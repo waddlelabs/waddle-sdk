@@ -529,3 +529,12 @@ pub fn grant_and_engage(session: &Session, claim_id: &str, source: &str, actor: 
         at: clock_now(session),
     });
 }
+
+/// Convenience: release a local claim (the counterpart of
+/// [`grant_and_engage`]; production releases arrive as plane directives).
+pub fn release_claim(session: &Session, claim_id: &str) {
+    session.inject(SessionEvent::Release {
+        claim: waddle_types::ClaimId::new(claim_id),
+        at: session.inner.clock.stamp_now().mono_ns(),
+    });
+}

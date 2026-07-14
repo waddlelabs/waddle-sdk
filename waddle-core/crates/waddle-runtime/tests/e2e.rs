@@ -13,7 +13,7 @@ use prost::Message as _;
 use waddle_fsm::Phase;
 use waddle_gate::gate::GateOutput;
 use waddle_media::{DataTopic, LoopbackMedia};
-use waddle_runtime::{ControlRegistry, Session, VerbError, grant_and_engage};
+use waddle_runtime::{ControlRegistry, Session, VerbError, grant_and_engage, release_claim};
 use waddle_types::pb::v0 as pb;
 use waddle_types::{ActorKind, GateMode, Provenance, TerminalOutcome};
 
@@ -233,10 +233,7 @@ fn engage_substitutes_teleop_actions_then_release_restores_passthrough() {
     }
     assert!(substituted, "teleop stream never substituted");
 
-    session.inject(waddle_fsm::SessionEvent::Release {
-        claim: waddle_types::ClaimId::new("claim-1"),
-        at: waddle_types::MonoNs(0),
-    });
+    release_claim(&session, "claim-1");
     wait_for(&session, |s| s.gate_mode == Some(GateMode::Passthrough));
     assert!(matches!(
         ep.gate(&[0.0; 3], None, None),
