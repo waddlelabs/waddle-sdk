@@ -5,9 +5,29 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Waddle reference implementation: runtime"
+description = "Waddle composition root: the Session object wiring FSM, gate, ingest, tripwires, sidecar, media, and control plane onto core-owned threads"
+
+[features]
+# Deferred integrations re-exported from the leaf crates.
+grpc = ["waddle-controlplane/tonic-transport"]
+livekit = ["waddle-media/livekit"]
 
 [dependencies]
+waddle-types = { workspace = true }
+waddle-fsm = { workspace = true }
+waddle-gate = { workspace = true }
+waddle-tripwire = { workspace = true }
+waddle-ingest = { workspace = true }
+waddle-media = { workspace = true }
+waddle-controlplane = { workspace = true }
+waddle-sidecar = { workspace = true }
+thiserror = { workspace = true }
+parking_lot = { workspace = true }
+uuid = { workspace = true }
+smallvec = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
 
 [lints]
 workspace = true
