@@ -1,0 +1,33 @@
+{
+  "format": "waddle.fixture/v0",
+  "type": "waddle.v0.NegotiateResponse",
+  "description": "Doctor-time demotion (N6/N11): VERB_HOLD measured at 72 ms against a declared 40 ms bound comes back DEMOTED; enforcement recorded ADVISORY; codecs accepted.",
+  "message": {
+    "grants": [
+      {
+        "grant": {
+          "verb": "VERB_SEND",
+          "sendInterfaces": ["SPACE_KIND_JOINT_POSITION", "SPACE_KIND_EE_POSE_DELTA"]
+        },
+        "status": "GRANT_STATUS_ACTIVE",
+        "measuredLatencyNs": "9200000",
+        "tMeasuredNs": "120000000000",
+        "window": "MEASUREMENT_WINDOW_DOCTOR"
+      },
+      {
+        "grant": {
+          "verb": "VERB_HOLD",
+          "declaredLatencyBoundNs": "40000000"
+        },
+        "status": "GRANT_STATUS_DEMOTED",
+        "measuredLatencyNs": "72000000",
+        "tMeasuredNs": "120500000000",
+        "window": "MEASUREMENT_WINDOW_DOCTOR"
+      }
+    ],
+    "acceptedFeatureFlags": ["waddle.v0.core", "waddle.v0.heartbeat.proxy-signals"],
+    "recordedEnforcement": "LEASE_ENFORCEMENT_ADVISORY",
+    "codecsAccepted": true,
+    "detail": "VERB_HOLD demoted at doctor time: measured 72ms exceeds declared 40ms bound"
+  }
+}

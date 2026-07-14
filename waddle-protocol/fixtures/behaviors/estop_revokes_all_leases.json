@@ -1,0 +1,31 @@
+{
+  "format": "waddle.behavior/v0",
+  "name": "estop_revokes_all_leases",
+  "description": "Pins FSM.md E11, E12 and L8: from RUNNING with an active claim and a held lease, estop revokes every lease (LEASE_EVENT_KIND_REVOKED_ALL, lease machine to Vacant — empty lease_id/holder in the snapshot), emits Fault{FAULT_KIND_ESTOP}, and drives TERMINAL{TERMINAL_OUTCOME_ABORT}, in that emission order per the E11 effects cell; TERMINAL is then absorbing — a subsequent mark injection must produce no state-transition emission of any kind within 500 ms and the terminal snapshot is unchanged. Judgment call: the claim is granted but not engaged, so the episode is still RUNNING at estop time ('active claim + lease') and E11's any-non-TERMINAL guard is exercised from RUNNING.",
+  "target": "fsm",
+  "requires_features": ["waddle.v0.core"],
+  "setup": {
+    "lease_enforcement": "LEASE_ENFORCEMENT_ENFORCED",
+    "handoff": { "immediate": { "blendNs": "0" } },
+    "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING"
+  },
+  "steps": [
+    { "inject": { "kind": "episode_open", "episode_id": "ep-es-0001", "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING" } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "reset_result", "result": { "ok": true, "strategy": "scripted_home", "verification": { "mode": "RESET_VERIFICATION_MODE_BLOCKING", "verified": true, "judgeId": "judge-reset", "judgeVersion": "2.1.0", "score": 0.97, "tNs": "100000000" } } } },
+    { "inject": { "kind": "start" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RUNNING" } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "claim_granted", "claim": { "claimId": "claim-es-0001", "episodeId": "ep-es-0001", "actor": { "kind": "ACTOR_KIND_TELEOPERATOR", "id": "top-7", "displayName": "Teleoperator 7" }, "sourceName": "teleop", "selfInitiated": false, "tGrantedNs": "200000000", "handoff": { "immediate": { "blendNs": "0" } }, "spaces": ["SPACE_KIND_EE_POSE_DELTA"] } } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RUNNING", "claim.active_claim_id": "claim-es-0001", "lease.holder_client_id": "$nonempty" } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "estop", "detail": "site estop chain pressed" } },
+    { "expect_emission": { "event": { "lease": { "kind": "LEASE_EVENT_KIND_REVOKED_ALL" } }, "within_ns": "0" } },
+    { "expect_emission": { "event": { "fault": { "kind": "FAULT_KIND_ESTOP" } }, "within_ns": "0" } },
+    { "expect_emission": { "event": { "state": { "to": "EPISODE_STATE_TERMINAL", "outcome": "TERMINAL_OUTCOME_ABORT" } }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_TERMINAL", "episode.outcome": "TERMINAL_OUTCOME_ABORT", "lease.lease_id": "", "lease.holder_client_id": "" } },
+    { "inject": { "kind": "mark", "mark": { "kind": "MARK_KIND_START", "actor": { "kind": "ACTOR_KIND_SITE_OPERATOR", "id": "site-3", "displayName": "Site operator 3" }, "note": "post-estop annotation attempt" } } },
+    { "expect_no_emission": { "event": { "state": {} }, "within_ns": "500000000" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_TERMINAL", "episode.outcome": "TERMINAL_OUTCOME_ABORT" } }
+  ]
+}

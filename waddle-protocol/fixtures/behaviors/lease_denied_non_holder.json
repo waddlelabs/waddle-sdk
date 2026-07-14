@@ -1,0 +1,28 @@
+{
+  "format": "waddle.behavior/v0",
+  "name": "lease_denied_non_holder",
+  "description": "Pins the FSM.md §3 non-holder note and the FaultKind comment in control.proto: a VerbResult{ok:false, fault.kind:FAULT_KIND_LEASE_DENIED} for a non-holder VERB_SEND is a pause signal under supervision, never a fault-equivalent abort — the fault surfaces as a Fault event on the session stream, but no state{to:TERMINAL} may be emitted within the following 1 s and the episode stays RUNNING (the integrator's loop holds the lease, e.g. as client 'customer-loop'); recovery is the lease-handoff path (E7/L6): claim granted, engage, lease HANDED_OFF with a fresh token, episode in INTERVENTION. Judgment calls: the pre-fault lease holder is asserted only as $nonempty rather than pinning the harness's integrator client id; the injected verb_result models the result of a send attempted by a non-holder writer, since a claim-less send itself is not an injectable step.",
+  "target": "fsm",
+  "requires_features": ["waddle.v0.core"],
+  "setup": {
+    "lease_enforcement": "LEASE_ENFORCEMENT_ENFORCED",
+    "handoff": { "immediate": { "blendNs": "0" } },
+    "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING"
+  },
+  "steps": [
+    { "inject": { "kind": "episode_open", "episode_id": "ep-ld-0001", "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING" } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "reset_result", "result": { "ok": true, "strategy": "scripted_home", "verification": { "mode": "RESET_VERIFICATION_MODE_BLOCKING", "verified": true, "judgeId": "judge-reset", "judgeVersion": "2.1.0", "score": 0.96, "tNs": "100000000" } } } },
+    { "inject": { "kind": "start" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RUNNING", "lease.holder_client_id": "$nonempty" } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "verb_result", "result": { "ok": false, "detail": "VERB_SEND rejected: not the lease holder", "fault": { "kind": "FAULT_KIND_LEASE_DENIED", "source": "lease-broker", "detail": "lease held by another client", "tNs": "200000000" }, "tNs": "200000000" } } },
+    { "expect_emission": { "event": { "fault": { "kind": "FAULT_KIND_LEASE_DENIED" } }, "within_ns": "0" } },
+    { "expect_no_emission": { "event": { "state": { "to": "EPISODE_STATE_TERMINAL" } }, "within_ns": "1000000000" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RUNNING" } },
+    { "inject": { "kind": "claim_granted", "claim": { "claimId": "claim-ld-0001", "episodeId": "ep-ld-0001", "actor": { "kind": "ACTOR_KIND_TELEOPERATOR", "id": "top-7", "displayName": "Teleoperator 7" }, "sourceName": "teleop", "selfInitiated": false, "tGrantedNs": "1200000000", "handoff": { "immediate": { "blendNs": "0" } }, "spaces": ["SPACE_KIND_EE_POSE_DELTA"] } } },
+    { "inject": { "kind": "engage", "claim_id": "claim-ld-0001", "initiator": "ACTOR_KIND_TELEOPERATOR" } },
+    { "expect_emission": { "event": { "lease": { "kind": "LEASE_EVENT_KIND_HANDED_OFF", "lease": { "leaseId": "$fresh_lease" } } }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_INTERVENTION", "claim.active_claim_id": "claim-ld-0001" } }
+  ]
+}

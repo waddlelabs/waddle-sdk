@@ -1,0 +1,29 @@
+{
+  "format": "waddle.fixture/v0",
+  "type": "waddle.v0.RobotDescription",
+  "description": "Monitor-only tier: opaque action space (unknown encoding), no grants, one uncalibrated camera — monitoring, episode bookkeeping, and video judging only; no takeover.",
+  "message": {
+    "name": "clamp-cell-usb",
+    "actionSpace": {
+      "opaque": {
+        "formatHint": "custom-usb-v2",
+        "dim": 6
+      },
+      "rateHz": 30
+    },
+    "robotId": "usb-arm-07",
+    "cellId": "cell-b",
+    "cameras": [
+      {
+        "name": "workspace",
+        "width": 640,
+        "height": 480,
+        "fps": 15,
+        "encoding": "CAMERA_ENCODING_RGB8",
+        "stream": {
+          "localFullRate": true
+        }
+      }
+    ]
+  }
+}

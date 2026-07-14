@@ -1,0 +1,49 @@
+{
+  "format": "waddle.behavior/v0",
+  "name": "handoff_hold_first",
+  "description": "Pins FSM.md §5 HOLD_FIRST (with E7, I1, L6): on engage, request_verb{VERB_HOLD} is issued and NO lease handoff may occur until a successful VerbResult is injected; caller ticks during the hold-wait return noop{NOOP_REASON_HOLD_ACTIVE} (a hold is an output condition, not a gate mode — the gate stays PASSTHROUGH until engage completes); after the hold verb succeeds the lease hands off (fresh token), the gate enters INTERVENTION, and the intervenor starts from rest with teleop actions substituting. Judgment calls: the hold request is asserted via an `effect` emission on the gate target (the gate harness composes the FSM, whose effects remain observable; scenario-format.md marks `effect` as fsm-target, so this fixture deliberately reads that as 'fsm effects, observable wherever the FSM runs'); the injected verb_result omits request_id and correlates to the single pending verb request; part names 'left'/'right' assumed from the bimanual fixture.",
+  "target": "gate",
+  "requires_features": ["waddle.v0.core"],
+  "setup": {
+    "robot_fixture": "../wire/robot_description_bimanual_composite.json",
+    "lease_enforcement": "LEASE_ENFORCEMENT_ADVISORY",
+    "handoff": { "holdFirst": {} },
+    "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING"
+  },
+  "steps": [
+    { "inject": { "kind": "episode_open", "episode_id": "ep-hf-0001", "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING" } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "reset_result", "result": { "ok": true, "strategy": "scripted_home", "verification": { "mode": "RESET_VERIFICATION_MODE_BLOCKING", "verified": true, "judgeId": "judge-reset", "judgeVersion": "2.1.0", "score": 0.98, "tNs": "100000000" } } } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_READY" } },
+    { "inject": { "kind": "chunk_arrival", "chunk": { "seq": "1", "sourceId": "policy-main", "tEmittedNs": "100000000", "tObsNs": "100000000", "horizonNs": "600000000", "provenance": { "kind": "PROVENANCE_KIND_POLICY", "actor": { "kind": "ACTOR_KIND_POLICY", "id": "policy-main" } }, "actions": [
+      { "tOffsetNs": "0", "composite": { "parts": [ { "name": "left", "action": { "jointPosition": { "values": [0.10, -0.40, 0.30, -1.20, 0.05, 0.90] } } }, { "name": "right", "action": { "jointPosition": { "values": [-0.10, -0.40, 0.30, -1.20, -0.05, 0.90] } } } ] } },
+      { "tOffsetNs": "100000000", "composite": { "parts": [ { "name": "left", "action": { "jointPosition": { "values": [0.11, -0.39, 0.30, -1.19, 0.05, 0.90] } } }, { "name": "right", "action": { "jointPosition": { "values": [-0.11, -0.39, 0.30, -1.19, -0.05, 0.90] } } } ] } },
+      { "tOffsetNs": "200000000", "composite": { "parts": [ { "name": "left", "action": { "jointPosition": { "values": [0.12, -0.38, 0.30, -1.18, 0.05, 0.90] } } }, { "name": "right", "action": { "jointPosition": { "values": [-0.12, -0.38, 0.30, -1.18, -0.05, 0.90] } } } ] } },
+      { "tOffsetNs": "300000000", "composite": { "parts": [ { "name": "left", "action": { "jointPosition": { "values": [0.13, -0.37, 0.30, -1.17, 0.05, 0.90] } } }, { "name": "right", "action": { "jointPosition": { "values": [-0.13, -0.37, 0.30, -1.17, -0.05, 0.90] } } } ] } },
+      { "tOffsetNs": "400000000", "composite": { "parts": [ { "name": "left", "action": { "jointPosition": { "values": [0.14, -0.36, 0.30, -1.16, 0.05, 0.90] } } }, { "name": "right", "action": { "jointPosition": { "values": [-0.14, -0.36, 0.30, -1.16, -0.05, 0.90] } } } ] } },
+      { "tOffsetNs": "500000000", "composite": { "parts": [ { "name": "left", "action": { "jointPosition": { "values": [0.15, -0.35, 0.30, -1.15, 0.05, 0.90] } } }, { "name": "right", "action": { "jointPosition": { "values": [-0.15, -0.35, 0.30, -1.15, -0.05, 0.90] } } } ] } }
+    ] } } },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "100000000" } },
+    { "expect_output": { "kind": "pass" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RUNNING", "gate.mode": "GATE_MODE_PASSTHROUGH" } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "200000000" } },
+    { "expect_output": { "kind": "pass" } },
+    { "inject": { "kind": "claim_granted", "claim": { "claimId": "claim-hf-0001", "episodeId": "ep-hf-0001", "actor": { "kind": "ACTOR_KIND_TELEOPERATOR", "id": "top-7", "displayName": "Teleoperator 7" }, "sourceName": "teleop", "selfInitiated": false, "tGrantedNs": "200000000", "handoff": { "holdFirst": {} }, "spaces": ["SPACE_KIND_EE_POSE_DELTA"] } } },
+    { "inject": { "kind": "engage", "claim_id": "claim-hf-0001", "initiator": "ACTOR_KIND_TELEOPERATOR" } },
+    { "expect_emission": { "effect": { "request_verb": { "verb": "VERB_HOLD" } }, "within_ns": "0" } },
+    { "expect_no_emission": { "event": { "lease": { "kind": "LEASE_EVENT_KIND_HANDED_OFF" } }, "within_ns": "100000000" } },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "300000000" } },
+    { "expect_output": { "kind": "noop", "reason": "NOOP_REASON_HOLD_ACTIVE" } },
+    { "inject": { "kind": "verb_result", "result": { "ok": true, "detail": "hold complete, arms at rest", "tNs": "300000000" } } },
+    { "expect_emission": { "event": { "lease": { "kind": "LEASE_EVENT_KIND_HANDED_OFF", "lease": { "leaseId": "$fresh_lease" } } }, "within_ns": "0" } },
+    { "expect_emission": { "event": { "gate": { "from": "GATE_MODE_PASSTHROUGH", "to": "GATE_MODE_INTERVENTION" } }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_INTERVENTION", "gate.mode": "GATE_MODE_INTERVENTION" } },
+    { "inject": { "kind": "teleop_action", "packet": { "tClientNs": "42000000000", "seq": "1", "clutchEngaged": true, "targets": [
+      { "part": "left", "twist": { "linear": { "x": 0.003, "y": 0.0, "z": 0.001 }, "angular": { "x": 0.0, "y": 0.0, "z": 0.0 } } }
+    ] } } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "400000000" } },
+    { "expect_output": { "kind": "substitute", "provenance": { "kind": "PROVENANCE_KIND_TELEOP" } } }
+  ]
+}

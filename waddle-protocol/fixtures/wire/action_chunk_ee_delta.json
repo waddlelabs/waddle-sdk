@@ -1,0 +1,33 @@
+{
+  "format": "waddle.fixture/v0",
+  "type": "waddle.v0.ActionChunk",
+  "description": "EE-space teleop chunk. The eeAbsolute rotation is the wxyz quat w=0.7071068 x=0 y=0.7071068 z=0: this fixture exists to catch a wxyz/xyzw transposition at an implementation boundary — a transposed reader produces a visibly different rotation.",
+  "message": {
+    "actions": [
+      {
+        "eeDelta": {
+          "linear": {"x": 0.004, "y": -0.002, "z": 0.001},
+          "angular": {"x": 0, "y": 0, "z": 0.01}
+        },
+        "tOffsetNs": "0"
+      },
+      {
+        "eeAbsolute": {
+          "position": {"x": 0.42, "y": -0.11, "z": 0.3},
+          "rotation": {"w": 0.7071068, "x": 0, "y": 0.7071068, "z": 0},
+          "frameId": "base"
+        },
+        "tOffsetNs": "20000000"
+      }
+    ],
+    "horizonNs": "40000000",
+    "tEmittedNs": "3735200000000",
+    "tObsNs": "3735185000000",
+    "seq": "112",
+    "sourceId": "teleop-console-7",
+    "provenance": {
+      "kind": "PROVENANCE_KIND_TELEOP",
+      "actor": {"kind": "ACTOR_KIND_TELEOPERATOR", "id": "top-347"}
+    }
+  }
+}

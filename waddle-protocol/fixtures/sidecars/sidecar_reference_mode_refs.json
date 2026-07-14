@@ -1,0 +1,319 @@
+{
+  "format": "waddle.fixture/v0",
+  "type": "waddle.v0.Sidecar",
+  "description": "Reference recording mode: the customer's recorder keeps the bulk bytes; the sidecar carries content-hashed ArchiveRefs (camera + robot-state streams) plus an incident clip around the intervention; episode FAILED with judge label grasp_slip.",
+  "message": {
+    "sidecarVersion": 1,
+    "episodeId": "int-d8e4a2c671",
+    "project": "towel-folding-pilot",
+    "sessionId": "sess-7d41f0",
+    "robotId": "yam-01",
+    "cellId": "cell-a",
+    "task": "fold_towel_half",
+    "clockAnchor": {
+      "monotonicNs": "3600000000000",
+      "unixNs": "1784000000000000000"
+    },
+    "bounds": {"tStartNs": "4000000000000", "tEndNs": "4055000000000"},
+    "tStartUnixNs": "1784000400000000000",
+    "tEndUnixNs": "1784000455000000000",
+    "outcome": "TERMINAL_OUTCOME_FAILURE",
+    "outcomeDetail": "grasp slip during second fold",
+    "metricsClass": "METRICS_CLASS_STANDARD",
+    "claims": [
+      {
+        "span": {"tStartNs": "4019500000000", "tEndNs": "4029900000000"},
+        "claim": {
+          "claimId": "claim-f1",
+          "episodeId": "int-d8e4a2c671",
+          "actor": {
+            "kind": "ACTOR_KIND_TELEOPERATOR",
+            "id": "top-512",
+            "displayName": "Waddle teleoperator 512"
+          },
+          "sourceName": "teleop",
+          "tGrantedNs": "4019500000000",
+          "handoff": {"holdFirst": {}},
+          "spaces": ["SPACE_KIND_EE_POSE_DELTA"]
+        }
+      }
+    ],
+    "leases": [
+      {
+        "span": {"tStartNs": "4000000000000", "tEndNs": "4020500000000"},
+        "lease": {
+          "leaseId": "lease-p7c5",
+          "holderClientId": "customer-loop",
+          "enforcement": "LEASE_ENFORCEMENT_ADVISORY",
+          "tAcquiredNs": "4000000000000"
+        }
+      },
+      {
+        "span": {"tStartNs": "4020500000000", "tEndNs": "4029500000000"},
+        "lease": {
+          "leaseId": "lease-t8d4",
+          "holderClientId": "teleop-console-7",
+          "enforcement": "LEASE_ENFORCEMENT_ADVISORY",
+          "tAcquiredNs": "4020500000000"
+        }
+      },
+      {
+        "span": {"tStartNs": "4029500000000", "tEndNs": "4055000000000"},
+        "lease": {
+          "leaseId": "lease-p9f0",
+          "holderClientId": "customer-loop",
+          "enforcement": "LEASE_ENFORCEMENT_ADVISORY",
+          "tAcquiredNs": "4029500000000"
+        }
+      }
+    ],
+    "provenance": [
+      {
+        "span": {"tStartNs": "4000000000000", "tEndNs": "4020500000000"},
+        "tag": {
+          "kind": "PROVENANCE_KIND_POLICY",
+          "actor": {"kind": "ACTOR_KIND_POLICY", "id": "policy-a"}
+        }
+      },
+      {
+        "span": {"tStartNs": "4020500000000", "tEndNs": "4029500000000"},
+        "tag": {
+          "kind": "PROVENANCE_KIND_TELEOP",
+          "actor": {"kind": "ACTOR_KIND_TELEOPERATOR", "id": "top-512"}
+        }
+      },
+      {
+        "span": {"tStartNs": "4029500000000", "tEndNs": "4055000000000"},
+        "tag": {
+          "kind": "PROVENANCE_KIND_POLICY",
+          "actor": {"kind": "ACTOR_KIND_POLICY", "id": "policy-a"}
+        }
+      }
+    ],
+    "interventions": [
+      {
+        "span": {"tStartNs": "4020000000000", "tEndNs": "4030000000000"},
+        "claimId": "claim-f1",
+        "phases": [
+          {
+            "phase": "INTERVENTION_PHASE_ENGAGE",
+            "span": {"tStartNs": "4020000000000", "tEndNs": "4021000000000"}
+          },
+          {
+            "phase": "INTERVENTION_PHASE_SETTLE",
+            "span": {"tStartNs": "4021000000000", "tEndNs": "4029000000000"}
+          },
+          {
+            "phase": "INTERVENTION_PHASE_RELEASE",
+            "span": {"tStartNs": "4029000000000", "tEndNs": "4030000000000"}
+          }
+        ]
+      }
+    ],
+    "events": [
+      {
+        "tNs": "4000000000000",
+        "episodeId": "int-d8e4a2c671",
+        "state": {"to": "EPISODE_STATE_RESETTING", "reason": "episode_open"}
+      },
+      {
+        "tNs": "4003000000000",
+        "episodeId": "int-d8e4a2c671",
+        "state": {
+          "from": "EPISODE_STATE_RESETTING",
+          "to": "EPISODE_STATE_READY",
+          "reason": "reset verified (blocking)"
+        }
+      },
+      {
+        "tNs": "4004000000000",
+        "episodeId": "int-d8e4a2c671",
+        "state": {
+          "from": "EPISODE_STATE_READY",
+          "to": "EPISODE_STATE_RUNNING",
+          "reason": "first gated action"
+        }
+      },
+      {
+        "tNs": "4019500000000",
+        "episodeId": "int-d8e4a2c671",
+        "claim": {
+          "kind": "CLAIM_EVENT_KIND_GRANTED",
+          "claim": {
+            "claimId": "claim-f1",
+            "episodeId": "int-d8e4a2c671",
+            "actor": {"kind": "ACTOR_KIND_TELEOPERATOR", "id": "top-512"},
+            "sourceName": "teleop",
+            "tGrantedNs": "4019500000000",
+            "handoff": {"holdFirst": {}},
+            "spaces": ["SPACE_KIND_EE_POSE_DELTA"]
+          }
+        }
+      },
+      {
+        "tNs": "4020000000000",
+        "episodeId": "int-d8e4a2c671",
+        "intervention": {"phase": "INTERVENTION_PHASE_ENGAGE", "claimId": "claim-f1"}
+      },
+      {
+        "tNs": "4020100000000",
+        "episodeId": "int-d8e4a2c671",
+        "state": {
+          "from": "EPISODE_STATE_RUNNING",
+          "to": "EPISODE_STATE_INTERVENTION",
+          "reason": "engage (hold-first)"
+        }
+      },
+      {
+        "tNs": "4020500000000",
+        "episodeId": "int-d8e4a2c671",
+        "lease": {
+          "kind": "LEASE_EVENT_KIND_HANDED_OFF",
+          "lease": {
+            "leaseId": "lease-t8d4",
+            "holderClientId": "teleop-console-7",
+            "enforcement": "LEASE_ENFORCEMENT_ADVISORY",
+            "tAcquiredNs": "4020500000000"
+          },
+          "detail": "hold confirmed, then handoff; fresh token minted"
+        }
+      },
+      {
+        "tNs": "4020600000000",
+        "episodeId": "int-d8e4a2c671",
+        "gate": {
+          "from": "GATE_MODE_PASSTHROUGH",
+          "to": "GATE_MODE_INTERVENTION",
+          "reason": "engage complete"
+        }
+      },
+      {
+        "tNs": "4021000000000",
+        "episodeId": "int-d8e4a2c671",
+        "intervention": {"phase": "INTERVENTION_PHASE_SETTLE", "claimId": "claim-f1"}
+      },
+      {
+        "tNs": "4029000000000",
+        "episodeId": "int-d8e4a2c671",
+        "intervention": {"phase": "INTERVENTION_PHASE_RELEASE", "claimId": "claim-f1"}
+      },
+      {
+        "tNs": "4029500000000",
+        "episodeId": "int-d8e4a2c671",
+        "lease": {
+          "kind": "LEASE_EVENT_KIND_HANDED_OFF",
+          "lease": {
+            "leaseId": "lease-p9f0",
+            "holderClientId": "customer-loop",
+            "enforcement": "LEASE_ENFORCEMENT_ADVISORY",
+            "tAcquiredNs": "4029500000000"
+          },
+          "detail": "handoff back to policy; policy re-primed on fresh observations"
+        }
+      },
+      {
+        "tNs": "4029700000000",
+        "episodeId": "int-d8e4a2c671",
+        "gate": {
+          "from": "GATE_MODE_INTERVENTION",
+          "to": "GATE_MODE_PASSTHROUGH",
+          "reason": "release complete"
+        }
+      },
+      {
+        "tNs": "4029900000000",
+        "episodeId": "int-d8e4a2c671",
+        "claim": {
+          "kind": "CLAIM_EVENT_KIND_RELEASED",
+          "claim": {
+            "claimId": "claim-f1",
+            "episodeId": "int-d8e4a2c671",
+            "actor": {"kind": "ACTOR_KIND_TELEOPERATOR", "id": "top-512"},
+            "sourceName": "teleop",
+            "tGrantedNs": "4019500000000",
+            "handoff": {"holdFirst": {}},
+            "spaces": ["SPACE_KIND_EE_POSE_DELTA"]
+          }
+        }
+      },
+      {
+        "tNs": "4030000000000",
+        "episodeId": "int-d8e4a2c671",
+        "state": {
+          "from": "EPISODE_STATE_INTERVENTION",
+          "to": "EPISODE_STATE_RUNNING",
+          "reason": "release"
+        }
+      },
+      {
+        "tNs": "4055000000000",
+        "episodeId": "int-d8e4a2c671",
+        "state": {
+          "from": "EPISODE_STATE_RUNNING",
+          "to": "EPISODE_STATE_TERMINAL",
+          "reason": "judge_result: grasp_slip",
+          "outcome": "TERMINAL_OUTCOME_FAILURE"
+        }
+      }
+    ],
+    "judgments": [
+      {
+        "judgeId": "vlm-rubric",
+        "judgeVersion": "2026.06",
+        "source": "JUDGE_SOURCE_MODEL",
+        "passed": false,
+        "score": 0.18,
+        "label": "grasp_slip",
+        "tNs": "4057000000000"
+      }
+    ],
+    "resetVerification": {
+      "mode": "RESET_VERIFICATION_MODE_BLOCKING",
+      "verified": true,
+      "judgeId": "reset-scene-v1",
+      "judgeVersion": "2026.05",
+      "score": 0.94,
+      "tNs": "4002800000000"
+    },
+    "recordingMode": "RECORDING_MODE_REFERENCE",
+    "refs": [
+      {
+        "refId": "ref-cam-overhead",
+        "streamId": "camera/overhead",
+        "tStartNs": "4000000000000",
+        "tEndNs": "4055000000000",
+        "contentHash": "sha256:f3b1c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "resolver": "customer-s3",
+        "uriHint": "s3://acme-robot-archive/sess-7d41f0/int-d8e4a2c671/overhead.h264.mcap",
+        "mediaType": "video/h264"
+      },
+      {
+        "refId": "ref-robot-state",
+        "streamId": "robot/state",
+        "tStartNs": "4000000000000",
+        "tEndNs": "4055000000000",
+        "contentHash": "sha256:a54ff53a5f1d36f1b2c0e4d78ce7a3b3aa1e6b0c4d28f5e19d3b7a60c8f21e44",
+        "resolver": "customer-s3",
+        "uriHint": "s3://acme-robot-archive/sess-7d41f0/int-d8e4a2c671/robot_state.mcap",
+        "mediaType": "application/x-mcap"
+      }
+    ],
+    "incidentClips": [
+      {
+        "refId": "clip-intervention-claim-f1",
+        "streamId": "camera/overhead",
+        "tStartNs": "4015000000000",
+        "tEndNs": "4035000000000",
+        "contentHash": "sha256:510e527fade682d1b05688c2b3e6c1f83d9a4b7e0c25d1f8a9634b0e7c5d2a19",
+        "resolver": "customer-s3",
+        "uriHint": "s3://acme-robot-archive/sess-7d41f0/int-d8e4a2c671/clips/intervention-claim-f1.mp4",
+        "mediaType": "video/mp4"
+      }
+    ],
+    "audit": {
+      "state": "AUDIT_STATE_NOT_RETAINED",
+      "randomQuotaSample": false
+    },
+    "robotDescriptionDigest": "sha256:8c1d29f4a7b3e6d05f92c84ab1e7d3960f45ac28b91d7e30c6a54f18d2e9b07c"
+  }
+}

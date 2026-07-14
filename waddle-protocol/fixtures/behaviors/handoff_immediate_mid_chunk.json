@@ -1,0 +1,85 @@
+{
+  "format": "waddle.behavior/v0",
+  "name": "handoff_immediate_mid_chunk",
+  "description": "Pins FSM.md E7/E8, I1-I3, L6 and §5 IMMEDIATE{blend_ns}: engage mid-chunk drops the executing policy chunk, the lease hands off atomically with a freshly minted token ($fresh_lease), the gate cross-fades (kind blend, provenance already TELEOP at blend start) for blend_ns, then substitutes teleop actions; release re-primes the policy on a fresh chunk with a new tObsNs before pass resumes, hands the lease back (fresh token again), releases the claim, and returns the gate to PASSTHROUGH / episode to RUNNING. Judgment calls: the joint-position composite space is required (the §5 delta-space restriction would degrade IMMEDIATE to HOLD_FIRST); the tick at the exact blend-window boundary (t=500ms) is deliberately unasserted; release-batch emission order is pinned as lease HANDED_OFF → claim RELEASED → gate → PASSTHROUGH → state → RUNNING per §5's release sentence; part names 'left'/'right' assumed from the bimanual fixture.",
+  "target": "gate",
+  "requires_features": ["waddle.v0.core"],
+  "setup": {
+    "robot_fixture": "../wire/robot_description_bimanual_composite.json",
+    "lease_enforcement": "LEASE_ENFORCEMENT_ENFORCED",
+    "handoff": { "immediate": { "blendNs": "300000000" } },
+    "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING"
+  },
+  "steps": [
+    { "inject": { "kind": "episode_open", "episode_id": "ep-imm-0001", "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING" } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "reset_result", "result": { "ok": true, "strategy": "scripted_home", "verification": { "mode": "RESET_VERIFICATION_MODE_BLOCKING", "verified": true, "judgeId": "judge-reset", "judgeVersion": "2.1.0", "score": 0.96, "tNs": "100000000" } } } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_READY" } },
+    { "inject": { "kind": "chunk_arrival", "chunk": { "seq": "1", "sourceId": "policy-main", "tEmittedNs": "100000000", "tObsNs": "100000000", "horizonNs": "600000000", "provenance": { "kind": "PROVENANCE_KIND_POLICY", "actor": { "kind": "ACTOR_KIND_POLICY", "id": "policy-main" } }, "actions": [
+      { "tOffsetNs": "0", "composite": { "parts": [ { "name": "left", "action": { "jointPosition": { "values": [0.10, -0.40, 0.30, -1.20, 0.05, 0.90] } } }, { "name": "right", "action": { "jointPosition": { "values": [-0.10, -0.40, 0.30, -1.20, -0.05, 0.90] } } } ] } },
+      { "tOffsetNs": "100000000", "composite": { "parts": [ { "name": "left", "action": { "jointPosition": { "values": [0.11, -0.39, 0.30, -1.19, 0.05, 0.90] } } }, { "name": "right", "action": { "jointPosition": { "values": [-0.11, -0.39, 0.30, -1.19, -0.05, 0.90] } } } ] } },
+      { "tOffsetNs": "200000000", "composite": { "parts": [ { "name": "left", "action": { "jointPosition": { "values": [0.12, -0.38, 0.30, -1.18, 0.05, 0.90] } } }, { "name": "right", "action": { "jointPosition": { "values": [-0.12, -0.38, 0.30, -1.18, -0.05, 0.90] } } } ] } },
+      { "tOffsetNs": "300000000", "composite": { "parts": [ { "name": "left", "action": { "jointPosition": { "values": [0.13, -0.37, 0.30, -1.17, 0.05, 0.90] } } }, { "name": "right", "action": { "jointPosition": { "values": [-0.13, -0.37, 0.30, -1.17, -0.05, 0.90] } } } ] } },
+      { "tOffsetNs": "400000000", "composite": { "parts": [ { "name": "left", "action": { "jointPosition": { "values": [0.14, -0.36, 0.30, -1.16, 0.05, 0.90] } } }, { "name": "right", "action": { "jointPosition": { "values": [-0.14, -0.36, 0.30, -1.16, -0.05, 0.90] } } } ] } },
+      { "tOffsetNs": "500000000", "composite": { "parts": [ { "name": "left", "action": { "jointPosition": { "values": [0.15, -0.35, 0.30, -1.15, 0.05, 0.90] } } }, { "name": "right", "action": { "jointPosition": { "values": [-0.15, -0.35, 0.30, -1.15, -0.05, 0.90] } } } ] } }
+    ] } } },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "100000000" } },
+    { "expect_output": { "kind": "pass" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RUNNING", "gate.mode": "GATE_MODE_PASSTHROUGH" } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "200000000" } },
+    { "expect_output": { "kind": "pass" } },
+    { "inject": { "kind": "claim_granted", "claim": { "claimId": "claim-imm-0001", "episodeId": "ep-imm-0001", "actor": { "kind": "ACTOR_KIND_TELEOPERATOR", "id": "top-7", "displayName": "Teleoperator 7" }, "sourceName": "teleop", "selfInitiated": false, "tGrantedNs": "200000000", "handoff": { "immediate": { "blendNs": "300000000" } }, "spaces": ["SPACE_KIND_EE_POSE_DELTA"] } } },
+    { "inject": { "kind": "engage", "claim_id": "claim-imm-0001", "initiator": "ACTOR_KIND_TELEOPERATOR" } },
+    { "inject": { "kind": "teleop_action", "packet": { "tClientNs": "42000000000", "seq": "1", "clutchEngaged": true, "targets": [
+      { "part": "left", "twist": { "linear": { "x": 0.006, "y": 0.0, "z": 0.0 }, "angular": { "x": 0.0, "y": 0.0, "z": 0.0 } } },
+      { "part": "right", "twist": { "linear": { "x": 0.0, "y": 0.0, "z": 0.0 }, "angular": { "x": 0.0, "y": 0.0, "z": 0.0 } } }
+    ] } } },
+    { "expect_emission": { "event": { "lease": { "kind": "LEASE_EVENT_KIND_HANDED_OFF", "lease": { "leaseId": "$fresh_lease" } } }, "within_ns": "0" } },
+    { "expect_emission": { "event": { "gate": { "from": "GATE_MODE_PASSTHROUGH", "to": "GATE_MODE_INTERVENTION" } }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_INTERVENTION", "gate.mode": "GATE_MODE_INTERVENTION" } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "teleop_action", "packet": { "tClientNs": "42100000000", "seq": "2", "clutchEngaged": true, "targets": [
+      { "part": "left", "twist": { "linear": { "x": 0.006, "y": 0.001, "z": 0.0 }, "angular": { "x": 0.0, "y": 0.0, "z": 0.0 } } }
+    ] } } },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "300000000" } },
+    { "expect_output": { "kind": "blend", "provenance": { "kind": "PROVENANCE_KIND_TELEOP" } } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "teleop_action", "packet": { "tClientNs": "42200000000", "seq": "3", "clutchEngaged": true, "targets": [
+      { "part": "left", "twist": { "linear": { "x": 0.005, "y": 0.002, "z": 0.0 }, "angular": { "x": 0.0, "y": 0.0, "z": 0.0 } } }
+    ] } } },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "400000000" } },
+    { "expect_output": { "kind": "blend", "provenance": { "kind": "PROVENANCE_KIND_TELEOP" } } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "teleop_action", "packet": { "tClientNs": "42300000000", "seq": "4", "clutchEngaged": true, "targets": [
+      { "part": "left", "twist": { "linear": { "x": 0.004, "y": 0.002, "z": 0.0 }, "angular": { "x": 0.0, "y": 0.0, "z": 0.0 } } }
+    ] } } },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "500000000" } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "teleop_action", "packet": { "tClientNs": "42400000000", "seq": "5", "clutchEngaged": true, "targets": [
+      { "part": "left", "twist": { "linear": { "x": 0.003, "y": 0.001, "z": 0.0 }, "angular": { "x": 0.0, "y": 0.0, "z": 0.0 } } }
+    ] } } },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "600000000" } },
+    { "expect_output": { "kind": "substitute", "provenance": { "kind": "PROVENANCE_KIND_TELEOP" } } },
+    { "expect_state": { "episode.intervention_phase": "INTERVENTION_PHASE_SETTLE" } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "release", "claim_id": "claim-imm-0001", "initiator": "ACTOR_KIND_TELEOPERATOR" } },
+    { "advance_ns": "50000000" },
+    { "inject": { "kind": "chunk_arrival", "chunk": { "seq": "2", "sourceId": "policy-main", "tEmittedNs": "750000000", "tObsNs": "750000000", "horizonNs": "600000000", "provenance": { "kind": "PROVENANCE_KIND_POLICY", "actor": { "kind": "ACTOR_KIND_POLICY", "id": "policy-main" } }, "actions": [
+      { "tOffsetNs": "0", "composite": { "parts": [ { "name": "left", "action": { "jointPosition": { "values": [0.16, -0.34, 0.30, -1.14, 0.05, 0.90] } } }, { "name": "right", "action": { "jointPosition": { "values": [-0.16, -0.34, 0.30, -1.14, -0.05, 0.90] } } } ] } },
+      { "tOffsetNs": "100000000", "composite": { "parts": [ { "name": "left", "action": { "jointPosition": { "values": [0.17, -0.33, 0.30, -1.13, 0.05, 0.90] } } }, { "name": "right", "action": { "jointPosition": { "values": [-0.17, -0.33, 0.30, -1.13, -0.05, 0.90] } } } ] } },
+      { "tOffsetNs": "200000000", "composite": { "parts": [ { "name": "left", "action": { "jointPosition": { "values": [0.18, -0.32, 0.30, -1.12, 0.05, 0.90] } } }, { "name": "right", "action": { "jointPosition": { "values": [-0.18, -0.32, 0.30, -1.12, -0.05, 0.90] } } } ] } },
+      { "tOffsetNs": "300000000", "composite": { "parts": [ { "name": "left", "action": { "jointPosition": { "values": [0.19, -0.31, 0.30, -1.11, 0.05, 0.90] } } }, { "name": "right", "action": { "jointPosition": { "values": [-0.19, -0.31, 0.30, -1.11, -0.05, 0.90] } } } ] } },
+      { "tOffsetNs": "400000000", "composite": { "parts": [ { "name": "left", "action": { "jointPosition": { "values": [0.20, -0.30, 0.30, -1.10, 0.05, 0.90] } } }, { "name": "right", "action": { "jointPosition": { "values": [-0.20, -0.30, 0.30, -1.10, -0.05, 0.90] } } } ] } },
+      { "tOffsetNs": "500000000", "composite": { "parts": [ { "name": "left", "action": { "jointPosition": { "values": [0.21, -0.29, 0.30, -1.09, 0.05, 0.90] } } }, { "name": "right", "action": { "jointPosition": { "values": [-0.21, -0.29, 0.30, -1.09, -0.05, 0.90] } } } ] } }
+    ] } } },
+    { "expect_emission": { "event": { "lease": { "kind": "LEASE_EVENT_KIND_HANDED_OFF", "lease": { "leaseId": "$fresh_lease" } } }, "within_ns": "0" } },
+    { "expect_emission": { "event": { "claim": { "kind": "CLAIM_EVENT_KIND_RELEASED" } }, "within_ns": "0" } },
+    { "expect_emission": { "event": { "gate": { "from": "GATE_MODE_INTERVENTION", "to": "GATE_MODE_PASSTHROUGH" } }, "within_ns": "0" } },
+    { "expect_emission": { "event": { "state": { "from": "EPISODE_STATE_INTERVENTION", "to": "EPISODE_STATE_RUNNING" } }, "within_ns": "0" } },
+    { "advance_ns": "50000000" },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "800000000" } },
+    { "expect_output": { "kind": "pass", "provenance": { "kind": "PROVENANCE_KIND_POLICY" } } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RUNNING", "gate.mode": "GATE_MODE_PASSTHROUGH", "claim.active_claim_id": "" } }
+  ]
+}

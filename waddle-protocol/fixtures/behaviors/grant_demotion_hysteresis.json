@@ -1,0 +1,38 @@
+{
+  "format": "waddle.behavior/v0",
+  "name": "grant_demotion_hysteresis",
+  "description": "Pins FSM.md §7 rules 1-4 (N6/N11): sustained bad gate-tick/callback-dispatch proxy signals crossing the declared hold latency bound must produce NO GrantStatusChange emission while the lease is active (rule 2 — no grant event of any kind in two 400 ms windows); after terminate{SUCCESS} ends the episode and the lease window, the deferred demotion of grants[VERB_HOLD] to GRANT_STATUS_DEMOTED is emitted with a populated effective_t_ns; signals then hovering just inside the bound must NOT re-promote (rule 3 hysteresis — no grant{to:ACTIVE} within 1 s); re-promotion lands only via a safe-window path, here a HeartbeatAck carrying the grant change to ACTIVE (rule 4: changes ride the ack as well as the stream). Judgment calls: rule 2 is pinned as deferral of the emission itself, not an early emission with future effective_t_ns; the demoted grant is VERB_HOLD (gate-tick and callback-dispatch jitter proxy the hold verb's health) and the bimanual fixture's declared grants seed the lattice with an assumed hold bound of roughly 100 ms — the bad signals (p95 420 ms) and hovering signals (p95 95 ms) are chosen to be unambiguous on either side; effective_t_ns exceeding lease end is asserted temporally (the emission appears only after termination) plus $nonempty, since relational matchers do not exist.",
+  "target": "fsm",
+  "requires_features": ["waddle.v0.core"],
+  "setup": {
+    "robot_fixture": "../wire/robot_description_bimanual_composite.json",
+    "lease_enforcement": "LEASE_ENFORCEMENT_ENFORCED",
+    "handoff": { "holdFirst": {} },
+    "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING"
+  },
+  "steps": [
+    { "inject": { "kind": "episode_open", "episode_id": "ep-gd-0001", "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING" } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "reset_result", "result": { "ok": true, "strategy": "scripted_home", "verification": { "mode": "RESET_VERIFICATION_MODE_BLOCKING", "verified": true, "judgeId": "judge-reset", "judgeVersion": "2.1.0", "score": 0.96, "tNs": "100000000" } } } },
+    { "inject": { "kind": "start" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RUNNING", "lease.holder_client_id": "$nonempty", "grants[VERB_HOLD].status": "GRANT_STATUS_ACTIVE" } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "proxy_signals", "signals": { "controlRttNs": "45000000", "gateTick": { "p50Ns": "180000000", "p95Ns": "420000000", "p99Ns": "550000000", "maxNs": "800000000", "rateHz": 9.2, "samples": 60 }, "hostLoad1m": 6.4, "hostLoad5m": 4.1, "cpuUtilization": 0.97, "callbackDispatch": { "p50Ns": "150000000", "p95Ns": "380000000", "p99Ns": "500000000", "maxNs": "650000000", "rateHz": 9.2, "samples": 60 } } } },
+    { "expect_no_emission": { "event": { "grant": {} }, "within_ns": "400000000" } },
+    { "inject": { "kind": "proxy_signals", "signals": { "controlRttNs": "47000000", "gateTick": { "p50Ns": "190000000", "p95Ns": "430000000", "p99Ns": "560000000", "maxNs": "820000000", "rateHz": 9.1, "samples": 60 }, "hostLoad1m": 6.6, "hostLoad5m": 4.4, "cpuUtilization": 0.98, "callbackDispatch": { "p50Ns": "155000000", "p95Ns": "390000000", "p99Ns": "510000000", "maxNs": "660000000", "rateHz": 9.1, "samples": 60 } } } },
+    { "expect_no_emission": { "event": { "grant": {} }, "within_ns": "400000000" } },
+    { "expect_state": { "grants[VERB_HOLD].status": "GRANT_STATUS_ACTIVE" } },
+    { "inject": { "kind": "terminate", "outcome": "TERMINAL_OUTCOME_SUCCESS", "reason": "rollout complete" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_TERMINAL", "episode.outcome": "TERMINAL_OUTCOME_SUCCESS" } },
+    { "expect_emission": { "event": { "grant": { "verb": "VERB_HOLD", "from": "GRANT_STATUS_ACTIVE", "to": "GRANT_STATUS_DEMOTED", "effectiveTNs": "$nonempty" } }, "within_ns": "500000000" } },
+    { "expect_state": { "grants[VERB_HOLD].status": "GRANT_STATUS_DEMOTED" } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "proxy_signals", "signals": { "controlRttNs": "38000000", "gateTick": { "p50Ns": "60000000", "p95Ns": "95000000", "p99Ns": "120000000", "maxNs": "150000000", "rateHz": 9.9, "samples": 60 }, "hostLoad1m": 2.1, "hostLoad5m": 2.8, "cpuUtilization": 0.72, "callbackDispatch": { "p50Ns": "55000000", "p95Ns": "92000000", "p99Ns": "115000000", "maxNs": "140000000", "rateHz": 9.9, "samples": 60 } } } },
+    { "expect_no_emission": { "event": { "grant": { "to": "GRANT_STATUS_ACTIVE" } }, "within_ns": "1000000000" } },
+    { "expect_state": { "grants[VERB_HOLD].status": "GRANT_STATUS_DEMOTED" } },
+    { "inject": { "kind": "proxy_signals", "signals": { "controlRttNs": "22000000", "gateTick": { "p50Ns": "4000000", "p95Ns": "8000000", "p99Ns": "11000000", "maxNs": "15000000", "rateHz": 10.0, "samples": 60 }, "hostLoad1m": 0.8, "hostLoad5m": 1.1, "cpuUtilization": 0.31, "callbackDispatch": { "p50Ns": "3000000", "p95Ns": "7000000", "p99Ns": "10000000", "maxNs": "13000000", "rateHz": 10.0, "samples": 60 } } } },
+    { "advance_ns": "200000000" },
+    { "inject": { "kind": "heartbeat_ack", "ack": { "tServerUnixNs": "1760000000000000000", "grantChanges": [ { "verb": "VERB_HOLD", "from": "GRANT_STATUS_DEMOTED", "to": "GRANT_STATUS_ACTIVE", "reason": "safe-window re-measurement (MEASUREMENT_WINDOW_BETWEEN_EPISODES)", "effectiveTNs": "2800000000" } ] } } },
+    { "expect_state": { "grants[VERB_HOLD].status": "GRANT_STATUS_ACTIVE" } }
+  ]
+}

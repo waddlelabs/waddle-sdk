@@ -1,0 +1,37 @@
+{
+  "format": "waddle.fixture/v0",
+  "type": "waddle.v0.ActionChunk",
+  "description": "Policy-emitted joint-position chunk: three 7-DoF steps at 20 ms offsets, one riding gripper command, policy provenance.",
+  "message": {
+    "actions": [
+      {
+        "jointPosition": {
+          "values": [0.12, -0.44, 0.31, 1.57, -0.2, 0.05, 0.73]
+        },
+        "tOffsetNs": "0"
+      },
+      {
+        "jointPosition": {
+          "values": [0.13, -0.43, 0.3, 1.56, -0.21, 0.06, 0.74]
+        },
+        "tOffsetNs": "20000000"
+      },
+      {
+        "jointPosition": {
+          "values": [0.14, -0.42, 0.29, 1.55, -0.22, 0.07, 0.75]
+        },
+        "gripper": {"position": 0.8},
+        "tOffsetNs": "40000000"
+      }
+    ],
+    "horizonNs": "60000000",
+    "tEmittedNs": "3625400000000",
+    "tObsNs": "3625380000000",
+    "seq": "41",
+    "sourceId": "policy-a",
+    "provenance": {
+      "kind": "PROVENANCE_KIND_POLICY",
+      "actor": {"kind": "ACTOR_KIND_POLICY", "id": "policy-a"}
+    }
+  }
+}

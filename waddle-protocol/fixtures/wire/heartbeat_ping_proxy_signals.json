@@ -1,0 +1,39 @@
+{
+  "format": "waddle.fixture/v0",
+  "type": "waddle.v0.HeartbeatPing",
+  "description": "N11 — grant health rides safely-measurable proxy signals, never live verb latencies; the one VerbMeasurement here was taken BETWEEN_EPISODES, verbs are only ever invoked for measurement in safe windows.",
+  "message": {
+    "sessionId": "sess-7d41f0",
+    "tNs": "3695000000000",
+    "signals": {
+      "controlRttNs": "8500000",
+      "gateTick": {
+        "p50Ns": "120000",
+        "p95Ns": "480000",
+        "p99Ns": "950000",
+        "maxNs": "2400000",
+        "rateHz": 50,
+        "samples": 1500
+      },
+      "hostLoad1m": 0.62,
+      "hostLoad5m": 0.55,
+      "cpuUtilization": 0.31,
+      "callbackDispatch": {
+        "p50Ns": "300000",
+        "p95Ns": "900000",
+        "p99Ns": "2100000",
+        "maxNs": "5200000",
+        "rateHz": 10,
+        "samples": 600
+      }
+    },
+    "verbMeasurements": [
+      {
+        "verb": "VERB_HOLD",
+        "latencyNs": "38000000",
+        "tMeasuredNs": "3690000000000",
+        "window": "MEASUREMENT_WINDOW_BETWEEN_EPISODES"
+      }
+    ]
+  }
+}

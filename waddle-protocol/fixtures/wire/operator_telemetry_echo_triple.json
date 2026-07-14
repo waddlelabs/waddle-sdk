@@ -1,0 +1,34 @@
+{
+  "format": "waddle.fixture/v0",
+  "type": "waddle.v0.OperatorTelemetry",
+  "description": "Robot-to-console telemetry mid-intervention with the NTP-style echo triple populated: echoClientNs is the console clock (t1), echoServerRecvNs/serverSendNs are session-monotonic robot stamps (t2/t3).",
+  "message": {
+    "tNs": "3735000000000",
+    "partPoses": [
+      {
+        "part": "left",
+        "pose": {
+          "position": {"x": 0.4, "y": 0.17, "z": 0.28},
+          "rotation": {"w": 0.9238795, "x": 0, "y": 0.3826834, "z": 0},
+          "frameId": "base"
+        }
+      },
+      {
+        "part": "right",
+        "pose": {
+          "position": {"x": 0.38, "y": -0.21, "z": 0.31},
+          "rotation": {"w": 1, "x": 0, "y": 0, "z": 0},
+          "frameId": "base"
+        }
+      }
+    ],
+    "gripper": 0.42,
+    "leaseHolder": "teleop-console-7",
+    "episodeState": "EPISODE_STATE_INTERVENTION",
+    "gateMode": "GATE_MODE_INTERVENTION",
+    "echoClientNs": "77123460000000",
+    "echoServerRecvNs": "3734998200000",
+    "serverSendNs": "3735000000000",
+    "activeCamera": "overhead"
+  }
+}

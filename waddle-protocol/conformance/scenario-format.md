@@ -112,7 +112,9 @@ paths. Present keys must match; absent keys are unconstrained.
 
 - `event` — deep partial match against a `waddle.v0.EpisodeEvent` emitted on
   the session event stream. Repeated fields match as an ordered subsequence.
-- `effect` — (fsm target) partial match against an emitted effect (below).
+- `effect` — partial match against an emitted FSM effect (below). Valid on
+  both targets: the gate target embeds the session FSM, so its effects are
+  observable there too.
 - `within_ns` — virtual-time window starting at this step; `"0"` means
   "already emitted by now, since the last expectation". `expect_no_emission`
   advances virtual time by `within_ns` and fails if a matching emission
@@ -175,10 +177,10 @@ enum spellings):
 `grants` is matched by `(verb, send_interface)` lookup, expressed as
 `grants[VERB_HOLD].status` or `grants[VERB_SEND/SPACE_KIND_EE_POSE_DELTA].status`.
 
-## Effects vocabulary (fsm target)
+## Effects vocabulary
 
-The pure state machine communicates with its runtime through effects; the fsm
-target exposes them as emissions matchable by `expect_emission.effect`:
+The pure state machine communicates with its runtime through effects; both
+targets expose them as emissions matchable by `expect_emission.effect`:
 
 | effect | fields |
 |---|---|

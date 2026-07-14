@@ -1,0 +1,189 @@
+{
+  "format": "waddle.fixture/v0",
+  "type": "waddle.v0.Sidecar",
+  "description": "Born-claimed successor whose optimistic-async reset verification later FAILED (E13): the late resetVerification event retro-flags the permanent reset_unverified bit; the episode itself still ran to SUCCESS.",
+  "message": {
+    "sidecarVersion": 1,
+    "episodeId": "int-b6d0e8f312",
+    "project": "towel-folding-pilot",
+    "sessionId": "sess-7d41f0",
+    "robotId": "yam-01",
+    "cellId": "cell-a",
+    "task": "fold_towel_half",
+    "clockAnchor": {
+      "monotonicNs": "3600000000000",
+      "unixNs": "1784000000000000000"
+    },
+    "bounds": {"tStartNs": "3900000000000", "tEndNs": "3940000000000"},
+    "tStartUnixNs": "1784000300000000000",
+    "tEndUnixNs": "1784000340000000000",
+    "outcome": "TERMINAL_OUTCOME_SUCCESS",
+    "bornClaimed": true,
+    "retake": {
+      "parentEpisodeId": "int-c7f2a90b1e",
+      "successorEpisodeId": "int-b6d0e8f312"
+    },
+    "metricsClass": "METRICS_CLASS_BORN_CLAIMED",
+    "claims": [
+      {
+        "span": {"tStartNs": "3900000000000", "tEndNs": "3903900000000"},
+        "claim": {
+          "claimId": "claim-r2",
+          "episodeId": "int-b6d0e8f312",
+          "actor": {
+            "kind": "ACTOR_KIND_TELEOPERATOR",
+            "id": "top-347",
+            "displayName": "Waddle teleoperator 347"
+          },
+          "sourceName": "teleop",
+          "tGrantedNs": "3894000000000",
+          "handoff": {"holdFirst": {}},
+          "spaces": ["SPACE_KIND_EE_POSE_DELTA"]
+        }
+      }
+    ],
+    "leases": [
+      {
+        "span": {"tStartNs": "3900000000000", "tEndNs": "3903800000000"},
+        "lease": {
+          "leaseId": "lease-t5a7",
+          "holderClientId": "teleop-console-7",
+          "enforcement": "LEASE_ENFORCEMENT_ADVISORY",
+          "tAcquiredNs": "3900000000000"
+        }
+      },
+      {
+        "span": {"tStartNs": "3903800000000", "tEndNs": "3940000000000"},
+        "lease": {
+          "leaseId": "lease-p6e1",
+          "holderClientId": "customer-loop",
+          "enforcement": "LEASE_ENFORCEMENT_ADVISORY",
+          "tAcquiredNs": "3903800000000"
+        }
+      }
+    ],
+    "provenance": [
+      {
+        "span": {"tStartNs": "3900000000000", "tEndNs": "3903800000000"},
+        "tag": {
+          "kind": "PROVENANCE_KIND_TELEOP",
+          "actor": {"kind": "ACTOR_KIND_TELEOPERATOR", "id": "top-347"}
+        }
+      },
+      {
+        "span": {"tStartNs": "3903800000000", "tEndNs": "3940000000000"},
+        "tag": {
+          "kind": "PROVENANCE_KIND_POLICY",
+          "actor": {"kind": "ACTOR_KIND_POLICY", "id": "policy-a"}
+        }
+      }
+    ],
+    "events": [
+      {
+        "tNs": "3900000000000",
+        "episodeId": "int-b6d0e8f312",
+        "state": {
+          "to": "EPISODE_STATE_RESETTING",
+          "reason": "retake successor opened born-claimed (claim claim-r2 held)"
+        }
+      },
+      {
+        "tNs": "3903000000000",
+        "episodeId": "int-b6d0e8f312",
+        "state": {
+          "from": "EPISODE_STATE_RESETTING",
+          "to": "EPISODE_STATE_READY",
+          "reason": "optimistic-async reset: verification pending"
+        }
+      },
+      {
+        "tNs": "3903800000000",
+        "episodeId": "int-b6d0e8f312",
+        "lease": {
+          "kind": "LEASE_EVENT_KIND_HANDED_OFF",
+          "lease": {
+            "leaseId": "lease-p6e1",
+            "holderClientId": "customer-loop",
+            "enforcement": "LEASE_ENFORCEMENT_ADVISORY",
+            "tAcquiredNs": "3903800000000"
+          },
+          "detail": "settle done; lease back to policy, fresh token minted"
+        }
+      },
+      {
+        "tNs": "3903900000000",
+        "episodeId": "int-b6d0e8f312",
+        "claim": {
+          "kind": "CLAIM_EVENT_KIND_RELEASED",
+          "claim": {
+            "claimId": "claim-r2",
+            "episodeId": "int-b6d0e8f312",
+            "actor": {"kind": "ACTOR_KIND_TELEOPERATOR", "id": "top-347"},
+            "sourceName": "teleop",
+            "tGrantedNs": "3894000000000",
+            "handoff": {"holdFirst": {}},
+            "spaces": ["SPACE_KIND_EE_POSE_DELTA"]
+          }
+        }
+      },
+      {
+        "tNs": "3904000000000",
+        "episodeId": "int-b6d0e8f312",
+        "state": {
+          "from": "EPISODE_STATE_READY",
+          "to": "EPISODE_STATE_RUNNING",
+          "reason": "first gated action"
+        }
+      },
+      {
+        "tNs": "3908000000000",
+        "episodeId": "int-b6d0e8f312",
+        "resetVerification": {
+          "mode": "RESET_VERIFICATION_MODE_OPTIMISTIC_ASYNC",
+          "verified": false,
+          "invalidatedAsync": true,
+          "judgeId": "reset-scene-v1",
+          "judgeVersion": "2026.05",
+          "score": 0.31,
+          "tNs": "3908000000000"
+        }
+      },
+      {
+        "tNs": "3940000000000",
+        "episodeId": "int-b6d0e8f312",
+        "state": {
+          "from": "EPISODE_STATE_RUNNING",
+          "to": "EPISODE_STATE_TERMINAL",
+          "reason": "judge_result: done",
+          "outcome": "TERMINAL_OUTCOME_SUCCESS"
+        }
+      }
+    ],
+    "judgments": [
+      {
+        "judgeId": "vlm-rubric",
+        "judgeVersion": "2026.06",
+        "source": "JUDGE_SOURCE_MODEL",
+        "passed": true,
+        "score": 0.84,
+        "tNs": "3942000000000"
+      }
+    ],
+    "resetVerification": {
+      "mode": "RESET_VERIFICATION_MODE_OPTIMISTIC_ASYNC",
+      "verified": false,
+      "invalidatedAsync": true,
+      "judgeId": "reset-scene-v1",
+      "judgeVersion": "2026.05",
+      "score": 0.31,
+      "tNs": "3908000000000"
+    },
+    "resetUnverified": true,
+    "recordingMode": "RECORDING_MODE_LOCAL",
+    "audit": {
+      "state": "AUDIT_STATE_NOT_RETAINED",
+      "randomQuotaSample": false
+    },
+    "robotDescriptionDigest": "sha256:8c1d29f4a7b3e6d05f92c84ab1e7d3960f45ac28b91d7e30c6a54f18d2e9b07c"
+  }
+}

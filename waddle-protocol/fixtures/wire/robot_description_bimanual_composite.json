@@ -1,0 +1,124 @@
+{
+  "format": "waddle.fixture/v0",
+  "type": "waddle.v0.RobotDescription",
+  "description": "Company-A shape: bimanual composite (left/right 7-DoF joint-position parts with parallel grippers), five-verb grants, calibrated + uncalibrated cameras, one F/T series.",
+  "message": {
+    "name": "yam-bimanual-01",
+    "actionSpace": {
+      "composite": {
+        "parts": [
+          {
+            "name": "left",
+            "space": {
+              "jointPosition": {
+                "joints": [
+                  {"name": "l0", "minPosition": -3.05, "maxPosition": 3.05},
+                  {"name": "l1", "minPosition": -3.05, "maxPosition": 3.05},
+                  {"name": "l2", "minPosition": -3.05, "maxPosition": 3.05},
+                  {"name": "l3", "minPosition": -3.05, "maxPosition": 3.05},
+                  {"name": "l4", "minPosition": -3.05, "maxPosition": 3.05},
+                  {"name": "l5", "minPosition": -3.05, "maxPosition": 3.05},
+                  {"name": "l_grip", "minPosition": -3.05, "maxPosition": 3.05}
+                ]
+              },
+              "gripper": {
+                "parallel": {"openValue": 1, "closedValue": 0, "actionDim": -1}
+              }
+            }
+          },
+          {
+            "name": "right",
+            "space": {
+              "jointPosition": {
+                "joints": [
+                  {"name": "r0", "minPosition": -3.05, "maxPosition": 3.05},
+                  {"name": "r1", "minPosition": -3.05, "maxPosition": 3.05},
+                  {"name": "r2", "minPosition": -3.05, "maxPosition": 3.05},
+                  {"name": "r3", "minPosition": -3.05, "maxPosition": 3.05},
+                  {"name": "r4", "minPosition": -3.05, "maxPosition": 3.05},
+                  {"name": "r5", "minPosition": -3.05, "maxPosition": 3.05},
+                  {"name": "r_grip", "minPosition": -3.05, "maxPosition": 3.05}
+                ]
+              },
+              "gripper": {
+                "parallel": {"openValue": 1, "closedValue": 0, "actionDim": -1}
+              }
+            }
+          }
+        ]
+      },
+      "rateHz": 50,
+      "chunking": {
+        "horizonSteps": 20,
+        "replan": "REPLAN_POLICY_IMMEDIATE",
+        "interpolation": "INTERPOLATION_LINEAR"
+      }
+    },
+    "grants": [
+      {
+        "verb": "VERB_SEND",
+        "sendInterfaces": ["SPACE_KIND_JOINT_POSITION", "SPACE_KIND_EE_POSE_DELTA"]
+      },
+      {
+        "verb": "VERB_HOLD",
+        "declaredLatencyBoundNs": "40000000"
+      },
+      {
+        "verb": "VERB_RESUME"
+      },
+      {
+        "verb": "VERB_HOME"
+      },
+      {
+        "verb": "VERB_ESTOP",
+        "hardware": false,
+        "declaredLatencyBoundNs": "15000000"
+      }
+    ],
+    "robotId": "yam-01",
+    "cellId": "cell-a",
+    "cameras": [
+      {
+        "name": "overhead",
+        "width": 848,
+        "height": 480,
+        "fps": 30,
+        "encoding": "CAMERA_ENCODING_RGB8",
+        "intrinsics": {
+          "fx": 615.2,
+          "fy": 615.8,
+          "cx": 424.5,
+          "cy": 239.7,
+          "model": "DISTORTION_MODEL_PLUMB_BOB"
+        },
+        "frameId": "cam_overhead",
+        "stream": {
+          "localFullRate": true,
+          "uplink": {"fps": 15, "encoding": "CAMERA_ENCODING_H264"}
+        }
+      },
+      {
+        "name": "wrist_left",
+        "width": 640,
+        "height": 480,
+        "fps": 30,
+        "encoding": "CAMERA_ENCODING_RGB8",
+        "stream": {
+          "localFullRate": true
+        }
+      }
+    ],
+    "series": [
+      {
+        "name": "/robot/ft_wrist",
+        "dtype": "DTYPE_F32",
+        "shape": [6],
+        "units": "N,Nm",
+        "rateHz": 100
+      }
+    ],
+    "vendor": {
+      "i2rt.hw_rev": "yam-b2"
+    }
+  }
+}

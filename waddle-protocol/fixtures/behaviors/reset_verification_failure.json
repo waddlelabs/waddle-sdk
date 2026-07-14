@@ -1,0 +1,29 @@
+{
+  "format": "waddle.behavior/v0",
+  "name": "reset_verification_failure",
+  "description": "Pins FSM.md E4 and E5: under RESET_VERIFICATION_MODE_BLOCKING, a reset_result{ok} whose verification reports verified:false keeps the episode in RESETTING (emitting a reset_verification{verified:false} event) and the pipeline moves to the next ResetStrategy in priority order; after two verification failures the third reset_result{ok:false} signals strategies exhausted, driving TERMINAL{TERMINAL_OUTCOME_ABORT}. The episode must never enter READY: expect_no_emission of state{to:READY} guards every window of the scenario, including after TERMINAL. Judgment call: 'strategies exhausted' is modeled as a final reset_result{ok:false} from the reset pipeline (per the E5 trigger 'reset strategies exhausted or reset aborted'), with the strategy names ('scripted_home', 'perturb_replay') illustrative rather than normative.",
+  "target": "fsm",
+  "requires_features": ["waddle.v0.core"],
+  "setup": {
+    "lease_enforcement": "LEASE_ENFORCEMENT_ENFORCED",
+    "handoff": { "holdFirst": {} },
+    "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING"
+  },
+  "steps": [
+    { "inject": { "kind": "episode_open", "episode_id": "ep-rvf-0001", "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RESETTING" } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "reset_result", "result": { "ok": true, "strategy": "scripted_home", "verification": { "mode": "RESET_VERIFICATION_MODE_BLOCKING", "verified": false, "judgeId": "judge-reset", "judgeVersion": "2.1.0", "score": 0.22, "tNs": "100000000" } } } },
+    { "expect_emission": { "event": { "resetVerification": { "verified": false } }, "within_ns": "0" } },
+    { "expect_no_emission": { "event": { "state": { "to": "EPISODE_STATE_READY" } }, "within_ns": "200000000" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RESETTING" } },
+    { "inject": { "kind": "reset_result", "result": { "ok": true, "strategy": "perturb_replay", "verification": { "mode": "RESET_VERIFICATION_MODE_BLOCKING", "verified": false, "judgeId": "judge-reset", "judgeVersion": "2.1.0", "score": 0.31, "tNs": "300000000" } } } },
+    { "expect_emission": { "event": { "resetVerification": { "verified": false } }, "within_ns": "0" } },
+    { "expect_no_emission": { "event": { "state": { "to": "EPISODE_STATE_READY" } }, "within_ns": "200000000" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RESETTING" } },
+    { "inject": { "kind": "reset_result", "result": { "ok": false, "detail": "reset strategies exhausted", "strategy": "perturb_replay" } } },
+    { "expect_emission": { "event": { "state": { "to": "EPISODE_STATE_TERMINAL", "outcome": "TERMINAL_OUTCOME_ABORT" } }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_TERMINAL", "episode.outcome": "TERMINAL_OUTCOME_ABORT" } },
+    { "expect_no_emission": { "event": { "state": { "to": "EPISODE_STATE_READY" } }, "within_ns": "200000000" } }
+  ]
+}

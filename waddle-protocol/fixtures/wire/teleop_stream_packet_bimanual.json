@@ -1,0 +1,32 @@
+{
+  "format": "waddle.fixture/v0",
+  "type": "waddle.v0.TeleopStreamPacket",
+  "description": "Bimanual teleop pose packet (lossy, latest-wins): left part gets an absolute pose (wxyz quat, frame-tagged) plus gripper, right part gets a twist; clutch engaged; named operator inputs.",
+  "message": {
+    "tClientNs": "77123456789012",
+    "seq": "5123",
+    "targets": [
+      {
+        "part": "left",
+        "pose": {
+          "position": {"x": 0.41, "y": 0.18, "z": 0.27},
+          "rotation": {"w": 0.9238795, "x": 0, "y": 0.3826834, "z": 0},
+          "frameId": "base"
+        },
+        "gripper": 0.35
+      },
+      {
+        "part": "right",
+        "twist": {
+          "linear": {"x": 0.01, "y": -0.004, "z": 0},
+          "angular": {"x": 0, "y": 0, "z": 0.05}
+        }
+      }
+    ],
+    "clutchEngaged": true,
+    "inputs": {
+      "axes": {"trigger_left": 0.35},
+      "buttons": {"a": false}
+    }
+  }
+}

@@ -1,0 +1,59 @@
+{
+  "format": "waddle.behavior/v0",
+  "name": "claimed_while_stalled",
+  "description": "Pins FSM.md §5 bypass mode, §6 gate-mode rows INTERVENTION→BYPASS→INTERVENTION, and E7: after a HOLD_FIRST engage under an ADVISORY lease, the caller loop stalls past the stall threshold (500000000 ns, per the conformance timing envelope); teleop actions are pumped through the declared send verb (provenance TELEOP), a late caller tick receives NoopMarker{NOOP_REASON_BYPASS_ACTIVE} and must not be dispatched, and resumed caller ticks return the gate to GATE_MODE_INTERVENTION. Judgment calls: the noop-marked late tick is the first 'resumed' tick and the mode is asserted back to INTERVENTION only after the following nominal-cadence tick; composite part names 'left'/'right' are assumed from the bimanual fixture.",
+  "target": "gate",
+  "requires_features": ["waddle.v0.core"],
+  "setup": {
+    "robot_fixture": "../wire/robot_description_bimanual_composite.json",
+    "lease_enforcement": "LEASE_ENFORCEMENT_ADVISORY",
+    "handoff": { "holdFirst": {} },
+    "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING"
+  },
+  "steps": [
+    { "inject": { "kind": "episode_open", "episode_id": "ep-stall-0001", "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING" } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "reset_result", "result": { "ok": true, "strategy": "scripted_home", "verification": { "mode": "RESET_VERIFICATION_MODE_BLOCKING", "verified": true, "judgeId": "judge-reset", "judgeVersion": "2.1.0", "score": 0.97, "tNs": "100000000" } } } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_READY" } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "200000000", "action": { "composite": { "parts": [
+      { "name": "left", "action": { "jointPosition": { "values": [0.10, -0.40, 0.30, -1.20, 0.05, 0.90] } } },
+      { "name": "right", "action": { "jointPosition": { "values": [-0.10, -0.40, 0.30, -1.20, -0.05, 0.90] } } }
+    ] }, "tOffsetNs": "0" } } },
+    { "expect_output": { "kind": "pass" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RUNNING", "gate.mode": "GATE_MODE_PASSTHROUGH" } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "300000000", "action": { "composite": { "parts": [
+      { "name": "left", "action": { "jointPosition": { "values": [0.11, -0.39, 0.30, -1.19, 0.05, 0.90] } } },
+      { "name": "right", "action": { "jointPosition": { "values": [-0.11, -0.39, 0.30, -1.19, -0.05, 0.90] } } }
+    ] }, "tOffsetNs": "0" } } },
+    { "expect_output": { "kind": "pass" } },
+    { "inject": { "kind": "claim_granted", "claim": { "claimId": "claim-stall-0001", "episodeId": "ep-stall-0001", "actor": { "kind": "ACTOR_KIND_TELEOPERATOR", "id": "top-7", "displayName": "Teleoperator 7" }, "sourceName": "teleop", "selfInitiated": false, "tGrantedNs": "300000000", "handoff": { "holdFirst": {} }, "spaces": ["SPACE_KIND_EE_POSE_DELTA"] } } },
+    { "inject": { "kind": "engage", "claim_id": "claim-stall-0001", "initiator": "ACTOR_KIND_TELEOPERATOR" } },
+    { "advance_ns": "50000000" },
+    { "inject": { "kind": "verb_result", "result": { "ok": true, "detail": "hold complete, arms at rest", "tNs": "350000000" } } },
+    { "expect_emission": { "event": { "lease": { "kind": "LEASE_EVENT_KIND_HANDED_OFF" } }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_INTERVENTION", "gate.mode": "GATE_MODE_INTERVENTION" } },
+    { "advance_ns": "600000000" },
+    { "inject": { "kind": "teleop_action", "packet": { "tClientNs": "42000000000", "seq": "1", "clutchEngaged": true, "targets": [
+      { "part": "left", "twist": { "linear": { "x": 0.004, "y": 0.0, "z": 0.002 }, "angular": { "x": 0.0, "y": 0.0, "z": 0.0 } } },
+      { "part": "right", "twist": { "linear": { "x": 0.0, "y": 0.0, "z": 0.0 }, "angular": { "x": 0.0, "y": 0.0, "z": 0.0 } } }
+    ] } } },
+    { "expect_send": { "provenance": { "kind": "PROVENANCE_KIND_TELEOP" }, "within_ns": "100000000" } },
+    { "expect_state": { "gate.mode": "GATE_MODE_BYPASS" } },
+    { "expect_emission": { "event": { "gate": { "from": "GATE_MODE_INTERVENTION", "to": "GATE_MODE_BYPASS" } }, "within_ns": "0" } },
+    { "advance_ns": "50000000" },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "1000000000", "action": { "composite": { "parts": [
+      { "name": "left", "action": { "jointPosition": { "values": [0.12, -0.38, 0.30, -1.18, 0.05, 0.90] } } },
+      { "name": "right", "action": { "jointPosition": { "values": [-0.12, -0.38, 0.30, -1.18, -0.05, 0.90] } } }
+    ] }, "tOffsetNs": "0" } } },
+    { "expect_output": { "kind": "noop", "reason": "NOOP_REASON_BYPASS_ACTIVE" } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "1100000000", "action": { "composite": { "parts": [
+      { "name": "left", "action": { "jointPosition": { "values": [0.12, -0.38, 0.30, -1.18, 0.05, 0.90] } } },
+      { "name": "right", "action": { "jointPosition": { "values": [-0.12, -0.38, 0.30, -1.18, -0.05, 0.90] } } }
+    ] }, "tOffsetNs": "0" } } },
+    { "expect_state": { "gate.mode": "GATE_MODE_INTERVENTION", "episode.state": "EPISODE_STATE_INTERVENTION" } },
+    { "expect_emission": { "event": { "gate": { "from": "GATE_MODE_BYPASS", "to": "GATE_MODE_INTERVENTION" } }, "within_ns": "0" } }
+  ]
+}

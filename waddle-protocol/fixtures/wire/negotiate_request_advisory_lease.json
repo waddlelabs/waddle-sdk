@@ -1,0 +1,37 @@
+{
+  "format": "waddle.fixture/v0",
+  "type": "waddle.v0.NegotiateRequest",
+  "description": "Advisory-lease negotiation (N7): hold+send grants, HOLD_FIRST handoff declared, LOCAL recording with a 5% audit quota (N13), one attested codec (N15).",
+  "message": {
+    "sessionId": "sess-7d41f0",
+    "declaredGrants": [
+      {
+        "verb": "VERB_HOLD",
+        "declaredLatencyBoundNs": "40000000"
+      },
+      {
+        "verb": "VERB_SEND",
+        "sendInterfaces": ["SPACE_KIND_JOINT_POSITION", "SPACE_KIND_EE_POSE_DELTA"]
+      }
+    ],
+    "leaseEnforcement": "LEASE_ENFORCEMENT_ADVISORY",
+    "handoff": {
+      "holdFirst": {}
+    },
+    "recording": {
+      "mode": "MODE_LOCAL",
+      "auditQuotaBp": 500
+    },
+    "codecs": [
+      {
+        "name": "lerobot-async",
+        "dialect": "lerobot-async",
+        "version": "0.1.0",
+        "upstreamVersion": "0.5.x",
+        "contentHash": "sha256:4be0339d2c6f2fe28b4b46a3717a627498561fca6f0d0f1e9aa62b0f27317e6d",
+        "signerKeyId": "waddle-codecs-dev-1"
+      }
+    ],
+    "featureFlags": ["waddle.v0.core", "waddle.v0.heartbeat.proxy-signals"]
+  }
+}

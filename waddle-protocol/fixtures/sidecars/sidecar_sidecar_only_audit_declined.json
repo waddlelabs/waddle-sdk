@@ -1,0 +1,102 @@
+{
+  "format": "waddle.fixture/v0",
+  "type": "waddle.v0.Sidecar",
+  "description": "SIDECAR_ONLY recording with the audit quota declined (N13): no bulk bytes, no refs, audit NOT_RETAINED and not quota-sampled — the project's judge metrics are permanently marked unaudited in every Corpus surface.",
+  "message": {
+    "sidecarVersion": 1,
+    "episodeId": "int-e5f19a3c08",
+    "project": "towel-folding-pilot",
+    "sessionId": "sess-7d41f0",
+    "robotId": "yam-01",
+    "cellId": "cell-a",
+    "task": "fold_towel_half",
+    "clockAnchor": {
+      "monotonicNs": "3600000000000",
+      "unixNs": "1784000000000000000"
+    },
+    "bounds": {"tStartNs": "4100000000000", "tEndNs": "4130000000000"},
+    "tStartUnixNs": "1784000500000000000",
+    "tEndUnixNs": "1784000530000000000",
+    "outcome": "TERMINAL_OUTCOME_SUCCESS",
+    "metricsClass": "METRICS_CLASS_STANDARD",
+    "leases": [
+      {
+        "span": {"tStartNs": "4100000000000", "tEndNs": "4130000000000"},
+        "lease": {
+          "leaseId": "lease-a8b3",
+          "holderClientId": "customer-loop",
+          "enforcement": "LEASE_ENFORCEMENT_ADVISORY",
+          "tAcquiredNs": "4100000000000"
+        }
+      }
+    ],
+    "provenance": [
+      {
+        "span": {"tStartNs": "4100000000000", "tEndNs": "4130000000000"},
+        "tag": {
+          "kind": "PROVENANCE_KIND_POLICY",
+          "actor": {"kind": "ACTOR_KIND_POLICY", "id": "policy-a"}
+        }
+      }
+    ],
+    "events": [
+      {
+        "tNs": "4100000000000",
+        "episodeId": "int-e5f19a3c08",
+        "state": {"to": "EPISODE_STATE_RESETTING", "reason": "episode_open"}
+      },
+      {
+        "tNs": "4103000000000",
+        "episodeId": "int-e5f19a3c08",
+        "state": {
+          "from": "EPISODE_STATE_RESETTING",
+          "to": "EPISODE_STATE_READY",
+          "reason": "reset verified (blocking)"
+        }
+      },
+      {
+        "tNs": "4104000000000",
+        "episodeId": "int-e5f19a3c08",
+        "state": {
+          "from": "EPISODE_STATE_READY",
+          "to": "EPISODE_STATE_RUNNING",
+          "reason": "first gated action"
+        }
+      },
+      {
+        "tNs": "4130000000000",
+        "episodeId": "int-e5f19a3c08",
+        "state": {
+          "from": "EPISODE_STATE_RUNNING",
+          "to": "EPISODE_STATE_TERMINAL",
+          "reason": "judge_result: done",
+          "outcome": "TERMINAL_OUTCOME_SUCCESS"
+        }
+      }
+    ],
+    "judgments": [
+      {
+        "judgeId": "vlm-rubric",
+        "judgeVersion": "2026.06",
+        "source": "JUDGE_SOURCE_MODEL",
+        "passed": true,
+        "score": 0.9,
+        "tNs": "4132000000000"
+      }
+    ],
+    "resetVerification": {
+      "mode": "RESET_VERIFICATION_MODE_BLOCKING",
+      "verified": true,
+      "judgeId": "reset-scene-v1",
+      "judgeVersion": "2026.05",
+      "score": 0.96,
+      "tNs": "4102800000000"
+    },
+    "recordingMode": "RECORDING_MODE_SIDECAR_ONLY",
+    "audit": {
+      "state": "AUDIT_STATE_NOT_RETAINED",
+      "randomQuotaSample": false
+    },
+    "robotDescriptionDigest": "sha256:8c1d29f4a7b3e6d05f92c84ab1e7d3960f45ac28b91d7e30c6a54f18d2e9b07c"
+  }
+}

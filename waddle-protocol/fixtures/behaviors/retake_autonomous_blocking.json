@@ -1,0 +1,40 @@
+{
+  "format": "waddle.behavior/v0",
+  "name": "retake_autonomous_blocking",
+  "description": "Pins FSM.md E9, C5, E2 and §1.2's N12 blocking branch for an autonomous (ACTOR_KIND_AGENT) retake: the predecessor terminates ABORTED_RETAKE and open_successor carries verification_mode RESET_VERIFICATION_MODE_BLOCKING (no human is waiting; episode validity is the point); the born-claimed successor stays in RESETTING after a reset_result{ok} that carries no verification — expect_no_emission of state{to:READY} across a 300 ms window — and only moves to READY once verification_result{verified:true} arrives, with the claim surviving throughout ($active_claim). Judgment calls: settle is reached as in retake_operator_optimistic (IMMEDIATE{blend_ns:0} handoff plus a 300 ms advance); E2's emission order is pinned as state{to:READY} then the reset_verification event, per the E2 effects-cell order; 'recovery_agent' is an illustrative source name.",
+  "target": "fsm",
+  "requires_features": ["waddle.v0.core"],
+  "setup": {
+    "lease_enforcement": "LEASE_ENFORCEMENT_ENFORCED",
+    "handoff": { "immediate": { "blendNs": "0" } },
+    "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING"
+  },
+  "steps": [
+    { "inject": { "kind": "episode_open", "episode_id": "int-bbbb000001", "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING" } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "reset_result", "result": { "ok": true, "strategy": "scripted_home", "verification": { "mode": "RESET_VERIFICATION_MODE_BLOCKING", "verified": true, "judgeId": "judge-reset", "judgeVersion": "2.1.0", "score": 0.97, "tNs": "100000000" } } } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_READY" } },
+    { "inject": { "kind": "start" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RUNNING" } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "claim_granted", "claim": { "claimId": "claim-ret-0002", "episodeId": "int-bbbb000001", "actor": { "kind": "ACTOR_KIND_AGENT", "id": "agent-recover-1", "displayName": "Recovery agent 1" }, "sourceName": "recovery_agent", "selfInitiated": false, "tGrantedNs": "200000000", "handoff": { "immediate": { "blendNs": "0" } }, "spaces": ["SPACE_KIND_JOINT_POSITION"] } } },
+    { "inject": { "kind": "engage", "claim_id": "claim-ret-0002", "initiator": "ACTOR_KIND_AGENT" } },
+    { "expect_emission": { "event": { "lease": { "kind": "LEASE_EVENT_KIND_HANDED_OFF" } }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_INTERVENTION" } },
+    { "advance_ns": "300000000" },
+    { "expect_state": { "episode.intervention_phase": "INTERVENTION_PHASE_SETTLE" } },
+    { "inject": { "kind": "retake", "claim_id": "claim-ret-0002", "initiator": "ACTOR_KIND_AGENT", "successor_episode_id": "int-bbbb000002" } },
+    { "expect_emission": { "event": { "state": { "to": "EPISODE_STATE_TERMINAL", "outcome": "TERMINAL_OUTCOME_ABORTED_RETAKE" } }, "within_ns": "0" } },
+    { "expect_emission": { "effect": { "open_successor": { "predecessor_episode_id": "int-bbbb000001", "claim_id": "$active_claim", "born_claimed": true, "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING" } }, "within_ns": "0" } },
+    { "inject": { "kind": "episode_open", "episode_id": "int-bbbb000002", "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING", "born_claimed": true, "parent_episode_id": "int-bbbb000001" } },
+    { "expect_state": { "episode.id": "int-bbbb000002", "episode.state": "EPISODE_STATE_RESETTING", "episode.born_claimed": true, "episode.parent_episode_id": "int-bbbb000001", "claim.active_claim_id": "$active_claim" } },
+    { "advance_ns": "200000000" },
+    { "inject": { "kind": "reset_result", "result": { "ok": true, "strategy": "autonomous_scene_reset" } } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RESETTING" } },
+    { "expect_no_emission": { "event": { "state": { "to": "EPISODE_STATE_READY" } }, "within_ns": "300000000" } },
+    { "inject": { "kind": "verification_result", "verification": { "mode": "RESET_VERIFICATION_MODE_BLOCKING", "verified": true, "judgeId": "judge-reset", "judgeVersion": "2.1.0", "score": 0.93, "tNs": "1200000000" } } },
+    { "expect_emission": { "event": { "state": { "to": "EPISODE_STATE_READY" } }, "within_ns": "0" } },
+    { "expect_emission": { "event": { "resetVerification": { "verified": true } }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_READY", "episode.born_claimed": true, "claim.active_claim_id": "$active_claim" } }
+  ]
+}

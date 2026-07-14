@@ -1,0 +1,214 @@
+{
+  "format": "waddle.fixture/v0",
+  "type": "waddle.v0.Sidecar",
+  "description": "Retake predecessor (N2): outcome ABORTED_RETAKE is a first-class terminal outcome, never folded into success-rate denominators silently; the claim survives (open claim span) and the successor is born claimed under it.",
+  "message": {
+    "sidecarVersion": 1,
+    "episodeId": "int-9c4d17e5f2",
+    "project": "towel-folding-pilot",
+    "sessionId": "sess-7d41f0",
+    "robotId": "yam-01",
+    "cellId": "cell-a",
+    "task": "fold_towel_half",
+    "clockAnchor": {
+      "monotonicNs": "3600000000000",
+      "unixNs": "1784000000000000000"
+    },
+    "bounds": {"tStartNs": "3800000000000", "tEndNs": "3830000000000"},
+    "tStartUnixNs": "1784000200000000000",
+    "tEndUnixNs": "1784000230000000000",
+    "outcome": "TERMINAL_OUTCOME_ABORTED_RETAKE",
+    "outcomeDetail": "teleoperator requested retake: towel grasp unrecoverable",
+    "retake": {
+      "parentEpisodeId": "int-9c4d17e5f2",
+      "successorEpisodeId": "int-a1b2c3d4e5"
+    },
+    "metricsClass": "METRICS_CLASS_STANDARD",
+    "claims": [
+      {
+        "span": {"tStartNs": "3815000000000"},
+        "claim": {
+          "claimId": "claim-r1",
+          "episodeId": "int-9c4d17e5f2",
+          "actor": {
+            "kind": "ACTOR_KIND_TELEOPERATOR",
+            "id": "top-347",
+            "displayName": "Waddle teleoperator 347"
+          },
+          "sourceName": "teleop",
+          "tGrantedNs": "3815000000000",
+          "handoff": {"holdFirst": {}},
+          "spaces": ["SPACE_KIND_EE_POSE_DELTA"]
+        }
+      }
+    ],
+    "leases": [
+      {
+        "span": {"tStartNs": "3800000000000", "tEndNs": "3815500000000"},
+        "lease": {
+          "leaseId": "lease-p1d8",
+          "holderClientId": "customer-loop",
+          "enforcement": "LEASE_ENFORCEMENT_ADVISORY",
+          "tAcquiredNs": "3800000000000"
+        }
+      },
+      {
+        "span": {"tStartNs": "3815500000000", "tEndNs": "3830000000000"},
+        "lease": {
+          "leaseId": "lease-t2e6",
+          "holderClientId": "teleop-console-7",
+          "enforcement": "LEASE_ENFORCEMENT_ADVISORY",
+          "tAcquiredNs": "3815500000000"
+        }
+      }
+    ],
+    "provenance": [
+      {
+        "span": {"tStartNs": "3800000000000", "tEndNs": "3815500000000"},
+        "tag": {
+          "kind": "PROVENANCE_KIND_POLICY",
+          "actor": {"kind": "ACTOR_KIND_POLICY", "id": "policy-a"}
+        }
+      },
+      {
+        "span": {"tStartNs": "3815500000000", "tEndNs": "3830000000000"},
+        "tag": {
+          "kind": "PROVENANCE_KIND_TELEOP",
+          "actor": {"kind": "ACTOR_KIND_TELEOPERATOR", "id": "top-347"}
+        }
+      }
+    ],
+    "interventions": [
+      {
+        "span": {"tStartNs": "3815200000000", "tEndNs": "3830000000000"},
+        "claimId": "claim-r1",
+        "phases": [
+          {
+            "phase": "INTERVENTION_PHASE_ENGAGE",
+            "span": {"tStartNs": "3815200000000", "tEndNs": "3816000000000"}
+          },
+          {
+            "phase": "INTERVENTION_PHASE_SETTLE",
+            "span": {"tStartNs": "3816000000000", "tEndNs": "3829000000000"}
+          },
+          {
+            "phase": "INTERVENTION_PHASE_RETAKE",
+            "span": {"tStartNs": "3829000000000", "tEndNs": "3830000000000"}
+          }
+        ]
+      }
+    ],
+    "events": [
+      {
+        "tNs": "3800000000000",
+        "episodeId": "int-9c4d17e5f2",
+        "state": {"to": "EPISODE_STATE_RESETTING", "reason": "episode_open"}
+      },
+      {
+        "tNs": "3802000000000",
+        "episodeId": "int-9c4d17e5f2",
+        "state": {
+          "from": "EPISODE_STATE_RESETTING",
+          "to": "EPISODE_STATE_READY",
+          "reason": "reset verified (blocking)"
+        }
+      },
+      {
+        "tNs": "3803000000000",
+        "episodeId": "int-9c4d17e5f2",
+        "state": {
+          "from": "EPISODE_STATE_READY",
+          "to": "EPISODE_STATE_RUNNING",
+          "reason": "first gated action"
+        }
+      },
+      {
+        "tNs": "3815000000000",
+        "episodeId": "int-9c4d17e5f2",
+        "claim": {
+          "kind": "CLAIM_EVENT_KIND_GRANTED",
+          "claim": {
+            "claimId": "claim-r1",
+            "episodeId": "int-9c4d17e5f2",
+            "actor": {"kind": "ACTOR_KIND_TELEOPERATOR", "id": "top-347"},
+            "sourceName": "teleop",
+            "tGrantedNs": "3815000000000",
+            "handoff": {"holdFirst": {}},
+            "spaces": ["SPACE_KIND_EE_POSE_DELTA"]
+          }
+        }
+      },
+      {
+        "tNs": "3815200000000",
+        "episodeId": "int-9c4d17e5f2",
+        "intervention": {"phase": "INTERVENTION_PHASE_ENGAGE", "claimId": "claim-r1"}
+      },
+      {
+        "tNs": "3815300000000",
+        "episodeId": "int-9c4d17e5f2",
+        "state": {
+          "from": "EPISODE_STATE_RUNNING",
+          "to": "EPISODE_STATE_INTERVENTION",
+          "reason": "engage (hold-first)"
+        }
+      },
+      {
+        "tNs": "3815500000000",
+        "episodeId": "int-9c4d17e5f2",
+        "lease": {
+          "kind": "LEASE_EVENT_KIND_HANDED_OFF",
+          "lease": {
+            "leaseId": "lease-t2e6",
+            "holderClientId": "teleop-console-7",
+            "enforcement": "LEASE_ENFORCEMENT_ADVISORY",
+            "tAcquiredNs": "3815500000000"
+          },
+          "detail": "hold confirmed, then handoff; fresh token minted"
+        }
+      },
+      {
+        "tNs": "3815600000000",
+        "episodeId": "int-9c4d17e5f2",
+        "gate": {
+          "from": "GATE_MODE_PASSTHROUGH",
+          "to": "GATE_MODE_INTERVENTION",
+          "reason": "engage complete"
+        }
+      },
+      {
+        "tNs": "3816000000000",
+        "episodeId": "int-9c4d17e5f2",
+        "intervention": {"phase": "INTERVENTION_PHASE_SETTLE", "claimId": "claim-r1"}
+      },
+      {
+        "tNs": "3829000000000",
+        "episodeId": "int-9c4d17e5f2",
+        "intervention": {"phase": "INTERVENTION_PHASE_RETAKE", "claimId": "claim-r1"}
+      },
+      {
+        "tNs": "3830000000000",
+        "episodeId": "int-9c4d17e5f2",
+        "state": {
+          "from": "EPISODE_STATE_INTERVENTION",
+          "to": "EPISODE_STATE_TERMINAL",
+          "reason": "retake: successor opens born-claimed under the still-held claim",
+          "outcome": "TERMINAL_OUTCOME_ABORTED_RETAKE"
+        }
+      }
+    ],
+    "resetVerification": {
+      "mode": "RESET_VERIFICATION_MODE_BLOCKING",
+      "verified": true,
+      "judgeId": "reset-scene-v1",
+      "judgeVersion": "2026.05",
+      "score": 0.96,
+      "tNs": "3801800000000"
+    },
+    "recordingMode": "RECORDING_MODE_LOCAL",
+    "audit": {
+      "state": "AUDIT_STATE_NOT_RETAINED",
+      "randomQuotaSample": false
+    },
+    "robotDescriptionDigest": "sha256:8c1d29f4a7b3e6d05f92c84ab1e7d3960f45ac28b91d7e30c6a54f18d2e9b07c"
+  }
+}
