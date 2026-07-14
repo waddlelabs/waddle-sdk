@@ -1,0 +1,25 @@
+# Rust
+target/
+**/*.rs.bk
+Cargo.lock.orig
+
+# Generated artifacts (never checked in; see waddle-protocol/README.md)
+*_pb2.py
+*.pb.go
+target/include/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+
+# Editors / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Local scratch
+/tmp/
+*.log
