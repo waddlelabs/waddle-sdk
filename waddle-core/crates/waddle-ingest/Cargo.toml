@@ -5,9 +5,18 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Waddle reference implementation: ingest"
+description = "Waddle ingest: the session clock (sole OS-clock reader), per-source offset estimation, rings, latest-value slots"
 
 [dependencies]
+waddle-types = { workspace = true }
+thiserror = { workspace = true }
+smallvec = { workspace = true }
+rtrb = { workspace = true }
+arc-swap = { workspace = true }
+parking_lot = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
 
 [lints]
 workspace = true

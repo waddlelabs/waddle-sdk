@@ -5,9 +5,16 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Waddle reference implementation: tripwire"
+description = "Waddle tripwires: local watchdog evaluation requesting safety verbs — never an envelope"
 
 [dependencies]
+waddle-types = { workspace = true }
+thiserror = { workspace = true }
+smallvec = { workspace = true }
+parking_lot = { workspace = true }
+
+[dev-dependencies]
+waddle-ingest = { workspace = true }
 
 [lints]
 workspace = true

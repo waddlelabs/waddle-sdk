@@ -5,9 +5,25 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Waddle reference implementation: gate"
+description = "Waddle gate engine: wait-free passthrough fast path, provenance tagging, jitter buffer, handoff blending, bypass NOOPs, dual-write detection"
 
 [dependencies]
+waddle-types = { workspace = true }
+waddle-fsm = { workspace = true }
+arc-swap = { workspace = true }
+rtrb = { workspace = true }
+parking_lot = { workspace = true }
+smallvec = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+waddle-ingest = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "gate_fast_path"
+harness = false
 
 [lints]
 workspace = true
