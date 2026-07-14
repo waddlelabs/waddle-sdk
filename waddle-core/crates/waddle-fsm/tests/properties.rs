@@ -226,25 +226,25 @@ impl Driver {
 
         // Invariant 1: terminal is absorbing per episode identity.
         if let Some(ep) = &s.episode {
-            if let Some((last_id, last_phase)) = &self.last_phase {
-                if last_id == &ep.id {
-                    if let Phase::Terminal(prev) = last_phase {
-                        assert_eq!(
-                            ep.phase,
-                            Phase::Terminal(*prev),
-                            "terminal episode changed phase"
-                        );
-                    }
-                    // Invariant 7: SETTLE is entered only from ENGAGE.
-                    if ep.phase == Phase::Intervention(InterventionPhase::Settle)
-                        && *last_phase != Phase::Intervention(InterventionPhase::Settle)
-                    {
-                        assert_eq!(
-                            *last_phase,
-                            Phase::Intervention(InterventionPhase::Engage),
-                            "SETTLE entered from a phase other than ENGAGE"
-                        );
-                    }
+            if let Some((last_id, last_phase)) = &self.last_phase
+                && last_id == &ep.id
+            {
+                if let Phase::Terminal(prev) = last_phase {
+                    assert_eq!(
+                        ep.phase,
+                        Phase::Terminal(*prev),
+                        "terminal episode changed phase"
+                    );
+                }
+                // Invariant 7: SETTLE is entered only from ENGAGE.
+                if ep.phase == Phase::Intervention(InterventionPhase::Settle)
+                    && *last_phase != Phase::Intervention(InterventionPhase::Settle)
+                {
+                    assert_eq!(
+                        *last_phase,
+                        Phase::Intervention(InterventionPhase::Engage),
+                        "SETTLE entered from a phase other than ENGAGE"
+                    );
                 }
             }
             self.last_phase = Some((ep.id.clone(), ep.phase));

@@ -70,5 +70,5 @@ pub enum Effect {
     },
     /// An `EpisodeEvent` for the session event stream (sidecar, recorder,
     /// control plane).
-    Emit(pb::EpisodeEvent),
+    Emit(Box<pb::EpisodeEvent>),
 }

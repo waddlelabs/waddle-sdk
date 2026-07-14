@@ -102,7 +102,7 @@ impl Ctx<'_> {
         if !self.s.plane_connected {
             self.s.buffered_events += 1;
         }
-        self.effects.push(Effect::Emit(ev));
+        self.effects.push(Effect::Emit(Box::new(ev)));
     }
 
     fn episode(&self) -> &EpisodeState {
@@ -159,17 +159,15 @@ impl Ctx<'_> {
             self.set_gate(at, GateMode::Passthrough, reason);
         }
         self.transition(at, Phase::Terminal(outcome), reason, Some(outcome));
-        if release_claim {
-            if let Some(claim) = self.s.claim.take() {
-                let ep = self.episode().id.clone();
-                self.emit(emit::claim_event(
-                    at,
-                    &ep,
-                    pb::ClaimEventKind::Released,
-                    &claim,
-                    reason,
-                ));
-            }
+        if release_claim && let Some(claim) = self.s.claim.take() {
+            let ep = self.episode().id.clone();
+            self.emit(emit::claim_event(
+                at,
+                &ep,
+                pb::ClaimEventKind::Released,
+                &claim,
+                reason,
+            ));
         }
         for id in [TimerId::EngageTimeout, TimerId::ChunkBoundaryCap] {
             self.effects.push(Effect::CancelTimer { id });
