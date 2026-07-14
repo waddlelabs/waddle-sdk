@@ -5,9 +5,17 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Waddle reference implementation: fsm"
+description = "Waddle episode/claim/lease state machines as pure transition functions — the behavioral conformance target"
 
 [dependencies]
+waddle-types = { workspace = true }
+thiserror = { workspace = true }
+smallvec = { workspace = true }
+serde = { workspace = true, features = ["rc"] }
+
+[dev-dependencies]
+proptest = { workspace = true }
+serde_json = { workspace = true }
 
 [lints]
 workspace = true
