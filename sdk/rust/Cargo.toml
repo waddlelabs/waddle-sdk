@@ -1,0 +1,25 @@
+[package]
+name = "waddle-sdk-shim"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "PyO3 shim binding waddle-runtime for the waddle Python package"
+publish = false
+
+# Deliberately its own workspace root (empty table): joining the waddle-core
+# workspace would drag pyo3's extension-module linkage into core CI. Path
+# deps below always build the working-tree core, so there is no version skew.
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.29", features = ["abi3-py310"] }
+numpy = "0.29"
+parking_lot = "0.12"
+waddle-runtime = { path = "../../waddle-core/crates/waddle-runtime" }
+waddle-types = { path = "../../waddle-core/crates/waddle-types" }
+waddle-gate = { path = "../../waddle-core/crates/waddle-gate" }
+waddle-sidecar = { path = "../../waddle-core/crates/waddle-sidecar" }
+waddle-media = { path = "../../waddle-core/crates/waddle-media" }

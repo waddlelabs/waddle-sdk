@@ -27,6 +27,23 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   per-tick trace). "The reducer owns all recording" is now structural. New
   `waddle_types::unflatten_action` (exact inverse of the flattening path)
   and `ProvenanceTag::to_pb`; `McapEpisodeWriter::write_observation`.
+- **`sdk/` — the Python `waddle-sdk` frontend (Tier-1 minimum)**: the
+  six-line tutorial loop against a real customer loop with Local recording,
+  fully offline (no control plane, no relay). PyO3 0.29 shim binding
+  `waddle-runtime` directly (abi3-py310, own cargo workspace with path-deps
+  into waddle-core), `uv`/maturin packaging. Public surface: `init` /
+  `rollout` / `shutdown`, `Control` (five verb callables → derived grants),
+  `Handoff`, `Outcome`, and pure-Python descriptor sugar (`Robot`,
+  `JointSpace`, `EEDelta`, `Composite`, `Opaque`, `Camera`, `Chunking`,
+  `Gripper`) compiling to canonical proto3 JSON. `ep.gate(action, obs)`
+  returns "what you should send, or None if you must not send" (Pass
+  returns the caller's exact object; Noop/Hold return None); exiting
+  `rollout()` non-terminal aborts, never succeeds. Private `waddle._testing`
+  hooks (engage/release/push_teleop over the loopback media plane) drive the
+  intervention pytest; the nominal pytest reads the episode MCAP back as the
+  Python-side proof of obs logging + gate-record persistence. New core
+  helper `waddle_runtime::release_claim` (counterpart of
+  `grant_and_engage`).
 - **waddle-core M2 (`waddle-fsm`)**: pure Mealy session machine (episode ×
   claim × lease × grant health) implementing every FSM.md guard row — reset
   verification modes (N12), retake → born-claimed successor under the
