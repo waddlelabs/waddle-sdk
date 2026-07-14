@@ -184,11 +184,20 @@ pub enum SessionEvent {
         id: TimerId,
         at: MonoNs,
     },
+    /// The integrator's loop stalled while a claim is active: no gate tick
+    /// within the stall threshold. Detected by the runtime pump / gate
+    /// harness; the FSM owns the resulting BYPASS transition (FSM.md §6).
+    StallDetected { at: MonoNs },
+    /// Caller ticks resumed during BYPASS.
+    TicksResumed { at: MonoNs },
     /// Dual-write divergence detected by the gate during advisory-lease
     /// bypass (N14).
     DualWrite {
         divergence_metric: f64,
         window_ns: i64,
+        /// Reference to the persisted divergence trace (sidecar incident
+        /// clip id).
+        trace_ref: String,
         at: MonoNs,
     },
 }
@@ -222,6 +231,8 @@ impl SessionEvent {
             | Self::PartitionStart { at }
             | Self::PartitionEnd { at }
             | Self::TimerFired { at, .. }
+            | Self::StallDetected { at }
+            | Self::TicksResumed { at }
             | Self::DualWrite { at, .. } => *at,
         }
     }

@@ -186,6 +186,7 @@ pub fn dual_write(
     episode: &EpisodeId,
     divergence_metric: f64,
     window_ns: i64,
+    trace_ref: &str,
     action_taken: Verb,
 ) -> pb::EpisodeEvent {
     let mut ev = base(at, Some(episode));
@@ -193,7 +194,7 @@ pub fn dual_write(
         detail: "commanded-vs-proprioception divergence during advisory-lease bypass".to_owned(),
         divergence_metric,
         window_ns,
-        trace_ref: String::new(),
+        trace_ref: trace_ref.to_owned(),
         action_taken: action_taken.to_pb() as i32,
     }));
     ev

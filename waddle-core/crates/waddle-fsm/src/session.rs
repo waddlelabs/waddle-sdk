@@ -991,10 +991,26 @@ pub fn step(
             }
         },
 
+        // §6 gate-mode rows: INTERVENTION ⇄ BYPASS -----------------------------
+        SessionEvent::StallDetected { at } => {
+            if state.gate_mode == GateMode::Intervention
+                && state.claim.is_some()
+                && matches!(phase, Some(Phase::Intervention(_)))
+            {
+                ctx.set_gate(*at, GateMode::Bypass, "caller loop stalled while claimed");
+            }
+        }
+        SessionEvent::TicksResumed { at } => {
+            if state.gate_mode == GateMode::Bypass {
+                ctx.set_gate(*at, GateMode::Intervention, "caller ticks resumed");
+            }
+        }
+
         // N14 ------------------------------------------------------------------
         SessionEvent::DualWrite {
             divergence_metric,
             window_ns,
+            trace_ref,
             at,
         } => {
             if !active {
@@ -1006,6 +1022,7 @@ pub fn step(
                 &ep,
                 *divergence_metric,
                 *window_ns,
+                trace_ref,
                 Verb::Hold,
             ));
             ctx.effects.push(Effect::RequestVerb(Verb::Hold));
