@@ -184,6 +184,13 @@ impl VerbDispatch {
             let _ = t.join();
         }
     }
+
+    /// Signal shutdown without consuming (the thread joins on Drop). Used by
+    /// the session's ordered teardown: stopping dispatch drops the outcome
+    /// sender, which lets the outcome pump exit.
+    pub fn stop(&self) {
+        self.shutdown.store(true, Ordering::SeqCst);
+    }
 }
 
 impl Drop for VerbDispatch {

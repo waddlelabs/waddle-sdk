@@ -7,6 +7,7 @@ use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
+use parking_lot::Mutex;
 use waddle_types::pb::v0 as pb;
 
 use crate::backoff::Backoff;
@@ -15,6 +16,7 @@ use crate::transport::{ClientMsg, ControlTransport, ServerMsg};
 
 /// Events surfaced to the runtime's reducer.
 #[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::large_enum_variant)] // moved once per event, never stored in bulk
 pub enum PlaneEvent {
     Connected,
     Registered(pb::RegisterResponse),
@@ -52,7 +54,7 @@ impl ClientConfig {
 #[derive(Debug)]
 pub struct ControlPlaneClient {
     cmd_tx: Sender<ClientMsg>,
-    events_rx: Receiver<PlaneEvent>,
+    events_rx: Mutex<Receiver<PlaneEvent>>,
     shutdown: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
 }
@@ -71,7 +73,7 @@ impl ControlPlaneClient {
 
         Self {
             cmd_tx,
-            events_rx,
+            events_rx: Mutex::new(events_rx),
             shutdown,
             thread: Some(thread),
         }
@@ -83,12 +85,12 @@ impl ControlPlaneClient {
     }
 
     pub fn try_recv_event(&self) -> Option<PlaneEvent> {
-        self.events_rx.try_recv().ok()
+        self.events_rx.lock().try_recv().ok()
     }
 
     /// Blocking receive with timeout (for tests and the runtime pump).
     pub fn recv_event_timeout(&self, timeout: Duration) -> Option<PlaneEvent> {
-        self.events_rx.recv_timeout(timeout).ok()
+        self.events_rx.lock().recv_timeout(timeout).ok()
     }
 
     pub fn shutdown(mut self) {
@@ -221,6 +223,7 @@ fn sleep_interruptible(ns: i64, shutdown: &AtomicBool) {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)] // wall-clock deadlines are test-only
 mod tests {
     use super::*;
     use crate::transport::InMemoryTransport;

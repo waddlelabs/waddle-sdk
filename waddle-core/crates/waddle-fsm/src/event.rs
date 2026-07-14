@@ -187,9 +187,13 @@ pub enum SessionEvent {
     /// The integrator's loop stalled while a claim is active: no gate tick
     /// within the stall threshold. Detected by the runtime pump / gate
     /// harness; the FSM owns the resulting BYPASS transition (FSM.md §6).
-    StallDetected { at: MonoNs },
+    StallDetected {
+        at: MonoNs,
+    },
     /// Caller ticks resumed during BYPASS.
-    TicksResumed { at: MonoNs },
+    TicksResumed {
+        at: MonoNs,
+    },
     /// Dual-write divergence detected by the gate during advisory-lease
     /// bypass (N14).
     DualWrite {

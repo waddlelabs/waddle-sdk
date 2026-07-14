@@ -1478,6 +1478,19 @@ dependencies = [
 [[package]]
 name = "waddle-conformance"
 version = "0.1.0"
+dependencies = [
+ "prost",
+ "prost-reflect",
+ "rtrb",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "waddle-fsm",
+ "waddle-gate",
+ "waddle-ingest",
+ "waddle-types",
+]
 
 [[package]]
 name = "waddle-controlplane"
@@ -1550,6 +1563,8 @@ name = "waddle-runtime"
 version = "0.1.0"
 dependencies = [
  "parking_lot",
+ "prost",
+ "rtrb",
  "smallvec",
  "tempfile",
  "thiserror",

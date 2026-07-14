@@ -1,7 +1,7 @@
 {
   "format": "waddle.behavior/v0",
   "name": "retake_operator_optimistic",
-  "description": "Pins FSM.md E9, C5, E3, E13 and §1.2 (N2/N12/N18) for a teleoperator retake: from INTERVENTION settle, retake terminates the predecessor with TERMINAL_OUTCOME_ABORTED_RETAKE and emits the open_successor effect carrying the still-held claim ($active_claim), born_claimed, and RESET_VERIFICATION_MODE_OPTIMISTIC_ASYNC (operator flow is sacred); the successor opens RESETTING under the surviving claim, enters READY on reset_result{ok} with verification pending (E3), runs, and a LATE verification_result{verified:false, invalidated_async} leaves the state unchanged while setting the permanent reset_unverified flag via the set_flag effect (E13). Judgment calls: the fsm target reaches INTERVENTION_PHASE_SETTLE by the engage handoff completing (I1/I2) plus a 300 ms advance, with an IMMEDIATE{blend_ns:0} handoff so no gate ticks are needed; effect field names follow scenario-format.md's snake_case effects table.",
+  "description": "Pins FSM.md E9, C5, E3, E13 and §1.2 (N2/N12/N18) for a teleoperator retake: from INTERVENTION settle, retake terminates the predecessor with TERMINAL_OUTCOME_ABORTED_RETAKE and emits the open_successor effect carrying the still-held claim ($active_claim), born_claimed, and RESET_VERIFICATION_MODE_OPTIMISTIC_ASYNC (operator flow is sacred); the successor opens RESETTING under the surviving claim, enters READY on reset_result{ok} with verification pending (E3), runs, and a LATE verification_result{verified:false, invalidated_async} leaves the state unchanged while setting the permanent reset_unverified flag via the set_flag effect (E13). Judgment calls: the fsm target reaches INTERVENTION_PHASE_SETTLE by the engage handoff completing (I1/I2) plus a 300 ms advance, with an IMMEDIATE{blend_ns:0} handoff so no gate ticks are needed; effect field names follow scenario-format.md's snake_case effects table; the E13 batch is pinned as the reset_verification{invalidated_async} event then the set_flag effect (the record correction precedes the flag application; the E13 effects cell is an inventory, not an order).",
   "target": "fsm",
   "requires_features": ["waddle.v0.core"],
   "setup": {
@@ -35,8 +35,8 @@
     { "expect_state": { "episode.state": "EPISODE_STATE_RUNNING", "claim.active_claim_id": "$active_claim" } },
     { "advance_ns": "1000000000" },
     { "inject": { "kind": "verification_result", "verification": { "mode": "RESET_VERIFICATION_MODE_OPTIMISTIC_ASYNC", "verified": false, "invalidatedAsync": true, "judgeId": "judge-reset", "judgeVersion": "2.1.0", "score": 0.28, "tNs": "1700000000" } } },
-    { "expect_emission": { "effect": { "set_flag": { "flag": "reset_unverified" } }, "within_ns": "0" } },
     { "expect_emission": { "event": { "resetVerification": { "verified": false, "invalidatedAsync": true } }, "within_ns": "0" } },
+    { "expect_emission": { "effect": { "set_flag": { "flag": "reset_unverified" } }, "within_ns": "0" } },
     { "expect_state": { "episode.reset_unverified": true, "episode.state": "EPISODE_STATE_RUNNING" } }
   ]
 }

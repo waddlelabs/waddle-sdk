@@ -1,7 +1,7 @@
 {
   "format": "waddle.behavior/v0",
   "name": "handoff_hold_first",
-  "description": "Pins FSM.md §5 HOLD_FIRST (with E7, I1, L6): on engage, request_verb{VERB_HOLD} is issued and NO lease handoff may occur until a successful VerbResult is injected; caller ticks during the hold-wait return noop{NOOP_REASON_HOLD_ACTIVE} (a hold is an output condition, not a gate mode — the gate stays PASSTHROUGH until engage completes); after the hold verb succeeds the lease hands off (fresh token), the gate enters INTERVENTION, and the intervenor starts from rest with teleop actions substituting. Judgment calls: the hold request is asserted via an `effect` emission on the gate target (the gate harness composes the FSM, whose effects remain observable; scenario-format.md marks `effect` as fsm-target, so this fixture deliberately reads that as 'fsm effects, observable wherever the FSM runs'); the injected verb_result omits request_id and correlates to the single pending verb request; part names 'left'/'right' assumed from the bimanual fixture.",
+  "description": "Pins FSM.md §5 HOLD_FIRST (with E7, I1, L6): on engage, request_verb{VERB_HOLD} is issued and NO lease handoff may occur until a successful VerbResult is injected; caller ticks during the hold-wait return a hold output (a hold is an output condition, not a gate mode — FSM.md §6 allows Hold or Noop here and the reference gate returns Hold, reserving NOOP markers for bypass per §5 — and the gate stays PASSTHROUGH until engage completes); after the hold verb succeeds the lease hands off (fresh token), the gate enters INTERVENTION, and the intervenor starts from rest with teleop actions substituting. Judgment calls: the hold request is asserted via an `effect` emission on the gate target (the gate harness composes the FSM, whose effects remain observable; scenario-format.md marks `effect` as fsm-target, so this fixture deliberately reads that as 'fsm effects, observable wherever the FSM runs'); the injected verb_result omits request_id and correlates to the single pending verb request; part names 'left'/'right' assumed from the bimanual fixture.",
   "target": "gate",
   "requires_features": ["waddle.v0.core"],
   "setup": {
@@ -34,7 +34,7 @@
     { "expect_emission": { "effect": { "request_verb": { "verb": "VERB_HOLD" } }, "within_ns": "0" } },
     { "expect_no_emission": { "event": { "lease": { "kind": "LEASE_EVENT_KIND_HANDED_OFF" } }, "within_ns": "100000000" } },
     { "inject": { "kind": "gate_tick", "obs_t_ns": "300000000" } },
-    { "expect_output": { "kind": "noop", "reason": "NOOP_REASON_HOLD_ACTIVE" } },
+    { "expect_output": { "kind": "hold" } },
     { "inject": { "kind": "verb_result", "result": { "ok": true, "detail": "hold complete, arms at rest", "tNs": "300000000" } } },
     { "expect_emission": { "event": { "lease": { "kind": "LEASE_EVENT_KIND_HANDED_OFF", "lease": { "leaseId": "$fresh_lease" } } }, "within_ns": "0" } },
     { "expect_emission": { "event": { "gate": { "from": "GATE_MODE_PASSTHROUGH", "to": "GATE_MODE_INTERVENTION" } }, "within_ns": "0" } },

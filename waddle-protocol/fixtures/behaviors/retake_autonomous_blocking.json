@@ -1,7 +1,7 @@
 {
   "format": "waddle.behavior/v0",
   "name": "retake_autonomous_blocking",
-  "description": "Pins FSM.md E9, C5, E2 and §1.2's N12 blocking branch for an autonomous (ACTOR_KIND_AGENT) retake: the predecessor terminates ABORTED_RETAKE and open_successor carries verification_mode RESET_VERIFICATION_MODE_BLOCKING (no human is waiting; episode validity is the point); the born-claimed successor stays in RESETTING after a reset_result{ok} that carries no verification — expect_no_emission of state{to:READY} across a 300 ms window — and only moves to READY once verification_result{verified:true} arrives, with the claim surviving throughout ($active_claim). Judgment calls: settle is reached as in retake_operator_optimistic (IMMEDIATE{blend_ns:0} handoff plus a 300 ms advance); E2's emission order is pinned as state{to:READY} then the reset_verification event, per the E2 effects-cell order; 'recovery_agent' is an illustrative source name.",
+  "description": "Pins FSM.md E9, C5, E2 and §1.2's N12 blocking branch for an autonomous (ACTOR_KIND_AGENT) retake: the predecessor terminates ABORTED_RETAKE and open_successor carries verification_mode RESET_VERIFICATION_MODE_BLOCKING (no human is waiting; episode validity is the point); the born-claimed successor stays in RESETTING after a reset_result{ok} that carries no verification — expect_no_emission of state{to:READY} across a 300 ms window — and only moves to READY once verification_result{verified:true} arrives, with the claim surviving throughout ($active_claim). Judgment calls: settle is reached as in retake_operator_optimistic (IMMEDIATE{blend_ns:0} handoff plus a 300 ms advance); E2's emission order is pinned as the reset_verification event then state{to:READY} — the passing verification is the cause of the transition, and the E2 effects cell is an inventory, not an order; 'recovery_agent' is an illustrative source name.",
   "target": "fsm",
   "requires_features": ["waddle.v0.core"],
   "setup": {
@@ -33,8 +33,8 @@
     { "expect_state": { "episode.state": "EPISODE_STATE_RESETTING" } },
     { "expect_no_emission": { "event": { "state": { "to": "EPISODE_STATE_READY" } }, "within_ns": "300000000" } },
     { "inject": { "kind": "verification_result", "verification": { "mode": "RESET_VERIFICATION_MODE_BLOCKING", "verified": true, "judgeId": "judge-reset", "judgeVersion": "2.1.0", "score": 0.93, "tNs": "1200000000" } } },
-    { "expect_emission": { "event": { "state": { "to": "EPISODE_STATE_READY" } }, "within_ns": "0" } },
     { "expect_emission": { "event": { "resetVerification": { "verified": true } }, "within_ns": "0" } },
+    { "expect_emission": { "event": { "state": { "to": "EPISODE_STATE_READY" } }, "within_ns": "0" } },
     { "expect_state": { "episode.state": "EPISODE_STATE_READY", "episode.born_claimed": true, "claim.active_claim_id": "$active_claim" } }
   ]
 }

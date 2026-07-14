@@ -24,6 +24,8 @@ waddle-sidecar = { workspace = true }
 thiserror = { workspace = true }
 parking_lot = { workspace = true }
 uuid = { workspace = true }
+prost = { workspace = true }
+rtrb = { workspace = true }
 smallvec = { workspace = true }
 
 [dev-dependencies]

@@ -1,7 +1,7 @@
 {
   "format": "waddle.behavior/v0",
   "name": "handoff_immediate_mid_chunk",
-  "description": "Pins FSM.md E7/E8, I1-I3, L6 and §5 IMMEDIATE{blend_ns}: engage mid-chunk drops the executing policy chunk, the lease hands off atomically with a freshly minted token ($fresh_lease), the gate cross-fades (kind blend, provenance already TELEOP at blend start) for blend_ns, then substitutes teleop actions; release re-primes the policy on a fresh chunk with a new tObsNs before pass resumes, hands the lease back (fresh token again), releases the claim, and returns the gate to PASSTHROUGH / episode to RUNNING. Judgment calls: the joint-position composite space is required (the §5 delta-space restriction would degrade IMMEDIATE to HOLD_FIRST); the tick at the exact blend-window boundary (t=500ms) is deliberately unasserted; release-batch emission order is pinned as lease HANDED_OFF → claim RELEASED → gate → PASSTHROUGH → state → RUNNING per §5's release sentence; part names 'left'/'right' assumed from the bimanual fixture.",
+  "description": "Pins FSM.md E7/E8, I1-I3, L6 and §5 IMMEDIATE{blend_ns}: engage mid-chunk drops the executing policy chunk, the lease hands off atomically with a freshly minted token ($fresh_lease), the gate cross-fades (kind blend, provenance already TELEOP at blend start) for blend_ns, then substitutes teleop actions; release re-primes the policy on a fresh chunk with a new tObsNs before pass resumes, hands the lease back (fresh token again), releases the claim, and returns the gate to PASSTHROUGH / episode to RUNNING. Judgment calls: the joint-position composite space is required (the §5 delta-space restriction would degrade IMMEDIATE to HOLD_FIRST); the tick at the exact blend-window boundary (t=500ms) is deliberately unasserted; release-batch emission order is pinned as lease HANDED_OFF → gate → PASSTHROUGH → state → RUNNING → claim RELEASED per §5's release sentence ('the lease hands back; the claim releases' — the claim release is the last act; §5 does not pin the inner gate/state order, which follows the reference implementation); part names 'left'/'right' assumed from the bimanual fixture.",
   "target": "gate",
   "requires_features": ["waddle.v0.core"],
   "setup": {
@@ -74,9 +74,9 @@
       { "tOffsetNs": "500000000", "composite": { "parts": [ { "name": "left", "action": { "jointPosition": { "values": [0.21, -0.29, 0.30, -1.09, 0.05, 0.90] } } }, { "name": "right", "action": { "jointPosition": { "values": [-0.21, -0.29, 0.30, -1.09, -0.05, 0.90] } } } ] } }
     ] } } },
     { "expect_emission": { "event": { "lease": { "kind": "LEASE_EVENT_KIND_HANDED_OFF", "lease": { "leaseId": "$fresh_lease" } } }, "within_ns": "0" } },
-    { "expect_emission": { "event": { "claim": { "kind": "CLAIM_EVENT_KIND_RELEASED" } }, "within_ns": "0" } },
     { "expect_emission": { "event": { "gate": { "from": "GATE_MODE_INTERVENTION", "to": "GATE_MODE_PASSTHROUGH" } }, "within_ns": "0" } },
     { "expect_emission": { "event": { "state": { "from": "EPISODE_STATE_INTERVENTION", "to": "EPISODE_STATE_RUNNING" } }, "within_ns": "0" } },
+    { "expect_emission": { "event": { "claim": { "kind": "CLAIM_EVENT_KIND_RELEASED" } }, "within_ns": "0" } },
     { "advance_ns": "50000000" },
     { "inject": { "kind": "gate_tick", "obs_t_ns": "800000000" } },
     { "expect_output": { "kind": "pass", "provenance": { "kind": "PROVENANCE_KIND_POLICY" } } },

@@ -14,6 +14,7 @@ use crate::PlaneError;
 /// Client → plane messages (the eight RPC surfaces flattened onto one
 /// ordered stream; the tonic transport maps them back to their RPCs).
 #[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::large_enum_variant)] // moved once per message, never stored in bulk
 pub enum ClientMsg {
     Register(pb::RegisterRequest),
     Negotiate(pb::NegotiateRequest),
@@ -36,6 +37,7 @@ impl ClientMsg {
 
 /// Plane → client messages.
 #[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::large_enum_variant)] // moved once per message, never stored in bulk
 pub enum ServerMsg {
     Registered(pb::RegisterResponse),
     Negotiated(pb::NegotiateResponse),

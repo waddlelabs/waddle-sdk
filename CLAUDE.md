@@ -103,10 +103,14 @@ Future artifacts (Python `waddle-sdk` frontend via PyO3/maturin, `waddle-proxy`,
   `waddle-protocol/conformance/scenario-format.md`; `waddle-conformance` implements
   exactly that schema — if they drift, the .md wins and the runner is wrong.
 - **Crate layering.** `waddle-types`/`-fsm`/`-gate`/`-codecs` must stay free of tokio,
-  threads, I/O, clocks, and randomness. Only `waddle-ingest` reads OS clocks. Only
-  `waddle-runtime` spawns/owns threads and the tokio runtime (waddle-tripwire provides
-  thread harnesses that runtime owns). `waddle-codecs` is independently versioned and
-  may depend only on `waddle-types` + serde (N4).
+  threads, I/O, clocks, and randomness. Only `waddle-ingest` reads OS clocks. Threads
+  are owned by `waddle-runtime` (plus the thread harnesses in waddle-tripwire and the
+  client threads in waddle-controlplane, whose lifecycles runtime owns). There is
+  deliberately **no async runtime anywhere yet** — everything is dedicated named
+  threads + channels; tokio arrives only if/when the tonic (`grpc`) or LiveKit
+  (`livekit`) integrations land and stays confined to those transports.
+  `waddle-codecs` is independently versioned and may depend only on `waddle-types` +
+  serde (N4).
 - **The gate fast path is sacred.** `Gate::gate()` must remain synchronous, wait-free
   in passthrough, and allocation-free. Benchmarks in `waddle-gate` track this; don't
   add locks, syscalls, or allocations to that path.

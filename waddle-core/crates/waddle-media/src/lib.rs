@@ -12,7 +12,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::mpsc::{Receiver, Sender, TryRecvError};
+use std::sync::mpsc::{Receiver, Sender};
 
 use bytes::Bytes;
 use parking_lot::Mutex;
@@ -104,10 +104,7 @@ pub struct DataRx {
 
 impl DataRx {
     pub fn try_recv(&self) -> Option<Bytes> {
-        match self.rx.try_recv() {
-            Ok(b) => Some(b),
-            Err(TryRecvError::Empty | TryRecvError::Disconnected) => None,
-        }
+        self.rx.try_recv().ok()
     }
 
     /// Decode the next pending teleop stream packet, if any.

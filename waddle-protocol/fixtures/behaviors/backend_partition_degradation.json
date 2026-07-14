@@ -1,7 +1,7 @@
 {
   "format": "waddle.behavior/v0",
   "name": "backend_partition_degradation",
-  "description": "Pins FSM.md §8 degraded operation: on partition_start the plane disconnects but the episode keeps RUNNING; sustained heartbeat loss fires the staleness tripwire (TripwireEvent with requested_verb VERB_HOLD, plus the request_verb{VERB_HOLD} effect), cloud-dependent grants demote with reason 'partition', events emitted while partitioned (here a MARK_KIND_START mark) buffer locally and replay in order after partition_end, ending with plane.connected true and an empty buffer. Judgment calls: heartbeat staleness threshold is assumed to be at most 2 s of silence (the scenario advances 2 s); emission order within the staleness batch is pinned tripwire-then-grant per §8 bullet order; the demotion asserts only {to: DEMOTED, reason: 'partition'} without pinning which verb degrades; the mark uses MARK_KIND_START because END_* marks would terminate the episode (E10).",
+  "description": "Pins FSM.md §8 degraded operation: on partition_start the plane disconnects but the episode keeps RUNNING; sustained heartbeat loss fires the staleness tripwire (TripwireEvent with requested_verb VERB_HOLD, plus the request_verb{VERB_HOLD} effect), cloud-dependent grants demote with reason 'partition', events emitted while partitioned (here the tripwire, the demotion, and a MARK_KIND_START mark) buffer locally — asserted via the snapshot's exact plane.buffered_events count — and partition_end restores the plane (connected, empty buffer) and re-promotes the partition-demoted grants with reason 'control plane reconnected'. Judgment calls: heartbeat staleness threshold is assumed to be at most 2 s of silence (the scenario advances 2 s); emission order within the staleness batch is pinned tripwire-then-grant per §8 bullet order; the demotion asserts only {to: DEMOTED, reason: 'partition'} without pinning which verb degrades; the mark uses MARK_KIND_START because END_* marks would terminate the episode (E10); in-order transport replay of the buffered events on reconnect is the control-plane client's contract, pinned by waddle-controlplane's own tests rather than an FSM emission here (the FSM does not re-emit buffered events).",
   "target": "fsm",
   "requires_features": ["waddle.v0.core"],
   "setup": {
@@ -24,10 +24,11 @@
     { "expect_emission": { "effect": { "request_verb": { "verb": "VERB_HOLD" } }, "within_ns": "0" } },
     { "expect_emission": { "event": { "grant": { "to": "GRANT_STATUS_DEMOTED", "reason": "partition" } }, "within_ns": "0" } },
     { "inject": { "kind": "mark", "mark": { "kind": "MARK_KIND_START", "actor": { "kind": "ACTOR_KIND_SITE_OPERATOR", "id": "site-3", "displayName": "Site operator 3" }, "note": "waypoint placed during partition" } } },
+    { "expect_state": { "plane.connected": false, "plane.buffered_events": 3 } },
     { "advance_ns": "100000000" },
     { "inject": { "kind": "partition_end" } },
     { "advance_ns": "100000000" },
-    { "expect_emission": { "event": { "mark": { "kind": "MARK_KIND_START", "note": "waypoint placed during partition" } }, "within_ns": "0" } },
+    { "expect_emission": { "event": { "grant": { "to": "GRANT_STATUS_ACTIVE", "reason": "control plane reconnected" } }, "within_ns": "0" } },
     { "expect_state": { "plane.connected": true, "plane.buffered_events": 0, "episode.state": "EPISODE_STATE_RUNNING" } }
   ]
 }

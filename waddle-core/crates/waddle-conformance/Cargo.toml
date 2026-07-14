@@ -5,10 +5,23 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Waddle reference implementation: conformance"
+description = "Waddle reference implementation: the behavioral-scenario conformance runner"
 publish = false
 
 [dependencies]
+waddle-types = { workspace = true }
+waddle-fsm = { workspace = true }
+waddle-gate = { workspace = true }
+waddle-ingest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+prost = { workspace = true }
+prost-reflect = { workspace = true }
+thiserror = { workspace = true }
+rtrb = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
 
 [lints]
 workspace = true
