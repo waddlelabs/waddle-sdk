@@ -50,10 +50,15 @@ waddle-sdk/
     crates/waddle-{types,fsm,gate,tripwire,ingest,media,controlplane,
                    sidecar,codecs,runtime,ffi,conformance}
     xtask/                   # cbindgen header gen etc. (publish = false)
+  sdk/                       # the Python `waddle-sdk` frontend (PyO3 + maturin)
+    pyproject.toml           # maturin backend; module waddle._core; uv-managed
+    rust/                    # the shim: its OWN cargo workspace (see build notes)
+    python/waddle/           # pure-Python surface: init/rollout/Control + descriptors
+    tests/                   # pytest: descriptors + e2e (incl. MCAP read-back)
 ```
 
-Future artifacts (Python `waddle-sdk` frontend via PyO3/maturin, `waddle-proxy`,
-`waddle-cpp`, `waddle_ros`) will live in new top-level dirs; they are not built yet.
+Future artifacts (`waddle-proxy`, `waddle-cpp`, `waddle_ros`) will live in new
+top-level dirs; they are not built yet.
 
 ## Build & test
 
@@ -75,13 +80,28 @@ Future artifacts (Python `waddle-sdk` frontend via PyO3/maturin, `waddle-proxy`,
     an alloc-free proof also runs as a normal test).
 - Quick proto syntax check without cargo:
   `uv run --with grpcio-tools python -m grpc_tools.protoc --descriptor_set_out=/dev/null -Iwaddle-protocol/proto waddle-protocol/proto/waddle/v0/*.proto`
+- The Python SDK runs from `sdk/` (Python 3.10+, `uv` on PATH):
+  - `uv sync --dev && uv run pytest` — full build (maturin backend into `.venv`)
+    + the pytest suite. Iterate on the Rust shim with
+    `uv run maturin develop --uv && uv run --no-sync pytest`.
+  - `cargo clippy --manifest-path rust/Cargo.toml --all-targets -- -D warnings`
+    and `cargo fmt --manifest-path rust/Cargo.toml --check` must be clean
+    (this works because pyo3's `extension-module` feature lives only in
+    `[tool.maturin].features`, never in Cargo.toml).
+  - `sdk/rust` is deliberately its **own cargo workspace** with path-deps into
+    `../waddle-core/crates/*` — do NOT add it to the waddle-core workspace
+    (extension-module would make plain `cargo test` unlinkable there and drag
+    a Python-interpreter probe into core CI). Cost: a second lockfile/target
+    dir. Path deps always build the working-tree core, so no version skew.
+  - The built extension (`python/waddle/_core*.so`) is a build artifact,
+    never checked in.
 
 ## Load-bearing invariants (violating these is a bug, not a style choice)
 
 - **Hollow-frontend rule.** All claim/lease/handoff/timeline logic lives in
   `waddle-core` exactly once (`waddle-fsm` is the behavioral conformance target). If a
   binding or frontend grows an `if` about claims, leases, handoffs, or timelines, that
-  is a defect.
+  is a defect. The Python-specific review checklist lives in `sdk/README.md`.
 - **Vocabulary discipline.** `waddle-protocol/docs/GLOSSARY.md` is normative for every
   word in code, comments, and docs: grant (permission), claim (orchestration), lease
   (actuation single-writer), envelope (owner's hard safety — Waddle never provides
