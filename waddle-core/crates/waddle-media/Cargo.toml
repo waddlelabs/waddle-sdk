@@ -5,9 +5,19 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Waddle reference implementation: media"
+description = "Waddle media plane: track publication and data-topic transport traits with an in-memory loopback; LiveKit/WebRTC deferred behind a feature"
+
+[features]
+# The real WebRTC integration lands behind this flag; until then the module
+# is a typed stub so downstream feature wiring stays compiling.
+livekit = []
 
 [dependencies]
+waddle-types = { workspace = true }
+prost = { workspace = true }
+bytes = { workspace = true }
+thiserror = { workspace = true }
+parking_lot = { workspace = true }
 
 [lints]
 workspace = true

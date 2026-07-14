@@ -5,9 +5,18 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Waddle reference implementation: controlplane"
+description = "Waddle control-plane client: session/grant negotiation, reconnect/backoff, offline event buffering, heartbeat proxy signals"
+
+[features]
+# Real gRPC transport (tonic) is a deferred integration; the in-memory
+# transport is the tested default.
+tonic-transport = []
 
 [dependencies]
+waddle-types = { workspace = true }
+waddle-fsm = { workspace = true }
+thiserror = { workspace = true }
+parking_lot = { workspace = true }
 
 [lints]
 workspace = true
