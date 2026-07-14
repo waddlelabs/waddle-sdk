@@ -1,0 +1,326 @@
+// waddle-protocol v0 — services.proto
+//
+// The control plane: typed, versioned gRPC for session lifecycle, grant
+// negotiation, intervention claims, and reset requests. Nothing
+// high-bandwidth ever touches these RPCs (pixels ride the media plane);
+// nothing stateful ever touches the media plane.
+//
+// Service shape decisions (normative rationale in docs/FSM.md):
+//   - ClaimEpisode / HandoffLease are UNARY: atomic decisions with an
+//     immediate grant/deny, mirroring the production broker's lease protocol.
+//   - GateActions is the ONE ordered event stream per session. SDK → plane:
+//     EpisodeEvents, VerbResults, gate status. Plane → SDK: claim directives,
+//     intervention action chunks, verb requests, grant changes, episode
+//     directives. Conformance scenarios assert emissions on exactly this
+//     stream.
+//   - Heartbeat is bidi so grant demotions have a low-latency down-path
+//     independent of gate traffic.
+//   - RequestReset is server-streaming: resets are long-running, with phase
+//     progress ending in a verification record.
+//
+// Authentication is transport metadata (bearer tokens), not protocol surface.
+
+syntax = "proto3";
+
+package waddle.v0;
+
+import "waddle/v0/control.proto";
+import "waddle/v0/descriptors.proto";
+import "waddle/v0/episode.proto";
+
+// ---------------------------------------------------------------------------
+// Register & negotiate
+// ---------------------------------------------------------------------------
+
+message ClientInfo {
+  string implementation = 1;  // e.g. "waddle-core"
+  string version = 2;
+  string platform = 3;  // e.g. "linux/x86_64"
+}
+
+message RegisterRequest {
+  string project = 1;
+  ClientInfo client = 2;
+  RobotDescription robot = 3;
+  // The session clock anchor, captured atomically at session start.
+  ClockAnchor clock_anchor = 4;
+  // Feature flags this client speaks (see docs/VERSIONING.md). Negotiation
+  // is per-connection: old SDKs never see undeclared features planned
+  // against them.
+  repeated string feature_flags = 5;
+  string session_nonce = 6;
+}
+
+message RegisterResponse {
+  string session_id = 1;
+  int64 t_server_unix_ns = 2;
+  repeated string accepted_feature_flags = 3;
+  string detail = 4;
+}
+
+// Windows in which a verb may actually be invoked for measurement (N11).
+// You cannot continuously measure the latency of a verb you dare not call:
+// hold() on a robot mid-task is an incident, not a probe. Verbs are
+// re-measured only in safe windows; the heartbeat carries proxy signals.
+enum MeasurementWindow {
+  MEASUREMENT_WINDOW_UNSPECIFIED = 0;
+  MEASUREMENT_WINDOW_DOCTOR = 1;           // an explicit doctor run
+  MEASUREMENT_WINDOW_BETWEEN_EPISODES = 2;
+  MEASUREMENT_WINDOW_DURING_RESET = 3;
+  // Not a verb invocation: health inferred from proxy signals.
+  MEASUREMENT_WINDOW_LIVE_PROXY = 4;
+}
+
+// A declared grant plus its live status — the live lattice (N6). Doctor-time
+// measurements seed it; heartbeat proxy signals maintain it.
+message GrantState {
+  Grant grant = 1;
+  GrantStatus status = 2;
+  optional int64 measured_latency_ns = 3;
+  int64 t_measured_ns = 4;
+  MeasurementWindow window = 5;
+}
+
+// Re-invocable mid-session: grants are live, not static.
+message NegotiateRequest {
+  string session_id = 1;
+  repeated Grant declared_grants = 2;
+  // Where the single-writer lease is enforced for this integration (N7).
+  LeaseEnforcement lease_enforcement = 3;
+  HandoffPolicy handoff = 4;
+  RecordingModeDeclaration recording = 5;
+  // Codecs loaded into the write path, with attestation (N15).
+  repeated CodecDescriptor codecs = 6;
+  repeated string feature_flags = 7;
+}
+
+// Declared separately from sidecar.proto's RecordingMode enum home so the
+// negotiation can also carry the audit quota opt-in (N13).
+message RecordingModeDeclaration {
+  // Numeric values mirror sidecar.proto's RecordingMode.
+  enum Mode {
+    MODE_UNSPECIFIED = 0;
+    MODE_LOCAL = 1;
+    MODE_REFERENCE = 2;
+    MODE_SIDECAR_ONLY = 3;
+  }
+  Mode mode = 1;
+  // N13: the random retention quota for the audit slice, in basis points
+  // (e.g. 500 = 5% of episodes retained at random, independent of events).
+  // 0 = declined; judge metrics for the project are then permanently marked
+  // unaudited in every Corpus surface.
+  uint32 audit_quota_bp = 2;
+}
+
+message NegotiateResponse {
+  repeated GrantState grants = 1;
+  repeated string accepted_feature_flags = 2;
+  LeaseEnforcement recorded_enforcement = 3;
+  bool codecs_accepted = 4;
+  string detail = 5;
+}
+
+// ---------------------------------------------------------------------------
+// Observations (control-plane summaries; pixels ride the media plane)
+// ---------------------------------------------------------------------------
+
+message ProprioSample {
+  repeated double joint_pos = 1;
+  repeated double joint_vel = 2;
+  optional Pose ee_pose = 3;
+  optional double gripper = 4;
+  string part = 5;  // "" = the sole/default part
+}
+
+message TimeSeriesSample {
+  string name = 1;
+  repeated double values = 2;
+}
+
+// Aligns control-plane time to media streams without moving pixels: which
+// frame of which camera existed at t_ns.
+message FrameNotice {
+  string camera = 1;
+  uint64 frame_seq = 2;
+  string stream_id = 3;
+}
+
+message ObservationUpdate {
+  int64 t_ns = 1;
+  oneof payload {
+    ProprioSample proprio = 2;
+    TimeSeriesSample series = 3;
+    FrameNotice frame = 4;
+  }
+}
+
+message ObservationAck {
+  int64 t_server_unix_ns = 1;
+}
+
+// ---------------------------------------------------------------------------
+// GateActions — the one ordered event stream
+// ---------------------------------------------------------------------------
+
+message GateStatus {
+  GateMode mode = 1;
+  string active_claim_id = 2;
+  double tick_rate_hz = 3;
+}
+
+message GateClientMessage {
+  oneof msg {
+    EpisodeEvent event = 1;
+    VerbResult verb_result = 2;
+    GateStatus status = 3;
+  }
+}
+
+enum ClaimDirectiveKind {
+  CLAIM_DIRECTIVE_KIND_UNSPECIFIED = 0;
+  CLAIM_DIRECTIVE_KIND_GRANT = 1;
+  CLAIM_DIRECTIVE_KIND_RELEASE = 2;
+  CLAIM_DIRECTIVE_KIND_RETAKE = 3;
+}
+
+message ClaimDirective {
+  ClaimDirectiveKind kind = 1;
+  Claim claim = 2;
+}
+
+enum EpisodeDirectiveKind {
+  EPISODE_DIRECTIVE_KIND_UNSPECIFIED = 0;
+  EPISODE_DIRECTIVE_KIND_TERMINATE = 1;
+  // The supervisor judged the episode done; ep.done flips.
+  EPISODE_DIRECTIVE_KIND_MARK_DONE = 2;
+}
+
+message EpisodeDirective {
+  EpisodeDirectiveKind kind = 1;
+  string episode_id = 2;
+  TerminalOutcome outcome = 3;
+  string reason = 4;
+}
+
+message GateServerMessage {
+  oneof msg {
+    ClaimDirective claim = 1;
+    // Intervention actions from plane-side sources (teleop consoles reach the
+    // robot via the media plane's data channel; agent chunks may ride here).
+    ActionChunk intervention_chunk = 2;
+    VerbRequest verb = 3;
+    GrantStatusChange grant_change = 4;
+    EpisodeDirective episode = 5;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Claims, leases, resets
+// ---------------------------------------------------------------------------
+
+message ClaimEpisodeRequest {
+  string session_id = 1;
+  string episode_id = 2;
+  ActorRef actor = 3;
+  string source_name = 4;
+  bool self_initiated = 5;
+  repeated SpaceKind spaces = 6;
+}
+
+message ClaimEpisodeResponse {
+  bool granted = 1;
+  Claim claim = 2;
+  string detail = 3;
+}
+
+message HandoffLeaseRequest {
+  string session_id = 1;
+  LeaseHandoff handoff = 2;
+}
+
+message HandoffLeaseResponse {
+  LeaseResponse response = 1;
+}
+
+enum ResetPhase {
+  RESET_PHASE_UNSPECIFIED = 0;
+  RESET_PHASE_PLANNING = 1;
+  RESET_PHASE_EXECUTING = 2;
+  RESET_PHASE_VERIFYING = 3;
+  RESET_PHASE_DONE = 4;
+}
+
+message ResetProgress {
+  ResetPhase phase = 1;
+  string strategy = 2;
+  string detail = 3;
+  // Set on the final (DONE) message.
+  optional ResetResult result = 4;
+}
+
+// ---------------------------------------------------------------------------
+// Heartbeat (N11)
+// ---------------------------------------------------------------------------
+
+message JitterStats {
+  int64 p50_ns = 1;
+  int64 p95_ns = 2;
+  int64 p99_ns = 3;
+  int64 max_ns = 4;
+  double rate_hz = 5;
+  uint32 samples = 6;
+}
+
+// Safely-measurable proxy signals for grant health (N11) — NEVER live verb
+// latencies. Gate-tick jitter is a direct read on interpreter/executor health
+// for advisory integrations; callback dispatch time covers the integrator's
+// registered verbs as invoked in safe contexts.
+message ProxySignals {
+  int64 control_rtt_ns = 1;
+  JitterStats gate_tick = 2;
+  double host_load_1m = 3;
+  double host_load_5m = 4;
+  double cpu_utilization = 5;  // 0..1
+  JitterStats callback_dispatch = 6;
+}
+
+// An actual verb invocation measurement, only ever taken in a safe window.
+message VerbMeasurement {
+  Verb verb = 1;
+  SpaceKind send_interface = 2;
+  int64 latency_ns = 3;
+  int64 t_measured_ns = 4;
+  MeasurementWindow window = 5;
+}
+
+message HeartbeatPing {
+  string session_id = 1;
+  int64 t_ns = 2;
+  ProxySignals signals = 3;
+  repeated VerbMeasurement verb_measurements = 4;
+}
+
+message HeartbeatAck {
+  int64 t_server_unix_ns = 1;
+  // Echo of HeartbeatPing.t_ns — gives the client its control-plane RTT
+  // sample without a second clock.
+  int64 echo_t_ns = 2;
+  // Demotions/re-promotions ride here as well as on GateActions, so they
+  // survive a stalled gate stream.
+  repeated GrantStatusChange grant_changes = 3;
+}
+
+// ---------------------------------------------------------------------------
+// The service
+// ---------------------------------------------------------------------------
+
+service ControlPlane {
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+  rpc Negotiate(NegotiateRequest) returns (NegotiateResponse);
+  rpc StreamObservations(stream ObservationUpdate) returns (stream ObservationAck);
+  rpc GateActions(stream GateClientMessage) returns (stream GateServerMessage);
+  rpc ClaimEpisode(ClaimEpisodeRequest) returns (ClaimEpisodeResponse);
+  rpc HandoffLease(HandoffLeaseRequest) returns (HandoffLeaseResponse);
+  rpc RequestReset(ResetRequest) returns (stream ResetProgress);
+  rpc Heartbeat(stream HeartbeatPing) returns (stream HeartbeatAck);
+}

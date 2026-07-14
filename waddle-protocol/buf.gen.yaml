@@ -1,0 +1,14 @@
+# ILLUSTRATIVE ONLY — no generated code is ever checked into waddle-protocol.
+# Generated code is a build product of downstream repos:
+#   - waddle-core compiles these files at build time via protox + prost
+#     (crates/waddle-types/build.rs); no system protoc required.
+#   - Other consumers may use this file as a reference for their own codegen.
+version: v2
+plugins:
+  # Rust (reference): waddle-core does NOT use buf; see note above.
+  # - remote: buf.build/community/neoeinstein-prost
+  #   out: gen/rust
+  # Python (reference):
+  # - remote: buf.build/protocolbuffers/python
+  #   out: gen/python
+  []

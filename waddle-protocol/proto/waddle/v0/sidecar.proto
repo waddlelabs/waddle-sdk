@@ -1,0 +1,168 @@
+// waddle-protocol v0 — sidecar.proto
+//
+// The sidecar is the small semantic record per episode: boundaries, task,
+// claims, provenance spans, events, labels. Bulk bytes may live in customer
+// storage via references (Reference recording mode). The Corpus is the
+// project-level index over sidecars.
+//
+// Recording modes (design doc §2.6, N8):
+//   LOCAL        — Waddle writes full MCAP episodes locally; sidecar + bytes.
+//   REFERENCE    — the customer's recorder keeps the bulk bytes; the sidecar
+//                  carries ArchiveRefs resolved at read time.
+//   SIDECAR_ONLY — semantic records only; nothing bulk persists. This is the
+//                  metrics/ops tier, not the data tier: corpus transforms and
+//                  optimizers declare their data requirements and fail loudly
+//                  against this mode.
+
+syntax = "proto3";
+
+package waddle.v0;
+
+import "waddle/v0/control.proto";
+import "waddle/v0/descriptors.proto";
+import "waddle/v0/episode.proto";
+
+enum RecordingMode {
+  RECORDING_MODE_UNSPECIFIED = 0;
+  RECORDING_MODE_LOCAL = 1;
+  RECORDING_MODE_REFERENCE = 2;
+  RECORDING_MODE_SIDECAR_ONLY = 3;
+}
+
+// A pointer to bulk bytes that live outside the sidecar: a stream id, a time
+// range on the session timeline, and a content hash — resolved at read time
+// through a resolver interface.
+message ArchiveRef {
+  string ref_id = 1;
+  string stream_id = 2;
+  int64 t_start_ns = 3;
+  int64 t_end_ns = 4;
+  string content_hash = 5;  // sha256 of the referenced bytes
+  string resolver = 6;      // resolver id registered by the integrator
+  string uri_hint = 7;      // advisory locator; the resolver is authoritative
+  string media_type = 8;
+}
+
+// A half-open interval on the session-monotonic timeline. t_end_ns == 0 means
+// the span was open when the record was written.
+message Span {
+  int64 t_start_ns = 1;
+  int64 t_end_ns = 2;
+}
+
+message ClaimSpan {
+  Span span = 1;
+  Claim claim = 2;
+}
+
+message LeaseSpan {
+  Span span = 1;
+  Lease lease = 2;
+}
+
+// Who was writing, when. Written at gate time — pre-annotated intervention
+// data, no post-hoc alignment.
+message ProvenanceSpan {
+  Span span = 1;
+  ProvenanceTag tag = 2;
+}
+
+message InterventionSpan {
+  message PhaseSpan {
+    InterventionPhase phase = 1;
+    Span span = 2;
+  }
+  Span span = 1;
+  string claim_id = 2;
+  repeated PhaseSpan phases = 3;
+}
+
+// Audit-slice state for this episode (N13). The audit sample is a RANDOM
+// retention quota, independent of events — an audit slice built from
+// judge-flagged moments cannot detect what the judge systematically misses.
+// Projects that decline the quota have their judge metrics permanently
+// marked "unaudited" in every Corpus surface.
+enum AuditState {
+  AUDIT_STATE_UNSPECIFIED = 0;
+  AUDIT_STATE_NOT_RETAINED = 1;
+  AUDIT_STATE_RETAINED = 2;
+  AUDIT_STATE_LABELED = 3;
+}
+
+message AuditRecord {
+  AuditState state = 1;
+  // True iff this episode was selected by the random retention quota.
+  bool random_quota_sample = 2;
+  // Human audit labels. Each MUST have labeler_was_intervenor == false and
+  // source == JUDGE_SOURCE_HUMAN; conformance rejects violations.
+  repeated Judgment audit_labels = 3;
+}
+
+message RetakeLink {
+  string parent_episode_id = 1;     // the ABORTED_RETAKE predecessor
+  string successor_episode_id = 2;  // the born-claimed successor
+}
+
+// Born-claimed episodes are their own metrics class (N18): excluded from
+// mean-time-to-intervention, counted in a retake-continuation rate, so
+// metric definitions written for clean episodes stay honest.
+enum MetricsClass {
+  METRICS_CLASS_UNSPECIFIED = 0;
+  METRICS_CLASS_STANDARD = 1;
+  METRICS_CLASS_BORN_CLAIMED = 2;
+}
+
+// The per-episode semantic record.
+message Sidecar {
+  // Format version of this record; starts at 1. Append-only evolution.
+  uint32 sidecar_version = 1;
+
+  string episode_id = 2;
+  string project = 3;
+  string session_id = 4;
+  // Fleet identity, first-class (N10): "SR across all cells running task X"
+  // is a join, not archaeology.
+  string robot_id = 5;
+  string cell_id = 6;
+
+  string task = 7;
+  map<string, string> task_metadata = 8;
+
+  // Clock anchor for this episode's records; epoch twins below were captured
+  // at stamp time, never derived at close.
+  ClockAnchor clock_anchor = 9;
+  Span bounds = 10;  // session-monotonic episode boundaries
+  int64 t_start_unix_ns = 11;
+  int64 t_end_unix_ns = 12;
+
+  TerminalOutcome outcome = 13;
+  string outcome_detail = 14;
+
+  bool born_claimed = 15;  // N18
+  RetakeLink retake = 16;  // set on either side of a retake pair
+  MetricsClass metrics_class = 17;
+
+  repeated ClaimSpan claims = 18;
+  repeated LeaseSpan leases = 19;
+  repeated ProvenanceSpan provenance = 20;
+  repeated InterventionSpan interventions = 21;
+  repeated EpisodeEvent events = 22;
+  repeated Judgment judgments = 23;
+
+  optional ResetVerification reset_verification = 24;
+  // PERMANENT flag (N2/N12): the episode ran without a verified reset (e.g.
+  // an optimistic retake whose async verification failed, or a retake
+  // successor that skipped verification). Never cleared retroactively.
+  bool reset_unverified = 25;
+
+  RecordingMode recording_mode = 26;
+  repeated ArchiveRef refs = 27;           // Reference-mode bulk pointers
+  repeated ArchiveRef incident_clips = 28; // ring-buffer clips around events
+  AuditRecord audit = 29;
+
+  // Content hash of the session's RobotDescription, so any consumer can
+  // verify which declaration produced this record.
+  string robot_description_digest = 30;
+
+  map<string, string> vendor = 31;
+}

@@ -1,0 +1,111 @@
+// waddle-protocol v0 — media.proto
+//
+// Payloads for the media plane's data topics (WebRTC data channels). Camera
+// and depth video ride WebRTC video tracks and are not protocol messages;
+// these are the low-rate data-channel payloads that accompany them.
+//
+// Topic table (normative). Reliability classes encode a production lesson:
+// reliable+ordered telemetry snowballs into stale backlog on a lossy WAN;
+// poses are latest-wins; sparse must-deliver events get reliable topics.
+//
+//   Message            | Topic                    | Class
+//   -------------------+--------------------------+--------------------------
+//   TeleopStreamPacket | waddle/v0/teleop/pose    | lossy, unordered,
+//                      |                          | latest-wins, 60–90 Hz
+//   ClutchTransition   | waddle/v0/teleop/clutch  | reliable, ordered
+//   MarkEventPacket    | waddle/v0/teleop/mark    | reliable, ordered
+//   OperatorTelemetry  | waddle/v0/telemetry      | lossy, latest-wins;
+//                      |                          | receivers drop
+//                      |                          | out-of-order by t_ns
+//
+// Clock discipline: `t_client_ns` fields are the REMOTE actor's monotonic
+// clock. They exist for jitter monitoring and the echo triple only, and are
+// never recorded as session time — the gate stamps intervention actions on
+// the session timeline at consumption.
+
+syntax = "proto3";
+
+package waddle.v0;
+
+import "waddle/v0/control.proto";
+import "waddle/v0/descriptors.proto";
+import "waddle/v0/episode.proto";
+
+// Generic operator inputs. Named axes/buttons keep the packet
+// device-agnostic; a given rig (VR controllers, gamepad, phone) is a profile
+// of names over this shape.
+message TeleopInputs {
+  map<string, double> axes = 1;
+  map<string, bool> buttons = 2;
+}
+
+// One target for one declared part (Composite part name, or "" for the sole
+// part).
+message PartTarget {
+  string part = 1;
+  oneof target {
+    Pose pose = 2;    // absolute target in the declared frame
+    Twist twist = 3;  // delta/rate per the declared encoding
+  }
+  optional double gripper = 4;  // declared GripperSpec units
+}
+
+// The teleoperator action stream. Lossy and latest-wins by design: a late
+// pose is a wrong pose. Consumers run a jitter buffer keyed on `seq` and
+// play out "the action due now".
+message TeleopStreamPacket {
+  int64 t_client_ns = 1;
+  uint64 seq = 2;
+  repeated PartTarget targets = 3;
+  // The clutch (deadman) state sampled with this packet. Engagement
+  // transitions additionally ride the reliable clutch topic.
+  bool clutch_engaged = 4;
+  TeleopInputs inputs = 5;
+}
+
+// Reliable clutch transitions. The engaged clutch is what makes a local
+// source's stream authoritative (engagement-initiated claims); a synthesized
+// release on pose staleness is a UX convenience — the integration's staleness
+// watchdog remains the actual fail-safe.
+message ClutchTransition {
+  bool engaged = 1;
+  int64 t_client_ns = 2;
+  string part = 3;  // "" = all parts
+}
+
+// An episode mark placed from a console (start/end/retake). Relayed onto the
+// session timeline as episode.proto's MarkEvent.
+message MarkEventPacket {
+  MarkKind kind = 1;
+  string task = 2;
+  int64 t_client_ns = 3;
+  ActorRef actor = 4;
+}
+
+message NamedPose {
+  string part = 1;
+  Pose pose = 2;
+}
+
+// Robot → console telemetry. Lossy latest-wins; receivers drop packets whose
+// t_ns is older than the newest seen (tolerating a large backward jump as a
+// robot-side clock reset).
+//
+// The echo triple implements NTP-style latency/offset estimation:
+// console sends echo_client_ns = t1; robot stamps echo_server_recv_ns = t2
+// on receipt and server_send_ns = t3 on send; the console reads t4 at
+// arrival. rtt = (t4 - t1) - (t3 - t2); offset = ((t2 - t1) + (t3 - t4)) / 2.
+// All three are zero until the console has sent at least one packet.
+message OperatorTelemetry {
+  int64 t_ns = 1;  // session-monotonic (robot side)
+  repeated NamedPose part_poses = 2;
+  optional double gripper = 3;
+  string lease_holder = 4;
+  EpisodeState episode_state = 5;
+  GateMode gate_mode = 6;
+  optional Fault fault = 7;
+  int64 echo_client_ns = 8;
+  int64 echo_server_recv_ns = 9;
+  int64 server_send_ns = 10;
+  string active_camera = 11;
+}

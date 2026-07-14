@@ -1,0 +1,463 @@
+// waddle-protocol v0 — descriptors.proto
+//
+// Everything the integrator tells Waddle at init: the robot, its action space,
+// cameras, time series, and the grants extended to Waddle. This file also
+// doubles as the base-types root of the package (geometry, time, actors),
+// because the v0 layout is pinned at six files and every other file imports
+// this one.
+//
+// Conventions pinned by this protocol (normative; see docs/GLOSSARY.md):
+//   - SI units, radians, meters. Right-handed frames, z-up.
+//   - Quaternions are wxyz (w first). See Quat.
+//   - Every timestamp is int64 session-monotonic nanoseconds, suffix `_ns`.
+//     Wall-clock twins are `_unix_ns`. Operator-clock values are `_client_ns`
+//     and are never recorded as session time. Durations are also `_ns`.
+//   - Schema evolution is append-only: never reuse or renumber a field or
+//     enum value; removed fields become `reserved` (number and name).
+//     See docs/VERSIONING.md.
+
+syntax = "proto3";
+
+package waddle.v0;
+
+// ---------------------------------------------------------------------------
+// Geometry & time
+// ---------------------------------------------------------------------------
+
+message Vec3 {
+  double x = 1;
+  double y = 2;
+  double z = 3;
+}
+
+// Unit quaternion, **wxyz order** (w first). This is a deliberate, pinned
+// choice; implementations converting from xyzw-ordered internals must convert
+// in exactly one place at their boundary, never on this wire. The wire
+// fixture `fixtures/wire/action_chunk_ee_delta.json` exists to catch a
+// transposed conversion.
+message Quat {
+  double w = 1;
+  double x = 2;
+  double y = 3;
+  double z = 4;
+}
+
+// A pose is always frame-tagged. An empty `frame_id` is a validation error,
+// never a default: untagged geometry is how misaligned data corrupts a corpus
+// silently.
+message Pose {
+  Vec3 position = 1;
+  Quat rotation = 2;
+  string frame_id = 3;
+}
+
+// Linear + angular rates or deltas. How the three angular numbers are read is
+// declared by the enclosing space's RotationEncoding — the platform must be
+// told, never guess.
+message Twist {
+  Vec3 linear = 1;
+  Vec3 angular = 2;
+}
+
+// Pairs the session-monotonic clock with the wall clock. Captured atomically
+// (paired reads, minimum inter-read delta) at session start and at every
+// recording-file open, so any monotonic stamp can be located on the wall
+// clock later: unix_ns(t) = t + (unix_ns - monotonic_ns).
+//
+// The monotonic timeline is the single stream timeline; epoch twins are
+// captured at stamp time where a record needs both. Deriving epoch values
+// after the fact (e.g. at episode close) is forbidden — a host suspend
+// between stamp and conversion silently corrupts offsets.
+message ClockAnchor {
+  int64 monotonic_ns = 1;
+  int64 unix_ns = 2;
+}
+
+// Named frames and static transforms between them. Camera extrinsics are
+// expressed by giving the camera a frame_id that appears in this graph.
+message FrameGraph {
+  repeated FrameTransform transforms = 1;
+}
+
+message FrameTransform {
+  string parent = 1;
+  string child = 2;
+  Pose transform = 3;  // pose of `child` expressed in `parent`
+}
+
+// ---------------------------------------------------------------------------
+// Actors (amendment N17)
+// ---------------------------------------------------------------------------
+
+// Who a human or software actor is, protocol-wide. Normative vocabulary:
+//   TELEOPERATOR  — a Waddle work-plane human (remote operator network).
+//   SITE_OPERATOR — a customer-side human physically at the cell.
+// Unqualified "operator" is banned in normative text (N17): the two roles have
+// different consoles, different authority, and different liability.
+enum ActorKind {
+  ACTOR_KIND_UNSPECIFIED = 0;
+  ACTOR_KIND_TELEOPERATOR = 1;
+  ACTOR_KIND_SITE_OPERATOR = 2;
+  ACTOR_KIND_AGENT = 3;   // a Waddle-hosted code-as-policy agent
+  ACTOR_KIND_POLICY = 4;  // the customer's policy under supervision
+  ACTOR_KIND_SYSTEM = 5;  // the platform itself (watchdogs, planners)
+  ACTOR_KIND_CUSTOM = 6;  // customer-supplied source (e.g. a leader arm)
+}
+
+message ActorRef {
+  ActorKind kind = 1;
+  // Stable identity. For humans this is a server-stamped participant id,
+  // never a client-forgeable string; display attribution rides display_name.
+  string id = 2;
+  string display_name = 3;
+}
+
+// ---------------------------------------------------------------------------
+// Rotation conventions
+// ---------------------------------------------------------------------------
+
+// How the three angular numbers of a Twist are interpreted. UNSPECIFIED is
+// not a legacy default: a declared EE space MUST set it. The platform must be
+// told, never guess — a wrong guess composes wrong motion.
+enum RotationEncoding {
+  ROTATION_ENCODING_UNSPECIFIED = 0;
+  ROTATION_ENCODING_AXIS_ANGLE = 1;  // unit axis scaled by angle (rad)
+  ROTATION_ENCODING_ROTVEC = 2;      // rotation vector (rad)
+  ROTATION_ENCODING_EULER_RPY = 3;   // roll, pitch, yaw (rad), extrinsic xyz
+  ROTATION_ENCODING_EULER_XYZ = 4;   // intrinsic xyz Euler (rad)
+  ROTATION_ENCODING_QUAT_XYZW = 5;   // for spaces that stream 4 numbers
+  ROTATION_ENCODING_QUAT_WXYZ = 6;
+}
+
+// How a delta composes with the current pose. Must be declared; never guessed.
+enum DeltaFrame {
+  DELTA_FRAME_UNSPECIFIED = 0;
+  DELTA_FRAME_BASE = 1;  // pre-multiply: new = delta * current
+  DELTA_FRAME_BODY = 2;  // post-multiply: new = current * delta
+}
+
+// ---------------------------------------------------------------------------
+// Action spaces — the one hard opinion (design doc §2.2)
+// ---------------------------------------------------------------------------
+
+// A named joint with optional limits. Units: radians (revolute) or meters
+// (prismatic), rad/s or m/s, N·m or N. Wire vector order = declaration order.
+message JointDescriptor {
+  string name = 1;
+  optional double min_position = 2;
+  optional double max_position = 3;
+  optional double max_velocity = 4;
+  optional double max_effort = 5;
+}
+
+message JointPosition {
+  repeated JointDescriptor joints = 1;
+}
+
+message JointVelocity {
+  repeated JointDescriptor joints = 1;
+}
+
+// End-effector pose deltas. The step ceilings are declarations of the
+// integration's safe per-tick step (they inform blending and teleop
+// retargeting); they are not an envelope — the owner's envelope still gates
+// every command.
+//
+// Compose contract (normative): deltas within a chunk compose against the
+// state snapshot taken at chunk start. A chunk entered mid-way (splice entry
+// at index > 0) has no valid compose base; conforming implementations refuse
+// mid-chunk splice entry for delta spaces.
+message EEPoseDelta {
+  string frame_id = 1;
+  RotationEncoding rotation_encoding = 2;
+  DeltaFrame delta_frame = 3;
+  optional double max_linear_step_m = 4;
+  optional double max_angular_step_rad = 5;
+}
+
+message EEPoseAbs {
+  string frame_id = 1;
+  RotationEncoding rotation_encoding = 2;
+}
+
+message BaseTwist {
+  string frame_id = 1;
+  optional double max_linear_mps = 2;
+  optional double max_angular_radps = 3;
+}
+
+// Named parts, each an ActionSpace. Part order is normative: it defines the
+// concatenated wire-vector layout every adapter depends on (a protobuf map
+// would have undefined order, hence `repeated`). v0 pins nesting depth to 1:
+// a Part's space must not itself be Composite. Opaque parts are legal — that
+// part is monitor-only and takeover plans against the remaining parts.
+message Composite {
+  message Part {
+    string name = 1;
+    ActionSpace space = 2;
+  }
+  repeated Part parts = 1;
+}
+
+// The monitor-only escape hatch. Unknown encodings still get monitoring,
+// episode bookkeeping, and video-based judging; they do not get takeover
+// until someone declares a mapping. A real tier, not a failure.
+message Opaque {
+  string format_hint = 1;
+  optional uint32 dim = 2;
+}
+
+// What happens when a new chunk arrives while one is executing, and how
+// actions interpolate between policy rate and control rate. Declared, not
+// discovered (design doc §2.2).
+enum ReplanPolicy {
+  REPLAN_POLICY_UNSPECIFIED = 0;
+  // New chunk replaces the executing one; entry index is time-aligned via
+  // t_obs_ns; the first step is slew-clamped per the space's declared step
+  // ceilings.
+  REPLAN_POLICY_IMMEDIATE = 1;
+  // New chunk queues behind the executing one.
+  REPLAN_POLICY_CHUNK_BOUNDARY = 2;
+  // Cross-fade between chunks per the declared interpolation rule. Caution
+  // (from production): cross-plan averaging is the temporal-ensembling
+  // failure mode — prefer IMMEDIATE + clamp; reach for BLEND only when a
+  // controller rings on clamped steps.
+  REPLAN_POLICY_BLEND = 3;
+}
+
+enum Interpolation {
+  INTERPOLATION_UNSPECIFIED = 0;
+  INTERPOLATION_HOLD = 1;  // zero-order hold
+  INTERPOLATION_LINEAR = 2;
+  INTERPOLATION_CUBIC = 3;
+}
+
+message ChunkingSemantics {
+  uint32 horizon_steps = 1;
+  ReplanPolicy replan = 2;
+  Interpolation interpolation = 3;
+}
+
+message GripperSpec {
+  // A parallel gripper commanded on one action channel.
+  message Parallel {
+    double open_value = 1;
+    double closed_value = 2;
+    // Index of the gripper channel within the part's action vector;
+    // -1 means the last element.
+    int32 action_dim = 3;
+  }
+  message Suction {}
+  message Dexterous {
+    repeated JointDescriptor joints = 1;
+  }
+  oneof kind {
+    Parallel parallel = 1;
+    Suction suction = 2;
+    Dexterous dexterous = 3;
+  }
+}
+
+// The closed enum of canonical action spaces, with complete execution
+// semantics. An action is never "a float tensor": Waddle's teleop retargeting
+// and reset agents must be able to WRITE into this space safely, which is why
+// the enum is closed (retargeting is implemented once per canonical type).
+// New types ship as new oneof arms behind feature flags (see VERSIONING.md).
+message ActionSpace {
+  oneof space {
+    JointPosition joint_position = 1;
+    JointVelocity joint_velocity = 2;
+    EEPoseDelta ee_delta = 3;
+    EEPoseAbs ee_absolute = 4;
+    BaseTwist base_twist = 5;
+    Composite composite = 6;
+    Opaque opaque = 7;
+  }
+  double rate_hz = 10;
+  ChunkingSemantics chunking = 11;
+  optional GripperSpec gripper = 12;
+}
+
+// ---------------------------------------------------------------------------
+// Cameras & time series
+// ---------------------------------------------------------------------------
+
+enum CameraEncoding {
+  CAMERA_ENCODING_UNSPECIFIED = 0;
+  CAMERA_ENCODING_RGB8 = 1;
+  CAMERA_ENCODING_BGR8 = 2;
+  CAMERA_ENCODING_Z16 = 3;  // 16-bit depth; scale via Intrinsics.depth_scale_mm
+  CAMERA_ENCODING_JPEG = 4;
+  CAMERA_ENCODING_H264 = 5;
+}
+
+enum DistortionModel {
+  DISTORTION_MODEL_UNSPECIFIED = 0;
+  DISTORTION_MODEL_PLUMB_BOB = 1;
+  DISTORTION_MODEL_RATIONAL_POLYNOMIAL = 2;
+  DISTORTION_MODEL_KANNALA_BRANDT = 3;
+}
+
+// Pinhole + distortion, ROS CameraInfo lineage (design doc §2.2). Uncalibrated
+// RGB unlocks monitoring and VLM judging; intrinsics + a frame unlock 3D
+// overlays, workspace tripwires, and mark-based actuation — the lattice, not
+// a cliff.
+message Intrinsics {
+  double fx = 1;
+  double fy = 2;
+  double cx = 3;
+  double cy = 4;
+  DistortionModel model = 5;
+  repeated double distortion = 6;
+  optional double depth_scale_mm = 7;
+}
+
+// What persists locally vs what flows uplink. Nothing high-bandwidth ever
+// touches the control plane; media rides the media plane and the local
+// recorder keeps the full-rate archive.
+message StreamPolicy {
+  message UplinkPolicy {
+    double fps = 1;
+    CameraEncoding encoding = 2;
+    optional uint32 max_kbps = 3;
+  }
+  bool local_full_rate = 1;
+  optional UplinkPolicy uplink = 2;
+}
+
+message CameraDescription {
+  string name = 1;  // e.g. "wrist_left", "overhead"
+  uint32 width = 2;
+  uint32 height = 3;
+  double fps = 4;
+  CameraEncoding encoding = 5;
+  optional Intrinsics intrinsics = 6;
+  optional string frame_id = 7;  // extrinsics via FrameGraph
+  StreamPolicy stream = 8;
+  map<string, string> vendor = 15;  // never interpreted; logged verbatim
+}
+
+enum DType {
+  DTYPE_UNSPECIFIED = 0;
+  DTYPE_F32 = 1;
+  DTYPE_F64 = 2;
+  DTYPE_I32 = 3;
+  DTYPE_I64 = 4;
+  DTYPE_U8 = 5;
+}
+
+// Generic non-camera sensor stream: joint states, F/T, IMU — without
+// enumerating sensor types forever.
+message TimeSeriesDescription {
+  string name = 1;  // e.g. "/robot/ft_wrist"
+  DType dtype = 2;
+  repeated uint32 shape = 3;
+  string units = 4;
+  optional string frame_id = 5;
+  double rate_hz = 6;
+}
+
+// ---------------------------------------------------------------------------
+// Verbs & grants (design doc §2.3; amendments N6, N7, N11)
+// ---------------------------------------------------------------------------
+
+// The five-verb control contract — the smallest write surface in the system.
+// Each verb is a customer-provided callable/topic/endpoint; Waddle plans
+// strictly against declared (and live-validated) grants.
+enum Verb {
+  VERB_UNSPECIFIED = 0;
+  VERB_SEND = 1;    // stream action chunks into the robot
+  VERB_HOLD = 2;    // freeze safely, hold position
+  VERB_RESUME = 3;  // release a hold
+  VERB_HOME = 4;    // move to declared home pose
+  VERB_ESTOP = 5;   // hardware or software stop (declared, with latency bound)
+}
+
+// A reference to a canonical action-space type, parallel to ActionSpace's
+// oneof — used wherever a space is referenced (send interfaces, claim
+// capabilities) without embedding a full declaration.
+enum SpaceKind {
+  SPACE_KIND_UNSPECIFIED = 0;
+  SPACE_KIND_JOINT_POSITION = 1;
+  SPACE_KIND_JOINT_VELOCITY = 2;
+  SPACE_KIND_EE_POSE_DELTA = 3;
+  SPACE_KIND_EE_POSE_ABS = 4;
+  SPACE_KIND_BASE_TWIST = 5;
+  SPACE_KIND_COMPOSITE = 6;
+  SPACE_KIND_OPAQUE = 7;
+}
+
+// Where the single-writer lease is enforced (amendment N7). Recorded at grant
+// negotiation. ENFORCED means a broker/mux/proxy physically owns the only
+// write path; ADVISORY means in-process callables where nothing physically
+// stops the integrator's loop from writing during a takeover. The
+// intervention planner treats ADVISORY integrations more conservatively
+// (prefer HOLD_FIRST handoffs), and conformance includes a NOOP-compliance
+// test plus runtime dual-write detection (N14).
+enum LeaseEnforcement {
+  LEASE_ENFORCEMENT_UNSPECIFIED = 0;
+  LEASE_ENFORCEMENT_ENFORCED = 1;
+  LEASE_ENFORCEMENT_ADVISORY = 2;
+}
+
+// A permission the integrator extends to Waddle, with its guarantees.
+// Declared at init, negotiated per connection, validated continuously at
+// runtime (N6): heartbeat-carried proxy signals maintain grant health, actual
+// verbs are re-measured only in safe windows (N11), and violated grants are
+// demoted with an actor-visible event — never mid-lease.
+//
+// The noun sense of "grant" is canonical (N1). For VERB_ESTOP, `hardware`
+// declares whether the stop is a hardware chain or software, and
+// `declared_latency_bound_ns` is its declared worst-case latency — this is
+// the "EStop declaration" of the design doc.
+message Grant {
+  Verb verb = 1;
+  // Populated only for VERB_SEND: which canonical spaces the integration can
+  // accept commands in. Multiple command interfaces let Waddle pick the
+  // richest interface each consumer supports (teleop prefers EE_POSE_DELTA;
+  // reset agents may prefer JOINT_POSITION).
+  repeated SpaceKind send_interfaces = 2;
+  optional int64 declared_latency_bound_ns = 3;
+  bool hardware = 4;
+}
+
+// ---------------------------------------------------------------------------
+// Codec attestation (amendment N15)
+// ---------------------------------------------------------------------------
+
+// A codec sits between a policy server and a robot — the highest-consequence
+// position in the system for a buggy or malicious artifact. Codecs are
+// version-pinned in configuration (no floating "latest" in the write path),
+// signed, and load-time certified in addition to per-session round-trip
+// checks. Declared at Negotiate.
+message CodecDescriptor {
+  string name = 1;
+  string dialect = 2;         // e.g. "lerobot-async", "openpi"
+  string version = 3;         // the codec's own semver
+  string upstream_version = 4;  // the upstream wire version it speaks
+  string content_hash = 5;    // sha256 of the codec artifact
+  bytes signature = 6;
+  string signer_key_id = 7;
+}
+
+// ---------------------------------------------------------------------------
+// The robot
+// ---------------------------------------------------------------------------
+
+message RobotDescription {
+  string name = 1;
+  // REQUIRED: the one hard opinion.
+  ActionSpace action_space = 2;
+  // Unlocks Waddle-side IK & retargeting.
+  optional bytes kinematics_urdf = 3;
+  optional FrameGraph frames = 4;
+  // Negotiated, not assumed.
+  repeated Grant grants = 5;
+  // Fleet identity, first-class from v0 (N10): fleet-level queries are joins,
+  // not archaeology.
+  string robot_id = 6;
+  string cell_id = 7;
+  repeated CameraDescription cameras = 8;
+  repeated TimeSeriesDescription series = 9;
+  map<string, string> vendor = 15;  // never interpreted; logged verbatim
+}

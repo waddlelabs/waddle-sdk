@@ -1,0 +1,228 @@
+// waddle-protocol v0 — control.proto
+//
+// The write path: actions and chunks, the five-verb invocation surface,
+// chunk-handoff policy, provenance tagging, and the fault taxonomy.
+//
+// Vocabulary reminder (normative, docs/GLOSSARY.md): a *tripwire* is
+// Waddle-side and REQUESTS safety actions through the declared verbs; an
+// *envelope* is the hard, non-bypassable gate chain owned by whoever owns the
+// hardware. Waddle never claims to provide an envelope, and every command
+// Waddle sends is subject to the owner's envelope like any other command.
+
+syntax = "proto3";
+
+package waddle.v0;
+
+import "waddle/v0/descriptors.proto";
+
+// ---------------------------------------------------------------------------
+// Faults
+// ---------------------------------------------------------------------------
+
+// The fault taxonomy. Numeric values 1–14 and 18–19 are identical to the
+// production cell taxonomy so that internal adoption of this protocol is a
+// rename, not a migration. Values 15–17 are reserved: the internal kinds
+// COMMAND_HOLD / AUTO_RE_ENABLE / ESTOP_RESUMED are non-fatal state
+// transitions, not faults, and live in episode.proto's SafetyTransition.
+enum FaultKind {
+  // A Fault whose kind is UNSPECIFIED is a bug in the producer, never a
+  // success signal.
+  FAULT_KIND_UNSPECIFIED = 0;
+  FAULT_KIND_ESTOP = 1;
+  // The owner's envelope rejected a command (bounds/limits/keep-out).
+  // Renamed from the internal ENVELOPE_VIOLATION to keep the liability line
+  // legible: the OWNER's envelope rejected; Waddle-side holds are
+  // FAULT_KIND_TRIPWIRE_HOLD.
+  FAULT_KIND_ENVELOPE_REJECT = 2;
+  // Motion from a non-holder. Halts dispatch. Under supervision this is a
+  // pause signal (re-acquire or hand off the lease), never a fault-equivalent
+  // abort.
+  FAULT_KIND_LEASE_DENIED = 3;
+  FAULT_KIND_COMMAND_STALE = 4;
+  FAULT_KIND_HARDWARE_FAULT = 5;
+  FAULT_KIND_IK_UNREACHABLE = 6;
+  FAULT_KIND_PERCEPTION_NOT_FOUND = 7;
+  FAULT_KIND_VERIFIER_FAIL = 8;
+  FAULT_KIND_PRECONDITION_FAIL = 9;
+  FAULT_KIND_CALIBRATION_STALE = 10;
+  FAULT_KIND_TIMEOUT = 11;
+  FAULT_KIND_ADAPTER_ERROR = 12;
+  // Malformed/untagged geometry and schema violations — kept distinct from
+  // ENVELOPE_REJECT so credit assignment stays legible ("bad message" vs
+  // "out of bounds").
+  FAULT_KIND_VALIDATION_ERROR = 13;
+  // A human said no at a motion-approval gate — distinct from
+  // PRECONDITION_FAIL ("the world wasn't right").
+  FAULT_KIND_APPROVAL_DENIED = 14;
+  reserved 15, 16, 17;
+  reserved "FAULT_KIND_COMMAND_HOLD", "FAULT_KIND_AUTO_RE_ENABLE",
+      "FAULT_KIND_ESTOP_RESUMED";
+  FAULT_KIND_BACKEND_ERROR = 18;
+  FAULT_KIND_OBS_INCOMPLETE = 19;
+  // A Waddle tripwire fired and requested a hold via the declared verbs.
+  // Weaker than an envelope by definition.
+  FAULT_KIND_TRIPWIRE_HOLD = 20;
+}
+
+message Fault {
+  FaultKind kind = 1;
+  string source = 2;  // who raised it (component or actor id)
+  string detail = 3;  // legible context; never a bare stack trace
+  int64 t_ns = 4;
+  // Mechanically decoded cause where one exists. Empty means "no decode",
+  // never a guess.
+  string cause = 5;
+  map<string, string> evidence = 6;
+}
+
+// ---------------------------------------------------------------------------
+// Provenance (design doc §2.8; generalizes the production operator_initiated
+// stamp)
+// ---------------------------------------------------------------------------
+
+enum ProvenanceKind {
+  PROVENANCE_KIND_UNSPECIFIED = 0;
+  PROVENANCE_KIND_POLICY = 1;
+  PROVENANCE_KIND_TELEOP = 2;
+  PROVENANCE_KIND_AGENT = 3;
+  PROVENANCE_KIND_CUSTOM = 4;  // custom_name identifies the source
+}
+
+// Per-action origin, written at gate time — intervention data is labeled at
+// write time, never post-hoc. `bypass_approval` carries authorization
+// semantics: a directly-initiated human action MAY bypass a motion-approval
+// gate ("the human pressing the button IS the authorization") but NEVER the
+// envelope, the lease, or the e-stop. This is a protocol invariant.
+message ProvenanceTag {
+  ProvenanceKind kind = 1;
+  string custom_name = 2;  // set iff kind == CUSTOM, e.g. "leader_arm"
+  ActorRef actor = 3;
+  bool bypass_approval = 4;
+}
+
+// ---------------------------------------------------------------------------
+// Actions
+// ---------------------------------------------------------------------------
+
+message JointVector {
+  repeated double values = 1;  // declared joint order; rad or rad/s
+}
+
+message GripperCommand {
+  // In the declared GripperSpec's open/closed units.
+  double position = 1;
+  optional double effort = 2;
+}
+
+enum NoopReason {
+  NOOP_REASON_UNSPECIFIED = 0;
+  // The gate is in bypass mode: the SDK is driving `send` directly from its
+  // own thread (claimed-while-stalled). The integrator's loop receives NOOP
+  // markers so it stays coherent as a spectator, and MUST NOT dispatch them.
+  NOOP_REASON_BYPASS_ACTIVE = 1;
+  // A hold is active (HOLD_FIRST handoff or tripwire-requested hold).
+  NOOP_REASON_HOLD_ACTIVE = 2;
+}
+
+message NoopMarker {
+  NoopReason reason = 1;
+}
+
+// One action step. Which arm of the oneof is populated must match the
+// declared ActionSpace; mismatches are FAULT_KIND_VALIDATION_ERROR.
+message Action {
+  oneof target {
+    JointVector joint_position = 1;  // absolute
+    JointVector joint_velocity = 2;
+    Twist ee_delta = 3;    // read per declared RotationEncoding + DeltaFrame
+    Pose ee_absolute = 4;
+    Twist base_twist = 5;
+    CompositeAction composite = 6;
+    bytes opaque = 7;
+    NoopMarker noop = 8;
+  }
+  // Rides alongside the target in one logical tick; dispatch order is
+  // arm-then-gripper.
+  optional GripperCommand gripper = 9;
+  // Playback offset within the chunk; 0 = now.
+  int64 t_offset_ns = 10;
+  // Composite/multi-part routing when this Action addresses a single part
+  // outside a CompositeAction; "" = the sole/default part.
+  string part = 11;
+}
+
+// Mirror of Composite: named parts, depth pinned to 1 in v0.
+message CompositeAction {
+  message PartAction {
+    string name = 1;
+    Action action = 2;
+  }
+  repeated PartAction parts = 1;
+}
+
+// A chunk of action steps, the unit policies emit (10–50 steps typical).
+message ActionChunk {
+  repeated Action actions = 1;
+  int64 horizon_ns = 2;
+  int64 t_emitted_ns = 3;
+  // Timestamp of the observation this chunk was computed from. Enables
+  // time-aligned splice entry under REPLAN_POLICY_IMMEDIATE and staleness
+  // accounting.
+  int64 t_obs_ns = 4;
+  // Monotone per stream; gaps are visible, reordering is detectable.
+  uint64 seq = 5;
+  string source_id = 6;
+  ProvenanceTag provenance = 7;
+}
+
+// ---------------------------------------------------------------------------
+// Handoff (design doc §2.4)
+// ---------------------------------------------------------------------------
+
+// What happens to the executing chunk when an intervention engages. Release
+// mirrors engage in reverse, with the policy re-primed on fresh observations
+// before un-claim (normative sequence diagrams: docs/FSM.md §5).
+// Advisory-lease integrations SHOULD declare HOLD_FIRST (N7).
+message HandoffPolicy {
+  message Immediate {
+    // Cross-fade window from the dropped chunk into the intervention stream,
+    // using the space's declared interpolation rule.
+    int64 blend_ns = 1;
+  }
+  message ChunkBoundary {
+    // Cap on how long engage may wait for the executing chunk to finish;
+    // 0 = the full remaining horizon.
+    int64 max_wait_ns = 1;
+  }
+  message HoldFirst {}
+  oneof policy {
+    Immediate immediate = 1;       // drop remaining chunk, cross-fade
+    ChunkBoundary chunk_boundary = 2;  // finish executing chunk, then switch
+    HoldFirst hold_first = 3;      // hold() first; intervenor starts from rest
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Verb invocation (transport-agnostic shapes)
+// ---------------------------------------------------------------------------
+
+message VerbRequest {
+  Verb verb = 1;
+  string lease_id = 2;
+  string request_id = 3;
+  int64 t_ns = 4;
+  // Set only for VERB_SEND.
+  optional ActionChunk chunk = 5;
+}
+
+message VerbResult {
+  bool ok = 1;
+  string detail = 2;
+  // Set when ok == false and a taxonomy kind applies. A non-holder VERB_SEND
+  // yields ok=false with FAULT_KIND_LEASE_DENIED — under supervision that is
+  // a pause signal, never a fault-equivalent abort. VERB_ESTOP is out of band
+  // of the lease/command channel entirely and revokes all leases.
+  optional Fault fault = 3;
+  string request_id = 4;
+  int64 t_ns = 5;
+}

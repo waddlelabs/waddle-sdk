@@ -1,0 +1,407 @@
+// waddle-protocol v0 — episode.proto
+//
+// The episode state machine, claims and leases, the intervention lifecycle,
+// reset verification, judgments, and the single EpisodeEvent stream that the
+// sidecar, the local recorder, and the control plane all share.
+//
+// The normative state diagrams and transition-guard tables live in
+// docs/FSM.md; the behavioral fixtures in fixtures/behaviors/ pin them.
+//
+//   RESETTING ─► READY ─► RUNNING ─► (INTERVENTION ⇄ RUNNING) ─► TERMINAL
+//                                          │
+//                               engage → settle → release
+//                                          └─ retake ─► (new episode, claim held)
+//
+// Claim vs lease (glossary): a *claim* is the orchestration-level assignment
+// of an episode to an actor; winning a claim leads to acquiring the *lease*,
+// the actuation-level single-writer right on the robot. Takeover and release
+// are lease handoffs under an existing claim.
+
+syntax = "proto3";
+
+package waddle.v0;
+
+import "waddle/v0/control.proto";
+import "waddle/v0/descriptors.proto";
+
+// ---------------------------------------------------------------------------
+// Core enums
+// ---------------------------------------------------------------------------
+
+enum EpisodeState {
+  EPISODE_STATE_UNSPECIFIED = 0;
+  EPISODE_STATE_RESETTING = 1;
+  EPISODE_STATE_READY = 2;
+  EPISODE_STATE_RUNNING = 3;
+  EPISODE_STATE_INTERVENTION = 4;
+  EPISODE_STATE_TERMINAL = 5;
+}
+
+// Terminal outcomes (N2). ABORTED_RETAKE is never silently folded into
+// success-rate denominators: every Corpus summary reports the retake count,
+// and SR is always presented both including and excluding retakes.
+enum TerminalOutcome {
+  TERMINAL_OUTCOME_UNSPECIFIED = 0;
+  TERMINAL_OUTCOME_SUCCESS = 1;
+  TERMINAL_OUTCOME_FAILURE = 2;
+  TERMINAL_OUTCOME_ABORT = 3;
+  TERMINAL_OUTCOME_ABORTED_RETAKE = 4;
+}
+
+// The intervention lifecycle (from the production intervention system;
+// normative in the protocol FSM): engage (lease handoff per the declared
+// HandoffPolicy) → settle (the intervenor stabilizes the scene) → either
+// release (lease returns, policy re-primed on fresh observations) or retake
+// (this episode terminates ABORTED_RETAKE and a successor opens under the
+// still-held claim).
+enum InterventionPhase {
+  INTERVENTION_PHASE_UNSPECIFIED = 0;
+  INTERVENTION_PHASE_ENGAGE = 1;
+  INTERVENTION_PHASE_SETTLE = 2;
+  INTERVENTION_PHASE_RELEASE = 3;
+  INTERVENTION_PHASE_RETAKE = 4;
+}
+
+// The gate's operating mode. BYPASS covers claimed-while-stalled: the SDK
+// drives `send` directly from its own thread while the integrator's loop
+// receives NoopMarkers.
+enum GateMode {
+  GATE_MODE_UNSPECIFIED = 0;
+  GATE_MODE_PASSTHROUGH = 1;
+  GATE_MODE_INTERVENTION = 2;
+  GATE_MODE_BYPASS = 3;
+}
+
+// ---------------------------------------------------------------------------
+// Episode
+// ---------------------------------------------------------------------------
+
+// The runtime handle for one rollout attempt. The durable record is the
+// Sidecar (sidecar.proto). v0 scopes ONE active episode per session (N18);
+// concurrent episodes are a named-trigger deferral.
+message Episode {
+  // Opaque id; internal id schemes (e.g. "int-<hex>") flow through as-is.
+  string episode_id = 1;
+  string project = 2;
+  string session_id = 3;
+  string robot_id = 4;
+  string cell_id = 5;
+  string task = 6;
+  EpisodeState state = 7;
+  int64 t_start_ns = 8;
+  int64 t_start_unix_ns = 9;  // epoch twin, captured at stamp time
+  // True iff this episode is a retake successor opened under a still-held
+  // claim (N18). Born-claimed episodes are a distinct metrics class:
+  // excluded from mean-time-to-intervention, counted in the
+  // retake-continuation rate.
+  bool born_claimed = 10;
+  // Set iff born_claimed: the ABORTED_RETAKE predecessor.
+  string parent_episode_id = 11;
+}
+
+// ---------------------------------------------------------------------------
+// Claim & lease
+// ---------------------------------------------------------------------------
+
+message Claim {
+  string claim_id = 1;
+  string episode_id = 2;
+  ActorRef actor = 3;
+  // The registered intervention-source name, e.g. "teleop", "leader_arm".
+  string source_name = 4;
+  // True for engagement-initiated claims: a local source (leader-arm clutch)
+  // engaged and the platform records the intervention rather than fighting it.
+  bool self_initiated = 5;
+  int64 t_granted_ns = 6;
+  HandoffPolicy handoff = 7;
+  // Which canonical spaces this claimant can emit into.
+  repeated SpaceKind spaces = 8;
+}
+
+message Lease {
+  string lease_id = 1;  // opaque token, freshly minted per grant/handoff
+  string holder_client_id = 2;
+  LeaseEnforcement enforcement = 3;
+  int64 t_acquired_ns = 4;
+}
+
+// Acquire is idempotent per client: the current holder re-acquiring receives
+// its existing lease back; a different client is refused.
+message LeaseAcquire {
+  string client_id = 1;
+}
+
+message LeaseRelease {
+  string lease_id = 1;
+}
+
+// Handoff is atomic: the old holder loses the lease and the new client
+// receives a FRESHLY MINTED token in one step. Fails if from_lease_id is not
+// the current holder. In-flight streaming state is ended on handoff; the new
+// holder's first streaming command re-arms staleness watchdogs.
+message LeaseHandoff {
+  string from_lease_id = 1;
+  string to_client_id = 2;
+}
+
+message LeaseResponse {
+  string lease_id = 1;  // empty on denial
+  bool granted = 2;
+  string detail = 3;
+}
+
+// ---------------------------------------------------------------------------
+// Reset & verification (N12)
+// ---------------------------------------------------------------------------
+
+// Who waits for reset verification (N12):
+//   BLOCKING — the episode may not leave RESETTING until verification passes.
+//     Required for autonomous resets: no human is waiting, and episode
+//     validity is the whole point.
+//   OPTIMISTIC_ASYNC — the episode may enter READY/RUNNING immediately; the
+//     judge scores the reset from the already-live media stream, and a late
+//     failure retroactively sets the permanent `reset_unverified` flag.
+//     Used for teleoperator retakes: operator flow is sacred, and the flag
+//     is what keeps optimism honest.
+enum ResetVerificationMode {
+  RESET_VERIFICATION_MODE_UNSPECIFIED = 0;
+  RESET_VERIFICATION_MODE_BLOCKING = 1;
+  RESET_VERIFICATION_MODE_OPTIMISTIC_ASYNC = 2;
+}
+
+message ResetRequest {
+  string session_id = 1;
+  // The episode this reset prepares for (may be empty when resetting between
+  // rollouts before an id is assigned).
+  string for_episode_id = 2;
+  string reason = 3;
+  optional string strategy_hint = 4;
+}
+
+message ResetVerification {
+  ResetVerificationMode mode = 1;
+  bool verified = 2;
+  // True when an OPTIMISTIC_ASYNC verification later failed and this record
+  // is the retroactive invalidation.
+  bool invalidated_async = 3;
+  string judge_id = 4;
+  string judge_version = 5;
+  optional double score = 6;
+  int64 t_ns = 7;
+}
+
+message ResetResult {
+  bool ok = 1;
+  string detail = 2;
+  string strategy = 3;  // which ResetStrategy executed
+  optional ResetVerification verification = 4;
+  optional Fault fault = 5;
+}
+
+// ---------------------------------------------------------------------------
+// Judgments (N9, N13)
+// ---------------------------------------------------------------------------
+
+enum JudgeSource {
+  JUDGE_SOURCE_UNSPECIFIED = 0;
+  JUDGE_SOURCE_CODE = 1;
+  JUDGE_SOURCE_MODEL = 2;
+  JUDGE_SOURCE_HUMAN = 3;
+}
+
+// A single judgment. Judge versions are pinned per project (N9): a judge
+// upgrade is an explicit re-baselining event, never a silent change to
+// historical metrics.
+message Judgment {
+  string judge_id = 1;
+  string judge_version = 2;
+  JudgeSource source = 3;
+  optional bool passed = 4;  // absent = score-only judgment
+  optional double score = 5;
+  string label = 6;  // open-vocabulary label / failure-taxonomy tag
+  optional double confidence = 7;
+  int64 t_ns = 8;
+  // For HUMAN judgments: who labeled.
+  ActorRef labeler = 9;
+  // Audit integrity (N13): audit-slice labels MUST come from a labeler who
+  // was not the episode's intervenor; conformance rejects audit labels with
+  // this bit set.
+  bool labeler_was_intervenor = 10;
+  map<string, string> extra = 15;
+}
+
+// ---------------------------------------------------------------------------
+// Grant liveness (N6, N11)
+// ---------------------------------------------------------------------------
+
+enum GrantStatus {
+  GRANT_STATUS_UNSPECIFIED = 0;
+  GRANT_STATUS_ACTIVE = 1;
+  GRANT_STATUS_DEMOTED = 2;
+  GRANT_STATUS_REVOKED = 3;
+}
+
+// A grant demotion or re-promotion. Demotion NEVER interrupts an active
+// lease — it takes effect at the next planning decision (`effective_t_ns`).
+// Demote/re-promote transitions carry hysteresis so a signal hovering at a
+// bound cannot flap the planner (N11). Always actor-visible: this event is
+// emitted on the episode stream, never applied silently.
+message GrantStatusChange {
+  Verb verb = 1;
+  SpaceKind send_interface = 2;  // set when the change scopes one interface
+  GrantStatus from = 3;
+  GrantStatus to = 4;
+  string reason = 5;
+  int64 effective_t_ns = 6;
+}
+
+// ---------------------------------------------------------------------------
+// Marks & safety transitions
+// ---------------------------------------------------------------------------
+
+enum MarkKind {
+  MARK_KIND_UNSPECIFIED = 0;
+  MARK_KIND_START = 1;
+  MARK_KIND_END_SUCCESS = 2;
+  MARK_KIND_END_FAILURE = 3;
+  MARK_KIND_END_ABORT = 4;
+  MARK_KIND_RETAKE = 5;
+}
+
+// An episode mark placed by a human actor (relayed from the media plane's
+// MarkEventPacket onto the session timeline).
+message MarkEvent {
+  MarkKind kind = 1;
+  ActorRef actor = 2;
+  string note = 3;
+}
+
+// Non-fatal safety-relevant transitions. These are deliberately NOT faults
+// (they render as "holding" / "resumed", not a red banner). Numeric lineage:
+// internal FaultKind 15/16/17.
+enum SafetyTransitionKind {
+  SAFETY_TRANSITION_KIND_UNSPECIFIED = 0;
+  // A command-staleness gap was absorbed by holding position (energized)
+  // instead of stopping; lease and authorization persist.
+  SAFETY_TRANSITION_KIND_COMMAND_HOLD = 1;
+  // A physical stop-controller latch was auto-cleared and the command
+  // retried (recorded, non-fatal).
+  SAFETY_TRANSITION_KIND_AUTO_RE_ENABLE = 2;
+  // An e-stop was acknowledged and cleared; re-energizing still requires an
+  // explicit re-enable.
+  SAFETY_TRANSITION_KIND_ESTOP_RESUMED = 3;
+}
+
+message SafetyTransition {
+  SafetyTransitionKind kind = 1;
+  string detail = 2;
+}
+
+// ---------------------------------------------------------------------------
+// Sub-events
+// ---------------------------------------------------------------------------
+
+message StateTransition {
+  EpisodeState from = 1;
+  EpisodeState to = 2;
+  string reason = 3;
+  // Set iff to == EPISODE_STATE_TERMINAL.
+  TerminalOutcome outcome = 4;
+}
+
+enum ClaimEventKind {
+  CLAIM_EVENT_KIND_UNSPECIFIED = 0;
+  CLAIM_EVENT_KIND_REQUESTED = 1;
+  CLAIM_EVENT_KIND_GRANTED = 2;
+  CLAIM_EVENT_KIND_DENIED = 3;
+  CLAIM_EVENT_KIND_RELEASED = 4;
+}
+
+message ClaimEvent {
+  ClaimEventKind kind = 1;
+  Claim claim = 2;
+  string detail = 3;
+}
+
+enum LeaseEventKind {
+  LEASE_EVENT_KIND_UNSPECIFIED = 0;
+  LEASE_EVENT_KIND_ACQUIRED = 1;
+  LEASE_EVENT_KIND_DENIED = 2;
+  LEASE_EVENT_KIND_HANDED_OFF = 3;
+  LEASE_EVENT_KIND_RELEASED = 4;
+  LEASE_EVENT_KIND_REVOKED_ALL = 5;  // the e-stop path
+}
+
+message LeaseEvent {
+  LeaseEventKind kind = 1;
+  Lease lease = 2;
+  string detail = 3;
+}
+
+message InterventionEvent {
+  InterventionPhase phase = 1;
+  string claim_id = 2;
+}
+
+// A tripwire fired and REQUESTED a verb through the declared control
+// contract. Tripwires never act directly and never claim to be an envelope.
+message TripwireEvent {
+  string name = 1;
+  string detail = 2;
+  Verb requested_verb = 3;
+  map<string, string> evidence = 4;
+}
+
+message GateModeChange {
+  GateMode from = 1;
+  GateMode to = 2;
+  string reason = 3;
+}
+
+// Runtime dual-write detection (N14). During any bypass on an advisory-lease
+// integration the intervenor knows exactly what it commanded; sustained
+// divergence between commanded trajectory and proprioception means either the
+// envelope clamped it or someone else is writing. On detection: freeze via
+// hold(), alert, and record this event with the divergence trace. This
+// converts the dual-writer scenario from silent corruption into a loud,
+// diagnosable incident — the most an advisory lease can honestly offer.
+message DualWriteDetected {
+  string detail = 1;
+  double divergence_metric = 2;
+  int64 window_ns = 3;
+  // Reference to the persisted divergence trace (an ArchiveRef.ref_id in the
+  // sidecar's incident clips).
+  string trace_ref = 4;
+  Verb action_taken = 5;
+}
+
+message JudgmentAttached {
+  Judgment judgment = 1;
+}
+
+// ---------------------------------------------------------------------------
+// The event stream
+// ---------------------------------------------------------------------------
+
+// The single episode-scoped event type. The sidecar's `events`, the local
+// recorder's event channel, and the control plane's GateActions stream all
+// carry exactly this message — one vocabulary, three transports.
+message EpisodeEvent {
+  int64 t_ns = 1;
+  string episode_id = 2;
+  oneof event {
+    StateTransition state = 3;
+    ClaimEvent claim = 4;
+    LeaseEvent lease = 5;
+    InterventionEvent intervention = 6;
+    TripwireEvent tripwire = 7;
+    Fault fault = 8;
+    GateModeChange gate = 9;
+    DualWriteDetected dual_write = 10;
+    GrantStatusChange grant = 11;
+    ResetVerification reset_verification = 12;
+    JudgmentAttached judgment = 13;
+    SafetyTransition safety = 14;
+    MarkEvent mark = 15;
+  }
+}
