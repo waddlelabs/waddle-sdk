@@ -25,6 +25,7 @@ waddle-conformance = { path = "crates/waddle-conformance", version = "0.1.0" }
 
 # proto pipeline (no system protoc: protox is a pure-Rust compiler)
 prost = "0.14"
+prost-reflect = { version = "0.16", features = ["serde"] }
 prost-build = "0.14"
 protox = "0.9"
 tonic = { version = "0.14", default-features = false }

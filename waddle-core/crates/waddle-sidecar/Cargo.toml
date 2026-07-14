@@ -5,9 +5,23 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Waddle reference implementation: sidecar"
+description = "Waddle sidecar: the per-episode semantic record — builder, canonical proto3 JSON, atomic writer, local MCAP recorder, incident ring, Reference-mode resolvers"
 
 [dependencies]
+waddle-types = { workspace = true }
+mcap = { workspace = true }
+prost = { workspace = true }
+prost-reflect = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+parking_lot = { workspace = true }
+bytes = { workspace = true }
+sha2 = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+insta = { workspace = true }
 
 [lints]
 workspace = true

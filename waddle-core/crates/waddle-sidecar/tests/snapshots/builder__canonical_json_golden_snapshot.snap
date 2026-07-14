@@ -1,0 +1,358 @@
+---
+source: crates/waddle-sidecar/tests/builder.rs
+expression: value
+---
+{
+  "audit": {
+    "state": "AUDIT_STATE_NOT_RETAINED"
+  },
+  "bounds": {
+    "tEndNs": "3760000000000",
+    "tStartNs": "3700000000000"
+  },
+  "cellId": "cell-a",
+  "claims": [
+    {
+      "claim": {
+        "actor": {
+          "displayName": "Waddle teleoperator 347",
+          "id": "top-347",
+          "kind": "ACTOR_KIND_TELEOPERATOR"
+        },
+        "claimId": "claim-01a",
+        "episodeId": "int-builder-01",
+        "handoff": {
+          "immediate": {
+            "blendNs": "300000000"
+          }
+        },
+        "sourceName": "teleop",
+        "spaces": [
+          "SPACE_KIND_EE_POSE_DELTA"
+        ],
+        "tGrantedNs": "3721800000000"
+      },
+      "span": {
+        "tEndNs": "3741400000000",
+        "tStartNs": "3721800000000"
+      }
+    }
+  ],
+  "clockAnchor": {
+    "monotonicNs": "3600000000000",
+    "unixNs": "1784000000000000000"
+  },
+  "episodeId": "int-builder-01",
+  "events": [
+    {
+      "episodeId": "int-builder-01",
+      "state": {
+        "reason": "episode_open",
+        "to": "EPISODE_STATE_RESETTING"
+      },
+      "tNs": "3700000000000"
+    },
+    {
+      "episodeId": "int-builder-01",
+      "lease": {
+        "kind": "LEASE_EVENT_KIND_ACQUIRED",
+        "lease": {
+          "enforcement": "LEASE_ENFORCEMENT_ENFORCED",
+          "holderClientId": "customer-loop",
+          "leaseId": "lease-a1f3",
+          "tAcquiredNs": "3700000000000"
+        }
+      },
+      "tNs": "3700000000000"
+    },
+    {
+      "episodeId": "int-builder-01",
+      "state": {
+        "from": "EPISODE_STATE_RESETTING",
+        "reason": "reset verified (blocking)",
+        "to": "EPISODE_STATE_READY"
+      },
+      "tNs": "3703000000000"
+    },
+    {
+      "episodeId": "int-builder-01",
+      "state": {
+        "from": "EPISODE_STATE_READY",
+        "reason": "first gated action",
+        "to": "EPISODE_STATE_RUNNING"
+      },
+      "tNs": "3704000000000"
+    },
+    {
+      "claim": {
+        "claim": {
+          "actor": {
+            "displayName": "Waddle teleoperator 347",
+            "id": "top-347",
+            "kind": "ACTOR_KIND_TELEOPERATOR"
+          },
+          "claimId": "claim-01a",
+          "episodeId": "int-builder-01",
+          "handoff": {
+            "immediate": {
+              "blendNs": "300000000"
+            }
+          },
+          "sourceName": "teleop",
+          "spaces": [
+            "SPACE_KIND_EE_POSE_DELTA"
+          ],
+          "tGrantedNs": "3721800000000"
+        },
+        "kind": "CLAIM_EVENT_KIND_GRANTED"
+      },
+      "episodeId": "int-builder-01",
+      "tNs": "3721800000000"
+    },
+    {
+      "episodeId": "int-builder-01",
+      "intervention": {
+        "claimId": "claim-01a",
+        "phase": "INTERVENTION_PHASE_ENGAGE"
+      },
+      "tNs": "3722000000000"
+    },
+    {
+      "episodeId": "int-builder-01",
+      "state": {
+        "from": "EPISODE_STATE_RUNNING",
+        "reason": "engage",
+        "to": "EPISODE_STATE_INTERVENTION"
+      },
+      "tNs": "3722100000000"
+    },
+    {
+      "episodeId": "int-builder-01",
+      "lease": {
+        "kind": "LEASE_EVENT_KIND_HANDED_OFF",
+        "lease": {
+          "enforcement": "LEASE_ENFORCEMENT_ENFORCED",
+          "holderClientId": "teleop-console-7",
+          "leaseId": "lease-b27c",
+          "tAcquiredNs": "3722500000000"
+        }
+      },
+      "tNs": "3722500000000"
+    },
+    {
+      "episodeId": "int-builder-01",
+      "gate": {
+        "from": "GATE_MODE_PASSTHROUGH",
+        "reason": "engage complete",
+        "to": "GATE_MODE_INTERVENTION"
+      },
+      "tNs": "3722500000000"
+    },
+    {
+      "episodeId": "int-builder-01",
+      "intervention": {
+        "claimId": "claim-01a",
+        "phase": "INTERVENTION_PHASE_SETTLE"
+      },
+      "tNs": "3722600000000"
+    },
+    {
+      "episodeId": "int-builder-01",
+      "intervention": {
+        "claimId": "claim-01a",
+        "phase": "INTERVENTION_PHASE_RELEASE"
+      },
+      "tNs": "3740500000000"
+    },
+    {
+      "episodeId": "int-builder-01",
+      "lease": {
+        "kind": "LEASE_EVENT_KIND_HANDED_OFF",
+        "lease": {
+          "enforcement": "LEASE_ENFORCEMENT_ENFORCED",
+          "holderClientId": "customer-loop",
+          "leaseId": "lease-c390",
+          "tAcquiredNs": "3741000000000"
+        }
+      },
+      "tNs": "3741000000000"
+    },
+    {
+      "episodeId": "int-builder-01",
+      "gate": {
+        "from": "GATE_MODE_INTERVENTION",
+        "reason": "release complete",
+        "to": "GATE_MODE_PASSTHROUGH"
+      },
+      "tNs": "3741000000000"
+    },
+    {
+      "claim": {
+        "claim": {
+          "actor": {
+            "displayName": "Waddle teleoperator 347",
+            "id": "top-347",
+            "kind": "ACTOR_KIND_TELEOPERATOR"
+          },
+          "claimId": "claim-01a",
+          "episodeId": "int-builder-01",
+          "handoff": {
+            "immediate": {
+              "blendNs": "300000000"
+            }
+          },
+          "sourceName": "teleop",
+          "spaces": [
+            "SPACE_KIND_EE_POSE_DELTA"
+          ],
+          "tGrantedNs": "3721800000000"
+        },
+        "kind": "CLAIM_EVENT_KIND_RELEASED"
+      },
+      "episodeId": "int-builder-01",
+      "tNs": "3741400000000"
+    },
+    {
+      "episodeId": "int-builder-01",
+      "state": {
+        "from": "EPISODE_STATE_INTERVENTION",
+        "reason": "release",
+        "to": "EPISODE_STATE_RUNNING"
+      },
+      "tNs": "3741500000000"
+    },
+    {
+      "episodeId": "int-builder-01",
+      "state": {
+        "from": "EPISODE_STATE_RUNNING",
+        "reason": "judge_result: done",
+        "to": "EPISODE_STATE_TERMINAL"
+      },
+      "tNs": "3760000000000"
+    }
+  ],
+  "interventions": [
+    {
+      "claimId": "claim-01a",
+      "phases": [
+        {
+          "phase": "INTERVENTION_PHASE_ENGAGE",
+          "span": {
+            "tEndNs": "3722600000000",
+            "tStartNs": "3722000000000"
+          }
+        },
+        {
+          "phase": "INTERVENTION_PHASE_SETTLE",
+          "span": {
+            "tEndNs": "3740500000000",
+            "tStartNs": "3722600000000"
+          }
+        },
+        {
+          "phase": "INTERVENTION_PHASE_RELEASE",
+          "span": {
+            "tEndNs": "3741500000000",
+            "tStartNs": "3740500000000"
+          }
+        }
+      ],
+      "span": {
+        "tEndNs": "3741500000000",
+        "tStartNs": "3722000000000"
+      }
+    }
+  ],
+  "leases": [
+    {
+      "lease": {
+        "enforcement": "LEASE_ENFORCEMENT_ENFORCED",
+        "holderClientId": "customer-loop",
+        "leaseId": "lease-a1f3",
+        "tAcquiredNs": "3700000000000"
+      },
+      "span": {
+        "tEndNs": "3722500000000",
+        "tStartNs": "3700000000000"
+      }
+    },
+    {
+      "lease": {
+        "enforcement": "LEASE_ENFORCEMENT_ENFORCED",
+        "holderClientId": "teleop-console-7",
+        "leaseId": "lease-b27c",
+        "tAcquiredNs": "3722500000000"
+      },
+      "span": {
+        "tEndNs": "3741000000000",
+        "tStartNs": "3722500000000"
+      }
+    },
+    {
+      "lease": {
+        "enforcement": "LEASE_ENFORCEMENT_ENFORCED",
+        "holderClientId": "customer-loop",
+        "leaseId": "lease-c390",
+        "tAcquiredNs": "3741000000000"
+      },
+      "span": {
+        "tEndNs": "3760000000000",
+        "tStartNs": "3741000000000"
+      }
+    }
+  ],
+  "metricsClass": "METRICS_CLASS_STANDARD",
+  "outcome": "TERMINAL_OUTCOME_SUCCESS",
+  "outcomeDetail": "judge_result: done",
+  "project": "towel-folding-pilot",
+  "provenance": [
+    {
+      "span": {
+        "tEndNs": "3722500000000",
+        "tStartNs": "3700000000000"
+      },
+      "tag": {
+        "kind": "PROVENANCE_KIND_POLICY"
+      }
+    },
+    {
+      "span": {
+        "tEndNs": "3741000000000",
+        "tStartNs": "3722500000000"
+      },
+      "tag": {
+        "actor": {
+          "displayName": "Waddle teleoperator 347",
+          "id": "top-347",
+          "kind": "ACTOR_KIND_TELEOPERATOR"
+        },
+        "kind": "PROVENANCE_KIND_TELEOP"
+      }
+    },
+    {
+      "span": {
+        "tEndNs": "3760000000000",
+        "tStartNs": "3741000000000"
+      },
+      "tag": {
+        "kind": "PROVENANCE_KIND_POLICY"
+      }
+    }
+  ],
+  "recordingMode": "RECORDING_MODE_LOCAL",
+  "resetVerification": {
+    "judgeId": "reset-scene-v1",
+    "judgeVersion": "2026.05",
+    "mode": "RESET_VERIFICATION_MODE_BLOCKING",
+    "score": 0.95,
+    "tNs": "3702800000000",
+    "verified": true
+  },
+  "robotDescriptionDigest": "sha256:8c1d29f4a7b3e6d05f92c84ab1e7d3960f45ac28b91d7e30c6a54f18d2e9b07c",
+  "robotId": "yam-01",
+  "sessionId": "sess-7d41f0",
+  "sidecarVersion": 1,
+  "tEndUnixNs": "1784000160000000000",
+  "tStartUnixNs": "1784000100000000000",
+  "task": "fold_towel_half"
+}

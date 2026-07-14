@@ -1,13 +1,25 @@
 [package]
 name = "waddle-codecs"
+# Independently versioned (N4): codecs ship on their own cadence, tracking
+# upstream wire formats, and are NOT lockstep with the workspace crates.
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Waddle reference implementation: codecs"
+description = "Waddle codec layer: dialect descriptors, wire codecs, signature pinning, and the certification registry (N4/N15)"
 
+# Dependency invariant (CI-checked): `cargo tree -p waddle-codecs -e normal`
+# must never contain tokio, waddle-fsm, waddle-gate, or waddle-runtime.
+# waddle-codecs may depend only on waddle-types + serde-adjacent leaves (N4).
 [dependencies]
+waddle-types = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+semver = { workspace = true }
+bytes = { workspace = true }
+sha2 = { workspace = true }
 
 [lints]
 workspace = true
