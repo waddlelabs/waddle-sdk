@@ -1,0 +1,9 @@
+# The two-clock discipline (see CLAUDE.md and waddle-protocol/docs/GLOSSARY.md):
+# only waddle-ingest may read OS clocks, and only SessionClock may mint Stamps.
+# Production had a data-corruption postmortem about epoch values derived after
+# the fact; these lints make the discipline structural.
+disallowed-methods = [
+    { path = "std::time::Instant::now", reason = "only waddle-ingest::SessionClock reads OS clocks; take a Stamp or a &dyn Clock instead", allow-invalid = true },
+    { path = "std::time::SystemTime::now", reason = "only waddle-ingest::SessionClock reads OS clocks; take a Stamp or a &dyn Clock instead", allow-invalid = true },
+    { path = "waddle_types::time::Stamp::from_parts_unchecked", reason = "Stamps are minted by waddle-ingest::SessionClock (prod) or FakeClock (tests) only", allow-invalid = true },
+]

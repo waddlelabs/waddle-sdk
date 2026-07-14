@@ -1,0 +1,67 @@
+# GLOSSARY — the Waddle vocabulary
+
+This document is **normative**. It is the **single vocabulary, internal and
+external**: the same word means the same thing in the cell codebase, the
+protocol, every SDK and frontend, and customer-facing documentation. It is
+**frozen in `waddle-protocol` v0** and is amended **only by reviewed pull
+request** against this repository. Every word in code, comments, fixtures, and
+docs MUST conform to this table; where any other document (including the
+design rationale under `rationale/`) diverges, this document wins.
+
+Amendment tags *(N#)* refer to the audit tables in
+`rationale/waddle_api_design_doc.md` §6.6 and §7.5. All of N1–N18 are applied
+in v0.
+
+## The glossary
+
+| Term | Meaning | Strength / owner | Protocol surface |
+|---|---|---|---|
+| **gate** | the single point where Waddle touches the integrator's loop; passthrough nominally, action source under a claim; bypass covers claimed-while-stalled (the SDK drives `send` directly while the integrator's loop receives no-op markers) | SDK / core | `GateMode`, `GateModeChange` (episode.proto); `GateStatus`, `GateClientMessage`, `GateServerMessage`, `ControlPlane.GateActions` (services.proto); `NoopMarker`, `NoopReason` (control.proto) |
+| **claim** | orchestration-level assignment of an episode or work item to an actor (teleoperator, hosted agent, custom source) — the work plane's `work_claim` | control plane / work plane | `Claim`, `ClaimEvent`, `ClaimEventKind` (episode.proto); `ClaimSpan` (sidecar.proto); `ClaimEpisodeRequest`/`ClaimEpisodeResponse`, `ClaimDirective` (services.proto) |
+| **lease** | actuation-level single-writer right on the robot; takeover = lease handoff under an existing claim. The **enforcement point** — *enforced* (a mux or proxy physically owns the only write path) vs *advisory* (in-process callables) — is recorded at grant negotiation *(N7)* | hardware owner (the integrator's stack, or the cell safety owner in Waddle-operated cells) | `Lease`, `LeaseAcquire`, `LeaseRelease`, `LeaseHandoff`, `LeaseResponse`, `LeaseEvent` (episode.proto); `LeaseEnforcement` (descriptors.proto); `LeaseSpan` (sidecar.proto); `ControlPlane.HandoffLease` (services.proto); `FAULT_KIND_LEASE_DENIED` (control.proto) |
+| **grant** | a permission the integrator extends to Waddle — pause, takeover, reset, per-verb guarantees. Declared at init, negotiated per connection, **validated continuously at runtime** via safely-measurable proxy signals with verbs re-measured only in safe windows *(N6, N11)*; violated grants are demoted with an actor-visible event, never mid-lease. The **noun sense is canonical** *(N1)*: the work plane's `work_grant` is the verb — awarding a claim — not an instance of this Grant | integrator declares; control plane plans against | `Grant`, `Verb` (descriptors.proto); `GrantStatus`, `GrantStatusChange` (episode.proto); `GrantState`, `MeasurementWindow`, `ProxySignals`, `VerbMeasurement` (services.proto) |
+| **envelope** | the hard, non-bypassable safety gate chain (limits, keep-outs, e-stop, watchdogs) | hardware owner; Waddle is always subject to it, **never the provider of it** | `FAULT_KIND_ENVELOPE_REJECT` (control.proto). Deliberately no Waddle-defined message: the envelope is not Waddle's to define |
+| **tripwire** | Waddle-side local watchdog (bounds, margins, heartbeats, deadmen) that *requests* holds through the declared verbs; weaker than an envelope by definition | SDK / relay | `TripwireEvent` (episode.proto); `FAULT_KIND_TRIPWIRE_HOLD` (control.proto) |
+| **episode** | one rollout attempt: reset-verified start → terminal outcome (`success \| failure \| abort \| aborted_retake`); the unit of the sidecar. "Supervised rollout" is prose for an episode run with supervision enabled, not a distinct protocol object | protocol | `Episode`, `EpisodeState`, `TerminalOutcome`, `StateTransition`, `EpisodeEvent` (episode.proto); the durable record is `Sidecar` (sidecar.proto) |
+| **intervention lifecycle** | engage → settle → release \| retake; engage is a lease handoff per the declared handoff policy, release returns the lease with the policy re-primed on fresh observations | protocol (from the production intervention system) | `InterventionPhase`, `InterventionEvent` (episode.proto); `InterventionSpan` (sidecar.proto); `HandoffPolicy` (control.proto) |
+| **provenance** | per-action origin tag (`policy \| teleop \| agent \| custom:<name>`), written at gate time; carries authorization semantics: a directly-initiated human action MAY bypass a motion-approval gate, **never** the envelope, the lease, or the e-stop | protocol | `ProvenanceKind`, `ProvenanceTag` (control.proto); `ProvenanceSpan` (sidecar.proto) |
+| **sidecar** | the small semantic record per episode (boundaries, task, claims, provenance spans, events, labels); bulk bytes may live in integrator storage via references | protocol | `Sidecar`, `ArchiveRef`, `Span`, `RecordingMode` (sidecar.proto) |
+| **corpus** | the project-level index of episodes, sidecars, labels, and archive references; the queryable data product (`waddle.corpus`) | control plane (Local mode: cell/SDK) | no `Corpus` message in v0; it consumes `Sidecar`, `MetricsClass`, `AuditRecord`, `RecordingMode` (sidecar.proto) |
+| **capability** | *reserved for robot skills* (code-as-policy actions a cell can perform). Never used for permissions (those are **grants**) or protocol versioning (those are **feature flags**) | cell / control plane | none in v0 — deliberately |
+| **feature flag** | a protocol-evolution unit negotiated per connection; how pinned SDKs and an evolving backend coexist | protocol | `RegisterRequest.feature_flags`, `RegisterResponse.accepted_feature_flags`, `NegotiateRequest.feature_flags`, `NegotiateResponse.accepted_feature_flags` (services.proto); registry in `docs/VERSIONING.md` |
+| **teleoperator** *(N17)* | a Waddle work-plane human: a remote intervenor driving through a console on the media plane. Unqualified "operator" is **banned in normative text** — see Reserved words | control plane / work plane | `ActorKind.ACTOR_KIND_TELEOPERATOR` (descriptors.proto); `PROVENANCE_KIND_TELEOP` (control.proto); `TeleopStreamPacket`, `ClutchTransition` (media.proto) |
+| **site operator** *(N17)* | a customer-side human physically at the cell (floor staff, the integrator's ops team). Different console, different authority, different liability than a teleoperator | integrator | `ActorKind.ACTOR_KIND_SITE_OPERATOR` (descriptors.proto) |
+| **born-claimed** *(N18)* | an episode that starts life under an active claim — a retake successor opened under the still-held claim. Its own metrics class: excluded from mean-time-to-intervention, counted in the retake-continuation rate | protocol | `Episode.born_claimed`, `Episode.parent_episode_id` (episode.proto); `Sidecar.born_claimed`, `MetricsClass.METRICS_CLASS_BORN_CLAIMED`, `RetakeLink` (sidecar.proto) |
+| **retake** *(N2)* | terminate the current episode and open a successor under the still-held claim, for when the intervenor deems the attempt unsalvageable. The predecessor closes `ABORTED_RETAKE` and is never silently folded into success-rate denominators: every Corpus summary reports the retake count, and SR is presented both including and excluding retakes | protocol | `TERMINAL_OUTCOME_ABORTED_RETAKE`, `INTERVENTION_PHASE_RETAKE`, `MARK_KIND_RETAKE` (episode.proto); `RetakeLink` (sidecar.proto); `CLAIM_DIRECTIVE_KIND_RETAKE` (services.proto) |
+
+## Reserved words
+
+The following words are load-bearing and restricted. Violating these rules in
+a public artifact, API, or normative document is a defect, not a style choice.
+
+- **bridge** — never appears in a public artifact or doc. It is an internal
+  process name, and in public robotics vocabulary it means a protocol
+  translator (rosbridge, foxglove_bridge), which would misidentify the proxy
+  and the ROS node. Public surfaces say **relay** and **control plane**.
+- **broker** — never appears in a public artifact or doc. It is an internal
+  process name (the cell safety owner). Public surfaces say **relay** and
+  **control plane**; the concept it implements is described as the
+  **envelope** and an **enforced lease**.
+- **agent** — never a component name (no "Waddle Agent" daemon or binary):
+  it collides with the literal agents Waddle hosts. The word refers only to
+  those hosted actors themselves — `ACTOR_KIND_AGENT` (descriptors.proto),
+  `PROVENANCE_KIND_AGENT` (control.proto).
+- **operator**, unqualified — banned in normative text *(N17)*. Write
+  **teleoperator** (Waddle work-plane human) or **site operator**
+  (customer-side human at the cell). The two roles have different consoles,
+  different authority, and different liability; cite `ActorKind` when the
+  distinction is wire-relevant.
+- **capability** — robot skills only. Permissions are **grants**;
+  protocol-evolution units are **feature flags**.
+- **grant**, verb sense — the noun sense (a declared permission) is canonical
+  *(N1)*. The work plane's `work_grant` RPC is the verb — awarding a claim —
+  and is not an instance of the protocol's `Grant`. If that ambiguity ever
+  bites, the escape hatch is renaming the message (`Grant` →
+  `StandingGrant`), never the wire RPC.
+- **relay** — belongs to `waddle-relay`. The phone app is the *companion*,
+  never a relay.

@@ -1,0 +1,29 @@
+[package]
+name = "waddle-types"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Waddle protocol types: prost-generated wire types plus the validated domain layer (units, frames, clocks)"
+
+[features]
+default = ["serde"]
+serde = ["dep:serde"]
+
+[dependencies]
+prost = { workspace = true }
+thiserror = { workspace = true }
+smallvec = { workspace = true }
+serde = { workspace = true, optional = true, features = ["rc"] }
+
+[build-dependencies]
+protox = { workspace = true }
+prost-build = { workspace = true }
+prost = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

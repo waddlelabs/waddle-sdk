@@ -1,0 +1,69 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "xtask"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.90"
+license = "Apache-2.0"
+repository = "https://github.com/waddlelabs/waddle-sdk"
+authors = ["Waddle Labs"]
+
+[workspace.dependencies]
+# internal
+waddle-types = { path = "crates/waddle-types", version = "0.1.0" }
+waddle-fsm = { path = "crates/waddle-fsm", version = "0.1.0" }
+waddle-gate = { path = "crates/waddle-gate", version = "0.1.0" }
+waddle-tripwire = { path = "crates/waddle-tripwire", version = "0.1.0" }
+waddle-ingest = { path = "crates/waddle-ingest", version = "0.1.0" }
+waddle-media = { path = "crates/waddle-media", version = "0.1.0" }
+waddle-controlplane = { path = "crates/waddle-controlplane", version = "0.1.0" }
+waddle-sidecar = { path = "crates/waddle-sidecar", version = "0.1.0" }
+waddle-codecs = { path = "crates/waddle-codecs", version = "0.1.0" }
+waddle-runtime = { path = "crates/waddle-runtime", version = "0.1.0" }
+waddle-conformance = { path = "crates/waddle-conformance", version = "0.1.0" }
+
+# proto pipeline (no system protoc: protox is a pure-Rust compiler)
+prost = "0.14"
+prost-build = "0.14"
+protox = "0.9"
+tonic = { version = "0.14", default-features = false }
+tonic-prost = "0.14"
+tonic-prost-build = "0.14"
+
+# core
+arc-swap = "1.9"
+rtrb = "0.3"
+parking_lot = "0.12"
+smallvec = { version = "1", features = ["union", "const_generics", "serde"] }
+thiserror = "2"
+bytes = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1.52", features = ["rt-multi-thread", "sync", "time", "macros"] }
+mcap = "0.25"
+uuid = { version = "1", features = ["v4"] }
+semver = { version = "1", features = ["serde"] }
+sha2 = "0.10"
+tracing = "0.1"
+
+# dev
+proptest = "1.11"
+criterion = "0.8"
+insta = { version = "1.48", features = ["json"] }
+tempfile = "3"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+undocumented_unsafe_blocks = "deny"
+disallowed_methods = "deny"
+
+[profile.release]
+lto = "thin"
+debug = 1
+
+[profile.bench]
+inherits = "release"
