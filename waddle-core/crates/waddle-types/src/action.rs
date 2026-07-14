@@ -14,6 +14,12 @@ use crate::space::{ActionSpace, SpaceSpec};
 /// allocation on the gate fast path.
 pub type ActionValues = SmallVec<[f64; 16]>;
 
+/// Inline capacity 32 covers bimanual proprio (14 pos + 14 vel + 2 grippers
+/// = 30) without heap allocation on the gate fast path. Wider observations
+/// spill to the heap: correct but no longer allocation-free — a documented
+/// degradation, never truncation.
+pub type ObsValues = SmallVec<[f64; 32]>;
+
 /// One flattened action step.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

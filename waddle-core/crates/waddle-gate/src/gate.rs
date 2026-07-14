@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use parking_lot::Mutex;
-use waddle_types::action::ActionValues;
+use waddle_types::action::{ActionValues, ObsValues};
 use waddle_types::time::Clock;
 use waddle_types::{MonoNs, ProvenanceTag};
 
@@ -154,6 +154,7 @@ impl<C: Clock> Gate<C> {
         decision: GateDecision,
         provenance: ProvenanceTag,
         action: Option<OwnedAction>,
+        obs: Option<ObsValues>,
     ) {
         let rec = GateRecord {
             stamp,
@@ -161,6 +162,7 @@ impl<C: Clock> Gate<C> {
             decision,
             provenance,
             action,
+            obs,
         };
         // Never block the caller's loop: a full ring drops loudly.
         if self.records_tx.push(rec).is_err() {
@@ -169,12 +171,22 @@ impl<C: Clock> Gate<C> {
     }
 
     /// The synchronous fast path. Passthrough: one plan load, one clock
-    /// read, one ring push — wait-free, and allocation-free up to 16 dims.
-    pub fn gate(&mut self, values: &[f64], gripper: Option<f64>) -> GateOutput {
+    /// read, one ring push — wait-free, and allocation-free up to 16 action
+    /// dims and 32 obs dims.
+    pub fn gate(
+        &mut self,
+        values: &[f64],
+        gripper: Option<f64>,
+        obs: Option<&[f64]>,
+    ) -> GateOutput {
         let stamp = self.clock.stamp_now();
         let now = stamp.mono_ns();
         self.shared.stats.record(now);
         self.seq += 1;
+
+        // Recorded on every decision arm: the (obs, action) pair is the
+        // contract, whatever the gate decides.
+        let obs = obs.map(ObsValues::from_slice);
 
         let plan = self.shared.plan.load();
         match &plan.mode {
@@ -189,16 +201,23 @@ impl<C: Clock> Gate<C> {
                     GateDecision::Pass,
                     provenance.clone(),
                     Some(action.clone()),
+                    obs,
                 );
                 self.last_action = Some(action);
                 GateOutput::Pass { provenance }
             }
             PlanMode::Held => {
-                self.record(stamp, GateDecision::Hold, ProvenanceTag::policy(), None);
+                self.record(
+                    stamp,
+                    GateDecision::Hold,
+                    ProvenanceTag::policy(),
+                    None,
+                    obs,
+                );
                 GateOutput::Hold
             }
             PlanMode::Bypass { provenance } => {
-                self.record(stamp, GateDecision::Noop, provenance.clone(), None);
+                self.record(stamp, GateDecision::Noop, provenance.clone(), None, obs);
                 GateOutput::Noop {
                     provenance: provenance.clone(),
                 }
@@ -207,7 +226,7 @@ impl<C: Clock> Gate<C> {
                 let due = self.shared.stream.lock().pop_due(now);
                 match due {
                     None => {
-                        self.record(stamp, GateDecision::Hold, provenance.clone(), None);
+                        self.record(stamp, GateDecision::Hold, provenance.clone(), None, obs);
                         GateOutput::Hold
                     }
                     Some(target) => {
@@ -222,6 +241,7 @@ impl<C: Clock> Gate<C> {
                                 GateDecision::Blend,
                                 provenance.clone(),
                                 Some(blended.clone()),
+                                obs,
                             );
                             GateOutput::Blend {
                                 action: blended,
@@ -235,6 +255,7 @@ impl<C: Clock> Gate<C> {
                                 GateDecision::Substitute,
                                 provenance.clone(),
                                 Some(target.clone()),
+                                obs,
                             );
                             GateOutput::Substitute {
                                 action: target,
@@ -291,11 +312,38 @@ mod tests {
     fn passthrough_passes_and_records() {
         let (mut gate, _shared, _tx, mut records, clock) = setup();
         clock.advance(1_000);
-        let out = gate.gate(&[1.0, 2.0], Some(0.5));
+        let out = gate.gate(&[1.0, 2.0], Some(0.5), None);
         assert!(matches!(out, GateOutput::Pass { .. }));
         let rec = records.pop().unwrap();
         assert_eq!(rec.decision, GateDecision::Pass);
         assert_eq!(rec.action.unwrap().values.as_slice(), &[1.0, 2.0]);
+    }
+
+    #[test]
+    fn records_carry_the_obs_on_every_decision_arm() {
+        let (mut gate, shared, _tx, mut records, clock) = setup();
+        let obs = [0.5f64; 30];
+
+        clock.advance(1_000);
+        gate.gate(&[1.0, 2.0], None, Some(&obs));
+        let rec = records.pop().unwrap();
+        assert_eq!(rec.decision, GateDecision::Pass);
+        assert_eq!(rec.obs.unwrap().as_slice(), &obs);
+
+        // Hold (claimed, stream empty) records the obs too: it is still a
+        // tick the caller observed.
+        shared.store_plan(GatePlan {
+            mode: PlanMode::Claimed {
+                provenance: teleop_tag(),
+                blend: None,
+            },
+            since: MonoNs(0),
+        });
+        clock.advance(1_000);
+        gate.gate(&[1.0, 2.0], None, Some(&obs));
+        let rec = records.pop().unwrap();
+        assert_eq!(rec.decision, GateDecision::Hold);
+        assert_eq!(rec.obs.unwrap().as_slice(), &obs);
     }
 
     #[test]
@@ -309,7 +357,7 @@ mod tests {
             since: MonoNs(0),
         });
         clock.advance(1_000);
-        assert!(matches!(gate.gate(&[0.0], None), GateOutput::Hold));
+        assert!(matches!(gate.gate(&[0.0], None, None), GateOutput::Hold));
 
         tx.push(TimedAction {
             seq: 1,
@@ -321,7 +369,7 @@ mod tests {
         })
         .unwrap();
         clock.advance(1_000);
-        match gate.gate(&[0.0], None) {
+        match gate.gate(&[0.0], None, None) {
             GateOutput::Substitute { action, provenance } => {
                 assert_eq!(action.values.as_slice(), &[9.0]);
                 assert_eq!(provenance.provenance, Provenance::Teleop);
@@ -335,7 +383,7 @@ mod tests {
         let (mut gate, shared, mut tx, _records, clock) = setup();
         // Establish a blend anchor at 0.0.
         clock.advance(1_000);
-        gate.gate(&[0.0], None);
+        gate.gate(&[0.0], None, None);
 
         shared.store_plan(GatePlan {
             mode: PlanMode::Claimed {
@@ -358,7 +406,7 @@ mod tests {
         })
         .unwrap();
         clock.set(MonoNs(1_500)); // halfway through the window
-        match gate.gate(&[0.0], None) {
+        match gate.gate(&[0.0], None, None) {
             GateOutput::Blend {
                 action, progress, ..
             } => {
@@ -379,7 +427,10 @@ mod tests {
             since: MonoNs(0),
         });
         clock.advance(1_000);
-        assert!(matches!(gate.gate(&[1.0], None), GateOutput::Noop { .. }));
+        assert!(matches!(
+            gate.gate(&[1.0], None, None),
+            GateOutput::Noop { .. }
+        ));
         assert_eq!(records.pop().unwrap().decision, GateDecision::Noop);
     }
 }

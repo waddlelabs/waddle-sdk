@@ -95,12 +95,19 @@ fn nominal_episode_records_sidecar_and_mcap() {
 
     let mut ep = session.start_episode("stack the blocks").unwrap();
     let id = ep.id().clone();
+    let obs = [0.9f64, 0.8, 0.7];
     for _ in 0..50 {
-        let out = ep.gate(&[0.1, 0.2, 0.3], None);
+        let out = ep.gate(&[0.1, 0.2, 0.3], None, Some(&obs));
         assert!(matches!(out, GateOutput::Pass { .. }));
     }
     let records = ep.drain_records();
     assert!(records.len() >= 50);
+    assert!(
+        records
+            .iter()
+            .all(|r| r.obs.as_ref().is_some_and(|o| o.as_slice() == obs)),
+        "every gate record must carry the caller's obs"
+    );
 
     ep.terminate(TerminalOutcome::Success, "test done");
     assert!(ep.done());
@@ -137,7 +144,10 @@ fn engage_substitutes_teleop_actions_then_release_restores_passthrough() {
 
     let mut ep = session.start_episode("towel").unwrap();
     for _ in 0..5 {
-        assert!(matches!(ep.gate(&[0.0; 3], None), GateOutput::Pass { .. }));
+        assert!(matches!(
+            ep.gate(&[0.0; 3], None, None),
+            GateOutput::Pass { .. }
+        ));
     }
     wait_for(&session, |s| {
         matches!(s.episode_state, Some(Phase::Running))
@@ -179,7 +189,7 @@ fn engage_substitutes_teleop_actions_then_release_restores_passthrough() {
     let mut substituted = false;
     while Instant::now() < deadline {
         push_pose(0.7);
-        match ep.gate(&[0.0; 3], None) {
+        match ep.gate(&[0.0; 3], None, None) {
             GateOutput::Substitute { provenance, .. } | GateOutput::Blend { provenance, .. } => {
                 assert_eq!(provenance.provenance, Provenance::Teleop);
                 substituted = true;
@@ -197,7 +207,10 @@ fn engage_substitutes_teleop_actions_then_release_restores_passthrough() {
         at: waddle_types::MonoNs(0),
     });
     wait_for(&session, |s| s.gate_mode == Some(GateMode::Passthrough));
-    assert!(matches!(ep.gate(&[0.0; 3], None), GateOutput::Pass { .. }));
+    assert!(matches!(
+        ep.gate(&[0.0; 3], None, None),
+        GateOutput::Pass { .. }
+    ));
 
     ep.terminate(TerminalOutcome::Success, "done");
     session.shutdown();
@@ -234,7 +247,7 @@ fn claimed_while_stalled_bypass_drives_send_directly() {
 
     let mut ep = session.start_episode("bypass").unwrap();
     for _ in 0..5 {
-        let _ = ep.gate(&[0.0; 3], None);
+        let _ = ep.gate(&[0.0; 3], None, None);
     }
     grant_and_engage(&session, "claim-b", "teleop", ActorKind::Teleoperator);
     wait_for(&session, |s| s.gate_mode == Some(GateMode::Intervention));
@@ -307,7 +320,7 @@ fn claimed_while_stalled_bypass_drives_send_directly() {
     }
 
     // A late caller tick observes a NOOP marker (spectator contract).
-    match ep.gate(&[0.0; 3], None) {
+    match ep.gate(&[0.0; 3], None, None) {
         GateOutput::Noop { provenance } => {
             assert_eq!(provenance.provenance, Provenance::Teleop);
         }

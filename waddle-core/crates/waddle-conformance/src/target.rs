@@ -711,7 +711,9 @@ impl Target {
         {
             let gp = self.gate_mut("gate_tick")?;
             gp.clock.set(MonoNs(now));
-            let output = gp.gate.gate(&values, gripper);
+            // The scenario schema has no `obs` field on gate_tick yet;
+            // adding one is protocol work.
+            let output = gp.gate.gate(&values, gripper, None);
             match &output {
                 GateOutput::Pass { .. } => gp.last_commanded = Some(values.clone()),
                 GateOutput::Substitute { action, .. } | GateOutput::Blend { action, .. } => {

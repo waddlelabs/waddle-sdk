@@ -16,8 +16,17 @@ fn bench_passthrough(c: &mut Criterion) {
 
     c.bench_function("gate_passthrough_14dof", |b| {
         b.iter(|| {
-            let out = gate.gate(black_box(&action), Some(0.5));
+            let out = gate.gate(black_box(&action), Some(0.5), None);
             // Keep the record ring from filling (a drop is a different path).
+            while records_rx.pop().is_ok() {}
+            black_box(out)
+        });
+    });
+
+    let obs = [0.1f64; 30];
+    c.bench_function("gate_passthrough_14dof_obs30", |b| {
+        b.iter(|| {
+            let out = gate.gate(black_box(&action), Some(0.5), Some(black_box(&obs)));
             while records_rx.pop().is_ok() {}
             black_box(out)
         });

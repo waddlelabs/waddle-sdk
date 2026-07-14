@@ -446,13 +446,21 @@ impl Episode {
     }
 
     /// The synchronous fast path: log + tripwires + claim consultation.
-    pub fn gate(&mut self, values: &[f64], gripper: Option<f64>) -> GateOutput {
+    /// `obs` is the observation the caller computed this tick's action from;
+    /// it rides into the gate record so Pass records are training pairs and
+    /// Substitute/Blend records are pre-labeled DAgger pairs.
+    pub fn gate(
+        &mut self,
+        values: &[f64],
+        gripper: Option<f64>,
+        obs: Option<&[f64]>,
+    ) -> GateOutput {
         if !self.started {
             self.started = true;
             let at = self.session.inner.clock.stamp_now().mono_ns();
             self.session.inject(SessionEvent::GateTick { at });
         }
-        self.gate.gate(values, gripper)
+        self.gate.gate(values, gripper, obs)
     }
 
     /// Drain the gate records accumulated since the last call (recording

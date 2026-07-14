@@ -1,7 +1,7 @@
-//! The passthrough fast path must be allocation-free (≤ 16 dims) and fast.
-//! A counting allocator proves the former; a generous wall-clock smoke bound
-//! (p50 < 5 µs over 1M calls) guards against gross regressions without CI
-//! flake.
+//! The passthrough fast path must be allocation-free (≤ 16 action dims,
+//! ≤ 32 obs dims) and fast. A counting allocator proves the former; a
+//! generous wall-clock smoke bound (p50 < 5 µs over 1M calls) guards
+//! against gross regressions without CI flake.
 
 // The counting allocator requires implementing GlobalAlloc (unsafe by
 // nature); confined to this test binary.
@@ -42,11 +42,12 @@ fn passthrough_is_allocation_free_and_fast() {
     let (shared, _stream_tx) = GateShared::new(GatePlan::passthrough(MonoNs(0)), 64, 0);
     let (mut gate, mut records_rx) = Gate::new(shared, clock.clone(), 4096);
     let action = [0.25f64; 14];
+    let obs = [0.5f64; 30];
 
     // Warm up (first call may lazily initialize).
     for _ in 0..1_000 {
         clock.advance(1_000);
-        let _ = gate.gate(&action, Some(0.5));
+        let _ = gate.gate(&action, Some(0.5), Some(&obs));
     }
     while records_rx.pop().is_ok() {}
 
@@ -56,7 +57,7 @@ fn passthrough_is_allocation_free_and_fast() {
     let start = std::time::Instant::now();
     for i in 0..CALLS {
         clock.advance(1_000);
-        let out = gate.gate(&action, Some(0.5));
+        let out = gate.gate(&action, Some(0.5), Some(&obs));
         assert!(matches!(out, GateOutput::Pass { .. }));
         // Drain periodically so the ring never fills (drop path ≠ fast path).
         if i % 1024 == 0 {
@@ -77,4 +78,26 @@ fn passthrough_is_allocation_free_and_fast() {
         mean_ns < 5_000,
         "passthrough mean {mean_ns}ns exceeded the 5µs smoke bound"
     );
+}
+
+/// Observations wider than the 32-dim inline bound spill to the heap:
+/// correct (never truncated) but no longer allocation-free. This test
+/// documents the spill by round-tripping a 64-dim obs into the record.
+#[test]
+fn wide_obs_spills_but_round_trips() {
+    use waddle_gate::{Gate, GateOutput, GatePlan, gate::GateShared};
+    use waddle_ingest::FakeClock;
+    use waddle_types::MonoNs;
+
+    let clock = FakeClock::default();
+    let (shared, _stream_tx) = GateShared::new(GatePlan::passthrough(MonoNs(0)), 64, 0);
+    let (mut gate, mut records_rx) = Gate::new(shared, clock.clone(), 64);
+    let action = [0.25f64; 14];
+    let obs: Vec<f64> = (0..64).map(f64::from).collect();
+
+    clock.advance(1_000);
+    let out = gate.gate(&action, None, Some(&obs));
+    assert!(matches!(out, GateOutput::Pass { .. }));
+    let rec = records_rx.pop().unwrap();
+    assert_eq!(rec.obs.unwrap().as_slice(), obs.as_slice());
 }

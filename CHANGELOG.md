@@ -12,6 +12,13 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 ## [Unreleased]
 
 ### Added
+- **waddle-core (obs logging)**: `gate()` now takes the observation the
+  caller computed its action from (`obs: Option<&[f64]>`) and records it on
+  every decision arm — Pass records are the training pairs;
+  Substitute/Blend records are pre-labeled DAgger pairs. New
+  `waddle_types::ObsValues` (inline to 32 dims; wider observations spill to
+  the heap, never truncate); `GateRecord.obs`. The alloc-free proof now
+  covers a 30-dim obs; new `gate_passthrough_14dof_obs30` bench.
 - **waddle-core M2 (`waddle-fsm`)**: pure Mealy session machine (episode ×
   claim × lease × grant health) implementing every FSM.md guard row — reset
   verification modes (N12), retake → born-claimed successor under the
@@ -57,6 +64,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   generated header and linked to `libwaddle.so`.
 
 ### Changed
+- **Signatures (pre-1.0 / ABI unstable per N5)**: `Gate::gate`,
+  `Episode::gate`, and the C ABI `waddle_gate` gained the obs parameter
+  (`obs`/`obs_len` on the ABI; NULL or 0 = no observation). Header
+  regenerated.
 - Six behavioral fixtures aligned to implementation emission order where
   FSM.md deliberately does not pin intra-step order (each documented in its
   fixture description); `backend_partition_degradation` now asserts buffer

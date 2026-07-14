@@ -118,8 +118,10 @@ Future artifacts (Python `waddle-sdk` frontend via PyO3/maturin, `waddle-proxy`,
   `waddle-codecs` is independently versioned and may depend only on `waddle-types` +
   serde (N4).
 - **The gate fast path is sacred.** `Gate::gate()` must remain synchronous, wait-free
-  in passthrough, and allocation-free. Benchmarks in `waddle-gate` track this; don't
-  add locks, syscalls, or allocations to that path.
+  in passthrough, and allocation-free up to 16 action dims and 32 obs dims (wider
+  observations spill to the heap — a documented degradation, never truncation).
+  Benchmarks in `waddle-gate` track this; don't add locks, syscalls, or allocations
+  to that path.
 
 ## Working conventions
 

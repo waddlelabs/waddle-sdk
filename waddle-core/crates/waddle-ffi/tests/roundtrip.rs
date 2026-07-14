@@ -100,14 +100,24 @@ fn full_round_trip_with_recording() {
     assert_eq!(unsafe { waddle_episode_done(episode) }, 0);
 
     let action = [0.1f64, 0.2, 0.3];
+    let obs = [0.9f64, 0.8, 0.7];
     let mut out = std::mem::MaybeUninit::<WaddleGateResult>::uninit();
-    for _ in 0..20 {
+    for i in 0..20 {
+        // Exercise both obs arms across the ABI: with a real observation
+        // and with the NULL = none convention.
+        let (obs_ptr, obs_len) = if i % 2 == 0 {
+            (obs.as_ptr(), obs.len())
+        } else {
+            (std::ptr::null(), 0)
+        };
         let rc = unsafe {
             waddle_gate(
                 episode,
                 action.as_ptr(),
                 action.len(),
                 std::ptr::null(),
+                obs_ptr,
+                obs_len,
                 out.as_mut_ptr(),
             )
         };

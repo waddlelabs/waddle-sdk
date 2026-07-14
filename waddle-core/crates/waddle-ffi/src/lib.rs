@@ -326,13 +326,17 @@ pub unsafe extern "C" fn waddle_episode_start(
 }
 
 /// The gate fast path. `values`/`values_len` is the policy action;
-/// `gripper` may be NULL. Writes the decision to `out`.
+/// `gripper` may be NULL. `obs`/`obs_len` is the observation the action was
+/// computed from (NULL or 0 = no observation; logged into the gate record).
+/// Writes the decision to `out`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn waddle_gate(
     episode: *mut WaddleEpisode,
     values: *const f64,
     values_len: usize,
     gripper: *const f64,
+    obs: *const f64,
+    obs_len: usize,
     out: *mut WaddleGateResult,
 ) -> i32 {
     if episode.is_null() || values.is_null() || out.is_null() {
@@ -349,7 +353,13 @@ pub unsafe extern "C" fn waddle_gate(
         } else {
             Some(unsafe { *gripper })
         };
-        let output = handle.episode.gate(action, gripper);
+        // SAFETY: obs is NULL or points to obs_len doubles.
+        let obs = if obs.is_null() || obs_len == 0 {
+            None
+        } else {
+            Some(unsafe { std::slice::from_raw_parts(obs, obs_len) })
+        };
+        let output = handle.episode.gate(action, gripper, obs);
 
         // SAFETY: out checked non-null; fully initialized below.
         let result = unsafe { &mut *out };
