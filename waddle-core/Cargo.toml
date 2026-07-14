@@ -28,9 +28,6 @@ prost = "0.14"
 prost-reflect = { version = "0.16", features = ["serde"] }
 prost-build = "0.14"
 protox = "0.9"
-tonic = { version = "0.14", default-features = false }
-tonic-prost = "0.14"
-tonic-prost-build = "0.14"
 
 # core
 arc-swap = "1.9"
@@ -41,7 +38,6 @@ thiserror = "2"
 bytes = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1.52", features = ["rt-multi-thread", "sync", "time", "macros"] }
 mcap = "0.25"
 uuid = { version = "1", features = ["v4"] }
 semver = { version = "1", features = ["serde"] }
@@ -52,6 +48,7 @@ tracing = "0.1"
 proptest = "1.11"
 criterion = "0.8"
 insta = { version = "1.48", features = ["json"] }
+cbindgen = "0.29"
 tempfile = "3"
 
 [workspace.lints.rust]

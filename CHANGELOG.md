@@ -36,9 +36,32 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   client thread (backoff reconnect, in-order offline replay, N11 heartbeat
   proxy signals, N7/N13 negotiation) over a scriptable in-memory transport;
   MediaPlane trait + loopback with the media.proto topic table.
-- **waddle-core M7 (partial, `waddle-runtime`)**: five-verb dispatch thread —
-  serialized integrator callables, catch_unwind isolation, latency sampling
-  for heartbeat proxies, estop priority path that never queues.
+- **waddle-core M7 (`waddle-conformance`, `waddle-runtime`)**: the
+  behavioral-scenario runner implementing `conformance/scenario-format.md`
+  exactly (canonical-JSON matching via prost-reflect, virtual time, FSM and
+  gate targets with a reference bypass pump) — **all 12 protocol scenarios
+  pass with zero changes to waddle-fsm/waddle-gate**, plus mutation tests
+  proving the runner detects wrong values/order/forbidden emissions; the
+  runtime Session/Episode API — five-verb dispatch thread (serialized,
+  catch_unwind, estop priority path), single-writer FSM reducer interpreting
+  effects, per-episode sidecar + MCAP finalization, blocking-through-reset
+  episode open, bypass pump, media intake, plane pump, ordered shutdown.
+  e2e: nominal recording, teleop engage/substitute/release, and the
+  claimed-while-stalled NOOP-spectator contract.
+- **waddle-core M8 (`waddle-ffi` → libwaddle, `xtask`)**: the C ABI — opaque
+  handles, pb-bytes configuration, five-verb C callbacks invoked only on the
+  dispatch thread, status codes + thread-local `waddle_last_error`,
+  panic-proof entry points; `cargo run -p xtask -- gen-header` emits
+  `target/include/waddle.h` (marked `WADDLE_ABI_UNSTABLE` per N5); verified
+  by Rust round-trip tests and a real C caller compiled with gcc against the
+  generated header and linked to `libwaddle.so`.
+
+### Changed
+- Six behavioral fixtures aligned to implementation emission order where
+  FSM.md deliberately does not pin intra-step order (each documented in its
+  fixture description); `backend_partition_degradation` now asserts buffer
+  counts + reconnect re-promotion (transport replay is waddle-controlplane's
+  tested contract).
 - **waddle-protocol v0**: the six schemas (`descriptors`, `control`,
   `episode`, `sidecar`, `services`, `media` under `proto/waddle/v0/`) with
   amendments N1–N18 applied; normative docs (GLOSSARY.md, FSM.md with

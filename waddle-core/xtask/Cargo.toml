@@ -6,9 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish = false
-description = "Workspace tooling: cbindgen header generation"
+description = "Workspace tooling: cbindgen header generation for libwaddle"
 
 [dependencies]
+cbindgen = { workspace = true }
 
 [lints]
 workspace = true

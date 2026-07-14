@@ -62,11 +62,17 @@ Future artifacts (Python `waddle-sdk` frontend via PyO3/maturin, `waddle-proxy`,
   `crates/waddle-types/build.rs` via `protox` (pure Rust). Generated code is never
   checked in, in either repo.
 - Everything Rust runs from `waddle-core/`:
-  - `cargo build --workspace` / `cargo test --workspace`
+  - `cargo build --workspace` / `cargo test --workspace` (includes the
+    conformance suite: `cargo test -p waddle-conformance -- --nocapture`
+    prints per-scenario PASS/FAIL)
   - `cargo clippy --workspace --all-targets -- -D warnings` and `cargo fmt --check`
     must be clean before any commit.
-  - Feature-gated paths: `cargo check -p waddle-runtime --features grpc` (and
-    `livekit` once implemented) must keep compiling.
+  - Feature-gated stubs: `cargo check -p waddle-runtime --features grpc,livekit`
+    must keep compiling (both are typed stubs until those integrations land).
+  - `cargo run -p xtask -- gen-header` emits the libwaddle C header to
+    `target/include/waddle.h` (a CI artifact, never checked in).
+  - `cargo bench -p waddle-gate` tracks the gate fast path (sub-µs target;
+    an alloc-free proof also runs as a normal test).
 - Quick proto syntax check without cargo:
   `uv run --with grpcio-tools python -m grpc_tools.protoc --descriptor_set_out=/dev/null -Iwaddle-protocol/proto waddle-protocol/proto/waddle/v0/*.proto`
 
