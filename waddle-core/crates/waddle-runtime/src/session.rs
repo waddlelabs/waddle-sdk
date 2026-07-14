@@ -365,11 +365,34 @@ impl Session {
 
     /// Open an episode and block through the reset pipeline (the design
     /// contract: `rollout()` does not yield until the scene is valid).
+    ///
+    /// One active episode per session (N18): opening while another episode
+    /// is live returns [`RuntimeError::EpisodeActive`] instead of injecting
+    /// an event the FSM would reject (a guard, not a synchronization
+    /// primitive — concurrent callers race to the FSM, which stays the
+    /// authority).
     pub fn start_episode(&self, task: &str) -> Result<Episode, RuntimeError> {
+        {
+            let s = self.inner.mirror.read();
+            if s.episode_id.is_some() && !matches!(s.episode_state, Some(Phase::Terminal(_))) {
+                return Err(RuntimeError::EpisodeActive);
+            }
+        }
         let id = EpisodeId::new(format!("ep-{}", uuid::Uuid::new_v4().simple()));
         // Written before the open event so the reducer stamps this task into
         // the episode's sidecar (retake successors inherit it).
         *self.inner.task_slot.lock() = task.to_owned();
+        // The fresh record ring goes into the hand-off slot BEFORE the open
+        // event: the reducer adopts it (discarding any stale predecessor
+        // ring) no later than the wake that opens this episode's recording,
+        // so a stale Episode handle can never write into this episode's
+        // MCAP. The ring stays empty until this call returns.
+        let (gate, records_rx) = Gate::new(
+            self.inner.gate_shared.clone(),
+            self.inner.clock.clone(),
+            8192,
+        );
+        *self.inner.record_slot.lock() = Some(records_rx);
         let now = self.inner.clock.stamp_now().mono_ns();
         self.inject(SessionEvent::EpisodeOpen {
             id: id.clone(),
@@ -409,20 +432,43 @@ impl Session {
             }
         }
 
-        let (gate, records_rx) = Gate::new(
-            self.inner.gate_shared.clone(),
-            self.inner.clock.clone(),
-            8192,
-        );
-        // Hand the consumer end to the reducer, which drains it onto the
-        // episode's MCAP (the reducer owns all recording).
-        *self.inner.record_slot.lock() = Some(records_rx);
         Ok(Episode {
             id,
             session: self.clone(),
             gate,
             started: false,
         })
+    }
+
+    /// True once `id` is no longer the live, non-terminal episode — because
+    /// it terminated, a successor replaced it, or the session shut down.
+    #[must_use]
+    pub fn episode_done(&self, id: &EpisodeId) -> bool {
+        let s = self.inner.mirror.read();
+        s.shutdown
+            || s.episode_id.as_ref() != Some(id)
+            || matches!(s.episode_state, Some(Phase::Terminal(_)))
+    }
+
+    /// Terminate episode `id` and block until the core confirms the
+    /// terminal state. A no-op when `id` is not the live episode — a stale
+    /// handle must never terminate a successor or a later episode.
+    pub fn terminate_episode(&self, id: &EpisodeId, outcome: TerminalOutcome, reason: &str) {
+        if self.episode_done(id) {
+            return;
+        }
+        let at = self.inner.clock.stamp_now().mono_ns();
+        self.inject(SessionEvent::Terminate {
+            outcome,
+            reason: reason.to_owned(),
+            at,
+        });
+        let id = id.clone();
+        self.inner.mirror.wait_until(|s| {
+            s.shutdown
+                || s.episode_id.as_ref() != Some(&id)
+                || matches!(s.episode_state, Some(Phase::Terminal(_)))
+        });
     }
 
     #[must_use]
@@ -484,13 +530,11 @@ impl Episode {
         self.gate.gate(values, gripper, obs)
     }
 
-    /// Flips when a judge, a directive, a timeout, or `terminate` ends the
-    /// episode.
+    /// Flips when a judge, a directive, a timeout, `terminate`, or session
+    /// shutdown ends the episode.
     #[must_use]
     pub fn done(&self) -> bool {
-        let s = self.session.inner.mirror.read();
-        s.episode_id.as_ref() != Some(&self.id)
-            || matches!(s.episode_state, Some(Phase::Terminal(_)))
+        self.session.episode_done(&self.id)
     }
 
     #[must_use]
@@ -498,18 +542,21 @@ impl Episode {
         self.session.inner.mirror.read().outcome
     }
 
+    /// Gate records dropped because the ring filled (the recording fell
+    /// behind the caller's loop). Nonzero means training-data loss.
+    #[must_use]
+    pub fn records_dropped(&self) -> u64 {
+        self.gate.records_dropped()
+    }
+
+    /// The session this episode runs on.
+    #[must_use]
+    pub fn session(&self) -> &Session {
+        &self.session
+    }
+
     pub fn terminate(&self, outcome: TerminalOutcome, reason: &str) {
-        let at = self.session.inner.clock.stamp_now().mono_ns();
-        self.session.inject(SessionEvent::Terminate {
-            outcome,
-            reason: reason.to_owned(),
-            at,
-        });
-        let id = self.id.clone();
-        self.session.inner.mirror.wait_until(|s| {
-            s.episode_id.as_ref() != Some(&id)
-                || matches!(s.episode_state, Some(Phase::Terminal(_)))
-        });
+        self.session.terminate_episode(&self.id, outcome, reason);
     }
 }
 

@@ -11,6 +11,12 @@ use waddle_types::{HandoffPolicy, LeaseEnforcement, TerminalOutcome};
 /// A borrowed-or-owned float64 row extracted from a Python object:
 /// zero-copy for contiguous float64 ndarrays, an owned copy for lists and
 /// other dtypes (the documented slow path).
+///
+/// The zero-copy borrow is held across the core gate call. Sound because
+/// the caller keeps the GIL for the whole call (gate never detaches) on a
+/// GIL build (abi3): no Python thread can mutate the buffer mid-call. A
+/// free-threaded (nogil) build would invalidate this reasoning — revisit
+/// before shipping one.
 pub(crate) enum F64s<'py> {
     Array(PyReadonlyArray1<'py, f64>),
     Owned(Vec<f64>),

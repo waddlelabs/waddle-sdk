@@ -103,6 +103,10 @@ def test_intervention(tmp_path):
         assert substituted is not None, "teleop stream never substituted"
         assert isinstance(substituted, np.ndarray)
         assert substituted.dtype == np.float64
+        # The open runtime carries the RAW teleop stream (a twist: 6 values);
+        # retargeting into the declared 3-joint space is the closed side's
+        # job. Documented shape, not a promise.
+        assert substituted.shape == (6,)
         assert ep.last_gate.kind in ("substitute", "blend")
         assert ep.last_gate.provenance == "teleop"
 
@@ -159,3 +163,15 @@ def test_init_twice_raises(tmp_path):
     waddle.init("py-twice", _robot(), _control())
     with pytest.raises(RuntimeError, match="shutdown"):
         waddle.init("py-twice-2", _robot(), _control())
+
+
+def test_nested_rollout_raises(tmp_path):
+    waddle.init("py-nested", _robot(), _control())
+    with waddle.rollout(task="outer") as ep:
+        ep.gate([0.0, 0.0, 0.0])
+        # One active episode per session: the guard errors instead of
+        # destroying the live episode's recording.
+        with pytest.raises(RuntimeError, match="already active"):
+            waddle.rollout(task="inner")
+        assert not ep.done
+        ep.terminate("success")

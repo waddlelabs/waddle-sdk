@@ -6,7 +6,7 @@
 //! |------------------------------------|---------------------------------|-----|
 //! | `Session::start_episode`           | reset pipeline + mirror condvar | detach (mandatory) |
 //! | `Episode::terminate`               | mirror condvar                  | detach (mandatory) |
-//! | `Session::shutdown`                | joins all threads incl. verb dispatch | detach (mandatory — the verb thread may be inside `Python::try_attach` waiting for the GIL we hold: classic deadlock) |
+//! | `Session::shutdown`                | joins core threads; the verb thread is waited on transitively (the outcome pump only exits once verb dispatch drops its sender) | detach (mandatory — the verb thread may be inside `Python::try_attach` waiting for the GIL we hold: classic deadlock) |
 //! | `Episode::gate`, `done`, `outcome` | nothing                         | keep GIL |
 
 use std::sync::Arc;
@@ -34,6 +34,26 @@ pub(crate) struct PySession {
     /// `waddle._testing` surface drives it).
     testing_far: Option<Mutex<LoopbackFarEnd>>,
     teleop_seq: AtomicU64,
+}
+
+/// Dropping an un-shutdown session must not run the core's blocking
+/// teardown (thread joins, transitively the verb thread) while holding the
+/// GIL — a verb callback mid-`try_attach` would deadlock. Dealloc happens
+/// with the GIL held, so detach around the join. The blessed
+/// `waddle.init`/`waddle.shutdown` path never reaches this (atexit calls
+/// shutdown first); this covers direct `_core.create_session` users.
+impl Drop for PySession {
+    fn drop(&mut self) {
+        if self.closed.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let session = self.inner.clone();
+        if Python::try_attach(|py| py.detach(|| session.shutdown())).is_none() {
+            // Interpreter unavailable (finalization): verb callbacks can no
+            // longer block on the GIL, so joining directly is safe.
+            self.inner.clone().shutdown();
+        }
+    }
 }
 
 impl PySession {

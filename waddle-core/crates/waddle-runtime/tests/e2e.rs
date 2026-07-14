@@ -161,6 +161,38 @@ fn nominal_episode_records_sidecar_and_mcap() {
 }
 
 #[test]
+fn second_open_is_rejected_and_stale_terminate_is_a_no_op() {
+    let send_log: SendLog = Arc::new(Mutex::new(Vec::new()));
+    let session = Session::builder("e2e-guards")
+        .robot(robot())
+        .control(registry(&send_log))
+        .build()
+        .unwrap();
+
+    let mut ep1 = session.start_episode("first").unwrap();
+    let _ = ep1.gate(&[0.0; 3], None, None);
+    // One active episode per session (N18): the guard errors instead of
+    // destroying the live episode's recording and hanging.
+    assert!(matches!(
+        session.start_episode("second"),
+        Err(waddle_runtime::RuntimeError::EpisodeActive)
+    ));
+
+    ep1.terminate(TerminalOutcome::Failure, "done");
+    assert_eq!(ep1.outcome(), Some(TerminalOutcome::Failure));
+
+    // A stale handle never terminates a later episode.
+    let ep2 = session.start_episode("third").unwrap();
+    ep1.terminate(TerminalOutcome::Abort, "stale");
+    assert!(
+        !ep2.done(),
+        "stale terminate must not touch the live episode"
+    );
+    ep2.terminate(TerminalOutcome::Success, "done");
+    session.shutdown();
+}
+
+#[test]
 fn engage_substitutes_teleop_actions_then_release_restores_passthrough() {
     let dir = tempfile::tempdir().unwrap();
     let send_log: SendLog = Arc::new(Mutex::new(Vec::new()));

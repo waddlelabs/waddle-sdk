@@ -25,6 +25,8 @@ pub enum RuntimeError {
     Types(#[from] waddle_types::TypesError),
     #[error("reset failed: {0}")]
     ResetFailed(String),
+    #[error("an episode is already active (one active episode per session)")]
+    EpisodeActive,
     #[error("media plane: {0}")]
     Media(#[from] waddle_media::MediaError),
     #[error("the session is shutting down")]

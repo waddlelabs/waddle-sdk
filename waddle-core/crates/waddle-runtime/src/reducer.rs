@@ -309,14 +309,20 @@ impl Reducer {
     }
 
     /// Drain gate records onto the episode recording. A fresh consumer in
-    /// the slot means a new episode's ring: flush leftovers from the old
-    /// ring first, then adopt the fresh one. Records arriving after the
-    /// episode finalized hit `mcap == None` and are discarded (same policy
-    /// as events).
+    /// the slot means a NEW episode's ring (only `start_episode` places
+    /// one): whatever is left in the old ring was pushed by a stale handle
+    /// after its episode finalized (finalize drains the legitimate tail),
+    /// so it is discarded, never written into the new episode's file. A
+    /// retake successor keeps the same ring — the caller's loop and its
+    /// records carry over. Records arriving after finalize with no new
+    /// episode hit `mcap == None` and are discarded (same policy as
+    /// events).
     fn drain_gate_records(&mut self) {
         let fresh = self.record_slot.lock().take();
         if let Some(fresh) = fresh {
-            self.drain_current_ring();
+            if let Some(rx) = &mut self.records_rx {
+                while rx.pop().is_ok() {}
+            }
             self.records_rx = Some(fresh);
         }
         self.drain_current_ring();
@@ -356,22 +362,25 @@ impl Reducer {
             })),
             ..Default::default()
         };
-        let action = match (rec.decision, &rec.action) {
+        let actions = match (rec.decision, &rec.action) {
             (GateDecision::Pass | GateDecision::Substitute | GateDecision::Blend, Some(action)) => {
                 match unflatten_action(&action.values, action.gripper, &self.space) {
-                    Ok(action) => action,
-                    // A gated action that does not fit the declared space is an
-                    // internal inconsistency; never poison the recording thread.
-                    Err(_) => return,
+                    Ok(action) => vec![action],
+                    // An action left the gate but does not fit the declared
+                    // space (e.g. a raw teleop stream ahead of closed-side
+                    // retargeting). Write the chunk with no decodable action
+                    // rather than skipping the tick, so /waddle/actions stays
+                    // a complete, obs-aligned per-tick trace.
+                    Err(_) => Vec::new(),
                 }
             }
-            (GateDecision::Noop, _) => noop(pb::NoopReason::BypassActive),
-            (GateDecision::Hold, _) => noop(pb::NoopReason::HoldActive),
+            (GateDecision::Noop, _) => vec![noop(pb::NoopReason::BypassActive)],
+            (GateDecision::Hold, _) => vec![noop(pb::NoopReason::HoldActive)],
             // Pass/Substitute/Blend always carry an action.
             (_, None) => return,
         };
         let _ = mcap.write_action(&pb::ActionChunk {
-            actions: vec![action],
+            actions,
             horizon_ns: 0,
             t_emitted_ns: t_ns,
             t_obs_ns: if rec.obs.is_some() { t_ns } else { 0 },

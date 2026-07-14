@@ -124,6 +124,24 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 - The task passed to `Session::start_episode` now reaches the episode
   sidecar (it was previously dropped after the reset hook; sidecars always
   recorded an empty task).
+- Episode-lifecycle hardening (from an adversarial review of this series):
+  `start_episode` while an episode is live now returns
+  `RuntimeError::EpisodeActive` instead of destroying the live episode's
+  recording and blocking forever; a stale `Episode` handle can no longer
+  write records into a later episode's MCAP (the fresh ring reaches the
+  reducer before the open event; stale leftovers are discarded, while
+  retake successors still inherit the caller's ring) or terminate a later
+  episode (`terminate` is a no-op unless the episode is still live);
+  `Episode::done` now also flips on session shutdown, so the tutorial loop
+  cannot spin forever after `waddle.shutdown()`. New
+  `Episode::records_dropped()` surfaces ring overflow (training-data
+  loss). A gated action that does not fit the declared space (raw teleop
+  stream ahead of closed-side retargeting) now records an action-less
+  chunk instead of silently skipping the tick, keeping `/waddle/actions`
+  obs-aligned. The Python shim's `Session` also shuts the core down safely
+  when dropped without `shutdown()`, and `terminate` no longer holds the
+  episode lock across its blocking wait (other threads' `gate`/`done`
+  stay responsive).
 
 ## Stowed changelogs
 

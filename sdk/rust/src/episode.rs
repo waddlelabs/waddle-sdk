@@ -46,12 +46,20 @@ impl GateInfo {
 #[pyclass(name = "Episode", frozen)]
 pub(crate) struct PyEpisode {
     inner: Mutex<waddle_runtime::Episode>,
+    /// Session handle + id copies so `done`/`outcome`/`terminate` never
+    /// take the `inner` mutex: a blocking `terminate` (GIL released) must
+    /// not freeze other Python threads calling `gate`/`done` (which hold
+    /// the GIL while waiting on `inner`).
+    session: waddle_runtime::Session,
+    id: waddle_types::EpisodeId,
     last: Mutex<Option<GateInfo>>,
 }
 
 impl PyEpisode {
     pub(crate) fn new(episode: waddle_runtime::Episode) -> Self {
         Self {
+            session: episode.session().clone(),
+            id: episode.id().clone(),
             inner: Mutex::new(episode),
             last: Mutex::new(None),
         }
@@ -62,13 +70,17 @@ impl PyEpisode {
 impl PyEpisode {
     #[getter]
     fn id(&self) -> String {
-        self.inner.lock().id().to_string()
+        self.id.to_string()
     }
 
     /// The gate: returns what you should send — your own `action` object on
     /// Pass (identity-preserved), a fresh float64 ndarray on
     /// Substitute/Blend, or `None` when you must not send (Noop/Hold).
     /// Synchronous and fast; keeps the GIL (it never blocks).
+    ///
+    /// The record captures the values at call time; mutating the array
+    /// afterwards (before your `send`) makes the dispatched action diverge
+    /// from the recorded one.
     #[pyo3(signature = (action, obs=None, gripper=None))]
     fn gate(
         &self,
@@ -146,25 +158,34 @@ impl PyEpisode {
         self.last.lock().clone()
     }
 
-    /// True once the episode reached a terminal outcome (single read of the
-    /// core mirror).
+    /// True once the episode ended — terminal outcome, a successor replaced
+    /// it, or the session shut down (single read of the core mirror).
     #[getter]
     fn done(&self) -> bool {
-        self.inner.lock().done()
+        self.session.episode_done(&self.id)
     }
 
     /// The terminal outcome as a string, or `None` while running.
     #[getter]
     fn outcome(&self) -> Option<&'static str> {
-        self.inner.lock().outcome().map(outcome_str)
+        self.session.status().outcome.map(outcome_str)
+    }
+
+    /// Gate records dropped because the recording fell behind the loop.
+    /// Nonzero means training-data loss.
+    #[getter]
+    fn records_dropped(&self) -> u64 {
+        self.inner.lock().records_dropped()
     }
 
     /// Terminate with an outcome ("success" | "failure" | "abort"); blocks
-    /// until the core confirms the terminal state (GIL released).
+    /// until the core confirms the terminal state (GIL released). A no-op
+    /// when this episode is no longer the live one — it never terminates a
+    /// successor.
     #[pyo3(signature = (outcome = "abort", reason = ""))]
     fn terminate(&self, py: Python<'_>, outcome: &str, reason: &str) -> PyResult<()> {
         let outcome = parse_outcome(outcome)?;
-        py.detach(|| self.inner.lock().terminate(outcome, reason));
+        py.detach(|| self.session.terminate_episode(&self.id, outcome, reason));
         Ok(())
     }
 }
