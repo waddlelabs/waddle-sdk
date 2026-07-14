@@ -37,6 +37,18 @@ use crate::verbs::{ControlRegistry, VerbDispatch, VerbOutcome};
 /// for scenes reset by hand between episodes; integrations override it.
 pub type ResetHook = Arc<dyn Fn(&str) -> (bool, Option<bool>) + Send + Sync>;
 
+/// Hand-off slot for the gate-record consumer: born on the caller thread
+/// (`Gate::new` inside `start_episode`), consumed by the reducer thread,
+/// which drains it onto the episode's MCAP. A slot rather than a channel:
+/// `SessionEvent` is pure `waddle-fsm` and cannot carry an `rtrb::Consumer`,
+/// and mpsc has no select to multiplex a second channel into the reducer
+/// loop.
+pub(crate) type RecordSlot = Arc<parking_lot::Mutex<Option<rtrb::Consumer<GateRecord>>>>;
+
+/// The current task, written by `start_episode` before the open event so the
+/// reducer stamps it into the episode's records.
+pub(crate) type TaskSlot = Arc<parking_lot::Mutex<String>>;
+
 pub struct SessionBuilder {
     project: String,
     robot: Option<pb::RobotDescription>,
@@ -153,7 +165,6 @@ impl SessionBuilder {
         };
         cfg.grants = robot.grants.clone();
         cfg.space_contains_delta = robot.action_space.contains_delta();
-        let interp = robot.action_space.chunking.interp;
         let dims = robot.action_space.dims();
 
         let (gate_shared, stream_tx) =
@@ -180,6 +191,8 @@ impl SessionBuilder {
 
         let mirror = Mirror::new();
         let (inject_tx, inject_rx) = std::sync::mpsc::channel::<SessionEvent>();
+        let record_slot: RecordSlot = Arc::new(parking_lot::Mutex::new(None));
+        let task_slot: TaskSlot = Arc::new(parking_lot::Mutex::new(String::new()));
 
         // The reducer thread.
         let reducer = Reducer::new(
@@ -192,7 +205,9 @@ impl SessionBuilder {
             self.recording_dir,
             self.project.clone(),
             robot_digest(&robot_pb),
-            interp,
+            robot.action_space.clone(),
+            record_slot.clone(),
+            task_slot.clone(),
         );
         let reducer_tx = inject_tx.clone();
         let reducer_thread = std::thread::Builder::new()
@@ -283,6 +298,8 @@ impl SessionBuilder {
                 gate_shared,
                 mirror,
                 inject_tx,
+                record_slot,
+                task_slot,
                 reset_hook: self.reset_hook,
                 verification_mode: self.verification_mode,
                 threads: parking_lot::Mutex::new(threads),
@@ -311,6 +328,8 @@ struct SessionInner {
     gate_shared: Arc<GateShared>,
     mirror: Arc<Mirror>,
     inject_tx: Sender<SessionEvent>,
+    record_slot: RecordSlot,
+    task_slot: TaskSlot,
     reset_hook: Option<ResetHook>,
     verification_mode: ResetVerificationMode,
     threads: parking_lot::Mutex<Vec<JoinHandle<()>>>,
@@ -348,6 +367,9 @@ impl Session {
     /// contract: `rollout()` does not yield until the scene is valid).
     pub fn start_episode(&self, task: &str) -> Result<Episode, RuntimeError> {
         let id = EpisodeId::new(format!("ep-{}", uuid::Uuid::new_v4().simple()));
+        // Written before the open event so the reducer stamps this task into
+        // the episode's sidecar (retake successors inherit it).
+        *self.inner.task_slot.lock() = task.to_owned();
         let now = self.inner.clock.stamp_now().mono_ns();
         self.inject(SessionEvent::EpisodeOpen {
             id: id.clone(),
@@ -392,11 +414,13 @@ impl Session {
             self.inner.clock.clone(),
             8192,
         );
+        // Hand the consumer end to the reducer, which drains it onto the
+        // episode's MCAP (the reducer owns all recording).
+        *self.inner.record_slot.lock() = Some(records_rx);
         Ok(Episode {
             id,
             session: self.clone(),
             gate,
-            records_rx,
             started: false,
         })
     }
@@ -427,9 +451,6 @@ pub struct Episode {
     id: EpisodeId,
     session: Session,
     gate: Gate<SessionClock>,
-    /// Gate records ring (drained by recording integrations; retained here
-    /// so records are never silently lost).
-    records_rx: rtrb::Consumer<GateRecord>,
     started: bool,
 }
 
@@ -461,16 +482,6 @@ impl Episode {
             self.session.inject(SessionEvent::GateTick { at });
         }
         self.gate.gate(values, gripper, obs)
-    }
-
-    /// Drain the gate records accumulated since the last call (recording
-    /// integrations consume these; the ring drops loudly when full).
-    pub fn drain_records(&mut self) -> Vec<GateRecord> {
-        let mut out = Vec::new();
-        while let Ok(r) = self.records_rx.pop() {
-            out.push(r);
-        }
-        out
     }
 
     /// Flips when a judge, a directive, a timeout, or `terminate` ends the

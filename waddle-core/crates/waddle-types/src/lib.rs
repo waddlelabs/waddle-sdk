@@ -37,7 +37,7 @@ pub mod pb {
 pub const FILE_DESCRIPTOR_SET: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/descriptor_set.bin"));
 
-pub use action::{ActionChunk, ActionValues, ObsValues, Step};
+pub use action::{ActionChunk, ActionValues, ObsValues, Step, unflatten_action};
 pub use error::TypesError;
 pub use grants::{Grant, GrantStatus, LeaseEnforcement, Verb};
 pub use handoff::HandoffPolicy;

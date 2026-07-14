@@ -184,6 +184,106 @@ fn flatten_target(
     }
 }
 
+/// The exact inverse of the flattening above: rebuild a wire action from a
+/// flat row against the declared space. This is the ONE place flat rows
+/// become wire shapes (composite parts in declaration order; poses as
+/// `[x, y, z, qw, qx, qy, qz]`, wxyz on the wire).
+pub fn unflatten_action(
+    values: &[f64],
+    gripper: Option<f64>,
+    space: &ActionSpace,
+) -> Result<pb::Action, TypesError> {
+    let expected = space.dims().ok_or(TypesError::OpaqueNotExecutable)?;
+    if values.len() != expected {
+        return Err(TypesError::DimensionMismatch {
+            expected,
+            got: values.len(),
+        });
+    }
+    let mut cursor = values;
+    let mut action = unflatten_target(&mut cursor, space)?;
+    debug_assert!(cursor.is_empty(), "dims() must equal the consumed width");
+    action.gripper = gripper.map(|position| pb::GripperCommand {
+        position,
+        effort: None,
+    });
+    Ok(action)
+}
+
+fn unflatten_target(cursor: &mut &[f64], space: &ActionSpace) -> Result<pb::Action, TypesError> {
+    // The top-level arity check against dims() guarantees enough values for
+    // every leaf; a short take here would be an internal inconsistency.
+    fn take<'a>(cursor: &mut &'a [f64], n: usize) -> Result<&'a [f64], TypesError> {
+        if cursor.len() < n {
+            return Err(TypesError::DimensionMismatch {
+                expected: n,
+                got: cursor.len(),
+            });
+        }
+        let (head, tail) = cursor.split_at(n);
+        *cursor = tail;
+        Ok(head)
+    }
+    fn twist(v: &[f64]) -> pb::Twist {
+        pb::Twist {
+            linear: Some(pb::Vec3 {
+                x: v[0],
+                y: v[1],
+                z: v[2],
+            }),
+            angular: Some(pb::Vec3 {
+                x: v[3],
+                y: v[4],
+                z: v[5],
+            }),
+        }
+    }
+
+    let target = match &space.spec {
+        SpaceSpec::JointPosition { joints } => pb::action::Target::JointPosition(pb::JointVector {
+            values: take(cursor, joints.len())?.to_vec(),
+        }),
+        SpaceSpec::JointVelocity { joints } => pb::action::Target::JointVelocity(pb::JointVector {
+            values: take(cursor, joints.len())?.to_vec(),
+        }),
+        SpaceSpec::EePoseDelta { .. } => pb::action::Target::EeDelta(twist(take(cursor, 6)?)),
+        SpaceSpec::BaseTwist { .. } => pb::action::Target::BaseTwist(twist(take(cursor, 6)?)),
+        SpaceSpec::EePoseAbs { frame, .. } => {
+            let v = take(cursor, 7)?;
+            pb::action::Target::EeAbsolute(pb::Pose {
+                position: Some(pb::Vec3 {
+                    x: v[0],
+                    y: v[1],
+                    z: v[2],
+                }),
+                // wxyz in the flat layout, wxyz on the wire.
+                rotation: Some(pb::Quat {
+                    w: v[3],
+                    x: v[4],
+                    y: v[5],
+                    z: v[6],
+                }),
+                frame_id: frame.as_str().to_owned(),
+            })
+        }
+        SpaceSpec::Composite { parts } => {
+            let mut out = Vec::with_capacity(parts.len());
+            for (name, part_space) in parts {
+                out.push(pb::composite_action::PartAction {
+                    name: name.clone(),
+                    action: Some(unflatten_target(cursor, part_space)?),
+                });
+            }
+            pb::action::Target::Composite(pb::CompositeAction { parts: out })
+        }
+        SpaceSpec::Opaque { .. } => return Err(TypesError::OpaqueNotExecutable),
+    };
+    Ok(pb::Action {
+        target: Some(target),
+        ..Default::default()
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -322,6 +422,96 @@ mod tests {
         };
         let step = flatten_action(&action, &space).unwrap();
         assert_eq!(step.values.as_slice(), &[1.0, 2.0, 3.0, 0.5, 0.6, 0.7, 0.8]);
+    }
+
+    /// Round-trip property: for every executable space shape,
+    /// `flatten_action(unflatten_action(row)) == row` (and the wire message
+    /// survives a second unflatten identically).
+    #[test]
+    fn unflatten_is_the_exact_inverse_of_flatten() {
+        let ee_abs = ActionSpace::from_pb(&pb::ActionSpace {
+            space: Some(pb::action_space::Space::EeAbsolute(pb::EePoseAbs {
+                frame_id: "base".into(),
+                rotation_encoding: pb::RotationEncoding::QuatWxyz as i32,
+            })),
+            rate_hz: 30.0,
+            chunking: None,
+            gripper: None,
+        })
+        .unwrap();
+        let ee_delta = ActionSpace::from_pb(&pb::ActionSpace {
+            space: Some(pb::action_space::Space::EeDelta(pb::EePoseDelta {
+                frame_id: "base".into(),
+                rotation_encoding: pb::RotationEncoding::Rotvec as i32,
+                delta_frame: pb::DeltaFrame::Base as i32,
+                ..Default::default()
+            })),
+            rate_hz: 30.0,
+            chunking: None,
+            gripper: None,
+        })
+        .unwrap();
+        let cases: Vec<(ActionSpace, Vec<f64>)> = vec![
+            (
+                ActionSpace::from_pb(&joint_space(7)).unwrap(),
+                (0..7).map(f64::from).collect(),
+            ),
+            (ee_delta, vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6]),
+            (ee_abs, vec![1.0, 2.0, 3.0, 0.5, 0.6, 0.7, 0.8]),
+            (bimanual_space(), (0..14).map(f64::from).collect()),
+        ];
+        for (space, row) in cases {
+            for gripper in [None, Some(0.25)] {
+                let action = unflatten_action(&row, gripper, &space).unwrap();
+                let step = flatten_action(&action, &space).unwrap();
+                assert_eq!(step.values.as_slice(), row.as_slice(), "{space:?}");
+                assert_eq!(step.gripper, gripper);
+                // The wire message itself is stable under a second pass.
+                assert_eq!(
+                    unflatten_action(step.values.as_slice(), step.gripper, &space).unwrap(),
+                    action
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn unflatten_composite_emits_parts_in_declaration_order() {
+        let space = bimanual_space();
+        let row: Vec<f64> = [[1.0; 7], [2.0; 7]].concat();
+        let action = unflatten_action(&row, None, &space).unwrap();
+        let Some(pb::action::Target::Composite(c)) = &action.target else {
+            panic!("expected composite target, got {action:?}");
+        };
+        assert_eq!(c.parts[0].name, "left");
+        assert_eq!(c.parts[1].name, "right");
+    }
+
+    #[test]
+    fn unflatten_rejects_dims_mismatch_and_opaque() {
+        let space = ActionSpace::from_pb(&joint_space(7)).unwrap();
+        assert!(matches!(
+            unflatten_action(&[0.0; 6], None, &space),
+            Err(TypesError::DimensionMismatch {
+                expected: 7,
+                got: 6
+            })
+        ));
+
+        let opaque = ActionSpace::from_pb(&pb::ActionSpace {
+            space: Some(pb::action_space::Space::Opaque(pb::Opaque {
+                format_hint: "vendor".into(),
+                dim: Some(4),
+            })),
+            rate_hz: 10.0,
+            chunking: None,
+            gripper: None,
+        })
+        .unwrap();
+        assert!(matches!(
+            unflatten_action(&[0.0; 4], None, &opaque),
+            Err(TypesError::OpaqueNotExecutable)
+        ));
     }
 
     #[test]

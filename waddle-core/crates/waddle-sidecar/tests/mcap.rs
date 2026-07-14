@@ -6,7 +6,9 @@ use std::collections::HashMap;
 
 use prost::Message as _;
 use waddle_sidecar::McapEpisodeWriter;
-use waddle_sidecar::mcaprec::{ACTIONS_TOPIC, CLOCK_ANCHOR_METADATA, EVENTS_TOPIC};
+use waddle_sidecar::mcaprec::{
+    ACTIONS_TOPIC, CLOCK_ANCHOR_METADATA, EVENTS_TOPIC, OBSERVATIONS_TOPIC,
+};
 use waddle_types::pb::v0 as pb;
 use waddle_types::time::{ClockAnchor, EpochNs, MonoNs};
 
@@ -40,6 +42,18 @@ fn chunk(t_emitted_ns: i64) -> pb::ActionChunk {
     }
 }
 
+fn observation(t_ns: i64) -> pb::ObservationUpdate {
+    pb::ObservationUpdate {
+        t_ns,
+        payload: Some(pb::observation_update::Payload::Proprio(
+            pb::ProprioSample {
+                joint_pos: vec![0.9, 0.8, 0.7],
+                ..Default::default()
+            },
+        )),
+    }
+}
+
 #[test]
 fn mcap_round_trip() {
     let dir = tempfile::tempdir().unwrap();
@@ -54,6 +68,9 @@ fn mcap_round_trip() {
         writer.write_event(&event(t)).unwrap();
     }
     writer.write_action(&chunk(3_700_150_000_000)).unwrap();
+    writer
+        .write_observation(&observation(3_700_140_000_000))
+        .unwrap();
     writer.finish().unwrap();
 
     let buf = std::fs::read(&path).unwrap();
@@ -67,7 +84,7 @@ fn mcap_round_trip() {
             .or_default()
             .push(message);
     }
-    assert_eq!(by_topic.len(), 2);
+    assert_eq!(by_topic.len(), 3);
     let events = &by_topic[EVENTS_TOPIC];
     assert_eq!(events.len(), 3);
     assert_eq!(events[0].log_time, 3_700_000_000_000);
@@ -92,6 +109,16 @@ fn mcap_round_trip() {
     );
     let decoded = pb::ActionChunk::decode(actions[0].data.as_ref()).unwrap();
     assert_eq!(decoded, chunk(3_700_150_000_000));
+
+    let observations = &by_topic[OBSERVATIONS_TOPIC];
+    assert_eq!(observations.len(), 1);
+    assert_eq!(observations[0].log_time, 3_700_140_000_000);
+    assert_eq!(
+        observations[0].channel.schema.as_ref().unwrap().name,
+        "waddle.v0.ObservationUpdate"
+    );
+    let decoded = pb::ObservationUpdate::decode(observations[0].data.as_ref()).unwrap();
+    assert_eq!(decoded, observation(3_700_140_000_000));
 
     // Per-channel sequence numbers are monotone from 0.
     let seqs: Vec<u32> = events.iter().map(|m| m.sequence).collect();
@@ -118,8 +145,12 @@ fn mcap_round_trip() {
         .values()
         .map(|c| c.topic.as_str())
         .collect();
-    assert!(topics.contains(&EVENTS_TOPIC) && topics.contains(&ACTIONS_TOPIC));
+    assert!(
+        topics.contains(&EVENTS_TOPIC)
+            && topics.contains(&ACTIONS_TOPIC)
+            && topics.contains(&OBSERVATIONS_TOPIC)
+    );
     let stats = summary.stats.as_ref().unwrap();
-    assert_eq!(stats.message_count, 4);
+    assert_eq!(stats.message_count, 5);
     assert_eq!(stats.metadata_count, 1);
 }

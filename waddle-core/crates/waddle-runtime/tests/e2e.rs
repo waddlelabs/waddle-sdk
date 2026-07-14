@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
+use prost::Message as _;
 use waddle_fsm::Phase;
 use waddle_gate::gate::GateOutput;
 use waddle_media::{DataTopic, LoopbackMedia};
@@ -100,15 +101,6 @@ fn nominal_episode_records_sidecar_and_mcap() {
         let out = ep.gate(&[0.1, 0.2, 0.3], None, Some(&obs));
         assert!(matches!(out, GateOutput::Pass { .. }));
     }
-    let records = ep.drain_records();
-    assert!(records.len() >= 50);
-    assert!(
-        records
-            .iter()
-            .all(|r| r.obs.as_ref().is_some_and(|o| o.as_slice() == obs)),
-        "every gate record must carry the caller's obs"
-    );
-
     ep.terminate(TerminalOutcome::Success, "test done");
     assert!(ep.done());
     session.shutdown();
@@ -120,13 +112,52 @@ fn nominal_episode_records_sidecar_and_mcap() {
             .unwrap();
     assert_eq!(sidecar.outcome, pb::TerminalOutcome::Success as i32);
     assert_eq!(sidecar.robot_id, "e2e-01");
+    assert_eq!(sidecar.task, "stack the blocks");
     assert!(sidecar.bounds.is_some());
     assert!(
         sidecar.t_start_unix_ns > 1_500_000_000_000_000_000,
         "epoch twin captured at stamp time"
     );
-    assert!(dir.path().join(format!("{id}.mcap")).exists());
     assert!(dir.path().join("manifest.jsonl").exists());
+
+    // The reducer persisted every gated tick to the episode MCAP: the
+    // (obs, action) pairs land on /waddle/observations + /waddle/actions.
+    let buf = std::fs::read(dir.path().join(format!("{id}.mcap"))).unwrap();
+    let mut actions = Vec::new();
+    let mut observations = Vec::new();
+    for message in mcap::MessageStream::new(&buf).unwrap() {
+        let message = message.unwrap();
+        match message.channel.topic.as_str() {
+            waddle_sidecar::mcaprec::ACTIONS_TOPIC => {
+                actions.push(pb::ActionChunk::decode(message.data.as_ref()).unwrap());
+            }
+            waddle_sidecar::mcaprec::OBSERVATIONS_TOPIC => {
+                observations.push(pb::ObservationUpdate::decode(message.data.as_ref()).unwrap());
+            }
+            _ => {}
+        }
+    }
+    assert!(actions.len() >= 50, "got {} action chunks", actions.len());
+    assert!(
+        observations.len() >= 50,
+        "got {} observations",
+        observations.len()
+    );
+    let chunk = &actions[0];
+    assert_eq!(chunk.source_id, "waddle.gate");
+    assert_eq!(chunk.provenance.as_ref().unwrap().kind, {
+        pb::ProvenanceKind::Policy as i32
+    });
+    assert_eq!(
+        chunk.actions[0].target,
+        Some(pb::action::Target::JointPosition(pb::JointVector {
+            values: vec![0.1, 0.2, 0.3],
+        }))
+    );
+    let Some(pb::observation_update::Payload::Proprio(proprio)) = &observations[0].payload else {
+        panic!("expected a proprio payload");
+    };
+    assert_eq!(proprio.joint_pos, obs);
 }
 
 #[test]

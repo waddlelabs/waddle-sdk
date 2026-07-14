@@ -30,6 +30,7 @@ smallvec = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+mcap = { workspace = true }
 
 [lints]
 workspace = true

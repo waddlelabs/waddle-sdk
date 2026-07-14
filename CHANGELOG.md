@@ -19,6 +19,14 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   `waddle_types::ObsValues` (inline to 32 dims; wider observations spill to
   the heap, never truncate); `GateRecord.obs`. The alloc-free proof now
   covers a 30-dim obs; new `gate_passthrough_14dof_obs30` bench.
+- **waddle-core (gate-record persistence)**: the reducer now drains the
+  per-episode gate-record ring every wake and persists it to the Local-mode
+  MCAP — the obs as `ObservationUpdate` on the new `/waddle/observations`
+  topic, the decision as a single-step `ActionChunk` on `/waddle/actions`
+  (Noop/Hold write `NoopMarker` actions, making the topic the complete
+  per-tick trace). "The reducer owns all recording" is now structural. New
+  `waddle_types::unflatten_action` (exact inverse of the flattening path)
+  and `ProvenanceTag::to_pb`; `McapEpisodeWriter::write_observation`.
 - **waddle-core M2 (`waddle-fsm`)**: pure Mealy session machine (episode ×
   claim × lease × grant health) implementing every FSM.md guard row — reset
   verification modes (N12), retake → born-claimed successor under the
@@ -89,6 +97,16 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   grants/handoff/provenance/outcome domain enums.
 - Monorepo bootstrap: git repository, Apache-2.0 license, agent bootstrap
   (`CLAUDE.md`), changelog discipline (this file + `docs/changelogs/`).
+
+### Removed
+- `Episode::drain_records` and the episode-held record consumer: gate
+  records now flow to the reducer (via an internal hand-off slot) and land
+  in the episode MCAP; callers no longer see the ring.
+
+### Fixed
+- The task passed to `Session::start_episode` now reaches the episode
+  sidecar (it was previously dropped after the reset hook; sidecars always
+  recorded an empty task).
 
 ## Stowed changelogs
 

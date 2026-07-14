@@ -416,7 +416,7 @@ impl Target {
         if self.fsm.gate_mode != GateMode::Bypass {
             return Ok(());
         }
-        let provenance = crate::target::provenance_to_pb(&self.claim_provenance());
+        let provenance = self.claim_provenance().to_pb();
         let provenance_json = self.codec.provenance_to_value(&provenance)?;
         let mut sent: Vec<OwnedAction> = Vec::new();
         {
@@ -968,22 +968,7 @@ impl Target {
     }
 
     fn provenance_json(&self, tag: &ProvenanceTag) -> Result<Value, ConformanceError> {
-        self.codec.provenance_to_value(&provenance_to_pb(tag))
-    }
-}
-
-fn provenance_to_pb(tag: &ProvenanceTag) -> pb::ProvenanceTag {
-    let (kind, custom_name) = match &tag.provenance {
-        Provenance::Policy => (pb::ProvenanceKind::Policy, String::new()),
-        Provenance::Teleop => (pb::ProvenanceKind::Teleop, String::new()),
-        Provenance::Agent => (pb::ProvenanceKind::Agent, String::new()),
-        Provenance::Custom(name) => (pb::ProvenanceKind::Custom, name.clone()),
-    };
-    pb::ProvenanceTag {
-        kind: kind as i32,
-        custom_name,
-        actor: None,
-        bypass_approval: tag.bypass_approval,
+        self.codec.provenance_to_value(&tag.to_pb())
     }
 }
 

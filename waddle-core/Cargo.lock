@@ -1712,6 +1712,7 @@ dependencies = [
 name = "waddle-runtime"
 version = "0.1.0"
 dependencies = [
+ "mcap",
  "parking_lot",
  "prost",
  "rtrb",

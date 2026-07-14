@@ -11,16 +11,18 @@ use waddle_controlplane::{ClientMsg, ControlPlaneClient};
 use waddle_fsm::{Effect, Phase, SessionConfig, SessionEvent, SessionFsm, TimerId, step};
 use waddle_gate::gate::GateShared;
 use waddle_gate::plan::{BlendSchedule, GatePlan, PlanMode};
+use waddle_gate::record::{GateDecision, GateRecord};
 use waddle_ingest::SessionClock;
 use waddle_sidecar::{ManifestWriter, McapEpisodeWriter, SidecarBuilder, write_sidecar};
 use waddle_types::pb::v0 as pb;
 use waddle_types::time::Clock;
 use waddle_types::{
-    EpisodeId, GateMode, HandoffPolicy, Interp, LeaseId, MonoNs, Provenance, ProvenanceTag,
-    VerbRequest,
+    ActionSpace, EpisodeId, GateMode, HandoffPolicy, LeaseId, MonoNs, Provenance, ProvenanceTag,
+    VerbRequest, unflatten_action,
 };
 
 use crate::mirror::Mirror;
+use crate::session::{RecordSlot, TaskSlot};
 use crate::verbs::VerbDispatch;
 
 /// Everything the reducer owns.
@@ -36,9 +38,13 @@ pub(crate) struct Reducer {
     /// dir set).
     pub recording_dir: Option<PathBuf>,
     pub project: String,
-    pub task: parking_lot::Mutex<String>,
+    pub task: TaskSlot,
     pub robot_description_digest: String,
-    pub interp: Interp,
+    pub space: ActionSpace,
+    /// Fresh gate-record consumers arrive here from `start_episode`.
+    record_slot: RecordSlot,
+    /// The active episode's gate-record consumer, drained every wake.
+    records_rx: Option<rtrb::Consumer<GateRecord>>,
 
     // Per-episode state.
     sidecar: Option<SidecarBuilder>,
@@ -59,7 +65,9 @@ impl Reducer {
         recording_dir: Option<PathBuf>,
         project: String,
         robot_description_digest: String,
-        interp: Interp,
+        space: ActionSpace,
+        record_slot: RecordSlot,
+        task: TaskSlot,
     ) -> Self {
         let fsm = SessionFsm::new(&cfg);
         let manifest = recording_dir
@@ -75,9 +83,11 @@ impl Reducer {
             plane,
             recording_dir,
             project,
-            task: parking_lot::Mutex::new(String::new()),
+            task,
             robot_description_digest,
-            interp,
+            space,
+            record_slot,
+            records_rx: None,
             sidecar: None,
             mcap: None,
             manifest,
@@ -88,6 +98,9 @@ impl Reducer {
     /// The reducer loop. Exits on channel close or shutdown event.
     pub fn run(mut self, rx: &Receiver<SessionEvent>, self_tx: &Sender<SessionEvent>) {
         loop {
+            // Every wake (≤20 ms cadence): drain the gate-record ring onto
+            // the episode recording.
+            self.drain_gate_records();
             if self.mirror.read().shutdown {
                 self.finalize_episode_if_terminal(true);
                 return;
@@ -234,7 +247,7 @@ impl Reducer {
                     HandoffPolicy::Immediate { blend_ns } if blend_ns > 0 => Some(BlendSchedule {
                         start: now,
                         blend_ns,
-                        interp: self.interp,
+                        interp: self.space.chunking.interp,
                     }),
                     _ => None,
                 },
@@ -295,12 +308,87 @@ impl Reducer {
         });
     }
 
+    /// Drain gate records onto the episode recording. A fresh consumer in
+    /// the slot means a new episode's ring: flush leftovers from the old
+    /// ring first, then adopt the fresh one. Records arriving after the
+    /// episode finalized hit `mcap == None` and are discarded (same policy
+    /// as events).
+    fn drain_gate_records(&mut self) {
+        let fresh = self.record_slot.lock().take();
+        if let Some(fresh) = fresh {
+            self.drain_current_ring();
+            self.records_rx = Some(fresh);
+        }
+        self.drain_current_ring();
+    }
+
+    fn drain_current_ring(&mut self) {
+        while let Some(rec) = self.records_rx.as_mut().and_then(|rx| rx.pop().ok()) {
+            self.write_record(&rec);
+        }
+    }
+
+    /// One gate record → the episode MCAP, via the canonical wire messages:
+    /// the obs (when present) as an `ObservationUpdate` on
+    /// `/waddle/observations`, and the decision as a single-step
+    /// `ActionChunk` on `/waddle/actions`. Noop and Hold write `NoopMarker`
+    /// actions rather than being skipped, so `/waddle/actions` is the
+    /// complete per-tick trace (provenance spans, bypass windows, holds).
+    fn write_record(&mut self, rec: &GateRecord) {
+        let Some(mcap) = &mut self.mcap else { return };
+        let t_ns = rec.stamp.mono_ns().0;
+
+        if let Some(obs) = &rec.obs {
+            let _ = mcap.write_observation(&pb::ObservationUpdate {
+                t_ns,
+                payload: Some(pb::observation_update::Payload::Proprio(
+                    pb::ProprioSample {
+                        joint_pos: obs.to_vec(),
+                        ..Default::default()
+                    },
+                )),
+            });
+        }
+
+        let noop = |reason: pb::NoopReason| pb::Action {
+            target: Some(pb::action::Target::Noop(pb::NoopMarker {
+                reason: reason as i32,
+            })),
+            ..Default::default()
+        };
+        let action = match (rec.decision, &rec.action) {
+            (GateDecision::Pass | GateDecision::Substitute | GateDecision::Blend, Some(action)) => {
+                match unflatten_action(&action.values, action.gripper, &self.space) {
+                    Ok(action) => action,
+                    // A gated action that does not fit the declared space is an
+                    // internal inconsistency; never poison the recording thread.
+                    Err(_) => return,
+                }
+            }
+            (GateDecision::Noop, _) => noop(pb::NoopReason::BypassActive),
+            (GateDecision::Hold, _) => noop(pb::NoopReason::HoldActive),
+            // Pass/Substitute/Blend always carry an action.
+            (_, None) => return,
+        };
+        let _ = mcap.write_action(&pb::ActionChunk {
+            actions: vec![action],
+            horizon_ns: 0,
+            t_emitted_ns: t_ns,
+            t_obs_ns: if rec.obs.is_some() { t_ns } else { 0 },
+            seq: rec.seq,
+            source_id: "waddle.gate".into(),
+            provenance: Some(rec.provenance.to_pb()),
+        });
+    }
+
     fn finalize_episode_if_terminal(&mut self, force: bool) {
         let terminal_outcome = match self.fsm.episode.as_ref().map(|e| e.phase) {
             Some(Phase::Terminal(outcome)) => Some(outcome),
             _ if force => None,
             _ => return,
         };
+        // The episode tail must land in the file before finish().
+        self.drain_gate_records();
         let Some(mut builder) = self.sidecar.take() else {
             return;
         };

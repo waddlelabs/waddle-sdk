@@ -21,6 +21,8 @@ use crate::error::SidecarError;
 pub const EVENTS_TOPIC: &str = "/waddle/events";
 /// Topic for gated action chunks.
 pub const ACTIONS_TOPIC: &str = "/waddle/actions";
+/// Topic for the observations the caller's actions were computed from.
+pub const OBSERVATIONS_TOPIC: &str = "/waddle/observations";
 /// Name of the clock-anchor metadata record.
 pub const CLOCK_ANCHOR_METADATA: &str = "waddle/clock_anchor";
 
@@ -78,6 +80,21 @@ impl McapEpisodeWriter {
             ACTIONS_TOPIC,
             "waddle.v0.ActionChunk",
             chunk.t_emitted_ns,
+            &data,
+        )
+    }
+
+    /// Write one observation update on [`OBSERVATIONS_TOPIC`]; `log_time`
+    /// is the update's session-monotonic `t_ns`.
+    pub fn write_observation(
+        &mut self,
+        update: &pb::ObservationUpdate,
+    ) -> Result<(), SidecarError> {
+        let data = update.encode_to_vec();
+        self.write_message(
+            OBSERVATIONS_TOPIC,
+            "waddle.v0.ObservationUpdate",
+            update.t_ns,
             &data,
         )
     }

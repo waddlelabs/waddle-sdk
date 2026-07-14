@@ -18,6 +18,18 @@ pub enum ActorKind {
 }
 
 impl ActorKind {
+    #[must_use]
+    pub fn to_pb(self) -> pb::ActorKind {
+        match self {
+            Self::Teleoperator => pb::ActorKind::Teleoperator,
+            Self::SiteOperator => pb::ActorKind::SiteOperator,
+            Self::Agent => pb::ActorKind::Agent,
+            Self::Policy => pb::ActorKind::Policy,
+            Self::System => pb::ActorKind::System,
+            Self::Custom => pb::ActorKind::Custom,
+        }
+    }
+
     pub fn from_pb(value: i32) -> Result<Self, TypesError> {
         match pb::ActorKind::try_from(value) {
             Ok(pb::ActorKind::Teleoperator) => Ok(Self::Teleoperator),
@@ -42,6 +54,17 @@ pub struct ActorRef {
     /// client-forgeable string).
     pub id: String,
     pub display_name: String,
+}
+
+impl ActorRef {
+    #[must_use]
+    pub fn to_pb(&self) -> pb::ActorRef {
+        pb::ActorRef {
+            kind: self.kind.to_pb() as i32,
+            id: self.id.clone(),
+            display_name: self.display_name.clone(),
+        }
+    }
 }
 
 impl TryFrom<&pb::ActorRef> for ActorRef {
@@ -95,6 +118,23 @@ impl ProvenanceTag {
             provenance: Provenance::Policy,
             actor: None,
             bypass_approval: false,
+        }
+    }
+
+    /// The exact inverse of `TryFrom<&pb::ProvenanceTag>`.
+    #[must_use]
+    pub fn to_pb(&self) -> pb::ProvenanceTag {
+        let (kind, custom_name) = match &self.provenance {
+            Provenance::Policy => (pb::ProvenanceKind::Policy, String::new()),
+            Provenance::Teleop => (pb::ProvenanceKind::Teleop, String::new()),
+            Provenance::Agent => (pb::ProvenanceKind::Agent, String::new()),
+            Provenance::Custom(name) => (pb::ProvenanceKind::Custom, name.clone()),
+        };
+        pb::ProvenanceTag {
+            kind: kind as i32,
+            custom_name,
+            actor: self.actor.as_ref().map(ActorRef::to_pb),
+            bypass_approval: self.bypass_approval,
         }
     }
 }
