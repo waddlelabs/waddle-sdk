@@ -16,10 +16,12 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
+use prost::Message as _;
 use waddle_fsm::{Phase, SessionEvent};
-use waddle_runtime::{ResetHook, ResetSpec, Session};
-use waddle_types::TerminalOutcome;
+use waddle_gate::gate::GateOutput;
+use waddle_runtime::{ControlRegistry, ResetHook, ResetSpec, Session, VerbError, grant_and_engage};
 use waddle_types::pb::v0 as pb;
+use waddle_types::{ActorKind, ClaimId, EpisodeId, GateMode, TerminalOutcome};
 
 fn robot() -> pb::RobotDescription {
     pb::RobotDescription {
@@ -51,6 +53,19 @@ fn robot() -> pb::RobotDescription {
                 ..Default::default()
             },
         ],
+        ..Default::default()
+    }
+}
+
+/// A registry with `hold`/`send` so `grant_and_engage` has a live engage
+/// path (retake requires reaching SETTLE).
+fn registry() -> ControlRegistry {
+    ControlRegistry {
+        send: Some(Arc::new(
+            |_chunk: &waddle_types::ActionChunk| -> Result<(), VerbError> { Ok(()) },
+        )),
+        hold: Some(Arc::new(|| Ok(()))),
+        resume: Some(Arc::new(|| Ok(()))),
         ..Default::default()
     }
 }
@@ -162,20 +177,14 @@ fn post_reset_failure_sets_sidecar_flag_and_never_alters_outcome() {
     wait_for(&session, |s| {
         matches!(s.episode_state, Some(Phase::Running))
     });
-    // Nonzero stamps: the sidecar's post_reset_bounds are copied from these
-    // events' t_ns (open at →POST_RESET, close at →TERMINAL).
+    // Nonzero stamp: the sidecar's post_reset_bounds open at this event's
+    // t_ns (→POST_RESET). The reset pump runs the declared failing hook and
+    // injects `PostResetResult { ok: false }` itself; POST_RESET may resolve
+    // faster than a poll can observe it, so wait straight for Terminal.
     session.inject(SessionEvent::Terminate {
         outcome: TerminalOutcome::Success,
         reason: "done".to_owned(),
         at: waddle_types::MonoNs(1_000_000),
-    });
-    wait_for(&session, |s| {
-        matches!(s.episode_state, Some(Phase::PostReset))
-    });
-    session.inject(SessionEvent::PostResetResult {
-        ok: false,
-        detail: "bin jammed".to_owned(),
-        at: waddle_types::MonoNs(2_000_000),
     });
 
     // E16: the failure flags permanently but the pinned outcome stands.
@@ -205,5 +214,259 @@ fn post_reset_failure_sets_sidecar_flag_and_never_alters_outcome() {
     assert!(!sidecar.post_reset_result.as_ref().unwrap().ok);
     let bounds = sidecar.post_reset_bounds.as_ref().unwrap();
     assert!(bounds.t_start_ns > 0);
+    assert!(bounds.t_end_ns >= bounds.t_start_ns);
+}
+
+// --- The reset pump -------------------------------------------------------
+
+/// THE headline regression (design §D4): a reducer-opened retake successor
+/// never received a `ResetResult` — only `start_episode`'s inline path ran
+/// the pre-reset pipeline, so the successor hung in RESETTING forever. The
+/// reset pump (mirror-watch) services it now, running the effective PRE
+/// hook (session config for reducer-opened episodes) and injecting the
+/// result.
+#[test]
+fn retake_successor_passes_through_reset_via_the_pump() {
+    let pre_runs = Arc::new(AtomicUsize::new(0));
+    let pre_runs2 = pre_runs.clone();
+    let session = Session::builder("reset-pump-retake")
+        .robot(robot())
+        .control(registry())
+        .pre_reset(ResetSpec::Hook(Arc::new(move |_task: &str| {
+            pre_runs2.fetch_add(1, Ordering::SeqCst);
+            (true, Some(true))
+        })))
+        .build()
+        .unwrap();
+
+    let mut ep1 = session.start_episode("first").unwrap();
+    let first_id = ep1.id().clone();
+    assert_eq!(pre_runs.load(Ordering::SeqCst), 1, "inline pre-reset ran");
+    let _ = ep1.gate(&[0.0; 3], None, None);
+    wait_for(&session, |s| {
+        matches!(s.episode_state, Some(Phase::Running))
+    });
+
+    // Reach SETTLE (retake is legal from there) and retake: the claim
+    // survives, the reducer opens the successor born-claimed in RESETTING.
+    grant_and_engage(&session, "claim-rt", "teleop", ActorKind::Teleoperator);
+    wait_for(&session, |s| s.gate_mode == Some(GateMode::Intervention));
+    let successor = EpisodeId::new("ep-retake-successor");
+    session.inject(SessionEvent::Retake {
+        claim: ClaimId::new("claim-rt"),
+        initiator: ActorKind::Teleoperator,
+        successor: successor.clone(),
+        at: waddle_types::MonoNs(3_000_000),
+    });
+
+    // Before the pump existed this waited forever: nothing ran the pre
+    // hook for the successor, so it never left RESETTING.
+    wait_for(&session, |s| {
+        s.episode_id.as_ref() == Some(&successor) && matches!(s.episode_state, Some(Phase::Ready))
+    });
+    assert_eq!(
+        pre_runs.load(Ordering::SeqCst),
+        2,
+        "the pump ran the effective PRE hook for the successor"
+    );
+    assert!(session.episode_done(&first_id));
+    session.shutdown();
+}
+
+/// The pump runs the effective POST hook exactly once per episode (the
+/// bookkeeping resets across episodes), its `PostResetResult` drives the
+/// episode to Terminal with the pinned outcome, and the sidecar carries
+/// the result + closed bounds. `terminate` (the blocking helper) now works
+/// on post-reset-declared episodes — the pump auto-completes POST_RESET.
+#[test]
+fn post_reset_hook_runs_exactly_once_per_episode() {
+    let dir = tempfile::tempdir().unwrap();
+    let post_runs = Arc::new(AtomicUsize::new(0));
+    let post_runs2 = post_runs.clone();
+    let session = Session::builder("reset-pump-post-once")
+        .robot(robot())
+        .recording_dir(dir.path())
+        .post_reset(ResetSpec::Hook(Arc::new(move |_task: &str| {
+            post_runs2.fetch_add(1, Ordering::SeqCst);
+            (true, Some(true))
+        })))
+        .build()
+        .unwrap();
+
+    let terminate_bounded = |session: &Session, id: &EpisodeId| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let session = session.clone();
+        let id = id.clone();
+        std::thread::spawn(move || {
+            session.terminate_episode(&id, TerminalOutcome::Success, "done");
+            let _ = tx.send(());
+        });
+        rx.recv_timeout(Duration::from_secs(5))
+            .expect("terminate_episode must unblock once the pump completes POST_RESET");
+    };
+
+    let mut ep1 = session.start_episode("cleanup-1").unwrap();
+    let id1 = ep1.id().clone();
+    let _ = ep1.gate(&[0.0; 3], None, None);
+    wait_for(&session, |s| {
+        matches!(s.episode_state, Some(Phase::Running))
+    });
+    terminate_bounded(&session, &id1);
+    wait_for(&session, |s| {
+        matches!(
+            s.episode_state,
+            Some(Phase::Terminal(TerminalOutcome::Success))
+        )
+    });
+    assert_eq!(post_runs.load(Ordering::SeqCst), 1, "post hook ran once");
+
+    // A second episode gets its own single run (per-episode bookkeeping).
+    let mut ep2 = session.start_episode("cleanup-2").unwrap();
+    let id2 = ep2.id().clone();
+    let _ = ep2.gate(&[0.0; 3], None, None);
+    wait_for(&session, |s| {
+        matches!(s.episode_state, Some(Phase::Running))
+    });
+    terminate_bounded(&session, &id2);
+    wait_for(&session, |s| {
+        s.episode_id.as_ref() == Some(&id2)
+            && matches!(
+                s.episode_state,
+                Some(Phase::Terminal(TerminalOutcome::Success))
+            )
+    });
+    assert_eq!(
+        post_runs.load(Ordering::SeqCst),
+        2,
+        "each episode's post hook runs exactly once"
+    );
+    session.shutdown();
+
+    // The first episode's sidecar carries the whole post-reset record.
+    let sidecar_path = dir.path().join(format!("{id1}.sidecar.json"));
+    let sidecar =
+        waddle_sidecar::sidecar_from_json(&std::fs::read_to_string(&sidecar_path).unwrap())
+            .unwrap();
+    assert!(sidecar.post_reset_declared);
+    assert!(!sidecar.post_reset_failed);
+    assert_eq!(sidecar.outcome, pb::TerminalOutcome::Success as i32);
+    assert!(sidecar.post_reset_result.as_ref().unwrap().ok);
+    let bounds = sidecar.post_reset_bounds.as_ref().unwrap();
+    assert!(bounds.t_start_ns > 0);
+    assert!(bounds.t_end_ns >= bounds.t_start_ns);
+}
+
+/// Remote specs are none of the pump's business: a `ResetSpec::Remote`
+/// post-reset is driven by the FSM's window machinery (E19–E22), and the
+/// caller's own stale `gate()` handle during the engaged window records
+/// RESET_ACTIVE NoopMarkers on /waddle/actions, like BYPASS/HOLD do.
+#[test]
+fn remote_post_reset_window_records_reset_active_noop_markers() {
+    let dir = tempfile::tempdir().unwrap();
+    let session = Session::builder("reset-pump-remote-post")
+        .robot(robot())
+        .recording_dir(dir.path())
+        .post_reset(ResetSpec::Remote {
+            actor: ActorKind::Teleoperator,
+            prompt: "clear the table".into(),
+            timeout_ns: 600_000_000_000,
+        })
+        .build()
+        .unwrap();
+
+    let mut ep = session.start_episode("remote-post").unwrap();
+    let id = ep.id().clone();
+    let _ = ep.gate(&[0.0; 3], None, None);
+    wait_for(&session, |s| {
+        matches!(s.episode_state, Some(Phase::Running))
+    });
+    session.inject(SessionEvent::Terminate {
+        outcome: TerminalOutcome::Success,
+        reason: "done".to_owned(),
+        at: waddle_types::MonoNs(1_000_000),
+    });
+    // E14 opens the declared POST window; the pump must NOT inject anything
+    // for a Remote spec — the phase stays POST_RESET until the window
+    // resolves.
+    wait_for(&session, |s| {
+        matches!(s.episode_state, Some(Phase::PostReset))
+    });
+    std::thread::sleep(Duration::from_millis(50));
+    assert!(
+        matches!(session.status().episode_state, Some(Phase::PostReset)),
+        "the pump must leave remote resets to the window machinery"
+    );
+
+    // C6 → E20: the expected actor claims and engages; the gate flips to
+    // RESET (the loop's own handle is stale, D7 edge 3).
+    session.inject(SessionEvent::ClaimGranted {
+        id: ClaimId::new("reset-claim"),
+        source: "teleop".to_owned(),
+        actor: ActorKind::Teleoperator,
+        self_initiated: false,
+        at: waddle_types::MonoNs(2_000_000),
+    });
+    wait_for(&session, |s| s.claim_active);
+    session.inject(SessionEvent::ResetWindowEngage {
+        claim: ClaimId::new("reset-claim"),
+        at: waddle_types::MonoNs(3_000_000),
+    });
+    wait_for(&session, |s| s.gate_mode == Some(GateMode::Reset));
+
+    for _ in 0..3 {
+        assert!(
+            matches!(ep.gate(&[0.0; 3], None, None), GateOutput::Noop { .. }),
+            "a Reset-mode gate tick is a noop for the stale handle"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+
+    // E21: completion hands the lease back and applies the result as the
+    // post-reset pipeline (Terminal, pinned outcome).
+    session.inject(SessionEvent::ResetWindowComplete {
+        claim: ClaimId::new("reset-claim"),
+        ok: true,
+        verified: Some(true),
+        at: waddle_types::MonoNs(4_000_000),
+    });
+    wait_for(&session, |s| {
+        matches!(
+            s.episode_state,
+            Some(Phase::Terminal(TerminalOutcome::Success))
+        )
+    });
+    session.shutdown();
+
+    // MCAP: the Reset-mode ticks landed as RESET_ACTIVE NoopMarkers.
+    let buf = std::fs::read(dir.path().join(format!("{id}.mcap"))).unwrap();
+    let mut reset_noops = 0;
+    for message in mcap::MessageStream::new(&buf).unwrap() {
+        let message = message.unwrap();
+        if message.channel.topic != waddle_sidecar::mcaprec::ACTIONS_TOPIC {
+            continue;
+        }
+        let chunk = pb::ActionChunk::decode(message.data.as_ref()).unwrap();
+        for action in &chunk.actions {
+            if let Some(pb::action::Target::Noop(marker)) = &action.target
+                && marker.reason == pb::NoopReason::ResetActive as i32
+            {
+                reset_noops += 1;
+            }
+        }
+    }
+    assert!(
+        reset_noops >= 3,
+        "expected the Reset-mode ticks as RESET_ACTIVE noops, got {reset_noops}"
+    );
+
+    // Sidecar: the window completion applied as the post-reset pipeline.
+    let sidecar_path = dir.path().join(format!("{id}.sidecar.json"));
+    let sidecar =
+        waddle_sidecar::sidecar_from_json(&std::fs::read_to_string(&sidecar_path).unwrap())
+            .unwrap();
+    assert!(sidecar.post_reset_declared);
+    assert!(sidecar.post_reset_result.as_ref().unwrap().ok);
+    let bounds = sidecar.post_reset_bounds.as_ref().unwrap();
+    assert_eq!(bounds.t_start_ns, 1_000_000);
     assert!(bounds.t_end_ns >= bounds.t_start_ns);
 }

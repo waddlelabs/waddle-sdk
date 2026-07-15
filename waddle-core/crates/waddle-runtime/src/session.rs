@@ -42,9 +42,12 @@ pub type ResetHook = Arc<dyn Fn(&str) -> (bool, Option<bool>) + Send + Sync>;
 /// and optionally overridden per episode via [`EpisodeOptions`].
 #[derive(Clone)]
 pub enum ResetSpec {
-    /// Run a [`ResetHook`] inline on the caller thread: for pre-reset,
-    /// `start_episode`'s own thread; for post-reset, the reset pump's thread
-    /// (a later task) since nothing blocks on it at `start_episode` time.
+    /// Run a [`ResetHook`]: for pre-reset, inline on `start_episode`'s own
+    /// caller thread (except reducer-opened retake successors, which the
+    /// reset pump services); for post-reset, always on the reset pump's
+    /// thread (`waddle-reset-hooks`), since nothing blocks on it. Hooks must
+    /// therefore be `Send + Sync` (the type already requires it) and must
+    /// return — session shutdown joins the pump thread.
     Hook(ResetHook),
     /// A plane-directed remote actor performs this reset through a window
     /// (flag `waddle.v0.reset.remote`, FSM.md rows E19–E22): the actor
@@ -127,6 +130,30 @@ pub(crate) type RecordSlot = Arc<parking_lot::Mutex<Option<rtrb::Consumer<GateRe
 /// The current task, written by `start_episode` before the open event so the
 /// reducer stamps it into the episode's records.
 pub(crate) type TaskSlot = Arc<parking_lot::Mutex<String>>;
+
+/// The episode `start_episode_with` is currently running the pre-reset phase
+/// for, inline on the caller thread — recorded before `EpisodeOpen` is
+/// injected, cleared once the call returns (success or failure). Set for
+/// every inline pre-reset path (`Hook` and the no-spec default), never for
+/// `Remote` (nothing runs inline there). Consulted by the reset pump so it
+/// never double-services an episode that call is already driving.
+pub(crate) type ResetOwnerSlot = Arc<parking_lot::Mutex<Option<EpisodeId>>>;
+
+/// The resolved (inherit/disable applied) reset specs of the episode most
+/// recently opened by `start_episode_with`, written before its `EpisodeOpen`
+/// is injected — so by the time the mirror can show that id at all, the
+/// reset pump can resolve the *effective* spec for it (per-episode overrides
+/// included) instead of guessing from session defaults. Reducer-opened
+/// retake successors never get an entry here; the pump falls back to the
+/// session-level config for them.
+#[derive(Clone)]
+pub(crate) struct EpisodeResetSpecs {
+    pub id: EpisodeId,
+    pub pre: Option<ResetSpec>,
+    pub post: Option<ResetSpec>,
+}
+
+pub(crate) type ResetSpecSlot = Arc<parking_lot::Mutex<Option<EpisodeResetSpecs>>>;
 
 pub struct SessionBuilder {
     project: String,
@@ -474,6 +501,23 @@ impl SessionBuilder {
             dims.unwrap_or(0),
         ));
 
+        // Reset pump: the single scripted-hook invocation site (mirror-watch,
+        // like the bypass pump). Services RESETTING episodes nobody runs
+        // inline (reducer-opened retake successors) and every declared POST
+        // hook; remote windows are the FSM's, not the pump's.
+        let inline_reset_owner: ResetOwnerSlot = Arc::new(parking_lot::Mutex::new(None));
+        let episode_reset_specs: ResetSpecSlot = Arc::new(parking_lot::Mutex::new(None));
+        threads.push(pumps::spawn_reset_pump(
+            mirror.clone(),
+            inject_tx.clone(),
+            clock.clone(),
+            task_slot.clone(),
+            inline_reset_owner.clone(),
+            episode_reset_specs.clone(),
+            self.pre_reset.clone(),
+            self.post_reset.clone(),
+        ));
+
         // Media intake: teleop stream → gate ring; clutch → FSM.
         if let Some(media) = self.media {
             threads.push(pumps::spawn_media_intake(
@@ -543,7 +587,8 @@ impl SessionBuilder {
                 task_slot,
                 pre_reset: self.pre_reset,
                 post_reset: self.post_reset,
-                inline_reset_owner: parking_lot::Mutex::new(None),
+                inline_reset_owner,
+                episode_reset_specs,
                 verification_mode: self.verification_mode,
                 threads: parking_lot::Mutex::new(threads),
                 tripwire_shutdown,
@@ -575,14 +620,10 @@ struct SessionInner {
     task_slot: TaskSlot,
     pre_reset: Option<ResetSpec>,
     post_reset: Option<ResetSpec>,
-    /// The episode `start_episode_with` is currently running the pre-reset
-    /// phase for, inline on the caller thread — recorded before `EpisodeOpen`
-    /// is injected, cleared once the call returns (success or failure). Set
-    /// for every inline pre-reset path (`Hook` and the no-spec default), never
-    /// for `Remote` (nothing runs inline there). Consulted by the reset pump
-    /// (a later task) so it never double-services an episode this call
-    /// already handled.
-    inline_reset_owner: parking_lot::Mutex<Option<EpisodeId>>,
+    /// See [`ResetOwnerSlot`]; shared with the reset pump.
+    inline_reset_owner: ResetOwnerSlot,
+    /// See [`ResetSpecSlot`]; shared with the reset pump.
+    episode_reset_specs: ResetSpecSlot,
     verification_mode: ResetVerificationMode,
     threads: parking_lot::Mutex<Vec<JoinHandle<()>>>,
     tripwire_shutdown: ShutdownToken,
@@ -691,11 +732,21 @@ impl Session {
         // `post_window` distinguishes a *remote* post-reset from a hook one.
         let post_reset_declared = post.is_some();
 
+        // Publish this episode's resolved specs BEFORE EpisodeOpen: by the
+        // time the mirror can show this id at all, the reset pump can
+        // resolve the effective spec for it (per-episode overrides
+        // included) instead of falling back to session defaults.
+        *self.inner.episode_reset_specs.lock() = Some(EpisodeResetSpecs {
+            id: id.clone(),
+            pre: pre.clone(),
+            post: post.clone(),
+        });
+
         // The inline pre-reset path covers everything but a declared Remote:
         // the configured Hook, and the no-spec default (both run on this
         // thread and inject ResetResult directly). Record the id before
-        // EpisodeOpen so the reset pump (a later task) never also services
-        // it; clear it once this call returns, success or failure.
+        // EpisodeOpen so the reset pump never also services it; clear it
+        // once this call returns, success or failure.
         let inline_pre = !matches!(pre, Some(ResetSpec::Remote { .. }));
         if inline_pre {
             *self.inner.inline_reset_owner.lock() = Some(id.clone());

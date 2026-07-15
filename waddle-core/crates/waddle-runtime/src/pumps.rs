@@ -7,7 +7,7 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use waddle_controlplane::{ControlPlaneClient, PlaneEvent, ServerMsg};
-use waddle_fsm::{GrantChangeDirective, SessionEvent};
+use waddle_fsm::{GrantChangeDirective, Phase, SessionEvent};
 use waddle_gate::gate::{GateShared, OwnedAction};
 use waddle_gate::jitter::TimedAction;
 use waddle_ingest::SessionClock;
@@ -20,6 +20,7 @@ use waddle_types::{
 
 use crate::RuntimeError;
 use crate::mirror::Mirror;
+use crate::session::{EpisodeResetSpecs, ResetOwnerSlot, ResetSpec, ResetSpecSlot, TaskSlot};
 use crate::verbs::{VerbDispatch, VerbOutcome};
 
 /// How long the caller's loop may go quiet while claimed before bypass
@@ -122,6 +123,141 @@ pub(crate) fn spawn_bypass_pump(
             }
         })
         .expect("spawn bypass pump")
+}
+
+/// The effective reset spec for episode `id`, for one phase (`pick` selects
+/// pre or post): the per-episode resolved entry when `start_episode_with`
+/// published one for this id, else the session-level default (the only case
+/// is a reducer-opened retake successor, which has no per-episode entry).
+fn effective_spec(
+    slot: &ResetSpecSlot,
+    id: &EpisodeId,
+    session_default: &Option<ResetSpec>,
+    pick: impl Fn(&EpisodeResetSpecs) -> Option<ResetSpec>,
+) -> Option<ResetSpec> {
+    let guard = slot.lock();
+    match &*guard {
+        Some(specs) if &specs.id == id => pick(specs),
+        _ => session_default.clone(),
+    }
+}
+
+/// The reset pump: the single scripted-hook invocation site (mirror-watch,
+/// like the bypass pump). Two arms, both keyed per episode id so the
+/// "already serviced" bookkeeping resets across episodes:
+///
+/// - A LIVE episode in RESETTING that nobody is driving inline
+///   (`inline_reset_owner`) gets the effective PRE hook run here and its
+///   `ResetResult` injected. This is what fixes the reducer-opened
+///   retake-successor gap: plane directives / marks / judge results
+///   terminate with no blocked caller, so a caller-thread-only invocation
+///   site left successors hanging in RESETTING forever.
+/// - A LIVE episode in POST_RESET with an effective POST spec of `Hook`
+///   gets that hook run here and its `PostResetResult` injected (E15/E16).
+///
+/// `ResetSpec::Remote` phases are none of the pump's business — the FSM's
+/// window machinery (E19–E22, including the window timeout) owns them.
+///
+/// Hooks run OFF the caller thread here, so they must be `Send + Sync`
+/// (the `ResetHook` type already requires it) and must return: session
+/// shutdown joins this thread.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn spawn_reset_pump(
+    mirror: Arc<Mirror>,
+    inject: Sender<SessionEvent>,
+    clock: SessionClock,
+    task: TaskSlot,
+    inline_owner: ResetOwnerSlot,
+    episode_specs: ResetSpecSlot,
+    session_pre: Option<ResetSpec>,
+    session_post: Option<ResetSpec>,
+) -> JoinHandle<()> {
+    std::thread::Builder::new()
+        .name("waddle-reset-hooks".into())
+        .spawn(move || {
+            let mut serviced_pre: Option<EpisodeId> = None;
+            let mut serviced_post: Option<EpisodeId> = None;
+            loop {
+                let status = mirror.read();
+                if status.shutdown {
+                    return;
+                }
+                match (status.episode_state, status.episode_id) {
+                    (Some(Phase::Resetting), Some(id)) if serviced_pre.as_ref() != Some(&id) => {
+                        let pre =
+                            effective_spec(&episode_specs, &id, &session_pre, |s| s.pre.clone());
+                        if matches!(pre, Some(ResetSpec::Remote { .. })) {
+                            // The window machinery owns a remote pre-reset;
+                            // injecting a pipeline result here would be
+                            // rejected anyway (E19b).
+                            serviced_pre = Some(id);
+                        } else if inline_owner.lock().as_ref() != Some(&id) {
+                            // `Hook` or the no-spec default, and no
+                            // `start_episode_with` call owns it inline.
+                            // Re-check the mirror AFTER the owner read: the
+                            // owner is set before the mirror can ever show
+                            // this id and cleared only after the mirror
+                            // showed it leaving RESETTING, so an id that is
+                            // (a) un-owned at the read above and (b) still
+                            // RESETTING now was never inline-owned at all —
+                            // without the re-check, a stale RESETTING
+                            // snapshot from before an inline reset finished
+                            // could double-run its hook.
+                            let recheck = mirror.read();
+                            if recheck.episode_id.as_ref() == Some(&id)
+                                && matches!(recheck.episode_state, Some(Phase::Resetting))
+                            {
+                                serviced_pre = Some(id);
+                                let (ok, verified) = match &pre {
+                                    Some(ResetSpec::Hook(hook)) => {
+                                        let task = task.lock().clone();
+                                        hook(&task)
+                                    }
+                                    // No spec: the placeholder default — a
+                                    // scene reset by hand (same default the
+                                    // inline path injects).
+                                    _ => (true, Some(true)),
+                                };
+                                let _ = inject.send(SessionEvent::ResetResult {
+                                    ok,
+                                    verified,
+                                    at: clock.stamp_now().mono_ns(),
+                                });
+                            }
+                        }
+                    }
+                    (Some(Phase::PostReset), Some(id)) if serviced_post.as_ref() != Some(&id) => {
+                        serviced_post = Some(id.clone());
+                        let post =
+                            effective_spec(&episode_specs, &id, &session_post, |s| s.post.clone());
+                        match post {
+                            Some(ResetSpec::Hook(hook)) => {
+                                let task = task.lock().clone();
+                                let (ok, _verified) = hook(&task);
+                                let _ = inject.send(SessionEvent::PostResetResult {
+                                    ok,
+                                    detail: String::new(),
+                                    at: clock.stamp_now().mono_ns(),
+                                });
+                            }
+                            Some(ResetSpec::Remote { .. }) | None => {
+                                // Remote: the window machinery owns it
+                                // (E19–E22). None is unreachable — POST_RESET
+                                // requires `post_reset_declared`, which is
+                                // only ever stamped from a resolved
+                                // `Some(spec)` — but if config were somehow
+                                // lost, leaving the phase to the FSM (which
+                                // still honors estop and directives) beats
+                                // fabricating a hook result.
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        })
+        .expect("spawn reset pump")
 }
 
 /// Media intake: decode teleop stream packets into the gate's intervention

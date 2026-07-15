@@ -4,11 +4,11 @@
 //! `start_episode`/`start_episode_with`'s pre-reset routing + the
 //! predecessor-in-`Phase::PostReset` wait (design §D4, first two bullets).
 //!
-//! The reset pump and the post-reset hook invocation site are a later task
-//! (Task 5's report / this task's brief): where a test needs the *post*-reset
-//! pipeline to complete, it injects `PostResetResult` directly (the seam the
-//! future pump will also use), simulating that not-yet-built consumer rather
-//! than exercising it.
+//! The reset pump (`waddle-reset-hooks`) is the single post-reset hook
+//! invocation site: a declared POST hook runs there the moment the mirror
+//! shows `Phase::PostReset`. Tests that need to *observe* POST_RESET hold it
+//! open with a gated hook (one that blocks until the test releases it) —
+//! otherwise the pump resolves the phase faster than a poll can see it.
 
 #![allow(clippy::disallowed_methods)] // wall-clock deadlines are test-only
 
@@ -134,9 +134,17 @@ fn pre_reset_hook_is_invoked_by_start_episode() {
 
 #[test]
 fn post_reset_hook_declared_detours_through_post_reset_phase() {
+    // A gated hook holds POST_RESET open so the detour is observable: the
+    // reset pump invokes it as soon as the mirror shows the phase, and
+    // would otherwise resolve it faster than this test's polling.
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let release_rx = Arc::new(Mutex::new(release_rx));
     let session = Session::builder("reset-config-post-hook")
         .robot(robot())
-        .post_reset(ResetSpec::Hook(Arc::new(|_| (true, Some(true)))))
+        .post_reset(ResetSpec::Hook(Arc::new(move |_| {
+            let _ = release_rx.lock().recv_timeout(Duration::from_secs(5));
+            (true, Some(true))
+        })))
         .build()
         .unwrap();
 
@@ -147,29 +155,21 @@ fn post_reset_hook_declared_detours_through_post_reset_phase() {
     wait_for(&session, |s| {
         matches!(s.episode_state, Some(Phase::Running))
     });
-    // `Episode::terminate`/`Session::terminate_episode` block until Terminal
-    // (unchanged, per Task 5's report) — correct once the reset pump (a
-    // later task) exists to auto-complete POST_RESET, but this test drives
-    // that completion itself, so it injects `Terminate` directly (the same
-    // non-blocking seam other reset-window tests use) instead of calling the
-    // blocking `terminate` helper, which would hang forever here.
+    // Inject Terminate directly rather than calling the blocking `terminate`
+    // helper: that helper blocks until Terminal, and this test wants to
+    // observe the POST_RESET detour while the gated hook holds it open.
     session.inject(SessionEvent::Terminate {
         outcome: TerminalOutcome::Success,
         reason: "done".to_owned(),
         at: waddle_types::MonoNs(0),
     });
     // Declaring post_reset (a hook) makes terminate detour through
-    // Phase::PostReset instead of going straight to Terminal (E14). Nothing
-    // yet invokes the post-reset hook (the reset pump is a later task); this
-    // test injects PostResetResult itself, the same seam that pump will use.
+    // Phase::PostReset instead of going straight to Terminal (E14).
     wait_for(&session, |s| {
         matches!(s.episode_state, Some(Phase::PostReset))
     });
-    session.inject(SessionEvent::PostResetResult {
-        ok: true,
-        detail: String::new(),
-        at: waddle_types::MonoNs(0),
-    });
+    // Release the hook: the pump injects the PostResetResult itself.
+    drop(release_tx);
     wait_for(&session, |s| {
         matches!(
             s.episode_state,
@@ -472,13 +472,19 @@ fn remote_pre_reset_window_timeout_yields_reset_failed() {
 
 #[test]
 fn predecessor_in_post_reset_is_waited_out_before_next_open() {
+    // A gated hook: the reset pump invokes it (flipping `cleanup_started`)
+    // as soon as A enters POST_RESET, then blocks until the test releases
+    // it — holding A's cleanup outstanding while B tries to open.
     let cleanup_started = Arc::new(AtomicBool::new(false));
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let release_rx = Arc::new(Mutex::new(release_rx));
     let session = Session::builder("reset-config-post-reset-wait")
         .robot(robot())
         .post_reset(ResetSpec::Hook(Arc::new({
             let cleanup_started = cleanup_started.clone();
             move |_task: &str| {
                 cleanup_started.store(true, Ordering::SeqCst);
+                let _ = release_rx.lock().recv_timeout(Duration::from_secs(5));
                 (true, Some(true))
             }
         })))
@@ -491,9 +497,9 @@ fn predecessor_in_post_reset_is_waited_out_before_next_open() {
     wait_for(&session, |s| {
         matches!(s.episode_state, Some(Phase::Running))
     });
-    // Non-blocking inject, not `ep_a.terminate(..)`: that helper blocks until
-    // Terminal, which (correctly, absent the reset pump — a later task)
-    // never happens on its own once POST_RESET is entered.
+    // Non-blocking inject, not `ep_a.terminate(..)`: that helper blocks
+    // until Terminal, and A's Terminal is deliberately held open by the
+    // gated hook for the duration of this test.
     session.inject(SessionEvent::Terminate {
         outcome: TerminalOutcome::Success,
         reason: "done".to_owned(),
@@ -502,11 +508,13 @@ fn predecessor_in_post_reset_is_waited_out_before_next_open() {
     wait_for(&session, |s| {
         matches!(s.episode_state, Some(Phase::PostReset))
     });
-    assert!(
-        !cleanup_started.load(Ordering::SeqCst),
-        "the reset pump is a later task; start_episode_with must never invoke \
-         the post-reset hook itself"
-    );
+    // The reset pump is the post-reset hook's single invocation site: it
+    // picks A's cleanup up off the mirror.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !cleanup_started.load(Ordering::SeqCst) {
+        assert!(Instant::now() < deadline, "the pump never invoked the hook");
+        std::thread::sleep(Duration::from_millis(5));
+    }
 
     // Start B on a background thread; it must block while A's POST_RESET
     // cleanup is outstanding, not error EpisodeActive. B disables post-reset
@@ -530,15 +538,9 @@ fn predecessor_in_post_reset_is_waited_out_before_next_open() {
         "must wait for the predecessor's PostReset to resolve, not error or race ahead"
     );
 
-    // Simulate the (not-yet-built) reset pump completing A's cleanup: the
-    // hook itself is inert here (nothing invokes it yet — that is the reset
-    // pump's job); this injects the same PostResetResult event that pump
-    // will eventually produce, to drive A the rest of the way to Terminal.
-    session.inject(SessionEvent::PostResetResult {
-        ok: true,
-        detail: String::new(),
-        at: waddle_types::MonoNs(0),
-    });
+    // Release the gated hook: the pump injects A's PostResetResult, A
+    // reaches Terminal, and B opens over it.
+    drop(release_tx);
 
     let ep_b = handle
         .join()
