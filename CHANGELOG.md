@@ -12,7 +12,50 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 ## [Unreleased]
 
 ### Added
+- **sdk (PyO3 shim: reset kwargs, `PyResetHook`, testing hooks)**: the
+  `_core` module surface now exposes the full reset-config vocabulary.
+  `create_session` gains `{pre,post}_reset_kind` (`"none"`|`"hook"`|
+  `"teleop"`|`"agent"`), `{pre,post}_reset_hook`, `{pre,post}_reset_prompt`,
+  `{pre,post}_reset_timeout_ns` (default 600s), and `reset_verification`
+  (`"blocking"`|`"optimistic"`) — all defaulted for full back-compat,
+  mapping onto `SessionBuilder::pre_reset`/`post_reset`/`verification_mode`.
+  `PySession::start_episode` gains the same eight kwargs as per-episode
+  overrides (`None` = inherit the session default) → `start_episode_with`.
+  A Python callable crosses as a `PyResetHook` (`sdk/rust/src/verbs.rs`,
+  the `PyUnit` GIL/shutdown pattern): it normalizes a bare `bool` return to
+  `(bool, Some(bool))` (a hook with no separate verification opinion is
+  read as vouching for its own `ok` — otherwise a bare `True` would hang
+  forever in RESETTING under the default Blocking verification mode,
+  which requires `verified = Some(true)`), passes an explicit
+  `(bool, Optional[bool])` tuple through as-is, and — for anything else
+  (a raised exception, or a return value of neither shape) — reports it
+  via `PyErr::write_unraisable` (CPython's "log, don't propagate" hook for
+  background-thread callbacks) and normalizes to `(false, None)`; the hook
+  never panics or unwinds into Rust. `PyEpisode` gains a `post_reset_failed`
+  getter (mirror read); `done`'s docstring documents the POST_RESET flip;
+  `outcome` now reads `status().outcome.or(status().pinned_outcome)` so it
+  returns the pinned value (not `None`) once `done` flips true at
+  POST_RESET entry, matching `waddle_runtime::Episode::outcome()`'s own
+  contract without touching the episode's inner mutex (Task 9's Concern 3).
+  Two new `_testing`-gated hooks (`testing_loopback=True` only, following
+  the existing `_testing_engage`/`_testing_push_teleop` pattern):
+  `_testing_reset_window_engage(claim_id, actor)` and
+  `_testing_reset_window_complete(claim_id, ok, verified=None)` inject the
+  window `SessionEvent`s directly (mirroring the exact `ClaimGranted` +
+  `ResetWindowEngage` / `ResetWindowComplete` sequences
+  `forward_server_msg`'s plane ENGAGE/COMPLETE arms produce), backed by two
+  new `waddle-runtime` convenience functions (`reset_window_engage`,
+  `reset_window_complete`, alongside the existing `grant_and_engage`/
+  `release_claim`) so the shim never mints its own clock stamps. Verified
+  (not changed): the reset pump's shutdown ordering — it checks
+  `mirror.status.shutdown` at the top of its loop exactly like the bypass
+  pump, `Session::shutdown()` sets that flag before joining any thread, and
+  `PySession::shutdown`/`Drop` already run the blocking join with the GIL
+  detached — so a `PyResetHook`'s `Python::try_attach` on the pump thread
+  can never deadlock against a Python caller holding the GIL during
+  interpreter teardown.
 - **waddle-runtime (reset-window actuation + plane directives)**: the
+  bypass pump (`pumps::spawn_bypass_pump`) gains a RESET arm — while the
   bypass pump (`pumps::spawn_bypass_pump`) gains a RESET arm — while the
   mirror shows `GateMode::Reset` with an active claim, due intervention
   actions (teleop via the existing media intake, agent chunks via the new
@@ -376,6 +419,17 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   in the episode MCAP; callers no longer see the ring.
 
 ### Fixed
+- **`sdk/tests/test_e2e.py::test_intervention`'s pre-existing flake**: the
+  test declared a 3-joint robot but pushed teleop `Twist` packets, which
+  `pumps::flatten_packet` always flattens to exactly 6 values (linear xyz +
+  angular xyz) — media intake's dims validation (Bug 2, already landed)
+  correctly rejected every packet as a dims mismatch (3 declared vs. 6
+  incoming), so the intervention stream never reached the gate and the
+  test's 5s wait for a substitution always timed out. This was a stale test
+  fixture, not a timing race or a core regression (confirmed deterministic
+  across repeated runs, and identical on the commit immediately before this
+  change) — fixed by giving the test's robot a 6-joint action space to
+  match the raw twist width it actually exercises.
 - **Reducer-opened retake successors hung in RESETTING forever**: only
   `start_episode`'s inline path ever ran the pre-reset pipeline, and a
   retake successor is opened by the reducer (`Effect::OpenSuccessor`) with
