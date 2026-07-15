@@ -65,9 +65,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   TERMINAL ∧ lease Vacant), I12 (`post_reset_failed` monotone; false at
   TERMINAL ⇒ the last post-reset result was ok), I13 (gate RESET ⇒ an active
   claim ∧ phase ∈ {RESETTING, POST_RESET}), I14 (retake acceptance ⇒
-  TERMINAL{ABORTED_RETAKE} with no intervening POST_RESET). A new
-  deterministic smoke test drives a full remote POST-window lifecycle,
-  asserting E21's deferred-apply emission order. `waddle-gate` gains
+  TERMINAL{ABORTED_RETAKE} with no intervening POST_RESET). `Cmd` also gained
+  `GateTick`, directly proptesting D7 edge 3: a gate tick landing in
+  RESETTING/POST_RESET must never transition the phase (only the READY→RUNNING
+  first-gated-action trigger, E6, may). A new deterministic smoke test drives
+  a full remote POST-window lifecycle, asserting E21's deferred-apply
+  emission order. `waddle-gate` gains
   `PlanMode::Reset { provenance }` (mirroring `Bypass`): `Gate::gate()`
   returns `Noop` and records the new `GateDecision::ResetActive`, same cost
   class as the existing NOOP paths (no locks/syscalls/allocations); the
@@ -84,7 +87,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   reachable through a config-correct runtime (`ResetSpec` is `Hook` XOR
   `Remote`; the reset pump skips hook injection for `Remote`, D4) but guarded
   in `waddle-fsm` anyway per the hollow-frontend rule. Two regression tests
-  pin it in `tests/remote_reset_windows.rs`.
+  pin it in `tests/remote_reset_windows.rs`; `docs/FSM.md` §1.4 gains the
+  E19b row. New conformance fixture `remote_window_owns_pipeline_result`
+  (`fixtures/behaviors/`) asserts the guard on both the pre- and post-window
+  path; it is currently runner-skipped (needs `waddle.v0.reset.phases` +
+  `waddle.v0.reset.remote`, neither implemented by `waddle-conformance`
+  yet — a D6 conformance-runner task) and will activate once that lands.
 - New conformance fixture `teleop_dims_mismatch_holds` (`waddle-conformance`,
   gate target): pins the media-intake action-space-validation contract as
   gate-observable — a teleop injection whose flattened width doesn't match

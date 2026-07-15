@@ -1,0 +1,49 @@
+{
+  "format": "waddle.behavior/v0",
+  "name": "remote_window_owns_pipeline_result",
+  "description": "Pins FSM.md E19b: while a remote reset window is open (pre or post), the pipeline-hook completion events (reset_result / post_reset_result) are illegal and must be rejected outright (no emission, no transition) — only the window's own reset_window_engage/reset_window_complete path (E20/E21) may close it. Part 1 declares a remote PRE window, injects an out-of-band reset_result while it is open (expect_no_emission of both resetVerification and state, episode stays RESETTING with the window still open), then closes the window legitimately via claim_granted(C6)/reset_window_engage(E20)/reset_window_complete(E21) into READY. Part 2 runs the episode to POST_RESET with a remote POST window declared, injects an out-of-band post_reset_result while it is open (same expect_no_emission shape, episode stays POST_RESET with the pinned outcome untouched), then closes it legitimately the same way into TERMINAL{pinned}. Needs waddle.v0.reset.phases + waddle.v0.reset.remote (neither implemented by this runner yet — see scenario.rs's SUPPORTED_FEATURES; this scenario is currently skipped, not executed, and will activate once the D6 conformance-runner task lands parsing for episode_open's window fields and the post_reset_result/reset_window_engage/reset_window_complete inject kinds). Today's enforcing coverage for E19b is proptest I13 (tests/properties.rs) plus the two direct unit tests in tests/remote_reset_windows.rs (e19b_reset_result_rejected_while_pre_window_open, e19b_post_reset_result_rejected_while_post_window_open).",
+  "target": "fsm",
+  "requires_features": ["waddle.v0.core", "waddle.v0.reset.phases", "waddle.v0.reset.remote"],
+  "setup": {
+    "lease_enforcement": "LEASE_ENFORCEMENT_ADVISORY",
+    "handoff": { "immediate": { "blendNs": "0" } },
+    "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING"
+  },
+  "steps": [
+    { "inject": { "kind": "episode_open", "episode_id": "ep-e19b-0001", "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING", "post_reset": true, "pre_reset_window": { "expected_actor": "ACTOR_KIND_TELEOPERATOR", "prompt": "please reset the scene", "timeout_ns": "5000000000" }, "post_reset_window": { "expected_actor": "ACTOR_KIND_TELEOPERATOR", "prompt": "please clear the scene", "timeout_ns": "5000000000" } } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RESETTING", "reset_window.open": true, "reset_window.kind": "RESET_KIND_PRE", "reset_window.expected_actor": "ACTOR_KIND_TELEOPERATOR" } },
+    { "expect_emission": { "event": { "resetWindow": { "kind": "RESET_WINDOW_EVENT_KIND_OPENED" } }, "within_ns": "0" } },
+
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "reset_result", "result": { "ok": true, "strategy": "pipeline-hook-race", "verification": { "mode": "RESET_VERIFICATION_MODE_BLOCKING", "verified": true, "judgeId": "judge-reset", "judgeVersion": "2.1.0", "tNs": "100000000" } } } },
+    { "expect_no_emission": { "event": { "resetVerification": {} }, "within_ns": "0" } },
+    { "expect_no_emission": { "event": { "state": {} }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RESETTING", "reset_window.open": true } },
+
+    { "inject": { "kind": "claim_granted", "claim": { "claimId": "claim-e19b-pre", "episodeId": "ep-e19b-0001", "actor": { "kind": "ACTOR_KIND_TELEOPERATOR" }, "sourceName": "teleop", "selfInitiated": false } } },
+    { "expect_state": { "claim.active_claim_id": "claim-e19b-pre" } },
+    { "inject": { "kind": "reset_window_engage", "claim_id": "claim-e19b-pre" } },
+    { "expect_state": { "gate.mode": "GATE_MODE_RESET" } },
+    { "expect_emission": { "event": { "resetWindow": { "kind": "RESET_WINDOW_EVENT_KIND_ENGAGED" } }, "within_ns": "0" } },
+
+    { "inject": { "kind": "reset_window_complete", "claim_id": "claim-e19b-pre", "result": { "ok": true, "verification": { "mode": "RESET_VERIFICATION_MODE_BLOCKING", "verified": true, "judgeId": "judge-reset", "judgeVersion": "2.1.0", "tNs": "200000000" } } } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_READY", "gate.mode": "GATE_MODE_PASSTHROUGH", "claim.active_claim_id": "", "reset_window.open": false } },
+
+    { "inject": { "kind": "start" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RUNNING" } },
+    { "inject": { "kind": "terminate", "outcome": "TERMINAL_OUTCOME_SUCCESS", "reason": "task done" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_POST_RESET", "episode.pinned_outcome": "TERMINAL_OUTCOME_SUCCESS", "reset_window.open": true, "reset_window.kind": "RESET_KIND_POST" } },
+
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "post_reset_result", "result": { "ok": true, "detail": "pipeline hook raced the post window" } } },
+    { "expect_no_emission": { "event": { "postReset": {} }, "within_ns": "0" } },
+    { "expect_no_emission": { "event": { "state": {} }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_POST_RESET", "episode.pinned_outcome": "TERMINAL_OUTCOME_SUCCESS", "reset_window.open": true } },
+
+    { "inject": { "kind": "claim_granted", "claim": { "claimId": "claim-e19b-post", "episodeId": "ep-e19b-0001", "actor": { "kind": "ACTOR_KIND_TELEOPERATOR" }, "sourceName": "teleop", "selfInitiated": false } } },
+    { "inject": { "kind": "reset_window_engage", "claim_id": "claim-e19b-post" } },
+    { "expect_state": { "gate.mode": "GATE_MODE_RESET" } },
+    { "inject": { "kind": "reset_window_complete", "claim_id": "claim-e19b-post", "result": { "ok": true } } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_TERMINAL", "episode.outcome": "TERMINAL_OUTCOME_SUCCESS", "gate.mode": "GATE_MODE_PASSTHROUGH", "claim.active_claim_id": "" } }
+  ]
+}

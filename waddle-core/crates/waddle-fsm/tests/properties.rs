@@ -58,6 +58,11 @@ enum Cmd {
         invalidated: bool,
     },
     Start,
+    /// A caller-loop gate tick (D7 edge 3): must not transition the episode
+    /// out of RESETTING/POST_RESET — the guard against a stale handle
+    /// double-driving a reset while a remote actor (or the pipeline hook)
+    /// owns it.
+    GateTick,
     ClaimGranted,
     Engage,
     HoldOk,
@@ -127,6 +132,7 @@ fn cmd_strategy() -> impl Strategy<Value = Cmd> {
         2 => (any::<bool>(), any::<bool>())
             .prop_map(|(verified, invalidated)| Cmd::Verification { verified, invalidated }),
         3 => Just(Cmd::Start),
+        2 => Just(Cmd::GateTick),
         3 => Just(Cmd::ClaimGranted),
         3 => Just(Cmd::Engage),
         2 => Just(Cmd::HoldOk),
@@ -258,6 +264,18 @@ impl Driver {
             self.state.episode.as_ref().map(|e| e.phase),
             Some(Phase::PostReset)
         );
+        // D7 edge 3: a GateTick landing in RESETTING/POST_RESET must not
+        // transition the phase — those windows are owned by a remote actor
+        // (or the pipeline hook), and the gate is already returning
+        // Noop{RESET_ACTIVE} to any stale caller ticking it (waddle-gate's
+        // PlanMode::Reset). Captured BEFORE the event so a rejection or a
+        // no-op commit is compared against the true prior phase.
+        let gate_tick = matches!(ev, SessionEvent::GateTick { .. });
+        let phase_before_gate_tick = if gate_tick {
+            self.state.episode.as_ref().map(|e| e.phase)
+        } else {
+            None
+        };
         match first {
             Err(Rejected { .. }) => {
                 // Rejections never mutate: nothing to fold in.
@@ -297,6 +315,22 @@ impl Driver {
                         self.state.lease,
                         LeaseState::Vacant,
                         "I11: estop from PostReset must leave the lease vacant"
+                    );
+                }
+
+                // D7 edge 3: GateTick in RESETTING/POST_RESET is a no-op —
+                // it must never drive a transition (unlike a GateTick landing
+                // in READY, which is E6's first-gated-action trigger).
+                if gate_tick
+                    && matches!(
+                        phase_before_gate_tick,
+                        Some(Phase::Resetting) | Some(Phase::PostReset)
+                    )
+                {
+                    assert_eq!(
+                        self.state.episode.as_ref().map(|e| e.phase),
+                        phase_before_gate_tick,
+                        "D7 edge 3: GateTick in RESETTING/POST_RESET must not transition"
                     );
                 }
 
@@ -586,6 +620,7 @@ impl Driver {
                 at,
             },
             Cmd::Start => SessionEvent::Start { at },
+            Cmd::GateTick => SessionEvent::GateTick { at },
             Cmd::ClaimGranted => {
                 self.claim_seq += 1;
                 SessionEvent::ClaimGranted {
