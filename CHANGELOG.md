@@ -55,6 +55,16 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   the new effects stays inert (runtime reset seams land in a later change).
   Undeclared episodes behave exactly per E1–E13 (the additive guarantee); all
   13 conformance fixtures stay byte-identical green.
+- **Bug fix (found by proptest I13) — FSM.md row E19b**: `reset_result` /
+  `post_reset_result` are now rejected while a remote reset window is open
+  (`waddle-fsm`). Previously the pipeline-hook completion path (E2–E5 /
+  E15–E16) could land while a window was OPEN or ENGAGED, abandoning the
+  window/claim/lease bookkeeping and leaving `gate_mode == RESET` stuck
+  alongside a phase that had already moved past RESETTING/POST_RESET. Not
+  reachable through a config-correct runtime (`ResetSpec` is `Hook` XOR
+  `Remote`; the reset pump skips hook injection for `Remote`, D4) but guarded
+  in `waddle-fsm` anyway per the hollow-frontend rule. Two regression tests
+  pin it in `tests/remote_reset_windows.rs`.
 - New conformance fixture `teleop_dims_mismatch_holds` (`waddle-conformance`,
   gate target): pins the media-intake action-space-validation contract as
   gate-observable — a teleop injection whose flattened width doesn't match

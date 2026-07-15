@@ -700,6 +700,13 @@ pub fn step(
             if !matches!(phase, Some(Phase::Resetting)) {
                 return Err(rejected("reset_result outside RESETTING"));
             }
+            // E19b: an open remote window owns this reset exclusively; the
+            // pipeline-hook path is illegal until it closes (E21/E22).
+            if ctx.episode().reset_window.is_some() {
+                return Err(rejected(
+                    "reset_result illegal while a remote reset window is open (E19b)",
+                ));
+            }
             ctx.apply_reset_result(*at, *ok, *verified);
         }
 
@@ -1447,6 +1454,13 @@ pub fn step(
         SessionEvent::PostResetResult { ok, detail, at } => {
             if !matches!(phase, Some(Phase::PostReset)) {
                 return Err(rejected("post_reset_result outside POST_RESET"));
+            }
+            // E19b: an open remote window owns this reset exclusively; the
+            // pipeline-hook path is illegal until it closes (E21/E22).
+            if ctx.episode().reset_window.is_some() {
+                return Err(rejected(
+                    "post_reset_result illegal while a remote reset window is open (E19b)",
+                ));
             }
             ctx.apply_post_reset_result(*at, *ok, detail);
         }

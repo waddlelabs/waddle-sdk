@@ -430,3 +430,62 @@ fn e22_post_window_timeout_keeps_pinned_and_flags() {
     assert!(d.state.episode.as_ref().unwrap().post_reset_failed);
     assert!(d.window_kinds().contains(&WINDOW_TIMED_OUT));
 }
+
+// E19b (found via proptest I13: an open window must own its reset
+// exclusively, or the pipeline-hook path can complete around it, abandoning
+// the window/claim/lease bookkeeping and leaving gate=RESET stuck alongside
+// a phase that has already moved on) --------------------------------------
+
+#[test]
+fn e19b_reset_result_rejected_while_pre_window_open() {
+    let mut d = Driver::new();
+    open_with(&mut d, Some(teleop_window()), None);
+    let at = d.tick();
+    let res = d.try_apply(SessionEvent::ResetResult {
+        ok: true,
+        verified: Some(true),
+        at,
+    });
+    assert!(
+        res.is_err(),
+        "reset_result illegal while a remote pre window is open (E19b)"
+    );
+    assert_eq!(d.phase(), Phase::Resetting, "unchanged");
+    assert!(
+        d.state.episode.as_ref().unwrap().reset_window.is_some(),
+        "window untouched"
+    );
+}
+
+#[test]
+fn e19b_post_reset_result_rejected_while_post_window_open() {
+    let mut d = Driver::new();
+    open_with(&mut d, None, Some(teleop_window()));
+    let at = d.tick();
+    d.ok(SessionEvent::ResetResult {
+        ok: true,
+        verified: Some(true),
+        at,
+    });
+    let at = d.tick();
+    d.ok(SessionEvent::Start { at });
+    let at = d.tick();
+    d.ok(SessionEvent::Terminate {
+        outcome: TerminalOutcome::Success,
+        reason: "done".to_owned(),
+        at,
+    });
+    assert_eq!(d.phase(), Phase::PostReset, "post window opened at E14");
+
+    let at = d.tick();
+    let res = d.try_apply(SessionEvent::PostResetResult {
+        ok: true,
+        detail: "hook raced the window".to_owned(),
+        at,
+    });
+    assert!(
+        res.is_err(),
+        "post_reset_result illegal while a remote post window is open (E19b)"
+    );
+    assert_eq!(d.phase(), Phase::PostReset, "unchanged");
+}
