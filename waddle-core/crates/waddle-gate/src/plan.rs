@@ -38,6 +38,14 @@ pub enum PlanMode {
     /// Claimed-while-stalled: the runtime pump drives `send` directly; the
     /// integrator's loop receives NOOP markers and MUST NOT dispatch them.
     Bypass { provenance: ProvenanceTag },
+    /// A remote actor is performing a scene reset through the SDK (flag
+    /// `waddle.v0.reset.remote`, gate mode RESET): the reset claimant holds
+    /// the lease and the SDK drives `send` on its behalf from its own
+    /// thread. A caller ticking `gate()` on this now-stale handle is a
+    /// spectator (D7 edge 3) — same shape as `Bypass`, distinct so the
+    /// reducer can render `NoopReason::RESET_ACTIVE` instead of
+    /// `BYPASS_ACTIVE`.
+    Reset { provenance: ProvenanceTag },
     /// A hold is active (HOLD_FIRST engage, tripwire hold).
     Held,
 }

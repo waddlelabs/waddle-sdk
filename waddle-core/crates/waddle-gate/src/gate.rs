@@ -222,6 +222,21 @@ impl<C: Clock> Gate<C> {
                     provenance: provenance.clone(),
                 }
             }
+            // D7 edge 3: a stale caller handle ticking during a remote reset
+            // window must dispatch nothing. Same cost class as Bypass (one
+            // record push, one marker return) — no locks/syscalls/allocs.
+            PlanMode::Reset { provenance } => {
+                self.record(
+                    stamp,
+                    GateDecision::ResetActive,
+                    provenance.clone(),
+                    None,
+                    obs,
+                );
+                GateOutput::Noop {
+                    provenance: provenance.clone(),
+                }
+            }
             PlanMode::Claimed { provenance, blend } => {
                 let due = self.shared.stream.lock().pop_due(now);
                 match due {
@@ -448,5 +463,32 @@ mod tests {
             GateOutput::Noop { .. }
         ));
         assert_eq!(records.pop().unwrap().decision, GateDecision::Noop);
+    }
+
+    /// D7 edge 3: a caller ticking `gate()` on a stale handle while a remote
+    /// actor holds the reset window dispatches nothing — same shape as
+    /// bypass, distinct decision so the reducer can render
+    /// `NoopReason::RESET_ACTIVE` instead of `BYPASS_ACTIVE`.
+    #[test]
+    fn reset_active_returns_noop_and_records_distinctly() {
+        let (mut gate, shared, _tx, mut records, clock) = setup();
+        shared.store_plan(GatePlan {
+            mode: PlanMode::Reset {
+                provenance: teleop_tag(),
+            },
+            since: MonoNs(0),
+        });
+        clock.advance(1_000);
+        assert!(matches!(
+            gate.gate(&[1.0], None, None),
+            GateOutput::Noop { .. }
+        ));
+        let rec = records.pop().unwrap();
+        assert_eq!(rec.decision, GateDecision::ResetActive);
+        assert_ne!(
+            rec.decision,
+            GateDecision::Noop,
+            "reset-active must be distinguishable from bypass for the reducer's marker mapping"
+        );
     }
 }

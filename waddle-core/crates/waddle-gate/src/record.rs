@@ -14,6 +14,11 @@ pub enum GateDecision {
     Blend,
     Noop,
     Hold,
+    /// A remote actor is performing a scene reset (`PlanMode::Reset`); shaped
+    /// like `Noop` (dispatch nothing) but distinct so the reducer's marker
+    /// translation can render `NoopReason::RESET_ACTIVE` instead of
+    /// `BYPASS_ACTIVE` (D7 edge 3).
+    ResetActive,
 }
 
 #[derive(Debug, Clone)]

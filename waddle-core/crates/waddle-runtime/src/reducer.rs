@@ -262,10 +262,10 @@ impl Reducer {
                     _ => None,
                 },
             },
-            // reset-phases: behavior lands with the FSM change on this
-            // branch; nothing emits GateMode::Reset yet, so this is
-            // unreachable today. Passthrough is the safe placeholder.
-            GateMode::Reset => PlanMode::Passthrough,
+            // D7 edge 3: a remote reset window's claimant holds the lease;
+            // the caller's own gate() handle is stale and must dispatch
+            // nothing (Noop{RESET_ACTIVE}), same shape as Bypass.
+            GateMode::Reset => PlanMode::Reset { provenance },
         };
         GatePlan { mode, since: now }
     }
@@ -390,6 +390,7 @@ impl Reducer {
             }
             (GateDecision::Noop, _) => vec![noop(pb::NoopReason::BypassActive)],
             (GateDecision::Hold, _) => vec![noop(pb::NoopReason::HoldActive)],
+            (GateDecision::ResetActive, _) => vec![noop(pb::NoopReason::ResetActive)],
             // Pass/Substitute/Blend always carry an action.
             (_, None) => return,
         };
