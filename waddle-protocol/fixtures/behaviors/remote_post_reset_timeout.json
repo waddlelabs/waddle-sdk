@@ -1,0 +1,39 @@
+{
+  "format": "waddle.behavior/v0",
+  "name": "remote_post_reset_timeout",
+  "description": "Pins FSM.md E22's POST_RESET branch: a declared remote POST window that engages (lease → claimant, gate → RESET) but never completes before its deadline times out — ResetWindowEvent{TIMED_OUT} emits, the lease hands back to the loop client, gate returns to PASSTHROUGH, the reset claim releases (C7), and only then does the episode reach TERMINAL: the pinned SUCCESS outcome survives (E16's failure branch, not E5's abort — post-reset failure never changes the outcome) with post_reset_failed permanently set and a Fault recorded.",
+  "target": "fsm",
+  "requires_features": ["waddle.v0.core", "waddle.v0.reset.phases", "waddle.v0.reset.remote"],
+  "setup": {
+    "lease_enforcement": "LEASE_ENFORCEMENT_ADVISORY",
+    "handoff": { "immediate": { "blendNs": "0" } },
+    "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING"
+  },
+  "steps": [
+    { "inject": { "kind": "episode_open", "episode_id": "ep-rpt-0001", "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING", "post_reset_window": { "expected_actor": "ACTOR_KIND_TELEOPERATOR", "prompt": "please clear the scene", "timeout_ns": "5000000000" } } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "reset_result", "result": { "ok": true, "strategy": "scripted_home", "verification": { "mode": "RESET_VERIFICATION_MODE_BLOCKING", "verified": true, "judgeId": "judge-reset", "judgeVersion": "2.1.0", "score": 0.96, "tNs": "100000000" } } } },
+    { "inject": { "kind": "start" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RUNNING" } },
+
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "terminate", "outcome": "TERMINAL_OUTCOME_SUCCESS", "reason": "task done" } },
+    { "expect_emission": { "event": { "state": { "to": "EPISODE_STATE_POST_RESET", "outcome": "TERMINAL_OUTCOME_SUCCESS" } }, "within_ns": "0" } },
+    { "expect_emission": { "event": { "resetWindow": { "kind": "RESET_WINDOW_EVENT_KIND_OPENED", "reset": "RESET_KIND_POST" } }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_POST_RESET", "episode.pinned_outcome": "TERMINAL_OUTCOME_SUCCESS", "reset_window.open": true, "reset_window.kind": "RESET_KIND_POST" } },
+
+    { "inject": { "kind": "claim_granted", "claim": { "claimId": "claim-rpt-0001", "episodeId": "ep-rpt-0001", "actor": { "kind": "ACTOR_KIND_TELEOPERATOR", "id": "top-7", "displayName": "Teleoperator 7" }, "sourceName": "teleop", "selfInitiated": false } } },
+    { "inject": { "kind": "reset_window_engage", "claim_id": "claim-rpt-0001" } },
+    { "expect_state": { "gate.mode": "GATE_MODE_RESET" } },
+
+    { "advance_ns": "5000000000" },
+    { "expect_emission": { "event": { "resetWindow": { "kind": "RESET_WINDOW_EVENT_KIND_TIMED_OUT" } }, "within_ns": "0" } },
+    { "expect_emission": { "event": { "lease": { "kind": "LEASE_EVENT_KIND_HANDED_OFF" } }, "within_ns": "0" } },
+    { "expect_emission": { "event": { "gate": { "from": "GATE_MODE_RESET", "to": "GATE_MODE_PASSTHROUGH" } }, "within_ns": "0" } },
+    { "expect_emission": { "event": { "claim": { "kind": "CLAIM_EVENT_KIND_RELEASED" } }, "within_ns": "0" } },
+    { "expect_emission": { "effect": { "set_flag": { "flag": "post_reset_failed" } }, "within_ns": "0" } },
+    { "expect_emission": { "event": { "fault": {} }, "within_ns": "0" } },
+    { "expect_emission": { "event": { "state": { "to": "EPISODE_STATE_TERMINAL", "outcome": "TERMINAL_OUTCOME_SUCCESS" } }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_TERMINAL", "episode.outcome": "TERMINAL_OUTCOME_SUCCESS", "episode.pinned_outcome": "TERMINAL_OUTCOME_SUCCESS", "episode.post_reset_failed": true, "gate.mode": "GATE_MODE_PASSTHROUGH", "claim.active_claim_id": "", "reset_window.open": false } }
+  ]
+}

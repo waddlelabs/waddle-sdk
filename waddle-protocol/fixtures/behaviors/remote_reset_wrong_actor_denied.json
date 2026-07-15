@@ -1,0 +1,24 @@
+{
+  "format": "waddle.behavior/v0",
+  "name": "remote_reset_wrong_actor_denied",
+  "description": "Pins FSM.md C6: a claim_granted whose actor does not match a declared reset window's expected actor is rejected outright — no ClaimEvent{GRANTED} emission, no active claim, the window stays OPEN and unaffected. Here an AGENT grant against a window declared for ACTOR_KIND_TELEOPERATOR is denied; a subsequent TELEOPERATOR grant (the correct actor) is then admitted normally, showing the guard is actor-specific rather than a blanket rejection.",
+  "target": "fsm",
+  "requires_features": ["waddle.v0.core", "waddle.v0.reset.remote"],
+  "setup": {
+    "lease_enforcement": "LEASE_ENFORCEMENT_ADVISORY",
+    "handoff": { "immediate": { "blendNs": "0" } },
+    "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING"
+  },
+  "steps": [
+    { "inject": { "kind": "episode_open", "episode_id": "ep-rwa-0001", "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING", "pre_reset_window": { "expected_actor": "ACTOR_KIND_TELEOPERATOR", "prompt": "please reset the scene", "timeout_ns": "5000000000" } } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RESETTING", "reset_window.open": true, "reset_window.kind": "RESET_KIND_PRE", "reset_window.expected_actor": "ACTOR_KIND_TELEOPERATOR" } },
+
+    { "inject": { "kind": "claim_granted", "claim": { "claimId": "claim-rwa-wrong", "episodeId": "ep-rwa-0001", "actor": { "kind": "ACTOR_KIND_AGENT", "id": "agent-1", "displayName": "Reset agent" }, "sourceName": "reset-agent", "selfInitiated": false } } },
+    { "expect_no_emission": { "event": { "claim": { "kind": "CLAIM_EVENT_KIND_GRANTED" } }, "within_ns": "0" } },
+    { "expect_state": { "claim.active_claim_id": "", "reset_window.open": true, "reset_window.claim_id": "" } },
+
+    { "inject": { "kind": "claim_granted", "claim": { "claimId": "claim-rwa-right", "episodeId": "ep-rwa-0001", "actor": { "kind": "ACTOR_KIND_TELEOPERATOR", "id": "top-7", "displayName": "Teleoperator 7" }, "sourceName": "teleop", "selfInitiated": false } } },
+    { "expect_emission": { "event": { "claim": { "kind": "CLAIM_EVENT_KIND_GRANTED" } }, "within_ns": "0" } },
+    { "expect_state": { "claim.active_claim_id": "claim-rwa-right", "reset_window.claim_id": "claim-rwa-right" } }
+  ]
+}

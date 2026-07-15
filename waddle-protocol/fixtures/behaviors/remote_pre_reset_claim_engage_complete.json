@@ -1,0 +1,36 @@
+{
+  "format": "waddle.behavior/v0",
+  "name": "remote_pre_reset_claim_engage_complete",
+  "description": "Pins the full remote pre-reset flow FSM.md E19→C6→E20→E21: episode_open with a declared PRE reset window emits ResetWindowEvent{OPENED} and the arm_timer{reset_window_timeout} effect; a matching-actor claim_granted is admitted (C6); reset_window_engage routes the lease to the claimant (LeaseEvent{HANDED_OFF}) before the gate flips to RESET and ResetWindowEvent{ENGAGED} emits, in that order (E20); reset_window_complete{ok} emits ResetWindowEvent{COMPLETED} then hands the lease back to the loop client (LeaseEvent{HANDED_OFF}) before gate→PASSTHROUGH, claim{RELEASED} (C7), and finally the pipeline result applies exactly as E2 would (reset_verification, state{→READY}) — the deferred-apply invariant: no READY until the lease is home.",
+  "target": "fsm",
+  "requires_features": ["waddle.v0.core", "waddle.v0.reset.remote"],
+  "setup": {
+    "lease_enforcement": "LEASE_ENFORCEMENT_ADVISORY",
+    "handoff": { "immediate": { "blendNs": "0" } },
+    "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING"
+  },
+  "steps": [
+    { "inject": { "kind": "episode_open", "episode_id": "ep-rpe-0001", "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING", "pre_reset_window": { "expected_actor": "ACTOR_KIND_TELEOPERATOR", "prompt": "please reset the scene", "timeout_ns": "5000000000" } } },
+    { "expect_emission": { "event": { "resetWindow": { "kind": "RESET_WINDOW_EVENT_KIND_OPENED", "reset": "RESET_KIND_PRE", "expectedActor": "ACTOR_KIND_TELEOPERATOR" } }, "within_ns": "0" } },
+    { "expect_emission": { "effect": { "arm_timer": { "timer_id": "reset_window_timeout", "deadline_ns": "5000000000" } }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RESETTING", "reset_window.open": true, "reset_window.kind": "RESET_KIND_PRE", "reset_window.expected_actor": "ACTOR_KIND_TELEOPERATOR", "reset_window.claim_id": "" } },
+
+    { "inject": { "kind": "claim_granted", "claim": { "claimId": "claim-rpe-0001", "episodeId": "ep-rpe-0001", "actor": { "kind": "ACTOR_KIND_TELEOPERATOR", "id": "top-7", "displayName": "Teleoperator 7" }, "sourceName": "teleop", "selfInitiated": false } } },
+    { "expect_state": { "claim.active_claim_id": "claim-rpe-0001", "reset_window.claim_id": "claim-rpe-0001" } },
+
+    { "inject": { "kind": "reset_window_engage", "claim_id": "claim-rpe-0001" } },
+    { "expect_emission": { "event": { "lease": { "kind": "LEASE_EVENT_KIND_HANDED_OFF" } }, "within_ns": "0" } },
+    { "expect_emission": { "event": { "gate": { "from": "GATE_MODE_PASSTHROUGH", "to": "GATE_MODE_RESET" } }, "within_ns": "0" } },
+    { "expect_emission": { "event": { "resetWindow": { "kind": "RESET_WINDOW_EVENT_KIND_ENGAGED", "claimId": "claim-rpe-0001" } }, "within_ns": "0" } },
+    { "expect_state": { "gate.mode": "GATE_MODE_RESET", "reset_window.open": true } },
+
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "reset_window_complete", "claim_id": "claim-rpe-0001", "result": { "ok": true, "verification": { "mode": "RESET_VERIFICATION_MODE_BLOCKING", "verified": true, "judgeId": "judge-reset", "judgeVersion": "2.1.0", "tNs": "100000000" } } } },
+    { "expect_emission": { "event": { "resetWindow": { "kind": "RESET_WINDOW_EVENT_KIND_COMPLETED" } }, "within_ns": "0" } },
+    { "expect_emission": { "event": { "lease": { "kind": "LEASE_EVENT_KIND_HANDED_OFF" } }, "within_ns": "0" } },
+    { "expect_emission": { "event": { "gate": { "from": "GATE_MODE_RESET", "to": "GATE_MODE_PASSTHROUGH" } }, "within_ns": "0" } },
+    { "expect_emission": { "event": { "claim": { "kind": "CLAIM_EVENT_KIND_RELEASED" } }, "within_ns": "0" } },
+    { "expect_emission": { "event": { "state": { "to": "EPISODE_STATE_READY" } }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_READY", "gate.mode": "GATE_MODE_PASSTHROUGH", "claim.active_claim_id": "", "reset_window.open": false } }
+  ]
+}
