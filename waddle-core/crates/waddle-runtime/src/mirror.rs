@@ -17,6 +17,15 @@ pub struct Status {
     /// Provenance tag of the active claim (bypass pump stamps sends with it).
     pub provenance: Option<ProvenanceTag>,
     pub outcome: Option<TerminalOutcome>,
+    /// The terminal outcome pinned at POST_RESET entry (FSM.md E14), before
+    /// the episode actually reaches `Phase::Terminal`. `None` until pinned;
+    /// for post-reset-declared episodes it equals `outcome` once terminal
+    /// (E15–E17 carry it unchanged). This is what makes the episode "done"
+    /// from the caller's view at `Phase::PostReset`.
+    pub pinned_outcome: Option<TerminalOutcome>,
+    /// PERMANENT once set (FSM.md E16/E17): the post-reset cleanup failed
+    /// or was estopped. NEVER alters the (pinned) outcome.
+    pub post_reset_failed: bool,
     pub plane_connected: bool,
     pub shutdown: bool,
     /// Set once, at build time, when the session's `ControlRegistry` has no

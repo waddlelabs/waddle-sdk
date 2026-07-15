@@ -777,19 +777,33 @@ impl Session {
         })
     }
 
-    /// True once `id` is no longer the live, non-terminal episode — because
-    /// it terminated, a successor replaced it, or the session shut down.
+    /// True once `id` is no longer the live, still-rolling episode — because
+    /// it terminated, entered `Phase::PostReset`, a successor replaced it,
+    /// or the session shut down.
+    ///
+    /// POST_RESET counts as done: the terminal outcome is pinned at entry
+    /// (FSM.md E14), so the rollout is over from the caller's view — only
+    /// the scene cleanup is still running, and it self-resolves (the reset
+    /// pump, a remote window, or its timeout). This also makes
+    /// [`Self::terminate_episode`] a no-op during POST_RESET: a caller's
+    /// teardown path (e.g. a context-manager exit racing a plane directive)
+    /// must never inject a second Terminate against a pinned outcome.
     #[must_use]
     pub fn episode_done(&self, id: &EpisodeId) -> bool {
         let s = self.inner.mirror.read();
         s.shutdown
             || s.episode_id.as_ref() != Some(id)
-            || matches!(s.episode_state, Some(Phase::Terminal(_)))
+            || matches!(s.episode_state, Some(Phase::Terminal(_) | Phase::PostReset))
     }
 
     /// Terminate episode `id` and block until the core confirms the
     /// terminal state. A no-op when `id` is not the live episode — a stale
-    /// handle must never terminate a successor or a later episode.
+    /// handle must never terminate a successor or a later episode — and
+    /// (via [`Self::episode_done`]) when the episode is already in
+    /// `Phase::PostReset`: its outcome is pinned and the cleanup
+    /// self-resolves to Terminal. When the terminate itself detours through
+    /// POST_RESET (a declared post-reset, FSM.md E14), this still blocks
+    /// until Terminal — through the cleanup — per the design contract.
     pub fn terminate_episode(&self, id: &EpisodeId, outcome: TerminalOutcome, reason: &str) {
         if self.episode_done(id) {
             return;
@@ -868,15 +882,23 @@ impl Episode {
     }
 
     /// Flips when a judge, a directive, a timeout, `terminate`, or session
-    /// shutdown ends the episode.
+    /// shutdown ends the episode — including at `Phase::PostReset` entry,
+    /// where the terminal outcome is already pinned and only the scene
+    /// cleanup (which self-resolves) is still running. See
+    /// [`Session::episode_done`].
     #[must_use]
     pub fn done(&self) -> bool {
         self.session.episode_done(&self.id)
     }
 
+    /// The episode's outcome: the terminal outcome once `Phase::Terminal`,
+    /// or the outcome pinned at POST_RESET entry while the cleanup is still
+    /// running (they are the same value — E15–E17 carry the pinned outcome
+    /// to Terminal unchanged). `None` while the rollout is still live.
     #[must_use]
     pub fn outcome(&self) -> Option<TerminalOutcome> {
-        self.session.inner.mirror.read().outcome
+        let s = self.session.inner.mirror.read();
+        s.outcome.or(s.pinned_outcome)
     }
 
     /// Gate records dropped because the ring filled (the recording fell

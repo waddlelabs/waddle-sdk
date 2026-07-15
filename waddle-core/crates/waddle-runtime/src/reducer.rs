@@ -144,10 +144,11 @@ impl Reducer {
             id,
             born_claimed,
             parent,
+            post_reset,
             ..
         } = event
         {
-            self.open_episode_records(id, *born_claimed, parent.as_ref());
+            self.open_episode_records(id, *born_claimed, parent.as_ref(), *post_reset);
         }
 
         match step(&self.cfg, &self.fsm, event) {
@@ -223,10 +224,20 @@ impl Reducer {
                     sc.mark_reset_unverified();
                 }
             }
-            // reset-phases: the sidecar/mirror wiring for these lands with the
-            // runtime reset seams (a later task); the FSM already carries the
-            // full post-reset semantics. Inert here so nothing regresses.
-            Effect::SetPostResetFailed { .. } | Effect::RunPostReset { .. } => {}
+            Effect::SetPostResetFailed { .. } => {
+                if let Some(sc) = &mut self.sidecar {
+                    sc.mark_post_reset_failed();
+                }
+            }
+            Effect::RunPostReset { .. } => {
+                // Deliberate no-op: the post-reset hook runs on the reset
+                // pump (`pumps::spawn_reset_pump`, mirror-watch — it sees
+                // `Phase::PostReset` from the same transition that produced
+                // this effect), never on the reducer thread. A user hook
+                // here would block the single event funnel for its whole
+                // duration — the same reason verbs run on their own
+                // dispatch thread.
+            }
             Effect::Emit(event) => {
                 if let Some(sc) = &mut self.sidecar {
                     sc.push_event((*event).clone());
@@ -291,6 +302,7 @@ impl Reducer {
         id: &EpisodeId,
         born_claimed: bool,
         parent: Option<&EpisodeId>,
+        post_reset_declared: bool,
     ) {
         // Finalize a leftover terminal episode first (retake path).
         self.finalize_episode_if_terminal(true);
@@ -312,6 +324,7 @@ impl Reducer {
         );
         builder.open_bounds(self.clock.stamp_now());
         builder.set_born_claimed(born_claimed);
+        builder.set_post_reset_declared(post_reset_declared);
         if let Some(parent) = parent {
             builder.set_retake(parent, id);
         }
@@ -441,6 +454,12 @@ impl Reducer {
             Some(Phase::Terminal(o)) => Some(o),
             _ => None,
         };
+        let pinned_outcome = self.fsm.episode.as_ref().and_then(|e| e.pinned_outcome);
+        let post_reset_failed = self
+            .fsm
+            .episode
+            .as_ref()
+            .is_some_and(|e| e.post_reset_failed);
         let gate_mode = Some(self.fsm.gate_mode);
         let claim_active = self.fsm.claim.is_some();
         let provenance = claim_active.then(|| self.claim_provenance());
@@ -452,6 +471,8 @@ impl Reducer {
             s.claim_active = claim_active;
             s.provenance = provenance;
             s.outcome = outcome;
+            s.pinned_outcome = pinned_outcome;
+            s.post_reset_failed = post_reset_failed;
             s.plane_connected = plane_connected;
         });
     }
