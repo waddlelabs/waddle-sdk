@@ -53,8 +53,10 @@ fn robot() -> pb::RobotDescription {
 
 /// A 6-dim `BaseTwist` robot: matches the `Twist` teleop packets the
 /// intervention tests push (see `flatten_packet`), so the intake dims
-/// validation (Bug 2) never rejects them.
-fn twist_robot() -> pb::RobotDescription {
+/// validation (Bug 2) never rejects them. `gripper` plumbs a declared
+/// `GripperSpec` through for Bug 3's mapping tests; `None` reproduces the
+/// other intervention tests' ungripped fixture.
+fn twist_robot(gripper: Option<pb::GripperSpec>) -> pb::RobotDescription {
     pb::RobotDescription {
         name: "e2e-twist-bot".into(),
         robot_id: "e2e-02".into(),
@@ -67,7 +69,7 @@ fn twist_robot() -> pb::RobotDescription {
             })),
             rate_hz: 50.0,
             chunking: None,
-            gripper: None,
+            gripper,
         }),
         grants: vec![
             pb::Grant {
@@ -232,7 +234,7 @@ fn engage_substitutes_teleop_actions_then_release_restores_passthrough() {
     let send_log: SendLog = Arc::new(Mutex::new(Vec::new()));
     let (media, far) = LoopbackMedia::new();
     let session = Session::builder("e2e-intervention")
-        .robot(twist_robot())
+        .robot(twist_robot(None))
         .control(registry(&send_log))
         .recording_dir(dir.path())
         .media(media)
@@ -333,7 +335,7 @@ fn claimed_while_stalled_bypass_drives_send_directly() {
     let send_log: SendLog = Arc::new(Mutex::new(Vec::new()));
     let (media, far) = LoopbackMedia::new();
     let session = Session::builder("e2e-bypass")
-        .robot(twist_robot())
+        .robot(twist_robot(None))
         .control(registry(&send_log))
         .media(media)
         .build()
@@ -432,7 +434,7 @@ fn stale_pre_claim_poses_never_replay_after_engage() {
     let send_log: SendLog = Arc::new(Mutex::new(Vec::new()));
     let (media, far) = LoopbackMedia::new();
     let session = Session::builder("e2e-stale-backlog")
-        .robot(twist_robot())
+        .robot(twist_robot(None))
         .control(registry(&send_log))
         .media(media)
         .build()
@@ -518,7 +520,7 @@ fn mismatched_action_dims_are_dropped_with_one_fault_per_claim() {
     let send_log: SendLog = Arc::new(Mutex::new(Vec::new()));
     let (media, far) = LoopbackMedia::new();
     let session = Session::builder("e2e-dims-validation")
-        .robot(twist_robot())
+        .robot(twist_robot(None))
         .control(registry(&send_log))
         .recording_dir(dir.path())
         .media(media)
@@ -649,4 +651,159 @@ fn mismatched_action_dims_are_dropped_with_one_fault_per_claim() {
         validation_faults, 1,
         "expected exactly one validation fault for the claim window"
     );
+}
+
+/// Bug 3: the declared `GripperSpec` must be applied to the teleop gripper
+/// command at intake, not copied verbatim. `open_value=0.04,
+/// closed_value=0.0` against a fully-open (1.0) teleop command must carry
+/// 0.04 into the ring, not 1.0.
+#[test]
+fn declared_gripper_spec_maps_teleop_gripper_at_intake() {
+    let send_log: SendLog = Arc::new(Mutex::new(Vec::new()));
+    let (media, far) = LoopbackMedia::new();
+    let gripper = pb::GripperSpec {
+        kind: Some(pb::gripper_spec::Kind::Parallel(
+            pb::gripper_spec::Parallel {
+                open_value: 0.04,
+                closed_value: 0.0,
+                action_dim: -1,
+            },
+        )),
+    };
+    let session = Session::builder("e2e-gripper")
+        .robot(twist_robot(Some(gripper)))
+        .control(registry(&send_log))
+        .media(media)
+        .build()
+        .unwrap();
+
+    let mut ep = session.start_episode("gripper").unwrap();
+    for _ in 0..5 {
+        let _ = ep.gate(&[0.0; 6], None, None);
+    }
+    wait_for(&session, |s| {
+        matches!(s.episode_state, Some(Phase::Running))
+    });
+
+    grant_and_engage(&session, "claim-gripper", "teleop", ActorKind::Teleoperator);
+    wait_for(&session, |s| s.gate_mode == Some(GateMode::Intervention));
+
+    far.push(
+        DataTopic::TeleopPose,
+        &pb::TeleopStreamPacket {
+            t_client_ns: 1,
+            seq: 1,
+            targets: vec![pb::PartTarget {
+                part: String::new(),
+                target: Some(pb::part_target::Target::Twist(pb::Twist {
+                    linear: Some(pb::Vec3 {
+                        x: 1.0,
+                        y: 0.0,
+                        z: 0.0,
+                    }),
+                    angular: Some(pb::Vec3::default()),
+                })),
+                gripper: Some(1.0), // fully open, media-plane convention
+            }],
+            clutch_engaged: true,
+            inputs: None,
+        },
+    )
+    .unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut mapped_gripper: Option<Option<f64>> = None;
+    while Instant::now() < deadline {
+        match ep.gate(&[0.0; 6], None, None) {
+            GateOutput::Substitute { action, .. } | GateOutput::Blend { action, .. } => {
+                mapped_gripper = Some(action.gripper);
+                break;
+            }
+            _ => std::thread::sleep(Duration::from_millis(5)),
+        }
+    }
+    match mapped_gripper.expect("teleop stream never substituted") {
+        Some(g) => assert!(
+            (g - 0.04).abs() < 1e-9,
+            "expected the declared open_value (0.04), got {g}"
+        ),
+        None => panic!("expected a mapped gripper value"),
+    }
+
+    ep.terminate(TerminalOutcome::Success, "done");
+    session.shutdown();
+}
+
+/// Bug 3: no declared `GripperSpec` means passthrough, unchanged.
+#[test]
+fn absent_gripper_spec_passes_teleop_gripper_through_unchanged() {
+    let send_log: SendLog = Arc::new(Mutex::new(Vec::new()));
+    let (media, far) = LoopbackMedia::new();
+    let session = Session::builder("e2e-gripper-passthrough")
+        .robot(twist_robot(None))
+        .control(registry(&send_log))
+        .media(media)
+        .build()
+        .unwrap();
+
+    let mut ep = session.start_episode("gripper-passthrough").unwrap();
+    for _ in 0..5 {
+        let _ = ep.gate(&[0.0; 6], None, None);
+    }
+    wait_for(&session, |s| {
+        matches!(s.episode_state, Some(Phase::Running))
+    });
+
+    grant_and_engage(
+        &session,
+        "claim-passthrough",
+        "teleop",
+        ActorKind::Teleoperator,
+    );
+    wait_for(&session, |s| s.gate_mode == Some(GateMode::Intervention));
+
+    far.push(
+        DataTopic::TeleopPose,
+        &pb::TeleopStreamPacket {
+            t_client_ns: 1,
+            seq: 1,
+            targets: vec![pb::PartTarget {
+                part: String::new(),
+                target: Some(pb::part_target::Target::Twist(pb::Twist {
+                    linear: Some(pb::Vec3 {
+                        x: 1.0,
+                        y: 0.0,
+                        z: 0.0,
+                    }),
+                    angular: Some(pb::Vec3::default()),
+                })),
+                gripper: Some(0.73),
+            }],
+            clutch_engaged: true,
+            inputs: None,
+        },
+    )
+    .unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut mapped_gripper: Option<Option<f64>> = None;
+    while Instant::now() < deadline {
+        match ep.gate(&[0.0; 6], None, None) {
+            GateOutput::Substitute { action, .. } | GateOutput::Blend { action, .. } => {
+                mapped_gripper = Some(action.gripper);
+                break;
+            }
+            _ => std::thread::sleep(Duration::from_millis(5)),
+        }
+    }
+    match mapped_gripper.expect("teleop stream never substituted") {
+        Some(g) => assert!(
+            (g - 0.73).abs() < 1e-9,
+            "expected passthrough 0.73, got {g}"
+        ),
+        None => panic!("expected a passthrough gripper value"),
+    }
+
+    ep.terminate(TerminalOutcome::Success, "done");
+    session.shutdown();
 }

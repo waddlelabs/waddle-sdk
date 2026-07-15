@@ -158,6 +158,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   practice, and a real defense-in-depth guard on the rare mismatch that
   still reaches it); it now returns no blend and the gate falls back to
   Hold.
+- **GripperSpec never applied**: the teleop gripper command (normalized
+  0..1, 1 = open — the media-plane convention) is now mapped through the
+  session's declared `GripperSpec` at intake — linearly onto
+  `[closed_value, open_value]` for `Parallel`, thresholded at 0.5 for
+  `Suction` — instead of being copied onto the wire verbatim. No declared
+  spec still passes the command through unchanged.
 
 ## Stowed changelogs
 

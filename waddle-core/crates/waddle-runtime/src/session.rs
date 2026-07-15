@@ -166,6 +166,7 @@ impl SessionBuilder {
         cfg.grants = robot.grants.clone();
         cfg.space_contains_delta = robot.action_space.contains_delta();
         let dims = robot.action_space.dims();
+        let gripper_spec = robot.action_space.gripper.clone();
 
         let (gate_shared, stream_tx) =
             GateShared::new(GatePlan::passthrough(MonoNs(0)), 1024, 20_000_000);
@@ -244,6 +245,7 @@ impl SessionBuilder {
                 clock.clone(),
                 mirror.clone(),
                 dims,
+                gripper_spec,
             )?);
         }
 

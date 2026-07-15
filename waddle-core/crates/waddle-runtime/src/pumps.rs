@@ -131,7 +131,11 @@ pub(crate) fn spawn_bypass_pump(
 /// source of truth `spawn_bypass_pump` uses for `ActionChunk.dims`); `None`
 /// means the declared space has no fixed width to validate against (e.g. an
 /// Opaque space without a declared dim), in which case flattened actions
-/// pass through unchecked, same as before Bug 2's fix.
+/// pass through unchecked, same as before Bug 2's fix. `gripper_spec` is the
+/// session's declared `GripperSpec` (Bug 3): the raw teleop gripper command
+/// (normalized 0..1, 1 = open — the media-plane convention) is mapped
+/// through it before the action reaches the ring; `None` passes it through
+/// unchanged.
 pub(crate) fn spawn_media_intake(
     media: Arc<dyn MediaPlane>,
     mut stream_tx: rtrb::Producer<TimedAction>,
@@ -139,6 +143,7 @@ pub(crate) fn spawn_media_intake(
     clock: SessionClock,
     mirror: Arc<Mirror>,
     expected_dims: Option<usize>,
+    gripper_spec: Option<waddle_types::GripperKind>,
 ) -> Result<JoinHandle<()>, RuntimeError> {
     let pose_rx = media
         .open_data_rx(DataTopic::TeleopPose)
@@ -177,13 +182,22 @@ pub(crate) fn spawn_media_intake(
                     // `claim_active` is acceptable (one or two 60 Hz
                     // packets).
                     if status.claim_active
-                        && let Some(action) = flatten_packet(&packet)
+                        && let Some(mut action) = flatten_packet(&packet)
                     {
                         let dims_ok = match expected_dims {
                             Some(want) => action.values.len() == want,
                             None => true,
                         };
                         if dims_ok {
+                            // Bug 3 (GripperSpec never applied): map the raw
+                            // teleop gripper through the declared spec
+                            // before this reaches the ring.
+                            if let Some(g) = action.gripper {
+                                action.gripper = Some(match &gripper_spec {
+                                    Some(spec) => spec.map_normalized(g),
+                                    None => g,
+                                });
+                            }
                             let _ = stream_tx.push(TimedAction {
                                 seq: packet.seq,
                                 received: now,

@@ -234,6 +234,34 @@ impl GripperKind {
             None => Err(TypesError::MissingField("GripperSpec.kind")),
         }
     }
+
+    /// Map a teleop gripper command — normalized `0..1` where `1` is fully
+    /// open (the media-plane convention) — through this declared spec's own
+    /// actuator convention.
+    ///
+    /// - `Parallel`: linearly onto `[closed_value, open_value]`.
+    /// - `Suction`: the proto declares no continuous open/closed values (a
+    ///   bare on/off channel), so this thresholds at 0.5 into `{0.0, 1.0}`.
+    /// - `Dexterous`: no single-scalar convention is declared for a
+    ///   multi-joint hand here; passes the command through unchanged.
+    #[must_use]
+    pub fn map_normalized(&self, g: f64) -> f64 {
+        match self {
+            Self::Parallel {
+                open_value,
+                closed_value,
+                ..
+            } => closed_value + g * (open_value - closed_value),
+            Self::Suction => {
+                if g >= 0.5 {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            Self::Dexterous { .. } => g,
+        }
+    }
 }
 
 /// The closed set of canonical space shapes.
@@ -509,6 +537,31 @@ mod tests {
             ActionSpace::from_pb(&space),
             Err(TypesError::CompositeDepth { part }) if part == "nested"
         ));
+    }
+
+    #[test]
+    fn parallel_gripper_maps_normalized_open_to_declared_open_value() {
+        let spec = GripperKind::Parallel {
+            open_value: 0.04,
+            closed_value: 0.0,
+            action_dim: -1,
+        };
+        // 1.0 is fully open in the media-plane convention.
+        assert!((spec.map_normalized(1.0) - 0.04).abs() < 1e-12);
+        // 0.0 is fully closed.
+        assert!((spec.map_normalized(0.0) - 0.0).abs() < 1e-12);
+        // Linear in between.
+        assert!((spec.map_normalized(0.5) - 0.02).abs() < 1e-12);
+    }
+
+    #[test]
+    fn suction_gripper_thresholds_at_one_half() {
+        let spec = GripperKind::Suction;
+        assert_eq!(spec.map_normalized(1.0), 1.0);
+        assert_eq!(spec.map_normalized(0.6), 1.0);
+        assert_eq!(spec.map_normalized(0.5), 1.0);
+        assert_eq!(spec.map_normalized(0.49), 0.0);
+        assert_eq!(spec.map_normalized(0.0), 0.0);
     }
 
     #[test]
