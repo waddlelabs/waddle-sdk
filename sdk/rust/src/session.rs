@@ -16,13 +16,21 @@ use parking_lot::Mutex;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use waddle_media::{DataTopic, LoopbackFarEnd, LoopbackMedia};
-use waddle_runtime::{ControlRegistry, EstopDecl, Session};
+use waddle_runtime::{ControlRegistry, EpisodeOptions, EstopDecl, Session};
 use waddle_types::ActorKind;
 use waddle_types::pb::v0 as pb;
 
-use crate::convert::{parse_enforcement, parse_handoff, parse_robot_json, runtime_err};
+use crate::convert::{
+    parse_enforcement, parse_handoff, parse_reset_spec, parse_robot_json, parse_verification_mode,
+    runtime_err,
+};
 use crate::episode::PyEpisode;
 use crate::verbs::{PySend, PyUnit};
+
+/// Default reset-window deadline (10 minutes) — matches the design's
+/// `TeleopReset`/`AgentReset` default, used whenever a caller declares a
+/// remote reset phase without an explicit timeout.
+const DEFAULT_RESET_TIMEOUT_NS: i64 = 600_000_000_000;
 
 #[pyclass(name = "Session", frozen)]
 pub(crate) struct PySession {
@@ -69,11 +77,67 @@ impl PySession {
 #[pymethods]
 impl PySession {
     /// Open an episode; blocks through the reset pipeline (GIL released).
-    fn start_episode(&self, py: Python<'_>, task: &str) -> PyResult<PyEpisode> {
+    /// Every `*_reset_kind` kwarg defaults to `None` (inherit the session's
+    /// declared default for that phase, exactly as plain `start_episode`
+    /// did before these existed); passing one overrides that phase for
+    /// this episode only — `"none"` disables it, `"hook"`/`"teleop"`/
+    /// `"agent"` mirror `create_session`'s own kinds. See
+    /// `waddle_runtime::EpisodeOptions` for the inherit/disable contract.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        task,
+        pre_reset_kind=None,
+        pre_reset_hook=None,
+        pre_reset_prompt=None,
+        pre_reset_timeout_ns=DEFAULT_RESET_TIMEOUT_NS,
+        post_reset_kind=None,
+        post_reset_hook=None,
+        post_reset_prompt=None,
+        post_reset_timeout_ns=DEFAULT_RESET_TIMEOUT_NS,
+    ))]
+    fn start_episode(
+        &self,
+        py: Python<'_>,
+        task: &str,
+        pre_reset_kind: Option<&str>,
+        pre_reset_hook: Option<Py<PyAny>>,
+        pre_reset_prompt: Option<&str>,
+        pre_reset_timeout_ns: i64,
+        post_reset_kind: Option<&str>,
+        post_reset_hook: Option<Py<PyAny>>,
+        post_reset_prompt: Option<&str>,
+        post_reset_timeout_ns: i64,
+    ) -> PyResult<PyEpisode> {
+        let pre_reset = pre_reset_kind
+            .map(|kind| {
+                parse_reset_spec(
+                    "pre_reset",
+                    kind,
+                    pre_reset_hook,
+                    pre_reset_prompt,
+                    pre_reset_timeout_ns,
+                )
+            })
+            .transpose()?;
+        let post_reset = post_reset_kind
+            .map(|kind| {
+                parse_reset_spec(
+                    "post_reset",
+                    kind,
+                    post_reset_hook,
+                    post_reset_prompt,
+                    post_reset_timeout_ns,
+                )
+            })
+            .transpose()?;
+        let opts = EpisodeOptions {
+            pre_reset,
+            post_reset,
+        };
         let session = self.inner.clone();
         let task = task.to_owned();
         let episode = py
-            .detach(move || session.start_episode(&task))
+            .detach(move || session.start_episode_with(&task, opts))
             .map_err(runtime_err)?;
         Ok(PyEpisode::new(episode))
     }
@@ -148,6 +212,39 @@ impl PySession {
             .push(DataTopic::TeleopPose, &packet)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
+
+    /// PRIVATE/UNSTABLE: engage an already-open reset window — injects
+    /// `ClaimGranted` then `ResetWindowEngage` (the same sequence a plane
+    /// ENGAGE directive produces), so pytest can drive a remote reset
+    /// window without a control-plane transport. `actor` follows
+    /// `_testing_engage`'s own convention (`"teleop"` / `"agent"`, else
+    /// `Custom`) — pick the one the window under test actually expects
+    /// (C6), or the FSM rejects the claim.
+    fn _testing_reset_window_engage(&self, claim_id: &str, actor: &str) -> PyResult<()> {
+        self.testing_far()?;
+        let actor_kind = match actor {
+            "teleop" => ActorKind::Teleoperator,
+            "agent" => ActorKind::Agent,
+            _ => ActorKind::Custom,
+        };
+        waddle_runtime::reset_window_engage(&self.inner, claim_id, actor, actor_kind);
+        Ok(())
+    }
+
+    /// PRIVATE/UNSTABLE: complete an engaged reset window — injects
+    /// `ResetWindowComplete{claim_id, ok, verified}` (the runtime-side half
+    /// of a plane COMPLETE directive).
+    #[pyo3(signature = (claim_id, ok, verified=None))]
+    fn _testing_reset_window_complete(
+        &self,
+        claim_id: &str,
+        ok: bool,
+        verified: Option<bool>,
+    ) -> PyResult<()> {
+        self.testing_far()?;
+        waddle_runtime::reset_window_complete(&self.inner, claim_id, ok, verified);
+        Ok(())
+    }
 }
 
 /// Build the session. Every argument is plain data; the callables cross as
@@ -169,6 +266,15 @@ impl PySession {
     handoff_ns=0,
     lease_enforcement="advisory",
     testing_loopback=false,
+    pre_reset_kind="none",
+    pre_reset_hook=None,
+    pre_reset_prompt=None,
+    pre_reset_timeout_ns=DEFAULT_RESET_TIMEOUT_NS,
+    post_reset_kind="none",
+    post_reset_hook=None,
+    post_reset_prompt=None,
+    post_reset_timeout_ns=DEFAULT_RESET_TIMEOUT_NS,
+    reset_verification="blocking",
 ))]
 pub(crate) fn create_session(
     py: Python<'_>,
@@ -186,10 +292,34 @@ pub(crate) fn create_session(
     handoff_ns: i64,
     lease_enforcement: &str,
     testing_loopback: bool,
+    pre_reset_kind: &str,
+    pre_reset_hook: Option<Py<PyAny>>,
+    pre_reset_prompt: Option<&str>,
+    pre_reset_timeout_ns: i64,
+    post_reset_kind: &str,
+    post_reset_hook: Option<Py<PyAny>>,
+    post_reset_prompt: Option<&str>,
+    post_reset_timeout_ns: i64,
+    reset_verification: &str,
 ) -> PyResult<PySession> {
     let robot = parse_robot_json(robot_json)?;
     let handoff = parse_handoff(handoff_kind, handoff_ns)?;
     let enforcement = parse_enforcement(lease_enforcement)?;
+    let pre_reset = parse_reset_spec(
+        "pre_reset",
+        pre_reset_kind,
+        pre_reset_hook,
+        pre_reset_prompt,
+        pre_reset_timeout_ns,
+    )?;
+    let post_reset = parse_reset_spec(
+        "post_reset",
+        post_reset_kind,
+        post_reset_hook,
+        post_reset_prompt,
+        post_reset_timeout_ns,
+    )?;
+    let verification = parse_verification_mode(reset_verification)?;
 
     let mut registry = ControlRegistry::default();
     if let Some(cb) = send {
@@ -218,9 +348,16 @@ pub(crate) fn create_session(
         .robot(robot)
         .control(registry)
         .handoff(handoff)
-        .lease_enforcement(enforcement);
+        .lease_enforcement(enforcement)
+        .verification_mode(verification);
     if let Some(dir) = recording_dir {
         builder = builder.recording_dir(dir);
+    }
+    if let Some(spec) = pre_reset {
+        builder = builder.pre_reset(spec);
+    }
+    if let Some(spec) = post_reset {
+        builder = builder.post_reset(spec);
     }
     let mut testing_far = None;
     if testing_loopback {

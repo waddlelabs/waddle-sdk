@@ -29,6 +29,65 @@ pub(crate) struct PyUnit {
     pub cb: Py<PyAny>,
 }
 
+/// A pre/post-reset hook callable, wrapped for `ResetSpec::Hook`
+/// (`Arc<dyn Fn(&str) -> (bool, Option<bool>) + Send + Sync>`): invoked
+/// with the episode's task string, on whichever thread the hook naturally
+/// runs on (the caller's own thread for an inline pre-reset, the
+/// `waddle-reset-hooks` pump thread otherwise — see `waddle-runtime`'s
+/// `ResetSpec` doc). Same GIL/shutdown shape as [`PyUnit`]: `try_attach`
+/// so an interpreter-finalization window degrades to `(false, None)`
+/// instead of blocking or aborting.
+pub(crate) struct PyResetHook {
+    pub cb: Py<PyAny>,
+}
+
+impl PyResetHook {
+    /// Call the hook with `task`; MUST NOT panic or unwind into Rust — this
+    /// runs on a core-owned thread. Normalizes every outcome defensively:
+    /// a raised exception, or a return value that is neither `bool` nor
+    /// `(bool, Optional[bool])`, is reported via `PyErr::write_unraisable`
+    /// (the same "log, don't propagate" mechanism CPython uses for
+    /// background-thread/destructor callbacks — there is no result channel
+    /// back to the caller here, unlike verb dispatch's `VerbError`) and
+    /// normalized to `(false, None)`.
+    pub(crate) fn call(&self, task: &str) -> (bool, Option<bool>) {
+        Python::try_attach(|py| match self.cb.bind(py).call1((task,)) {
+            Ok(value) => normalize_hook_result(py, &value),
+            Err(err) => {
+                err.write_unraisable(py, Some(self.cb.bind(py)));
+                (false, None)
+            }
+        })
+        .unwrap_or((false, None))
+    }
+}
+
+/// `bool` -> `(bool, Some(bool))`: a hook that only reports success is read
+/// as also vouching for it — the same "no distinct verification opinion"
+/// default the no-spec pipeline already uses (`(true, Some(true))`), and
+/// the only reading under which a bare-`True` hook reaches READY by itself
+/// under the default `Blocking` verification mode (which requires
+/// `verified = Some(true)`) rather than hanging in RESETTING forever.
+/// `(bool, Optional[bool])` -> as-is. Anything else is reported as
+/// unraisable and normalized to `(false, None)`.
+fn normalize_hook_result(py: Python<'_>, value: &Bound<'_, PyAny>) -> (bool, Option<bool>) {
+    if let Ok(ok) = value.extract::<bool>() {
+        return (ok, Some(ok));
+    }
+    if let Ok((ok, verified)) = value.extract::<(bool, Option<bool>)>() {
+        return (ok, verified);
+    }
+    let repr = value
+        .repr()
+        .map(|r| r.to_string())
+        .unwrap_or_else(|_| "<unrepr-able>".to_owned());
+    let err = pyo3::exceptions::PyTypeError::new_err(format!(
+        "reset hook must return bool or (bool, Optional[bool]); got {repr}"
+    ));
+    err.write_unraisable(py, Some(value));
+    (false, None)
+}
+
 impl UnitVerb for PyUnit {
     fn call(&self) -> Result<(), VerbError> {
         Python::try_attach(|py| {

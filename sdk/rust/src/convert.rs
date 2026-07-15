@@ -1,12 +1,18 @@
 //! Marshalling helpers: ndarray/sequence extraction, enum parsing, error
 //! mapping. Pure conversion — no policy.
 
+use std::sync::Arc;
+
 use numpy::{PyArray1, PyArrayMethods, PyReadonlyArray1};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use waddle_runtime::RuntimeError;
+use waddle_runtime::{ResetHook, ResetSpec, RuntimeError};
 use waddle_types::pb::v0 as pb;
-use waddle_types::{HandoffPolicy, LeaseEnforcement, TerminalOutcome};
+use waddle_types::{
+    ActorKind, HandoffPolicy, LeaseEnforcement, ResetVerificationMode, TerminalOutcome,
+};
+
+use crate::verbs::PyResetHook;
 
 /// A borrowed-or-owned float64 row extracted from a Python object:
 /// zero-copy for contiguous float64 ndarrays, an owned copy for lists and
@@ -67,6 +73,57 @@ pub(crate) fn parse_enforcement(value: &str) -> PyResult<LeaseEnforcement> {
         "enforced" => Ok(LeaseEnforcement::Enforced),
         other => Err(PyValueError::new_err(format!(
             "lease_enforcement={other:?}: expected \"advisory\" or \"enforced\""
+        ))),
+    }
+}
+
+/// Build one reset phase's [`ResetSpec`] from its four kwargs (all sharing
+/// one `label` — `"pre_reset"` or `"post_reset"` — for error messages).
+/// `"none"` disables the phase (`None`); `"hook"` wraps `hook` as a
+/// [`PyResetHook`] (requires `hook` to be set); `"teleop"`/`"agent"` build a
+/// [`ResetSpec::Remote`] window for that actor. Pure kwarg-to-type mapping —
+/// zero reset/claim logic of its own.
+pub(crate) fn parse_reset_spec(
+    label: &str,
+    kind: &str,
+    hook: Option<Py<PyAny>>,
+    prompt: Option<&str>,
+    timeout_ns: i64,
+) -> PyResult<Option<ResetSpec>> {
+    match kind {
+        "none" => Ok(None),
+        "hook" => {
+            let cb = hook.ok_or_else(|| {
+                PyValueError::new_err(format!(
+                    "{label}_kind=\"hook\" requires {label}_hook to be set"
+                ))
+            })?;
+            let hook = Arc::new(PyResetHook { cb });
+            let reset_hook: ResetHook = Arc::new(move |task: &str| hook.call(task));
+            Ok(Some(ResetSpec::Hook(reset_hook)))
+        }
+        "teleop" => Ok(Some(ResetSpec::Remote {
+            actor: ActorKind::Teleoperator,
+            prompt: prompt.unwrap_or_default().to_owned(),
+            timeout_ns,
+        })),
+        "agent" => Ok(Some(ResetSpec::Remote {
+            actor: ActorKind::Agent,
+            prompt: prompt.unwrap_or_default().to_owned(),
+            timeout_ns,
+        })),
+        other => Err(PyValueError::new_err(format!(
+            "{label}_kind={other:?}: expected \"none\", \"hook\", \"teleop\", or \"agent\""
+        ))),
+    }
+}
+
+pub(crate) fn parse_verification_mode(value: &str) -> PyResult<ResetVerificationMode> {
+    match value {
+        "blocking" => Ok(ResetVerificationMode::Blocking),
+        "optimistic" => Ok(ResetVerificationMode::OptimisticAsync),
+        other => Err(PyValueError::new_err(format!(
+            "reset_verification={other:?}: expected \"blocking\" or \"optimistic\""
         ))),
     }
 }

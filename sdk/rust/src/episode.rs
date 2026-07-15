@@ -158,17 +158,35 @@ impl PyEpisode {
         self.last.lock().clone()
     }
 
-    /// True once the episode ended — terminal outcome, a successor replaced
-    /// it, or the session shut down (single read of the core mirror).
+    /// True once the episode ended: a terminal outcome, POST_RESET entry
+    /// (the terminal outcome is already pinned there — E14; only the scene
+    /// cleanup, which self-resolves via a hook, a remote window, or its
+    /// timeout, is still running — so `terminate()` becomes a no-op from
+    /// this point on), a successor replaced it, or the session shut down
+    /// (single read of the core mirror).
     #[getter]
     fn done(&self) -> bool {
         self.session.episode_done(&self.id)
     }
 
-    /// The terminal outcome as a string, or `None` while running.
+    /// The terminal outcome as a string, or `None` while running. Reads the
+    /// pinned outcome once `done` flips true at POST_RESET entry (before
+    /// `Phase::Terminal` itself) — the two are always the same value
+    /// (FSM.md E15-E17 carry the pinned outcome to Terminal unchanged), so
+    /// a `while not done: ...` caller sees a real outcome the instant
+    /// `done` does, never a spurious `None`.
     #[getter]
     fn outcome(&self) -> Option<&'static str> {
-        self.session.status().outcome.map(outcome_str)
+        let s = self.session.status();
+        s.outcome.or(s.pinned_outcome).map(outcome_str)
+    }
+
+    /// PERMANENT once set: the post-reset cleanup failed (a `False`/invalid
+    /// hook result, exhausted retries, or an estop during POST_RESET —
+    /// FSM.md E16/E17). Never alters the (already pinned) outcome.
+    #[getter]
+    fn post_reset_failed(&self) -> bool {
+        self.session.status().post_reset_failed
     }
 
     /// Gate records dropped because the recording fell behind the loop.
