@@ -12,6 +12,43 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 ## [Unreleased]
 
 ### Added
+- **waddle-runtime (reset-window actuation + plane directives)**: the
+  bypass pump (`pumps::spawn_bypass_pump`) gains a RESET arm — while the
+  mirror shows `GateMode::Reset` with an active claim, due intervention
+  actions (teleop via the existing media intake, agent chunks via the new
+  plane arm below) are driven straight to `send`, identical mechanics to
+  the BYPASS arm (provenance from the mirror, same chunk shape), no stall
+  detection. `forward_server_msg` now handles
+  `GateServerMessage.reset_window` (flag `waddle.v0.reset.remote`): ENGAGE
+  injects `ClaimGranted` (from the directive's claim) then
+  `ResetWindowEngage`; COMPLETE injects `ResetWindowComplete{ok, verified}`
+  from the attached result; CANCEL injects `ResetWindowComplete{ok:false}`
+  (no dedicated FSM event exists for a plane-initiated cancel — it is
+  observably the same as a failed completion). `forward_server_msg` also
+  handles `GateServerMessage.intervention_chunk` while the mirror shows
+  `GateMode::Reset`: the chunk's steps (dims-validated via
+  `ActionChunk::from_pb`) join the intervention ring as timed actions,
+  keyed off this arrival plus each step's declared offset; every other
+  gate mode still drops this arm silently (the general Claimed-mode chunk
+  intake — jitter horizon, `ReplanPolicy` — remains a later milestone).
+  The intervention ring's single write end is now Mutex-shared
+  (`StreamProducer`) between the media-intake thread and the plane pump,
+  since `rtrb` is strictly SPSC and both now need to push. Proven
+  end-to-end over a real `ControlPlaneClient` + `InMemoryTransport` script
+  (not direct FSM injection): a remote PRE window engaging over teleop and
+  completing to READY; a remote POST window engaging an agent, dispatching
+  an `intervention_chunk`, and completing to `Terminal`; a POST window
+  that is never engaged, timing out for real (short `timeout_ns`, no
+  `TimerFired` shortcut) to `Terminal{pinned}` + `post_reset_failed`; the
+  same window-timer slot reused correctly across a PRE-then-POST window
+  pair inside one episode; and a born-claimed retake successor confirmed
+  to never open a remote pre-window even when the session default is
+  `Remote`. An MCAP read-back confirms the actuation lands on
+  `/waddle/actions` (as the caller-tick's `RESET_ACTIVE` `NoopMarker`,
+  tagged with the claimant's provenance — the gate's per-tick record
+  remains the only writer onto that topic; the bypass pump's direct `send`
+  dispatch is a separate verb call, not itself an MCAP record, unchanged
+  from BYPASS).
 - **waddle-runtime (reset pump + post-reset recording)**: a new core thread,
   `waddle-reset-hooks` (`pumps::spawn_reset_pump`, mirror-watch like the
   bypass pump), is the single scripted-hook invocation site for resets: a
