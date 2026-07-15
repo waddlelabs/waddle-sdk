@@ -11,46 +11,113 @@
 //! 7. Gate mode INTERVENTION implies an active claim; SETTLE is entered
 //!    only from ENGAGE.
 //! 8. `step` is deterministic and the state stays serializable.
+//! 9. `phase == PostReset ⇒ post_reset_declared` (FSM.md §1.3).
+//! 10. `pinned_outcome` is set-once; any Terminal reached from PostReset
+//!     carries it unchanged (including via Estop) — PostReset is followed
+//!     only by Terminal{pinned}.
+//! 11. Estop from PostReset ⇒ next phase Terminal ∧ lease Vacant (E17).
+//! 12. `post_reset_failed` is monotone; false at Terminal (from PostReset)
+//!     ⇒ the last post-reset result was ok.
+//! 13. `gate_mode == Reset ⇒ claim.is_some() ∧ phase ∈ {Resetting, PostReset}`
+//!     (D7 edge 3).
+//! 14. Retake acceptance ⇒ predecessor Terminal{ABORTED_RETAKE} with no
+//!     intervening PostReset phase (E18 bypass).
 
 use std::collections::HashSet;
 
 use proptest::prelude::*;
 use waddle_fsm::{
     Effect, LeaseState, MarkKind, Phase, ProxySample, Rejected, SessionConfig, SessionEvent,
-    SessionFsm, TimerId, step,
+    SessionFsm, TimerId, WindowSpec, step,
 };
 use waddle_types::{
     ActorKind, ClaimId, EpisodeId, GateMode, Grant, HandoffPolicy, InterventionPhase,
-    LeaseEnforcement, LeaseId, MonoNs, ResetVerificationMode, TerminalOutcome, Verb,
+    LeaseEnforcement, LeaseId, MonoNs, ResetVerificationMode, TerminalOutcome, Verb, pb::v0 as pb,
 };
 
 /// The abstract command alphabet the random walk draws from.
 #[derive(Debug, Clone)]
 enum Cmd {
-    Open { optimistic: bool },
-    ResetOk { verified: Option<bool> },
+    Open {
+        optimistic: bool,
+    },
+    /// Declares a post-reset (flag `waddle.v0.reset.phases`) at open,
+    /// independently varying a remote PRE window and a remote POST window
+    /// (flag `waddle.v0.reset.remote`) across cases.
+    OpenPostReset {
+        optimistic: bool,
+        pre_window: bool,
+        post_window: bool,
+    },
+    ResetOk {
+        verified: Option<bool>,
+    },
     ResetFail,
-    Verification { verified: bool, invalidated: bool },
+    Verification {
+        verified: bool,
+        invalidated: bool,
+    },
     Start,
     ClaimGranted,
     Engage,
     HoldOk,
     ChunkBoundary,
     Release,
-    Retake { by_teleoperator: bool },
-    Clutch { engaged: bool },
+    Retake {
+        by_teleoperator: bool,
+    },
+    Clutch {
+        engaged: bool,
+    },
     Estop,
-    Terminate { success: bool },
-    Mark { end: bool },
-    Proxy { p95_ns: i64 },
+    Terminate {
+        success: bool,
+    },
+    Mark {
+        end: bool,
+    },
+    /// The post-reset pipeline reported (E15/E16); legal only in PostReset.
+    PostResetOk,
+    PostResetFail,
+    /// The granted reset claim engages the open window (E20).
+    WindowEngage,
+    /// The remote actor finished (E21).
+    WindowComplete {
+        ok: bool,
+    },
+    Proxy {
+        p95_ns: i64,
+    },
     PartitionStart,
     PartitionEnd,
-    Advance { ns: i64 },
+    Advance {
+        ns: i64,
+    },
+}
+
+/// A fixed remote-window spec (flag `waddle.v0.reset.remote`): the actor is
+/// always TELEOPERATOR to match the walk's only claim-granting actor
+/// (`Cmd::ClaimGranted`), so C6 admission is exercised without spuriously
+/// rejecting otherwise-legal claims. `timeout_ns` sits inside the walk's
+/// `Advance` range so `ResetWindowTimeout` fires under random exploration.
+fn reset_window_spec() -> WindowSpec {
+    WindowSpec {
+        expected: ActorKind::Teleoperator,
+        prompt: "proptest reset".to_owned(),
+        timeout_ns: 2_000_000_000,
+    }
 }
 
 fn cmd_strategy() -> impl Strategy<Value = Cmd> {
     prop_oneof![
         3 => any::<bool>().prop_map(|optimistic| Cmd::Open { optimistic }),
+        2 => (any::<bool>(), any::<bool>(), any::<bool>()).prop_map(
+            |(optimistic, pre_window, post_window)| Cmd::OpenPostReset {
+                optimistic,
+                pre_window,
+                post_window,
+            }
+        ),
         3 => prop_oneof![
             Just(Cmd::ResetOk { verified: Some(true) }),
             Just(Cmd::ResetOk { verified: Some(false) }),
@@ -70,11 +137,34 @@ fn cmd_strategy() -> impl Strategy<Value = Cmd> {
         1 => Just(Cmd::Estop),
         1 => any::<bool>().prop_map(|success| Cmd::Terminate { success }),
         1 => any::<bool>().prop_map(|end| Cmd::Mark { end }),
+        1 => Just(Cmd::PostResetOk),
+        1 => Just(Cmd::PostResetFail),
+        1 => Just(Cmd::WindowEngage),
+        2 => any::<bool>().prop_map(|ok| Cmd::WindowComplete { ok }),
         2 => (50_000_000i64..200_000_000).prop_map(|p95_ns| Cmd::Proxy { p95_ns }),
         1 => Just(Cmd::PartitionStart),
         1 => Just(Cmd::PartitionEnd),
         2 => (1_000_000i64..5_000_000_000).prop_map(|ns| Cmd::Advance { ns }),
     ]
+}
+
+/// A compact rendering of the emission-relevant effects, for the
+/// deterministic smoke test's ordering assertions (mirrors
+/// `tests/remote_reset_windows.rs`'s `render`).
+fn render(effect: &Effect) -> String {
+    match effect {
+        Effect::Emit(ev) => match &ev.event {
+            Some(pb::episode_event::Event::State(s)) => {
+                format!("state->{} outcome={}", s.to, s.outcome)
+            }
+            Some(pb::episode_event::Event::Gate(g)) => format!("gate {}->{}", g.from, g.to),
+            Some(pb::episode_event::Event::ResetWindow(w)) => {
+                format!("reset_window kind={}", w.kind)
+            }
+            _ => "emit other".to_owned(),
+        },
+        _ => "effect other".to_owned(),
+    }
 }
 
 struct Driver {
@@ -90,6 +180,19 @@ struct Driver {
     dead_tokens: HashSet<LeaseId>,
     armed: Vec<(TimerId, MonoNs)>,
     last_phase: Option<(EpisodeId, Phase)>,
+    /// I10: the last-seen `pinned_outcome` per episode, to catch it changing
+    /// after being set.
+    last_pinned_outcome: Option<(EpisodeId, TerminalOutcome)>,
+    /// I12: the last-seen `post_reset_failed` per episode, to catch it
+    /// reverting from true to false.
+    last_post_reset_failed: Option<(EpisodeId, bool)>,
+    /// I14: episodes that have ever visited PostReset (retake must never
+    /// have passed through it).
+    ever_post_reset: HashSet<EpisodeId>,
+    /// A rendering of every effect emitted, in commit order, for the
+    /// deterministic smoke test's emission-order assertions (unused by the
+    /// random walk itself).
+    trace: Vec<String>,
 }
 
 impl Driver {
@@ -117,12 +220,22 @@ impl Driver {
             dead_tokens: HashSet::new(),
             armed: Vec::new(),
             last_phase: None,
+            last_pinned_outcome: None,
+            last_post_reset_failed: None,
+            ever_post_reset: HashSet::new(),
+            trace: Vec::new(),
         }
     }
 
     fn tick(&mut self) -> MonoNs {
         self.now = self.now.saturating_add(1_000_000);
         self.now
+    }
+
+    /// The index of the first traced effect matching `pred`, for the
+    /// deterministic smoke test's emission-order assertions.
+    fn index_of<F: Fn(&str) -> bool>(&self, pred: F) -> Option<usize> {
+        self.trace.iter().position(|s| pred(s))
     }
 
     /// Apply an event; interpret effects; check per-step invariants.
@@ -140,6 +253,11 @@ impl Driver {
         }
 
         let retake_expected = matches!(ev, SessionEvent::Retake { .. });
+        let estop = matches!(ev, SessionEvent::Estop { .. });
+        let was_post_reset = matches!(
+            self.state.episode.as_ref().map(|e| e.phase),
+            Some(Phase::PostReset)
+        );
         match first {
             Err(Rejected { .. }) => {
                 // Rejections never mutate: nothing to fold in.
@@ -163,13 +281,47 @@ impl Driver {
                     }
                 }
 
+                // I11: estop from PostReset lands directly in Terminal, lease
+                // vacant (E17). Checked against the phase just BEFORE this
+                // event, since check_invariants only sees the committed
+                // (post) state.
+                if estop && was_post_reset {
+                    assert!(
+                        self.state
+                            .episode
+                            .as_ref()
+                            .is_some_and(|e| e.phase.is_terminal()),
+                        "I11: estop from PostReset must reach Terminal"
+                    );
+                    assert_eq!(
+                        self.state.lease,
+                        LeaseState::Vacant,
+                        "I11: estop from PostReset must leave the lease vacant"
+                    );
+                }
+
+                // I12: this step's post-reset completion result (if any),
+                // scanned from the emissions BEFORE check_invariants runs —
+                // E15/E16 land in the very same step as the Terminal
+                // transition they cause.
+                let post_reset_ok_this_step = s.effects.iter().find_map(|e| match e {
+                    Effect::Emit(ev) => match &ev.event {
+                        Some(pb::episode_event::Event::PostReset(p)) => {
+                            Some(p.result.as_ref().is_some_and(|r| r.ok))
+                        }
+                        _ => None,
+                    },
+                    _ => None,
+                });
+
                 // Check (and record) the committed state BEFORE follow-up
                 // events run, so intermediate phases are observed.
-                self.check_invariants(retake_expected);
+                self.check_invariants(retake_expected, post_reset_ok_this_step);
 
                 let mut successors = 0;
                 let mut follow_ups: Vec<SessionEvent> = Vec::new();
                 for effect in &s.effects {
+                    self.trace.push(render(effect));
                     match effect {
                         Effect::MintLeaseToken(_) => {
                             self.lease_seq += 1;
@@ -224,11 +376,35 @@ impl Driver {
         }
     }
 
-    fn check_invariants(&mut self, _retake: bool) {
+    fn check_invariants(&mut self, retake_expected: bool, post_reset_ok_this_step: Option<bool>) {
         let s = &self.state;
 
         // Invariant 1: terminal is absorbing per episode identity.
         if let Some(ep) = &s.episode {
+            // I9: PostReset implies the episode declared one.
+            if ep.phase == Phase::PostReset {
+                assert!(
+                    ep.post_reset_declared,
+                    "I9: PostReset phase requires post_reset_declared"
+                );
+                self.ever_post_reset.insert(ep.id.clone());
+            }
+
+            // I14: retake acceptance ⇒ the predecessor lands directly in
+            // TERMINAL{ABORTED_RETAKE}, never having visited PostReset (E18
+            // bypasses it regardless of whether a post-reset is declared).
+            if retake_expected {
+                assert_eq!(
+                    ep.phase,
+                    Phase::Terminal(TerminalOutcome::AbortedRetake),
+                    "I14: retake must terminate the predecessor with ABORTED_RETAKE"
+                );
+                assert!(
+                    !self.ever_post_reset.contains(&ep.id),
+                    "I14: retake predecessor must not have visited PostReset (E18 bypass)"
+                );
+            }
+
             if let Some((last_id, last_phase)) = &self.last_phase
                 && last_id == &ep.id
             {
@@ -249,8 +425,60 @@ impl Driver {
                         "SETTLE entered from a phase other than ENGAGE"
                     );
                 }
+
+                // I10/I12: PostReset may be followed only by Terminal{pinned}.
+                if *last_phase == Phase::PostReset && ep.phase != Phase::PostReset {
+                    match ep.phase {
+                        Phase::Terminal(outcome) => {
+                            let pinned = ep
+                                .pinned_outcome
+                                .expect("I9/I10: PostReset must pin an outcome before leaving");
+                            assert_eq!(
+                                outcome, pinned,
+                                "I10: Terminal-after-PostReset must carry the pinned outcome"
+                            );
+                            // I12: false at Terminal ⇒ the last post-reset
+                            // result was ok.
+                            if !ep.post_reset_failed {
+                                assert_eq!(
+                                    post_reset_ok_this_step,
+                                    Some(true),
+                                    "I12: post_reset_failed=false at Terminal-from-PostReset \
+                                     requires the last post-reset result to be ok"
+                                );
+                            }
+                        }
+                        other => panic!(
+                            "I10: PostReset must be followed only by Terminal{{pinned}}, got {other:?}"
+                        ),
+                    }
+                }
             }
             self.last_phase = Some((ep.id.clone(), ep.phase));
+
+            // I10: pinned_outcome is set-once.
+            if let Some(outcome) = ep.pinned_outcome {
+                if let Some((last_id, last_outcome)) = &self.last_pinned_outcome
+                    && last_id == &ep.id
+                {
+                    assert_eq!(
+                        *last_outcome, outcome,
+                        "I10: pinned_outcome changed after being set"
+                    );
+                }
+                self.last_pinned_outcome = Some((ep.id.clone(), outcome));
+            }
+
+            // I12: post_reset_failed is monotone (never true → false).
+            if let Some((last_id, last_failed)) = &self.last_post_reset_failed
+                && last_id == &ep.id
+            {
+                assert!(
+                    !*last_failed || ep.post_reset_failed,
+                    "I12: post_reset_failed must be monotone"
+                );
+            }
+            self.last_post_reset_failed = Some((ep.id.clone(), ep.post_reset_failed));
 
             // Invariant 6: verified-or-flagged.
             if !matches!(ep.phase, Phase::Resetting) && !ep.phase.is_terminal() {
@@ -272,6 +500,22 @@ impl Driver {
         if s.gate_mode == GateMode::Intervention {
             assert!(s.claim.is_some(), "gate claimed with no active claim");
         }
+
+        // I13: gate RESET implies an active claim and phase ∈ {Resetting,
+        // PostReset} (D7 edge 3).
+        if s.gate_mode == GateMode::Reset {
+            assert!(
+                s.claim.is_some(),
+                "I13: gate RESET requires an active claim"
+            );
+            assert!(
+                matches!(
+                    s.episode.as_ref().map(|e| e.phase),
+                    Some(Phase::Resetting) | Some(Phase::PostReset)
+                ),
+                "I13: gate RESET requires phase in {{Resetting, PostReset}}"
+            );
+        }
     }
 
     fn run(&mut self, cmd: &Cmd) {
@@ -291,6 +535,35 @@ impl Driver {
                     post_reset: false,
                     pre_window: None,
                     post_window: None,
+                    at,
+                }
+            }
+            Cmd::OpenPostReset {
+                optimistic,
+                pre_window,
+                post_window,
+            } => {
+                self.episode_seq += 1;
+                SessionEvent::EpisodeOpen {
+                    id: EpisodeId::new(format!("ep-{}", self.episode_seq)),
+                    verification: if *optimistic {
+                        ResetVerificationMode::OptimisticAsync
+                    } else {
+                        ResetVerificationMode::Blocking
+                    },
+                    born_claimed: false,
+                    parent: None,
+                    post_reset: true,
+                    pre_window: if *pre_window {
+                        Some(reset_window_spec())
+                    } else {
+                        None
+                    },
+                    post_window: if *post_window {
+                        Some(reset_window_spec())
+                    } else {
+                        None
+                    },
                     at,
                 }
             }
@@ -386,6 +659,37 @@ impl Driver {
                 },
                 at,
             },
+            Cmd::PostResetOk => SessionEvent::PostResetResult {
+                ok: true,
+                detail: "cleanup ok".to_owned(),
+                at,
+            },
+            Cmd::PostResetFail => SessionEvent::PostResetResult {
+                ok: false,
+                detail: "cleanup failed".to_owned(),
+                at,
+            },
+            Cmd::WindowEngage => {
+                let claim = self
+                    .state
+                    .claim
+                    .as_ref()
+                    .map_or_else(|| ClaimId::new("missing"), |c| c.id.clone());
+                SessionEvent::ResetWindowEngage { claim, at }
+            }
+            Cmd::WindowComplete { ok } => {
+                let claim = self
+                    .state
+                    .claim
+                    .as_ref()
+                    .map_or_else(|| ClaimId::new("missing"), |c| c.id.clone());
+                SessionEvent::ResetWindowComplete {
+                    claim,
+                    ok: *ok,
+                    verified: if *ok { Some(true) } else { None },
+                    at,
+                }
+            }
             Cmd::Proxy { p95_ns } => SessionEvent::ProxySignals {
                 sample: ProxySample {
                     gate_tick_p95_ns: *p95_ns,
@@ -500,4 +804,76 @@ fn autonomous_retake_blocks_on_verification() {
         invalidated: false,
     });
     assert_eq!(d.state.episode.as_ref().unwrap().phase, Phase::Ready);
+}
+
+/// A deterministic end-to-end reset-phases lifecycle (flags
+/// `waddle.v0.reset.phases` + `waddle.v0.reset.remote`): open(post declared,
+/// post window remote) → reset ok → run → terminate{SUCCESS} → POST_RESET
+/// with the window OPENED → claim granted (C6) → engage (gate → RESET, E20)
+/// → complete{ok} → TERMINAL{SUCCESS}, asserting the E21 deferred-apply
+/// emission order (handback precedes the pinned →TERMINAL transition).
+#[test]
+fn remote_post_reset_window_smoke() {
+    let mut d = Driver::new();
+    d.run(&Cmd::OpenPostReset {
+        optimistic: false,
+        pre_window: false,
+        post_window: true,
+    });
+    d.run(&Cmd::ResetOk {
+        verified: Some(true),
+    });
+    d.run(&Cmd::Start);
+    d.run(&Cmd::Terminate { success: true });
+
+    let ep = d.state.episode.as_ref().unwrap();
+    assert_eq!(ep.phase, Phase::PostReset);
+    assert!(ep.reset_window.is_some(), "post window opened at E14 (E19)");
+    assert_eq!(ep.pinned_outcome, Some(TerminalOutcome::Success));
+
+    d.run(&Cmd::ClaimGranted);
+    assert!(d.state.claim.is_some(), "reset claim admitted (C6)");
+    d.run(&Cmd::WindowEngage);
+    assert_eq!(
+        d.state.gate_mode,
+        GateMode::Reset,
+        "gate → RESET on engage (E20)"
+    );
+
+    d.run(&Cmd::WindowComplete { ok: true });
+    assert_eq!(
+        d.state.episode.as_ref().unwrap().phase,
+        Phase::Terminal(TerminalOutcome::Success)
+    );
+    assert!(d.state.claim.is_none(), "C7: reset claim released");
+    assert_eq!(d.state.gate_mode, GateMode::Passthrough);
+
+    // E21 emission order.
+    let gate_reset = GateMode::Reset.to_pb() as i32;
+    let gate_pass = GateMode::Passthrough.to_pb() as i32;
+    let state_terminal = pb::EpisodeState::Terminal as i32;
+    let outcome_success = TerminalOutcome::Success.to_pb() as i32;
+
+    let engage_marker = format!("gate {gate_pass}->{gate_reset}");
+    let handback_marker = format!("gate {gate_reset}->{gate_pass}");
+    let terminal_marker = format!("state->{state_terminal} outcome={outcome_success}");
+
+    let engage_idx = d
+        .index_of(|s| s == engage_marker)
+        .expect("gate → RESET on engage (E20)");
+    let handback_idx = d
+        .index_of(|s| s == handback_marker)
+        .expect("gate RESET→PASSTHROUGH (deferred handback)");
+    let terminal_idx = d
+        .index_of(|s| s == terminal_marker)
+        .expect("→TERMINAL{SUCCESS}");
+
+    assert!(
+        engage_idx < handback_idx,
+        "engage precedes the later handback"
+    );
+    assert!(
+        handback_idx < terminal_idx,
+        "E21: the deferred handback precedes the pinned →TERMINAL transition"
+    );
 }

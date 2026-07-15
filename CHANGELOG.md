@@ -55,6 +55,26 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   the new effects stays inert (runtime reset seams land in a later change).
   Undeclared episodes behave exactly per E1–E13 (the additive guarantee); all
   13 conformance fixtures stay byte-identical green.
+- **waddle-fsm proptests (I9–I14) + waddle-gate `PlanMode::Reset`**: the
+  random-walk harness (`tests/properties.rs`) now drives POST_RESET and
+  remote reset windows too — `Cmd` gained `OpenPostReset` (varying pre/post
+  window declarations), `PostResetOk`/`PostResetFail`, `WindowEngage`,
+  `WindowComplete{ok}` — and checks six new invariants: I9 (PostReset ⇒
+  declared), I10 (`pinned_outcome` set-once; PostReset is followed only by
+  TERMINAL{pinned}, including via estop), I11 (estop from PostReset ⇒
+  TERMINAL ∧ lease Vacant), I12 (`post_reset_failed` monotone; false at
+  TERMINAL ⇒ the last post-reset result was ok), I13 (gate RESET ⇒ an active
+  claim ∧ phase ∈ {RESETTING, POST_RESET}), I14 (retake acceptance ⇒
+  TERMINAL{ABORTED_RETAKE} with no intervening POST_RESET). A new
+  deterministic smoke test drives a full remote POST-window lifecycle,
+  asserting E21's deferred-apply emission order. `waddle-gate` gains
+  `PlanMode::Reset { provenance }` (mirroring `Bypass`): `Gate::gate()`
+  returns `Noop` and records the new `GateDecision::ResetActive`, same cost
+  class as the existing NOOP paths (no locks/syscalls/allocations); the
+  runtime reducer wires `GateMode::Reset` to it and renders
+  `NoopReason::RESET_ACTIVE` distinctly from `BYPASS_ACTIVE` — the D7 edge 3
+  stale-handle protection (a caller ticking `gate()` while a remote actor
+  resets dispatches nothing).
 - **Bug fix (found by proptest I13) — FSM.md row E19b**: `reset_result` /
   `post_reset_result` are now rejected while a remote reset window is open
   (`waddle-fsm`). Previously the pipeline-hook completion path (E2–E5 /
