@@ -25,9 +25,22 @@ fn weight(interp: Interp, t: f32) -> f32 {
 }
 
 /// Blend one step: `from * (1-w) + to * w` componentwise. Lengths must
-/// match (validated upstream by the flattener).
+/// match — action-space validation lives at media intake
+/// (`spawn_media_intake`), so a mismatch here should never happen in
+/// practice; this is a defense-in-depth guard, not the primary check.
+/// Returns `None` on a mismatch rather than zip-truncating (a truncated
+/// action is a meaningless one, never a degraded-but-safe one); callers
+/// fall back to `Hold`.
 #[must_use]
-pub fn blend_step(from: &OwnedAction, to: &OwnedAction, t: f32, interp: Interp) -> OwnedAction {
+pub fn blend_step(
+    from: &OwnedAction,
+    to: &OwnedAction,
+    t: f32,
+    interp: Interp,
+) -> Option<OwnedAction> {
+    if from.values.len() != to.values.len() {
+        return None;
+    }
     let w = f64::from(weight(interp, t));
     let values = from
         .values
@@ -35,14 +48,14 @@ pub fn blend_step(from: &OwnedAction, to: &OwnedAction, t: f32, interp: Interp) 
         .zip(to.values.iter())
         .map(|(a, b)| a * (1.0 - w) + b * w)
         .collect();
-    OwnedAction {
+    Some(OwnedAction {
         values,
         gripper: match (from.gripper, to.gripper) {
             (Some(a), Some(b)) => Some(a * (1.0 - w) + b * w),
             (_, b @ Some(_)) => b,
             (a, None) => a,
         },
-    }
+    })
 }
 
 #[cfg(test)]
@@ -73,12 +86,12 @@ mod tests {
             let from = action(a);
             let to = action(&b);
 
-            let at0 = blend_step(&from, &to, 0.0, Interp::Linear);
-            let at1 = blend_step(&from, &to, 1.0, Interp::Linear);
+            let at0 = blend_step(&from, &to, 0.0, Interp::Linear).unwrap();
+            let at1 = blend_step(&from, &to, 1.0, Interp::Linear).unwrap();
             prop_assert_eq!(at0.values.as_slice(), from.values.as_slice());
             prop_assert_eq!(at1.values.as_slice(), to.values.as_slice());
 
-            let mid = blend_step(&from, &to, t, Interp::Linear);
+            let mid = blend_step(&from, &to, t, Interp::Linear).unwrap();
             for ((m, x), y) in mid.values.iter().zip(a).zip(&b) {
                 let (lo, hi) = if x <= y { (x, y) } else { (y, x) };
                 prop_assert!(*m >= lo - 1e-9 && *m <= hi + 1e-9);
@@ -94,8 +107,8 @@ mod tests {
             let from = action(&[0.0]);
             let to = action(&[1.0]);
             let (lo, hi) = if t1 <= t2 { (t1, t2) } else { (t2, t1) };
-            let a = blend_step(&from, &to, lo, Interp::Linear);
-            let b = blend_step(&from, &to, hi, Interp::Linear);
+            let a = blend_step(&from, &to, lo, Interp::Linear).unwrap();
+            let b = blend_step(&from, &to, hi, Interp::Linear).unwrap();
             prop_assert!(a.values[0] <= b.values[0] + 1e-9);
         }
     }
@@ -104,7 +117,24 @@ mod tests {
     fn hold_switches_only_at_the_end() {
         let from = action(&[0.0]);
         let to = action(&[1.0]);
-        assert_eq!(blend_step(&from, &to, 0.99, Interp::Hold).values[0], 0.0);
-        assert_eq!(blend_step(&from, &to, 1.0, Interp::Hold).values[0], 1.0);
+        assert_eq!(
+            blend_step(&from, &to, 0.99, Interp::Hold).unwrap().values[0],
+            0.0
+        );
+        assert_eq!(
+            blend_step(&from, &to, 1.0, Interp::Hold).unwrap().values[0],
+            1.0
+        );
+    }
+
+    /// Bug 2 (defense in depth): a dims mismatch must never zip-truncate
+    /// silently. Intake validation should keep this from happening in
+    /// practice, but the blend step itself must refuse rather than produce
+    /// a truncated, meaningless action.
+    #[test]
+    fn mismatched_dims_return_none_instead_of_truncating() {
+        let from = action(&[0.0, 0.0, 0.0]);
+        let to = action(&[1.0, 1.0]); // shorter: would silently truncate today
+        assert!(blend_step(&from, &to, 0.5, Interp::Linear).is_none());
     }
 }

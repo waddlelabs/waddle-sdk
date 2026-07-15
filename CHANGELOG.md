@@ -147,6 +147,17 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   pose was queued regardless of claim state, so up to a whole ring's worth
   of pre-claim poses could all become "due" the instant a claim engaged and
   replay as stale motion while fresh packets were dropped by the full ring.
+- **Media intake — no action-space validation on injected teleop actions**:
+  a flattened teleop action whose width doesn't match the session's
+  declared action space is now dropped at intake instead of substituted
+  verbatim, with a `Fault{VALIDATION_ERROR}` recorded once per claim window
+  (not once per packet at 60-90 Hz) via a new
+  `SessionEvent::InterventionRejected`. `waddle-gate`'s blend step no longer
+  zip-truncates a dims mismatch between the blend anchor and the
+  intervention target (a false "validated upstream" comment is now true in
+  practice, and a real defense-in-depth guard on the rare mismatch that
+  still reaches it); it now returns no blend and the gate falls back to
+  Hold.
 
 ## Stowed changelogs
 

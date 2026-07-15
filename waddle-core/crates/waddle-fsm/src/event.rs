@@ -204,6 +204,16 @@ pub enum SessionEvent {
         trace_ref: String,
         at: MonoNs,
     },
+    /// Media intake dropped a teleop action whose flattened width didn't
+    /// match the declared action space (Bug 2: action-space validation).
+    /// A diagnostic emission — records `Fault{VALIDATION_ERROR}` — never a
+    /// state transition; the intake thread already deduplicates this to
+    /// once per claim window before injecting it.
+    InterventionRejected {
+        dims_got: usize,
+        dims_want: usize,
+        at: MonoNs,
+    },
 }
 
 impl SessionEvent {
@@ -237,7 +247,8 @@ impl SessionEvent {
             | Self::TimerFired { at, .. }
             | Self::StallDetected { at }
             | Self::TicksResumed { at }
-            | Self::DualWrite { at, .. } => *at,
+            | Self::DualWrite { at, .. }
+            | Self::InterventionRejected { at, .. } => *at,
         }
     }
 }

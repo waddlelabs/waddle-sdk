@@ -126,12 +126,19 @@ pub(crate) fn spawn_bypass_pump(
 
 /// Media intake: decode teleop stream packets into the gate's intervention
 /// ring; clutch transitions become FSM events (self-initiated claims).
+///
+/// `expected_dims` is the session's declared action-space width (the same
+/// source of truth `spawn_bypass_pump` uses for `ActionChunk.dims`); `None`
+/// means the declared space has no fixed width to validate against (e.g. an
+/// Opaque space without a declared dim), in which case flattened actions
+/// pass through unchecked, same as before Bug 2's fix.
 pub(crate) fn spawn_media_intake(
     media: Arc<dyn MediaPlane>,
     mut stream_tx: rtrb::Producer<TimedAction>,
     inject: Sender<SessionEvent>,
     clock: SessionClock,
     mirror: Arc<Mirror>,
+    expected_dims: Option<usize>,
 ) -> Result<JoinHandle<()>, RuntimeError> {
     let pose_rx = media
         .open_data_rx(DataTopic::TeleopPose)
@@ -143,10 +150,18 @@ pub(crate) fn spawn_media_intake(
     let handle = std::thread::Builder::new()
         .name("waddle-media-intake".into())
         .spawn(move || {
+            // Bug 2 (action-space validation): a fault fires at most once
+            // per claim window, not once per mismatched packet at
+            // 60-90 Hz. Reset the guard the instant the claim ends so the
+            // next claim window gets its own chance to fault.
+            let mut validation_fault_sent = false;
             loop {
                 let status = mirror.read();
                 if status.shutdown {
                     return;
+                }
+                if !status.claim_active {
+                    validation_fault_sent = false;
                 }
                 let mut idle = true;
                 if let Ok(Some(packet)) = pose_rx.try_recv_pose() {
@@ -164,11 +179,24 @@ pub(crate) fn spawn_media_intake(
                     if status.claim_active
                         && let Some(action) = flatten_packet(&packet)
                     {
-                        let _ = stream_tx.push(TimedAction {
-                            seq: packet.seq,
-                            received: now,
-                            action,
-                        });
+                        let dims_ok = match expected_dims {
+                            Some(want) => action.values.len() == want,
+                            None => true,
+                        };
+                        if dims_ok {
+                            let _ = stream_tx.push(TimedAction {
+                                seq: packet.seq,
+                                received: now,
+                                action,
+                            });
+                        } else if !validation_fault_sent {
+                            validation_fault_sent = true;
+                            let _ = inject.send(SessionEvent::InterventionRejected {
+                                dims_got: action.values.len(),
+                                dims_want: expected_dims.unwrap_or(0),
+                                at: now,
+                            });
+                        }
                     }
                     // The clutch state rides every pose packet; edges also
                     // arrive on the reliable topic below.

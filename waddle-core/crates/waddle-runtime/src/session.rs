@@ -243,6 +243,7 @@ impl SessionBuilder {
                 inject_tx.clone(),
                 clock.clone(),
                 mirror.clone(),
+                dims,
             )?);
         }
 

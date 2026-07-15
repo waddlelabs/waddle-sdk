@@ -234,19 +234,35 @@ impl<C: Clock> Gate<C> {
                         if progress < 1.0 {
                             let schedule = blend.as_ref().expect("progress < 1 implies schedule");
                             let from = self.last_action.clone().unwrap_or_else(|| target.clone());
-                            let blended = blend_step(&from, &target, progress, schedule.interp);
-                            self.last_action = Some(blended.clone());
-                            self.record(
-                                stamp,
-                                GateDecision::Blend,
-                                provenance.clone(),
-                                Some(blended.clone()),
-                                obs,
-                            );
-                            GateOutput::Blend {
-                                action: blended,
-                                progress,
-                                provenance: provenance.clone(),
+                            match blend_step(&from, &target, progress, schedule.interp) {
+                                Some(blended) => {
+                                    self.last_action = Some(blended.clone());
+                                    self.record(
+                                        stamp,
+                                        GateDecision::Blend,
+                                        provenance.clone(),
+                                        Some(blended.clone()),
+                                        obs,
+                                    );
+                                    GateOutput::Blend {
+                                        action: blended,
+                                        progress,
+                                        provenance: provenance.clone(),
+                                    }
+                                }
+                                None => {
+                                    // Defense in depth: a dims mismatch here
+                                    // means intake validation was bypassed.
+                                    // Never truncate — hold instead.
+                                    self.record(
+                                        stamp,
+                                        GateDecision::Hold,
+                                        provenance.clone(),
+                                        None,
+                                        obs,
+                                    );
+                                    GateOutput::Hold
+                                }
                             }
                         } else {
                             self.last_action = Some(target.clone());

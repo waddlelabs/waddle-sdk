@@ -1027,6 +1027,28 @@ pub fn step(
             ));
             ctx.effects.push(Effect::RequestVerb(Verb::Hold));
         }
+
+        // Bug 2 (action-space validation) --------------------------------
+        SessionEvent::InterventionRejected {
+            dims_got,
+            dims_want,
+            at,
+        } => {
+            if !active {
+                return Err(rejected("intervention_rejected without an active episode"));
+            }
+            let ep = ctx.episode().id.clone();
+            ctx.emit(emit::fault(
+                *at,
+                Some(&ep),
+                pb::FaultKind::ValidationError,
+                "media-intake",
+                &format!(
+                    "teleop action carried {dims_got} dims; declared action \
+                     space wants {dims_want}"
+                ),
+            ));
+        }
     }
 
     Ok(ctx.finish())

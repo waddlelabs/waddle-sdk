@@ -232,7 +232,7 @@ fn engage_substitutes_teleop_actions_then_release_restores_passthrough() {
     let send_log: SendLog = Arc::new(Mutex::new(Vec::new()));
     let (media, far) = LoopbackMedia::new();
     let session = Session::builder("e2e-intervention")
-        .robot(robot())
+        .robot(twist_robot())
         .control(registry(&send_log))
         .recording_dir(dir.path())
         .media(media)
@@ -333,7 +333,7 @@ fn claimed_while_stalled_bypass_drives_send_directly() {
     let send_log: SendLog = Arc::new(Mutex::new(Vec::new()));
     let (media, far) = LoopbackMedia::new();
     let session = Session::builder("e2e-bypass")
-        .robot(robot())
+        .robot(twist_robot())
         .control(registry(&send_log))
         .media(media)
         .build()
@@ -505,4 +505,148 @@ fn stale_pre_claim_poses_never_replay_after_engage() {
 
     ep.terminate(TerminalOutcome::Success, "done");
     session.shutdown();
+}
+
+/// Bug 2: a teleop action whose flattened width doesn't match the robot's
+/// declared action space must never reach the ring, and the mismatch must
+/// surface as exactly one Fault (not one per 60-90 Hz packet) for the whole
+/// claim window. A subsequent matching packet must still substitute
+/// normally — validation must not wedge the stream.
+#[test]
+fn mismatched_action_dims_are_dropped_with_one_fault_per_claim() {
+    let dir = tempfile::tempdir().unwrap();
+    let send_log: SendLog = Arc::new(Mutex::new(Vec::new()));
+    let (media, far) = LoopbackMedia::new();
+    let session = Session::builder("e2e-dims-validation")
+        .robot(twist_robot())
+        .control(registry(&send_log))
+        .recording_dir(dir.path())
+        .media(media)
+        .build()
+        .unwrap();
+
+    let mut ep = session.start_episode("dims-validation").unwrap();
+    for _ in 0..5 {
+        let _ = ep.gate(&[0.0; 6], None, None);
+    }
+    wait_for(&session, |s| {
+        matches!(s.episode_state, Some(Phase::Running))
+    });
+
+    grant_and_engage(&session, "claim-dims", "teleop", ActorKind::Teleoperator);
+    wait_for(&session, |s| s.gate_mode == Some(GateMode::Intervention));
+
+    let seq = Arc::new(AtomicU32::new(1));
+    // A Pose target flattens to 7 values; the declared BaseTwist space wants
+    // 6. Spam this well past a single 60-90 Hz packet to prove the fault
+    // dedupes to once per claim window.
+    for _ in 0..20 {
+        far.push(
+            DataTopic::TeleopPose,
+            &pb::TeleopStreamPacket {
+                t_client_ns: 1,
+                seq: u64::from(seq.fetch_add(1, Ordering::SeqCst)),
+                targets: vec![pb::PartTarget {
+                    part: String::new(),
+                    target: Some(pb::part_target::Target::Pose(pb::Pose {
+                        position: Some(pb::Vec3 {
+                            x: 9.0,
+                            y: 9.0,
+                            z: 9.0,
+                        }),
+                        rotation: Some(pb::Quat {
+                            w: 1.0,
+                            x: 0.0,
+                            y: 0.0,
+                            z: 0.0,
+                        }),
+                        frame_id: String::new(),
+                    })),
+                    gripper: None,
+                }],
+                clutch_engaged: true,
+                inputs: None,
+            },
+        )
+        .unwrap();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+
+    // None of the mismatched packets ever substitute; the loop only ever
+    // observes Hold.
+    for _ in 0..10 {
+        assert!(
+            matches!(ep.gate(&[0.0; 6], None, None), GateOutput::Hold),
+            "a dims-mismatched teleop action must never be substituted"
+        );
+    }
+
+    // A matching packet still substitutes normally: validation doesn't
+    // wedge the stream.
+    far.push(
+        DataTopic::TeleopPose,
+        &pb::TeleopStreamPacket {
+            t_client_ns: 1,
+            seq: u64::from(seq.fetch_add(1, Ordering::SeqCst)),
+            targets: vec![pb::PartTarget {
+                part: String::new(),
+                target: Some(pb::part_target::Target::Twist(pb::Twist {
+                    linear: Some(pb::Vec3 {
+                        x: 3.0,
+                        y: 0.0,
+                        z: 0.0,
+                    }),
+                    angular: Some(pb::Vec3::default()),
+                })),
+                gripper: None,
+            }],
+            clutch_engaged: true,
+            inputs: None,
+        },
+    )
+    .unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut substituted = false;
+    while Instant::now() < deadline {
+        match ep.gate(&[0.0; 6], None, None) {
+            GateOutput::Substitute { action, .. } | GateOutput::Blend { action, .. } => {
+                assert_eq!(action.values[0], 3.0);
+                substituted = true;
+                break;
+            }
+            _ => std::thread::sleep(Duration::from_millis(5)),
+        }
+    }
+    assert!(substituted, "a matching packet must still substitute");
+
+    ep.terminate(TerminalOutcome::Success, "done");
+    session.shutdown();
+
+    // Exactly one Fault{VALIDATION_ERROR} for the whole claim window, no
+    // matter how many mismatched packets arrived.
+    let files: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_name().to_string_lossy().ends_with(".sidecar.json"))
+        .collect();
+    assert_eq!(files.len(), 1);
+    let sidecar =
+        waddle_sidecar::sidecar_from_json(&std::fs::read_to_string(files[0].path()).unwrap())
+            .unwrap();
+    let validation_faults = sidecar
+        .events
+        .iter()
+        .filter(|e| {
+            matches!(
+                &e.event,
+                Some(pb::episode_event::Event::Fault(f))
+                    if f.kind == pb::FaultKind::ValidationError as i32
+            )
+        })
+        .count();
+    assert_eq!(
+        validation_faults, 1,
+        "expected exactly one validation fault for the claim window"
+    );
 }
