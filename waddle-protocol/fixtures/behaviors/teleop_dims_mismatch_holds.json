@@ -1,0 +1,55 @@
+{
+  "format": "waddle.behavior/v0",
+  "name": "teleop_dims_mismatch_holds",
+  "description": "Pins Bug 2 (media-intake action-space validation, waddle-runtime/src/pumps.rs; gate-observable via the blend defense-in-depth in waddle-gate/src/blend.rs) and FSM.md's dims-mismatch sentence in §5: a teleop injection whose flattened width doesn't match the declared 14-dim bimanual composite is never dispatched — gate_tick returns hold, however many mismatched packets arrive during the blend window, and exactly one Fault{FAULT_KIND_VALIDATION_ERROR} fires for the whole claim window, not one per packet; a subsequent dims-correct packet (left+right Pose, 7+7=14) still substitutes normally once the blend window elapses, proving validation doesn't wedge the stream. Judgment calls: IMMEDIATE{blend_ns:300000000} is used so the mismatch is exercised inside an open blend window (the only point the conformance harness's scripted teleop injection can observe this defense-in-depth check — the harness never models the media-intake thread itself, which is the primary, unconditional check and is covered by waddle-runtime's e2e suite instead); the mismatched packets carry a single 'left' Twist target (6 values); part names 'left'/'right' assumed from the bimanual fixture.",
+  "target": "gate",
+  "requires_features": ["waddle.v0.core"],
+  "setup": {
+    "robot_fixture": "../wire/robot_description_bimanual_composite.json",
+    "lease_enforcement": "LEASE_ENFORCEMENT_ENFORCED",
+    "handoff": { "immediate": { "blendNs": "300000000" } },
+    "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING"
+  },
+  "steps": [
+    { "inject": { "kind": "episode_open", "episode_id": "ep-dmh-0001", "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING" } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "reset_result", "result": { "ok": true, "strategy": "scripted_home", "verification": { "mode": "RESET_VERIFICATION_MODE_BLOCKING", "verified": true, "judgeId": "judge-reset", "judgeVersion": "2.1.0", "score": 0.95, "tNs": "100000000" } } } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_READY" } },
+    { "inject": { "kind": "chunk_arrival", "chunk": { "seq": "1", "sourceId": "policy-main", "tEmittedNs": "100000000", "tObsNs": "100000000", "horizonNs": "600000000", "provenance": { "kind": "PROVENANCE_KIND_POLICY", "actor": { "kind": "ACTOR_KIND_POLICY", "id": "policy-main" } }, "actions": [
+      { "tOffsetNs": "0", "composite": { "parts": [ { "name": "left", "action": { "jointPosition": { "values": [0.10, -0.40, 0.30, -1.20, 0.05, 0.90] } } }, { "name": "right", "action": { "jointPosition": { "values": [-0.10, -0.40, 0.30, -1.20, -0.05, 0.90] } } } ] } },
+      { "tOffsetNs": "500000000", "composite": { "parts": [ { "name": "left", "action": { "jointPosition": { "values": [0.15, -0.35, 0.30, -1.15, 0.05, 0.90] } } }, { "name": "right", "action": { "jointPosition": { "values": [-0.15, -0.35, 0.30, -1.15, -0.05, 0.90] } } } ] } }
+    ] } } },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "100000000" } },
+    { "expect_output": { "kind": "pass" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RUNNING", "gate.mode": "GATE_MODE_PASSTHROUGH" } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "200000000" } },
+    { "expect_output": { "kind": "pass" } },
+    { "inject": { "kind": "claim_granted", "claim": { "claimId": "claim-dmh-0001", "episodeId": "ep-dmh-0001", "actor": { "kind": "ACTOR_KIND_TELEOPERATOR", "id": "top-7", "displayName": "Teleoperator 7" }, "sourceName": "teleop", "selfInitiated": false, "tGrantedNs": "200000000", "handoff": { "immediate": { "blendNs": "300000000" } }, "spaces": ["SPACE_KIND_EE_POSE_DELTA"] } } },
+    { "inject": { "kind": "engage", "claim_id": "claim-dmh-0001", "initiator": "ACTOR_KIND_TELEOPERATOR" } },
+    { "expect_emission": { "event": { "lease": { "kind": "LEASE_EVENT_KIND_HANDED_OFF", "lease": { "leaseId": "$fresh_lease" } } }, "within_ns": "0" } },
+    { "expect_emission": { "event": { "gate": { "from": "GATE_MODE_PASSTHROUGH", "to": "GATE_MODE_INTERVENTION" } }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_INTERVENTION", "gate.mode": "GATE_MODE_INTERVENTION" } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "teleop_action", "packet": { "tClientNs": "42000000000", "seq": "1", "clutchEngaged": true, "targets": [
+      { "part": "left", "twist": { "linear": { "x": 0.006, "y": 0.0, "z": 0.0 }, "angular": { "x": 0.0, "y": 0.0, "z": 0.0 } } }
+    ] } } },
+    { "expect_emission": { "event": { "fault": { "kind": "FAULT_KIND_VALIDATION_ERROR" } }, "within_ns": "0" } },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "300000000" } },
+    { "expect_output": { "kind": "hold" } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "teleop_action", "packet": { "tClientNs": "42100000000", "seq": "2", "clutchEngaged": true, "targets": [
+      { "part": "left", "twist": { "linear": { "x": 0.006, "y": 0.001, "z": 0.0 }, "angular": { "x": 0.0, "y": 0.0, "z": 0.0 } } }
+    ] } } },
+    { "expect_no_emission": { "event": { "fault": {} }, "within_ns": "0" } },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "400000000" } },
+    { "expect_output": { "kind": "hold" } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "teleop_action", "packet": { "tClientNs": "42200000000", "seq": "3", "clutchEngaged": true, "targets": [
+      { "part": "left", "pose": { "position": { "x": 0.41, "y": 0.18, "z": 0.27 }, "rotation": { "w": 0.9238795, "x": 0, "y": 0.3826834, "z": 0 }, "frameId": "base" } },
+      { "part": "right", "pose": { "position": { "x": 0.41, "y": -0.18, "z": 0.27 }, "rotation": { "w": 0.9238795, "x": 0, "y": -0.3826834, "z": 0 }, "frameId": "base" } }
+    ] } } },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "500000000" } },
+    { "expect_output": { "kind": "substitute", "provenance": { "kind": "PROVENANCE_KIND_TELEOP" } } }
+  ]
+}

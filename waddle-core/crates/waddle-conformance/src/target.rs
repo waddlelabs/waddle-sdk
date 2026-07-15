@@ -66,6 +66,11 @@ struct GateParts {
     /// An intervention stream has produced traffic (stall → bypass only
     /// matters when there is someone to starve).
     traffic: bool,
+    /// Bug 2 (action-space validation, mirroring `spawn_media_intake`'s
+    /// `validation_fault_sent`): a dims-mismatched teleop injection faults
+    /// at most once per claim window, not once per packet. Reset the
+    /// instant the claim ends.
+    validation_fault_sent: bool,
     /// End of the executing policy chunk (chunk-boundary detection).
     chunk_end_ns: Option<i64>,
     detector: DivergenceDetector,
@@ -140,6 +145,7 @@ impl Target {
                     last_output: None,
                     last_tick_ns: None,
                     traffic: false,
+                    validation_fault_sent: false,
                     chunk_end_ns: None,
                     detector: DivergenceDetector::new(DIVERGENCE_THRESHOLD, DIVERGENCE_WINDOW_NS),
                     last_commanded: None,
@@ -740,21 +746,70 @@ impl Target {
     ) -> Result<(), ConformanceError> {
         let packet: pb::TeleopStreamPacket =
             self.parse_payload(payload, "packet", "waddle.v0.TeleopStreamPacket")?;
-        let (values, gripper) = flatten_first_target(&packet);
+        let (values, gripper) = flatten_teleop_targets(&packet);
         let now = self.now;
+        let at = self.at();
+        // Bug 2 (action-space validation, mirroring `spawn_media_intake`'s
+        // `validation_fault_sent`): the fault guard resets the instant the
+        // claim ends, so the next claim window gets its own chance to
+        // fault.
+        if self.fsm.claim.is_none()
+            && let Some(gp) = self.gate.as_mut()
+        {
+            gp.validation_fault_sent = false;
+        }
+        let expected_dims = self
+            .gate
+            .as_ref()
+            .and_then(|g| g.space.as_ref())
+            .and_then(ActionSpace::dims);
+        let dims_ok = expected_dims.is_none_or(|want| values.len() == want);
+        // The harness never models the media-intake thread (production's
+        // *unconditional* primary check, already covered by
+        // waddle-runtime's e2e suite) — only the gate's own blend-window
+        // defense-in-depth (`blend.rs::blend_step` returning `None`) is
+        // observable here, and only while a blend is actually in progress.
+        // Scoping the harness check to that same window keeps it a no-op
+        // for every other teleop_action fixture (bypass, HOLD_FIRST,
+        // CHUNK_BOUNDARY never open a blend window), so it cannot alter
+        // their observable behavior.
+        let blend_active = self.gate.as_ref().is_some_and(|gp| {
+            matches!(
+                &gp.shared.load_plan().mode,
+                PlanMode::Claimed { blend: Some(b), .. } if b.progress(MonoNs(now)) < 1.0
+            )
+        });
+        let mut rejected = None;
         {
             let gp = self.gate_mut("teleop_action")?;
-            gp.producer
-                .push(TimedAction {
-                    seq: packet.seq,
-                    received: MonoNs(now),
-                    action: OwnedAction {
-                        values: ActionValues::from_slice(&values),
-                        gripper,
-                    },
-                })
-                .map_err(|_| scenario_err("intervention stream ring full"))?;
+            if dims_ok || !blend_active {
+                gp.producer
+                    .push(TimedAction {
+                        seq: packet.seq,
+                        received: MonoNs(now),
+                        action: OwnedAction {
+                            values: ActionValues::from_slice(&values),
+                            gripper,
+                        },
+                    })
+                    .map_err(|_| scenario_err("intervention stream ring full"))?;
+            } else if !gp.validation_fault_sent {
+                gp.validation_fault_sent = true;
+                rejected = Some((values.len(), expected_dims.unwrap_or(0)));
+            }
             gp.traffic = true;
+        }
+        // Bug 2: a dims-mismatched injection during an open blend window is
+        // never dispatched — nothing
+        // goes to the ring, and the claim window gets exactly one
+        // Fault{VALIDATION_ERROR} (waddle-fsm's `InterventionRejected`
+        // handling), not one per mismatched packet.
+        if let Some((dims_got, dims_want)) = rejected {
+            self.dispatch(SessionEvent::InterventionRejected {
+                dims_got,
+                dims_want,
+                at,
+            })?;
         }
         // Arrival is an event for stall detection and (in bypass) the pump.
         self.periodic()
@@ -988,34 +1043,42 @@ fn str_field<'m>(
         .ok_or_else(|| scenario_err(format!("inject payload missing string {field:?}")))
 }
 
-/// Simple documented teleop flattening: the FIRST part target only —
-/// pose → `[x, y, z, qw, qx, qy, qz]`, twist → 6 values — plus the packet's
-/// gripper channel when present.
-fn flatten_first_target(packet: &pb::TeleopStreamPacket) -> (Vec<f64>, Option<f64>) {
-    let Some(target) = packet.targets.first() else {
-        return (Vec::new(), None);
-    };
+/// Simple documented teleop flattening: ALL part targets concatenate in
+/// packet order — pose → `[x, y, z, qw, qx, qy, qz]`, twist → 6 values —
+/// matching production `flatten_packet` semantics
+/// (`waddle-runtime/src/pumps.rs`); the first declared gripper channel rides
+/// along. scenario-format.md's `teleop_action` payload is a plain
+/// `waddle.v0.TeleopStreamPacket` and does not pin "first target only" — a
+/// runner that only read `targets[0]` was a runner defect (see
+/// `handoff_immediate_mid_chunk`'s amendment).
+fn flatten_teleop_targets(packet: &pb::TeleopStreamPacket) -> (Vec<f64>, Option<f64>) {
     let mut values = Vec::new();
-    match &target.target {
-        Some(pb::part_target::Target::Pose(pose)) => {
-            if let Some(p) = &pose.position {
-                values.extend([p.x, p.y, p.z]);
+    let mut gripper = None;
+    for target in &packet.targets {
+        match &target.target {
+            Some(pb::part_target::Target::Pose(pose)) => {
+                if let Some(p) = &pose.position {
+                    values.extend([p.x, p.y, p.z]);
+                }
+                if let Some(r) = &pose.rotation {
+                    values.extend([r.w, r.x, r.y, r.z]);
+                }
             }
-            if let Some(r) = &pose.rotation {
-                values.extend([r.w, r.x, r.y, r.z]);
+            Some(pb::part_target::Target::Twist(twist)) => {
+                if let Some(l) = &twist.linear {
+                    values.extend([l.x, l.y, l.z]);
+                }
+                if let Some(a) = &twist.angular {
+                    values.extend([a.x, a.y, a.z]);
+                }
             }
+            None => {}
         }
-        Some(pb::part_target::Target::Twist(twist)) => {
-            if let Some(l) = &twist.linear {
-                values.extend([l.x, l.y, l.z]);
-            }
-            if let Some(a) = &twist.angular {
-                values.extend([a.x, a.y, a.z]);
-            }
+        if gripper.is_none() {
+            gripper = target.gripper;
         }
-        None => {}
     }
-    (values, target.gripper)
+    (values, gripper)
 }
 
 /// Permissive action flattening for scripted caller ticks whose fixtures

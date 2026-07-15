@@ -156,7 +156,14 @@ policy source paused ─► lease handoff ─► intervention stream live
             to the intervenor exactly at blend start.
 ```
 
-Fixture: `handoff_immediate_mid_chunk`.
+If the intervention action's flattened width doesn't match the declared
+action space, the gate holds instead of cross-fading — a dims mismatch is
+never zip-truncated into a shorter, meaningless action. Media intake is the
+primary check (drops the mismatched action before it reaches the gate,
+faulting `FAULT_KIND_VALIDATION_ERROR` once per claim window); the gate's
+own refusal to blend mismatched lengths is defense in depth.
+
+Fixtures: `handoff_immediate_mid_chunk`, `teleop_dims_mismatch_holds`.
 
 ### CHUNK_BOUNDARY{max_wait_ns}
 
