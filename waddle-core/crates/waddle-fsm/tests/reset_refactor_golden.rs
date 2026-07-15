@@ -7,6 +7,11 @@
 //!
 //! Captured against the pre-refactor implementation; if the refactor changes
 //! any emission or effect ordering, one of these assertions fails.
+//!
+//! Note: the run-closing cancel list later gained `ResetWindowTimeout` (timer
+//! hygiene, D7 edge 6). That is an emission-invisible, no-op `CancelTimer`
+//! effect for undeclared episodes (no such timer is ever armed) — the
+//! observable emission subsequence is unchanged.
 
 use waddle_fsm::{Effect, SessionConfig, SessionEvent, SessionFsm, step};
 use waddle_types::{
@@ -168,6 +173,7 @@ fn undeclared_terminate_trace_is_stable() {
             "emit state 3->5 outcome=1",
             "cancel EngageTimeout",
             "cancel ChunkBoundaryCap",
+            "cancel ResetWindowTimeout",
         ]
     );
 }
@@ -208,6 +214,7 @@ fn undeclared_estop_while_claimed_trace_is_stable() {
             "emit claim kind=4",
             "cancel EngageTimeout",
             "cancel ChunkBoundaryCap",
+            "cancel ResetWindowTimeout",
         ]
     );
 }
@@ -248,6 +255,7 @@ fn undeclared_retake_trace_is_stable() {
             "emit state 4->5 outcome=4",
             "cancel EngageTimeout",
             "cancel ChunkBoundaryCap",
+            "cancel ResetWindowTimeout",
             "open_successor",
         ]
     );

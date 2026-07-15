@@ -3,8 +3,9 @@
 //! plane, conformance runner) sees exactly one vocabulary.
 
 use waddle_types::{
-    ClaimId, ClientId, EpisodeId, EpisodeStateKind, GateMode, GrantStatus, InterventionPhase,
-    LeaseEnforcement, LeaseId, MonoNs, TerminalOutcome, Verb, pb::v0 as pb,
+    ActorKind, ClaimId, ClientId, EpisodeId, EpisodeStateKind, GateMode, GrantStatus,
+    InterventionPhase, LeaseEnforcement, LeaseId, MonoNs, ResetKind, TerminalOutcome, Verb,
+    pb::v0 as pb,
 };
 
 use crate::claim::ActiveClaim;
@@ -257,6 +258,56 @@ pub fn judgment(
             ..Default::default()
         }),
     }));
+    ev
+}
+
+/// The post-reset pipeline result (E15/E16). `result.ok` reflects the
+/// pipeline; `pinned_outcome` is the terminal outcome fixed at E14.
+pub fn post_reset(
+    at: MonoNs,
+    episode: &EpisodeId,
+    ok: bool,
+    detail: &str,
+    pinned: TerminalOutcome,
+) -> pb::EpisodeEvent {
+    let mut ev = base(at, Some(episode));
+    ev.event = Some(pb::episode_event::Event::PostReset(pb::PostResetResult {
+        result: Some(pb::ResetResult {
+            ok,
+            detail: detail.to_owned(),
+            strategy: String::new(),
+            verification: None,
+            fault: None,
+        }),
+        pinned_outcome: pinned.to_pb() as i32,
+    }));
+    ev
+}
+
+/// A remote reset window lifecycle event (E19–E22). `claim_id` is set from
+/// ENGAGED onward; `result` is set on COMPLETED / TIMED_OUT.
+#[allow(clippy::too_many_arguments)]
+pub fn reset_window(
+    at: MonoNs,
+    episode: &EpisodeId,
+    kind: pb::ResetWindowEventKind,
+    reset: ResetKind,
+    prompt: &str,
+    expected: ActorKind,
+    claim_id: &str,
+    result: Option<pb::ResetResult>,
+) -> pb::EpisodeEvent {
+    let mut ev = base(at, Some(episode));
+    ev.event = Some(pb::episode_event::Event::ResetWindow(
+        pb::ResetWindowEvent {
+            kind: kind as i32,
+            reset: reset.to_pb() as i32,
+            prompt: prompt.to_owned(),
+            expected_actor: expected.to_pb() as i32,
+            claim_id: claim_id.to_owned(),
+            result,
+        },
+    ));
     ev
 }
 

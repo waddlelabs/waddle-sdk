@@ -175,7 +175,14 @@ impl Ctx<'_> {
                 reason,
             ));
         }
-        for id in [TimerId::EngageTimeout, TimerId::ChunkBoundaryCap] {
+        for id in [
+            TimerId::EngageTimeout,
+            TimerId::ChunkBoundaryCap,
+            // Timer hygiene (D7 edge 6): a run may close with a reset window
+            // still armed (E17 estop). Cancelling here is emission-invisible
+            // and a no-op for episodes that never armed it.
+            TimerId::ResetWindowTimeout,
+        ] {
             self.effects.push(Effect::CancelTimer { id });
         }
         self.s.engage_stage = None;
@@ -204,11 +211,105 @@ impl Ctx<'_> {
     }
 
     /// The E10 trigger set (terminate / mark END_* / judge / timeout) routes
-    /// here so it can detour to POST_RESET when the episode declares one. For
-    /// undeclared episodes this is exactly `enter_terminal(.., true)`. Estop
-    /// (E11) and pre-reset failure (E5) never route here — nothing ran.
+    /// here so it can detour to POST_RESET when the episode declares one (E14).
+    /// For undeclared episodes this is exactly `enter_terminal(.., true)`.
+    /// Estop (E11) and pre-reset failure (E5) never route here — nothing ran.
     fn request_terminal(&mut self, at: MonoNs, outcome: TerminalOutcome, reason: &str) {
-        self.enter_terminal(at, outcome, reason, true);
+        let ep = self.episode();
+        if ep.post_reset_declared && matches!(ep.phase, Phase::Running | Phase::Intervention(_)) {
+            self.enter_post_reset(at, outcome, reason);
+        } else {
+            self.enter_terminal(at, outcome, reason, true);
+        }
+    }
+
+    /// E14: pin the outcome, run the shared run-closing block into POST_RESET
+    /// (gate→PASSTHROUGH, claim released, timers cancelled — exactly as E10
+    /// would), then engage the declared post-reset pipeline (a remote window
+    /// or a hook).
+    fn enter_post_reset(&mut self, at: MonoNs, outcome: TerminalOutcome, reason: &str) {
+        self.episode_mut().pinned_outcome = Some(outcome);
+        self.close_run(at, Phase::PostReset, reason, Some(outcome), true);
+        if let Some(spec) = self.episode().post_window.clone() {
+            self.open_reset_window(at, waddle_types::ResetKind::Post, &spec);
+        } else {
+            let episode = self.episode().id.clone();
+            self.effects.push(Effect::RunPostReset { episode });
+        }
+    }
+
+    /// E19: open a remote reset window (PRE on RESETTING entry, POST at E14)
+    /// and arm its deadline.
+    fn open_reset_window(
+        &mut self,
+        at: MonoNs,
+        kind: waddle_types::ResetKind,
+        spec: &crate::event::WindowSpec,
+    ) {
+        self.episode_mut().reset_window = Some(crate::episode::ResetWindowState {
+            kind,
+            expected: spec.expected,
+            engaged: false,
+            prompt: spec.prompt.clone(),
+        });
+        let ep = self.episode().id.clone();
+        self.emit(emit::reset_window(
+            at,
+            &ep,
+            pb::ResetWindowEventKind::Opened,
+            kind,
+            &spec.prompt,
+            spec.expected,
+            "",
+            None,
+        ));
+        self.effects.push(Effect::ArmTimer {
+            id: TimerId::ResetWindowTimeout,
+            deadline: at.saturating_add(spec.timeout_ns),
+        });
+    }
+
+    /// E15/E16: the post-reset pipeline reported. The pinned outcome is
+    /// unchanged; a failure only sets the permanent `post_reset_failed` flag.
+    fn apply_post_reset_result(&mut self, at: MonoNs, ok: bool, detail: &str) {
+        let pinned = self
+            .episode()
+            .pinned_outcome
+            .expect("pinned_outcome set at E14");
+        if ok {
+            // E15.
+            let ep = self.episode().id.clone();
+            self.emit(emit::post_reset(at, &ep, true, detail, pinned));
+            self.close_run(
+                at,
+                Phase::Terminal(pinned),
+                "post-reset complete",
+                Some(pinned),
+                true,
+            );
+        } else {
+            // E16: flag permanently, keep the pinned outcome.
+            self.episode_mut().post_reset_failed = true;
+            let ep = self.episode().id.clone();
+            self.effects.push(Effect::SetPostResetFailed {
+                episode: ep.clone(),
+            });
+            self.emit(emit::post_reset(at, &ep, false, detail, pinned));
+            self.emit(emit::fault(
+                at,
+                Some(&ep),
+                pb::FaultKind::PreconditionFail,
+                "post-reset",
+                "post-reset cleanup failed; pinned outcome stands",
+            ));
+            self.close_run(
+                at,
+                Phase::Terminal(pinned),
+                "post-reset failed",
+                Some(pinned),
+                true,
+            );
+        }
     }
 
     fn apply_pending_demotions(&mut self, at: MonoNs) {
@@ -376,8 +477,10 @@ pub fn step(
             verification,
             born_claimed,
             parent,
+            post_reset,
+            pre_window,
+            post_window,
             at,
-            ..
         } => {
             if active {
                 return Err(rejected("one active episode per session (N18)"));
@@ -385,12 +488,13 @@ pub fn step(
             if *born_claimed && state.claim.is_none() {
                 return Err(rejected("a born-claimed successor requires a held claim"));
             }
-            ctx.s.episode = Some(EpisodeState::open(
-                id.clone(),
-                *verification,
-                *born_claimed,
-                parent.clone(),
-            ));
+            let mut ep =
+                EpisodeState::open(id.clone(), *verification, *born_claimed, parent.clone());
+            // A remote post window implies a declared post-reset (a remote
+            // one); `post_reset` alone declares a hook.
+            ep.post_reset_declared = *post_reset || post_window.is_some();
+            ep.post_window = post_window.clone();
+            ctx.s.episode = Some(ep);
             ctx.emit(emit::state_transition(
                 *at,
                 id,
@@ -399,6 +503,15 @@ pub fn step(
                 "open",
                 None,
             ));
+            // E19 (PRE): a declared remote pre window opens on entry — but not
+            // for a born-claimed successor, whose surviving claim keeps the
+            // hand-reset-under-claim story (D7 edge 5; C6 needs no active
+            // claim).
+            if let Some(spec) = pre_window
+                && ctx.s.claim.is_none()
+            {
+                ctx.open_reset_window(*at, waddle_types::ResetKind::Pre, spec);
+            }
             if ctx.s.lease == LeaseState::Vacant && ctx.s.pending_lease.is_none() {
                 let pending = PendingLeaseOp {
                     op: LeaseOpKind::Acquire {
@@ -846,7 +959,34 @@ pub fn step(
             ));
             ctx.effects.push(Effect::RequestVerb(Verb::Estop));
             ctx.s.pending_lease = None;
-            if active {
+            if matches!(phase, Some(Phase::PostReset)) {
+                // E17: keep the pinned outcome (an estopped cleanup must not
+                // flip an earned SUCCESS to ABORT); flag the incident, cancel
+                // any open window, transition to TERMINAL{pinned}.
+                let pinned = ctx
+                    .episode()
+                    .pinned_outcome
+                    .expect("pinned_outcome set at E14");
+                ctx.episode_mut().post_reset_failed = true;
+                let ep = ctx.episode().id.clone();
+                ctx.effects.push(Effect::SetPostResetFailed {
+                    episode: ep.clone(),
+                });
+                if let Some(window) = ctx.episode().reset_window.clone() {
+                    ctx.emit(emit::reset_window(
+                        *at,
+                        &ep,
+                        pb::ResetWindowEventKind::Cancelled,
+                        window.kind,
+                        &window.prompt,
+                        window.expected,
+                        "",
+                        None,
+                    ));
+                    ctx.episode_mut().reset_window = None;
+                }
+                ctx.close_run(*at, Phase::Terminal(pinned), "estop", Some(pinned), true);
+            } else if active {
                 ctx.enter_terminal(*at, TerminalOutcome::Abort, "estop", true);
             }
         }
@@ -859,6 +999,11 @@ pub fn step(
         } => {
             if !active {
                 return Err(rejected("terminate without an active episode (E12)"));
+            }
+            if matches!(phase, Some(Phase::PostReset)) {
+                // E14b: the outcome is pinned; a late terminate never changes
+                // it.
+                return Err(rejected("terminate rejected in POST_RESET (E14b)"));
             }
             ctx.request_terminal(*at, *outcome, reason);
         }
@@ -883,7 +1028,11 @@ pub fn step(
             }
             let ep = ctx.episode().id.clone();
             ctx.emit(emit::mark(*at, &ep, kind.to_pb()));
-            if let Some(outcome) = kind.terminal_outcome() {
+            // E14b: in POST_RESET a late END_* mark is recorded above but the
+            // outcome is pinned — never a transition.
+            if !matches!(phase, Some(Phase::PostReset))
+                && let Some(outcome) = kind.terminal_outcome()
+            {
                 ctx.request_terminal(*at, outcome, "mark");
             }
             let _ = MarkKind::Start; // exhaustiveness documented in event.rs
@@ -1088,11 +1237,16 @@ pub fn step(
             ));
         }
 
-        // reset-phases (flags waddle.v0.reset.phases / .remote): inert until
-        // the post-reset phase and remote windows land in later commits.
-        SessionEvent::PostResetResult { .. } => {
-            return Err(rejected("post_reset_result not yet implemented"));
+        // E15/E16 -------------------------------------------------------------
+        SessionEvent::PostResetResult { ok, detail, at } => {
+            if !matches!(phase, Some(Phase::PostReset)) {
+                return Err(rejected("post_reset_result outside POST_RESET"));
+            }
+            ctx.apply_post_reset_result(*at, *ok, detail);
         }
+
+        // reset-remote windows (flag waddle.v0.reset.remote): inert until the
+        // remote-window rows land in the next commit.
         SessionEvent::ResetWindowEngage { .. } => {
             return Err(rejected("reset_window_engage not yet implemented"));
         }
