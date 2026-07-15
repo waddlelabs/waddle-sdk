@@ -63,12 +63,24 @@ Concretely, in this package:
 - No tripwire evaluation, reset verification, grant negotiation/demotion
   logic; no provenance computation (strings surfaced verbatim); no
   recording writes (the core reducer owns all recording).
+- **Reset API** (`TeleopReset`/`AgentReset`, `init(pre_reset=, post_reset=,
+  reset_verification=)`, `rollout(pre_reset=, post_reset=)`): the markers
+  and callables are pure config — which reset *kind* string names a
+  marker's type, and normalizing a hook's return shape to `(bool,
+  Optional[bool])`, are type dispatch and input-shape validation, not
+  reset decisions. Every actual behavior (which `ResetStrategy` runs, how
+  `reset_verification` gates the RESETTING→READY transition, the window's
+  claim/lease/gate-mode sequencing, `post_reset_failed`'s permanence, the
+  outcome-pinning at POST_RESET entry) lives in waddle-core; Python never
+  branches on any of it.
 - Review heuristic: descriptors may validate *shape* ("must declare"),
   never *behavior*.
 
 ## Private test hooks
 
-`waddle._testing` (engage/release/push_teleop) requires
-`waddle.init(_testing=True)`, which wires an in-process loopback media
-plane. Private and unstable — it exists so the intervention path is
-testable without a control plane.
+`waddle._testing` (`engage`/`release`/`push_teleop`/`reset_window_engage`/
+`reset_window_complete`) requires `waddle.init(_testing=True)`, which
+wires an in-process loopback media plane. Private and unstable — it
+exists so the intervention and remote-reset-window paths are testable
+without a control plane (the open-source runtime has no supervision-plane
+transport wired yet; see `TeleopReset`/`AgentReset`'s docstrings).

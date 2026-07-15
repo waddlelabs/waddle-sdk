@@ -30,3 +30,20 @@ def push_teleop(
     """Push one teleop stream packet through the loopback media plane (the
     same wire packet a teleoperator console would send)."""
     session._testing_push_teleop([float(v) for v in values], gripper)
+
+
+def reset_window_engage(session: _core.Session, claim_id: str, actor: str = "teleop") -> None:
+    """Engage an already-open reset window (what a plane ENGAGE directive
+    would do): grants the claim, hands the lease to it, and turns the gate
+    RESET for `actor` ("teleop" | "agent" — must match the window's
+    declared expected actor, FSM.md guard C6)."""
+    session._testing_reset_window_engage(claim_id, actor)
+
+
+def reset_window_complete(
+    session: _core.Session, claim_id: str, ok: bool, verified: bool | None = None
+) -> None:
+    """Complete an engaged reset window (what a plane COMPLETE directive
+    would do): the pipeline result applies as if the pre/post-reset had
+    produced it directly."""
+    session._testing_reset_window_complete(claim_id, ok, verified)
