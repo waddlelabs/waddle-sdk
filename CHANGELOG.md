@@ -98,6 +98,16 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   generated header and linked to `libwaddle.so`.
 
 ### Changed
+- **Golden fixture amendment (pre-release; no tagged versions exist) —
+  `handoff_immediate_mid_chunk`**: its teleop packets now carry Pose
+  targets for both parts (7+7=14 values) to stay dims-consistent with the
+  declared bimanual composite, instead of single-part Twist packets. The
+  fixture previously reached its `blend` expectation only via the
+  since-fixed silent dim-truncation defect (see the media-intake fix
+  below) — it pinned the defect, not intended behavior. This is a
+  deliberate, documented exception to the append-only-goldens rule, made
+  possible only because no version has shipped yet; the other 11 existing
+  fixtures are untouched.
 - **Signatures (pre-1.0 / ABI unstable per N5)**: `Gate::gate`,
   `Episode::gate`, and the C ABI `waddle_gate` gained the obs parameter
   (`obs`/`obs_len` on the ABI; NULL or 0 = no observation). Header
