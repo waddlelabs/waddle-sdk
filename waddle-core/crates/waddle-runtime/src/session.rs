@@ -1027,3 +1027,39 @@ pub fn release_claim(session: &Session, claim_id: &str) {
         at: session.inner.clock.stamp_now().mono_ns(),
     });
 }
+
+/// Convenience: engage an already-open reset window — the runtime-side
+/// half of a plane ENGAGE directive (`pumps::forward_server_msg`'s
+/// `ResetWindow::Engage` arm produces this exact two-event sequence:
+/// `ClaimGranted` then `ResetWindowEngage`), so tests and the `waddle-sdk`
+/// shim's testing hooks can drive a remote reset window without a
+/// control-plane transport. `source` is recorded on the claim exactly as
+/// [`grant_and_engage`] does; `actor` must satisfy C6 (match the window's
+/// expected actor) or the FSM rejects the `ClaimGranted`.
+pub fn reset_window_engage(session: &Session, claim_id: &str, source: &str, actor: ActorKind) {
+    let clock_now = |s: &Session| s.inner.clock.stamp_now().mono_ns();
+    let claim = waddle_types::ClaimId::new(claim_id);
+    session.inject(SessionEvent::ClaimGranted {
+        id: claim.clone(),
+        source: source.to_owned(),
+        actor,
+        self_initiated: false,
+        at: clock_now(session),
+    });
+    session.inject(SessionEvent::ResetWindowEngage {
+        claim,
+        at: clock_now(session),
+    });
+}
+
+/// Convenience: complete an engaged reset window (the runtime-side half of
+/// a plane COMPLETE directive) — injects `ResetWindowComplete{claim, ok,
+/// verified}`.
+pub fn reset_window_complete(session: &Session, claim_id: &str, ok: bool, verified: Option<bool>) {
+    session.inject(SessionEvent::ResetWindowComplete {
+        claim: waddle_types::ClaimId::new(claim_id),
+        ok,
+        verified,
+        at: session.inner.clock.stamp_now().mono_ns(),
+    });
+}
