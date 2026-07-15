@@ -145,20 +145,26 @@ impl Ctx<'_> {
         ));
     }
 
-    /// Central terminal entry (rows E5/E9/E10/E11). `release_claim` is false
-    /// only for retake (row C5: the claim survives; the intervenor keeps the
-    /// lease and the gate stays claimed for the hand reset).
-    fn enter_terminal(
+    /// Central run-closing block, shared by terminal entry (E5/E9/E10/E11)
+    /// and post-reset entry (E14). Drops the gate to PASSTHROUGH, transitions
+    /// to `to` (carrying `outcome`), releases the claim, cancels engage/window
+    /// timers, clears engage state, and applies deferred demotions — in the
+    /// exact order the terminal path has always emitted them (pinned by
+    /// `tests/reset_refactor_golden.rs`). `release_claim` is false only for
+    /// retake (row C5: the claim survives; the intervenor keeps the lease and
+    /// the gate stays claimed for the hand reset).
+    fn close_run(
         &mut self,
         at: MonoNs,
-        outcome: TerminalOutcome,
+        to: Phase,
         reason: &str,
+        outcome: Option<TerminalOutcome>,
         release_claim: bool,
     ) {
         if release_claim && self.s.gate_mode != GateMode::Passthrough {
             self.set_gate(at, GateMode::Passthrough, reason);
         }
-        self.transition(at, Phase::Terminal(outcome), reason, Some(outcome));
+        self.transition(at, to, reason, outcome);
         if release_claim && let Some(claim) = self.s.claim.take() {
             let ep = self.episode().id.clone();
             self.emit(emit::claim_event(
@@ -178,6 +184,31 @@ impl Ctx<'_> {
         // The next planning decision happens at an episode boundary — apply
         // deferred, signal-driven demotions now (N11: never mid-lease).
         self.apply_pending_demotions(at);
+    }
+
+    /// Central terminal entry (rows E5/E9/E10/E11).
+    fn enter_terminal(
+        &mut self,
+        at: MonoNs,
+        outcome: TerminalOutcome,
+        reason: &str,
+        release_claim: bool,
+    ) {
+        self.close_run(
+            at,
+            Phase::Terminal(outcome),
+            reason,
+            Some(outcome),
+            release_claim,
+        );
+    }
+
+    /// The E10 trigger set (terminate / mark END_* / judge / timeout) routes
+    /// here so it can detour to POST_RESET when the episode declares one. For
+    /// undeclared episodes this is exactly `enter_terminal(.., true)`. Estop
+    /// (E11) and pre-reset failure (E5) never route here — nothing ran.
+    fn request_terminal(&mut self, at: MonoNs, outcome: TerminalOutcome, reason: &str) {
+        self.enter_terminal(at, outcome, reason, true);
     }
 
     fn apply_pending_demotions(&mut self, at: MonoNs) {
@@ -825,7 +856,7 @@ pub fn step(
             if !active {
                 return Err(rejected("terminate without an active episode (E12)"));
             }
-            ctx.enter_terminal(*at, *outcome, reason, true);
+            ctx.request_terminal(*at, *outcome, reason);
         }
 
         // Async judging attaches labels even after TERMINAL (E10 note); it is
@@ -849,7 +880,7 @@ pub fn step(
             let ep = ctx.episode().id.clone();
             ctx.emit(emit::mark(*at, &ep, kind.to_pb()));
             if let Some(outcome) = kind.terminal_outcome() {
-                ctx.enter_terminal(*at, outcome, "mark", true);
+                ctx.request_terminal(*at, outcome, "mark");
             }
             let _ = MarkKind::Start; // exhaustiveness documented in event.rs
         }
