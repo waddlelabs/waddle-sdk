@@ -17,14 +17,6 @@ fn base(at: MonoNs, episode: Option<&EpisodeId>) -> pb::EpisodeEvent {
     }
 }
 
-fn gate_mode_pb(mode: GateMode) -> pb::GateMode {
-    match mode {
-        GateMode::Passthrough => pb::GateMode::Passthrough,
-        GateMode::Intervention => pb::GateMode::Intervention,
-        GateMode::Bypass => pb::GateMode::Bypass,
-    }
-}
-
 fn phase_pb(phase: InterventionPhase) -> pb::InterventionPhase {
     match phase {
         InterventionPhase::Engage => pb::InterventionPhase::Engage,
@@ -174,8 +166,8 @@ pub fn gate_mode_change(
 ) -> pb::EpisodeEvent {
     let mut ev = base(at, Some(episode));
     ev.event = Some(pb::episode_event::Event::Gate(pb::GateModeChange {
-        from: gate_mode_pb(from) as i32,
-        to: gate_mode_pb(to) as i32,
+        from: from.to_pb() as i32,
+        to: to.to_pb() as i32,
         reason: reason.to_owned(),
     }));
     ev

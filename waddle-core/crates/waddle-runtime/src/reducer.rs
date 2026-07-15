@@ -252,6 +252,10 @@ impl Reducer {
                     _ => None,
                 },
             },
+            // reset-phases: behavior lands with the FSM change on this
+            // branch; nothing emits GateMode::Reset yet, so this is
+            // unreachable today. Passthrough is the safe placeholder.
+            GateMode::Reset => PlanMode::Passthrough,
         };
         GatePlan { mode, since: now }
     }

@@ -45,7 +45,8 @@ pub use ids::{
     CellId, ClaimId, ClientId, EpisodeId, FrameId, LeaseId, RobotId, SessionId, SourceId,
 };
 pub use outcome::{
-    EpisodeStateKind, GateMode, InterventionPhase, ResetVerificationMode, TerminalOutcome,
+    EpisodeStateKind, GateMode, InterventionPhase, ResetKind, ResetVerificationMode,
+    TerminalOutcome,
 };
 pub use provenance::{ActorKind, ActorRef, Provenance, ProvenanceTag};
 pub use space::{

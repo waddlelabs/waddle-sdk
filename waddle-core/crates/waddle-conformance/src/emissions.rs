@@ -100,11 +100,7 @@ pub fn timer_name(id: TimerId) -> &'static str {
 }
 
 pub fn gate_mode_name(mode: GateMode) -> &'static str {
-    match mode {
-        GateMode::Passthrough => pb::GateMode::Passthrough.as_str_name(),
-        GateMode::Intervention => pb::GateMode::Intervention.as_str_name(),
-        GateMode::Bypass => pb::GateMode::Bypass.as_str_name(),
-    }
+    mode.to_pb().as_str_name()
 }
 
 pub fn verb_name(verb: Verb) -> &'static str {
