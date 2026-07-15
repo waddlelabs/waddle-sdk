@@ -433,6 +433,141 @@ fn finish_before_open_bounds_is_an_error() {
     assert!(builder("int-unopened").finish("sha256:digest").is_err());
 }
 
+/// Post-reset record (flag `waddle.v0.reset.phases`): the declared flag is
+/// stamped explicitly (it comes from `EpisodeOpen`, which is a session
+/// event, not an emission); the `PostResetResult` payload is derived from
+/// the pushed event; the bounds open at the →POST_RESET transition and
+/// close at →TERMINAL (task duration = post_reset_bounds.start -
+/// bounds.start, per the proto comment).
+#[test]
+fn post_reset_record_derives_result_and_bounds() {
+    use pb::EpisodeState as Es;
+    let ep = "int-post-reset";
+    let mut b = builder(ep);
+    b.open_bounds(stamp(4_000_000_000_000));
+    b.set_post_reset_declared(true);
+    b.push_event(event(
+        4_000_000_000_000,
+        ep,
+        state(Es::Unspecified, Es::Resetting, "episode_open"),
+    ));
+    b.push_event(event(
+        4_001_000_000_000,
+        ep,
+        state(Es::Resetting, Es::Ready, "reset ok"),
+    ));
+    b.push_event(event(
+        4_002_000_000_000,
+        ep,
+        state(Es::Ready, Es::Running, "first gated action"),
+    ));
+    b.push_event(event(
+        4_010_000_000_000,
+        ep,
+        state(Es::Running, Es::PostReset, "terminate: post-reset declared"),
+    ));
+    b.push_event(event(
+        4_012_000_000_000,
+        ep,
+        pb::episode_event::Event::PostReset(pb::PostResetResult {
+            result: Some(pb::ResetResult {
+                ok: true,
+                detail: "scene cleared".into(),
+                ..Default::default()
+            }),
+            pinned_outcome: pb::TerminalOutcome::Success as i32,
+        }),
+    ));
+    b.push_event(event(
+        4_012_000_000_000,
+        ep,
+        state(Es::PostReset, Es::Terminal, "post-reset ok"),
+    ));
+    b.set_outcome(TerminalOutcome::Success, "");
+    b.close_bounds(stamp(4_012_000_000_000));
+    let s = b.finish("sha256:digest").unwrap();
+
+    assert!(s.post_reset_declared);
+    assert!(!s.post_reset_failed);
+    let result = s.post_reset_result.as_ref().unwrap();
+    assert!(result.ok);
+    assert_eq!(result.detail, "scene cleared");
+    let prb = s.post_reset_bounds.as_ref().unwrap();
+    assert_eq!(prb.t_start_ns, 4_010_000_000_000);
+    assert_eq!(prb.t_end_ns, 4_012_000_000_000);
+}
+
+/// E16/E17: `post_reset_failed` is permanent once set and never alters the
+/// pinned outcome (field 13 keeps the outcome fixed at POST_RESET entry).
+/// A failed cleanup's result payload is still recorded.
+#[test]
+fn post_reset_failed_flag_is_permanent_and_never_alters_outcome() {
+    use pb::EpisodeState as Es;
+    let ep = "int-post-reset-failed";
+    let mut b = builder(ep);
+    b.open_bounds(stamp(4_100_000_000_000));
+    b.set_post_reset_declared(true);
+    b.push_event(event(
+        4_110_000_000_000,
+        ep,
+        state(Es::Running, Es::PostReset, "terminate: post-reset declared"),
+    ));
+    b.push_event(event(
+        4_112_000_000_000,
+        ep,
+        pb::episode_event::Event::PostReset(pb::PostResetResult {
+            result: Some(pb::ResetResult {
+                ok: false,
+                detail: "bin jammed".into(),
+                ..Default::default()
+            }),
+            pinned_outcome: pb::TerminalOutcome::Success as i32,
+        }),
+    ));
+    b.mark_post_reset_failed();
+    b.push_event(event(
+        4_112_000_000_000,
+        ep,
+        state(Es::PostReset, Es::Terminal, "post-reset failed"),
+    ));
+    // The outcome was pinned at POST_RESET entry — the failed cleanup never
+    // rewrites it.
+    b.set_outcome(TerminalOutcome::Success, "");
+    b.close_bounds(stamp(4_112_000_000_000));
+    let s = b.finish("sha256:digest").unwrap();
+
+    assert!(s.post_reset_failed);
+    assert_eq!(s.outcome(), pb::TerminalOutcome::Success);
+    assert!(!s.post_reset_result.as_ref().unwrap().ok);
+    let prb = s.post_reset_bounds.as_ref().unwrap();
+    assert_eq!(prb.t_start_ns, 4_110_000_000_000);
+    assert_eq!(prb.t_end_ns, 4_112_000_000_000);
+}
+
+/// An episode force-finalized mid-POST_RESET (session shutdown) leaves the
+/// post-reset bounds open (`t_end_ns == 0`), the same "open when the record
+/// was written" shape every other span uses.
+#[test]
+fn post_reset_bounds_left_open_when_never_terminal() {
+    use pb::EpisodeState as Es;
+    let ep = "int-post-reset-open";
+    let mut b = builder(ep);
+    b.open_bounds(stamp(4_200_000_000_000));
+    b.set_post_reset_declared(true);
+    b.push_event(event(
+        4_210_000_000_000,
+        ep,
+        state(Es::Running, Es::PostReset, "terminate: post-reset declared"),
+    ));
+    b.close_bounds(stamp(4_211_000_000_000));
+    let s = b.finish("sha256:digest").unwrap();
+
+    let prb = s.post_reset_bounds.as_ref().unwrap();
+    assert_eq!(prb.t_start_ns, 4_210_000_000_000);
+    assert_eq!(prb.t_end_ns, 0, "never reached TERMINAL: open span");
+    assert!(s.post_reset_result.is_none());
+}
+
 #[test]
 fn canonical_json_golden_snapshot() {
     // Fixed stamps end to end, so the canonical JSON is deterministic.

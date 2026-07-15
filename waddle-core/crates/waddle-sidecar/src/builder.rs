@@ -80,6 +80,14 @@ pub struct SidecarBuilder {
     retake: Option<pb::RetakeLink>,
     reset_verification: Option<pb::ResetVerification>,
     reset_unverified: bool,
+    post_reset_declared: bool,
+    post_reset_failed: bool,
+    post_reset_result: Option<pb::ResetResult>,
+    /// Bounds of the post-reset phase (flag `waddle.v0.reset.phases`): opens
+    /// at the →POST_RESET state transition, closes at →TERMINAL. Both ends
+    /// are event `t_ns` (session-monotonic), same as every other span.
+    post_reset_start_ns: Option<i64>,
+    post_reset_end_ns: Option<i64>,
 
     events: Vec<pb::EpisodeEvent>,
     judgments: Vec<pb::Judgment>,
@@ -127,6 +135,11 @@ impl SidecarBuilder {
             retake: None,
             reset_verification: None,
             reset_unverified: false,
+            post_reset_declared: false,
+            post_reset_failed: false,
+            post_reset_result: None,
+            post_reset_start_ns: None,
+            post_reset_end_ns: None,
             events: Vec::new(),
             judgments: Vec::new(),
             refs: Vec::new(),
@@ -184,6 +197,12 @@ impl SidecarBuilder {
             Some(pb::episode_event::Event::Intervention(i)) => self.on_intervention(t, i),
             Some(pb::episode_event::Event::Gate(g)) => self.on_gate(t, g),
             Some(pb::episode_event::Event::State(s)) => self.on_state(t, s),
+            // The post-reset pipeline reported (E15/E16): keep the latest
+            // result payload; `pinned_outcome` already lives on the sidecar's
+            // own `outcome` field (pinned at E14, carried to TERMINAL).
+            Some(pb::episode_event::Event::PostReset(pr)) => {
+                self.post_reset_result.clone_from(&pr.result);
+            }
             _ => {}
         }
         self.events.push(event);
@@ -288,6 +307,15 @@ impl SidecarBuilder {
         if leaving_intervention && let Some(open) = self.open_intervention.take() {
             self.interventions.push(open.into_span(t));
         }
+        // Post-reset bounds: open at →POST_RESET (E14), close at →TERMINAL
+        // (E15/E16/E17 all transition there). An episode force-finalized
+        // mid-POST_RESET leaves them open (t_end_ns == 0), like every span.
+        if e.to == pb::EpisodeState::PostReset as i32 {
+            self.post_reset_start_ns = Some(t);
+        }
+        if e.to == pb::EpisodeState::Terminal as i32 && self.post_reset_start_ns.is_some() {
+            self.post_reset_end_ns = Some(t);
+        }
     }
 
     /// Record the terminal outcome (domain enum — the wire cannot carry
@@ -327,6 +355,21 @@ impl SidecarBuilder {
     /// (e.g. a retake successor that skipped verification). One-way.
     pub fn mark_reset_unverified(&mut self) {
         self.reset_unverified = true;
+    }
+
+    /// Mark that this episode declared a post-reset pipeline (flag
+    /// `waddle.v0.reset.phases`). Stamped explicitly by the runtime from
+    /// `EpisodeOpen` — a session event, not an emission, so it cannot be
+    /// derived from the pushed event stream.
+    pub fn set_post_reset_declared(&mut self, declared: bool) {
+        self.post_reset_declared = declared;
+    }
+
+    /// Permanently mark the post-reset cleanup as failed or estopped
+    /// (E16/E17). One-way, like `mark_reset_unverified`; NEVER alters the
+    /// outcome — the pinned outcome from before POST_RESET entry stands.
+    pub fn mark_post_reset_failed(&mut self) {
+        self.post_reset_failed = true;
     }
 
     pub fn add_judgment(&mut self, j: pb::Judgment) {
@@ -422,13 +465,12 @@ impl SidecarBuilder {
             audit: self.audit,
             robot_description_digest: robot_description_digest.to_owned(),
             vendor: Default::default(),
-            // reset-phases: stamped by the builder once the FSM change on
-            // this branch lands (D4); inert defaults here keep the sidecar
-            // shape additive without changing any recorded behavior.
-            post_reset_declared: false,
-            post_reset_failed: false,
-            post_reset_result: None,
-            post_reset_bounds: None,
+            post_reset_declared: self.post_reset_declared,
+            post_reset_failed: self.post_reset_failed,
+            post_reset_result: self.post_reset_result,
+            post_reset_bounds: self
+                .post_reset_start_ns
+                .map(|t_start| span(t_start, self.post_reset_end_ns.unwrap_or(0))),
         })
     }
 }
