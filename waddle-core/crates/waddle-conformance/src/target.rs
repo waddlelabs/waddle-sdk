@@ -20,7 +20,7 @@ use waddle_fsm::{
 use waddle_gate::gate::GateShared;
 use waddle_gate::{
     BlendSchedule, DivergenceDetector, Gate, GateOutput, GatePlan, GateRecord, OwnedAction,
-    PlanMode, TimedAction,
+    PlanMode, StreamChannel, TimedAction,
 };
 use waddle_ingest::FakeClock;
 use waddle_types::action::ActionValues;
@@ -842,6 +842,7 @@ impl Target {
             if dims_ok || !blend_active {
                 gp.producer
                     .push(TimedAction {
+                        channel: StreamChannel::Teleop,
                         seq: packet.seq,
                         received: MonoNs(now),
                         action: OwnedAction {

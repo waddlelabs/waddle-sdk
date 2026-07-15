@@ -482,6 +482,35 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   unchanged (fixture stability); `SessionConfig` gains `clutch_actor`
   (alongside `clutch_source`), and the new `SessionBuilder::clutch_identity`
   setter lets integrators override both.
+- **Jitter buffer — one shared reorder cursor for two independent
+  producers**: the intervention ring's `JitterBuffer` kept a single
+  session-wide `last_popped_seq` watermark, but two producers write into
+  it — the media-intake thread (teleop, seq = wire
+  `TeleopStreamPacket.seq`) and the plane pump's reset-window
+  `intervention_chunk` arm (agent chunks, seq = a fresh pump-local counter
+  starting at 0). An ordinary teleop claim earlier in the session (nothing
+  to do with any reset window) would advance that one shared cursor well
+  past 1, so the first agent-chunk step of a *later* reset window — the
+  exact `pre_reset=TeleopReset`/`post_reset=AgentReset` shape the design
+  suggests as normal — would look "late" and be silently, permanently
+  dropped, with the window then just timing out and no diagnostic trail
+  (`dropped_late` has no readers). `JitterBuffer` now keeps one reorder
+  cursor per `TimedAction::channel` (`StreamChannel::Teleop` /
+  `StreamChannel::AgentChunk`), so neither producer's activity can starve
+  or drop the other's arrivals. Regression-tested by driving an ordinary
+  teleop claim to completion (advancing the teleop channel's cursor well
+  past a small number) and then confirming a later Remote POST window's
+  agent chunk still dispatches.
+- **`intervention_chunk` during a reset window — malformed chunks dropped
+  with zero signal**: a wire chunk that fails `ActionChunk::from_pb`
+  (dims mismatch, wrong target variant, an Opaque space, …) during a
+  Reset-mode window was silently ignored, unlike the parallel teleop path
+  (which raises `SessionEvent::InterventionRejected` on a dims mismatch).
+  Since this is the only actuation channel for an Agent-kind reset window
+  (no teleop fallback), `forward_server_msg` now logs a `tracing::warn!`
+  naming the rejection instead of dropping it with no trace; behaviorally
+  verified (no dispatch, no corruption, the window still resolves
+  normally on the plane's COMPLETE).
 
 ## Stowed changelogs
 

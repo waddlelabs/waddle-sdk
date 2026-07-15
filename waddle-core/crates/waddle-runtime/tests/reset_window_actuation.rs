@@ -26,7 +26,7 @@ use waddle_fsm::{Phase, SessionEvent};
 use waddle_gate::gate::GateOutput;
 use waddle_media::{DataTopic, LoopbackMedia};
 use waddle_runtime::{
-    ControlRegistry, EpisodeOptions, ResetSpec, Session, VerbError, grant_and_engage,
+    ControlRegistry, EpisodeOptions, ResetSpec, Session, VerbError, grant_and_engage, release_claim,
 };
 use waddle_types::pb::v0 as pb;
 use waddle_types::{ActorKind, ClaimId, EpisodeId, GateMode, MonoNs, Provenance, TerminalOutcome};
@@ -839,5 +839,335 @@ fn born_claimed_retake_successor_gets_no_remote_pre_window() {
         "no reset window exists for a born-claimed successor to engage"
     );
 
+    session.shutdown();
+}
+
+// --- Cross-producer seq isolation: teleop activity, then an agent window --
+
+/// Review finding (CRITICAL): the intervention ring's `JitterBuffer` used to
+/// keep ONE shared `last_popped_seq` watermark for the whole session, but
+/// two independent producers write into it — the media-intake thread
+/// (teleop, seq = wire `TeleopStreamPacket.seq`) and the plane pump's
+/// `InterventionChunk` arm (agent chunks, seq = a fresh pump-local counter
+/// starting at 0). An ordinary teleop claim EARLIER in the session (nothing
+/// to do with any reset window) would advance that single shared cursor
+/// past 1, so the FIRST agent-chunk step of a LATER reset window — exactly
+/// the `pre_reset=TeleopReset`/`post_reset=AgentReset` shape the design's
+/// own D5 examples suggest as normal — would look "late" and be silently,
+/// permanently dropped (`ingest`'s `dropped_late` counter has zero readers
+/// anywhere, so this failed with no diagnostic trail: the window would just
+/// time out).
+///
+/// This test reproduces exactly that precondition: episode 1 runs an
+/// ordinary (non-reset) teleop Intervention claim to completion first —
+/// pushing enough packets that the teleop channel's cursor climbs well past
+/// any small number — then episode 2 opens a Remote POST window with an
+/// AGENT claimant and must still see its chunk dispatched. Against the
+/// pre-fix single-cursor `JitterBuffer` this hangs until the 5s assertion
+/// deadline; against the fix (one reorder cursor per `StreamChannel`) it
+/// passes the same way the other agent-chunk test does.
+#[test]
+fn remote_post_reset_window_agent_chunk_survives_prior_teleop_claim_activity() {
+    let dir = tempfile::tempdir().unwrap();
+    let send_log: SendLog = Arc::new(Mutex::new(Vec::new()));
+    let (media, far) = LoopbackMedia::new();
+    let session_cell: Arc<Mutex<Option<Session>>> = Arc::new(Mutex::new(None));
+    let ready_to_complete = Arc::new(AtomicBool::new(false));
+
+    let cell_for_script = session_cell.clone();
+    let ready_for_script = ready_to_complete.clone();
+    let transport = scripted_transport(move |tx| {
+        script_reset_window(
+            cell_for_script.clone(),
+            tx.clone(),
+            "reset-claim-post-mixed",
+            pb::ActorKind::Agent,
+            pb::ResetKind::Post,
+            |s| matches!(s.episode_state, Some(Phase::PostReset)),
+            |tx| {
+                let _ = tx.send(ServerMsg::Gate(pb::GateServerMessage {
+                    msg: Some(pb::gate_server_message::Msg::InterventionChunk(
+                        pb::ActionChunk {
+                            actions: vec![pb::Action {
+                                target: Some(pb::action::Target::BaseTwist(pb::Twist {
+                                    linear: Some(pb::Vec3 {
+                                        x: 0.5,
+                                        y: 0.0,
+                                        z: 0.0,
+                                    }),
+                                    angular: Some(pb::Vec3::default()),
+                                })),
+                                gripper: None,
+                                t_offset_ns: 0,
+                                part: String::new(),
+                            }],
+                            horizon_ns: 0,
+                            t_emitted_ns: 0,
+                            t_obs_ns: 0,
+                            seq: 1,
+                            source_id: "agent-script".into(),
+                            provenance: None,
+                        },
+                    )),
+                }));
+            },
+            ready_for_script.clone(),
+        );
+    });
+
+    let session = Session::builder("e2e-reset-post-mixed-producers")
+        .robot(twist_robot())
+        .control(registry(&send_log))
+        .recording_dir(dir.path())
+        .media(media)
+        .transport(transport)
+        .post_reset(ResetSpec::Remote {
+            actor: ActorKind::Agent,
+            prompt: "stow the tool".into(),
+            timeout_ns: 30_000_000_000,
+        })
+        .build()
+        .unwrap();
+    *session_cell.lock() = Some(session.clone());
+
+    // Episode 1: an ORDINARY teleop claim (no reset window at all) drives
+    // the teleop channel's cursor well past any small number, then
+    // terminates directly (POST disabled for THIS episode only).
+    let mut ep1 = session
+        .start_episode_with(
+            "teleop-warmup",
+            EpisodeOptions {
+                post_reset: Some(None),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let _ = ep1.gate(&[0.0; 6], None, None);
+    wait_for(&session, |s| {
+        matches!(s.episode_state, Some(Phase::Running))
+    });
+
+    grant_and_engage(
+        &session,
+        "claim-teleop-first",
+        "teleop",
+        ActorKind::Teleoperator,
+    );
+    wait_for(&session, |s| s.gate_mode == Some(GateMode::Intervention));
+
+    let seq = Arc::new(AtomicU32::new(1));
+    let mut substitutions = 0u32;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    // Push (and drain, via this episode's own `gate()` calls — the
+    // Claimed-mode fast path pop_due's the ring directly) at least 40
+    // packets, well past the agent-chunk arm's own counter, which always
+    // starts fresh at 1 for a new window.
+    while substitutions < 40 && Instant::now() < deadline {
+        far.push(
+            DataTopic::TeleopPose,
+            &pb::TeleopStreamPacket {
+                t_client_ns: 1,
+                seq: u64::from(seq.fetch_add(1, Ordering::SeqCst)),
+                targets: vec![pb::PartTarget {
+                    part: String::new(),
+                    target: Some(pb::part_target::Target::Twist(pb::Twist {
+                        linear: Some(pb::Vec3 {
+                            x: 0.3,
+                            y: 0.0,
+                            z: 0.0,
+                        }),
+                        angular: Some(pb::Vec3::default()),
+                    })),
+                    gripper: None,
+                }],
+                clutch_engaged: true,
+                inputs: None,
+            },
+        )
+        .unwrap();
+        std::thread::sleep(Duration::from_millis(3));
+        if matches!(
+            ep1.gate(&[0.0; 6], None, None),
+            GateOutput::Substitute { .. } | GateOutput::Blend { .. }
+        ) {
+            substitutions += 1;
+        }
+    }
+    assert!(
+        substitutions >= 40,
+        "expected the teleop channel's cursor to advance well past a small \
+         seq before the agent window opens, got {substitutions} substitutions"
+    );
+
+    release_claim(&session, "claim-teleop-first");
+    wait_for(&session, |s| s.gate_mode == Some(GateMode::Passthrough));
+    assert!(matches!(
+        ep1.gate(&[0.0; 6], None, None),
+        GateOutput::Pass { .. }
+    ));
+    ep1.terminate(TerminalOutcome::Success, "warmup done");
+    assert!(ep1.done());
+
+    // Episode 2: a Remote POST window with an AGENT claimant. Its chunk's
+    // steps use the plane pump's own fresh `next_chunk_seq` counter
+    // (starting at 1) — with a single shared jitter-buffer cursor this
+    // would collide with episode 1's teleop activity above and be dropped
+    // forever; with per-channel cursors it must dispatch normally.
+    let mut ep2 = session.start_episode("stow").unwrap();
+    let _ = ep2.gate(&[0.0; 6], None, None);
+    wait_for(&session, |s| {
+        matches!(s.episode_state, Some(Phase::Running))
+    });
+    session.inject(SessionEvent::Terminate {
+        outcome: TerminalOutcome::Success,
+        reason: "rollout done".to_owned(),
+        at: MonoNs(1_000_000),
+    });
+
+    // Checked on the DISPATCHED VALUE, not just the provenance tag: once
+    // episode 2's window starts polling the ring, it may also drain and
+    // dispatch any of episode 1's own teleop packets that were still
+    // in-flight (pushed but not yet popped) when the claim released —
+    // those get tagged `Provenance::Agent` too (provenance comes from the
+    // CURRENT mirror status at pop time, not from the pushed item), so a
+    // provenance-only check could pass on stale teleop residue instead of
+    // proving the agent chunk itself got through. The agent chunk's `x` is
+    // 0.5; every teleop packet pushed above used 0.3 — distinguishable.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut dispatched = false;
+    while Instant::now() < deadline {
+        if send_log
+            .lock()
+            .iter()
+            .any(|(p, v)| *p == Provenance::Agent && v.first().is_some_and(|x| *x > 0.4))
+        {
+            dispatched = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        dispatched,
+        "the agent-chunk actuation of a LATER reset window must not be \
+         dropped because an EARLIER, unrelated teleop claim already \
+         advanced a shared jitter-buffer cursor"
+    );
+
+    ready_to_complete.store(true, Ordering::SeqCst);
+    wait_for(&session, |s| {
+        matches!(
+            s.episode_state,
+            Some(Phase::Terminal(TerminalOutcome::Success))
+        )
+    });
+    assert!(ep2.done());
+    session.shutdown();
+}
+
+// --- Malformed agent chunk during a reset window: rejected, not dropped ---
+
+/// Review finding (IMPORTANT): unlike the media-intake teleop path (which
+/// raises `SessionEvent::InterventionRejected` on a dims mismatch), a
+/// malformed or action-space-incompatible `intervention_chunk` arriving
+/// during a Reset-mode window used to be dropped by
+/// `ActionChunk::from_pb`'s `Err` arm with zero signal and, more
+/// importantly, with no guarantee the window could still recover. This test
+/// proves the behavioral half of the fix: a chunk whose target doesn't match
+/// the declared action space is safely ignored — not dispatched, and not
+/// fatal to the window, which still resolves normally once the plane sends
+/// COMPLETE. (The diagnostic half of the fix — a `tracing::warn!` naming the
+/// rejection — isn't asserted here: this workspace has no tracing subscriber
+/// wired yet, and installing one process-wide would conflict with the other
+/// tests in this binary running in parallel.)
+#[test]
+fn remote_post_reset_window_ignores_malformed_agent_chunk_and_still_completes() {
+    let dir = tempfile::tempdir().unwrap();
+    let send_log: SendLog = Arc::new(Mutex::new(Vec::new()));
+    let session_cell: Arc<Mutex<Option<Session>>> = Arc::new(Mutex::new(None));
+    let ready_to_complete = Arc::new(AtomicBool::new(false));
+
+    let cell_for_script = session_cell.clone();
+    let ready_for_script = ready_to_complete.clone();
+    let transport = scripted_transport(move |tx| {
+        script_reset_window(
+            cell_for_script.clone(),
+            tx.clone(),
+            "reset-claim-post-malformed",
+            pb::ActorKind::Agent,
+            pb::ResetKind::Post,
+            |s| matches!(s.episode_state, Some(Phase::PostReset)),
+            |tx| {
+                // Wrong target arm for a BaseTwist-space robot: `from_pb`
+                // must reject this (`TypesError::InvalidValue`), not panic.
+                let _ = tx.send(ServerMsg::Gate(pb::GateServerMessage {
+                    msg: Some(pb::gate_server_message::Msg::InterventionChunk(
+                        pb::ActionChunk {
+                            actions: vec![pb::Action {
+                                target: Some(pb::action::Target::JointPosition(pb::JointVector {
+                                    values: vec![0.0; 3],
+                                })),
+                                gripper: None,
+                                t_offset_ns: 0,
+                                part: String::new(),
+                            }],
+                            horizon_ns: 0,
+                            t_emitted_ns: 0,
+                            t_obs_ns: 0,
+                            seq: 1,
+                            source_id: "agent-script".into(),
+                            provenance: None,
+                        },
+                    )),
+                }));
+            },
+            ready_for_script.clone(),
+        );
+    });
+
+    let session = Session::builder("e2e-reset-post-malformed-chunk")
+        .robot(twist_robot())
+        .control(registry(&send_log))
+        .recording_dir(dir.path())
+        .transport(transport)
+        .post_reset(ResetSpec::Remote {
+            actor: ActorKind::Agent,
+            prompt: "stow the tool".into(),
+            timeout_ns: 30_000_000_000,
+        })
+        .build()
+        .unwrap();
+    *session_cell.lock() = Some(session.clone());
+
+    let mut ep = session.start_episode("stow").unwrap();
+    let _ = ep.gate(&[0.0; 6], None, None);
+    wait_for(&session, |s| {
+        matches!(s.episode_state, Some(Phase::Running))
+    });
+    session.inject(SessionEvent::Terminate {
+        outcome: TerminalOutcome::Success,
+        reason: "rollout done".to_owned(),
+        at: MonoNs(1_000_000),
+    });
+
+    // The window opens and the malformed chunk arrives; give it a real
+    // chance to (incorrectly) dispatch before asserting it didn't.
+    wait_for(&session, |s| s.gate_mode == Some(GateMode::Reset));
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(
+        send_log.lock().is_empty(),
+        "a malformed intervention_chunk must never reach `send`"
+    );
+
+    // The window still resolves normally: the malformed chunk didn't
+    // corrupt the ring, the pump thread, or the window's own state machine.
+    ready_to_complete.store(true, Ordering::SeqCst);
+    wait_for(&session, |s| {
+        matches!(
+            s.episode_state,
+            Some(Phase::Terminal(TerminalOutcome::Success))
+        )
+    });
+    assert!(ep.done());
+    assert_eq!(ep.outcome(), Some(TerminalOutcome::Success));
     session.shutdown();
 }

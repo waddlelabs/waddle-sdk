@@ -9,7 +9,7 @@ use std::time::Duration;
 use waddle_controlplane::{ControlPlaneClient, PlaneEvent, ServerMsg};
 use waddle_fsm::{GrantChangeDirective, Phase, SessionEvent};
 use waddle_gate::gate::{GateShared, OwnedAction};
-use waddle_gate::jitter::TimedAction;
+use waddle_gate::jitter::{StreamChannel, TimedAction};
 use waddle_ingest::SessionClock;
 use waddle_media::{DataTopic, MediaPlane};
 use waddle_types::pb::v0 as pb;
@@ -308,7 +308,10 @@ pub(crate) fn spawn_reset_pump(
 /// `forward_server_msg` during a reset window (`rtrb` is strictly SPSC, so
 /// the one real producer is Mutex-shared rather than duplicated — mirrors
 /// how `GateShared.stream`'s consumer side is already shared between the
-/// caller thread and the bypass pump).
+/// caller thread and the bypass pump). Every `TimedAction` pushed here is
+/// tagged `StreamChannel::Teleop`, so this producer's seq space (the wire
+/// `TeleopStreamPacket.seq`) never shares a reorder/late-drop cursor with
+/// the agent-chunk producer's (`JitterBuffer` keeps one per channel).
 pub(crate) fn spawn_media_intake(
     media: Arc<dyn MediaPlane>,
     stream_tx: StreamProducer,
@@ -372,6 +375,7 @@ pub(crate) fn spawn_media_intake(
                                 });
                             }
                             let _ = stream_tx.lock().push(TimedAction {
+                                channel: StreamChannel::Teleop,
                                 seq: packet.seq,
                                 received: now,
                                 action,
@@ -625,32 +629,53 @@ fn forward_server_msg(
             // `chunk.seq` — the jitter buffer's reorder map is keyed by seq
             // *per step*, and a chunk's own `seq` is one value for the
             // whole chunk (every step in it would collide on the same key).
-            // Known limitation: this counter is independent of the media
-            // intake's teleop-packet seq space on the same ring: within one
-            // reset window only one of the two ever pushes (C6 is one
-            // engaged claimant at a time), so this is sound for any single
-            // window; a session that mixes a teleop-driven window with an
-            // agent-chunk-driven window could see the jitter buffer's
-            // high-water mark cross-contaminate between them. The general
-            // chunk-intake milestone this arm deliberately does not attempt
-            // is the natural place to give both producers one shared,
-            // monotonic seq source.
+            // Tagged `StreamChannel::AgentChunk` so this counter's seq space
+            // never shares a reorder/late-drop cursor with the media
+            // intake's teleop-packet seq space, even though both producers
+            // push into the same physical ring (`JitterBuffer` keeps one
+            // cursor per channel — see `jitter.rs`'s module doc): an earlier
+            // teleop claim (ordinary Intervention/Bypass, or an earlier
+            // teleop-driven reset window) advancing its own cursor high must
+            // never cause THIS window's first agent-chunk step to look
+            // "late" and be dropped.
             Some(pb::gate_server_message::Msg::InterventionChunk(chunk)) => {
                 if !matches!(mirror.read().gate_mode, Some(GateMode::Reset)) {
                     return;
                 }
-                if let Ok(action_chunk) = ActionChunk::from_pb(&chunk, space) {
-                    let mut producer = stream.lock();
-                    for step in &action_chunk.steps {
-                        *next_chunk_seq += 1;
-                        let _ = producer.push(TimedAction {
-                            seq: *next_chunk_seq,
-                            received: MonoNs(at.0.saturating_add(step.offset_ns)),
-                            action: OwnedAction {
-                                values: step.values.clone(),
-                                gripper: step.gripper,
-                            },
-                        });
+                match ActionChunk::from_pb(&chunk, space) {
+                    Ok(action_chunk) => {
+                        let mut producer = stream.lock();
+                        for step in &action_chunk.steps {
+                            *next_chunk_seq += 1;
+                            let _ = producer.push(TimedAction {
+                                channel: StreamChannel::AgentChunk,
+                                seq: *next_chunk_seq,
+                                received: MonoNs(at.0.saturating_add(step.offset_ns)),
+                                action: OwnedAction {
+                                    values: step.values.clone(),
+                                    gripper: step.gripper,
+                                },
+                            });
+                        }
+                    }
+                    Err(err) => {
+                        // Unlike the media-intake teleop path (which raises
+                        // `SessionEvent::InterventionRejected` on a dims
+                        // mismatch), there is no FSM event shaped for an
+                        // arbitrary wire-validation error: `TypesError` has
+                        // several non-dims variants (missing field, wrong
+                        // target arm, Opaque space, …) that a dims-only
+                        // event would misreport. This is the ONLY actuation
+                        // channel for an Agent-kind reset window (no teleop
+                        // fallback), so a silent drop here is a real
+                        // operability gap — surface it loudly instead of
+                        // fabricating a fault event that would lie about
+                        // what actually went wrong.
+                        tracing::warn!(
+                            error = %err,
+                            "reset-window intervention_chunk rejected: incompatible \
+                             with the declared action space"
+                        );
                     }
                 }
             }

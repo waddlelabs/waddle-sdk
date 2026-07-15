@@ -391,6 +391,7 @@ mod tests {
         assert!(matches!(gate.gate(&[0.0], None, None), GateOutput::Hold));
 
         tx.push(TimedAction {
+            channel: crate::jitter::StreamChannel::Teleop,
             seq: 1,
             received: MonoNs(1_000),
             action: OwnedAction {
@@ -428,6 +429,7 @@ mod tests {
             since: MonoNs(1_000),
         });
         tx.push(TimedAction {
+            channel: crate::jitter::StreamChannel::Teleop,
             seq: 1,
             received: MonoNs(1_000),
             action: OwnedAction {
