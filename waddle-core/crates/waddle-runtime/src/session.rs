@@ -12,7 +12,7 @@ use std::sync::mpsc::Sender;
 use std::thread::JoinHandle;
 
 use waddle_controlplane::{ClientConfig, ControlPlaneClient, ControlTransport};
-use waddle_fsm::{Phase, SessionConfig, SessionEvent};
+use waddle_fsm::{Phase, SessionConfig, SessionEvent, WindowSpec};
 use waddle_gate::gate::{Gate, GateOutput, GateShared};
 use waddle_gate::plan::GatePlan;
 use waddle_gate::record::GateRecord;
@@ -37,6 +37,85 @@ use crate::verbs::{ControlRegistry, VerbDispatch, VerbOutcome};
 /// for scenes reset by hand between episodes; integrations override it.
 pub type ResetHook = Arc<dyn Fn(&str) -> (bool, Option<bool>) + Send + Sync>;
 
+/// How a single reset phase (pre or post) is driven. One or the other, never
+/// both, per phase — configured on the [`SessionBuilder`] (session default)
+/// and optionally overridden per episode via [`EpisodeOptions`].
+#[derive(Clone)]
+pub enum ResetSpec {
+    /// Run a [`ResetHook`] inline on the caller thread: for pre-reset,
+    /// `start_episode`'s own thread; for post-reset, the reset pump's thread
+    /// (a later task) since nothing blocks on it at `start_episode` time.
+    Hook(ResetHook),
+    /// A plane-directed remote actor performs this reset through a window
+    /// (flag `waddle.v0.reset.remote`, FSM.md rows E19–E22): the actor
+    /// expected to engage it, the prompt shown to them, and the window's
+    /// deadline. The runtime injects no hook result for this phase at all —
+    /// the FSM's window machinery owns the whole reset, including its
+    /// timeout.
+    Remote {
+        actor: ActorKind,
+        prompt: String,
+        timeout_ns: i64,
+    },
+}
+
+impl ResetSpec {
+    /// The remote window this spec declares, if any (`None` for `Hook` —
+    /// that phase has no window; the hook runs inline instead).
+    fn window(&self) -> Option<WindowSpec> {
+        match self {
+            Self::Hook(_) => None,
+            Self::Remote {
+                actor,
+                prompt,
+                timeout_ns,
+            } => Some(WindowSpec {
+                expected: *actor,
+                prompt: prompt.clone(),
+                timeout_ns: *timeout_ns,
+            }),
+        }
+    }
+}
+
+impl std::fmt::Debug for ResetSpec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Hook(_) => f.debug_tuple("Hook").field(&"<fn>").finish(),
+            Self::Remote {
+                actor,
+                prompt,
+                timeout_ns,
+            } => f
+                .debug_struct("Remote")
+                .field("actor", actor)
+                .field("prompt", prompt)
+                .field("timeout_ns", timeout_ns)
+                .finish(),
+        }
+    }
+}
+
+/// Per-episode override of the session's declared reset specs
+/// ([`SessionBuilder::pre_reset`]/[`SessionBuilder::post_reset`]), passed to
+/// [`Session::start_episode_with`]. For each field: outer `None` inherits the
+/// session default; inner `None` disables that phase for this episode only
+/// (the trivial "already reset by hand" default applies: `(true,
+/// Some(true))`, exactly as if the session declared no spec at all).
+///
+/// Overrides can only narrow what the session already declared, never widen
+/// it: the `waddle.v0.reset.remote` feature flag is negotiated once, at
+/// build time, from the session-level config alone (see
+/// `SessionBuilder::build`). A per-episode `ResetSpec::Remote` override
+/// requires the session to have already declared a `Remote` spec for some
+/// phase at build time — otherwise the plane was never told to expect a
+/// remote-reset negotiation for this session at all.
+#[derive(Clone, Debug, Default)]
+pub struct EpisodeOptions {
+    pub pre_reset: Option<Option<ResetSpec>>,
+    pub post_reset: Option<Option<ResetSpec>>,
+}
+
 /// Hand-off slot for the gate-record consumer: born on the caller thread
 /// (`Gate::new` inside `start_episode`), consumed by the reducer thread,
 /// which drains it onto the episode's MCAP. A slot rather than a channel:
@@ -59,7 +138,8 @@ pub struct SessionBuilder {
     tripwires: Vec<Tripwire>,
     handoff: HandoffPolicy,
     enforcement: LeaseEnforcement,
-    reset_hook: Option<ResetHook>,
+    pre_reset: Option<ResetSpec>,
+    post_reset: Option<ResetSpec>,
     verification_mode: ResetVerificationMode,
     clutch_actor: ActorKind,
     clutch_source: String,
@@ -86,7 +166,8 @@ impl SessionBuilder {
             tripwires: Vec::new(),
             handoff: HandoffPolicy::HoldFirst,
             enforcement: LeaseEnforcement::Advisory,
-            reset_hook: None,
+            pre_reset: None,
+            post_reset: None,
             verification_mode: ResetVerificationMode::Blocking,
             // The runtime's honest default (N17): a clutch edge on the media
             // plane is our teleoperators' takeover path. waddle-fsm's own
@@ -146,10 +227,41 @@ impl SessionBuilder {
         self
     }
 
+    /// Configure the pre-reset phase: runs before RESETTING → READY, before
+    /// the caller's `start_episode`/`start_episode_with` call returns.
     #[must_use]
-    pub fn reset_hook(mut self, hook: ResetHook) -> Self {
-        self.reset_hook = Some(hook);
+    pub fn pre_reset(mut self, spec: ResetSpec) -> Self {
+        self.pre_reset = Some(spec);
         self
+    }
+
+    /// Configure the post-reset phase (flag `waddle.v0.reset.phases`): runs
+    /// INSIDE the finishing episode, after the terminal outcome is pinned
+    /// and before TERMINAL (FSM.md row E14). Declaring this at all — with
+    /// either variant of [`ResetSpec`] — is what makes an episode detour
+    /// through `Phase::PostReset` on completion instead of terminating
+    /// directly.
+    #[must_use]
+    pub fn post_reset(mut self, spec: ResetSpec) -> Self {
+        self.post_reset = Some(spec);
+        self
+    }
+
+    /// How reset verification gates entry to READY (N12): `Blocking` (the
+    /// default) holds RESETTING until verification passes; `OptimisticAsync`
+    /// enters READY immediately and permanently flags a late verification
+    /// failure instead of blocking on it.
+    #[must_use]
+    pub fn verification_mode(mut self, mode: ResetVerificationMode) -> Self {
+        self.verification_mode = mode;
+        self
+    }
+
+    /// Deprecated alias for `pre_reset(ResetSpec::Hook(hook))`.
+    #[deprecated(note = "use `pre_reset(ResetSpec::Hook(hook))` instead")]
+    #[must_use]
+    pub fn reset_hook(self, hook: ResetHook) -> Self {
+        self.pre_reset(ResetSpec::Hook(hook))
     }
 
     /// Override the actor/source recorded for clutch-initiated
@@ -273,6 +385,26 @@ impl SessionBuilder {
         let (outcome_tx, outcome_rx) = std::sync::mpsc::channel::<VerbOutcome>();
         let verbs = Arc::new(VerbDispatch::spawn(self.control, clock.clone(), outcome_tx));
 
+        // Feature-flag declaration (VERSIONING.md registry): `waddle.v0.core`
+        // is the always-required baseline; `waddle.v0.reset` always rides
+        // alongside it since every episode runs some reset pipeline (even
+        // the trivial "already reset by hand" default). `.phases`/`.remote`
+        // are declared from the session-level config only — per-episode
+        // overrides can narrow (disable, or swap a Remote default for a
+        // Hook) but a `ResetSpec::Remote` override requires the session to
+        // have already declared a Remote spec for that phase (or the other
+        // one) at build time, since flags are negotiated once, at Register,
+        // before any episode opens.
+        let mut feature_flags = vec!["waddle.v0.core".to_owned(), "waddle.v0.reset".to_owned()];
+        if self.post_reset.is_some() {
+            feature_flags.push("waddle.v0.reset.phases".to_owned());
+        }
+        if matches!(self.pre_reset, Some(ResetSpec::Remote { .. }))
+            || matches!(self.post_reset, Some(ResetSpec::Remote { .. }))
+        {
+            feature_flags.push("waddle.v0.reset.remote".to_owned());
+        }
+
         let plane = self.transport.map(|t| {
             let register = pb::RegisterRequest {
                 project: self.project.clone(),
@@ -283,7 +415,7 @@ impl SessionBuilder {
                 }),
                 robot: Some(robot_pb.clone()),
                 clock_anchor: Some(clock.anchor().to_pb()),
-                feature_flags: vec!["waddle.v0.core".into()],
+                feature_flags,
                 session_nonce: session_id.to_string(),
             };
             Arc::new(ControlPlaneClient::spawn(t, ClientConfig::new(register)))
@@ -409,7 +541,9 @@ impl SessionBuilder {
                 inject_tx,
                 record_slot,
                 task_slot,
-                reset_hook: self.reset_hook,
+                pre_reset: self.pre_reset,
+                post_reset: self.post_reset,
+                inline_reset_owner: parking_lot::Mutex::new(None),
                 verification_mode: self.verification_mode,
                 threads: parking_lot::Mutex::new(threads),
                 tripwire_shutdown,
@@ -439,7 +573,16 @@ struct SessionInner {
     inject_tx: Sender<SessionEvent>,
     record_slot: RecordSlot,
     task_slot: TaskSlot,
-    reset_hook: Option<ResetHook>,
+    pre_reset: Option<ResetSpec>,
+    post_reset: Option<ResetSpec>,
+    /// The episode `start_episode_with` is currently running the pre-reset
+    /// phase for, inline on the caller thread — recorded before `EpisodeOpen`
+    /// is injected, cleared once the call returns (success or failure). Set
+    /// for every inline pre-reset path (`Hook` and the no-spec default), never
+    /// for `Remote` (nothing runs inline there). Consulted by the reset pump
+    /// (a later task) so it never double-services an episode this call
+    /// already handled.
+    inline_reset_owner: parking_lot::Mutex<Option<EpisodeId>>,
     verification_mode: ResetVerificationMode,
     threads: parking_lot::Mutex<Vec<JoinHandle<()>>>,
     tripwire_shutdown: ShutdownToken,
@@ -472,21 +615,51 @@ impl Session {
         let _ = self.inner.inject_tx.send(event);
     }
 
+    /// [`Self::start_episode_with`] using the session's declared reset specs
+    /// unchanged (no per-episode override).
+    pub fn start_episode(&self, task: &str) -> Result<Episode, RuntimeError> {
+        self.start_episode_with(task, EpisodeOptions::default())
+    }
+
     /// Open an episode and block through the reset pipeline (the design
-    /// contract: `rollout()` does not yield until the scene is valid).
+    /// contract: `rollout()` does not yield until the scene is valid), with
+    /// a per-episode override (`opts`) of the session's declared pre/post
+    /// reset specs. See [`EpisodeOptions`] for the inherit/disable rules.
     ///
     /// One active episode per session (N18): opening while another episode
-    /// is live returns [`RuntimeError::EpisodeActive`] instead of injecting
-    /// an event the FSM would reject (a guard, not a synchronization
-    /// primitive — concurrent callers race to the FSM, which stays the
-    /// authority).
-    pub fn start_episode(&self, task: &str) -> Result<Episode, RuntimeError> {
-        {
+    /// is live and has not yet entered `Phase::PostReset` returns
+    /// [`RuntimeError::EpisodeActive`] instead of injecting an event the FSM
+    /// would reject (a guard, not a synchronization primitive — concurrent
+    /// callers race to the FSM, which stays the authority). A predecessor
+    /// that HAS entered `Phase::PostReset` is instead waited out to Terminal
+    /// and then opened over: POST_RESET self-resolves (its own cleanup, past
+    /// the pinned outcome already), so this serializes back-to-back rollouts
+    /// started without an explicit `terminate` + wait in between, rather than
+    /// erroring on a predecessor that is already on its way out.
+    pub fn start_episode_with(
+        &self,
+        task: &str,
+        opts: EpisodeOptions,
+    ) -> Result<Episode, RuntimeError> {
+        loop {
             let s = self.inner.mirror.read();
-            if s.episode_id.is_some() && !matches!(s.episode_state, Some(Phase::Terminal(_))) {
-                return Err(RuntimeError::EpisodeActive);
+            match s.episode_state {
+                None | Some(Phase::Terminal(_)) => break,
+                Some(Phase::PostReset) => {
+                    let status = self
+                        .inner
+                        .mirror
+                        .wait_until(|s| !matches!(s.episode_state, Some(Phase::PostReset)));
+                    if status.shutdown {
+                        return Err(RuntimeError::ShuttingDown);
+                    }
+                    // POST_RESET can only leave to Terminal; loop back around
+                    // to re-check rather than assume it.
+                }
+                Some(_) => return Err(RuntimeError::EpisodeActive),
             }
         }
+
         let id = EpisodeId::new(format!("ep-{}", uuid::Uuid::new_v4().simple()));
         // Written before the open event so the reducer stamps this task into
         // the episode's sidecar (retake successors inherit it).
@@ -502,30 +675,74 @@ impl Session {
             8192,
         );
         *self.inner.record_slot.lock() = Some(records_rx);
+
+        // Resolve effective specs: outer None inherits the session default;
+        // inner None disables that phase for this episode only.
+        let pre = opts
+            .pre_reset
+            .unwrap_or_else(|| self.inner.pre_reset.clone());
+        let post = opts
+            .post_reset
+            .unwrap_or_else(|| self.inner.post_reset.clone());
+        let pre_window = pre.as_ref().and_then(ResetSpec::window);
+        let post_window = post.as_ref().and_then(ResetSpec::window);
+        // `post_reset` (bool) is true for either variant — a hook still
+        // makes this episode detour through Phase::PostReset (E14); only
+        // `post_window` distinguishes a *remote* post-reset from a hook one.
+        let post_reset_declared = post.is_some();
+
+        // The inline pre-reset path covers everything but a declared Remote:
+        // the configured Hook, and the no-spec default (both run on this
+        // thread and inject ResetResult directly). Record the id before
+        // EpisodeOpen so the reset pump (a later task) never also services
+        // it; clear it once this call returns, success or failure.
+        let inline_pre = !matches!(pre, Some(ResetSpec::Remote { .. }));
+        if inline_pre {
+            *self.inner.inline_reset_owner.lock() = Some(id.clone());
+        }
+
         let now = self.inner.clock.stamp_now().mono_ns();
         self.inject(SessionEvent::EpisodeOpen {
             id: id.clone(),
             verification: self.inner.verification_mode,
             born_claimed: false,
             parent: None,
-            // Post-reset declaration / remote windows are wired by the runtime
-            // reset seams (a later task); undeclared for now.
-            post_reset: false,
-            pre_window: None,
-            post_window: None,
+            post_reset: post_reset_declared,
+            pre_window,
+            post_window,
             at: now,
         });
 
-        // Run the reset hook (placeholder for the closed reset planner).
-        let (ok, verified) = match &self.inner.reset_hook {
-            Some(hook) => hook(task),
-            None => (true, Some(true)),
-        };
-        self.inject(SessionEvent::ResetResult {
-            ok,
-            verified,
-            at: self.inner.clock.stamp_now().mono_ns(),
-        });
+        match &pre {
+            Some(ResetSpec::Hook(hook)) => {
+                let (ok, verified) = hook(task);
+                self.inject(SessionEvent::ResetResult {
+                    ok,
+                    verified,
+                    at: self.inner.clock.stamp_now().mono_ns(),
+                });
+            }
+            None => {
+                // No spec configured (session default absent, or disabled
+                // for this episode): the placeholder default — a scene
+                // reset by hand between episodes.
+                self.inject(SessionEvent::ResetResult {
+                    ok: true,
+                    verified: Some(true),
+                    at: self.inner.clock.stamp_now().mono_ns(),
+                });
+            }
+            Some(ResetSpec::Remote { .. }) => {
+                // Skip the hook and the ResetResult injection entirely: the
+                // window machinery (FSM) drives RESETTING to READY or
+                // Terminal on its own. No runtime-side timeout is added here
+                // — the FSM's reset-window timer owns that.
+            }
+        }
+
+        if inline_pre {
+            *self.inner.inline_reset_owner.lock() = None;
+        }
 
         let status = self.inner.mirror.wait_until(|s| {
             s.episode_id.as_ref() == Some(&id)

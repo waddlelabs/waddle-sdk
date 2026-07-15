@@ -14,7 +14,10 @@ pub mod verbs;
 
 pub use mirror::Status;
 pub use pumps::STALL_THRESHOLD_NS;
-pub use session::{Episode, ResetHook, Session, SessionBuilder, grant_and_engage, release_claim};
+pub use session::{
+    Episode, EpisodeOptions, ResetHook, ResetSpec, Session, SessionBuilder, grant_and_engage,
+    release_claim,
+};
 pub use verbs::{ControlRegistry, EstopDecl, SendVerb, UnitVerb, VerbDispatch, VerbError};
 
 #[derive(Debug, thiserror::Error)]
