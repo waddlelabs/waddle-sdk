@@ -171,6 +171,22 @@ impl Reducer {
             Effect::SetGateMode(mode) => {
                 let plan = self.plan_for(mode);
                 self.gate_shared.store_plan(plan);
+                // The transition back to PASSTHROUGH is the one point every
+                // claim/reset-window teardown funnels through (release,
+                // ordinary episode end, or `close_reset_window` before it
+                // applies the window's result) — Bypass<->Intervention
+                // toggling for the SAME live claim never passes through
+                // here, so this never discards actions that are still
+                // legitimately in flight. Whatever is left in the
+                // intervention ring's per-channel pending map at this
+                // instant was pushed under the claim/window that just
+                // ended; left alone it would sit there until some LATER,
+                // unrelated claim/window starts polling the ring and pop it
+                // under THAT claimant's mirror provenance (see
+                // `jitter.rs`'s module doc and `StreamIntake::clear`).
+                if mode == GateMode::Passthrough {
+                    self.gate_shared.stream.lock().clear();
+                }
             }
             Effect::RequestVerb(verb) => {
                 let req = match verb {

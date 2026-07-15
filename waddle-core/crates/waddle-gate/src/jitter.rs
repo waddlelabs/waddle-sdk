@@ -16,6 +16,18 @@
 //! teleop claim earlier in the session) can never starve or permanently drop
 //! the other's arrivals (e.g. the first agent chunk of a later reset
 //! window). See waddle-runtime's `pumps.rs` for the producer side.
+//!
+//! Per-channel cursors alone are not enough: an arrival that is pushed but
+//! never popped before its claim/window ends (still within its own playout
+//! delay, say) is left sitting in that channel's `pending` map with nothing
+//! left to drain it -- the caller stopped ticking `Claimed`, and the bypass
+//! pump only polls while `Bypass`/`Reset` is active. It resurfaces the next
+//! time ANYTHING pops that channel, which may be a much later and entirely
+//! unrelated claim/window, dispatched under THAT claimant's mirror
+//! provenance. [`JitterBuffer::clear_pending`] is the fix: the reducer calls
+//! it on every transition back to `GateMode::Passthrough` (claim released,
+//! or a reset window closed) so a dead claim/window's leftovers can never
+//! outlive it.
 
 use std::collections::BTreeMap;
 
@@ -115,6 +127,29 @@ impl JitterBuffer {
         Some(action.action)
     }
 
+    /// Discard every not-yet-due arrival on EVERY channel, leaving each
+    /// channel's own late-drop cursor (`last_popped_seq`) untouched.
+    ///
+    /// Called once per claim/window teardown (the reducer's transition back
+    /// to `GateMode::Passthrough` — see `waddle-runtime`'s `reducer.rs`):
+    /// whatever is still `pending` at that instant was pushed under a claim
+    /// or reset window that has just ended, and nothing pops the ring again
+    /// until some LATER, unrelated claim/window starts polling it. Without
+    /// this, those leftovers sit in the buffer indefinitely and eventually
+    /// get popped and dispatched under a completely different, later
+    /// claimant's mirror provenance — the exact defect
+    /// `waddle-runtime`'s `remote_post_reset_window_agent_chunk_survives_prior_teleop_claim_activity`
+    /// test guards against. The cursor is deliberately left alone: it is
+    /// the per-channel late-drop watermark, not a scope of "this claim" —
+    /// resetting it would let an already-delivered (or already-late) seq
+    /// look fresh again on a channel whose producer's seq space persists
+    /// across claims (the media-intake teleop seq is the wire's own,
+    /// session-lifetime-monotonic counter).
+    pub fn clear_pending(&mut self) {
+        self.teleop.pending.clear();
+        self.agent_chunk.pending.clear();
+    }
+
     #[must_use]
     pub fn dropped_late(&self) -> u64 {
         self.dropped_late
@@ -205,6 +240,56 @@ mod tests {
         jb.ingest(ta_on(StreamChannel::Teleop, 30, 200));
         assert!(jb.pop_due(MonoNs(200)).is_none());
         assert_eq!(jb.dropped_late(), 1);
+    }
+
+    /// The stale-residue regression `clear_pending` exists to prevent: an
+    /// arrival that is pushed but never popped before its claim ends (still
+    /// within its own playout delay) must not resurface once a LATER,
+    /// unrelated claim/window starts polling the buffer again — per-channel
+    /// cursors alone don't help here, since it's the SAME channel both
+    /// times (e.g. an ordinary teleop claim, then a later teleop-driven
+    /// reset window).
+    #[test]
+    fn clear_pending_discards_stale_not_yet_due_arrivals_but_keeps_the_cursor() {
+        let mut jb = JitterBuffer::new(1_000);
+        // Claim 1 delivers seq=1 normally (sets the channel's cursor).
+        jb.ingest(ta_on(StreamChannel::Teleop, 1, 0));
+        assert_eq!(jb.pop_due(MonoNs(1_000)).unwrap().values[0], 1.0);
+
+        // A later packet in the SAME claim arrives right as the claim ends,
+        // still within its own playout delay — pending, not yet due.
+        jb.ingest(ta_on(StreamChannel::Teleop, 2, 900));
+        assert!(jb.pop_due(MonoNs(1_000)).is_none(), "not due yet");
+
+        // The claim releases (gate mode -> Passthrough): the reducer clears
+        // the buffer right here.
+        jb.clear_pending();
+
+        // A LATER, unrelated teleop claim/window starts polling. Without
+        // the clear, `now` has long since passed seq 2's playout deadline
+        // and it would pop here, dispatched under the later claim's
+        // provenance.
+        assert!(
+            jb.pop_due(MonoNs(5_000)).is_none(),
+            "claim 1's stale pending arrival must not survive into a later claim"
+        );
+        assert_eq!(
+            jb.dropped_late(),
+            0,
+            "a clear is a discard, not a late-drop (no double counting)"
+        );
+
+        // The cursor is untouched: a replay of an already-DELIVERED seq
+        // from claim 1's own channel is still correctly rejected as late,
+        // not accepted as fresh (see the method's own doc comment for why
+        // that stays deliberate).
+        jb.ingest(ta_on(StreamChannel::Teleop, 1, 6_000));
+        assert!(jb.pop_due(MonoNs(7_000)).is_none());
+        assert_eq!(jb.dropped_late(), 1);
+
+        // The later claim's own fresh arrivals still work normally.
+        jb.ingest(ta_on(StreamChannel::Teleop, 3, 6_000));
+        assert!(jb.pop_due(MonoNs(7_000)).is_some());
     }
 
     proptest! {

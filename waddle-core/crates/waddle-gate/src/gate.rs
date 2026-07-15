@@ -66,6 +66,18 @@ impl StreamIntake {
         }
         self.jitter.pop_due(now)
     }
+
+    /// Discard everything not yet delivered to a consumer: unconsumed ring
+    /// arrivals (never even reached the jitter buffer) plus every channel's
+    /// still-pending, not-yet-due jitter-buffer contents. Called by the
+    /// reducer on the transition back to `GateMode::Passthrough` (claim
+    /// released, or a reset window closed) so a dead claim/window's
+    /// leftover actions can never surface later, dispatched under an
+    /// unrelated claimant's provenance (see `jitter.rs`'s module doc).
+    pub fn clear(&mut self) {
+        while self.rx.pop().is_ok() {}
+        self.jitter.clear_pending();
+    }
 }
 
 /// State shared between the gate (caller thread), the FSM reducer (plan

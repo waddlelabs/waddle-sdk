@@ -511,6 +511,31 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   naming the rejection instead of dropping it with no trace; behaviorally
   verified (no dispatch, no corruption, the window still resolves
   normally on the plane's COMPLETE).
+- **Intervention ring — a released claim's leftover, not-yet-due actions
+  could outlive it and dispatch under a LATER, unrelated claim's
+  provenance**: per-channel reorder cursors (above) stop the wrong-channel
+  seq collision, but not this — an arrival pushed but not yet due when its
+  claim releases or its reset window closes sat in that channel's pending
+  map with nothing left to drain it (the caller stopped ticking `Claimed`,
+  and the bypass pump only polls while `Bypass`/`Reset` is active). It
+  resurfaced the next time anything popped that same channel, which could
+  be a much later, entirely unrelated claim or reset window, dispatched
+  tagged with THAT claimant's mirror provenance — corrupting the
+  provenance-tagged actuation record during a reset window, a scene-reset-
+  sensitive context. With a 20ms playout delay and typical teleop packet
+  rates this triggered routinely (at least one in-flight packet pending at
+  essentially every claim release), not as a rare race. `waddle-gate`'s
+  `JitterBuffer::clear_pending`/`StreamIntake::clear` now discard every
+  channel's pending, not-yet-due arrivals (cursors untouched); the reducer
+  (`Effect::SetGateMode`) calls it on every transition back to
+  `GateMode::Passthrough` — the one point every claim/reset-window
+  teardown funnels through, while `Bypass`<->`Intervention` toggling for
+  the SAME live claim never passes through it, so nothing still
+  legitimately in flight is discarded. Regression-tested at the
+  `JitterBuffer` level and end-to-end (an ordinary teleop claim releases
+  with in-flight packets still pending, then a later Remote POST window's
+  agent chunk dispatches with zero teleop residue reaching `send`, checked
+  on the dispatched values rather than provenance alone).
 
 ## Stowed changelogs
 

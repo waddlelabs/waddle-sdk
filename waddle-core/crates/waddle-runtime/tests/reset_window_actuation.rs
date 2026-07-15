@@ -866,6 +866,20 @@ fn born_claimed_retake_successor_gets_no_remote_pre_window() {
 /// pre-fix single-cursor `JitterBuffer` this hangs until the 5s assertion
 /// deadline; against the fix (one reorder cursor per `StreamChannel`) it
 /// passes the same way the other agent-chunk test does.
+///
+/// Review finding (IMPORTANT, follow-up): per-channel cursors alone don't
+/// close the whole gap. Episode 1's claim releases with several teleop
+/// packets still in-flight (pushed, not yet due — the 20ms playout delay
+/// vs. this test's 3ms push cadence guarantees that); nothing pops the
+/// ring again until episode 2's Reset-mode pump starts polling it, at which
+/// point those leftovers become due and get dispatched tagged with episode
+/// 2's CURRENT mirror provenance (`Agent`) — not the wrong-channel seq
+/// collision the cursor fix targets, but the SAME channel's own residue
+/// outliving the claim that produced it. This test's final assertion
+/// checks the dispatched VALUES, not just provenance, to prove that
+/// residue never reaches `send` at all (see `Effect::SetGateMode`'s
+/// clear-on-Passthrough in `waddle-runtime`'s `reducer.rs` and
+/// `StreamIntake::clear`/`JitterBuffer::clear_pending` in `waddle-gate`).
 #[test]
 fn remote_post_reset_window_agent_chunk_survives_prior_teleop_claim_activity() {
     let dir = tempfile::tempdir().unwrap();
@@ -1025,14 +1039,15 @@ fn remote_post_reset_window_agent_chunk_survives_prior_teleop_claim_activity() {
     });
 
     // Checked on the DISPATCHED VALUE, not just the provenance tag: once
-    // episode 2's window starts polling the ring, it may also drain and
-    // dispatch any of episode 1's own teleop packets that were still
-    // in-flight (pushed but not yet popped) when the claim released —
-    // those get tagged `Provenance::Agent` too (provenance comes from the
-    // CURRENT mirror status at pop time, not from the pushed item), so a
-    // provenance-only check could pass on stale teleop residue instead of
-    // proving the agent chunk itself got through. The agent chunk's `x` is
-    // 0.5; every teleop packet pushed above used 0.3 — distinguishable.
+    // episode 2's window starts polling the ring, it could in principle
+    // also drain and dispatch any of episode 1's own teleop packets that
+    // were still in-flight (pushed but not yet popped) when the claim
+    // released — those would get tagged `Provenance::Agent` too
+    // (provenance comes from the CURRENT mirror status at pop time, not
+    // from the pushed item), so a provenance-only check could pass on
+    // stale teleop residue instead of proving the agent chunk itself got
+    // through. The agent chunk's `x` is 0.5; every teleop packet pushed
+    // above used 0.3 — distinguishable.
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut dispatched = false;
     while Instant::now() < deadline {
@@ -1061,6 +1076,33 @@ fn remote_post_reset_window_agent_chunk_survives_prior_teleop_claim_activity() {
         )
     });
     assert!(ep2.done());
+
+    // Review finding (IMPORTANT): with a 20ms playout delay and packets
+    // pushed every 3ms, episode 1's teleop claim reliably still has
+    // in-flight (pushed but not yet due) packets sitting in the ring's
+    // Teleop channel the instant it releases — this loop's own assertion
+    // above (`substitutions >= 40`) guarantees the ramp-up ran long enough
+    // for that to be true. Before the leak was closed
+    // (`Effect::SetGateMode`'s clear-on-Passthrough / `StreamIntake::clear`
+    // in `waddle-gate`), those leftovers sat in the buffer until episode
+    // 2's Reset-mode pump started polling it, at which point they were
+    // popped and dispatched tagged with episode 2's CURRENT mirror
+    // provenance (`Agent`) — passing the provenance-only check above for
+    // the wrong reason. Assert directly that NONE of episode 1's teleop
+    // values (`x` == 0.3) ever reached `send`, under ANY provenance: this
+    // is the proof the leak itself is closed, not just that the intended
+    // agent chunk happened to also get through.
+    assert!(
+        send_log
+            .lock()
+            .iter()
+            .all(|(_, v)| !v.first().is_some_and(|x| (*x - 0.3).abs() < 0.05)),
+        "a stale teleop packet from episode 1's already-released claim \
+         reached `send` during episode 2's reset window — the intervention \
+         ring's pending map must be cleared on the transition back to \
+         Passthrough, not merely reordered without cross-contamination"
+    );
+
     session.shutdown();
 }
 
