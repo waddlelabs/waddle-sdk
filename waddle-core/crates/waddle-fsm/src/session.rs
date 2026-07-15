@@ -269,6 +269,123 @@ impl Ctx<'_> {
         });
     }
 
+    /// E20: route the lease to the reset claimant (L1 if vacant, else an L6
+    /// handoff with a fresh token). Gate → RESET and the ENGAGED emission wait
+    /// for the lease to apply (`AfterLease::ResetEngageComplete`).
+    fn begin_reset_engage(&mut self, _at: MonoNs) {
+        let to = self.s.claim.as_ref().expect("reset claim held").client();
+        let op = match self.s.lease.holder() {
+            Some((from, _)) => LeaseOpKind::Handoff {
+                from: from.clone(),
+                to,
+            },
+            None => LeaseOpKind::Acquire { client: to },
+        };
+        let pending = PendingLeaseOp {
+            op,
+            then: AfterLease::ResetEngageComplete,
+        };
+        self.s.pending_lease = Some(pending.clone());
+        self.effects.push(Effect::MintLeaseToken(pending));
+    }
+
+    /// E21/E22 deferred handback: hand the lease back to the loop client with
+    /// a fresh token before the window's result applies (no READY/TERMINAL
+    /// until the lease is home — else the next `EpisodeOpen` finds it
+    /// non-vacant and the customer loop is permanently LeaseDenied). When the
+    /// window never engaged, the lease never moved, so apply immediately.
+    fn begin_reset_handback(&mut self, at: MonoNs, then: crate::effect::HandbackThen) {
+        let engaged = self
+            .episode()
+            .reset_window
+            .as_ref()
+            .is_some_and(|w| w.engaged);
+        if engaged && let Some((from, _)) = self.s.lease.holder() {
+            let pending = PendingLeaseOp {
+                op: LeaseOpKind::Handoff {
+                    from: from.clone(),
+                    to: self.cfg.loop_client.clone(),
+                },
+                then: AfterLease::ResetHandback { then },
+            };
+            self.s.pending_lease = Some(pending.clone());
+            self.effects.push(Effect::MintLeaseToken(pending));
+        } else {
+            self.close_reset_window(at, then);
+        }
+    }
+
+    /// After the reset window closes (handback applied, or never engaged):
+    /// gate → PASSTHROUGH, release the reset claim (C7), clear the window, then
+    /// apply the window's result as if from the pipeline (E2–E5 pre / E15/E16
+    /// post) or, on timeout, abort (pre) / pinned + failed (post).
+    fn close_reset_window(&mut self, at: MonoNs, then: crate::effect::HandbackThen) {
+        use crate::effect::HandbackThen;
+        if self.s.gate_mode == GateMode::Reset {
+            self.set_gate(at, GateMode::Passthrough, "reset window closed");
+        }
+        if let Some(claim) = self.s.claim.take() {
+            let ep = self.episode().id.clone();
+            self.emit(emit::claim_event(
+                at,
+                &ep,
+                pb::ClaimEventKind::Released,
+                &claim,
+                "reset window closed",
+            ));
+        }
+        let kind = self.episode().reset_window.as_ref().map(|w| w.kind);
+        self.episode_mut().reset_window = None;
+        match then {
+            HandbackThen::ApplyPreResult { ok, verified } => {
+                self.apply_reset_result(at, ok, verified);
+            }
+            HandbackThen::ApplyPostResult { ok } => {
+                self.apply_post_reset_result(at, ok, "remote reset window");
+            }
+            HandbackThen::TimeoutClose => match kind {
+                Some(waddle_types::ResetKind::Post) => {
+                    // E22 post → E16: keep the pinned outcome, flag the failure.
+                    let pinned = self
+                        .episode()
+                        .pinned_outcome
+                        .expect("pinned_outcome set at E14");
+                    self.episode_mut().post_reset_failed = true;
+                    let ep = self.episode().id.clone();
+                    self.effects.push(Effect::SetPostResetFailed {
+                        episode: ep.clone(),
+                    });
+                    self.emit(emit::fault(
+                        at,
+                        Some(&ep),
+                        pb::FaultKind::PreconditionFail,
+                        "post-reset",
+                        "post-reset window timed out; pinned outcome stands",
+                    ));
+                    self.close_run(
+                        at,
+                        Phase::Terminal(pinned),
+                        "post-reset timeout",
+                        Some(pinned),
+                        true,
+                    );
+                }
+                _ => {
+                    // E22 pre → E5: abort.
+                    let ep = self.episode().id.clone();
+                    self.emit(emit::fault(
+                        at,
+                        Some(&ep),
+                        pb::FaultKind::PreconditionFail,
+                        "reset-pipeline",
+                        "reset window timed out",
+                    ));
+                    self.enter_terminal(at, TerminalOutcome::Abort, "reset window timeout", true);
+                }
+            },
+        }
+    }
+
     /// E15/E16: the post-reset pipeline reported. The pinned outcome is
     /// unchanged; a failure only sets the permanent `post_reset_failed` flag.
     fn apply_post_reset_result(&mut self, at: MonoNs, ok: bool, detail: &str) {
@@ -309,6 +426,47 @@ impl Ctx<'_> {
                 Some(pinned),
                 true,
             );
+        }
+    }
+
+    /// E2–E5: the pre-reset pipeline reported. Shared by the `ResetResult`
+    /// event and a remote pre-window completion (E21). Caller has confirmed
+    /// the phase is RESETTING.
+    fn apply_reset_result(&mut self, at: MonoNs, ok: bool, verified: Option<bool>) {
+        if !ok {
+            // E5: strategies exhausted / reset failed.
+            let ep = self.episode().id.clone();
+            self.emit(emit::fault(
+                at,
+                Some(&ep),
+                pb::FaultKind::PreconditionFail,
+                "reset-pipeline",
+                "reset failed; strategies exhausted",
+            ));
+            self.enter_terminal(at, TerminalOutcome::Abort, "reset failed", true);
+            return;
+        }
+        self.episode_mut().reset_ok = true;
+        let mode = self.episode().verification;
+        if let Some(v) = verified {
+            let ep = self.episode().id.clone();
+            self.emit(emit::reset_verification(at, &ep, mode, v, false));
+            if v {
+                self.episode_mut().verified = true;
+            }
+        }
+        match mode {
+            ResetVerificationMode::Blocking => {
+                // E2 when verified; E4 (stay) otherwise.
+                if self.episode().verified {
+                    self.transition(at, Phase::Ready, "reset verified", None);
+                }
+            }
+            ResetVerificationMode::OptimisticAsync => {
+                // E3: enter READY; verification continues async.
+                self.episode_mut().optimistic_entry = !self.episode().verified;
+                self.transition(at, Phase::Ready, "optimistic entry", None);
+            }
         }
     }
 
@@ -440,6 +598,19 @@ impl Ctx<'_> {
     }
 }
 
+/// C6 admission: which actors a reset window's `expected` actor admits. A
+/// TELEOPERATOR window also admits SITE_OPERATOR (the customer-side human is a
+/// legitimate hand-reset actor); an AGENT window admits AGENT only; every
+/// other expected actor requires an exact match.
+fn window_admits(expected: ActorKind, actor: ActorKind) -> bool {
+    match expected {
+        ActorKind::Teleoperator => {
+            matches!(actor, ActorKind::Teleoperator | ActorKind::SiteOperator)
+        }
+        other => actor == other,
+    }
+}
+
 /// Retake initiator → successor verification mode (N12).
 fn retake_mode(initiator: ActorKind) -> ResetVerificationMode {
     match initiator {
@@ -529,40 +700,7 @@ pub fn step(
             if !matches!(phase, Some(Phase::Resetting)) {
                 return Err(rejected("reset_result outside RESETTING"));
             }
-            if !*ok {
-                // E5: strategies exhausted / reset failed.
-                ctx.emit(emit::fault(
-                    *at,
-                    Some(&ctx.episode().id.clone()),
-                    pb::FaultKind::PreconditionFail,
-                    "reset-pipeline",
-                    "reset failed; strategies exhausted",
-                ));
-                ctx.enter_terminal(*at, TerminalOutcome::Abort, "reset failed", true);
-                return Ok(ctx.finish());
-            }
-            ctx.episode_mut().reset_ok = true;
-            let mode = ctx.episode().verification;
-            if let Some(v) = verified {
-                let ep = ctx.episode().id.clone();
-                ctx.emit(emit::reset_verification(*at, &ep, mode, *v, false));
-                if *v {
-                    ctx.episode_mut().verified = true;
-                }
-            }
-            match mode {
-                ResetVerificationMode::Blocking => {
-                    // E2 when verified; E4 (stay) otherwise.
-                    if ctx.episode().verified {
-                        ctx.transition(*at, Phase::Ready, "reset verified", None);
-                    }
-                }
-                ResetVerificationMode::OptimisticAsync => {
-                    // E3: enter READY; verification continues async.
-                    ctx.episode_mut().optimistic_entry = !ctx.episode().verified;
-                    ctx.transition(*at, Phase::Ready, "optimistic entry", None);
-                }
-            }
+            ctx.apply_reset_result(*at, *ok, *verified);
         }
 
         // E2 (late verification) / E13 --------------------------------------
@@ -651,6 +789,20 @@ pub fn step(
             }
             if state.claim.is_some() {
                 return Err(rejected("conflicting active claim (one claim in v0)"));
+            }
+            // C6: a claim landing in a reset phase with a window OPEN is a
+            // reset claim — its actor must match the window's expected actor
+            // (a TELEOPERATOR window also admits SITE_OPERATOR; an AGENT window
+            // admits AGENT only). Grants in RUNNING/INTERVENTION, and grants in
+            // a reset phase WITHOUT an open window, are unchanged (additive).
+            if matches!(phase, Some(Phase::Resetting | Phase::PostReset))
+                && let Some(window) = &ctx.episode().reset_window
+                && !window.engaged
+                && !window_admits(window.expected, *actor)
+            {
+                return Err(rejected(
+                    "reset claim actor does not match the window's expected actor (C6)",
+                ));
             }
             let claim = ActiveClaim {
                 id: id.clone(),
@@ -929,9 +1081,36 @@ pub fn step(
                         ));
                     }
                 }
-                // reset-remote lease completions (E20/E21/E22): implemented in
-                // a later commit; no pending op targets them yet.
-                AfterLease::ResetEngageComplete | AfterLease::ResetHandback { .. } => {}
+                // E20: the reset claimant now holds the lease — gate → RESET
+                // and emit ENGAGED (in that order).
+                AfterLease::ResetEngageComplete => {
+                    let claim_id = ctx.s.claim.as_ref().expect("reset claim held").id.clone();
+                    if let Some(window) = ctx.episode_mut().reset_window.as_mut() {
+                        window.engaged = true;
+                    }
+                    ctx.set_gate(*at, GateMode::Reset, "reset window engaged");
+                    let window = ctx
+                        .episode()
+                        .reset_window
+                        .clone()
+                        .expect("window open during engage");
+                    let ep = ctx.episode().id.clone();
+                    ctx.emit(emit::reset_window(
+                        *at,
+                        &ep,
+                        pb::ResetWindowEventKind::Engaged,
+                        window.kind,
+                        &window.prompt,
+                        window.expected,
+                        claim_id.as_str(),
+                        None,
+                    ));
+                }
+                // E21/E22: the lease is back with the loop client — close the
+                // window and apply the deferred result.
+                AfterLease::ResetHandback { then } => {
+                    ctx.close_reset_window(*at, then);
+                }
             }
         }
 
@@ -1173,9 +1352,36 @@ pub fn step(
                     }
                 }
             }
-            // reset-remote window deadline (E22): implemented in a later
-            // commit; no window arms this timer yet.
-            TimerId::ResetWindowTimeout => {}
+            // E22: the remote window's deadline elapsed while still open.
+            TimerId::ResetWindowTimeout => {
+                if let Some(window) = ctx.episode().reset_window.clone() {
+                    let claim_id = ctx
+                        .s
+                        .claim
+                        .as_ref()
+                        .map(|c| c.id.as_str().to_owned())
+                        .unwrap_or_default();
+                    let result = Some(pb::ResetResult {
+                        ok: false,
+                        detail: "reset window timed out".to_owned(),
+                        strategy: String::new(),
+                        verification: None,
+                        fault: None,
+                    });
+                    let ep = ctx.episode().id.clone();
+                    ctx.emit(emit::reset_window(
+                        *at,
+                        &ep,
+                        pb::ResetWindowEventKind::TimedOut,
+                        window.kind,
+                        &window.prompt,
+                        window.expected,
+                        &claim_id,
+                        result,
+                    ));
+                    ctx.begin_reset_handback(*at, crate::effect::HandbackThen::TimeoutClose);
+                }
+            }
         },
 
         // §6 gate-mode rows: INTERVENTION ⇄ BYPASS -----------------------------
@@ -1245,13 +1451,81 @@ pub fn step(
             ctx.apply_post_reset_result(*at, *ok, detail);
         }
 
-        // reset-remote windows (flag waddle.v0.reset.remote): inert until the
-        // remote-window rows land in the next commit.
-        SessionEvent::ResetWindowEngage { .. } => {
-            return Err(rejected("reset_window_engage not yet implemented"));
+        // E20 -----------------------------------------------------------------
+        SessionEvent::ResetWindowEngage { claim, at } => {
+            if !matches!(phase, Some(Phase::Resetting | Phase::PostReset)) {
+                return Err(rejected("reset_window_engage outside a reset phase"));
+            }
+            match &ctx.episode().reset_window {
+                Some(w) if w.engaged => {
+                    return Err(rejected("reset window already engaged"));
+                }
+                Some(_) => {}
+                None => return Err(rejected("no open reset window")),
+            }
+            match &state.claim {
+                Some(c) if &c.id == claim => {}
+                _ => {
+                    return Err(rejected(
+                        "reset_window_engage without the granted reset claim",
+                    ));
+                }
+            }
+            ctx.begin_reset_engage(*at);
         }
-        SessionEvent::ResetWindowComplete { .. } => {
-            return Err(rejected("reset_window_complete not yet implemented"));
+
+        // E21 -----------------------------------------------------------------
+        SessionEvent::ResetWindowComplete {
+            claim,
+            ok,
+            verified,
+            at,
+        } => {
+            if !matches!(phase, Some(Phase::Resetting | Phase::PostReset)) {
+                return Err(rejected("reset_window_complete outside a reset phase"));
+            }
+            let Some(window) = ctx.episode().reset_window.clone() else {
+                return Err(rejected("no open reset window"));
+            };
+            match &state.claim {
+                Some(c) if &c.id == claim => {}
+                _ => {
+                    return Err(rejected(
+                        "reset_window_complete without the active reset claim",
+                    ));
+                }
+            }
+            let result = Some(pb::ResetResult {
+                ok: *ok,
+                detail: String::new(),
+                strategy: String::new(),
+                verification: None,
+                fault: None,
+            });
+            let ep = ctx.episode().id.clone();
+            ctx.emit(emit::reset_window(
+                *at,
+                &ep,
+                pb::ResetWindowEventKind::Completed,
+                window.kind,
+                &window.prompt,
+                window.expected,
+                claim.as_str(),
+                result,
+            ));
+            ctx.effects.push(Effect::CancelTimer {
+                id: TimerId::ResetWindowTimeout,
+            });
+            let then = match window.kind {
+                waddle_types::ResetKind::Pre => crate::effect::HandbackThen::ApplyPreResult {
+                    ok: *ok,
+                    verified: *verified,
+                },
+                waddle_types::ResetKind::Post => {
+                    crate::effect::HandbackThen::ApplyPostResult { ok: *ok }
+                }
+            };
+            ctx.begin_reset_handback(*at, then);
         }
     }
 
