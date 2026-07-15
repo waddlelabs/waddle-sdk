@@ -12,6 +12,22 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 ## [Unreleased]
 
 ### Added
+- **waddle-protocol (reset-phases vocabulary, inert)**: two new feature
+  flags, `waddle.v0.reset.phases` and `waddle.v0.reset.remote` (registered
+  in `VERSIONING.md`), gate the wire vocabulary for pre/post-reset phases
+  and remote reset windows: `EPISODE_STATE_POST_RESET`, `GATE_MODE_RESET`,
+  `ResetKind`, `PostResetResult`, `ResetWindowEvent`/`ResetWindowEventKind`,
+  `ResetWindowDirective`/`ResetWindowDirectiveKind`, `EpisodeEvent` arms 16
+  (`post_reset`) and 17 (`reset_window`), `GateServerMessage.reset_window`
+  (arm 6), `Sidecar` fields 32-35 (`post_reset_declared`,
+  `post_reset_failed`, `post_reset_result`, `post_reset_bounds`), and
+  `NOOP_REASON_RESET_ACTIVE` — purely additive on the wire; nothing emits or
+  reads any of it yet. `waddle-types` mirrors: `EpisodeStateKind::PostReset`,
+  `GateMode::Reset`, new `ResetKind { Pre, Post }`, with pb round-trip
+  conversions and a unit test per new enum. Every exhaustive match this
+  touched across `waddle-fsm`/`waddle-runtime`/`waddle-conformance`/
+  `waddle-sidecar` gained an inert arm (behavior unchanged; the FSM/gate/
+  runtime behavior for these flags lands in a later change on this branch).
 - New conformance fixture `teleop_dims_mismatch_holds` (`waddle-conformance`,
   gate target): pins the media-intake action-space-validation contract as
   gate-observable — a teleop injection whose flattened width doesn't match
@@ -97,6 +113,24 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   generated header and linked to `libwaddle.so`.
 
 ### Changed
+- **`FSM.md`** gains §1.3 "Post-reset" (flag `waddle.v0.reset.phases`,
+  guard rows E14-E18 + E14b) and §1.4 "Remote reset windows" (flag
+  `waddle.v0.reset.remote`, guard rows E19-E22), plus claim-lifecycle rows
+  C6/C7 (§2) and two gate-mode-table rows (PASSTHROUGH↔RESET). No FSM
+  behavior changes: these rows are prose/normative only in this change: the
+  9 fixtures that pin them, and the FSM implementation itself, land together
+  in a later change on this branch (the repo rule that guard rows +
+  fixtures + a green runner land in one change is satisfied at the
+  branch level, not this commit). **`conformance/scenario-format.md`**
+  gains the `post_reset_result` / `reset_window_engage` /
+  `reset_window_complete` inject kinds, `episode_open`'s optional
+  `post_reset?`/`pre_reset_window?`/`post_reset_window?` keys, state-
+  snapshot additions (`episode.post_reset_declared`,
+  `episode.post_reset_failed`, `episode.pinned_outcome`, top-level
+  `reset_window`), and effects-vocabulary additions (`GATE_MODE_RESET`,
+  `set_flag{post_reset_failed}`, `arm_timer{reset_window_timeout}`) — all
+  gated by the same two flags, documenting what the conformance runner will
+  implement in a later task on this branch.
 - **Golden fixture amendment (pre-release; no tagged versions exist) —
   `handoff_immediate_mid_chunk`**: its teleop packets now carry Pose
   targets for both parts (7+7=14 values) to stay dims-consistent with the

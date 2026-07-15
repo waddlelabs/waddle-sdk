@@ -31,7 +31,9 @@ existing claim.
 
 States: `EpisodeState` — RESETTING, READY, RUNNING, INTERVENTION, TERMINAL.
 Terminal outcomes: `TerminalOutcome` — SUCCESS, FAILURE, ABORT,
-ABORTED_RETAKE.
+ABORTED_RETAKE. A sixth state, POST_RESET, exists only under flag
+`waddle.v0.reset.phases` (§1.3); the diagram and guard table above are the
+complete picture for connections that do not declare it.
 
 v0 scope: **one active episode per session** (N18). TERMINAL is absorbing:
 every event delivered to a terminal episode is rejected without a state
@@ -70,6 +72,54 @@ change.
 The predecessor's outcome is always ABORTED_RETAKE and is never silently
 folded into success-rate denominators.
 
+### 1.3 Post-reset (flag `waddle.v0.reset.phases`)
+
+Preface (normative): rows E14–E18 and E14b exist only when
+`waddle.v0.reset.phases` is negotiated **and** the episode declares the
+feature. An episode with no post-reset declared behaves exactly per
+E1–E13; `EPISODE_STATE_POST_RESET` does not exist on undeclared connections
+(pinned by `post_reset_skipped_when_undeclared`). E17 is the POST_RESET
+specialization of E11 (a state that predates no existing row — the more
+specific row governs; E11's behavior on every other pre-existing state is
+unchanged).
+
+| # | From | Trigger | Guard | To | Effects / emissions | Fixture |
+|---|---|---|---|---|---|---|
+| E14 | RUNNING or INTERVENTION | the E10 trigger set (judge done, mark END_*, terminate, timeout) | post-reset declared ∧ not yet entered | POST_RESET{outcome pinned} | `state{→POST_RESET, outcome}` (outcome final+immutable); claim released + gate→PASSTHROUGH exactly as E10 would; engage timers cancelled; post-reset pipeline engaged (hook or window) | `post_reset_happy`, `post_reset_from_intervention` |
+| E15 | POST_RESET | `post_reset_result{ok}` | — | TERMINAL{pinned} | `post_reset{result, pinned_outcome}`; lease handback to loop client completes BEFORE the terminal transition when a reset claimant holds it; `state{→TERMINAL, pinned}` | `post_reset_happy` |
+| E16 | POST_RESET | `post_reset_result{!ok}` / strategies exhausted / window timeout | — | TERMINAL{pinned, UNCHANGED} | `set_flag{post_reset_failed}` (PERMANENT); `post_reset{ok:false}`; `Fault` (kind: validation-appropriate, see impl); `state{→TERMINAL, pinned}` | `post_reset_failure_flags` |
+| E17 | POST_RESET | `estop` | — | TERMINAL{pinned, UNCHANGED} | lease `RevokeAll`; `Fault{ESTOP}`; `set_flag{post_reset_failed}`; `reset_window{CANCELLED}` if window open; cancel `reset_window_timeout`; `state{→TERMINAL, pinned}` | `estop_during_post_reset` |
+| E18 | INTERVENTION | `retake` | (E9 guard), post-reset declared or not | TERMINAL{ABORTED_RETAKE} | exactly E9 — retake BYPASSES POST_RESET (the successor's pre-reset handles the scene; E9's `release_claim=false` keeps claim+lease with the intervenor) | `retake_skips_post_reset` |
+| E14b | POST_RESET | `terminate` / `mark{END_*}` / judge done / `retake` | — | POST_RESET (rejected) | none — outcome pinned; a late mark is recorded as a `mark` event only, never a transition | `post_reset_happy` |
+
+Rationale E17: E11 verbatim ("any non-TERMINAL → TERMINAL{ABORT}") would
+flip an earned SUCCESS to ABORT because cleanup was estopped, corrupting SR
+denominators. E17 keeps every safety effect (RevokeAll, `Fault{ESTOP}`,
+immediate TERMINAL) and preserves the pinned outcome; `post_reset_failed`
+makes the incident permanent.
+
+### 1.4 Remote reset windows (flag `waddle.v0.reset.remote`)
+
+Preface (normative): rows E19–E22 exist only when `waddle.v0.reset.remote`
+is negotiated **and** the reset in question (pre or post) declares a remote
+actor. A remote reset window is a bounded period during which a claimed
+teleoperator, site operator, or agent performs the reset directly through
+the SDK; the claim granted for this purpose is the same `Claim`/`Lease`
+machinery as everywhere else in this document, reused unchanged (rows C6/C7
+in §2 document the claim side).
+
+| # | From | Trigger | Guard | To | Effects / emissions | Fixture |
+|---|---|---|---|---|---|---|
+| E19 | entry to RESETTING (E1) or POST_RESET (E14) | — | that reset declared remote | unchanged | `reset_window{OPENED, kind, prompt, expected_actor}`; `arm_timer{reset_window_timeout}` | `remote_pre_reset_claim_engage_complete` |
+| E20 | RESETTING or POST_RESET | `reset_window_engage{claim}` | claim GRANTED per C6 | unchanged | lease → claimant (L1 if vacant, else L6 handoff, fresh token); on lease applied: gate→RESET (`GateModeChange{→RESET}`), `reset_window{ENGAGED, claim_id}`. Actuation authorization = held lease + gate RESET; the SDK pump drives `send`; caller ticks get `NoopMarker{RESET_ACTIVE}` | `remote_pre_reset_claim_engage_complete` |
+| E21 | RESETTING or POST_RESET | `reset_window_complete{claim, result}` | claim active per C6 | (deferred) | `reset_window{COMPLETED, result}`; cancel timer; lease handback (L6); AFTER handback applies: gate→PASSTHROUGH, `claim{RELEASED}` (C7), then the result applies as if from the pipeline (E2–E5 in RESETTING; E15/E16 in POST_RESET) | `remote_pre_reset_claim_engage_complete` |
+| E22 | RESETTING or POST_RESET | `timer{reset_window_timeout}` | window not COMPLETED | pre: TERMINAL{ABORT} (E5); post: TERMINAL{pinned} + `set_flag{post_reset_failed}` (E16) | `reset_window{TIMED_OUT}`; claim released; lease handback | `remote_post_reset_timeout` |
+
+Pinned in prose: `engage` stays E7/RUNNING-only (a reset claimant never
+enters INTERVENTION; `InterventionPhase` is untouched). `clutch` during
+reset windows stays a recorded edge, not a claim (current behavior,
+unchanged). E13 (late verification) applies unchanged in POST_RESET.
+
 ---
 
 ## 2. Claim lifecycle
@@ -83,6 +133,8 @@ States (per claim): REQUESTED → GRANTED | DENIED; GRANTED → RELEASED.
 | C3 | REQUESTED | control-plane decision | conflicting claim, no grant | DENIED | `claim{DENIED}` | — |
 | C4 | GRANTED | `release` completes or episode reaches TERMINAL (except via retake) | — | RELEASED | `claim{RELEASED}` | `handoff_immediate_mid_chunk` |
 | C5 | GRANTED | `retake` | — | GRANTED (survives) | the claim is NOT released; the successor episode is born claimed under it | `retake_operator_optimistic` |
+| C6 | — | `claim_granted` | episode in RESETTING or POST_RESET ∧ window OPENED ∧ actor matches expected (a TELEOPERATOR window also admits SITE_OPERATOR; an AGENT window admits AGENT only) ∧ no active claim | GRANTED | `claim{GRANTED}` — a real `Claim`; the N18 one-claim rule applies (flag `waddle.v0.reset.remote`; see §1.4) | `remote_pre_reset_claim_engage_complete`, `remote_reset_wrong_actor_denied` |
+| C7 | GRANTED (reset claim) | E21 / E22 / `estop` | — | RELEASED | `claim{RELEASED, "reset window closed"}` (flag `waddle.v0.reset.remote`; see §1.4) | `remote_pre_reset_claim_engage_complete` |
 
 **Self-initiated claims** (`Claim.self_initiated`): a local source's clutch
 edge (`clutch{engaged}`) both requests and grants the claim in one step — the
@@ -213,6 +265,10 @@ IMMEDIATE degrades to HOLD_FIRST for a delta space).
 | INTERVENTION | PASSTHROUGH | release completes | `handoff_immediate_mid_chunk` |
 | INTERVENTION | BYPASS | stall detected while claimed (no gate tick within threshold) | `claimed_while_stalled` |
 | BYPASS | INTERVENTION | caller ticks resume | `claimed_while_stalled` |
+| PASSTHROUGH | RESET | remote reset window engage completes (E20: lease handed to the reset claimant) — flag `waddle.v0.reset.remote` | `remote_pre_reset_claim_engage_complete` |
+| RESET | PASSTHROUGH | remote reset window complete/timeout handback completes (E21/E22) — flag `waddle.v0.reset.remote` | `remote_pre_reset_claim_engage_complete` |
+
+BYPASS and RESET never inter-transition.
 
 Every change emits `GateModeChange`. Holds (HOLD_FIRST engage, tripwire
 holds) are an output condition (`gate()` returns Hold/Noop), not a gate mode.

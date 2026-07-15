@@ -63,11 +63,15 @@ order) before the next step executes.
 { "inject": { "kind": "<kind>", ...payload } }
 ```
 
-Closed set of kinds (v0):
+Closed set of kinds (v0). Where a kind's meaning depends on a feature flag,
+that flag is named below; a scenario using such a kind MUST list the flag in
+`requires_features`, and a runner that does not implement the flag skips the
+scenario (the `requires_features` rule above) rather than rejecting the kind
+as unknown:
 
 | kind | payload | targets | meaning |
 |---|---|---|---|
-| `episode_open` | `episode_id`, `verification_mode?`, `born_claimed?`, `parent_episode_id?` | fsm, gate | open an episode in RESETTING |
+| `episode_open` | `episode_id`, `verification_mode?`, `born_claimed?`, `parent_episode_id?`, `post_reset?: bool` (needs `waddle.v0.reset.phases`), `pre_reset_window?: {expected_actor, prompt?, timeout_ns}` (needs `waddle.v0.reset.remote`), `post_reset_window?: {expected_actor, prompt?, timeout_ns}` (needs both flags) | fsm, gate | open an episode in RESETTING; the optional keys declare the post-reset phase and/or remote reset windows for this episode |
 | `reset_result` | `result`: `waddle.v0.ResetResult` | fsm, gate | the reset pipeline reported |
 | `verification_result` | `verification`: `waddle.v0.ResetVerification` | fsm, gate | a (possibly late/async) reset verification |
 | `start` | — | fsm | READY → RUNNING without modeling gate ticks |
@@ -84,6 +88,9 @@ Closed set of kinds (v0):
 | `verb_result` | `result`: `waddle.v0.VerbResult` | fsm, gate | a declared verb completed |
 | `estop` | `detail?` | fsm, gate | the stop path fired |
 | `terminate` | `outcome`: `waddle.v0.TerminalOutcome`, `reason?` | fsm, gate | integrator/supervisor terminates |
+| `post_reset_result` | `result`: `waddle.v0.ResetResult` | fsm, gate | the post-reset pipeline reported (needs `waddle.v0.reset.phases`) |
+| `reset_window_engage` | `claim_id` | fsm, gate | a granted reset claim engages: lease → claimant, gate → RESET (needs `waddle.v0.reset.remote`) |
+| `reset_window_complete` | `claim_id`, `result`: `waddle.v0.ResetResult` | fsm, gate | the remote actor finished the reset (needs `waddle.v0.reset.remote`) |
 | `judge_result` | `judgment`: `waddle.v0.Judgment` | fsm, gate | an episode judgment arrives |
 | `mark` | `mark`: `waddle.v0.MarkEvent` | fsm, gate | a human mark arrives |
 | `proxy_signals` | `signals`: `waddle.v0.ProxySignals` | fsm | heartbeat proxy signals sampled |
@@ -164,15 +171,26 @@ enum spellings):
     "intervention_phase": "INTERVENTION_PHASE_*",
     "born_claimed": false,
     "reset_unverified": false,
-    "parent_episode_id": ""
+    "parent_episode_id": "",
+    "post_reset_declared": false,
+    "post_reset_failed": false,
+    "pinned_outcome": "TERMINAL_OUTCOME_UNSPECIFIED"
   },
   "gate":  { "mode": "GATE_MODE_*" },
   "lease": { "holder_client_id": "", "lease_id": "", "enforcement": "LEASE_ENFORCEMENT_*" },
   "claim": { "active_claim_id": "", "source_name": "", "self_initiated": false },
   "grants": [ { "verb": "VERB_*", "send_interface": "SPACE_KIND_*", "status": "GRANT_STATUS_*" } ],
-  "plane": { "connected": true, "buffered_events": 0 }
+  "plane": { "connected": true, "buffered_events": 0 },
+  "reset_window": { "open": false, "kind": "RESET_KIND_UNSPECIFIED", "expected_actor": "ACTOR_KIND_UNSPECIFIED", "claim_id": "" }
 }
 ```
+
+`episode.post_reset_declared` / `episode.post_reset_failed` /
+`episode.pinned_outcome` need `waddle.v0.reset.phases`; `pinned_outcome` is
+`TERMINAL_OUTCOME_UNSPECIFIED` until POST_RESET entry pins it, and
+`episode.outcome` stays TERMINAL-only (unlike `pinned_outcome`, it is never
+set on a POST_RESET transition). The top-level `reset_window` document needs
+`waddle.v0.reset.remote`.
 
 `grants` is matched by `(verb, send_interface)` lookup, expressed as
 `grants[VERB_HOLD].status` or `grants[VERB_SEND/SPACE_KIND_EE_POSE_DELTA].status`.
@@ -184,12 +202,12 @@ targets expose them as emissions matchable by `expect_emission.effect`:
 
 | effect | fields |
 |---|---|
-| `set_gate_mode` | `mode` |
+| `set_gate_mode` | `mode` (`GATE_MODE_RESET` needs `waddle.v0.reset.remote`) |
 | `request_verb` | `verb`, `chunk?` |
-| `arm_timer` / `cancel_timer` | `timer_id`, `deadline_ns` |
+| `arm_timer` / `cancel_timer` | `timer_id` (`"reset_window_timeout"` needs `waddle.v0.reset.remote`; exercised via the existing `advance_ns` step like every other timer), `deadline_ns` |
 | `open_successor` | `predecessor_episode_id`, `claim_id`, `born_claimed`, `verification_mode` |
 | `mint_lease_token` | `to_client_id` |
-| `set_flag` | `flag` (e.g. `"reset_unverified"`) |
+| `set_flag` | `flag` (e.g. `"reset_unverified"`, or `"post_reset_failed"` which needs `waddle.v0.reset.phases`) |
 
 ## Runner report
 

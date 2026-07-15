@@ -65,6 +65,8 @@ Mechanics (normative):
 | `waddle.v0.reset` | The reset pipeline: the `RequestReset` RPC, `ResetRequest`, `ResetProgress`, `ResetResult`, and `ResetVerification` with its per-initiator modes (N12). |
 | `waddle.v0.audit` | The audit slice (N13): `RecordingModeDeclaration.audit_quota_bp`, `AuditRecord`, and audit-label integrity enforcement (`Judgment.labeler_was_intervenor`). |
 | `waddle.v0.heartbeat.proxy-signals` | `ProxySignals` and `VerbMeasurement` riding `HeartbeatPing` (N11). Without it, heartbeats are liveness-only and grant health falls back to safe-window measurement alone. |
+| `waddle.v0.reset.phases` | `EPISODE_STATE_POST_RESET`, `PostResetResult` (`EpisodeEvent` arm 16), `StateTransition.outcome` set on a transition to `POST_RESET`, `Sidecar` fields 32–35 (`post_reset_declared`, `post_reset_failed`, `post_reset_result`, `post_reset_bounds`), FSM.md guard rows E14–E18/E14b (§1.3), the `post_reset_result` scenario inject kind, and snapshot paths `episode.post_reset_declared` / `episode.post_reset_failed` / `episode.pinned_outcome`. |
+| `waddle.v0.reset.remote` | `GATE_MODE_RESET`, `ResetWindowEvent` (`EpisodeEvent` arm 17), `ResetWindowDirective` (`GateServerMessage` arm 6), `ResetKind`, FSM.md guard rows E19–E22 and C6/C7 (§1.4), the `reset_window_engage` / `reset_window_complete` scenario inject kinds, `NOOP_REASON_RESET_ACTIVE`, and the top-level `reset_window` snapshot document. Independent of and composable with `waddle.v0.reset.phases`: a remote actor may run either the pre-reset, the post-reset, or both. |
 
 ### Serving guarantee
 
