@@ -425,7 +425,9 @@ fn provenance_code(tag: &waddle_types::ProvenanceTag) -> i32 {
     }
 }
 
-/// 1 when the episode has reached a terminal outcome, else 0.
+/// 1 once the episode's outcome is decided — it reached a terminal outcome
+/// or entered POST_RESET (where the outcome is already pinned and only the
+/// scene cleanup, which self-resolves, is still running) — else 0.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn waddle_episode_done(episode: *const WaddleEpisode) -> i32 {
     if episode.is_null() {
