@@ -185,8 +185,21 @@ def _normalize_reset_hook(fn: Callable) -> Callable[[str], tuple]:
     trivial ``lambda task: True`` forever waiting for a verification
     opinion that never comes. Anything else — the wrong arity, a non-bool
     first element, or a second element that is neither bool nor None —
-    raises ``TypeError`` naming the contract, so a broken hook fails
-    loudly and specifically instead of degrading silently."""
+    raises ``TypeError`` naming the contract.
+
+    That ``TypeError`` never reaches the caller of :func:`rollout`,
+    though: ``PyResetHook::call`` (``sdk/rust/src/verbs.rs``) invokes this
+    wrapper from core-owned code and unconditionally catches whatever it
+    raises — this wrapper's own ``TypeError`` included — reporting it only
+    via ``PyErr::write_unraisable`` (``sys.unraisablehook``: a stderr
+    print normally, a ``PytestUnraisableExceptionWarning`` under pytest)
+    and normalizing the outcome to ``(False, None)``, exactly like a hook
+    that legitimately returns ``False``. So the ``TypeError``'s only
+    effect is a diagnostic breadcrumb on a side channel the caller isn't
+    necessarily watching; the caller of :func:`rollout` sees the same
+    generic ``RuntimeError: reset failed`` either way and cannot
+    distinguish "my hook is malformed" from "my hook correctly reported
+    failure" from that exception alone."""
 
     def wrapped(task: str) -> tuple:
         result = fn(task)

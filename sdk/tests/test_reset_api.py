@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import sys
 import threading
 import time
 
@@ -246,6 +247,63 @@ def test_failing_pre_reset_hook_raises(tmp_path):
     )
     with pytest.raises(RuntimeError, match="reset failed"):
         waddle.rollout(task="nope")
+
+
+def test_malformed_pre_reset_hook_return_is_indistinguishable_from_a_legitimate_failure(tmp_path):
+    """Regression for a corrected claim in `_normalize_reset_hook`'s
+    docstring/CHANGELOG: a hook whose return value violates the
+    `bool | (bool, Optional[bool])` contract does NOT raise a
+    distinguishable, actionable error to the `rollout()` caller.
+    `PyResetHook::call` (`sdk/rust/src/verbs.rs`) catches every exception
+    the Python callable raises -- including `_normalize_reset_hook`'s own
+    `TypeError` -- and reports it only via `sys.unraisablehook` before
+    normalizing to `(False, None)`, the exact same outcome a hook that
+    legitimately returns `False` produces. This test proves both the
+    diagnostic-only delivery (captured via a chained `sys.unraisablehook`)
+    and the caller-visible indistinguishability (byte-identical
+    `RuntimeError` text), through the public `waddle.init`/`waddle.rollout`
+    API rather than the private `_normalize_reset_hook` helper alone."""
+    captured_unraisable = []
+    previous_hook = sys.unraisablehook
+
+    def _chained_hook(unraisable):
+        captured_unraisable.append(unraisable)
+        previous_hook(unraisable)
+
+    sys.unraisablehook = _chained_hook
+    try:
+        waddle.init(
+            "py-reset-pre-malformed",
+            _robot(),
+            _control(),
+            recording_dir=tmp_path,
+            pre_reset=lambda task: "not a bool",
+        )
+        with pytest.raises(RuntimeError, match="reset failed") as malformed_exc:
+            waddle.rollout(task="nope")
+    finally:
+        sys.unraisablehook = previous_hook
+    waddle.shutdown()
+
+    # The TypeError naming the contract really was raised -- but only
+    # ever delivered to the unraisable-hook diagnostic channel.
+    assert len(captured_unraisable) == 1
+    assert captured_unraisable[0].exc_type is TypeError
+    assert "Optional[bool]" in str(captured_unraisable[0].exc_value)
+
+    waddle.init(
+        "py-reset-pre-legit-false",
+        _robot(),
+        _control(),
+        recording_dir=tmp_path,
+        pre_reset=lambda task: False,
+    )
+    with pytest.raises(RuntimeError, match="reset failed") as legit_exc:
+        waddle.rollout(task="nope")
+
+    # A malformed return and a legitimate `False` are byte-for-byte the
+    # same exception from the caller's point of view.
+    assert str(malformed_exc.value) == str(legit_exc.value)
 
 
 def test_failing_post_reset_hook_pins_success_and_sets_post_reset_failed(tmp_path):

@@ -34,8 +34,13 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   existing FFI-level default, now pure defense-in-depth underneath this);
   anything else — wrong arity, a non-bool first element, a second element
   that is neither `bool` nor `None` — raises `TypeError` naming the
-  contract, so a broken hook fails loudly and specifically instead of
-  degrading silently. `waddle._testing` gains `reset_window_engage`/
+  contract. That `TypeError` is diagnostic only: `PyResetHook::call`
+  (Rust) catches every exception from the hook callable, including this
+  wrapper's own, and reports it solely via `sys.unraisablehook` before
+  normalizing to `(False, None)` — the `rollout()` caller sees the same
+  generic `RuntimeError: reset failed` as a hook that legitimately
+  returns `False`, and cannot tell the two apart from that exception
+  alone. `waddle._testing` gains `reset_window_engage`/
   `reset_window_complete` thin wrappers alongside the existing
   `engage`/`release`/`push_teleop` (Task 11's Concern 2, resolved: yes,
   these deserved the same wrapper treatment). `rollout`'s docstring now
