@@ -13,10 +13,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 - New conformance fixture `teleop_dims_mismatch_holds` (`waddle-conformance`,
-  gate target): pins the Bug 2 dims-mismatch behavior as gate-observable —
-  a teleop injection whose flattened width doesn't match the declared
-  action space is never dispatched, `gate_tick` returns hold however many
-  mismatched packets arrive in the blend window, exactly one
+  gate target): pins the media-intake action-space-validation contract as
+  gate-observable — a teleop injection whose flattened width doesn't match
+  the declared action space is never dispatched, `gate_tick` returns hold
+  however many mismatched packets arrive in the blend window, exactly one
   `Fault{FAULT_KIND_VALIDATION_ERROR}` fires per claim window, and a
   subsequent dims-correct packet still substitutes normally. FSM.md §5
   (IMMEDIATE{blend_ns}) now states the dims-mismatch contract explicitly.
