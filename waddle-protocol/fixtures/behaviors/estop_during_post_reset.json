@@ -1,0 +1,31 @@
+{
+  "format": "waddle.behavior/v0",
+  "name": "estop_during_post_reset",
+  "description": "Pins FSM.md E17: an estop arriving while POST_RESET is open must NOT flip the earned SUCCESS to ABORT (unlike E11's default any-non-TERMINAL rule) — every safety effect still fires (lease RevokeAll, Fault{ESTOP}) and the episode reaches TERMINAL immediately, but carrying the pinned SUCCESS outcome, with post_reset_failed permanently set to record the incident. Emission order: lease{REVOKED_ALL}, Fault{ESTOP}, set_flag{post_reset_failed}, state{→TERMINAL, SUCCESS}.",
+  "target": "fsm",
+  "requires_features": ["waddle.v0.core", "waddle.v0.reset.phases"],
+  "setup": {
+    "lease_enforcement": "LEASE_ENFORCEMENT_ENFORCED",
+    "handoff": { "immediate": { "blendNs": "0" } },
+    "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING"
+  },
+  "steps": [
+    { "inject": { "kind": "episode_open", "episode_id": "ep-edp-0001", "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING", "post_reset": true } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "reset_result", "result": { "ok": true, "strategy": "scripted_home", "verification": { "mode": "RESET_VERIFICATION_MODE_BLOCKING", "verified": true, "judgeId": "judge-reset", "judgeVersion": "2.1.0", "score": 0.97, "tNs": "100000000" } } } },
+    { "inject": { "kind": "start" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RUNNING", "lease.holder_client_id": "$nonempty" } },
+
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "terminate", "outcome": "TERMINAL_OUTCOME_SUCCESS", "reason": "task done" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_POST_RESET", "episode.pinned_outcome": "TERMINAL_OUTCOME_SUCCESS" } },
+
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "estop", "detail": "site estop chain pressed during cleanup" } },
+    { "expect_emission": { "event": { "lease": { "kind": "LEASE_EVENT_KIND_REVOKED_ALL" } }, "within_ns": "0" } },
+    { "expect_emission": { "event": { "fault": { "kind": "FAULT_KIND_ESTOP" } }, "within_ns": "0" } },
+    { "expect_emission": { "effect": { "set_flag": { "flag": "post_reset_failed" } }, "within_ns": "0" } },
+    { "expect_emission": { "event": { "state": { "to": "EPISODE_STATE_TERMINAL", "outcome": "TERMINAL_OUTCOME_SUCCESS" } }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_TERMINAL", "episode.outcome": "TERMINAL_OUTCOME_SUCCESS", "episode.pinned_outcome": "TERMINAL_OUTCOME_SUCCESS", "episode.post_reset_failed": true, "lease.lease_id": "", "lease.holder_client_id": "" } }
+  ]
+}

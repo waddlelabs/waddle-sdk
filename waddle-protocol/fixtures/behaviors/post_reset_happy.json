@@ -1,0 +1,37 @@
+{
+  "format": "waddle.behavior/v0",
+  "name": "post_reset_happy",
+  "description": "Pins FSM.md E14/E15/E14b for a declared post-reset hook: terminate{SUCCESS} arriving in RUNNING detours through E14 (state{→POST_RESET} carrying the pinned SUCCESS outcome, never TERMINAL directly) instead of E10's usual direct terminal entry; a late terminate{FAILURE} injected while POST_RESET is open is rejected outright (E14b) — no second state emission, the pinned outcome and phase are unchanged; the post-reset pipeline then reports ok via post_reset_result, emitting PostResetResult{ok:true, pinnedOutcome:SUCCESS} followed by state{→TERMINAL, SUCCESS} (E15), with post_reset_failed staying false throughout.",
+  "target": "fsm",
+  "requires_features": ["waddle.v0.core", "waddle.v0.reset.phases"],
+  "setup": {
+    "lease_enforcement": "LEASE_ENFORCEMENT_ENFORCED",
+    "handoff": { "immediate": { "blendNs": "0" } },
+    "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING"
+  },
+  "steps": [
+    { "inject": { "kind": "episode_open", "episode_id": "ep-prh-0001", "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING", "post_reset": true } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RESETTING", "episode.post_reset_declared": true } },
+
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "reset_result", "result": { "ok": true, "strategy": "scripted_home", "verification": { "mode": "RESET_VERIFICATION_MODE_BLOCKING", "verified": true, "judgeId": "judge-reset", "judgeVersion": "2.1.0", "score": 0.97, "tNs": "100000000" } } } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_READY" } },
+    { "inject": { "kind": "start" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RUNNING" } },
+
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "terminate", "outcome": "TERMINAL_OUTCOME_SUCCESS", "reason": "task done" } },
+    { "expect_emission": { "event": { "state": { "to": "EPISODE_STATE_POST_RESET", "outcome": "TERMINAL_OUTCOME_SUCCESS" } }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_POST_RESET", "episode.pinned_outcome": "TERMINAL_OUTCOME_SUCCESS", "episode.outcome": "TERMINAL_OUTCOME_UNSPECIFIED", "episode.post_reset_failed": false } },
+
+    { "inject": { "kind": "terminate", "outcome": "TERMINAL_OUTCOME_FAILURE", "reason": "late terminate during cleanup" } },
+    { "expect_no_emission": { "event": { "state": {} }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_POST_RESET", "episode.pinned_outcome": "TERMINAL_OUTCOME_SUCCESS" } },
+
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "post_reset_result", "result": { "ok": true, "detail": "scene cleared" } } },
+    { "expect_emission": { "event": { "postReset": { "result": { "ok": true }, "pinnedOutcome": "TERMINAL_OUTCOME_SUCCESS" } }, "within_ns": "0" } },
+    { "expect_emission": { "event": { "state": { "to": "EPISODE_STATE_TERMINAL", "outcome": "TERMINAL_OUTCOME_SUCCESS" } }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_TERMINAL", "episode.outcome": "TERMINAL_OUTCOME_SUCCESS", "episode.pinned_outcome": "TERMINAL_OUTCOME_SUCCESS", "episode.post_reset_failed": false } }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "format": "waddle.behavior/v0",
+  "name": "post_reset_skipped_when_undeclared",
+  "description": "Pins the additive guarantee (FSM.md §1.3 preface): an episode that never declares a post-reset behaves exactly per E1-E13 even on a runner that implements waddle.v0.reset.phases — terminate from RUNNING never emits a state transition into EPISODE_STATE_POST_RESET (that state does not exist on this connection) and goes directly to TERMINAL, with post_reset_declared/pinned_outcome left at their zero values. Deliberately core-only: this scenario must pass unchanged whether or not the runner implements the reset-phase flags.",
+  "target": "fsm",
+  "requires_features": ["waddle.v0.core"],
+  "setup": {
+    "lease_enforcement": "LEASE_ENFORCEMENT_ENFORCED",
+    "handoff": { "immediate": { "blendNs": "0" } },
+    "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING"
+  },
+  "steps": [
+    { "inject": { "kind": "episode_open", "episode_id": "ep-psu-0001", "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING" } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "reset_result", "result": { "ok": true, "strategy": "scripted_home", "verification": { "mode": "RESET_VERIFICATION_MODE_BLOCKING", "verified": true, "judgeId": "judge-reset", "judgeVersion": "2.1.0", "score": 0.98, "tNs": "100000000" } } } },
+    { "inject": { "kind": "start" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RUNNING", "episode.post_reset_declared": false } },
+
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "terminate", "outcome": "TERMINAL_OUTCOME_SUCCESS", "reason": "task done" } },
+    { "expect_no_emission": { "event": { "state": { "to": "EPISODE_STATE_POST_RESET" } }, "within_ns": "0" } },
+    { "expect_emission": { "event": { "state": { "to": "EPISODE_STATE_TERMINAL", "outcome": "TERMINAL_OUTCOME_SUCCESS" } }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_TERMINAL", "episode.outcome": "TERMINAL_OUTCOME_SUCCESS", "episode.post_reset_declared": false, "episode.post_reset_failed": false, "episode.pinned_outcome": "TERMINAL_OUTCOME_UNSPECIFIED" } }
+  ]
+}

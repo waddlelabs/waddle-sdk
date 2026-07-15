@@ -1,0 +1,32 @@
+{
+  "format": "waddle.behavior/v0",
+  "name": "post_reset_from_intervention",
+  "description": "Pins FSM.md E14's INTERVENTION branch: request_terminal detours to POST_RESET from Phase::Intervention(_), not only from RUNNING. A terminate arriving while an engaged claim sits in INTERVENTION_PHASE_SETTLE runs close_run exactly as E10 would (gate→PASSTHROUGH, then state{→POST_RESET, pinned}, then claim RELEASED, in that established close_run order) before engaging the post-reset pipeline.",
+  "target": "fsm",
+  "requires_features": ["waddle.v0.core", "waddle.v0.reset.phases"],
+  "setup": {
+    "lease_enforcement": "LEASE_ENFORCEMENT_ENFORCED",
+    "handoff": { "immediate": { "blendNs": "0" } },
+    "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING"
+  },
+  "steps": [
+    { "inject": { "kind": "episode_open", "episode_id": "ep-pfi-0001", "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING", "post_reset": true } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "reset_result", "result": { "ok": true, "strategy": "scripted_home", "verification": { "mode": "RESET_VERIFICATION_MODE_BLOCKING", "verified": true, "judgeId": "judge-reset", "judgeVersion": "2.1.0", "score": 0.96, "tNs": "100000000" } } } },
+    { "inject": { "kind": "start" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RUNNING" } },
+
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "claim_granted", "claim": { "claimId": "claim-pfi-0001", "episodeId": "ep-pfi-0001", "actor": { "kind": "ACTOR_KIND_TELEOPERATOR", "id": "top-7", "displayName": "Teleoperator 7" }, "sourceName": "teleop", "selfInitiated": false, "tGrantedNs": "200000000", "handoff": { "immediate": { "blendNs": "0" } }, "spaces": ["SPACE_KIND_EE_POSE_DELTA"] } } },
+    { "inject": { "kind": "engage", "claim_id": "claim-pfi-0001", "initiator": "ACTOR_KIND_TELEOPERATOR" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_INTERVENTION", "gate.mode": "GATE_MODE_INTERVENTION" } },
+    { "advance_ns": "300000000" },
+    { "expect_state": { "episode.intervention_phase": "INTERVENTION_PHASE_SETTLE" } },
+
+    { "inject": { "kind": "terminate", "outcome": "TERMINAL_OUTCOME_SUCCESS", "reason": "task done mid-settle" } },
+    { "expect_emission": { "event": { "gate": { "from": "GATE_MODE_INTERVENTION", "to": "GATE_MODE_PASSTHROUGH" } }, "within_ns": "0" } },
+    { "expect_emission": { "event": { "state": { "to": "EPISODE_STATE_POST_RESET", "outcome": "TERMINAL_OUTCOME_SUCCESS" } }, "within_ns": "0" } },
+    { "expect_emission": { "event": { "claim": { "kind": "CLAIM_EVENT_KIND_RELEASED" } }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_POST_RESET", "episode.pinned_outcome": "TERMINAL_OUTCOME_SUCCESS", "gate.mode": "GATE_MODE_PASSTHROUGH", "claim.active_claim_id": "" } }
+  ]
+}
