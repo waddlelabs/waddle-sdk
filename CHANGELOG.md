@@ -28,6 +28,33 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   touched across `waddle-fsm`/`waddle-runtime`/`waddle-conformance`/
   `waddle-sidecar` gained an inert arm (behavior unchanged; the FSM/gate/
   runtime behavior for these flags lands in a later change on this branch).
+- **waddle-fsm (POST_RESET phase + remote reset windows)**: the FSM now
+  implements FSM.md rows E14–E22 and C6/C7 behind the reset-phases flags. An
+  episode that declares a post-reset runs a cleanup pipeline INSIDE the
+  finishing episode: the terminal outcome is pinned at POST_RESET entry (E14)
+  and never changes — a post-reset failure only sets the permanent
+  `post_reset_failed` flag (E16), and an estop during cleanup keeps the pinned
+  outcome rather than flipping an earned SUCCESS to ABORT (E17). A late
+  terminate is rejected and a late END_* mark records the mark without
+  transitioning (E14b). Remote reset windows (E19–E22) let a plane-directed
+  actor perform a scene reset through the SDK: a window opens in RESETTING
+  (pre) or POST_RESET (post), a reset claim is admitted with an actor check
+  (C6: a TELEOPERATOR window also admits SITE_OPERATOR, an AGENT window admits
+  AGENT only), the claimant engages (lease → claimant, gate → RESET, E20), and
+  on completion the lease hands back to the loop client BEFORE the pipeline
+  result applies (E21, the deferred-apply invariant), releasing the reset
+  claim (C7); a deadline aborts (pre) or pins + flags (post) (E22). The
+  central run-closing block is factored into `close_run` (shared by terminal
+  and post-reset entry, byte-identical for undeclared episodes) and the E10
+  trigger set routes through `request_terminal`, which detours to POST_RESET
+  only when declared. New `SessionEvent`s (`PostResetResult`,
+  `ResetWindowEngage`, `ResetWindowComplete`), `EpisodeOpen` fields
+  (`post_reset`, `pre_window`/`post_window`), `TimerId::ResetWindowTimeout`,
+  `AfterLease::{ResetEngageComplete, ResetHandback}`, and
+  `Effect::{SetPostResetFailed, RunPostReset}`; the reducer-side handling of
+  the new effects stays inert (runtime reset seams land in a later change).
+  Undeclared episodes behave exactly per E1–E13 (the additive guarantee); all
+  13 conformance fixtures stay byte-identical green.
 - New conformance fixture `teleop_dims_mismatch_holds` (`waddle-conformance`,
   gate target): pins the media-intake action-space-validation contract as
   gate-observable — a teleop injection whose flattened width doesn't match
