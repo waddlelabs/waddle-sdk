@@ -147,15 +147,25 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   `NotRegistered` silently and the engage fail-closed only at the 10s engage
   timeout — the teleoperator's clutch did nothing, with no diagnosable
   error. `hold` is now required at build time whenever the handoff policy is
-  HOLD_FIRST and a media plane is wired (an actual engage path); `send` is
-  now required whenever a media plane is wired, independent of handoff
-  policy (the bypass pump can drive `Verb::Send` directly once a claimed
-  loop stalls). Both errors name the fix directly (e.g. "handoff HOLD_FIRST
-  requires a registered `hold` verb — register one in your Control, or
-  choose a different handoff policy"). Sessions built with no Control and no
-  media plane (the descriptors-only / minimal-local case, including the
-  PyO3 shim's all-None-verbs `create_session`) are unaffected and stay
-  buildable. A missing `estop` is deliberately never build-fatal, but the
+  HOLD_FIRST and the session has a live engage path; `send` is now required
+  under that same condition, independent of handoff policy (the bypass pump
+  can drive `Verb::Send` directly once a claimed loop stalls). A live engage
+  path is a wired media plane **or** `hold`/`send` registered in `Control`
+  directly — `grant_and_engage` (the local-intervention convenience,
+  exported from the crate root and used by "tests and local intervention
+  sources") injects `ClaimGranted`/`Engage` with zero dependency on
+  `self.media`, so a session that registers `send` for local intervention
+  without ever calling `.media(...)` is exactly as live an engage path as
+  one wired to a media plane, and is now checked the same way. Both errors
+  name the fix directly (e.g. "handoff HOLD_FIRST requires a registered
+  `hold` verb — register one in your Control, or choose a different handoff
+  policy"). Sessions built with no Control and no media plane (the
+  descriptors-only / minimal-local case, including the PyO3 shim's
+  all-None-verbs `create_session`) are unaffected and stay buildable — that
+  shape has no build-time-visible engage path at all; `grant_and_engage`'s
+  own doc comment now carries an explicit safety note that direct callers
+  outside that shape are still responsible for registering `hold`/`send`
+  themselves. A missing `estop` is deliberately never build-fatal, but the
   degradation is now recorded on the status mirror
   (`Status::estop_unregistered`) so it stays observable. The `hold` check
   reasons about the *effective* handoff policy, not the raw declared enum

@@ -1118,6 +1118,71 @@ fn build_fails_fast_when_media_wired_without_send() {
     );
 }
 
+/// Bug 4 (review follow-up): `grant_and_engage` is a real, exported,
+/// always-live engage path (used by "tests and local intervention sources",
+/// per its own doc comment) with zero dependency on `self.media` — a
+/// session that registers `send` directly for local intervention, with no
+/// `.media(...)` call at all, is exactly as live an engage path as one
+/// wired to a media plane. The `hold` check must not key on
+/// `self.media.is_some()` alone, or this exact shape builds clean and then
+/// reproduces the "clutch press, nothing happens" stall the moment
+/// `grant_and_engage` is called (Bug 4's original report, reached without
+/// any media plane at all).
+#[test]
+fn build_fails_fast_when_hold_first_and_send_registered_without_media() {
+    let registry = ControlRegistry {
+        send: Some(Arc::new(
+            |_chunk: &waddle_types::ActionChunk| -> Result<(), VerbError> { Ok(()) },
+        )),
+        ..Default::default()
+    };
+    let err = Session::builder("e2e-send-no-media-missing-hold")
+        .robot(twist_robot(None))
+        .control(registry)
+        .build()
+        .expect_err(
+            "send registered without media is still a live grant_and_engage \
+             path and must require hold",
+        );
+    assert!(
+        matches!(
+            &err,
+            RuntimeError::MissingVerb { verb, .. } if *verb == "hold"
+        ),
+        "expected MissingVerb{{verb: \"hold\", ..}}, got {err:?}"
+    );
+}
+
+/// The symmetric case: `hold` registered with no `send` and no media wired
+/// is just as live a `grant_and_engage` path (engage doesn't need media to
+/// reach a claimed/intervention state) — the bypass pump can still try to
+/// drive `Verb::Send` once that loop stalls. Under `Immediate` handoff so
+/// the `hold` requirement itself never fires here; this isolates the `send`
+/// side of the same local-intervention gap.
+#[test]
+fn build_fails_fast_when_hold_registered_without_send_and_no_media() {
+    let registry = ControlRegistry {
+        hold: Some(Arc::new(|| Ok(()))),
+        ..Default::default()
+    };
+    let err = Session::builder("e2e-hold-no-media-missing-send")
+        .robot(twist_robot(None))
+        .control(registry)
+        .handoff(HandoffPolicy::Immediate { blend_ns: 0 })
+        .build()
+        .expect_err(
+            "hold registered without media is still a live grant_and_engage \
+             path and must require send",
+        );
+    assert!(
+        matches!(
+            &err,
+            RuntimeError::MissingVerb { verb, .. } if *verb == "send"
+        ),
+        "expected MissingVerb{{verb: \"send\", ..}}, got {err:?}"
+    );
+}
+
 /// Bug 4 (estop side): a missing `estop` must never fail the build (unlike
 /// `hold`/`send`) — but the degradation must stay observable on the status
 /// mirror the caller already polls, not silently swallowed.

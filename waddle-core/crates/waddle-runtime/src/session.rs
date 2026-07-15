@@ -169,23 +169,35 @@ impl SessionBuilder {
     /// instead of silently the first time something requests it:
     ///
     /// - `hold`: required whenever the *effective* handoff policy is
-    ///   [`HandoffPolicy::HoldFirst`] **and** a media plane is wired — every
-    ///   engage issues `Verb::Hold` before the intervenor's first action
-    ///   lands (the teleoperator's clutch is the real engage path a media
-    ///   plane gives). "Effective" matters: `waddle_fsm::begin_engage`
-    ///   silently degrades a declared [`HandoffPolicy::Immediate`] to
-    ///   `HoldFirst` on the very first engage whenever the robot's action
-    ///   space contains a delta component (FSM.md §5 — delta spaces refuse
-    ///   mid-chunk splice entry). This check mirrors that same degrade so a
-    ///   declared-IMMEDIATE session over a delta space cannot build clean and
-    ///   then stall at the first engage exactly like the undegraded case. A
-    ///   session with no media plane has no such path (the descriptors-only
-    ///   / minimal-local case, including the PyO3 shim's all-None-verbs
-    ///   `create_session`), so it stays buildable without `hold` even under
-    ///   the default `HoldFirst` policy.
-    /// - `send`: required whenever a media plane is wired, independent of
-    ///   handoff policy — the bypass pump can drive `Verb::Send` directly
-    ///   once a claimed loop stalls (see `pumps::spawn_bypass_pump`).
+    ///   [`HandoffPolicy::HoldFirst`] **and** the session has a live engage
+    ///   path — every engage issues `Verb::Hold` before the intervenor's
+    ///   first action lands. A live engage path is a wired media plane (the
+    ///   teleoperator's clutch) **or** `hold`/`send` registered in
+    ///   `Control` directly: [`grant_and_engage`] is a real, exported,
+    ///   always-live function with zero dependency on `self.media` — a
+    ///   caller that registers `hold`/`send` and drives engage through it
+    ///   directly (its own doc comment names this "local intervention
+    ///   sources", plural) has exactly the same exposure as one wired to a
+    ///   media plane, so this check cannot key on `self.media` alone.
+    ///   "Effective" matters too: `waddle_fsm::begin_engage` silently
+    ///   degrades a declared [`HandoffPolicy::Immediate`] to `HoldFirst` on
+    ///   the very first engage whenever the robot's action space contains a
+    ///   delta component (FSM.md §5 — delta spaces refuse mid-chunk splice
+    ///   entry). This check mirrors that same degrade so a declared-IMMEDIATE
+    ///   session over a delta space cannot build clean and then stall at the
+    ///   first engage exactly like the undegraded case. Only a session that
+    ///   wires no media plane **and** registers neither `hold` nor `send`
+    ///   (the fully descriptors-only / minimal-local case, including the
+    ///   PyO3 shim's all-None-verbs `create_session`) has no build-time
+    ///   visible engage path, so it alone stays buildable without `hold`
+    ///   even under the default `HoldFirst` policy — see the safety note on
+    ///   [`grant_and_engage`] for why that residual shape is still the
+    ///   caller's own responsibility if they invoke it directly.
+    /// - `send`: required under that same live-engage-path condition,
+    ///   independent of handoff policy — the bypass pump can drive
+    ///   `Verb::Send` directly once a claimed loop stalls (see
+    ///   `pumps::spawn_bypass_pump`), and reaching "claimed" needs nothing
+    ///   more than the same `grant_and_engage` call.
     /// - `estop`: never build-fatal (an integrator legitimately without
     ///   hardware estop must still be able to build a session) but the
     ///   degradation is recorded on [`crate::Status::estop_unregistered`]
@@ -195,7 +207,15 @@ impl SessionBuilder {
         let robot_pb = self.robot.ok_or(RuntimeError::MissingRobot)?;
         let robot = RobotDescription::try_from(&robot_pb)?;
 
-        if self.media.is_some() {
+        // A live engage path: a wired media plane, or `hold`/`send`
+        // registered directly. `grant_and_engage` doesn't consult
+        // `self.media` at all, so registering either verb without media is
+        // just as live a path into the same HOLD_FIRST engage handshake as
+        // wiring media is (see the `build` rustdoc above and the safety
+        // note on `grant_and_engage`).
+        let intervention_wired =
+            self.media.is_some() || self.control.hold.is_some() || self.control.send.is_some();
+        if intervention_wired {
             // Same degrade `begin_engage` applies at engage time (FSM.md
             // §5): under a delta action space, a declared IMMEDIATE becomes
             // HOLD_FIRST for the first engage. Gate the `hold` requirement on
@@ -217,8 +237,9 @@ impl SessionBuilder {
             if self.control.send.is_none() {
                 return Err(RuntimeError::MissingVerb {
                     verb: "send",
-                    required_by: "a wired media plane (bypass/intervention dispatch)",
-                    remedy: "remove the media plane wiring",
+                    required_by: "a wired media plane or a registered `hold` verb \
+                                  (bypass/intervention dispatch)",
+                    remedy: "remove that wiring",
                 });
             }
         }
@@ -650,6 +671,23 @@ impl Episode {
 
 /// Convenience: engage a local claim (used by tests and local intervention
 /// sources; production claims arrive as plane directives).
+///
+/// Safety note: this injects `ClaimGranted`/`Engage` directly onto the
+/// session's event funnel — it has zero dependency on `self.media` or
+/// `self.control` and completely bypasses whatever engage path
+/// `SessionBuilder::build` validated against. `build()` requires a
+/// registered `hold` whenever the effective handoff is `HoldFirst` **and**
+/// the session wires a media plane or registers `hold`/`send` directly; a
+/// session built with none of those (the fully descriptors-only shape, see
+/// the `build` rustdoc) passes that check even under the default
+/// `HOLD_FIRST` policy. Calling `grant_and_engage` on such a session
+/// reproduces the exact "clutch press, nothing happens" stall the check
+/// exists to catch: `Verb::Hold` dispatch fails `NotRegistered` and engage
+/// fails closed until the 10s `EngageTimeout`, with no diagnosable error at
+/// the call site. Callers that drive engage this way — rather than through
+/// a wired media plane — must register `hold` (and, for the same reason,
+/// `send`) themselves; the build-time check cannot see through this call
+/// site to know it will be used.
 pub fn grant_and_engage(session: &Session, claim_id: &str, source: &str, actor: ActorKind) {
     let clock_now = |s: &Session| s.inner.clock.stamp_now().mono_ns();
     session.inject(SessionEvent::ClaimGranted {
