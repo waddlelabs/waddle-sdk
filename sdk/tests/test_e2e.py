@@ -78,12 +78,19 @@ def test_nominal_episode(tmp_path):
 
 
 def test_intervention(tmp_path):
+    # A 6-joint action space: the open runtime carries the RAW teleop stream
+    # (a twist flattens to exactly 6 values — linear xyz + angular xyz,
+    # `pumps::flatten_packet`) and media intake's dims validation (Bug 2)
+    # drops anything that doesn't match the declared action space's width —
+    # retargeting into whatever the real robot's space is is the closed
+    # side's job. A 3-joint robot here would have every pushed packet
+    # rejected at intake before it ever reached the gate.
     session = waddle.init(
-        "py-intervention", _robot(), _control(), recording_dir=tmp_path, _testing=True
+        "py-intervention", _robot(n_joints=6), _control(), recording_dir=tmp_path, _testing=True
     )
 
     with waddle.rollout(task="towel") as ep:
-        a = np.zeros(3)
+        a = np.zeros(6)
         for _ in range(5):
             assert ep.gate(a, a) is a
 
@@ -103,9 +110,6 @@ def test_intervention(tmp_path):
         assert substituted is not None, "teleop stream never substituted"
         assert isinstance(substituted, np.ndarray)
         assert substituted.dtype == np.float64
-        # The open runtime carries the RAW teleop stream (a twist: 6 values);
-        # retargeting into the declared 3-joint space is the closed side's
-        # job. Documented shape, not a promise.
         assert substituted.shape == (6,)
         assert ep.last_gate.kind in ("substitute", "blend")
         assert ep.last_gate.provenance == "teleop"
