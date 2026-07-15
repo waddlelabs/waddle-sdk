@@ -56,7 +56,6 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   interpreter teardown.
 - **waddle-runtime (reset-window actuation + plane directives)**: the
   bypass pump (`pumps::spawn_bypass_pump`) gains a RESET arm — while the
-  bypass pump (`pumps::spawn_bypass_pump`) gains a RESET arm — while the
   mirror shows `GateMode::Reset` with an active claim, due intervention
   actions (teleop via the existing media intake, agent chunks via the new
   plane arm below) are driven straight to `send`, identical mechanics to
