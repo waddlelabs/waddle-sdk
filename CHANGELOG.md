@@ -93,6 +93,31 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   path; it is currently runner-skipped (needs `waddle.v0.reset.phases` +
   `waddle.v0.reset.remote`, neither implemented by `waddle-conformance`
   yet — a D6 conformance-runner task) and will activate once that lands.
+- **Conformance coverage for reset phases + remote reset windows**
+  (`waddle-conformance`): the runner now implements scenario-format.md's
+  reset-phase vocabulary — `SUPPORTED_FEATURES` gains
+  `waddle.v0.reset.phases`/`waddle.v0.reset.remote`; `episode_open` parses
+  the optional `post_reset`/`pre_reset_window`/`post_reset_window` keys; the
+  new inject kinds `post_reset_result`, `reset_window_engage`,
+  `reset_window_complete`; the state-snapshot document gains
+  `episode.post_reset_declared`/`post_reset_failed`/`pinned_outcome` and the
+  top-level `reset_window` document; `GateMode::Reset` now maps to
+  `waddle-gate`'s real `PlanMode::Reset` instead of a Passthrough
+  placeholder. Activating the flags also brought the previously
+  runner-skipped `remote_window_owns_pipeline_result` fixture (added above)
+  online; running it for the first time surfaced an emission-cursor
+  authoring gap (three legitimate transitions never explicitly consumed via
+  `expect_emission`, so a later `expect_no_emission` tripped on one of them)
+  — fixed by adding the missing assertions, with no change to the guard it
+  pins. Nine new fixtures added (`fixtures/behaviors/`), covering FSM.md
+  rows E14–E22 and C6/C7: `post_reset_happy`, `post_reset_failure_flags`,
+  `post_reset_skipped_when_undeclared` (core-only, the additive guarantee),
+  `estop_during_post_reset` (E17), `retake_skips_post_reset` (E18),
+  `post_reset_from_intervention` (E14 from INTERVENTION),
+  `remote_pre_reset_claim_engage_complete` (the full E19→C6→E20→E21 flow,
+  emission order asserted), `remote_post_reset_timeout` (E22), and
+  `remote_reset_wrong_actor_denied` (C6). 23/23 scenarios pass (13 original +
+  the newly-activated `remote_window_owns_pipeline_result` + these 9).
 - New conformance fixture `teleop_dims_mismatch_holds` (`waddle-conformance`,
   gate target): pins the media-intake action-space-validation contract as
   gate-observable — a teleop injection whose flattened width doesn't match
