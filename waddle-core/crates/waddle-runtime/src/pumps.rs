@@ -144,14 +144,26 @@ pub(crate) fn spawn_media_intake(
         .name("waddle-media-intake".into())
         .spawn(move || {
             loop {
-                if mirror.read().shutdown {
+                let status = mirror.read();
+                if status.shutdown {
                     return;
                 }
                 let mut idle = true;
                 if let Ok(Some(packet)) = pose_rx.try_recv_pose() {
                     idle = false;
                     let now = clock.stamp_now().mono_ns();
-                    if let Some(action) = flatten_packet(&packet) {
+                    // Bug 1 (stale-backlog replay): the gate only drains the
+                    // ring in a mode that consumes it (claim active —
+                    // Intervention/Bypass today, a future Reset mode too).
+                    // Pushing while unclaimed just stockpiles a backlog that
+                    // would all be immediately "due" the instant a claim
+                    // engages; drop it at intake instead. The few-ms mirror
+                    // lag between clutch-engage and this thread observing
+                    // `claim_active` is acceptable (one or two 60 Hz
+                    // packets).
+                    if status.claim_active
+                        && let Some(action) = flatten_packet(&packet)
+                    {
                         let _ = stream_tx.push(TimedAction {
                             seq: packet.seq,
                             received: now,

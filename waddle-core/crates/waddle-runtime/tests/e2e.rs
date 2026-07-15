@@ -51,6 +51,40 @@ fn robot() -> pb::RobotDescription {
     }
 }
 
+/// A 6-dim `BaseTwist` robot: matches the `Twist` teleop packets the
+/// intervention tests push (see `flatten_packet`), so the intake dims
+/// validation (Bug 2) never rejects them.
+fn twist_robot() -> pb::RobotDescription {
+    pb::RobotDescription {
+        name: "e2e-twist-bot".into(),
+        robot_id: "e2e-02".into(),
+        cell_id: "cell-e2e".into(),
+        action_space: Some(pb::ActionSpace {
+            space: Some(pb::action_space::Space::BaseTwist(pb::BaseTwist {
+                frame_id: "base".into(),
+                max_linear_mps: None,
+                max_angular_radps: None,
+            })),
+            rate_hz: 50.0,
+            chunking: None,
+            gripper: None,
+        }),
+        grants: vec![
+            pb::Grant {
+                verb: pb::Verb::Hold as i32,
+                declared_latency_bound_ns: Some(50_000_000),
+                ..Default::default()
+            },
+            pb::Grant {
+                verb: pb::Verb::Send as i32,
+                send_interfaces: vec![pb::SpaceKind::BaseTwist as i32],
+                ..Default::default()
+            },
+        ],
+        ..Default::default()
+    }
+}
+
 type SendLog = Arc<Mutex<Vec<(Provenance, Vec<f64>)>>>;
 
 fn registry(send_log: &SendLog) -> ControlRegistry {
@@ -387,5 +421,88 @@ fn claimed_while_stalled_bypass_drives_send_directly() {
         other => panic!("expected NOOP for the stalled loop's tick, got {other:?}"),
     }
 
+    session.shutdown();
+}
+
+/// Bug 1: media intake must gate its ring push on the mirror's claim state.
+/// Poses arriving before any claim exists must be dropped at intake, never
+/// stockpiled and replayed the instant a claim engages.
+#[test]
+fn stale_pre_claim_poses_never_replay_after_engage() {
+    let send_log: SendLog = Arc::new(Mutex::new(Vec::new()));
+    let (media, far) = LoopbackMedia::new();
+    let session = Session::builder("e2e-stale-backlog")
+        .robot(twist_robot())
+        .control(registry(&send_log))
+        .media(media)
+        .build()
+        .unwrap();
+
+    let mut ep = session.start_episode("stale-backlog").unwrap();
+    for _ in 0..5 {
+        let _ = ep.gate(&[0.0; 6], None, None);
+    }
+    wait_for(&session, |s| {
+        matches!(s.episode_state, Some(Phase::Running))
+    });
+
+    let seq = Arc::new(AtomicU32::new(1));
+    let push_twist = |value: f64| {
+        far.push(
+            DataTopic::TeleopPose,
+            &pb::TeleopStreamPacket {
+                t_client_ns: 1,
+                seq: u64::from(seq.fetch_add(1, Ordering::SeqCst)),
+                targets: vec![pb::PartTarget {
+                    part: String::new(),
+                    target: Some(pb::part_target::Target::Twist(pb::Twist {
+                        linear: Some(pb::Vec3 {
+                            x: value,
+                            y: 0.0,
+                            z: 0.0,
+                        }),
+                        angular: Some(pb::Vec3::default()),
+                    })),
+                    gripper: None,
+                }],
+                clutch_engaged: false,
+                inputs: None,
+            },
+        )
+        .unwrap();
+    };
+
+    // A backlog of clearly-stale poses arrives before any claim exists.
+    // None of these may ever be substituted once a claim engages.
+    for i in 0..200 {
+        push_twist(1_000.0 + f64::from(i));
+    }
+    // Give the intake thread a moment to drain the backlog while unclaimed.
+    std::thread::sleep(Duration::from_millis(100));
+
+    grant_and_engage(&session, "claim-stale", "teleop", ActorKind::Teleoperator);
+    wait_for(&session, |s| s.gate_mode == Some(GateMode::Intervention));
+
+    // The one fresh, post-claim pose.
+    push_twist(7.0);
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut first_substitute: Option<Vec<f64>> = None;
+    while Instant::now() < deadline {
+        match ep.gate(&[0.0; 6], None, None) {
+            GateOutput::Substitute { action, .. } | GateOutput::Blend { action, .. } => {
+                first_substitute = Some(action.values.to_vec());
+                break;
+            }
+            _ => std::thread::sleep(Duration::from_millis(5)),
+        }
+    }
+    let values = first_substitute.expect("teleop stream never substituted");
+    assert_eq!(
+        values[0], 7.0,
+        "first substitution must be the fresh post-claim pose, not a stale pre-claim one"
+    );
+
+    ep.terminate(TerminalOutcome::Success, "done");
     session.shutdown();
 }

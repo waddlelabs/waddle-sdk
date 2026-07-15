@@ -142,6 +142,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   when dropped without `shutdown()`, and `terminate` no longer holds the
   episode lock across its blocking wait (other threads' `gate`/`done`
   stay responsive).
+- **Media intake — stale-backlog replay**: intake now pushes a teleop pose
+  into the intervention ring only while a claim is active; previously every
+  pose was queued regardless of claim state, so up to a whole ring's worth
+  of pre-claim poses could all become "due" the instant a claim engaged and
+  replay as stale motion while fresh packets were dropped by the full ring.
 
 ## Stowed changelogs
 
