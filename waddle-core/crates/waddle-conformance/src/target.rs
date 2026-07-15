@@ -800,10 +800,9 @@ impl Target {
             gp.traffic = true;
         }
         // Bug 2: a dims-mismatched injection during an open blend window is
-        // never dispatched — nothing
-        // goes to the ring, and the claim window gets exactly one
-        // Fault{VALIDATION_ERROR} (waddle-fsm's `InterventionRejected`
-        // handling), not one per mismatched packet.
+        // never dispatched — nothing goes to the ring, and the claim
+        // window gets exactly one Fault{VALIDATION_ERROR} (waddle-fsm's
+        // `InterventionRejected` handling), not one per mismatched packet.
         if let Some((dims_got, dims_want)) = rejected {
             self.dispatch(SessionEvent::InterventionRejected {
                 dims_got,
