@@ -96,6 +96,7 @@ pub fn timer_name(id: TimerId) -> &'static str {
         TimerId::EngageTimeout => "engage_timeout",
         TimerId::ChunkBoundaryCap => "chunk_boundary_cap",
         TimerId::HeartbeatStale => "heartbeat_stale",
+        TimerId::ResetWindowTimeout => "reset_window_timeout",
     }
 }
 
@@ -171,6 +172,12 @@ pub fn effect_to_value(effect: &Effect) -> Option<Value> {
         Effect::SetResetUnverified { .. } => {
             json!({ "set_flag": { "flag": "reset_unverified" } })
         }
+        Effect::SetPostResetFailed { .. } => {
+            json!({ "set_flag": { "flag": "post_reset_failed" } })
+        }
+        // The post-reset hook trigger is a runtime seam, not a scenario-visible
+        // effect (the reset pump answers it with a PostResetResult inject).
+        Effect::RunPostReset { .. } => return None,
     };
     Some(json!({ "effect": body }))
 }

@@ -27,6 +27,9 @@ fn running_fsm(cfg: &SessionConfig) -> SessionFsm {
             verification: waddle_types::ResetVerificationMode::Blocking,
             born_claimed: false,
             parent: None,
+            post_reset: false,
+            pre_window: None,
+            post_window: None,
             at: MonoNs(0),
         },
     )

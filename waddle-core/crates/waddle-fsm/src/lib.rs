@@ -25,9 +25,9 @@ pub mod session;
 
 pub use claim::ActiveClaim;
 pub use config::SessionConfig;
-pub use effect::{AfterLease, Effect, PendingLeaseOp};
-pub use episode::{EpisodeState, Phase};
-pub use event::{GrantChangeDirective, MarkKind, ProxySample, SessionEvent, TimerId};
+pub use effect::{AfterLease, Effect, HandbackThen, PendingLeaseOp};
+pub use episode::{EpisodeState, Phase, ResetWindowState};
+pub use event::{GrantChangeDirective, MarkKind, ProxySample, SessionEvent, TimerId, WindowSpec};
 pub use granthealth::GrantHealthEntry;
 pub use lease::{LeaseCmd, LeaseOutcome, LeaseState};
 pub use session::{Rejected, SessionFsm, Step, step};

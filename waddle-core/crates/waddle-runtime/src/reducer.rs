@@ -204,6 +204,12 @@ impl Reducer {
                     verification: mode,
                     born_claimed: true,
                     parent: Some(predecessor),
+                    // Retake successors carry a surviving claim (born-claimed):
+                    // no remote pre-window opens (D7 edge 5). Post-reset config
+                    // is applied by the runtime's start path, not here.
+                    post_reset: false,
+                    pre_window: None,
+                    post_window: None,
                     at: self.clock.stamp_now().mono_ns(),
                 });
             }
@@ -217,6 +223,10 @@ impl Reducer {
                     sc.mark_reset_unverified();
                 }
             }
+            // reset-phases: the sidecar/mirror wiring for these lands with the
+            // runtime reset seams (a later task); the FSM already carries the
+            // full post-reset semantics. Inert here so nothing regresses.
+            Effect::SetPostResetFailed { .. } | Effect::RunPostReset { .. } => {}
             Effect::Emit(event) => {
                 if let Some(sc) = &mut self.sidecar {
                     sc.push_event((*event).clone());

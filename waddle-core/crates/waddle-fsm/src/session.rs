@@ -377,6 +377,7 @@ pub fn step(
             born_claimed,
             parent,
             at,
+            ..
         } => {
             if active {
                 return Err(rejected("one active episode per session (N18)"));
@@ -815,6 +816,9 @@ pub fn step(
                         ));
                     }
                 }
+                // reset-remote lease completions (E20/E21/E22): implemented in
+                // a later commit; no pending op targets them yet.
+                AfterLease::ResetEngageComplete | AfterLease::ResetHandback { .. } => {}
             }
         }
 
@@ -1020,6 +1024,9 @@ pub fn step(
                     }
                 }
             }
+            // reset-remote window deadline (E22): implemented in a later
+            // commit; no window arms this timer yet.
+            TimerId::ResetWindowTimeout => {}
         },
 
         // §6 gate-mode rows: INTERVENTION ⇄ BYPASS -----------------------------
@@ -1079,6 +1086,18 @@ pub fn step(
                      space wants {dims_want}"
                 ),
             ));
+        }
+
+        // reset-phases (flags waddle.v0.reset.phases / .remote): inert until
+        // the post-reset phase and remote windows land in later commits.
+        SessionEvent::PostResetResult { .. } => {
+            return Err(rejected("post_reset_result not yet implemented"));
+        }
+        SessionEvent::ResetWindowEngage { .. } => {
+            return Err(rejected("reset_window_engage not yet implemented"));
+        }
+        SessionEvent::ResetWindowComplete { .. } => {
+            return Err(rejected("reset_window_complete not yet implemented"));
         }
     }
 

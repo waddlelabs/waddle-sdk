@@ -242,6 +242,9 @@ impl Target {
                         verification: mode,
                         born_claimed,
                         parent: Some(predecessor),
+                        post_reset: false,
+                        pre_window: None,
+                        post_window: None,
                         at: self.at(),
                     })?;
                 }
@@ -267,7 +270,11 @@ impl Target {
                     self.timers.push((id, deadline.0));
                 }
                 Effect::CancelTimer { id } => self.timers.retain(|(t, _)| *t != id),
-                Effect::Emit(_) | Effect::ReprimePolicy | Effect::SetResetUnverified { .. } => {}
+                Effect::Emit(_)
+                | Effect::ReprimePolicy
+                | Effect::SetResetUnverified { .. }
+                | Effect::SetPostResetFailed { .. }
+                | Effect::RunPostReset { .. } => {}
             }
         }
         Ok(())
@@ -480,6 +487,11 @@ impl Target {
                     verification,
                     born_claimed,
                     parent,
+                    // Post-reset / reset-window payload parsing (D6) lands with
+                    // the conformance-runner task; undeclared until then.
+                    post_reset: false,
+                    pre_window: None,
+                    post_window: None,
                     at,
                 })?;
             }

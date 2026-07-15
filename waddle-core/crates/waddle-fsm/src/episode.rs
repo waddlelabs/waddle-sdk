@@ -1,8 +1,11 @@
 //! Episode state (FSM.md §1).
 
 use waddle_types::{
-    EpisodeId, EpisodeStateKind, InterventionPhase, ResetVerificationMode, TerminalOutcome,
+    ActorKind, EpisodeId, EpisodeStateKind, InterventionPhase, ResetKind, ResetVerificationMode,
+    TerminalOutcome,
 };
+
+use crate::event::WindowSpec;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum Phase {
@@ -11,6 +14,10 @@ pub enum Phase {
     Running,
     Intervention(InterventionPhase),
     Terminal(TerminalOutcome),
+    /// Post-run scene cleanup INSIDE the finishing episode (flag
+    /// `waddle.v0.reset.phases`). The terminal outcome is pinned before entry
+    /// and never changed here (FSM.md §1.3, rows E14–E18).
+    PostReset,
 }
 
 impl Phase {
@@ -22,6 +29,7 @@ impl Phase {
             Self::Running => EpisodeStateKind::Running,
             Self::Intervention(_) => EpisodeStateKind::Intervention,
             Self::Terminal(_) => EpisodeStateKind::Terminal,
+            Self::PostReset => EpisodeStateKind::PostReset,
         }
     }
 
@@ -29,6 +37,20 @@ impl Phase {
     pub fn is_terminal(&self) -> bool {
         matches!(self, Self::Terminal(_))
     }
+}
+
+/// A remote reset window currently open on the episode (flag
+/// `waddle.v0.reset.remote`, rows E19–E22). Present only while a window is
+/// OPEN or ENGAGED; cleared when the window closes (complete/timeout/estop).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct ResetWindowState {
+    /// PRE (in RESETTING) or POST (in POST_RESET).
+    pub kind: ResetKind,
+    /// The actor the plane expects to perform the reset (C6 admission).
+    pub expected: ActorKind,
+    /// The reset claimant has engaged (lease → claimant, gate → RESET).
+    pub engaged: bool,
+    pub prompt: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -48,6 +70,21 @@ pub struct EpisodeState {
     /// The episode left RESETTING optimistically (eligible for late
     /// invalidation).
     pub optimistic_entry: bool,
+    /// A post-reset pipeline (hook or remote window) runs before TERMINAL
+    /// (flag `waddle.v0.reset.phases`). Undeclared episodes leave this false
+    /// and behave exactly per E1–E13.
+    pub post_reset_declared: bool,
+    /// The terminal outcome fixed at POST_RESET entry (E14); the →TERMINAL
+    /// transition after cleanup carries it unchanged (E15–E17).
+    pub pinned_outcome: Option<TerminalOutcome>,
+    /// PERMANENT once set (E16/E17): post-reset cleanup failed or was
+    /// estopped. NEVER alters the pinned outcome.
+    pub post_reset_failed: bool,
+    /// The remote reset window currently open (E19–E22), if any.
+    pub reset_window: Option<ResetWindowState>,
+    /// The declared POST reset remote window, stashed at open so E14 can open
+    /// it. `None` means the post-reset pipeline (if declared) is a hook.
+    pub post_window: Option<WindowSpec>,
 }
 
 impl EpisodeState {
@@ -68,6 +105,11 @@ impl EpisodeState {
             reset_ok: false,
             verified: false,
             optimistic_entry: false,
+            post_reset_declared: false,
+            pinned_outcome: None,
+            post_reset_failed: false,
+            reset_window: None,
+            post_window: None,
         }
     }
 }

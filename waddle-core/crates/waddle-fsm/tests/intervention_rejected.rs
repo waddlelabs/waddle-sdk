@@ -22,6 +22,9 @@ fn opened_fsm() -> (SessionConfig, SessionFsm) {
             verification: ResetVerificationMode::Blocking,
             born_claimed: false,
             parent: None,
+            post_reset: false,
+            pre_window: None,
+            post_window: None,
             at: MonoNs(0),
         },
     )

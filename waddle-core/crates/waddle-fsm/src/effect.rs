@@ -33,6 +33,27 @@ pub enum AfterLease {
     /// Release completes: gate flips to PASSTHROUGH, phase → RUNNING,
     /// claim released.
     ReleaseComplete,
+    /// A remote reset claimant's lease routed in (E20): gate flips to RESET,
+    /// the window is marked ENGAGED.
+    ResetEngageComplete,
+    /// The reset window's lease handed back to the loop client (E21/E22).
+    /// Deferred-apply: only after the lease is back does the gate drop to
+    /// PASSTHROUGH, the claim release (C7), and `then` apply the result — so
+    /// the next `EpisodeOpen` finds the lease non-vacant is impossible.
+    ResetHandback { then: HandbackThen },
+}
+
+/// What applies after a reset-window lease handback completes (E21/E22).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HandbackThen {
+    /// PRE window: apply the reset result as the pre-reset pipeline (E2–E5).
+    ApplyPreResult { ok: bool, verified: Option<bool> },
+    /// POST window: apply the reset result as the post-reset pipeline
+    /// (E15/E16).
+    ApplyPostResult { ok: bool },
+    /// The window timed out (E22): abort (pre) / pinned + failed (post).
+    TimeoutClose,
 }
 
 #[derive(Debug)]
@@ -66,6 +87,16 @@ pub enum Effect {
     ReprimePolicy,
     /// The permanent `reset_unverified` flag was set retroactively (N12).
     SetResetUnverified {
+        episode: EpisodeId,
+    },
+    /// The permanent `post_reset_failed` flag was set (E16/E17): post-reset
+    /// cleanup failed or was estopped. NEVER alters the pinned outcome.
+    SetPostResetFailed {
+        episode: EpisodeId,
+    },
+    /// Run the declared post-reset hook pipeline (E14, hook variant). The
+    /// runtime answers with `SessionEvent::PostResetResult`.
+    RunPostReset {
         episode: EpisodeId,
     },
     /// An `EpisodeEvent` for the session event stream (sidecar, recorder,

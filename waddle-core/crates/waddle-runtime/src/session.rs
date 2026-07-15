@@ -508,6 +508,11 @@ impl Session {
             verification: self.inner.verification_mode,
             born_claimed: false,
             parent: None,
+            // Post-reset declaration / remote windows are wired by the runtime
+            // reset seams (a later task); undeclared for now.
+            post_reset: false,
+            pre_window: None,
+            post_window: None,
             at: now,
         });
 

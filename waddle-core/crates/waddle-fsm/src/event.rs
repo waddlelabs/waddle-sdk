@@ -14,6 +14,21 @@ pub enum TimerId {
     EngageTimeout,
     ChunkBoundaryCap,
     HeartbeatStale,
+    /// A remote reset window's deadline (flag `waddle.v0.reset.remote`, E19);
+    /// firing drives E22 (window not completed in time).
+    ResetWindowTimeout,
+}
+
+/// A declared remote reset window (flag `waddle.v0.reset.remote`). Carried on
+/// `EpisodeOpen` for the PRE window (opened immediately) and stashed for the
+/// POST window (opened at E14).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct WindowSpec {
+    /// The actor the plane expects to perform the reset (C6 admission).
+    pub expected: ActorKind,
+    pub prompt: String,
+    /// Deadline offset from window open; arms `ResetWindowTimeout`.
+    pub timeout_ns: i64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,6 +87,15 @@ pub enum SessionEvent {
         verification: ResetVerificationMode,
         born_claimed: bool,
         parent: Option<EpisodeId>,
+        /// A post-reset pipeline runs before TERMINAL (flag
+        /// `waddle.v0.reset.phases`). `post_window` being set also implies a
+        /// declared post-reset (a remote one); `post_reset` alone means a
+        /// hook.
+        post_reset: bool,
+        /// A remote PRE reset window to open on entry to RESETTING (E19).
+        pre_window: Option<WindowSpec>,
+        /// A remote POST reset window, stashed for E14 to open.
+        post_window: Option<WindowSpec>,
         at: MonoNs,
     },
     /// The reset pipeline reported. `verified` carries an inline
@@ -214,6 +238,29 @@ pub enum SessionEvent {
         dims_want: usize,
         at: MonoNs,
     },
+    /// The post-reset pipeline reported (flag `waddle.v0.reset.phases`, rows
+    /// E15/E16). Legal only in POST_RESET.
+    PostResetResult {
+        ok: bool,
+        detail: String,
+        at: MonoNs,
+    },
+    /// A granted reset claim engages the open window (flag
+    /// `waddle.v0.reset.remote`, E20): the lease routes to the claimant and
+    /// the gate flips to RESET.
+    ResetWindowEngage {
+        claim: ClaimId,
+        at: MonoNs,
+    },
+    /// The remote actor finished (flag `waddle.v0.reset.remote`, E21): lease
+    /// hands back, the window closes, and the result applies as if from the
+    /// pipeline.
+    ResetWindowComplete {
+        claim: ClaimId,
+        ok: bool,
+        verified: Option<bool>,
+        at: MonoNs,
+    },
 }
 
 impl SessionEvent {
@@ -248,7 +295,10 @@ impl SessionEvent {
             | Self::StallDetected { at }
             | Self::TicksResumed { at }
             | Self::DualWrite { at, .. }
-            | Self::InterventionRejected { at, .. } => *at,
+            | Self::InterventionRejected { at, .. }
+            | Self::PostResetResult { at, .. }
+            | Self::ResetWindowEngage { at, .. }
+            | Self::ResetWindowComplete { at, .. } => *at,
         }
     }
 }

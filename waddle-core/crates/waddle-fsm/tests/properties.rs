@@ -198,6 +198,9 @@ impl Driver {
                                 verification: *mode,
                                 born_claimed: true,
                                 parent: self.state.episode.as_ref().map(|e| e.id.clone()),
+                                post_reset: false,
+                                pre_window: None,
+                                post_window: None,
                                 at: self.tick(),
                             });
                         }
@@ -285,6 +288,9 @@ impl Driver {
                     },
                     born_claimed: false,
                     parent: None,
+                    post_reset: false,
+                    pre_window: None,
+                    post_window: None,
                     at,
                 }
             }

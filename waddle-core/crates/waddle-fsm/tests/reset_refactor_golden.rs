@@ -96,6 +96,8 @@ fn render(effect: &Effect) -> String {
         Effect::OpenSuccessor { .. } => "open_successor".to_owned(),
         Effect::ReprimePolicy => "reprime".to_owned(),
         Effect::SetResetUnverified { .. } => "set_reset_unverified".to_owned(),
+        Effect::SetPostResetFailed { .. } => "set_post_reset_failed".to_owned(),
+        Effect::RunPostReset { .. } => "run_post_reset".to_owned(),
     }
 }
 
@@ -106,6 +108,9 @@ fn open_reset_run(d: &mut Driver) {
         verification: ResetVerificationMode::Blocking,
         born_claimed: false,
         parent: None,
+        post_reset: false,
+        pre_window: None,
+        post_window: None,
         at,
     });
     let at = d.tick();
