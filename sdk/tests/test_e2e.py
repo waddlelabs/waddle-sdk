@@ -169,6 +169,20 @@ def test_init_twice_raises(tmp_path):
         waddle.init("py-twice-2", _robot(), _control())
 
 
+def test_missing_hold_verb_under_hold_first_raises_actionable_error(tmp_path):
+    # No `hold`: the build-time verb-registration check (Task 3) must
+    # surface as a clear, actionable Python exception naming both the
+    # missing verb and the fix — not a 10s engage timeout with nothing to
+    # diagnose it.
+    control = waddle.Control(send=lambda chunk: None)
+    with pytest.raises(RuntimeError) as exc_info:
+        waddle.init("py-missing-hold", _robot(), control, recording_dir=tmp_path)
+    message = str(exc_info.value)
+    assert "hold" in message
+    assert "HOLD_FIRST" in message
+    assert "choose a different handoff policy" in message
+
+
 def test_nested_rollout_raises(tmp_path):
     waddle.init("py-nested", _robot(), _control())
     with waddle.rollout(task="outer") as ep:
