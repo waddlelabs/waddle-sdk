@@ -18,9 +18,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   action space is never dispatched, `gate_tick` returns hold however many
   mismatched packets arrive in the blend window, exactly one
   `Fault{FAULT_KIND_VALIDATION_ERROR}` fires per claim window, and a
-  subsequent dims-correct packet still substitutes normally.
-  `waddle-protocol/docs/FSM.md` §5 (IMMEDIATE{blend_ns}) now states the
-  dims-mismatch contract explicitly.
+  subsequent dims-correct packet still substitutes normally. FSM.md §5
+  (IMMEDIATE{blend_ns}) now states the dims-mismatch contract explicitly.
 - **waddle-core (obs logging)**: `gate()` now takes the observation the
   caller computed its action from (`obs: Option<&[f64]>`) and records it on
   every decision arm — Pass records are the training pairs;
@@ -180,10 +179,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 - **Conformance runner — `teleop_action` injection only read the first part
   target**: `waddle-conformance`'s scripted intervention-stream flattening
   now concatenates every part target in packet order (pose → 7 values
-  wxyz, twist → 6), matching production `flatten_packet` semantics
-  (`waddle-runtime/src/pumps.rs`). `scenario-format.md`'s `teleop_action`
-  payload never pinned "first target only"; the narrower reading was a
-  runner defect, surfaced by the media-intake dims-validation fix above.
+  wxyz, twist → 6), matching production `flatten_packet` semantics.
+  `scenario-format.md`'s `teleop_action` payload never pinned "first target
+  only"; the narrower reading was a runner defect, surfaced by the
+  media-intake dims-validation fix above.
 - **GripperSpec never applied**: the teleop gripper command (normalized
   0..1, 1 = open — the media-plane convention) is now mapped through the
   session's declared `GripperSpec` at intake — linearly onto
