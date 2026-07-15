@@ -740,10 +740,6 @@ impl Session {
             }
         }
 
-        if inline_pre {
-            *self.inner.inline_reset_owner.lock() = None;
-        }
-
         let status = self.inner.mirror.wait_until(|s| {
             s.episode_id.as_ref() == Some(&id)
                 && matches!(
@@ -751,6 +747,16 @@ impl Session {
                     Some(Phase::Ready | Phase::Terminal(_)) | None
                 )
         });
+        // Only clear the guard once the reducer has actually observed the
+        // episode leaving RESETTING (confirmed via the mirror, not merely
+        // "we finished sending the events") — `inject` is fire-and-forget,
+        // so clearing this any earlier (e.g. right after the ResetResult
+        // send above) would reopen the window the guard exists to close: a
+        // pump thread could see `Phase::Resetting` with the guard already
+        // cleared and double-service an episode this call is still driving.
+        if inline_pre {
+            *self.inner.inline_reset_owner.lock() = None;
+        }
         if status.shutdown {
             return Err(RuntimeError::ShuttingDown);
         }
