@@ -157,7 +157,15 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   PyO3 shim's all-None-verbs `create_session`) are unaffected and stay
   buildable. A missing `estop` is deliberately never build-fatal, but the
   degradation is now recorded on the status mirror
-  (`Status::estop_unregistered`) so it stays observable.
+  (`Status::estop_unregistered`) so it stays observable. The `hold` check
+  reasons about the *effective* handoff policy, not the raw declared enum
+  variant: `waddle_fsm::begin_engage` silently degrades a declared
+  `HandoffPolicy::Immediate` to HOLD_FIRST on the very first engage whenever
+  the robot's action space contains a delta component (FSM.md §5 — delta
+  spaces refuse mid-chunk splice entry), so `build()` now applies that same
+  degrade before checking `hold`, closing a gap where a declared-IMMEDIATE
+  session over an `EePoseDelta`/composite-with-delta space built clean and
+  then stalled at the first engage the same way the undegraded bug did.
 - The task passed to `Session::start_episode` now reaches the episode
   sidecar (it was previously dropped after the reset hook; sidecars always
   recorded an empty task).

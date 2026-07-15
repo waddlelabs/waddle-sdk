@@ -89,6 +89,45 @@ fn twist_robot(gripper: Option<pb::GripperSpec>) -> pb::RobotDescription {
     }
 }
 
+/// A delta action space (`EePoseDelta`): FSM.md §5 refuses mid-chunk splice
+/// entry for delta spaces, so `begin_engage` silently degrades a declared
+/// `HandoffPolicy::Immediate` to `HoldFirst` on the very first engage
+/// (`waddle-fsm/src/session.rs`). Used to pin that the build-time `hold`
+/// check reasons about this *effective* policy, not the raw declared enum
+/// variant.
+fn ee_delta_robot() -> pb::RobotDescription {
+    pb::RobotDescription {
+        name: "e2e-delta-bot".into(),
+        robot_id: "e2e-03".into(),
+        cell_id: "cell-e2e".into(),
+        action_space: Some(pb::ActionSpace {
+            space: Some(pb::action_space::Space::EeDelta(pb::EePoseDelta {
+                frame_id: "base".into(),
+                rotation_encoding: pb::RotationEncoding::QuatWxyz as i32,
+                delta_frame: pb::DeltaFrame::Base as i32,
+                max_linear_step_m: None,
+                max_angular_step_rad: None,
+            })),
+            rate_hz: 50.0,
+            chunking: None,
+            gripper: None,
+        }),
+        grants: vec![
+            pb::Grant {
+                verb: pb::Verb::Hold as i32,
+                declared_latency_bound_ns: Some(50_000_000),
+                ..Default::default()
+            },
+            pb::Grant {
+                verb: pb::Verb::Send as i32,
+                send_interfaces: vec![pb::SpaceKind::EePoseDelta as i32],
+                ..Default::default()
+            },
+        ],
+        ..Default::default()
+    }
+}
+
 type SendLog = Arc<Mutex<Vec<(Provenance, Vec<f64>)>>>;
 
 fn registry(send_log: &SendLog) -> ControlRegistry {
@@ -1010,6 +1049,46 @@ fn build_ok_with_immediate_handoff_and_no_hold() {
         .build()
         .expect("IMMEDIATE handoff never requires hold");
     session.shutdown();
+}
+
+/// Bug 4 (delta-space degrade): FSM.md §5 refuses mid-chunk splice entry for
+/// delta action spaces, so `waddle_fsm::begin_engage` silently degrades a
+/// declared `HandoffPolicy::Immediate` to `HoldFirst` on the very first
+/// engage whenever `space_contains_delta` is set (see
+/// `waddle-fsm/src/session.rs`, and the conformance fixture
+/// `handoff_immediate_mid_chunk.json`, which deliberately picks a
+/// joint-position composite space to *avoid* this same degrade). The
+/// build-time `hold` check above (`build_ok_with_immediate_handoff_and_no_hold`)
+/// must not be fooled by the raw declared policy: over an `EePoseDelta`
+/// space, declared IMMEDIATE + no `hold` is the exact bug this task closes,
+/// just reached through the declared-IMMEDIATE path instead of the
+/// declared-HOLD_FIRST default — it must fail the build the same way.
+#[test]
+fn build_fails_fast_when_immediate_over_delta_space_and_no_hold() {
+    let (media, _far) = LoopbackMedia::new();
+    let registry = ControlRegistry {
+        send: Some(Arc::new(
+            |_chunk: &waddle_types::ActionChunk| -> Result<(), VerbError> { Ok(()) },
+        )),
+        ..Default::default()
+    };
+    let err = Session::builder("e2e-immediate-delta-missing-hold")
+        .robot(ee_delta_robot())
+        .control(registry)
+        .media(media)
+        .handoff(HandoffPolicy::Immediate { blend_ns: 0 })
+        .build()
+        .expect_err(
+            "IMMEDIATE over a delta space degrades to HOLD_FIRST at engage \
+             and must require hold at build time",
+        );
+    assert!(
+        matches!(
+            &err,
+            RuntimeError::MissingVerb { verb, .. } if *verb == "hold"
+        ),
+        "expected MissingVerb{{verb: \"hold\", ..}}, got {err:?}"
+    );
 }
 
 /// Bug 4 (send side): the bypass pump can drive `Verb::Send` directly once a

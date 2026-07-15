@@ -168,14 +168,21 @@ impl SessionBuilder {
     /// actually dispatch each verb, so a missing callable fails loudly here
     /// instead of silently the first time something requests it:
     ///
-    /// - `hold`: required whenever the handoff policy is
+    /// - `hold`: required whenever the *effective* handoff policy is
     ///   [`HandoffPolicy::HoldFirst`] **and** a media plane is wired — every
     ///   engage issues `Verb::Hold` before the intervenor's first action
     ///   lands (the teleoperator's clutch is the real engage path a media
-    ///   plane gives). A session with no media plane has no such path (the
-    ///   descriptors-only / minimal-local case, including the PyO3 shim's
-    ///   all-None-verbs `create_session`), so it stays buildable without
-    ///   `hold` even under the default `HoldFirst` policy.
+    ///   plane gives). "Effective" matters: `waddle_fsm::begin_engage`
+    ///   silently degrades a declared [`HandoffPolicy::Immediate`] to
+    ///   `HoldFirst` on the very first engage whenever the robot's action
+    ///   space contains a delta component (FSM.md §5 — delta spaces refuse
+    ///   mid-chunk splice entry). This check mirrors that same degrade so a
+    ///   declared-IMMEDIATE session over a delta space cannot build clean and
+    ///   then stall at the first engage exactly like the undegraded case. A
+    ///   session with no media plane has no such path (the descriptors-only
+    ///   / minimal-local case, including the PyO3 shim's all-None-verbs
+    ///   `create_session`), so it stays buildable without `hold` even under
+    ///   the default `HoldFirst` policy.
     /// - `send`: required whenever a media plane is wired, independent of
     ///   handoff policy — the bypass pump can drive `Verb::Send` directly
     ///   once a claimed loop stalls (see `pumps::spawn_bypass_pump`).
@@ -185,8 +192,22 @@ impl SessionBuilder {
     ///   so it stays observable rather than surfacing only as a
     ///   `VerbError::NotRegistered` the first time something requests one.
     pub fn build(self) -> Result<Session, RuntimeError> {
+        let robot_pb = self.robot.ok_or(RuntimeError::MissingRobot)?;
+        let robot = RobotDescription::try_from(&robot_pb)?;
+
         if self.media.is_some() {
-            if matches!(self.handoff, HandoffPolicy::HoldFirst) && self.control.hold.is_none() {
+            // Same degrade `begin_engage` applies at engage time (FSM.md
+            // §5): under a delta action space, a declared IMMEDIATE becomes
+            // HOLD_FIRST for the first engage. Gate the `hold` requirement on
+            // that effective policy, not the raw declared enum variant.
+            let effective_handoff = match self.handoff {
+                HandoffPolicy::Immediate { .. } if robot.action_space.contains_delta() => {
+                    HandoffPolicy::HoldFirst
+                }
+                other => other,
+            };
+            if matches!(effective_handoff, HandoffPolicy::HoldFirst) && self.control.hold.is_none()
+            {
                 return Err(RuntimeError::MissingVerb {
                     verb: "hold",
                     required_by: "handoff HOLD_FIRST",
@@ -202,9 +223,6 @@ impl SessionBuilder {
             }
         }
         let estop_unregistered = self.control.estop.is_none();
-
-        let robot_pb = self.robot.ok_or(RuntimeError::MissingRobot)?;
-        let robot = RobotDescription::try_from(&robot_pb)?;
 
         let clock = SessionClock::capture();
         let session_id = SessionId::new(uuid::Uuid::new_v4().to_string());
