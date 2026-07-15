@@ -12,6 +12,44 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 ## [Unreleased]
 
 ### Added
+- **waddle-runtime (reset config surface)**: the first runtime seam for
+  reset phases (`waddle-core/crates/waddle-runtime`) — `ResetSpec { Hook(ResetHook) |
+  Remote { actor, prompt, timeout_ns } }`; `SessionBuilder::pre_reset`/
+  `post_reset` (declaring `post_reset` at all — either variant — is what
+  makes an episode detour through `Phase::PostReset`, FSM.md row E14) and
+  the previously-missing `verification_mode` setter; `reset_hook` stays as
+  an alias for `pre_reset(ResetSpec::Hook(hook))`, now `#[deprecated]` since
+  no internal caller exists anywhere in the workspace that would need
+  migrating first. `EpisodeOptions {
+  pre_reset: Option<Option<ResetSpec>>, post_reset: Option<Option<ResetSpec>> }`
+  (outer `None` inherits the session default, inner `None` disables that
+  phase for this episode only) plus `Session::start_episode_with`, with
+  `start_episode` now a thin default-options delegate. `start_episode_with`
+  resolves the effective pre/post specs and injects them onto
+  `EpisodeOpen`; a `Hook` (or no spec at all) runs inline on the caller
+  thread exactly as before; a `Remote` pre-spec skips the hook/`ResetResult`
+  injection entirely and lets the FSM's window machinery (rows E19–E22)
+  drive RESETTING to READY or Terminal on its own — no runtime-side
+  timeout is added, the FSM window timer owns it. New
+  `inline_reset_owner: Mutex<Option<EpisodeId>>` on `SessionInner`, set
+  before `EpisodeOpen` for every inline pre-reset path and cleared when the
+  call returns, for the reset pump (a later task) to consult so it never
+  double-services an episode `start_episode_with` already handled. New
+  guard: a predecessor episode that has reached `Phase::PostReset` (its own
+  cleanup, past the pinned outcome) is waited out to Terminal and opened
+  over instead of erroring `EpisodeActive` — POST_RESET self-resolves, so
+  back-to-back rollouts started without an explicit `terminate` + wait no
+  longer race the guard. The `Register` feature-flag declaration always
+  includes `waddle.v0.reset` (alongside the existing unconditional
+  `waddle.v0.core`) and adds `waddle.v0.reset.phases`/`.remote` whenever the
+  session-level config declares a matching spec; per-episode `Remote`
+  overrides can only narrow what the session already declared, never widen
+  it (documented on `EpisodeOptions`, not runtime-enforced — the simpler of
+  the two options the brief offered). The reset pump (the actual hook
+  invocation for post-reset, and the successor-episode fix for
+  reducer-opened retakes), the RESET bypass-pump arm, and
+  `forward_server_msg` window handling are explicitly out of scope here —
+  reducer/mirror fields are untouched.
 - **waddle-protocol (reset-phases vocabulary, inert)**: two new feature
   flags, `waddle.v0.reset.phases` and `waddle.v0.reset.remote` (registered
   in `VERSIONING.md`), gate the wire vocabulary for pre/post-reset phases
