@@ -13,7 +13,11 @@ use crate::{ConformanceError, scenario_err};
 pub const FORMAT: &str = "waddle.behavior/v0";
 /// Feature flags this runner implements; scenarios requiring anything else
 /// are skipped, not failed (scenario-format.md).
-pub const SUPPORTED_FEATURES: &[&str] = &["waddle.v0.core"];
+pub const SUPPORTED_FEATURES: &[&str] = &[
+    "waddle.v0.core",
+    "waddle.v0.reset.phases",
+    "waddle.v0.reset.remote",
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TargetKind {

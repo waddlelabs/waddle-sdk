@@ -27,11 +27,14 @@
     { "expect_emission": { "event": { "resetWindow": { "kind": "RESET_WINDOW_EVENT_KIND_ENGAGED" } }, "within_ns": "0" } },
 
     { "inject": { "kind": "reset_window_complete", "claim_id": "claim-e19b-pre", "result": { "ok": true, "verification": { "mode": "RESET_VERIFICATION_MODE_BLOCKING", "verified": true, "judgeId": "judge-reset", "judgeVersion": "2.1.0", "tNs": "200000000" } } } },
+    { "expect_emission": { "event": { "state": { "to": "EPISODE_STATE_READY" } }, "within_ns": "0" } },
     { "expect_state": { "episode.state": "EPISODE_STATE_READY", "gate.mode": "GATE_MODE_PASSTHROUGH", "claim.active_claim_id": "", "reset_window.open": false } },
 
     { "inject": { "kind": "start" } },
+    { "expect_emission": { "event": { "state": { "to": "EPISODE_STATE_RUNNING" } }, "within_ns": "0" } },
     { "expect_state": { "episode.state": "EPISODE_STATE_RUNNING" } },
     { "inject": { "kind": "terminate", "outcome": "TERMINAL_OUTCOME_SUCCESS", "reason": "task done" } },
+    { "expect_emission": { "event": { "state": { "to": "EPISODE_STATE_POST_RESET", "outcome": "TERMINAL_OUTCOME_SUCCESS" } }, "within_ns": "0" } },
     { "expect_state": { "episode.state": "EPISODE_STATE_POST_RESET", "episode.pinned_outcome": "TERMINAL_OUTCOME_SUCCESS", "reset_window.open": true, "reset_window.kind": "RESET_KIND_POST" } },
 
     { "advance_ns": "100000000" },

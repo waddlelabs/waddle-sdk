@@ -15,6 +15,7 @@ use waddle_fsm::effect::Effect;
 use waddle_fsm::session::EngageStage;
 use waddle_fsm::{
     GrantChangeDirective, MarkKind, ProxySample, SessionConfig, SessionEvent, SessionFsm, TimerId,
+    WindowSpec,
 };
 use waddle_gate::gate::GateShared;
 use waddle_gate::{
@@ -295,10 +296,13 @@ impl Target {
                 mode: PlanMode::Bypass { provenance },
                 since: MonoNs(self.now),
             },
-            // reset-phases: behavior lands with the FSM change on this
-            // branch; nothing emits GateMode::Reset yet, so this is
-            // unreachable today. Passthrough is the safe placeholder.
-            GateMode::Reset => GatePlan::passthrough(MonoNs(self.now)),
+            // A remote actor is driving the reset through the SDK; every
+            // caller tick gets a Noop{RESET_ACTIVE} (waddle-gate's
+            // `PlanMode::Reset` arm), mirroring `Bypass`'s shape.
+            GateMode::Reset => GatePlan {
+                mode: PlanMode::Reset { provenance },
+                since: MonoNs(self.now),
+            },
         };
         gp.shared.store_plan(plan);
     }
@@ -482,16 +486,26 @@ impl Target {
                     .get("parent_episode_id")
                     .and_then(Value::as_str)
                     .map(EpisodeId::new);
+                let post_reset = payload
+                    .get("post_reset")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let pre_window = payload
+                    .get("pre_reset_window")
+                    .map(|v| self.parse_window_spec(v))
+                    .transpose()?;
+                let post_window = payload
+                    .get("post_reset_window")
+                    .map(|v| self.parse_window_spec(v))
+                    .transpose()?;
                 self.dispatch(SessionEvent::EpisodeOpen {
                     id: EpisodeId::new(id),
                     verification,
                     born_claimed,
                     parent,
-                    // Post-reset / reset-window payload parsing (D6) lands with
-                    // the conformance-runner task; undeclared until then.
-                    post_reset: false,
-                    pre_window: None,
-                    post_window: None,
+                    post_reset,
+                    pre_window,
+                    post_window,
                     at,
                 })?;
             }
@@ -714,6 +728,33 @@ impl Target {
                 self.dispatch(SessionEvent::PartitionEnd { at })?;
             }
             "proprio_sample" => self.inject_proprio_sample(payload)?,
+            "post_reset_result" => {
+                let result: pb::ResetResult =
+                    self.parse_payload(payload, "result", "waddle.v0.ResetResult")?;
+                self.dispatch(SessionEvent::PostResetResult {
+                    ok: result.ok,
+                    detail: result.detail.clone(),
+                    at,
+                })?;
+            }
+            "reset_window_engage" => {
+                let claim = str_field(payload, "claim_id")?;
+                self.dispatch(SessionEvent::ResetWindowEngage {
+                    claim: ClaimId::new(claim),
+                    at,
+                })?;
+            }
+            "reset_window_complete" => {
+                let claim = str_field(payload, "claim_id")?;
+                let result: pb::ResetResult =
+                    self.parse_payload(payload, "result", "waddle.v0.ResetResult")?;
+                self.dispatch(SessionEvent::ResetWindowComplete {
+                    claim: ClaimId::new(claim),
+                    ok: result.ok,
+                    verified: result.verification.as_ref().map(|v| v.verified),
+                    at,
+                })?;
+            }
             other => {
                 // Closed set (scenario-format.md): unknown kinds are a
                 // scenario error, never silently ignored.
@@ -883,6 +924,30 @@ impl Target {
         self.codec.parse(full_name, value)
     }
 
+    /// Parse an `episode_open` window declaration (`{expected_actor, prompt?,
+    /// timeout_ns}`, scenario-format.md's `pre_reset_window`/
+    /// `post_reset_window` keys).
+    fn parse_window_spec(&self, value: &Value) -> Result<WindowSpec, ConformanceError> {
+        let obj = value
+            .as_object()
+            .ok_or_else(|| scenario_err("reset window spec must be an object"))?;
+        let expected = parse_actor_kind(str_field(obj, "expected_actor")?)?;
+        let prompt = obj
+            .get("prompt")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned();
+        let timeout_ns = parse_ns(
+            obj.get("timeout_ns")
+                .ok_or_else(|| scenario_err("reset window spec missing \"timeout_ns\""))?,
+        )?;
+        Ok(WindowSpec {
+            expected,
+            prompt,
+            timeout_ns,
+        })
+    }
+
     fn default_dims(&self) -> usize {
         self.gate
             .as_ref()
@@ -930,6 +995,11 @@ impl Target {
                     waddle_fsm::Phase::Intervention(p) => intervention_phase_name(p),
                     _ => pb::InterventionPhase::Unspecified.as_str_name(),
                 };
+                let pinned_outcome = ep
+                    .pinned_outcome
+                    .map_or(pb::TerminalOutcome::Unspecified.as_str_name(), |o| {
+                        o.to_pb().as_str_name()
+                    });
                 json!({
                     "id": ep.id.as_str(),
                     "state": ep.phase.kind().to_pb().as_str_name(),
@@ -938,6 +1008,9 @@ impl Target {
                     "born_claimed": ep.born_claimed,
                     "reset_unverified": ep.reset_unverified,
                     "parent_episode_id": ep.parent.as_ref().map_or("", |p| p.as_str()),
+                    "post_reset_declared": ep.post_reset_declared,
+                    "post_reset_failed": ep.post_reset_failed,
+                    "pinned_outcome": pinned_outcome,
                 })
             }
             None => json!({
@@ -948,6 +1021,28 @@ impl Target {
                 "born_claimed": false,
                 "reset_unverified": false,
                 "parent_episode_id": "",
+                "post_reset_declared": false,
+                "post_reset_failed": false,
+                "pinned_outcome": pb::TerminalOutcome::Unspecified.as_str_name(),
+            }),
+        };
+        let reset_window = match self
+            .fsm
+            .episode
+            .as_ref()
+            .and_then(|ep| ep.reset_window.as_ref())
+        {
+            Some(w) => json!({
+                "open": true,
+                "kind": w.kind.to_pb().as_str_name(),
+                "expected_actor": w.expected.to_pb().as_str_name(),
+                "claim_id": self.fsm.claim.as_ref().map_or("", |c| c.id.as_str()),
+            }),
+            None => json!({
+                "open": false,
+                "kind": pb::ResetKind::Unspecified.as_str_name(),
+                "expected_actor": pb::ActorKind::Unspecified.as_str_name(),
+                "claim_id": "",
             }),
         };
         let (lease_id, holder) = match self.fsm.lease.holder() {
@@ -997,6 +1092,7 @@ impl Target {
                 "connected": self.fsm.plane_connected,
                 "buffered_events": self.fsm.buffered_events,
             },
+            "reset_window": reset_window,
         })
     }
 
