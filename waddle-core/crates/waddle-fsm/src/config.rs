@@ -1,7 +1,8 @@
 //! Static session configuration the machines plan against.
 
 use waddle_types::{
-    CellId, ClientId, EpisodeId, Grant, HandoffPolicy, LeaseEnforcement, RobotId, SessionId,
+    ActorKind, CellId, ClientId, EpisodeId, Grant, HandoffPolicy, LeaseEnforcement, RobotId,
+    SessionId,
 };
 
 #[derive(Debug, Clone)]
@@ -20,6 +21,12 @@ pub struct SessionConfig {
     pub space_contains_delta: bool,
     /// Source name recorded for clutch-initiated (self-initiated) claims.
     pub clutch_source: String,
+    /// Actor kind recorded for clutch-initiated (self-initiated) claims
+    /// (N17). The FSM's own default (`SiteOperator`) is fixture-stable and
+    /// deliberately not the honest one — `waddle-runtime`'s `SessionBuilder`
+    /// overrides it to `Teleoperator` at build time, since a clutch edge on
+    /// the media plane is our teleoperators' takeover path.
+    pub clutch_actor: ActorKind,
     /// Heartbeat staleness window after a partition before the local
     /// tripwire requests HOLD (FSM.md §8).
     pub heartbeat_timeout_ns: i64,
@@ -54,6 +61,7 @@ impl SessionConfig {
             grants: Vec::new(),
             space_contains_delta: false,
             clutch_source: "custom".to_owned(),
+            clutch_actor: ActorKind::SiteOperator,
             heartbeat_timeout_ns: 2_000_000_000,
             engage_timeout_ns: 10_000_000_000,
             demote_after: 1,

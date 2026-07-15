@@ -630,7 +630,7 @@ pub fn step(
                     let claim = ActiveClaim {
                         id: ClaimId::new(format!("clutch-{}", ctx.s.clutch_seq)),
                         source: cfg.clutch_source.clone(),
-                        actor: ActorKind::SiteOperator,
+                        actor: cfg.clutch_actor,
                         self_initiated: true,
                     };
                     let ep = ctx.episode().id.clone();
