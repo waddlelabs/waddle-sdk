@@ -422,6 +422,13 @@ impl SidecarBuilder {
             audit: self.audit,
             robot_description_digest: robot_description_digest.to_owned(),
             vendor: Default::default(),
+            // reset-phases: stamped by the builder once the FSM change on
+            // this branch lands (D4); inert defaults here keep the sidecar
+            // shape additive without changing any recorded behavior.
+            post_reset_declared: false,
+            post_reset_failed: false,
+            post_reset_result: None,
+            post_reset_bounds: None,
         })
     }
 }

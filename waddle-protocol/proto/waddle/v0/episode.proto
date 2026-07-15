@@ -35,6 +35,11 @@ enum EpisodeState {
   EPISODE_STATE_RUNNING = 3;
   EPISODE_STATE_INTERVENTION = 4;
   EPISODE_STATE_TERMINAL = 5;
+  // Post-run scene cleanup INSIDE the finishing episode (flag
+  // waddle.v0.reset.phases).
+  // The terminal outcome is decided BEFORE entry and never changed here.
+  // RESETTING (=1) is the pre-reset; docs/APIs say "pre-reset" for it.
+  EPISODE_STATE_POST_RESET = 6;
 }
 
 // Terminal outcomes (N2). ABORTED_RETAKE is never silently folded into
@@ -70,6 +75,10 @@ enum GateMode {
   GATE_MODE_PASSTHROUGH = 1;
   GATE_MODE_INTERVENTION = 2;
   GATE_MODE_BYPASS = 3;
+  // A remote actor is performing a scene reset through the SDK (flag
+  // waddle.v0.reset.remote): the reset claimant holds the lease and the SDK
+  // drives `send` from its own thread; any caller tick gets a NoopMarker.
+  GATE_MODE_RESET = 4;
 }
 
 // ---------------------------------------------------------------------------
@@ -198,6 +207,39 @@ message ResetResult {
   optional Fault fault = 5;
 }
 
+// Which reset a record refers to; distinct from services.proto's ResetPhase
+// (pipeline progress within one reset).
+enum ResetKind {
+  RESET_KIND_UNSPECIFIED = 0;
+  RESET_KIND_PRE = 1;
+  RESET_KIND_POST = 2;
+}
+
+// flag waddle.v0.reset.phases
+message PostResetResult {
+  ResetResult result = 1;              // payload reused from the pre-reset shape
+  TerminalOutcome pinned_outcome = 2;  // outcome decided at POST_RESET entry
+}
+
+// flag waddle.v0.reset.remote
+enum ResetWindowEventKind {
+  RESET_WINDOW_EVENT_KIND_UNSPECIFIED = 0;
+  RESET_WINDOW_EVENT_KIND_OPENED = 1;
+  RESET_WINDOW_EVENT_KIND_ENGAGED = 2;
+  RESET_WINDOW_EVENT_KIND_COMPLETED = 3;
+  RESET_WINDOW_EVENT_KIND_TIMED_OUT = 4;
+  RESET_WINDOW_EVENT_KIND_CANCELLED = 5;
+}
+
+message ResetWindowEvent {
+  ResetWindowEventKind kind = 1;
+  ResetKind reset = 2;
+  string prompt = 3;
+  ActorKind expected_actor = 4;
+  string claim_id = 5;                 // set from ENGAGED onward
+  optional ResetResult result = 6;     // set on COMPLETED / TIMED_OUT
+}
+
 // ---------------------------------------------------------------------------
 // Judgments (N9, N13)
 // ---------------------------------------------------------------------------
@@ -305,7 +347,9 @@ message StateTransition {
   EpisodeState from = 1;
   EpisodeState to = 2;
   string reason = 3;
-  // Set iff to == EPISODE_STATE_TERMINAL.
+  // Set iff to == EPISODE_STATE_TERMINAL, or to == EPISODE_STATE_POST_RESET
+  // (flag waddle.v0.reset.phases), where it carries the pinned final
+  // outcome.
   TerminalOutcome outcome = 4;
 }
 
@@ -403,5 +447,7 @@ message EpisodeEvent {
     JudgmentAttached judgment = 13;
     SafetyTransition safety = 14;
     MarkEvent mark = 15;
+    PostResetResult post_reset = 16;    // flag waddle.v0.reset.phases
+    ResetWindowEvent reset_window = 17; // flag waddle.v0.reset.remote
   }
 }

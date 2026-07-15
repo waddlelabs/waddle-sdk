@@ -211,7 +211,33 @@ message GateServerMessage {
     VerbRequest verb = 3;
     GrantStatusChange grant_change = 4;
     EpisodeDirective episode = 5;
+    ResetWindowDirective reset_window = 6; // flag waddle.v0.reset.remote
   }
+}
+
+// ---------------------------------------------------------------------------
+// Remote reset windows (flag waddle.v0.reset.remote)
+// ---------------------------------------------------------------------------
+//
+// Window-open needs no new client arm: ResetWindowEvent{OPENED} is an
+// EpisodeEvent and the reducer already forwards every emission to the plane.
+// ResetRequest/ResetProgress (the RequestReset RPC) are untouched — they
+// model plane-executed resets; the window below is SDK-executed under plane
+// direction. Remote actor action streams reuse existing transports: teleop
+// via media intake, agent chunks via GateServerMessage.intervention_chunk.
+
+enum ResetWindowDirectiveKind {
+  RESET_WINDOW_DIRECTIVE_KIND_UNSPECIFIED = 0;
+  RESET_WINDOW_DIRECTIVE_KIND_ENGAGE = 1;    // this actor performs the reset
+  RESET_WINDOW_DIRECTIVE_KIND_COMPLETE = 2;  // reset done; result attached
+  RESET_WINDOW_DIRECTIVE_KIND_CANCEL = 3;    // plane withdraws the actor
+}
+
+message ResetWindowDirective {
+  ResetWindowDirectiveKind kind = 1;
+  ResetKind reset = 2;
+  Claim claim = 3;                  // ENGAGE: who resets (a real Claim; C6 applies)
+  optional ResetResult result = 4;  // COMPLETE: ok + optional inline verification
 }
 
 // ---------------------------------------------------------------------------

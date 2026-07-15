@@ -122,6 +122,10 @@ enum NoopReason {
   NOOP_REASON_BYPASS_ACTIVE = 1;
   // A hold is active (HOLD_FIRST handoff or tripwire-requested hold).
   NOOP_REASON_HOLD_ACTIVE = 2;
+  // A remote reset window is active (flag waddle.v0.reset.remote): the SDK
+  // is driving `send` on the reset claimant's behalf from its own thread, on
+  // a stale caller `gate()` handle.
+  NOOP_REASON_RESET_ACTIVE = 3;
 }
 
 message NoopMarker {

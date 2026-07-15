@@ -165,4 +165,14 @@ message Sidecar {
   string robot_description_digest = 30;
 
   map<string, string> vendor = 31;
+
+  // Post-reset pipeline record (flag waddle.v0.reset.phases).
+  bool post_reset_declared = 32;
+  // PERMANENT once set (like reset_unverified above); NEVER alters outcome
+  // (field 13) — the pinned outcome from before POST_RESET entry stands.
+  bool post_reset_failed = 33;
+  optional ResetResult post_reset_result = 34;
+  // Closes at TERMINAL, i.e. after cleanup; task duration =
+  // post_reset_bounds.start - bounds.start.
+  optional Span post_reset_bounds = 35;
 }
