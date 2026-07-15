@@ -331,6 +331,121 @@ fn engage_substitutes_teleop_actions_then_release_restores_passthrough() {
 }
 
 #[test]
+fn clutch_engage_is_recorded_with_teleoperator_provenance_by_default() {
+    // The leader-arm/console-clutch takeover path: a self-initiated claim
+    // over the reliable clutch topic, never an explicit ClaimGranted/Engage
+    // pair. Before this fix, waddle-fsm hardcoded ActorKind::SiteOperator
+    // for this path, so the reducer's provenance mapping recorded these
+    // interventions as NOT teleop; SessionBuilder now sets the honest
+    // runtime default (Teleoperator / "teleop-clutch") that waddle-fsm
+    // itself deliberately does not default to (fixture stability).
+    let dir = tempfile::tempdir().unwrap();
+    let send_log: SendLog = Arc::new(Mutex::new(Vec::new()));
+    let (media, far) = LoopbackMedia::new();
+    let session = Session::builder("e2e-clutch")
+        .robot(twist_robot(None))
+        .control(registry(&send_log))
+        .recording_dir(dir.path())
+        .media(media)
+        .build()
+        .unwrap();
+
+    let mut ep = session.start_episode("towel").unwrap();
+    for _ in 0..5 {
+        assert!(matches!(
+            ep.gate(&[0.0; 3], None, None),
+            GateOutput::Pass { .. }
+        ));
+    }
+    wait_for(&session, |s| {
+        matches!(s.episode_state, Some(Phase::Running))
+    });
+
+    // Engage the clutch over the reliable topic (production's
+    // self-initiated-claim path).
+    far.push(
+        DataTopic::TeleopClutch,
+        &pb::ClutchTransition {
+            engaged: true,
+            t_client_ns: 1,
+            part: String::new(),
+        },
+    )
+    .unwrap();
+    wait_for(&session, |s| s.gate_mode == Some(GateMode::Intervention));
+
+    // Teleop stream flows through the media plane into the gate.
+    let seq = Arc::new(AtomicU32::new(1));
+    let push_pose = |value: f64| {
+        far.push(
+            DataTopic::TeleopPose,
+            &pb::TeleopStreamPacket {
+                t_client_ns: 1,
+                seq: u64::from(seq.fetch_add(1, Ordering::SeqCst)),
+                targets: vec![pb::PartTarget {
+                    part: String::new(),
+                    target: Some(pb::part_target::Target::Twist(pb::Twist {
+                        linear: Some(pb::Vec3 {
+                            x: value,
+                            y: 0.0,
+                            z: 0.0,
+                        }),
+                        angular: Some(pb::Vec3::default()),
+                    })),
+                    gripper: None,
+                }],
+                clutch_engaged: true,
+                inputs: None,
+            },
+        )
+        .unwrap();
+    };
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut substituted = false;
+    while Instant::now() < deadline {
+        push_pose(0.7);
+        match ep.gate(&[0.0; 3], None, None) {
+            GateOutput::Substitute { provenance, .. } | GateOutput::Blend { provenance, .. } => {
+                assert_eq!(
+                    provenance.provenance,
+                    Provenance::Teleop,
+                    "clutch-initiated intervention must be recorded as teleop, not custom"
+                );
+                substituted = true;
+                break;
+            }
+            GateOutput::Pass { .. } | GateOutput::Hold | GateOutput::Noop { .. } => {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+    }
+    assert!(substituted, "clutch-driven teleop stream never substituted");
+
+    ep.terminate(TerminalOutcome::Success, "done");
+    session.shutdown();
+
+    // The sidecar's claim span carries the runtime's honest clutch
+    // identity (source), not waddle-fsm's fixture-stable "custom" default.
+    let files: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_name().to_string_lossy().ends_with(".sidecar.json"))
+        .collect();
+    assert_eq!(files.len(), 1);
+    let sidecar =
+        waddle_sidecar::sidecar_from_json(&std::fs::read_to_string(files[0].path()).unwrap())
+            .unwrap();
+    let claim = sidecar
+        .claims
+        .first()
+        .and_then(|c| c.claim.as_ref())
+        .expect("claim span recorded");
+    assert!(claim.self_initiated, "clutch claims are self-initiated");
+    assert_eq!(claim.source_name, "teleop-clutch");
+}
+
+#[test]
 fn claimed_while_stalled_bypass_drives_send_directly() {
     let send_log: SendLog = Arc::new(Mutex::new(Vec::new()));
     let (media, far) = LoopbackMedia::new();

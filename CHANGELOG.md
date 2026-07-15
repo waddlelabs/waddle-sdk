@@ -189,6 +189,17 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   `[closed_value, open_value]` for `Parallel`, thresholded at 0.5 for
   `Suction` — instead of being copied onto the wire verbatim. No declared
   spec still passes the command through unchanged.
+- **Clutch claim provenance mislabeled as non-teleop**: a clutch edge on the
+  media plane (the leader-arm/console-clutch takeover path) self-initiates a
+  claim; `waddle-runtime`'s `SessionBuilder` now defaults that claim's actor
+  to `ActorKind::Teleoperator` (source `"teleop-clutch"`) instead of
+  inheriting `waddle-fsm`'s `SiteOperator`/"custom" default, so the
+  reducer's provenance mapping records these interventions as teleop —
+  provenance-labeled training data (DAgger pairs) was silently mislabeled,
+  and the N17 actor vocabulary was violated. `waddle-fsm`'s own default is
+  unchanged (fixture stability); `SessionConfig` gains `clutch_actor`
+  (alongside `clutch_source`), and the new `SessionBuilder::clutch_identity`
+  setter lets integrators override both.
 
 ## Stowed changelogs
 

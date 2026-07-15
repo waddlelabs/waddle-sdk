@@ -61,6 +61,8 @@ pub struct SessionBuilder {
     enforcement: LeaseEnforcement,
     reset_hook: Option<ResetHook>,
     verification_mode: ResetVerificationMode,
+    clutch_actor: ActorKind,
+    clutch_source: String,
 }
 
 impl std::fmt::Debug for SessionBuilder {
@@ -86,6 +88,12 @@ impl SessionBuilder {
             enforcement: LeaseEnforcement::Advisory,
             reset_hook: None,
             verification_mode: ResetVerificationMode::Blocking,
+            // The runtime's honest default (N17): a clutch edge on the media
+            // plane is our teleoperators' takeover path. waddle-fsm's own
+            // default stays SiteOperator/"custom" for fixture stability —
+            // this is the layer that owns the real-world identity.
+            clutch_actor: ActorKind::Teleoperator,
+            clutch_source: "teleop-clutch".to_owned(),
         }
     }
 
@@ -144,6 +152,16 @@ impl SessionBuilder {
         self
     }
 
+    /// Override the actor/source recorded for clutch-initiated
+    /// (self-initiated) claims — the leader-arm/console-clutch takeover
+    /// path. Defaults to `ActorKind::Teleoperator` / "teleop-clutch".
+    #[must_use]
+    pub fn clutch_identity(mut self, actor: ActorKind, source: impl Into<String>) -> Self {
+        self.clutch_actor = actor;
+        self.clutch_source = source.into();
+        self
+    }
+
     pub fn build(self) -> Result<Session, RuntimeError> {
         let robot_pb = self.robot.ok_or(RuntimeError::MissingRobot)?;
         let robot = RobotDescription::try_from(&robot_pb)?;
@@ -165,6 +183,8 @@ impl SessionBuilder {
         };
         cfg.grants = robot.grants.clone();
         cfg.space_contains_delta = robot.action_space.contains_delta();
+        cfg.clutch_actor = self.clutch_actor;
+        cfg.clutch_source = self.clutch_source.clone();
         let dims = robot.action_space.dims();
         let gripper_spec = robot.action_space.gripper.clone();
 
