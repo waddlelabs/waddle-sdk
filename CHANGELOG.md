@@ -12,6 +12,46 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 ## [Unreleased]
 
 ### Added
+- **sdk (Python reset API: `TeleopReset`/`AgentReset`, `init`/`rollout`
+  kwargs)**: the headline user-facing surface for the reset-phases branch.
+  `waddle.TeleopReset(prompt, *, timeout_s=600.0)` and
+  `waddle.AgentReset(prompt, *, timeout_s=600.0)` are small frozen,
+  repr-friendly dataclasses declaring a remote reset window for a
+  teleoperator/agent respectively (their docstrings name the production
+  caveat: this open-source runtime has no supervision-plane transport
+  wired yet, so today a window can only be driven end-to-end via the
+  private `waddle._testing` reset-window hooks). `waddle.init` gains
+  `pre_reset=None`, `post_reset=None` (`None` | callable | `TeleopReset` |
+  `AgentReset`) and `reset_verification="blocking"` (`"blocking"` |
+  `"optimistic"`); `waddle.rollout(task, *, pre_reset=_UNSET,
+  post_reset=_UNSET)` gains the same two kwargs with a module-level
+  `_UNSET` sentinel distinguishing "inherit `init()`'s declaration"
+  (`_UNSET`, the default) from "disable this phase for this one episode
+  only" (explicit `None`) from "override it" (a fresh marker/callable).
+  Callables are normalized **in Python** (`_normalize_reset_hook`) so the
+  `_core` FFI always receives `(bool, Optional[bool])`: a bare `bool`
+  return vouches for its own verification (`(ok, ok)`, matching the
+  existing FFI-level default, now pure defense-in-depth underneath this);
+  anything else — wrong arity, a non-bool first element, a second element
+  that is neither `bool` nor `None` — raises `TypeError` naming the
+  contract, so a broken hook fails loudly and specifically instead of
+  degrading silently. `waddle._testing` gains `reset_window_engage`/
+  `reset_window_complete` thin wrappers alongside the existing
+  `engage`/`release`/`push_teleop` (Task 11's Concern 2, resolved: yes,
+  these deserved the same wrapper treatment). `rollout`'s docstring now
+  documents the post-reset exit contract: `ep.done` flips to `True` at
+  POST_RESET entry (before cleanup finishes); the ordinary
+  `ep.terminate(...)` call already blocks the `with`-exit through it
+  (unchanged, Task 9); a `with` block that exits some other way while
+  POST_RESET is still running finds `__exit__` already a no-op (it never
+  aborts, or otherwise touches, an in-flight post-reset); a failed
+  post-reset never changes the pinned outcome, only
+  `ep.post_reset_failed`. `init`'s docstring documents
+  `reset_verification` and the remote-window build-time-negotiation
+  narrowing rule. `sdk/README.md`'s hollow-frontend checklist gains a
+  Reset API bullet: markers/callables are pure type dispatch and
+  input-shape validation, never reset decisions — every actual behavior
+  stays in waddle-core.
 - **sdk (PyO3 shim: reset kwargs, `PyResetHook`, testing hooks)**: the
   `_core` module surface now exposes the full reset-config vocabulary.
   `create_session` gains `{pre,post}_reset_kind` (`"none"`|`"hook"`|
