@@ -162,7 +162,47 @@ impl SessionBuilder {
         self
     }
 
+    /// Build the session, or a build-time error.
+    ///
+    /// Validates the verb registry against the configuration that can
+    /// actually dispatch each verb, so a missing callable fails loudly here
+    /// instead of silently the first time something requests it:
+    ///
+    /// - `hold`: required whenever the handoff policy is
+    ///   [`HandoffPolicy::HoldFirst`] **and** a media plane is wired — every
+    ///   engage issues `Verb::Hold` before the intervenor's first action
+    ///   lands (the teleoperator's clutch is the real engage path a media
+    ///   plane gives). A session with no media plane has no such path (the
+    ///   descriptors-only / minimal-local case, including the PyO3 shim's
+    ///   all-None-verbs `create_session`), so it stays buildable without
+    ///   `hold` even under the default `HoldFirst` policy.
+    /// - `send`: required whenever a media plane is wired, independent of
+    ///   handoff policy — the bypass pump can drive `Verb::Send` directly
+    ///   once a claimed loop stalls (see `pumps::spawn_bypass_pump`).
+    /// - `estop`: never build-fatal (an integrator legitimately without
+    ///   hardware estop must still be able to build a session) but the
+    ///   degradation is recorded on [`crate::Status::estop_unregistered`]
+    ///   so it stays observable rather than surfacing only as a
+    ///   `VerbError::NotRegistered` the first time something requests one.
     pub fn build(self) -> Result<Session, RuntimeError> {
+        if self.media.is_some() {
+            if matches!(self.handoff, HandoffPolicy::HoldFirst) && self.control.hold.is_none() {
+                return Err(RuntimeError::MissingVerb {
+                    verb: "hold",
+                    required_by: "handoff HOLD_FIRST",
+                    remedy: "choose a different handoff policy",
+                });
+            }
+            if self.control.send.is_none() {
+                return Err(RuntimeError::MissingVerb {
+                    verb: "send",
+                    required_by: "a wired media plane (bypass/intervention dispatch)",
+                    remedy: "remove the media plane wiring",
+                });
+            }
+        }
+        let estop_unregistered = self.control.estop.is_none();
+
         let robot_pb = self.robot.ok_or(RuntimeError::MissingRobot)?;
         let robot = RobotDescription::try_from(&robot_pb)?;
 
@@ -211,6 +251,13 @@ impl SessionBuilder {
         });
 
         let mirror = Mirror::new();
+        if estop_unregistered {
+            // estop unregistered: dispatch degrades to NotRegistered at
+            // estop time (never build-fatal — see the `build` rustdoc) —
+            // recorded here, before any thread starts, so it is observable
+            // from the first `session.status()` read onward.
+            mirror.update(|s| s.estop_unregistered = true);
+        }
         let (inject_tx, inject_rx) = std::sync::mpsc::channel::<SessionEvent>();
         let record_slot: RecordSlot = Arc::new(parking_lot::Mutex::new(None));
         let task_slot: TaskSlot = Arc::new(parking_lot::Mutex::new(String::new()));

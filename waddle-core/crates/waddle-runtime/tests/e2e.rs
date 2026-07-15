@@ -13,9 +13,11 @@ use prost::Message as _;
 use waddle_fsm::Phase;
 use waddle_gate::gate::GateOutput;
 use waddle_media::{DataTopic, LoopbackMedia};
-use waddle_runtime::{ControlRegistry, Session, VerbError, grant_and_engage, release_claim};
+use waddle_runtime::{
+    ControlRegistry, RuntimeError, Session, VerbError, grant_and_engage, release_claim,
+};
 use waddle_types::pb::v0 as pb;
-use waddle_types::{ActorKind, GateMode, Provenance, TerminalOutcome};
+use waddle_types::{ActorKind, GateMode, HandoffPolicy, Provenance, TerminalOutcome};
 
 fn robot() -> pb::RobotDescription {
     pb::RobotDescription {
@@ -920,5 +922,154 @@ fn absent_gripper_spec_passes_teleop_gripper_through_unchanged() {
     }
 
     ep.terminate(TerminalOutcome::Success, "done");
+    session.shutdown();
+}
+
+/// Bug 4: the default handoff policy is HOLD_FIRST — every engage issues
+/// `Verb::Hold` before the intervenor's first action lands. Building a
+/// media-wired session (a real engage path: the teleoperator's clutch)
+/// without a registered `hold` callable must fail loudly at build time,
+/// never silently at the 10s engage timeout.
+#[test]
+fn build_fails_fast_when_hold_first_and_media_wired_without_hold() {
+    let (media, _far) = LoopbackMedia::new();
+    let registry = ControlRegistry {
+        send: Some(Arc::new(
+            |_chunk: &waddle_types::ActionChunk| -> Result<(), VerbError> { Ok(()) },
+        )),
+        ..Default::default()
+    };
+    let err = Session::builder("e2e-missing-hold")
+        .robot(twist_robot(None))
+        .control(registry)
+        .media(media)
+        .build()
+        .expect_err("HOLD_FIRST + media wired + no hold must fail the build");
+    assert!(
+        matches!(
+            &err,
+            RuntimeError::MissingVerb { verb, .. } if *verb == "hold"
+        ),
+        "expected MissingVerb{{verb: \"hold\", ..}}, got {err:?}"
+    );
+    assert_eq!(
+        err.to_string(),
+        "handoff HOLD_FIRST requires a registered `hold` verb — register one \
+         in your Control, or choose a different handoff policy"
+    );
+}
+
+/// The green counterpart: HOLD_FIRST + media wired + hold registered stays
+/// buildable (the existing e2e paths above already cover this in depth; this
+/// is the focused regression for the validation added by Bug 4).
+#[test]
+fn build_ok_when_hold_first_and_media_wired_with_hold_registered() {
+    let (media, _far) = LoopbackMedia::new();
+    let send_log: SendLog = Arc::new(Mutex::new(Vec::new()));
+    let session = Session::builder("e2e-hold-registered")
+        .robot(twist_robot(None))
+        .control(registry(&send_log))
+        .media(media)
+        .build()
+        .expect("HOLD_FIRST + media wired + hold registered must build");
+    session.shutdown();
+}
+
+/// Back-compat (Bug 4): a session built with no Control at all and no media
+/// plane — the descriptors-only / minimal-local integration — must keep
+/// working. Nothing wires a real engage path (no media, no transport), so
+/// there is no dispatch for the build-time check to protect against; the
+/// PyO3 shim's `create_session` has always accepted all-None verbs and must
+/// not regress.
+#[test]
+fn build_ok_with_no_verbs_and_no_media() {
+    let session = Session::builder("e2e-no-control")
+        .robot(robot())
+        .build()
+        .expect("no verbs + no media must still build (back-compat)");
+    session.shutdown();
+}
+
+/// Bug 4: HOLD_FIRST is the only policy that unconditionally issues
+/// `Verb::Hold` on engage — IMMEDIATE and CHUNK_BOUNDARY never do, so `hold`
+/// is not a build-time requirement under them even with a media plane wired.
+#[test]
+fn build_ok_with_immediate_handoff_and_no_hold() {
+    let (media, _far) = LoopbackMedia::new();
+    let registry = ControlRegistry {
+        send: Some(Arc::new(
+            |_chunk: &waddle_types::ActionChunk| -> Result<(), VerbError> { Ok(()) },
+        )),
+        ..Default::default()
+    };
+    let session = Session::builder("e2e-immediate-no-hold")
+        .robot(twist_robot(None))
+        .control(registry)
+        .media(media)
+        .handoff(HandoffPolicy::Immediate { blend_ns: 0 })
+        .build()
+        .expect("IMMEDIATE handoff never requires hold");
+    session.shutdown();
+}
+
+/// Bug 4 (send side): the bypass pump can drive `Verb::Send` directly once a
+/// claimed loop stalls (`claimed_while_stalled_bypass_drives_send_directly`
+/// above) — that path exists the moment a media plane is wired, regardless
+/// of handoff policy. An unregistered `send` must fail the build the same
+/// way `hold` does.
+#[test]
+fn build_fails_fast_when_media_wired_without_send() {
+    let (media, _far) = LoopbackMedia::new();
+    let registry = ControlRegistry {
+        hold: Some(Arc::new(|| Ok(()))),
+        ..Default::default()
+    };
+    let err = Session::builder("e2e-missing-send")
+        .robot(twist_robot(None))
+        .control(registry)
+        .media(media)
+        .build()
+        .expect_err("media wired + no send must fail the build");
+    assert!(
+        matches!(
+            &err,
+            RuntimeError::MissingVerb { verb, .. } if *verb == "send"
+        ),
+        "expected MissingVerb{{verb: \"send\", ..}}, got {err:?}"
+    );
+}
+
+/// Bug 4 (estop side): a missing `estop` must never fail the build (unlike
+/// `hold`/`send`) — but the degradation must stay observable on the status
+/// mirror the caller already polls, not silently swallowed.
+#[test]
+fn build_records_estop_unregistered_on_status_mirror() {
+    let send_log: SendLog = Arc::new(Mutex::new(Vec::new()));
+    let mut partial = registry(&send_log);
+    partial.estop = None;
+    let session = Session::builder("e2e-no-estop")
+        .robot(robot())
+        .control(partial)
+        .build()
+        .expect("missing estop must never fail the build");
+    assert!(
+        session.status().estop_unregistered,
+        "missing estop must be recorded as observable degradation"
+    );
+    session.shutdown();
+}
+
+/// The counterpart: estop registered means no degradation is recorded.
+#[test]
+fn build_does_not_flag_estop_when_registered() {
+    let send_log: SendLog = Arc::new(Mutex::new(Vec::new()));
+    let mut full = registry(&send_log);
+    full.estop = Some((Arc::new(|| Ok(())), waddle_runtime::EstopDecl::default()));
+    let session = Session::builder("e2e-with-estop")
+        .robot(robot())
+        .control(full)
+        .build()
+        .expect("build with estop registered must succeed");
+    assert!(!session.status().estop_unregistered);
     session.shutdown();
 }

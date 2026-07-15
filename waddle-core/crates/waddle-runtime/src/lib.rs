@@ -31,4 +31,19 @@ pub enum RuntimeError {
     Media(#[from] waddle_media::MediaError),
     #[error("the session is shutting down")]
     ShuttingDown,
+    /// A build-time verb-registration check: the session's configuration
+    /// (its handoff policy, or a wired feature) requires a verb whose
+    /// callable the integrator never registered on the `ControlRegistry`.
+    /// Caught here instead of failing silently at first dispatch — for
+    /// `hold` under `HandoffPolicy::HoldFirst`, that failure mode is a 10s
+    /// engage timeout with nothing to diagnose it: the teleoperator presses
+    /// the clutch and nothing happens.
+    #[error(
+        "{required_by} requires a registered `{verb}` verb — register one in your Control, or {remedy}"
+    )]
+    MissingVerb {
+        verb: &'static str,
+        required_by: &'static str,
+        remedy: &'static str,
+    },
 }

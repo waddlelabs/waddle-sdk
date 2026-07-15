@@ -19,6 +19,13 @@ pub struct Status {
     pub outcome: Option<TerminalOutcome>,
     pub plane_connected: bool,
     pub shutdown: bool,
+    /// Set once, at build time, when the session's `ControlRegistry` has no
+    /// `estop` callable. Missing `estop` never fails the build (unlike
+    /// `hold`/`send` — see `SessionBuilder::build`), but the degradation
+    /// must stay observable rather than surfacing only as a
+    /// `VerbError::NotRegistered` the first time something actually
+    /// requests an estop.
+    pub estop_unregistered: bool,
 }
 
 #[derive(Debug, Default)]

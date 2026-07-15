@@ -139,6 +139,25 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   in the episode MCAP; callers no longer see the ring.
 
 ### Fixed
+- **Verb-registration validation at session build**: `SessionBuilder::build`
+  now fails fast with a new `RuntimeError::MissingVerb` instead of letting a
+  missing callable surface only at first dispatch. Previously, the default
+  handoff policy (HOLD_FIRST) issues `Verb::Hold` on every engage; with a
+  media plane wired but no `hold` callable registered, dispatch failed
+  `NotRegistered` silently and the engage fail-closed only at the 10s engage
+  timeout — the teleoperator's clutch did nothing, with no diagnosable
+  error. `hold` is now required at build time whenever the handoff policy is
+  HOLD_FIRST and a media plane is wired (an actual engage path); `send` is
+  now required whenever a media plane is wired, independent of handoff
+  policy (the bypass pump can drive `Verb::Send` directly once a claimed
+  loop stalls). Both errors name the fix directly (e.g. "handoff HOLD_FIRST
+  requires a registered `hold` verb — register one in your Control, or
+  choose a different handoff policy"). Sessions built with no Control and no
+  media plane (the descriptors-only / minimal-local case, including the
+  PyO3 shim's all-None-verbs `create_session`) are unaffected and stay
+  buildable. A missing `estop` is deliberately never build-fatal, but the
+  degradation is now recorded on the status mirror
+  (`Status::estop_unregistered`) so it stays observable.
 - The task passed to `Session::start_episode` now reaches the episode
   sidecar (it was previously dropped after the reset hook; sidecars always
   recorded an empty task).
