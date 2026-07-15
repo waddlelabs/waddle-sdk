@@ -14,6 +14,7 @@ use std::thread::JoinHandle;
 use waddle_controlplane::{ClientConfig, ControlPlaneClient, ControlTransport};
 use waddle_fsm::{Phase, SessionConfig, SessionEvent, WindowSpec};
 use waddle_gate::gate::{Gate, GateOutput, GateShared};
+use waddle_gate::jitter::TimedAction;
 use waddle_gate::plan::GatePlan;
 use waddle_gate::record::GateRecord;
 use waddle_ingest::SessionClock;
@@ -154,6 +155,14 @@ pub(crate) struct EpisodeResetSpecs {
 }
 
 pub(crate) type ResetSpecSlot = Arc<parking_lot::Mutex<Option<EpisodeResetSpecs>>>;
+
+/// The intervention stream's single write end, Mutex-shared rather than
+/// owned outright: `rtrb` is strictly SPSC, but two producers need it — the
+/// media intake thread (teleop poses) and the plane pump's
+/// `forward_server_msg` (reset-window agent chunks, flag
+/// `waddle.v0.reset.remote`). Never touched from the caller thread or the
+/// gate fast path; both writers already take other locks.
+pub(crate) type StreamProducer = Arc<parking_lot::Mutex<rtrb::Producer<TimedAction>>>;
 
 pub struct SessionBuilder {
     project: String,
@@ -408,6 +417,9 @@ impl SessionBuilder {
 
         let (gate_shared, stream_tx) =
             GateShared::new(GatePlan::passthrough(MonoNs(0)), 1024, 20_000_000);
+        // Shared (see `StreamProducer`): media intake and the plane pump's
+        // reset-window agent-chunk arm both write into it.
+        let stream_tx: StreamProducer = Arc::new(parking_lot::Mutex::new(stream_tx));
 
         let (outcome_tx, outcome_rx) = std::sync::mpsc::channel::<VerbOutcome>();
         let verbs = Arc::new(VerbDispatch::spawn(self.control, clock.clone(), outcome_tx));
@@ -522,7 +534,7 @@ impl SessionBuilder {
         if let Some(media) = self.media {
             threads.push(pumps::spawn_media_intake(
                 media,
-                stream_tx,
+                stream_tx.clone(),
                 inject_tx.clone(),
                 clock.clone(),
                 mirror.clone(),
@@ -531,13 +543,16 @@ impl SessionBuilder {
             )?);
         }
 
-        // Plane directives → FSM events.
+        // Plane directives → FSM events (claims, episode directives, reset
+        // windows, reset-window agent chunks).
         if let Some(plane) = plane.clone() {
             threads.push(pumps::spawn_plane_pump(
                 plane,
                 inject_tx.clone(),
                 clock.clone(),
                 mirror.clone(),
+                stream_tx.clone(),
+                Arc::new(robot.action_space.clone()),
             ));
         }
 

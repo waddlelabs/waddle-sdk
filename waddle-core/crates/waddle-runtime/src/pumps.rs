@@ -15,12 +15,15 @@ use waddle_media::{DataTopic, MediaPlane};
 use waddle_types::pb::v0 as pb;
 use waddle_types::time::Clock;
 use waddle_types::{
-    ActionChunk, ActorKind, ClaimId, EpisodeId, GateMode, GrantStatus, MonoNs, Step, VerbRequest,
+    ActionChunk, ActionSpace, ActorKind, ClaimId, EpisodeId, GateMode, GrantStatus, MonoNs, Step,
+    VerbRequest,
 };
 
 use crate::RuntimeError;
 use crate::mirror::Mirror;
-use crate::session::{EpisodeResetSpecs, ResetOwnerSlot, ResetSpec, ResetSpecSlot, TaskSlot};
+use crate::session::{
+    EpisodeResetSpecs, ResetOwnerSlot, ResetSpec, ResetSpecSlot, StreamProducer, TaskSlot,
+};
 use crate::verbs::{VerbDispatch, VerbOutcome};
 
 /// How long the caller's loop may go quiet while claimed before bypass
@@ -52,10 +55,58 @@ pub(crate) fn spawn_outcome_pump(
         .expect("spawn verb-outcome pump")
 }
 
+/// Pop one due intervention action off the gate's stream ring (if any) and
+/// dispatch it straight to `send`, tagged with the mirror's claim
+/// provenance — the shared mechanics behind both the BYPASS arm
+/// (claimed-while-stalled) and the RESET arm (remote reset-window
+/// actuation) of [`spawn_bypass_pump`]: same chunk shape, same source id.
+/// Neither caller re-derives legality here — that's the FSM's job, encoded
+/// entirely in which `GateMode` the mirror shows.
+fn dispatch_due_intervention(
+    gate_shared: &GateShared,
+    status: &crate::mirror::Status,
+    verbs: &VerbDispatch,
+    dims: usize,
+    now: MonoNs,
+) {
+    let due: Option<OwnedAction> = gate_shared.stream.lock().pop_due(now);
+    if let Some(action) = due {
+        let provenance = status
+            .provenance
+            .clone()
+            .unwrap_or_else(waddle_types::ProvenanceTag::policy);
+        let chunk = ActionChunk {
+            steps: vec![Step {
+                offset_ns: 0,
+                values: action.values,
+                gripper: action.gripper,
+            }],
+            dims: if dims > 0 { dims } else { 0 },
+            horizon_ns: 0,
+            t_emitted_ns: now.0,
+            t_obs_ns: now.0,
+            seq: 0,
+            source: waddle_types::SourceId::new("bypass-pump"),
+            provenance,
+        };
+        verbs.request(VerbRequest::Send {
+            chunk: Arc::new(chunk),
+        });
+    }
+}
+
 /// Bypass supervision: detects the stalled caller loop (no gate tick within
 /// the threshold while claimed), lets the FSM flip to BYPASS, and while in
 /// BYPASS drives the declared `send` verb directly from the intervention
 /// stream — the integrator's loop is a spectator receiving NOOPs.
+///
+/// Also the reset-window actuation site (FSM.md E20/E21, flag
+/// `waddle.v0.reset.remote`): while the mirror shows `GateMode::Reset` with
+/// an active claim, the engaged reset claimant's actions (teleop via media
+/// intake, agent chunks via `forward_server_msg`) land in the SAME
+/// intervention ring and get driven to `send` here too — identical
+/// mechanics, no stall detection (a reset window has no "ticks resumed"
+/// recovery path; the window's own timeout is the FSM's, not this pump's).
 pub(crate) fn spawn_bypass_pump(
     gate_shared: Arc<GateShared>,
     mirror: Arc<Mirror>,
@@ -90,32 +141,11 @@ pub(crate) fn spawn_bypass_pump(
                         {
                             let _ = inject.send(SessionEvent::TicksResumed { at: now });
                         } else {
-                            // Drive due intervention actions straight to send.
-                            let due: Option<OwnedAction> = gate_shared.stream.lock().pop_due(now);
-                            if let Some(action) = due {
-                                let provenance = status
-                                    .provenance
-                                    .clone()
-                                    .unwrap_or_else(waddle_types::ProvenanceTag::policy);
-                                let chunk = ActionChunk {
-                                    steps: vec![Step {
-                                        offset_ns: 0,
-                                        values: action.values,
-                                        gripper: action.gripper,
-                                    }],
-                                    dims: if dims > 0 { dims } else { 0 },
-                                    horizon_ns: 0,
-                                    t_emitted_ns: now.0,
-                                    t_obs_ns: now.0,
-                                    seq: 0,
-                                    source: waddle_types::SourceId::new("bypass-pump"),
-                                    provenance,
-                                };
-                                verbs.request(VerbRequest::Send {
-                                    chunk: Arc::new(chunk),
-                                });
-                            }
+                            dispatch_due_intervention(&gate_shared, &status, &verbs, dims, now);
                         }
+                    }
+                    Some(GateMode::Reset) if status.claim_active => {
+                        dispatch_due_intervention(&gate_shared, &status, &verbs, dims, now);
                     }
                     _ => {}
                 }
@@ -272,9 +302,16 @@ pub(crate) fn spawn_reset_pump(
 /// (normalized 0..1, 1 = open — the media-plane convention) is mapped
 /// through it before the action reaches the ring; `None` passes it through
 /// unchanged.
+///
+/// `stream_tx` is shared (`StreamProducer`, not an owned `rtrb::Producer`):
+/// the same intervention ring also takes agent-chunk pushes from
+/// `forward_server_msg` during a reset window (`rtrb` is strictly SPSC, so
+/// the one real producer is Mutex-shared rather than duplicated — mirrors
+/// how `GateShared.stream`'s consumer side is already shared between the
+/// caller thread and the bypass pump).
 pub(crate) fn spawn_media_intake(
     media: Arc<dyn MediaPlane>,
-    mut stream_tx: rtrb::Producer<TimedAction>,
+    stream_tx: StreamProducer,
     inject: Sender<SessionEvent>,
     clock: SessionClock,
     mirror: Arc<Mirror>,
@@ -334,7 +371,7 @@ pub(crate) fn spawn_media_intake(
                                     None => g,
                                 });
                             }
-                            let _ = stream_tx.push(TimedAction {
+                            let _ = stream_tx.lock().push(TimedAction {
                                 seq: packet.seq,
                                 received: now,
                                 action,
@@ -399,17 +436,24 @@ fn flatten_packet(packet: &pb::TeleopStreamPacket) -> Option<OwnedAction> {
 }
 
 /// Plane events → FSM events (claim directives, episode directives,
-/// partitions, heartbeat-carried grant changes).
+/// partitions, heartbeat-carried grant changes, reset-window directives,
+/// reset-window agent-chunk actuation).
 pub(crate) fn spawn_plane_pump(
     plane: Arc<ControlPlaneClient>,
     inject: Sender<SessionEvent>,
     clock: SessionClock,
     mirror: Arc<Mirror>,
+    stream: StreamProducer,
+    action_space: Arc<ActionSpace>,
 ) -> JoinHandle<()> {
     std::thread::Builder::new()
         .name("waddle-plane-pump".into())
         .spawn(move || {
             let mut was_connected = true;
+            // Monotonic ring-seq counter for agent-chunk steps pushed by the
+            // `InterventionChunk` arm below — see that arm's doc comment for
+            // why this can't just reuse `chunk.seq`.
+            let mut next_chunk_seq: u64 = 0;
             loop {
                 if mirror.read().shutdown {
                     return;
@@ -432,14 +476,31 @@ pub(crate) fn spawn_plane_pump(
                         }
                     }
                     PlaneEvent::BufferOverflowed { .. } => {}
-                    PlaneEvent::Server(msg) => forward_server_msg(msg, &inject, at),
+                    PlaneEvent::Server(msg) => forward_server_msg(
+                        msg,
+                        &inject,
+                        at,
+                        &mirror,
+                        &stream,
+                        &action_space,
+                        &mut next_chunk_seq,
+                    ),
                 }
             }
         })
         .expect("spawn plane pump")
 }
 
-fn forward_server_msg(msg: ServerMsg, inject: &Sender<SessionEvent>, at: MonoNs) {
+#[allow(clippy::too_many_arguments)]
+fn forward_server_msg(
+    msg: ServerMsg,
+    inject: &Sender<SessionEvent>,
+    at: MonoNs,
+    mirror: &Mirror,
+    stream: &StreamProducer,
+    space: &ActionSpace,
+    next_chunk_seq: &mut u64,
+) {
     match msg {
         ServerMsg::Gate(gate_msg) => match gate_msg.msg {
             Some(pb::gate_server_message::Msg::Claim(directive)) => {
@@ -491,6 +552,107 @@ fn forward_server_msg(msg: ServerMsg, inject: &Sender<SessionEvent>, at: MonoNs)
                     reason: directive.reason,
                     at,
                 });
+            }
+            // Remote reset windows (flag `waddle.v0.reset.remote`): the
+            // claim carried on the directive is who performs the reset —
+            // populated on every kind, the same convention `ClaimDirective`
+            // already uses for Grant/Release/Retake — so ENGAGE, COMPLETE,
+            // and CANCEL all identify their window's claim from it.
+            Some(pb::gate_server_message::Msg::ResetWindow(directive)) => {
+                let Some(claim) = directive.claim else { return };
+                let claim_id = ClaimId::new(&claim.claim_id);
+                match pb::ResetWindowDirectiveKind::try_from(directive.kind) {
+                    Ok(pb::ResetWindowDirectiveKind::Engage) => {
+                        // C6 admission and the "one open window" check are
+                        // the FSM's; this just relays the plane's directive
+                        // as the same two events a local claim/engage would
+                        // produce (Task 5's `ClaimGranted` then
+                        // `ResetWindowEngage`, in that order).
+                        let actor = claim
+                            .actor
+                            .as_ref()
+                            .and_then(|a| ActorKind::from_pb(a.kind).ok())
+                            .unwrap_or(ActorKind::Teleoperator);
+                        let _ = inject.send(SessionEvent::ClaimGranted {
+                            id: claim_id.clone(),
+                            source: claim.source_name.clone(),
+                            actor,
+                            self_initiated: claim.self_initiated,
+                            at,
+                        });
+                        let _ = inject.send(SessionEvent::ResetWindowEngage {
+                            claim: claim_id,
+                            at,
+                        });
+                    }
+                    Ok(pb::ResetWindowDirectiveKind::Complete) => {
+                        let Some(result) = directive.result else {
+                            return;
+                        };
+                        let verified = result.verification.as_ref().map(|v| v.verified);
+                        let _ = inject.send(SessionEvent::ResetWindowComplete {
+                            claim: claim_id,
+                            ok: result.ok,
+                            verified,
+                            at,
+                        });
+                    }
+                    Ok(pb::ResetWindowDirectiveKind::Cancel) => {
+                        // No dedicated FSM event for a plane-initiated
+                        // cancel: it is observably a failed completion
+                        // (E21 with ok=false) from the session's point of
+                        // view — the same event COMPLETE{ok:false} uses.
+                        let _ = inject.send(SessionEvent::ResetWindowComplete {
+                            claim: claim_id,
+                            ok: false,
+                            verified: None,
+                            at,
+                        });
+                    }
+                    _ => {}
+                }
+            }
+            // Agent-chunk reset actuation ONLY (flag `waddle.v0.reset.remote`):
+            // while the mirror shows `GateMode::Reset`, an engaged AGENT
+            // claimant's chunk steps join the same intervention ring the
+            // bypass pump's RESET arm drains, timed off this arrival (`at`
+            // + each step's declared offset). The general Claimed-mode
+            // chunk intake (jitter horizon, ReplanPolicy) is a later
+            // milestone — every other gate mode still drops this arm
+            // silently, unchanged from before this task.
+            //
+            // Ring seq: `next_chunk_seq` is a fresh per-pump counter, not
+            // `chunk.seq` — the jitter buffer's reorder map is keyed by seq
+            // *per step*, and a chunk's own `seq` is one value for the
+            // whole chunk (every step in it would collide on the same key).
+            // Known limitation: this counter is independent of the media
+            // intake's teleop-packet seq space on the same ring: within one
+            // reset window only one of the two ever pushes (C6 is one
+            // engaged claimant at a time), so this is sound for any single
+            // window; a session that mixes a teleop-driven window with an
+            // agent-chunk-driven window could see the jitter buffer's
+            // high-water mark cross-contaminate between them. The general
+            // chunk-intake milestone this arm deliberately does not attempt
+            // is the natural place to give both producers one shared,
+            // monotonic seq source.
+            Some(pb::gate_server_message::Msg::InterventionChunk(chunk)) => {
+                if !matches!(mirror.read().gate_mode, Some(GateMode::Reset)) {
+                    return;
+                }
+                if let Ok(action_chunk) = ActionChunk::from_pb(&chunk, space) {
+                    let mut producer = stream.lock();
+                    for step in &action_chunk.steps {
+                        *next_chunk_seq += 1;
+                        let _ = producer.push(TimedAction {
+                            seq: *next_chunk_seq,
+                            received: MonoNs(at.0.saturating_add(step.offset_ns)),
+                            action: OwnedAction {
+                                values: step.values.clone(),
+                                gripper: step.gripper,
+                            },
+                        });
+                    }
+                }
             }
             _ => {}
         },
