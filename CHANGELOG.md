@@ -12,6 +12,33 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 ## [Unreleased]
 
 ### Added
+- **waddle-runtime (reset pump + post-reset recording)**: a new core thread,
+  `waddle-reset-hooks` (`pumps::spawn_reset_pump`, mirror-watch like the
+  bypass pump), is the single scripted-hook invocation site for resets: a
+  LIVE episode in RESETTING that no `start_episode_with` call is driving
+  inline gets the effective PRE hook run there (session/per-episode config;
+  the trivial `(true, Some(true))` default when none) and its `ResetResult`
+  injected, and a LIVE episode in POST_RESET whose effective POST spec is a
+  `Hook` gets that hook run there and its `PostResetResult` injected
+  (E15/E16) — so blocking `terminate` now completes on post-reset-declared
+  episodes. `Remote` specs are untouched by the pump: the FSM's window
+  machinery owns them, including the timeout. `start_episode_with` publishes
+  the episode's resolved specs (a new internal slot, written before
+  `EpisodeOpen`) so per-episode overrides are honored by the pump; hooks run
+  off the caller thread (the `ResetHook` type already requires
+  `Send + Sync`) and must return — shutdown joins the pump. The mirror
+  `Status` gains `pinned_outcome` and `post_reset_failed`, and the sidecar
+  now carries the full post-reset record: `post_reset_declared` (stamped
+  from `EpisodeOpen`), `post_reset_failed`
+  (`Effect::SetPostResetFailed`, permanent, never alters the outcome),
+  `post_reset_result` (derived from the emitted `PostResetResult` event),
+  and `post_reset_bounds` (opens at the →POST_RESET transition, closes at
+  →TERMINAL; left open if force-finalized mid-cleanup).
+  `Effect::RunPostReset` is a documented reducer no-op — the mirror-watch
+  pump sees the same transition, and user hooks must never run on the
+  reducer thread. A Reset-mode gate tick's RESET_ACTIVE `NoopMarker` on
+  `/waddle/actions` (wired earlier, untested) is now pinned by an
+  end-to-end remote-post-window test.
 - **waddle-runtime (reset config surface)**: the first runtime seam for
   reset phases (`waddle-core/crates/waddle-runtime`) — `ResetSpec { Hook(ResetHook) |
   Remote { actor, prompt, timeout_ns } }`; `SessionBuilder::pre_reset`/
@@ -241,6 +268,17 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   generated header and linked to `libwaddle.so`.
 
 ### Changed
+- **`Session::episode_done` / `Episode::done` flip at `Phase::PostReset`**,
+  not only at Terminal: the terminal outcome is pinned at POST_RESET entry
+  (E14), so the rollout is over from the caller's view while only the scene
+  cleanup (which self-resolves) is still running. Consequences:
+  `terminate_episode`/`Episode::terminate` are now no-ops during POST_RESET
+  (a teardown path — e.g. a context-manager `__exit__` racing a plane
+  directive — can no longer inject a second Terminate against a pinned
+  outcome), and `Episode::outcome()` returns the pinned outcome while the
+  cleanup runs (the same value the eventual →TERMINAL carries). A terminate
+  that itself detours through POST_RESET still blocks to Terminal,
+  unchanged.
 - **`FSM.md`** gains §1.3 "Post-reset" (flag `waddle.v0.reset.phases`,
   guard rows E14-E18 + E14b) and §1.4 "Remote reset windows" (flag
   `waddle.v0.reset.remote`, guard rows E19-E22), plus claim-lifecycle rows
@@ -301,6 +339,14 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   in the episode MCAP; callers no longer see the ring.
 
 ### Fixed
+- **Reducer-opened retake successors hung in RESETTING forever**: only
+  `start_episode`'s inline path ever ran the pre-reset pipeline, and a
+  retake successor is opened by the reducer (`Effect::OpenSuccessor`) with
+  no blocked caller — so nothing injected its `ResetResult` and the
+  born-claimed successor never reached READY. The reset pump now services
+  it (regression-tested by driving a retake through the runtime and
+  asserting the successor passes through reset to READY, with the
+  session's PRE hook run exactly once for it).
 - **Verb-registration validation at session build**: `SessionBuilder::build`
   now fails fast with a new `RuntimeError::MissingVerb` instead of letting a
   missing callable surface only at first dispatch. Previously, the default
