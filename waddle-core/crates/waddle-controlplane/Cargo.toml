@@ -40,6 +40,7 @@ tokio = { version = "1", default-features = false, features = [
     "rt",
     "sync",
     "macros",
+    "time",
 ], optional = true }
 tokio-stream = { version = "0.1", default-features = false, features = [
     "net",

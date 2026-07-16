@@ -200,25 +200,43 @@ async fn run_conn(
         Ok(ep) => ep,
         Err(e) => return fail(e),
     };
-    let channel = match endpoint.connect().await {
-        Ok(c) => c,
-        Err(e) => return fail(PlaneError::Transport(format!("connect: {e}"))),
-    };
-    let mut client: Client = GeneratedClient::with_interceptor(channel, BearerAuth { header });
 
-    // The two eager long-lived streams: the plane's down-paths.
-    let (gate_tx, gate_rx) = tokio_mpsc::unbounded_channel::<pb::GateClientMessage>();
-    let mut gate_in = match client
-        .gate_actions(UnboundedReceiverStream::new(gate_rx))
-        .await
-    {
-        Ok(resp) => resp.into_inner(),
-        Err(e) => return fail(PlaneError::Transport(format!("GateActions open: {e}"))),
-    };
-    let (hb_tx, hb_rx) = tokio_mpsc::unbounded_channel::<pb::HeartbeatPing>();
-    let mut hb_in = match client.heartbeat(UnboundedReceiverStream::new(hb_rx)).await {
-        Ok(resp) => resp.into_inner(),
-        Err(e) => return fail(PlaneError::Transport(format!("Heartbeat open: {e}"))),
+    // Everything before `ready` blocks the client thread inside `connect()`,
+    // so the WHOLE pre-ready phase is deadline-bounded: `connect_timeout`
+    // covers TCP establishment, but a plane that accepts and then stalls the
+    // handshake or the stream opens must also fail fast (the client's
+    // backoff owns retrying).
+    let opened = tokio::time::timeout(CONNECT_TIMEOUT, async {
+        let channel = endpoint
+            .connect()
+            .await
+            .map_err(|e| PlaneError::Transport(format!("connect: {e}")))?;
+        let mut client: Client = GeneratedClient::with_interceptor(channel, BearerAuth { header });
+
+        // The two eager long-lived streams: the plane's down-paths.
+        let (gate_tx, gate_rx) = tokio_mpsc::unbounded_channel::<pb::GateClientMessage>();
+        let gate_in = client
+            .gate_actions(UnboundedReceiverStream::new(gate_rx))
+            .await
+            .map_err(|e| PlaneError::Transport(format!("GateActions open: {e}")))?
+            .into_inner();
+        let (hb_tx, hb_rx) = tokio_mpsc::unbounded_channel::<pb::HeartbeatPing>();
+        let hb_in = client
+            .heartbeat(UnboundedReceiverStream::new(hb_rx))
+            .await
+            .map_err(|e| PlaneError::Transport(format!("Heartbeat open: {e}")))?
+            .into_inner();
+        Ok((client, gate_tx, gate_in, hb_tx, hb_in))
+    })
+    .await
+    .unwrap_or_else(|_| {
+        Err(PlaneError::Transport(format!(
+            "connection setup timed out after {CONNECT_TIMEOUT:?}"
+        )))
+    });
+    let (mut client, gate_tx, mut gate_in, hb_tx, mut hb_in) = match opened {
+        Ok(parts) => parts,
+        Err(e) => return fail(e),
     };
 
     let _ = ready.send(Ok(()));
