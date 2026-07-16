@@ -317,3 +317,19 @@ On loss of control-plane connectivity (`partition_start`):
   event) and replay **in order** on reconnect (`partition_end`).
 
 Fixture: `backend_partition_degradation`.
+
+**Directive acks (flag `waddle.v0.plane.acks`).** A plane directive
+(`ClaimDirective`, `EpisodeDirective`, `ResetWindowDirective`) that carries a
+`directive_id`, on a connection that negotiated the flag, is answered with
+exactly one `DirectiveAck` (`GateClientMessage` arm 4): `accepted=true` when
+the session FSM applied every event the directive decoded into,
+`accepted=false` with the FSM's rejection reason (guard-row language, e.g.
+"engage outside RUNNING (E7)", "terminate rejected in POST_RESET (E14b)")
+when any was rejected — a directive that decodes into more than one event
+(a claim GRANT, a reset-window ENGAGE) acks once, rejected if any event was,
+with the first rejection's reason. This is observability only, **not a guard
+row**: the FSM accepts and rejects exactly what it did before the flag
+existed, a NACKed directive changed no state, and acks never appear on the
+`EpisodeEvent` stream or in sidecars. Directives without a `directive_id`
+stay fire-and-forget; a directive too malformed to decode into session
+events at all produces no ack.

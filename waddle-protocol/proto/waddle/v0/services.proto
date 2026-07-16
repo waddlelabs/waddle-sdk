@@ -173,6 +173,9 @@ message GateClientMessage {
     EpisodeEvent event = 1;
     VerbResult verb_result = 2;
     GateStatus status = 3;
+    // Flag waddle.v0.plane.acks: the SDK's accept/reject answer to a plane
+    // directive that carried a directive_id (see DirectiveAck).
+    DirectiveAck ack = 4;
   }
 }
 
@@ -186,6 +189,10 @@ enum ClaimDirectiveKind {
 message ClaimDirective {
   ClaimDirectiveKind kind = 1;
   Claim claim = 2;
+  // Flag waddle.v0.plane.acks: correlation id for a DirectiveAck. The SDK
+  // emits an ack only when this is set AND the flag was negotiated;
+  // fire-and-forget remains valid for planes that don't set ids.
+  optional string directive_id = 3;
 }
 
 enum EpisodeDirectiveKind {
@@ -200,6 +207,24 @@ message EpisodeDirective {
   string episode_id = 2;
   TerminalOutcome outcome = 3;
   string reason = 4;
+  // Flag waddle.v0.plane.acks: correlation id for a DirectiveAck. The SDK
+  // emits an ack only when this is set AND the flag was negotiated;
+  // fire-and-forget remains valid for planes that don't set ids.
+  optional string directive_id = 5;
+}
+
+// Flag waddle.v0.plane.acks — the SDK's answer to one plane directive
+// (GateClientMessage arm 4). accepted=true means the session FSM applied the
+// directive's event(s); accepted=false carries the FSM's rejection reason
+// (guard-row language, e.g. "engage outside RUNNING (E7)") — the directive
+// changed nothing. Emitted only when the directive carried a directive_id
+// AND the flag was negotiated on this connection; a directive without an id
+// stays fire-and-forget. A directive too malformed to decode into session
+// events at all (e.g. a ClaimDirective with no claim) produces no ack.
+message DirectiveAck {
+  string directive_id = 1;
+  bool accepted = 2;
+  string reason = 3;
 }
 
 message GateServerMessage {
@@ -238,6 +263,10 @@ message ResetWindowDirective {
   ResetKind reset = 2;
   Claim claim = 3;                  // ENGAGE: who resets (a real Claim; C6 applies)
   optional ResetResult result = 4;  // COMPLETE: ok + optional inline verification
+  // Flag waddle.v0.plane.acks: correlation id for a DirectiveAck. The SDK
+  // emits an ack only when this is set AND the flag was negotiated;
+  // fire-and-forget remains valid for planes that don't set ids.
+  optional string directive_id = 5;
 }
 
 // ---------------------------------------------------------------------------

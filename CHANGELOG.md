@@ -12,6 +12,27 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 ## [Unreleased]
 
 ### Added
+- **waddle-protocol/waddle-runtime (directive acks, new feature flag
+  `waddle.v0.plane.acks`)**: plane→SDK directives are no longer blind
+  fire-and-forget — an FSM rejection is now observable to the plane.
+  services.proto gains an optional `directive_id` on `ClaimDirective` (field
+  3), `EpisodeDirective` (field 5), and `ResetWindowDirective` (field 5),
+  plus `DirectiveAck { directive_id, accepted, reason }` as
+  `GateClientMessage` arm 4 (append-only). When a directive carries a
+  `directive_id` AND the connection negotiated the flag, the SDK answers
+  with exactly one ack per directive: `accepted=true` when the session FSM
+  applied every event the directive decoded into, `accepted=false` with the
+  FSM's rejection reason in guard-row language (e.g. "engage outside RUNNING
+  (E7)", "terminate rejected in POST_RESET (E14b)", the C6 reset-claim
+  admission reason) when any was rejected — a directive that decodes into
+  two events (claim GRANT, reset-window ENGAGE) acks once, with the first
+  rejection's reason. Zero guard-semantics changes: the FSM accepts and
+  rejects exactly what it did before; acks are a runtime/plane behavior and
+  never appear on the `EpisodeEvent` stream, in sidecars, or in fixtures.
+  Directives without an id stay fire-and-forget; the flag is always declared
+  at Register when a transport is configured (safe — emission still requires
+  the id). Registry row in VERSIONING.md; normative ack paragraph in FSM.md
+  §8.
 - **waddle-gate/waddle-runtime (Claimed-mode agent-chunk intake + jitter
   horizon + `ReplanPolicy`)**: cloud-agent interventions are now real
   outside a reset window too. `forward_server_msg`'s `InterventionChunk` arm

@@ -186,6 +186,7 @@ fn script_reset_window(
                         ..Default::default()
                     }),
                     result: None,
+                    directive_id: None,
                 },
             )),
         }));
@@ -226,6 +227,7 @@ fn script_reset_window(
                         }),
                         ..Default::default()
                     }),
+                    directive_id: None,
                 },
             )),
         }));
