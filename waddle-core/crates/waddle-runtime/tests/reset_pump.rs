@@ -1,4 +1,4 @@
-//! Task 9 — reset pump, reducer effects, mirror semantics (design §D4):
+//! Reset pump, reducer effects, mirror semantics:
 //! `episode_done` flips at `Phase::PostReset` (the outcome is pinned, so the
 //! rollout is over from the caller's view — and `terminate_episode` becomes
 //! a no-op there, fixing the `_Rollout.__exit__` race); the reducer routes
@@ -8,7 +8,7 @@
 //! reducer-opened retake-successor gap (successors never received a
 //! `ResetResult` before it).
 //!
-//! Task 12b: a reducer-opened retake successor also inherits the SESSION's
+//! Also: a reducer-opened retake successor inherits the SESSION's
 //! declared `post_reset` config (a per-episode override does NOT carry
 //! across a retake — see the successor tests below).
 
@@ -477,7 +477,7 @@ fn remote_post_reset_window_records_reset_active_noop_markers() {
     assert!(bounds.t_end_ns >= bounds.t_start_ns);
 }
 
-// --- Task 12b: retake successors inherit the session's post_reset config --
+// --- Retake successors inherit the session's post_reset config -----------
 
 /// Regression: before the fix, `Effect::OpenSuccessor` hardcoded
 /// `post_reset: false`, so a retaken episode's own termination skipped

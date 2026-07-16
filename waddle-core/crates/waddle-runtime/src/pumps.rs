@@ -307,8 +307,8 @@ pub(crate) fn spawn_reset_pump(
 /// source of truth `spawn_bypass_pump` uses for `ActionChunk.dims`); `None`
 /// means the declared space has no fixed width to validate against (e.g. an
 /// Opaque space without a declared dim), in which case flattened actions
-/// pass through unchecked, same as before Bug 2's fix. `gripper_spec` is the
-/// session's declared `GripperSpec` (Bug 3): the raw teleop gripper command
+/// pass through unchecked (no dims-validation contract applies). `gripper_spec`
+/// is the session's declared `GripperSpec`: the raw teleop gripper command
 /// (normalized 0..1, 1 = open — the media-plane convention) is mapped
 /// through it before the action reaches the ring; `None` passes it through
 /// unchanged.
@@ -341,7 +341,7 @@ pub(crate) fn spawn_media_intake(
     let handle = std::thread::Builder::new()
         .name("waddle-media-intake".into())
         .spawn(move || {
-            // Bug 2 (action-space validation): a fault fires at most once
+            // Dims-validation contract: a fault fires at most once
             // per claim window, not once per mismatched packet at
             // 60-90 Hz. Reset the guard the instant the claim ends so the
             // next claim window gets its own chance to fault.
@@ -358,7 +358,7 @@ pub(crate) fn spawn_media_intake(
                 if let Ok(Some(packet)) = pose_rx.try_recv_pose() {
                     idle = false;
                     let now = clock.stamp_now().mono_ns();
-                    // Bug 1 (stale-backlog replay): the gate only drains the
+                    // Stale-backlog replay guard: the gate only drains the
                     // ring in a mode that consumes it (claim active —
                     // Intervention/Bypass today, a future Reset mode too).
                     // Pushing while unclaimed just stockpiles a backlog that
@@ -375,7 +375,7 @@ pub(crate) fn spawn_media_intake(
                             None => true,
                         };
                         if dims_ok {
-                            // Bug 3 (GripperSpec never applied): map the raw
+                            // GripperSpec mapping contract: map the raw
                             // teleop gripper through the declared spec
                             // before this reaches the ring.
                             if let Some(g) = action.gripper {
@@ -459,9 +459,9 @@ fn flatten_packet(packet: &pb::TeleopStreamPacket) -> Option<OwnedAction> {
 
 /// Plane events → FSM events (claim directives, episode directives,
 /// partitions, heartbeat-carried grant changes, reset-window directives,
-/// agent-chunk actuation — Reset-mode window actuation (Task 10) and the
-/// general Claimed-mode intake, Task 17). Also the attachment point for
-/// directive-ack correlation (flag `waddle.v0.plane.acks`, Task 18): the
+/// agent-chunk actuation — both the Reset-mode window actuation and the
+/// general Claimed-mode intake). Also the attachment point for
+/// directive-ack correlation (flag `waddle.v0.plane.acks`): the
 /// pump tracks whether the plane accepted the flag at Register and, when it
 /// did, wraps id-carrying directives' events in a shared [`AckGroup`] the
 /// reducer completes.
@@ -487,7 +487,7 @@ pub(crate) fn spawn_plane_pump(
             // `InterventionChunk` arm below — see that arm's doc comment for
             // why this can't just reuse `chunk.seq`.
             let mut next_chunk_seq: u64 = 0;
-            // Bug 2 (action-space validation) guard for the agent-chunk
+            // Dims-validation guard for the agent-chunk
             // path, mirroring `spawn_media_intake`'s `validation_fault_sent`:
             // a dims-mismatched chunk faults at most once per claim window.
             let mut chunk_dims_fault_sent = false;
@@ -656,7 +656,7 @@ fn forward_server_msg(
                         // C6 admission and the "one open window" check are
                         // the FSM's; this just relays the plane's directive
                         // as the same two events a local claim/engage would
-                        // produce (Task 5's `ClaimGranted` then
+                        // produce (`ClaimGranted` then
                         // `ResetWindowEngage`, in that order). TWO events,
                         // ONE ack, same as a claim GRANT.
                         let actor = claim
@@ -718,8 +718,8 @@ fn forward_server_msg(
                     _ => {}
                 }
             }
-            // Agent-chunk intake (Task 10: Reset-mode window actuation;
-            // Task 17: general Claimed-mode intake): an `intervention_chunk`
+            // Agent-chunk intake (Reset-mode window actuation and the
+            // general Claimed-mode intake): an `intervention_chunk`
             // is accepted whenever a claim is active — the SAME gate
             // `spawn_media_intake`'s teleop path already uses (`claim_active`
             // alone, no `GateMode` match), so a chunk arriving during the
@@ -752,7 +752,7 @@ fn forward_server_msg(
             //
             // Playout scheduling stays session-receive-time (`at`) + each
             // step's declared `t_offset_ns` — NOT `chunk.t_emitted_ns` +
-            // offset — matching Task 10's Reset-mode arm: `ActionChunk`'s
+            // offset — matching the Reset-mode arm's convention: `ActionChunk`'s
             // `_ns` fields are session-timeline per `VERSIONING.md` §7 (not
             // `_client_ns`, so no cross-clock offset-estimator mapping
             // applies), but nothing guarantees a remote agent's own
@@ -784,7 +784,7 @@ fn forward_server_msg(
                             });
                         }
                     }
-                    // Bug 2 (action-space validation), mirroring
+                    // Dims-validation contract, mirroring
                     // `spawn_media_intake`'s teleop path: a genuine dims
                     // mismatch faults once per claim window, chunk dropped.
                     Err(TypesError::DimensionMismatch { expected, got }) => {

@@ -76,7 +76,7 @@ def test_nominal_episode(tmp_path):
 
         # report_proprio: a richer sample than the bare joint_pos every
         # gate(obs=...) call already records, merged into every subsequent
-        # tick's recorded ProprioSample (Task 19).
+        # tick's recorded ProprioSample.
         session.report_proprio(
             joint_vel=[0.01, 0.02, 0.03],
             ee_pose=np.array([1.0, 2.0, 3.0, 1.0, 0.0, 0.0, 0.0]),
@@ -132,7 +132,7 @@ def test_nominal_episode(tmp_path):
 def test_intervention(tmp_path):
     # A 6-joint action space: the open runtime carries the RAW teleop stream
     # (a twist flattens to exactly 6 values — linear xyz + angular xyz,
-    # `pumps::flatten_packet`) and media intake's dims validation (Bug 2)
+    # `pumps::flatten_packet`) and media intake's dims validation
     # drops anything that doesn't match the declared action space's width —
     # retargeting into whatever the real robot's space is is the closed
     # side's job. A 3-joint robot here would have every pushed packet
@@ -236,7 +236,7 @@ def test_init_twice_raises(tmp_path):
 
 
 def test_missing_hold_verb_under_hold_first_raises_actionable_error(tmp_path):
-    # No `hold`: the build-time verb-registration check (Task 3) must
+    # No `hold`: the build-time verb-registration check must
     # surface as a clear, actionable Python exception naming both the
     # missing verb and the fix — not a 10s engage timeout with nothing to
     # diagnose it.

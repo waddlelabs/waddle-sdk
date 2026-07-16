@@ -148,7 +148,7 @@ def test_robot_without_new_fields_compiles_unchanged():
 
 
 # ---------------------------------------------------------------------------
-# Task 13: intrinsics, StreamPolicy, URDF, FrameGraph, joint limits.
+# Rich descriptors: intrinsics, StreamPolicy, URDF, FrameGraph, joint limits.
 # ---------------------------------------------------------------------------
 
 

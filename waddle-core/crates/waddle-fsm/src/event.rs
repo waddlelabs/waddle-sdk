@@ -229,9 +229,9 @@ pub enum SessionEvent {
         at: MonoNs,
     },
     /// An intake producer dropped an action whose flattened width didn't
-    /// match the declared action space (Bug 2: action-space validation;
-    /// Task 17 generalized this from the media-intake teleop path to also
-    /// cover the plane pump's `InterventionChunk` agent-chunk path). A
+    /// match the declared action space (the dims-validation contract,
+    /// shared by the media-intake teleop path and the plane pump's
+    /// `InterventionChunk` agent-chunk path). A
     /// diagnostic emission — records `Fault{VALIDATION_ERROR}` — never a
     /// state transition; the intake thread already deduplicates this to
     /// once per claim window before injecting it. `source` names the

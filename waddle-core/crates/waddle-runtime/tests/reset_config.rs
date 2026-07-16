@@ -1,4 +1,4 @@
-//! Task 8 — runtime reset config surface: `ResetSpec`, the `SessionBuilder`
+//! Runtime reset config surface: `ResetSpec`, the `SessionBuilder`
 //! setters (`pre_reset`/`post_reset`/`verification_mode`, and the deprecated
 //! `reset_hook` alias), `EpisodeOptions` per-episode overrides, and
 //! `start_episode`/`start_episode_with`'s pre-reset routing + the

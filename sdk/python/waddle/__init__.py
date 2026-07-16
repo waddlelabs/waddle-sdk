@@ -141,16 +141,16 @@ class LiveKit:
     loopback.
 
     Not yet wired end-to-end from this SDK build: ``waddle-core``'s LiveKit
-    transport exists (``waddle_media::livekit``, see the Task 14 report) but
-    lives behind its own ``livekit`` Cargo feature — a real WebRTC/
-    ``webrtc-sys`` dependency chain (~700 MB on a cold build, plus tokio)
-    that this Python SDK does not compile in by default, to keep
-    ``uv sync --dev`` and the iterate-on-the-shim loop fast. Passing this to
-    :func:`init` today raises a clear ``RuntimeError`` naming the gap;
-    wiring the `livekit` feature through this SDK's build for real is a
-    later task's job — Task 15 exposes the config shape only, per its
-    brief. Use ``waddle.init(_testing=True)`` (the in-process loopback) to
-    exercise ``publish_frame`` and the teleop stream today."""
+    transport is real (``waddle_media::livekit``) but lives behind its own
+    ``livekit`` Cargo feature — a real WebRTC/``webrtc-sys`` dependency
+    chain (~700 MB on a cold build, plus tokio) that this Python SDK does
+    not compile in by default, to keep ``uv sync --dev`` and the
+    iterate-on-the-shim loop fast. Passing this to :func:`init` today
+    raises a clear ``RuntimeError`` naming the gap; this build exposes the
+    config shape only — wiring the ``livekit`` feature through the SDK
+    build is future work. Use ``waddle.init(_testing=True)`` (the
+    in-process loopback) to exercise ``publish_frame`` and the teleop
+    stream today."""
 
     url: str
     token: str
@@ -205,8 +205,9 @@ class TeleopReset:
     claim/lease/gate-mode sequencing lives entirely in waddle-core.
 
     In production this requires a connected supervision plane to grant and
-    complete the window; the open-source runtime has no such plane wired
-    yet (the `grpc`/`livekit` transports are typed stubs), so today a
+    complete the window. The ``grpc`` control-plane and ``livekit`` media
+    transports are real in ``waddle-core``, but neither is compiled into
+    the default SDK build (both sit behind Cargo features), so today a
     window declared this way can only be driven end-to-end via the private
     `waddle._testing` reset-window hooks (tests only)."""
 

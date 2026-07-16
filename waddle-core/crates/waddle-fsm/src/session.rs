@@ -1453,7 +1453,7 @@ pub fn step(
             ctx.effects.push(Effect::RequestVerb(Verb::Hold));
         }
 
-        // Bug 2 (action-space validation) --------------------------------
+        // Dims validation (intake diagnostic) -----------------------------
         SessionEvent::InterventionRejected {
             dims_got,
             dims_want,

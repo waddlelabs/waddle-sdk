@@ -92,7 +92,7 @@ fn clutch_engage_uses_the_configured_actor_and_source() {
 #[test]
 fn clutch_engage_with_default_config_keeps_legacy_actor_and_source() {
     // Pins fixture-stability: the FSM-level defaults must never move, only
-    // the runtime layer's chosen defaults change (Task 2).
+    // the runtime layer's chosen defaults change.
     let cfg = SessionConfig::minimal(
         "loop-client",
         HandoffPolicy::HoldFirst,

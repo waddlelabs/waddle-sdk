@@ -398,7 +398,7 @@ fn worker(
                         if let Err(e) = res {
                             // DataTx::send is fire-and-forget by contract;
                             // lossy topics tolerate drops and reliable-topic
-                            // failures surface here for the operator log.
+                            // failures surface here for the integrator log.
                             tracing::warn!(
                                 topic = topic.topic_str(),
                                 error = %e,

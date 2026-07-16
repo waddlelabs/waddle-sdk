@@ -1,4 +1,4 @@
-"""Task 11 (PyO3 shim): reset kwargs, PyResetHook normalization, and the
+"""The PyO3 shim's reset surface: reset kwargs, PyResetHook normalization, and the
 `_testing` reset-window hooks.
 
 Drives `waddle._core` directly rather than `waddle.init`/`waddle.rollout`:

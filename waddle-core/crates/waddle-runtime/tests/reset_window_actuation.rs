@@ -1,16 +1,17 @@
-//! Task 10 — reset-window actuation + plane directives + runtime e2e
-//! (design §D4, brief scope 1–5): the bypass pump's RESET arm (teleop/agent
-//! actions during a reset window go straight to `send`, same mechanics as
-//! BYPASS); `forward_server_msg`'s `reset_window` and (Reset-mode-only)
-//! `intervention_chunk` arms; and the full remote-reset flow driven through
-//! a REAL `ControlPlaneClient` + `InMemoryTransport` script, not direct FSM
-//! injection (Tasks 8/9 already covered the FSM-level mechanics that way).
+//! Reset-window actuation + plane directives + runtime e2e: the bypass
+//! pump's RESET arm (teleop/agent actions during a reset window go straight
+//! to `send`, same mechanics as BYPASS); `forward_server_msg`'s
+//! `reset_window` and (Reset-mode-only) `intervention_chunk` arms; and the
+//! full remote-reset flow driven through a REAL `ControlPlaneClient` +
+//! `InMemoryTransport` script, not direct FSM injection (`reset_config.rs`/
+//! `reset_pump.rs` cover the FSM-level mechanics that way).
 //!
-//! Ordering note (Task 8's report, Concern 2): a real plane's ENGAGE and
-//! COMPLETE are seconds apart, never back-to-back — the scripts below wait
-//! for `claim_active` then `gate_mode == Reset` before ever sending
-//! COMPLETE, exactly as a real plane client would, to stay clear of the
-//! documented `pending_lease` single-slot hazard.
+//! Ordering note: a real plane's ENGAGE and COMPLETE are seconds apart,
+//! never back-to-back — the scripts below wait for `claim_active` then
+//! `gate_mode == Reset` before ever sending COMPLETE, exactly as a real
+//! plane client would. (A COMPLETE racing an in-flight engage is rejected
+//! by the FSM and retried by the plane; `reset_window_races.rs` drives that
+//! back-to-back ordering deliberately.)
 
 #![allow(clippy::disallowed_methods)] // wall-clock deadlines are test-only
 
@@ -485,8 +486,8 @@ fn remote_post_reset_window_dispatches_agent_chunk_then_completes_to_terminal() 
     // this test's own thread is what must later flip `ready_to_complete` to
     // let the window resolve. Inject the same event non-blocking instead —
     // the identical seam `terminate_episode` itself uses internally, and
-    // the same one Task 9's own remote-post-reset test uses for this exact
-    // reason.
+    // the same one `reset_pump.rs`'s remote-post-reset test uses for this
+    // exact reason.
     session.inject(SessionEvent::Terminate {
         outcome: TerminalOutcome::Success,
         reason: "rollout done".to_owned(),
@@ -582,7 +583,7 @@ fn post_reset_window_timeout_pins_outcome_and_flags_failure() {
             // Short and real: nobody ever ENGAGEs, so the FSM's own
             // `ResetWindowTimeout` must fire from real elapsed time — not a
             // `session.inject(TimerFired)` shortcut (that path is already
-            // covered by Task 8's `remote_pre_reset_window_timeout_...`).
+            // covered by `reset_config.rs`'s `remote_pre_reset_window_timeout_...`).
             timeout_ns: 150_000_000,
         })
         .build()

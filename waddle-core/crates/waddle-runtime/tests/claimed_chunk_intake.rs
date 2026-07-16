@@ -1,6 +1,6 @@
-//! Task 17 — Claimed-mode agent-chunk intake + jitter-buffer horizon +
-//! `ReplanPolicy`: before this task, `forward_server_msg`'s
-//! `InterventionChunk` arm only fed a Reset-mode window (Task 10); an
+//! Claimed-mode agent-chunk intake + jitter-buffer horizon +
+//! `ReplanPolicy`: before this landed, `forward_server_msg`'s
+//! `InterventionChunk` arm only fed a Reset-mode window; an
 //! ordinary (non-reset) `GateMode::Intervention` claim silently dropped
 //! agent chunks. Driven through a REAL `ControlPlaneClient` +
 //! `InMemoryTransport`, exactly like `reset_window_actuation.rs`.
@@ -382,7 +382,7 @@ fn claimed_mode_newer_chunk_supersedes_the_executing_one_under_immediate_replan(
     session.shutdown();
 }
 
-/// Bug 2 (action-space validation), mirroring
+/// The dims-validation contract, mirroring
 /// `e2e.rs::mismatched_action_dims_are_dropped_with_one_fault_per_claim`: a
 /// dims-mismatched agent chunk never substitutes, faults exactly once for
 /// the whole claim window (not once per chunk), and a subsequent

@@ -71,13 +71,18 @@ top-level dirs; they are not built yet.
   - `cargo build --workspace` / `cargo test --workspace` (includes the
     conformance suite: `cargo test -p waddle-conformance -- --nocapture`
     prints per-scenario PASS/FAIL)
-  - `cargo clippy --workspace --all-targets -- -D warnings` and `cargo fmt --check`
-    must be clean before any commit.
-  - Feature checks: `cargo check -p waddle-runtime --features grpc,livekit` must
-    keep compiling. Both are REAL transports now: `grpc` is the tonic
+  - Must be clean before any commit (the featureless workspace run alone is
+    NOT enough — it has provably missed feature-gated compile breaks):
+    - `cargo clippy --workspace --all-targets -- -D warnings` and
+      `cargo fmt --check`
+    - the feature-gated test suites:
+      `cargo test -p waddle-controlplane --features tonic-transport` and
+      `cargo test -p waddle-media --features livekit`
+    - a feature-enabled clippy pass:
+      `cargo clippy -p waddle-runtime --features grpc,livekit --all-targets -- -D warnings`
+  - Both transport features are REAL transports: `grpc` is the tonic
     `ControlTransport` (`waddle-controlplane/src/grpc.rs`, feature
-    `tonic-transport`; test it with `cargo test -p waddle-controlplane
-    --features tonic-transport`), `livekit` is the LiveKit media plane
+    `tonic-transport`), `livekit` is the LiveKit media plane
     (`waddle-media/src/livekit.rs`). Build cost: the `webrtc-sys` build
     script downloads a prebuilt libwebrtc (~hundreds of MB compressed, ~690 MB
     extracted into the target dir) on the first build per target dir — network

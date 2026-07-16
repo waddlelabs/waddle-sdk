@@ -26,7 +26,7 @@ use crate::mirror::Mirror;
 use crate::session::{ObsSlot, ProprioReport, RecordSlot, ResetSpec, TaskSlot};
 use crate::verbs::VerbDispatch;
 
-/// The `StreamObservations` uplink cadence (Task 19): no dedicated
+/// The `StreamObservations` uplink cadence: no dedicated
 /// "observation rate" field exists on `RobotDescription` to key off —
 /// `series` entries are arbitrary customer-named channels (no canonical
 /// "proprio" name), and `action_space.rate_hz` is the CONTROL cadence, not a
@@ -39,7 +39,7 @@ use crate::verbs::VerbDispatch;
 const DEFAULT_OBSERVATION_UPLINK_HZ: f64 = 10.0;
 const OBSERVATION_UPLINK_PERIOD_NS: i64 = (1_000_000_000.0 / DEFAULT_OBSERVATION_UPLINK_HZ) as i64;
 
-/// The latest reported proprio extras (Task 19), maintained by the reducer
+/// The latest reported proprio extras, maintained by the reducer
 /// and merged into every subsequent gate-tick's `ProprioSample` (both the
 /// MCAP recording and the `StreamObservations` uplink). See
 /// [`crate::session::ProprioReport`] for the per-field patch semantics this
@@ -96,22 +96,22 @@ pub(crate) struct Reducer {
     record_slot: RecordSlot,
     /// The active episode's gate-record consumer, drained every wake.
     records_rx: Option<rtrb::Consumer<GateRecord>>,
-    /// Tripwire `ObsSource` wiring (Task 15): every ring-drained record
+    /// Tripwire `ObsSource` wiring: every ring-drained record
     /// carrying an obs publishes it here, regardless of whether local MCAP
     /// recording is even on.
     obs_slot: ObsSlot,
-    /// `Session::report_proprio`'s side channel (Task 19) — drained every
+    /// `Session::report_proprio`'s side channel — drained every
     /// wake, same discipline as `record_slot`/`records_rx`.
     proprio_rx: Receiver<ProprioReport>,
-    /// The latest joint_pos from a ring-drained gate record (Task 19's
-    /// "merged with the latest joint_pos from gate records"), independent of
-    /// `write_record`'s own per-tick `obs` — this is what the periodic
-    /// `StreamObservations` uplink reads between ticks.
+    /// The latest joint_pos from a ring-drained gate record (what reported
+    /// proprio extras merge with), independent of `write_record`'s own
+    /// per-tick `obs` — this is what the periodic `StreamObservations`
+    /// uplink reads between ticks.
     latest_joint_pos: Vec<f64>,
-    /// The latest reported proprio extras (Task 19), merged into every
+    /// The latest reported proprio extras, merged into every
     /// subsequent gate-tick's `ProprioSample` and the periodic uplink.
     latest_extras: ProprioExtras,
-    /// Last `StreamObservations` send time (Task 19), for the cadence check.
+    /// Last `StreamObservations` send time, for the cadence check.
     last_obs_uplink_ns: Option<i64>,
 
     // Per-episode state.
@@ -177,7 +177,7 @@ impl Reducer {
         loop {
             // Every wake (≤20 ms cadence): drain the gate-record ring onto
             // the episode recording, and any queued `report_proprio` calls
-            // (Task 19) onto the reducer's own latest-known state.
+            // onto the reducer's own latest-known state.
             self.drain_gate_records();
             self.drain_proprio_reports();
             if self.mirror.read().shutdown {
@@ -327,9 +327,9 @@ impl Reducer {
                 // which a born-claimed episode never satisfies) — the reset
                 // pump services PRE the same way it does for any episode with
                 // no per-episode override slot, falling back to the
-                // session-level default. A declared `Remote` PRE spec is
-                // still the known gap (see the Task 9 report's Concern 1);
-                // untouched here.
+                // session-level default. A declared `Remote` PRE spec for a
+                // successor is still a known gap (pending the closed-side
+                // retake/hand-reset flow); untouched here.
                 //
                 // POST is different: nothing suppresses the successor's own
                 // POST window or hook at E14 (`enter_post_reset` opens a
@@ -505,7 +505,7 @@ impl Reducer {
         }
     }
 
-    /// Drain `Session::report_proprio` calls (Task 19) onto the reducer's
+    /// Drain `Session::report_proprio` calls onto the reducer's
     /// own latest-known proprio state — merged into every subsequent
     /// gate-tick's recorded `ProprioSample` (`write_record`) and into the
     /// periodic `StreamObservations` uplink (`maybe_uplink_observation`).
@@ -519,7 +519,7 @@ impl Reducer {
         }
     }
 
-    /// `StreamObservations` (Task 19): a periodic summary of the reducer's
+    /// `StreamObservations`: a periodic summary of the reducer's
     /// latest known proprio state, sent whenever a transport is configured.
     /// Buffering/dropping while disconnected is entirely the client's
     /// existing `ClientMsg::buffer_when_offline` classification (unchanged
@@ -549,7 +549,7 @@ impl Reducer {
         }));
     }
 
-    /// Tripwire `ObsSource` wiring (Task 15): every gate tick's `obs` (the
+    /// Tripwire `ObsSource` wiring: every gate tick's `obs` (the
     /// customer's `gate(obs=...)` argument) becomes the latest snapshot a
     /// declared tripwire evaluates — this runs unconditionally per drained
     /// record, before `write_record`'s own (local-recording-only) early
@@ -575,7 +575,7 @@ impl Reducer {
     /// complete per-tick trace (provenance spans, bypass windows, holds).
     ///
     /// The `ProprioSample` carries `joint_pos` from this tick's own `obs`
-    /// merged with the latest `Session::report_proprio` extras (Task 19) —
+    /// merged with the latest `Session::report_proprio` extras —
     /// exactly the same per-tick cadence `joint_pos` alone used before this
     /// task; a `report_proprio` call with no further gate tick afterward
     /// still reaches the periodic `StreamObservations` uplink

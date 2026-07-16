@@ -1,4 +1,4 @@
-"""Task 15 — the Python-facing frame-ingestion surface: `session.
+"""The Python-facing frame-ingestion surface: `session.
 publish_frame(camera, frame)` over the `_testing` loopback media plane."""
 
 import time

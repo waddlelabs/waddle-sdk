@@ -127,7 +127,7 @@ mod tests {
         );
     }
 
-    /// Bug 2 (defense in depth): a dims mismatch must never zip-truncate
+    /// Dims-validation defense in depth: a dims mismatch must never zip-truncate
     /// silently. Intake validation should keep this from happening in
     /// practice, but the blend step itself must refuse rather than produce
     /// a truncated, meaningless action.

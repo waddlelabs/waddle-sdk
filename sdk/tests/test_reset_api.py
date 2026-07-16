@@ -1,6 +1,6 @@
-"""Task 12: the `waddle.init`/`waddle.rollout`-level reset API —
-`TeleopReset`/`AgentReset`, the `pre_reset`/`post_reset` kwargs, and the
-e2e pytest suite the brief names. Complements `test_reset.py` (Task 11,
+"""The `waddle.init`/`waddle.rollout`-level reset API —
+`TeleopReset`/`AgentReset`, the `pre_reset`/`post_reset` kwargs, and its
+e2e pytest suite. Complements `test_reset.py` (which
 drives `waddle._core` directly) one layer up: everything here goes through
 the public `waddle.init`/`waddle.rollout` surface.
 """
@@ -463,7 +463,7 @@ def test_remote_post_reset_window_timeout_sets_post_reset_failed(tmp_path):
 def test_dims_mismatch_intervention_rejected_with_fault(tmp_path):
     # A 3-joint robot: `_testing.push_teleop`'s Twist always flattens to 6
     # raw values (linear xyz + angular xyz) — media intake's dims
-    # validation (Bug 2) must drop every one of these as a mismatch (3
+    # validation must drop every one of these as a mismatch (3
     # declared vs. 6 incoming), never handing them to the gate, and raise
     # exactly one deduplicated Fault.
     session = waddle.init(

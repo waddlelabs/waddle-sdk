@@ -173,14 +173,14 @@ pub(crate) type ResetSpecSlot = Arc<parking_lot::Mutex<Option<EpisodeResetSpecs>
 /// gate fast path; both writers already take other locks.
 pub(crate) type StreamProducer = Arc<parking_lot::Mutex<rtrb::Producer<TimedAction>>>;
 
-/// The gate record stream's latest observation (Task 15): published by the
+/// The gate record stream's latest observation: published by the
 /// reducer on every ring-drained record that carries one (regardless of
 /// whether local MCAP recording is even on), read by the tripwire
 /// evaluator's `ObsSource`. Wait-free (`LatestSlot`) — the write lives on
 /// the reducer thread, never `Gate::gate()`'s fast path.
 pub(crate) type ObsSlot = Arc<LatestSlot<ObsSnapshot>>;
 
-/// A frame-tagged end-effector pose (Task 19: [`ProprioReport::ee_pose`]).
+/// A frame-tagged end-effector pose (see [`ProprioReport::ee_pose`]).
 /// `descriptors.proto`'s `Pose` is always frame-tagged ("an empty frame_id
 /// is a validation error, never a default: untagged geometry is how
 /// misaligned data corrupts a corpus silently") — so, unlike a bare
@@ -231,7 +231,7 @@ impl EePose {
     }
 }
 
-/// One reported proprioceptive sample (Task 19): [`Session::report_proprio`]'s
+/// One reported proprioceptive sample: [`Session::report_proprio`]'s
 /// payload, merged with the reducer's own `joint_pos` (from the caller's
 /// `gate(obs=...)` stream) into a richer `ProprioSample` than the bare
 /// `joint_pos` every gate tick already records. Every field PATCHES the
@@ -437,7 +437,7 @@ impl SessionBuilder {
         let robot_pb = self.robot.ok_or(RuntimeError::MissingRobot)?;
         let robot = RobotDescription::try_from(&robot_pb)?;
 
-        // Cameras (Task 15): `declared_cameras` backs `publish_frame`'s
+        // Cameras: `declared_cameras` backs `publish_frame`'s
         // unknown-camera + declared-resolution checks regardless of whether
         // a media plane is wired at all; `camera_uplinks` (one per declared
         // camera, only when a media plane IS wired) is what actually
@@ -584,14 +584,14 @@ impl SessionBuilder {
             mirror.update(|s| s.estop_unregistered = true);
         }
         let (inject_tx, inject_rx) = std::sync::mpsc::channel::<Injected>();
-        // Task 19: `Session::report_proprio`'s side channel into the
+        // `Session::report_proprio`'s side channel into the
         // reducer — deliberately NOT the `Injected`/`SessionEvent` funnel
         // (this carries no FSM guard, so it never touches `step()`; see
         // `Reducer::drain_proprio_reports`).
         let (proprio_tx, proprio_rx) = std::sync::mpsc::channel::<ProprioReport>();
         let record_slot: RecordSlot = Arc::new(parking_lot::Mutex::new(None));
         let task_slot: TaskSlot = Arc::new(parking_lot::Mutex::new(String::new()));
-        // Tripwire ObsSource wiring (Task 15): published by the reducer from
+        // Tripwire ObsSource wiring: published by the reducer from
         // the gate record stream, read by the tripwire evaluator below.
         let obs_slot: ObsSlot = Arc::new(LatestSlot::new());
 
@@ -671,7 +671,7 @@ impl SessionBuilder {
             )?);
         }
 
-        // Camera uplink (Task 15): one dedicated pump servicing every
+        // Camera uplink: one dedicated pump servicing every
         // declared camera that has a media plane to publish into;
         // `Session::publish_frame` feeds it through the per-camera bounded
         // queues built above.
@@ -699,7 +699,7 @@ impl SessionBuilder {
         }
 
         // Tripwires: fires REQUEST verbs through dispatch (never an
-        // envelope). The observation source (Task 15) is the gate record
+        // envelope). The observation source is the gate record
         // stream: `obs_slot` above, published by the reducer from every
         // `gate(obs=...)` call the customer's loop makes.
         if !self.tripwires.is_empty() {
@@ -717,7 +717,7 @@ impl SessionBuilder {
                     self.verbs.request(req);
                 }
             }
-            /// Reads the latest gate-record obs (Task 15): the customer's
+            /// Reads the latest gate-record obs: the customer's
             /// flat `gate(obs=...)` vector maps onto `ObsSnapshot::joint_pos`
             /// verbatim; `ee_pos`/`force_n` stay `None` (this seam carries a
             /// flat vector, not semantically-tagged fields), so
@@ -804,7 +804,7 @@ struct SessionInner {
     tripwire_shutdown: ShutdownToken,
     /// Every camera the robot declared (name → (width, height)), regardless
     /// of whether a media plane is wired — backs `publish_frame`'s
-    /// unknown-camera and declared-resolution checks (Task 15).
+    /// unknown-camera and declared-resolution checks.
     declared_cameras: HashMap<String, (u32, u32)>,
     /// One entry per declared camera, present only when a media plane is
     /// wired: `publish_frame` enqueues into these; absent means "declared,
@@ -1062,7 +1062,7 @@ impl Session {
         self.inner.mirror.read()
     }
 
-    /// Publish one raw RGB8 video frame for a declared camera (Task 15).
+    /// Publish one raw RGB8 video frame for a declared camera.
     /// Cheap on the caller's thread — validates `camera` against the
     /// robot's declared `cameras` and `frame`'s dimensions against that
     /// camera's declaration, applies the declared uplink fps throttle (a
@@ -1080,7 +1080,7 @@ impl Session {
     /// - Declared camera, but no media plane wired at all: `Ok(())`,
     ///   nothing published — Local mode records no video in v0.
     ///
-    /// The camera's declared `StreamPolicy.uplink.encoding` (Task 15b) is
+    /// The camera's declared `StreamPolicy.uplink.encoding` is
     /// bandwidth-intent for the video track, not a literal wire format:
     /// `RGB8`/`BGR8`/`JPEG` (and unspecified) all publish this same raw RGB8
     /// frame through to the track, which the wired transport converts as it
@@ -1112,7 +1112,7 @@ impl Session {
     }
 
     /// Report a richer proprioceptive sample than the bare `joint_pos`
-    /// every `gate(obs=...)` call already records (Task 19): the reducer
+    /// every `gate(obs=...)` call already records: the reducer
     /// merges `report` with its latest known `joint_pos` into every
     /// subsequent gate-tick's recorded `/waddle/observations` `ProprioSample`
     /// (Local mode — see [`ProprioReport`]'s rustdoc for the patch

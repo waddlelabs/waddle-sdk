@@ -1,4 +1,4 @@
-//! Task 18 — directive acks (flag `waddle.v0.plane.acks`), end-to-end
+//! Directive acks (flag `waddle.v0.plane.acks`), end-to-end
 //! through a REAL `ControlPlaneClient` + `InMemoryTransport`: a plane
 //! directive that carries a `directive_id`, on a connection that negotiated
 //! the flag, is answered with exactly one `DirectiveAck` reflecting the

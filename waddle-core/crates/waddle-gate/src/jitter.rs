@@ -9,8 +9,8 @@
 //! per session (`StreamProducer`, Mutex-shared): the media-intake thread
 //! (teleop packets, wire-ordered by `TeleopStreamPacket.seq`, genuinely
 //! unordered over the network) and `forward_server_msg`'s `InterventionChunk`
-//! arm (agent chunks — both the Reset-mode window actuation Task 10 built
-//! and the general Claimed-mode intake this module adds, seq assigned by a
+//! arm (agent chunks — both the Reset-mode window actuation and the
+//! general Claimed-mode intake, seq assigned by a
 //! pump-local counter). Each [`TimedAction`] carries a [`StreamChannel`] tag
 //! so this buffer keeps a SEPARATE reorder/late-drop cursor per producer —
 //! never one shared high-water mark — so one producer's activity (e.g. an
@@ -90,7 +90,7 @@ pub enum StreamChannel {
 /// cannot distinguish "unset" from 0, so a lone/zero value is never treated
 /// as evidence of staleness). Used ONLY to detect a chunk boundary and decide
 /// stale-vs-supersede (see the module doc) — never for playout scheduling
-/// (that stays session-receive-time + `t_offset_ns`, matching Task 10's
+/// (that stays session-receive-time + `t_offset_ns`, matching the
 /// Reset-mode arm: `ActionChunk`'s `_ns` fields are already session-timeline
 /// per `VERSIONING.md` §7, not `_client_ns`, but there is no guarantee a
 /// remote agent's own chunk-seq numbering is claim-scoped or session-scoped,

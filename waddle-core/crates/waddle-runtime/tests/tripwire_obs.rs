@@ -1,4 +1,4 @@
-//! Task 15 — ObsSource wiring: a declared tripwire evaluates real
+//! ObsSource wiring: a declared tripwire evaluates real
 //! observations fed from the customer's own `gate(obs=...)` calls (the gate
 //! record stream, tapped on the reducer thread — never `Gate::gate()`'s fast
 //! path), and requests its declared verb through dispatch when it fires.

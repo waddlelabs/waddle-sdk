@@ -38,7 +38,7 @@ impl ResetProgressPhase {
     }
 }
 
-/// The plane's most recent `ResetProgress` message (Task 19). Observational
+/// The plane's most recent `ResetProgress` message. Observational
 /// only: nothing in the FSM reads this, and `episode.proto` doesn't model
 /// `ResetProgress` as an `EpisodeEvent` (services-message, not sidecar/wire
 /// history) — so this mirror field is the only surface for it. `None` until
@@ -68,7 +68,7 @@ pub struct Status {
     /// PERMANENT once set (FSM.md E16/E17): the post-reset cleanup failed
     /// or was estopped. NEVER alters the (pinned) outcome.
     pub post_reset_failed: bool,
-    /// The plane's most recent plane-executed reset progress (Task 19); see
+    /// The plane's most recent plane-executed reset progress; see
     /// [`ResetProgressStatus`].
     pub reset_progress: Option<ResetProgressStatus>,
     pub plane_connected: bool,

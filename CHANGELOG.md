@@ -12,7 +12,7 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 ## [Unreleased]
 
 ### Added
-- **waddle-runtime (`ServerMsg::ResetProgress` handling, Task 19)**: the
+- **waddle-runtime (`ServerMsg::ResetProgress` handling)**: the
   plane-executed reset completion path (`RequestReset`/`ResetProgress`,
   `waddle.v0.reset`) is no longer dropped — every message updates a new
   `Status.reset_progress` mirror field (observational only; `episode.proto`
@@ -21,16 +21,16 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   already do, completing the pipeline. No episode-id filtering (the message
   carries none — session-scoped, like `HeartbeatAck`); the FSM's own E19b
   guard (`ResetResult` requires `Phase::Resetting` with no open remote
-  window) makes a stray or out-of-order DONE harmless. **Closes the Task
-  9/12b reports' documented gap**: a retake successor under a session-level
+  window) makes a stray or out-of-order DONE harmless. **Closes a
+  long-documented gap**: a retake successor under a session-level
   `Remote` PRE spec is born-claimed, so its pre-reset window never opens
   (D7 edge 5); nothing else in the runtime could ever complete that
   successor's RESETTING. `RequestReset` issuance (the outbound half) stays
   unimplemented — no `ResetSpec` variant models "the plane executes this
-  reset automatically," so there is no clean trigger to fire it from (see
-  the report's Concerns).
-- **waddle-runtime (`Session::report_proprio` + `StreamObservations` uplink,
-  Task 19)**: `report_proprio(ProprioReport { joint_vel, ee_pose, gripper })`
+  reset automatically," so there is no clean trigger to fire it from — a
+  known open item.
+- **waddle-runtime (`Session::report_proprio` + `StreamObservations`
+  uplink)**: `report_proprio(ProprioReport { joint_vel, ee_pose, gripper })`
   reports a richer proprioceptive sample than the bare `joint_pos` every
   `gate(obs=...)` call already records; the reducer merges it with the
   latest gate-tick `joint_pos` into every recorded `ProprioSample` (Local
@@ -50,8 +50,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   zero-copy-when-possible convention as `gate(action, obs)`); `ee_pose`
   raises `ValueError` unless it has exactly 7 values (xyz + wxyz).
   `ee_pose_frame` (default `"ee"`) names the frame the pose is expressed
-  in — widens the brief's bare `Option<[f64; 7]>` Python signature by this
-  one kwarg for the same frame-tagging reason as the Rust `EePose` type.
+  in — deliberately one kwarg wider than a bare 7-value pose signature,
+  for the same frame-tagging reason as the Rust `EePose` type.
   Dev-only new dependency: `mcap-protobuf-support` (pulls in `protobuf`),
   used by the extended `test_nominal_episode` MCAP read-back test to
   decode `/waddle/observations` messages via the channel's own embedded
@@ -81,7 +81,7 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 - **waddle-gate/waddle-runtime (Claimed-mode agent-chunk intake + jitter
   horizon + `ReplanPolicy`)**: cloud-agent interventions are now real
   outside a reset window too. `forward_server_msg`'s `InterventionChunk` arm
-  (Task 10 built Reset-mode-only intake) now accepts a chunk whenever a
+  (previously Reset-mode-only intake) now accepts a chunk whenever a
   claim is active — the same `claim_active`-alone gate `spawn_media_intake`'s
   teleop path already uses, so a chunk arriving during the ENGAGE handoff
   sub-phase still buffers correctly and is ready the instant the handoff
@@ -104,15 +104,16 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     `REPLAN_POLICY_IMMEDIATE`/`REPLAN_POLICY_BLEND` drop the executing
     chunk's still-pending steps (BLEND has no declared blend duration/curve
     for a chunk-to-chunk splice and its own comment steers away from it, so
-    it maps onto the same replace-remaining behavior as IMMEDIATE — flagged
-    in the task report); `REPLAN_POLICY_CHUNK_BOUNDARY` lets them finish
+    it maps onto the same replace-remaining behavior as IMMEDIATE — a
+    documented simplification); `REPLAN_POLICY_CHUNK_BOUNDARY` lets them finish
     first. `clear_pending` (the existing claim/window-teardown discard) also
     forgets the executing-chunk pointer, so a brand-new claim's first chunk
     is never wrongly rejected as stale against an unrelated prior claim's
     last one. `GateShared::new`/`JitterBuffer::new` take the declared
     `ReplanPolicy` (from `ActionSpace.chunking.replan`) as a new parameter.
   - Playout scheduling stays session-receive-time + each step's
-    `t_offset_ns` (unchanged from Task 10) — chunk `seq`/`t_emitted_ns` are
+    `t_offset_ns` (unchanged from the Reset-mode intake) — chunk
+    `seq`/`t_emitted_ns` are
     used only for the boundary/staleness decision, never as the playout
     anchor.
   - Dims validation: a chunk whose flattened width doesn't match the
@@ -272,12 +273,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   returns `False`, and cannot tell the two apart from that exception
   alone. `waddle._testing` gains `reset_window_engage`/
   `reset_window_complete` thin wrappers alongside the existing
-  `engage`/`release`/`push_teleop` (Task 11's Concern 2, resolved: yes,
-  these deserved the same wrapper treatment). `rollout`'s docstring now
+  `engage`/`release`/`push_teleop` (they deserved the same wrapper
+  treatment). `rollout`'s docstring now
   documents the post-reset exit contract: `ep.done` flips to `True` at
   POST_RESET entry (before cleanup finishes); the ordinary
   `ep.terminate(...)` call already blocks the `with`-exit through it
-  (unchanged, Task 9); a `with` block that exits some other way while
+  (unchanged); a `with` block that exits some other way while
   POST_RESET is still running finds `__exit__` already a no-op (it never
   aborts, or otherwise touches, an in-flight post-reset); a failed
   post-reset never changes the pinned outcome, only
@@ -311,7 +312,7 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   `outcome` now reads `status().outcome.or(status().pinned_outcome)` so it
   returns the pinned value (not `None`) once `done` flips true at
   POST_RESET entry, matching `waddle_runtime::Episode::outcome()`'s own
-  contract without touching the episode's inner mutex (Task 9's Concern 3).
+  contract without touching the episode's inner mutex.
   Two new `_testing`-gated hooks (`testing_loopback=True` only, following
   the existing `_testing_engage`/`_testing_push_teleop` pattern):
   `_testing_reset_window_engage(claim_id, actor)` and
@@ -425,8 +426,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   `waddle.v0.core`) and adds `waddle.v0.reset.phases`/`.remote` whenever the
   session-level config declares a matching spec; per-episode `Remote`
   overrides can only narrow what the session already declared, never widen
-  it (documented on `EpisodeOptions`, not runtime-enforced — the simpler of
-  the two options the brief offered). The reset pump (the actual hook
+  it (documented on `EpisodeOptions`, not runtime-enforced — the simpler
+  sound option). The reset pump (the actual hook
   invocation for post-reset, and the successor-episode fix for
   reducer-opened retakes), the RESET bypass-pump arm, and
   `forward_server_msg` window handling are explicitly out of scope here —
@@ -749,15 +750,15 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   behavior, and two runtime tests drive ENGAGE+COMPLETE back-to-back
   through the production plane-directive path and assert the session
   always resolves with the reducer alive.
-- **`waddle-controlplane`'s `tonic-transport` test build (pre-existing,
-  unrelated to Task 19's own scope)**: `grpc_transport.rs`'s two
+- **`waddle-controlplane`'s `tonic-transport` test build (pre-existing
+  break)**: `grpc_transport.rs`'s two
   `ClaimDirective` struct literals predated the directive-acks feature
   (`waddle.v0.plane.acks`) that added its `directive_id` field and were
   never updated for it — a compile break invisible to `cargo test
-  --workspace` (featureless) and never caught because no task since then
-  had re-run this crate's feature-gated tests. Discovered while running
-  the full gate suite for Task 19; fixed with `directive_id: None` (no
-  production code touched).
+  --workspace` (featureless) and never caught because nothing since had
+  re-run this crate's feature-gated tests (they are now part of the
+  standing pre-commit gates in CLAUDE.md). Fixed with `directive_id: None`
+  (no production code touched).
 - **`Session::publish_frame` — a declared `CAMERA_ENCODING_JPEG` uplink
   policy would fail every frame against a real LiveKit-backed session**:
   the previous behavior ran a declared JPEG uplink through the real
@@ -777,7 +778,7 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   compressed buffer). `CAMERA_ENCODING_H264` is unchanged: still the one
   genuinely unsupported encoding, still a build-time
   `RuntimeError::UnsupportedCameraEncoding`, never a silent per-frame
-  failure. `waddle-media`'s real `JpegEncoder` (Task 14) is untouched and
+  failure. `waddle-media`'s real `JpegEncoder` is untouched and
   remains available for a genuine still-image byte stream path (e.g. a
   future data-channel/recording snapshot) — nothing on the track path
   calls it today. Regression-tested with a LiveKit-shaped `MediaPlane`
@@ -788,7 +789,7 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 - **`sdk/tests/test_e2e.py::test_intervention`'s pre-existing flake**: the
   test declared a 3-joint robot but pushed teleop `Twist` packets, which
   `pumps::flatten_packet` always flattens to exactly 6 values (linear xyz +
-  angular xyz) — media intake's dims validation (Bug 2, already landed)
+  angular xyz) — media intake's dims validation (already landed)
   correctly rejected every packet as a dims mismatch (3 declared vs. 6
   incoming), so the intervention stream never reached the gate and the
   test's 5s wait for a substitution always timed out. This was a stale test

@@ -1,4 +1,4 @@
-//! Bug 2 (action-space validation): `SessionEvent::InterventionRejected`
+//! The dims-validation contract: `SessionEvent::InterventionRejected`
 //! must land a `Fault{FAULT_KIND_VALIDATION_ERROR}` on the episode event
 //! stream without touching claim/gate/phase state — it is a diagnostic
 //! emission, not a state transition.
@@ -76,7 +76,7 @@ fn intervention_rejected_emits_exactly_one_validation_fault() {
     );
 }
 
-/// Task 17: the fault's `source` must reflect the ACTUAL rejecting
+/// The fault's `source` must reflect the ACTUAL rejecting
 /// producer, not a hardcoded "media-intake" — an agent-chunk mismatch
 /// (`forward_server_msg`'s `InterventionChunk` arm) must never be
 /// misreported as a teleop one.

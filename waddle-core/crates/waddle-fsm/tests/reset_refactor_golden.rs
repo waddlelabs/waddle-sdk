@@ -1,5 +1,5 @@
 //! Refactor protection for the `enter_terminal` → `close_run` /
-//! `request_terminal` extraction (Task 5). These scripts drive an
+//! `request_terminal` extraction. These scripts drive an
 //! **undeclared** episode (no post-reset) through the run-closing paths and
 //! capture the full ordered effect trace. The extraction must keep every one
 //! of these traces byte-identical — an undeclared episode behaves exactly per

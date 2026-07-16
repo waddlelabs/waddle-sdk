@@ -1,4 +1,4 @@
-//! Task 15 — the frame-ingestion seam: `Session::publish_frame` validates
+//! The frame-ingestion seam: `Session::publish_frame` validates
 //! the declared camera + frame shape, honors the declared `StreamPolicy`
 //! uplink fps throttle, lazily `publish_track`s a camera on its first frame,
 //! and drops (counted) under backpressure from a slow media plane — never
@@ -173,7 +173,7 @@ fn h264_uplink_encoding_is_a_build_time_error() {
 /// A *present* uplink policy with a non-positive fps is always a
 /// misconfiguration (the SDK's own `Uplink` dataclass never lets a
 /// customer declare one) — it must never collapse onto the same
-/// "unthrottled" sentinel an altogether-undeclared policy uses (Task 15
+/// "unthrottled" sentinel an altogether-undeclared policy uses (a
 /// self-review regression: the two were briefly conflated, which would have
 /// silently let a declared-but-broken `fps: 0.0` policy publish
 /// unthrottled).
@@ -349,7 +349,7 @@ fn backpressure_from_a_stalled_uplink_step_drops_the_oldest_frame_and_counts_it(
     session.shutdown();
 }
 
-// --- uniform per-encoding behavior on the track path (Task 15b) ------------
+// --- uniform per-encoding behavior on the track path ----------------------
 
 /// Mimics `LiveKitMedia::push_frame`'s real validation (see
 /// `waddle-media::livekit`): a video track only ever ingests raw RGB8 or
@@ -394,7 +394,7 @@ impl MediaPlane for TrackShapedMedia {
     }
 }
 
-/// Task 15b: a declared `CameraEncoding` on `StreamPolicy.uplink` is the
+/// A declared `CameraEncoding` on `StreamPolicy.uplink` is the
 /// customer's bandwidth-intent for the track, not a promise that literal
 /// byte format lands on the wire — the transport always receives raw frames
 /// and converts to whatever the track actually needs (raw RGB8/I420;

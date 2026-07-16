@@ -1,4 +1,4 @@
-//! Frame ingestion: `Session::publish_frame`'s uplink seam (Task 15).
+//! Frame ingestion: `Session::publish_frame`'s uplink seam.
 //!
 //! `publish_frame` runs on the CUSTOMER's thread and must stay cheap: it
 //! validates the camera + frame shape against the robot's declaration,
@@ -15,18 +15,18 @@
 //! this is distinct from (and never conflated with) an fps-throttled frame,
 //! which is simply never enqueued at all and never counted as a drop.
 //!
-//! Encoding (Task 15b): the one real transport this wires against,
-//! `LiveKitMedia` (Task 14), publishes a WebRTC video *track* — libwebrtc
+//! Encoding: the one real transport this wires against,
+//! `LiveKitMedia`, publishes a WebRTC video *track* — libwebrtc
 //! encodes the uplink itself and its native video source ingests raw
 //! RGB8/I420 only; a still-image byte stream (JPEG) is not a track format
 //! at all. A declared `StreamPolicy.uplink.encoding` is therefore treated as
 //! the customer's **bandwidth-intent**, not a promise of that literal byte
 //! format landing on the wire: every encoding this pump can actually wire
 //! onto a track — `CAMERA_ENCODING_UNSPECIFIED`/`RGB8`/`BGR8`/`JPEG` (and
-//! `Z16` — depth is out of scope for this rgb8-only task) — resolves to raw
+//! `Z16` — depth is out of scope for this rgb8-only seam) — resolves to raw
 //! passthrough, and the transport (`LiveKitMedia::push_frame`, or
 //! `LoopbackMedia` in tests) converts to whatever the track needs
-//! (`rgb8_to_i420`) and its own codec does the real compression. The Task 14
+//! (`rgb8_to_i420`) and its own codec does the real compression. `waddle-media`'s
 //! `JpegEncoder` remains available for a genuine still-image byte stream
 //! path (e.g. a future data-channel/recording snapshot) — nothing on the
 //! track path calls it. `CAMERA_ENCODING_H264` is the one genuinely

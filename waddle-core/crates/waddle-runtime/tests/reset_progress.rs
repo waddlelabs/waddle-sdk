@@ -1,11 +1,11 @@
-//! Task 19 — `ServerMsg::ResetProgress` handling (the `RequestReset` RPC's
+//! `ServerMsg::ResetProgress` handling (the `RequestReset` RPC's
 //! inbound half): the plane-executed reset completion path, distinct from
 //! the SDK-executed remote reset WINDOW machinery in
 //! `reset_window_actuation.rs` (a window is `ResetWindowDirective`/
 //! `ResetWindowEvent`, negotiated per FSM.md E19–E22; `ResetProgress` is a
 //! services message that never touches the FSM's window guards at all).
 //!
-//! This closes the Task 9/12b reports' documented gap: a retake successor
+//! This closes a long-documented gap: a retake successor
 //! opened under a session-level `Remote` PRE spec is born-claimed, so its
 //! `EpisodeOpen`'s `pre_window` never opens (D7 edge 5 — the guard requires
 //! `claim.is_none()`, and a born-claimed successor's claim survives the

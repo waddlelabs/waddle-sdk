@@ -1,4 +1,4 @@
-//! Task 19 — `Session::report_proprio` merges a richer proprioceptive
+//! `Session::report_proprio` merges a richer proprioceptive
 //! sample (`joint_vel`, `ee_pose`, `gripper`) into the reducer's own
 //! `joint_pos` (from the caller's `gate(obs=...)` stream): the merged
 //! `ProprioSample` lands in Local-mode MCAP `/waddle/observations` exactly

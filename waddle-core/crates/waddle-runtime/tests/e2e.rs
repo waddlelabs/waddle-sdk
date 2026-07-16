@@ -55,8 +55,8 @@ fn robot() -> pb::RobotDescription {
 
 /// A 6-dim `BaseTwist` robot: matches the `Twist` teleop packets the
 /// intervention tests push (see `flatten_packet`), so the intake dims
-/// validation (Bug 2) never rejects them. `gripper` plumbs a declared
-/// `GripperSpec` through for Bug 3's mapping tests; `None` reproduces the
+/// validation never rejects them. `gripper` plumbs a declared
+/// `GripperSpec` through for the gripper-mapping tests; `None` reproduces the
 /// other intervention tests' ungripped fixture.
 fn twist_robot(gripper: Option<pb::GripperSpec>) -> pb::RobotDescription {
     pb::RobotDescription {
@@ -582,7 +582,7 @@ fn claimed_while_stalled_bypass_drives_send_directly() {
     session.shutdown();
 }
 
-/// Bug 1: media intake must gate its ring push on the mirror's claim state.
+/// Stale-backlog replay: media intake must gate its ring push on the mirror's claim state.
 /// Poses arriving before any claim exists must be dropped at intake, never
 /// stockpiled and replayed the instant a claim engages.
 #[test]
@@ -665,7 +665,7 @@ fn stale_pre_claim_poses_never_replay_after_engage() {
     session.shutdown();
 }
 
-/// Bug 2: a teleop action whose flattened width doesn't match the robot's
+/// Dims-validation contract: a teleop action whose flattened width doesn't match the robot's
 /// declared action space must never reach the ring, and the mismatch must
 /// surface as exactly one Fault (not one per 60-90 Hz packet) for the whole
 /// claim window. A subsequent matching packet must still substitute
@@ -809,7 +809,7 @@ fn mismatched_action_dims_are_dropped_with_one_fault_per_claim() {
     );
 }
 
-/// Bug 3: the declared `GripperSpec` must be applied to the teleop gripper
+/// GripperSpec mapping contract: the declared `GripperSpec` must be applied to the teleop gripper
 /// command at intake, not copied verbatim. `open_value=0.04,
 /// closed_value=0.0` against a fully-open (1.0) teleop command must carry
 /// 0.04 into the ring, not 1.0.
@@ -890,7 +890,7 @@ fn declared_gripper_spec_maps_teleop_gripper_at_intake() {
     session.shutdown();
 }
 
-/// Bug 3: no declared `GripperSpec` means passthrough, unchanged.
+/// GripperSpec mapping contract: no declared `GripperSpec` means passthrough, unchanged.
 #[test]
 fn absent_gripper_spec_passes_teleop_gripper_through_unchanged() {
     let send_log: SendLog = Arc::new(Mutex::new(Vec::new()));
@@ -964,7 +964,7 @@ fn absent_gripper_spec_passes_teleop_gripper_through_unchanged() {
     session.shutdown();
 }
 
-/// Bug 4: the default handoff policy is HOLD_FIRST — every engage issues
+/// Verb-registration validation: the default handoff policy is HOLD_FIRST — every engage issues
 /// `Verb::Hold` before the intervenor's first action lands. Building a
 /// media-wired session (a real engage path: the teleoperator's clutch)
 /// without a registered `hold` callable must fail loudly at build time,
@@ -1000,7 +1000,7 @@ fn build_fails_fast_when_hold_first_and_media_wired_without_hold() {
 
 /// The green counterpart: HOLD_FIRST + media wired + hold registered stays
 /// buildable (the existing e2e paths above already cover this in depth; this
-/// is the focused regression for the validation added by Bug 4).
+/// is the focused regression for the build-time verb-registration check).
 #[test]
 fn build_ok_when_hold_first_and_media_wired_with_hold_registered() {
     let (media, _far) = LoopbackMedia::new();
@@ -1014,7 +1014,7 @@ fn build_ok_when_hold_first_and_media_wired_with_hold_registered() {
     session.shutdown();
 }
 
-/// Back-compat (Bug 4): a session built with no Control at all and no media
+/// Back-compat (verb-registration validation): a session built with no Control at all and no media
 /// plane — the descriptors-only / minimal-local integration — must keep
 /// working. Nothing wires a real engage path (no media, no transport), so
 /// there is no dispatch for the build-time check to protect against; the
@@ -1029,7 +1029,7 @@ fn build_ok_with_no_verbs_and_no_media() {
     session.shutdown();
 }
 
-/// Bug 4: HOLD_FIRST is the only policy that unconditionally issues
+/// Verb-registration validation: HOLD_FIRST is the only policy that unconditionally issues
 /// `Verb::Hold` on engage — IMMEDIATE and CHUNK_BOUNDARY never do, so `hold`
 /// is not a build-time requirement under them even with a media plane wired.
 #[test]
@@ -1051,7 +1051,7 @@ fn build_ok_with_immediate_handoff_and_no_hold() {
     session.shutdown();
 }
 
-/// Bug 4 (delta-space degrade): FSM.md §5 refuses mid-chunk splice entry for
+/// Verb-registration validation (delta-space degrade): FSM.md §5 refuses mid-chunk splice entry for
 /// delta action spaces, so `waddle_fsm::begin_engage` silently degrades a
 /// declared `HandoffPolicy::Immediate` to `HoldFirst` on the very first
 /// engage whenever `space_contains_delta` is set (see
@@ -1091,7 +1091,7 @@ fn build_fails_fast_when_immediate_over_delta_space_and_no_hold() {
     );
 }
 
-/// Bug 4 (send side): the bypass pump can drive `Verb::Send` directly once a
+/// Verb-registration validation (send side): the bypass pump can drive `Verb::Send` directly once a
 /// claimed loop stalls (`claimed_while_stalled_bypass_drives_send_directly`
 /// above) — that path exists the moment a media plane is wired, regardless
 /// of handoff policy. An unregistered `send` must fail the build the same
@@ -1118,7 +1118,7 @@ fn build_fails_fast_when_media_wired_without_send() {
     );
 }
 
-/// Bug 4 (review follow-up): `grant_and_engage` is a real, exported,
+/// Verb-registration validation (review follow-up): `grant_and_engage` is a real, exported,
 /// always-live engage path (used by "tests and local intervention sources",
 /// per its own doc comment) with zero dependency on `self.media` — a
 /// session that registers `send` directly for local intervention, with no
@@ -1126,8 +1126,8 @@ fn build_fails_fast_when_media_wired_without_send() {
 /// wired to a media plane. The `hold` check must not key on
 /// `self.media.is_some()` alone, or this exact shape builds clean and then
 /// reproduces the "clutch press, nothing happens" stall the moment
-/// `grant_and_engage` is called (Bug 4's original report, reached without
-/// any media plane at all).
+/// `grant_and_engage` is called (the originally reported stall, reached
+/// without any media plane at all).
 #[test]
 fn build_fails_fast_when_hold_first_and_send_registered_without_media() {
     let registry = ControlRegistry {
@@ -1183,7 +1183,7 @@ fn build_fails_fast_when_hold_registered_without_send_and_no_media() {
     );
 }
 
-/// Bug 4 (estop side): a missing `estop` must never fail the build (unlike
+/// Verb-registration validation (estop side): a missing `estop` must never fail the build (unlike
 /// `hold`/`send`) — but the degradation must stay observable on the status
 /// mirror the caller already polls, not silently swallowed.
 #[test]

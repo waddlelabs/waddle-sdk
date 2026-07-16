@@ -67,7 +67,7 @@ struct GateParts {
     /// An intervention stream has produced traffic (stall → bypass only
     /// matters when there is someone to starve).
     traffic: bool,
-    /// Bug 2 (action-space validation, mirroring `spawn_media_intake`'s
+    /// Dims-validation contract (mirroring `spawn_media_intake`'s
     /// `validation_fault_sent`): a dims-mismatched teleop injection faults
     /// at most once per claim window, not once per packet. Reset the
     /// instant the claim ends.
@@ -810,7 +810,7 @@ impl Target {
         let (values, gripper) = flatten_teleop_targets(&packet);
         let now = self.now;
         let at = self.at();
-        // Bug 2 (action-space validation, mirroring `spawn_media_intake`'s
+        // Dims-validation contract (mirroring `spawn_media_intake`'s
         // `validation_fault_sent`): the fault guard resets the instant the
         // claim ends, so the next claim window gets its own chance to
         // fault.
@@ -862,7 +862,7 @@ impl Target {
             }
             gp.traffic = true;
         }
-        // Bug 2: a dims-mismatched injection during an open blend window is
+        // Dims validation: a dims-mismatched injection during an open blend window is
         // never dispatched — nothing goes to the ring, and the claim
         // window gets exactly one Fault{VALIDATION_ERROR} (waddle-fsm's
         // `InterventionRejected` handling), not one per mismatched packet.

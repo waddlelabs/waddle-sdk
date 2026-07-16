@@ -164,7 +164,7 @@ struct LoopbackState {
     /// Far-end receivers for topics the near end writes.
     outbound: HashMap<&'static str, Receiver<Bytes>>,
     frames: Vec<(String, EncodedFrame)>,
-    /// Every `publish_track` call, in order (Task 15): lets tests assert a
+    /// Every `publish_track` call, in order: lets tests assert a
     /// track was published lazily, exactly once, despite many frames.
     published_tracks: Vec<String>,
 }
@@ -252,8 +252,8 @@ impl LoopbackFarEnd {
         self.state.lock().frames.clone()
     }
 
-    /// Every `publish_track` call this media plane has serviced, in order
-    /// (Task 15) — lets tests assert a camera's track was published lazily,
+    /// Every `publish_track` call this media plane has serviced, in
+    /// order — lets tests assert a camera's track was published lazily,
     /// exactly once, despite many frames.
     #[must_use]
     pub fn published_tracks(&self) -> Vec<String> {
