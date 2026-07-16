@@ -78,15 +78,21 @@ impl AckGroup {
 
     /// Record one enveloped event's step outcome (`Err` carries the FSM's
     /// rejection reason). Returns the finished ack when this was the group's
-    /// last outstanding event, `None` while others are still in flight.
+    /// last outstanding event, `None` while others are still in flight — and
+    /// `None` forever after it finished, so a group can never emit twice
+    /// (unreachable when the pump sizes `events` correctly, but an ack is a
+    /// protocol answer: at-most-once is worth being structural).
     pub fn record(&self, outcome: Result<(), String>) -> Option<FinishedAck> {
         let mut st = self.state.lock();
+        if st.remaining == 0 {
+            return None;
+        }
         if let Err(reason) = outcome
             && st.rejection.is_none()
         {
             st.rejection = Some(reason);
         }
-        st.remaining = st.remaining.saturating_sub(1);
+        st.remaining -= 1;
         (st.remaining == 0).then(|| {
             let reason = st.rejection.take();
             FinishedAck {
@@ -120,6 +126,14 @@ mod tests {
             .expect("finished on the last event");
         assert!(!fin.accepted);
         assert_eq!(fin.reason, "first reason");
+    }
+
+    #[test]
+    fn a_finished_group_never_emits_twice() {
+        let g = AckGroup::new("d5".into(), 1);
+        assert!(g.record(Ok(())).is_some());
+        assert!(g.record(Ok(())).is_none(), "at-most-once is structural");
+        assert!(g.record(Err("late".into())).is_none());
     }
 
     #[test]
