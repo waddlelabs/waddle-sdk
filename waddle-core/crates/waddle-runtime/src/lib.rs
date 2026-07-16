@@ -17,7 +17,7 @@ pub mod session;
 pub mod verbs;
 
 pub use media_uplink::{FrameData, FramePixels};
-pub use mirror::Status;
+pub use mirror::{ResetProgressPhase, ResetProgressStatus, Status};
 pub use pumps::STALL_THRESHOLD_NS;
 pub use session::{
     EePose, Episode, EpisodeOptions, ProprioReport, ResetHook, ResetSpec, Session, SessionBuilder,

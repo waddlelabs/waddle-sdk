@@ -6,7 +6,49 @@
 use std::sync::Arc;
 
 use parking_lot::{Condvar, Mutex};
+use waddle_types::pb::v0 as pb;
 use waddle_types::{EpisodeId, GateMode, ProvenanceTag, TerminalOutcome};
+
+/// Pipeline progress within a plane-EXECUTED reset (the `RequestReset`/
+/// `ResetProgress` RPCs, `waddle.v0.reset`) — distinct from an SDK-executed
+/// remote reset WINDOW (flag `waddle.v0.reset.remote`, `ResetWindowEvent`).
+/// Mirrors `services.proto`'s `ResetPhase` permissively: an unrecognized
+/// wire value maps to `Unspecified` rather than erroring, since this is
+/// observational status only, never consulted by the FSM.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ResetProgressPhase {
+    #[default]
+    Unspecified,
+    Planning,
+    Executing,
+    Verifying,
+    Done,
+}
+
+impl ResetProgressPhase {
+    #[must_use]
+    pub fn from_pb(value: i32) -> Self {
+        match pb::ResetPhase::try_from(value) {
+            Ok(pb::ResetPhase::Planning) => Self::Planning,
+            Ok(pb::ResetPhase::Executing) => Self::Executing,
+            Ok(pb::ResetPhase::Verifying) => Self::Verifying,
+            Ok(pb::ResetPhase::Done) => Self::Done,
+            _ => Self::Unspecified,
+        }
+    }
+}
+
+/// The plane's most recent `ResetProgress` message (Task 19). Observational
+/// only: nothing in the FSM reads this, and `episode.proto` doesn't model
+/// `ResetProgress` as an `EpisodeEvent` (services-message, not sidecar/wire
+/// history) — so this mirror field is the only surface for it. `None` until
+/// the plane sends its first `ResetProgress` for the session.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ResetProgressStatus {
+    pub phase: ResetProgressPhase,
+    pub strategy: String,
+    pub detail: String,
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct Status {
@@ -26,6 +68,9 @@ pub struct Status {
     /// PERMANENT once set (FSM.md E16/E17): the post-reset cleanup failed
     /// or was estopped. NEVER alters the (pinned) outcome.
     pub post_reset_failed: bool,
+    /// The plane's most recent plane-executed reset progress (Task 19); see
+    /// [`ResetProgressStatus`].
+    pub reset_progress: Option<ResetProgressStatus>,
     pub plane_connected: bool,
     pub shutdown: bool,
     /// Set once, at build time, when the session's `ControlRegistry` has no

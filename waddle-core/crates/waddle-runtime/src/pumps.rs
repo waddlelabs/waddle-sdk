@@ -21,7 +21,7 @@ use waddle_types::{
 
 use crate::RuntimeError;
 use crate::ack::{ACKS_FLAG, AckGroup, Injected};
-use crate::mirror::Mirror;
+use crate::mirror::{Mirror, ResetProgressPhase, ResetProgressStatus};
 use crate::session::{
     EpisodeResetSpecs, ResetOwnerSlot, ResetSpec, ResetSpecSlot, StreamProducer, TaskSlot,
 };
@@ -837,6 +837,41 @@ fn forward_server_msg(
                 let _ = inject.send(
                     SessionEvent::HeartbeatAck {
                         grant_changes: changes,
+                        at,
+                    }
+                    .into(),
+                );
+            }
+        }
+        // A plane-EXECUTED reset (the `RequestReset`/`ResetProgress` RPCs,
+        // `waddle.v0.reset` — distinct from the SDK-executed remote reset
+        // WINDOW above, which is `ResetWindowDirective`/`ResetWindowEvent`
+        // under `waddle.v0.reset.remote`): every message is observational
+        // (mirror only — `episode.proto` doesn't model this as an
+        // `EpisodeEvent`), and DONE additionally injects the same
+        // `ResetResult` event the inline caller-thread path and the reset
+        // pump already inject, completing the pipeline. No episode-id
+        // filtering: `ResetProgress` carries none (session-scoped, like
+        // `HeartbeatAck`), and the FSM's own guard (`ResetResult` requires
+        // `Phase::Resetting` with no open remote window, E19b) is what makes
+        // an out-of-order or stray DONE harmless — never decided here
+        // (hollow-frontend).
+        ServerMsg::ResetProgress(progress) => {
+            let phase = ResetProgressPhase::from_pb(progress.phase);
+            mirror.update(|s| {
+                s.reset_progress = Some(ResetProgressStatus {
+                    phase,
+                    strategy: progress.strategy.clone(),
+                    detail: progress.detail.clone(),
+                });
+            });
+            if phase == ResetProgressPhase::Done
+                && let Some(result) = progress.result
+            {
+                let _ = inject.send(
+                    SessionEvent::ResetResult {
+                        ok: result.ok,
+                        verified: result.verification.as_ref().map(|v| v.verified),
                         at,
                     }
                     .into(),

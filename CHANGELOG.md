@@ -12,6 +12,23 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 ## [Unreleased]
 
 ### Added
+- **waddle-runtime (`ServerMsg::ResetProgress` handling, Task 19)**: the
+  plane-executed reset completion path (`RequestReset`/`ResetProgress`,
+  `waddle.v0.reset`) is no longer dropped — every message updates a new
+  `Status.reset_progress` mirror field (observational only; `episode.proto`
+  doesn't model this as an `EpisodeEvent`), and `ResetProgress{DONE, result}`
+  injects `SessionEvent::ResetResult` exactly like the inline/pump paths
+  already do, completing the pipeline. No episode-id filtering (the message
+  carries none — session-scoped, like `HeartbeatAck`); the FSM's own E19b
+  guard (`ResetResult` requires `Phase::Resetting` with no open remote
+  window) makes a stray or out-of-order DONE harmless. **Closes the Task
+  9/12b reports' documented gap**: a retake successor under a session-level
+  `Remote` PRE spec is born-claimed, so its pre-reset window never opens
+  (D7 edge 5); nothing else in the runtime could ever complete that
+  successor's RESETTING. `RequestReset` issuance (the outbound half) stays
+  unimplemented — no `ResetSpec` variant models "the plane executes this
+  reset automatically," so there is no clean trigger to fire it from (see
+  the report's Concerns).
 - **waddle-runtime (`Session::report_proprio` + `StreamObservations` uplink,
   Task 19)**: `report_proprio(ProprioReport { joint_vel, ee_pose, gripper })`
   reports a richer proprioceptive sample than the bare `joint_pos` every
