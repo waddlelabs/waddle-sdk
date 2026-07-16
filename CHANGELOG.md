@@ -634,6 +634,24 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   with in-flight packets still pending, then a later Remote POST window's
   agent chunk dispatches with zero teleop residue reaching `send`, checked
   on the dispatched values rather than provenance alone).
+- **Retake successors never inherited the session's `post_reset` config**:
+  `Effect::OpenSuccessor` hardcoded `post_reset: false` (with a stale
+  comment claiming a runtime start path applied the config — no such path
+  runs for a reducer-opened episode), so a retaken episode's own
+  termination skipped straight to `Terminal` with no cleanup at all, even
+  when the session declared one. The reducer now carries the session-level
+  `post_reset` default and resolves it the same way `start_episode_with`
+  does (`Hook` → `post_reset: true`; `Remote` → the declared `post_window`
+  too) when answering `OpenSuccessor`; a `Remote` post-reset opens the
+  successor's own POST window exactly as it would for any other episode —
+  the born-claimed suppression (D7 edge 5) is a PRE-window-only guard and
+  never applied to POST. A predecessor's per-episode `post_reset` override
+  still does not carry across a retake (documented on `EpisodeOptions`):
+  the successor only ever sees the session-level default, matching the PRE
+  side's existing behavior. `pre_reset` on successors is unchanged (the
+  reset pump already fell back to the session default for the PRE phase;
+  a declared `Remote` PRE spec on a successor remains the known gap noted
+  above, pending the closed-side retake/hand-reset flow).
 
 ## Stowed changelogs
 

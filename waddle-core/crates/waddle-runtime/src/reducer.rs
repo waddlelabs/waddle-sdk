@@ -22,7 +22,7 @@ use waddle_types::{
 };
 
 use crate::mirror::Mirror;
-use crate::session::{RecordSlot, TaskSlot};
+use crate::session::{RecordSlot, ResetSpec, TaskSlot};
 use crate::verbs::VerbDispatch;
 
 /// Everything the reducer owns.
@@ -41,6 +41,13 @@ pub(crate) struct Reducer {
     pub task: TaskSlot,
     pub robot_description_digest: String,
     pub space: ActionSpace,
+    /// The session-level `post_reset` default. `Effect::OpenSuccessor`
+    /// consults this to open a reducer-opened retake successor with the
+    /// same post-reset config as any other episode — successors never go
+    /// through `start_episode_with`, so this is their only source of
+    /// post-reset config (a predecessor's per-episode override never
+    /// reaches here, and must not: see `EpisodeOptions`'s rustdoc).
+    post_reset: Option<ResetSpec>,
     /// Fresh gate-record consumers arrive here from `start_episode`.
     record_slot: RecordSlot,
     /// The active episode's gate-record consumer, drained every wake.
@@ -68,6 +75,7 @@ impl Reducer {
         space: ActionSpace,
         record_slot: RecordSlot,
         task: TaskSlot,
+        post_reset: Option<ResetSpec>,
     ) -> Self {
         let fsm = SessionFsm::new(&cfg);
         let manifest = recording_dir
@@ -86,6 +94,7 @@ impl Reducer {
             task,
             robot_description_digest,
             space,
+            post_reset,
             record_slot,
             records_rx: None,
             sidecar: None,
@@ -216,17 +225,33 @@ impl Reducer {
                 mode,
                 ..
             } => {
+                // Retake successors carry a surviving claim (born-claimed):
+                // no remote pre-window opens (D7 edge 5; `EpisodeOpen`'s
+                // `pre_window` arm only opens one when `ctx.s.claim.is_none()`,
+                // which a born-claimed episode never satisfies) — the reset
+                // pump services PRE the same way it does for any episode with
+                // no per-episode override slot, falling back to the
+                // session-level default. A declared `Remote` PRE spec is
+                // still the known gap (see the Task 9 report's Concern 1);
+                // untouched here.
+                //
+                // POST is different: nothing suppresses the successor's own
+                // POST window or hook at E14 (`enter_post_reset` opens a
+                // declared `post_window` unconditionally, with no claim
+                // check), so the successor must inherit the SESSION's
+                // declared `post_reset` config here — there is no
+                // `start_episode_with` call for a reducer-opened successor to
+                // have resolved it earlier.
+                let post_window = self.post_reset.as_ref().and_then(ResetSpec::window);
+                let post_reset_declared = self.post_reset.is_some();
                 let _ = self_tx.send(SessionEvent::EpisodeOpen {
                     id: successor,
                     verification: mode,
                     born_claimed: true,
                     parent: Some(predecessor),
-                    // Retake successors carry a surviving claim (born-claimed):
-                    // no remote pre-window opens (D7 edge 5). Post-reset config
-                    // is applied by the runtime's start path, not here.
-                    post_reset: false,
+                    post_reset: post_reset_declared,
                     pre_window: None,
-                    post_window: None,
+                    post_window,
                     at: self.clock.stamp_now().mono_ns(),
                 });
             }

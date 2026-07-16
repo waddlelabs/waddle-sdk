@@ -7,6 +7,10 @@
 //! single scripted-hook invocation site (mirror-watch), fixing the
 //! reducer-opened retake-successor gap (successors never received a
 //! `ResetResult` before it).
+//!
+//! Task 12b: a reducer-opened retake successor also inherits the SESSION's
+//! declared `post_reset` config (a per-episode override does NOT carry
+//! across a retake — see the successor tests below).
 
 #![allow(clippy::disallowed_methods)] // wall-clock deadlines are test-only
 
@@ -19,7 +23,9 @@ use parking_lot::Mutex;
 use prost::Message as _;
 use waddle_fsm::{Phase, SessionEvent};
 use waddle_gate::gate::GateOutput;
-use waddle_runtime::{ControlRegistry, ResetHook, ResetSpec, Session, VerbError, grant_and_engage};
+use waddle_runtime::{
+    ControlRegistry, EpisodeOptions, ResetHook, ResetSpec, Session, VerbError, grant_and_engage,
+};
 use waddle_types::pb::v0 as pb;
 use waddle_types::{ActorKind, ClaimId, EpisodeId, GateMode, TerminalOutcome};
 
@@ -469,4 +475,243 @@ fn remote_post_reset_window_records_reset_active_noop_markers() {
     let bounds = sidecar.post_reset_bounds.as_ref().unwrap();
     assert_eq!(bounds.t_start_ns, 1_000_000);
     assert!(bounds.t_end_ns >= bounds.t_start_ns);
+}
+
+// --- Task 12b: retake successors inherit the session's post_reset config --
+
+/// Regression: before the fix, `Effect::OpenSuccessor` hardcoded
+/// `post_reset: false`, so a retaken episode's own termination skipped
+/// straight to `Terminal` with no cleanup at all, silently, even though the
+/// session declared a `post_reset` hook. The successor must detour through
+/// `Phase::PostReset` and run the SESSION's declared hook exactly like any
+/// other episode would.
+#[test]
+fn retake_successor_inherits_session_post_reset_hook() {
+    let invoked = Arc::new(AtomicUsize::new(0));
+    let (hook, release) = gated_hook(true, invoked.clone());
+    let session = Session::builder("reset-pump-retake-post")
+        .robot(robot())
+        .control(registry())
+        .post_reset(ResetSpec::Hook(hook))
+        .build()
+        .unwrap();
+
+    let mut ep1 = session.start_episode("first").unwrap();
+    let _ = ep1.gate(&[0.0; 3], None, None);
+    wait_for(&session, |s| {
+        matches!(s.episode_state, Some(Phase::Running))
+    });
+
+    // Retake: the claim survives, the reducer opens the successor
+    // born-claimed in RESETTING. No per-episode post_reset override is in
+    // play anywhere here — the successor's only source of post-reset config
+    // is the session-level default declared above.
+    grant_and_engage(&session, "claim-rt", "teleop", ActorKind::Teleoperator);
+    wait_for(&session, |s| s.gate_mode == Some(GateMode::Intervention));
+    let successor = EpisodeId::new("ep-retake-post-successor");
+    session.inject(SessionEvent::Retake {
+        claim: ClaimId::new("claim-rt"),
+        initiator: ActorKind::Teleoperator,
+        successor: successor.clone(),
+        at: waddle_types::MonoNs(3_000_000),
+    });
+    wait_for(&session, |s| {
+        s.episode_id.as_ref() == Some(&successor) && matches!(s.episode_state, Some(Phase::Ready))
+    });
+    // The POST_RESET detour only applies once the episode has actually run
+    // (Running/Intervention) — drive READY → RUNNING directly (E6), since
+    // there is no `Episode` handle for a reducer-opened successor to `gate()`
+    // with.
+    session.inject(SessionEvent::Start {
+        at: waddle_types::MonoNs(3_500_000),
+    });
+    wait_for(&session, |s| {
+        matches!(s.episode_state, Some(Phase::Running))
+    });
+
+    // The successor's own termination must detour through POST_RESET and run
+    // the session's declared hook — before the fix this went straight to
+    // Terminal and `invoked` never incremented.
+    session.inject(SessionEvent::Terminate {
+        outcome: TerminalOutcome::Success,
+        reason: "done".to_owned(),
+        at: waddle_types::MonoNs(4_000_000),
+    });
+    wait_for(&session, |s| {
+        matches!(s.episode_state, Some(Phase::PostReset))
+    });
+    assert_eq!(
+        invoked.load(Ordering::SeqCst),
+        1,
+        "the successor's inherited session post-reset hook ran"
+    );
+
+    drop(release);
+    wait_for(&session, |s| {
+        matches!(
+            s.episode_state,
+            Some(Phase::Terminal(TerminalOutcome::Success))
+        )
+    });
+    session.shutdown();
+}
+
+/// A retake successor with a SESSION-level `Remote` post-reset spec opens
+/// the window on the successor's own E14, exactly as any other episode
+/// would: the born-claimed suppression (D7 edge 5) is a PRE-window-only
+/// guard (checked only at `EpisodeOpen`'s `pre_window` arm) and does not
+/// apply to the POST window opened later at `enter_post_reset`.
+#[test]
+fn retake_successor_inherits_session_post_reset_remote_window() {
+    let session = Session::builder("reset-pump-retake-remote-post")
+        .robot(robot())
+        .control(registry())
+        .post_reset(ResetSpec::Remote {
+            actor: ActorKind::Teleoperator,
+            prompt: "clear the table".into(),
+            timeout_ns: 600_000_000_000,
+        })
+        .build()
+        .unwrap();
+
+    let mut ep1 = session.start_episode("first").unwrap();
+    let _ = ep1.gate(&[0.0; 3], None, None);
+    wait_for(&session, |s| {
+        matches!(s.episode_state, Some(Phase::Running))
+    });
+
+    grant_and_engage(&session, "claim-rt", "teleop", ActorKind::Teleoperator);
+    wait_for(&session, |s| s.gate_mode == Some(GateMode::Intervention));
+    let successor = EpisodeId::new("ep-retake-remote-post-successor");
+    session.inject(SessionEvent::Retake {
+        claim: ClaimId::new("claim-rt"),
+        initiator: ActorKind::Teleoperator,
+        successor: successor.clone(),
+        at: waddle_types::MonoNs(3_000_000),
+    });
+    wait_for(&session, |s| {
+        s.episode_id.as_ref() == Some(&successor) && matches!(s.episode_state, Some(Phase::Ready))
+    });
+    // The POST_RESET detour only applies once the episode has actually run
+    // (Running/Intervention) — drive READY → RUNNING directly (E6), since
+    // there is no `Episode` handle for a reducer-opened successor to `gate()`
+    // with.
+    session.inject(SessionEvent::Start {
+        at: waddle_types::MonoNs(3_500_000),
+    });
+    wait_for(&session, |s| {
+        matches!(s.episode_state, Some(Phase::Running))
+    });
+
+    session.inject(SessionEvent::Terminate {
+        outcome: TerminalOutcome::Success,
+        reason: "done".to_owned(),
+        at: waddle_types::MonoNs(4_000_000),
+    });
+    // Before the fix, `post_window` was hardcoded to `None` for successors,
+    // so `post_reset_declared` never became true and this never entered
+    // POST_RESET at all.
+    wait_for(&session, |s| {
+        matches!(s.episode_state, Some(Phase::PostReset))
+    });
+    std::thread::sleep(Duration::from_millis(50));
+    assert!(
+        matches!(session.status().episode_state, Some(Phase::PostReset)),
+        "the pump must leave a remote post-reset to the window machinery"
+    );
+
+    // The retake's surviving claim was released on entry to POST_RESET
+    // (`close_run(.., release_claim=true)`, same as any other episode's
+    // close), so a fresh claim can now engage the window (C6).
+    session.inject(SessionEvent::ClaimGranted {
+        id: ClaimId::new("reset-claim"),
+        source: "teleop".to_owned(),
+        actor: ActorKind::Teleoperator,
+        self_initiated: false,
+        at: waddle_types::MonoNs(5_000_000),
+    });
+    wait_for(&session, |s| s.claim_active);
+    session.inject(SessionEvent::ResetWindowEngage {
+        claim: ClaimId::new("reset-claim"),
+        at: waddle_types::MonoNs(6_000_000),
+    });
+    wait_for(&session, |s| s.gate_mode == Some(GateMode::Reset));
+    session.inject(SessionEvent::ResetWindowComplete {
+        claim: ClaimId::new("reset-claim"),
+        ok: true,
+        verified: Some(true),
+        at: waddle_types::MonoNs(7_000_000),
+    });
+    wait_for(&session, |s| {
+        s.episode_id.as_ref() == Some(&successor)
+            && matches!(
+                s.episode_state,
+                Some(Phase::Terminal(TerminalOutcome::Success))
+            )
+    });
+    session.shutdown();
+}
+
+/// A predecessor's per-episode `post_reset` override belongs to the
+/// predecessor only: it must never leak to a retake successor, which sees
+/// only the session-level default (here: none at all, so the successor's
+/// own termination skips POST_RESET entirely).
+#[test]
+fn retake_successor_does_not_inherit_predecessor_per_episode_post_reset_override() {
+    let invoked = Arc::new(AtomicUsize::new(0));
+    let invoked2 = invoked.clone();
+    let session = Session::builder("reset-pump-retake-no-leak")
+        .robot(robot())
+        .control(registry())
+        .build()
+        .unwrap();
+
+    let mut ep1 = session
+        .start_episode_with(
+            "first",
+            EpisodeOptions {
+                post_reset: Some(Some(ResetSpec::Hook(Arc::new(move |_task: &str| {
+                    invoked2.fetch_add(1, Ordering::SeqCst);
+                    (true, Some(true))
+                })))),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let _ = ep1.gate(&[0.0; 3], None, None);
+    wait_for(&session, |s| {
+        matches!(s.episode_state, Some(Phase::Running))
+    });
+
+    grant_and_engage(&session, "claim-rt", "teleop", ActorKind::Teleoperator);
+    wait_for(&session, |s| s.gate_mode == Some(GateMode::Intervention));
+    let successor = EpisodeId::new("ep-retake-no-leak-successor");
+    session.inject(SessionEvent::Retake {
+        claim: ClaimId::new("claim-rt"),
+        initiator: ActorKind::Teleoperator,
+        successor: successor.clone(),
+        at: waddle_types::MonoNs(3_000_000),
+    });
+    wait_for(&session, |s| {
+        s.episode_id.as_ref() == Some(&successor) && matches!(s.episode_state, Some(Phase::Ready))
+    });
+
+    session.inject(SessionEvent::Terminate {
+        outcome: TerminalOutcome::Success,
+        reason: "done".to_owned(),
+        at: waddle_types::MonoNs(4_000_000),
+    });
+    wait_for(&session, |s| {
+        s.episode_id.as_ref() == Some(&successor)
+            && matches!(
+                s.episode_state,
+                Some(Phase::Terminal(TerminalOutcome::Success))
+            )
+    });
+    assert_eq!(
+        invoked.load(Ordering::SeqCst),
+        0,
+        "the predecessor's per-episode post_reset override must not leak to the successor"
+    );
+    session.shutdown();
 }

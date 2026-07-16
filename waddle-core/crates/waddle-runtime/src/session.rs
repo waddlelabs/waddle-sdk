@@ -66,7 +66,7 @@ pub enum ResetSpec {
 impl ResetSpec {
     /// The remote window this spec declares, if any (`None` for `Hook` —
     /// that phase has no window; the hook runs inline instead).
-    fn window(&self) -> Option<WindowSpec> {
+    pub(crate) fn window(&self) -> Option<WindowSpec> {
         match self {
             Self::Hook(_) => None,
             Self::Remote {
@@ -114,6 +114,10 @@ impl std::fmt::Debug for ResetSpec {
 /// requires the session to have already declared a `Remote` spec for some
 /// phase at build time — otherwise the plane was never told to expect a
 /// remote-reset negotiation for this session at all.
+///
+/// An override belongs to the episode it was passed for only: a retake
+/// successor (reducer-opened, never routed through this call) always
+/// inherits the SESSION-level specs, never the predecessor's override.
 #[derive(Clone, Debug, Default)]
 pub struct EpisodeOptions {
     pub pre_reset: Option<Option<ResetSpec>>,
@@ -472,7 +476,9 @@ impl SessionBuilder {
         let record_slot: RecordSlot = Arc::new(parking_lot::Mutex::new(None));
         let task_slot: TaskSlot = Arc::new(parking_lot::Mutex::new(String::new()));
 
-        // The reducer thread.
+        // The reducer thread. `self.post_reset` is the session-level default
+        // a reducer-opened retake successor inherits (`Effect::OpenSuccessor`
+        // has no per-episode override slot to consult — see its rustdoc).
         let reducer = Reducer::new(
             cfg,
             clock.clone(),
@@ -486,6 +492,7 @@ impl SessionBuilder {
             robot.action_space.clone(),
             record_slot.clone(),
             task_slot.clone(),
+            self.post_reset.clone(),
         );
         let reducer_tx = inject_tx.clone();
         let reducer_thread = std::thread::Builder::new()
