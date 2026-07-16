@@ -44,6 +44,19 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   `frame_id`, per `descriptors.proto`'s `Pose` invariant) rather than the
   design sketch's bare `[f64; 7]`, since an untagged pose is exactly the
   silent-corruption failure mode that invariant exists to prevent.
+- **sdk (Python `session.report_proprio`)**: `session.report_proprio(
+  joint_vel=..., ee_pose=..., ee_pose_frame="ee", gripper=...)` — numpy
+  `float64` ndarray or plain list accepted for `joint_vel`/`ee_pose` (same
+  zero-copy-when-possible convention as `gate(action, obs)`); `ee_pose`
+  raises `ValueError` unless it has exactly 7 values (xyz + wxyz).
+  `ee_pose_frame` (default `"ee"`) names the frame the pose is expressed
+  in — widens the brief's bare `Option<[f64; 7]>` Python signature by this
+  one kwarg for the same frame-tagging reason as the Rust `EePose` type.
+  Dev-only new dependency: `mcap-protobuf-support` (pulls in `protobuf`),
+  used by the extended `test_nominal_episode` MCAP read-back test to
+  decode `/waddle/observations` messages via the channel's own embedded
+  `FileDescriptorSet` schema and assert the merged field values, not just
+  topic/message counts. Not a runtime dependency of the SDK itself.
 - **waddle-protocol/waddle-runtime (directive acks, new feature flag
   `waddle.v0.plane.acks`)**: plane→SDK directives are no longer blind
   fire-and-forget — an FSM rejection is now observable to the plane.

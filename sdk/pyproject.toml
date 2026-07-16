@@ -13,7 +13,12 @@ dynamic = ["version"]
 
 [dependency-groups]
 # mcap: the e2e test reads /waddle/actions back from the episode MCAP.
-dev = ["pytest>=8", "mcap>=1.1", "maturin>=1.14,<2"]
+# mcap-protobuf-support (pulls in `protobuf`): decodes recorded messages via
+# the FileDescriptorSet every channel schema already embeds (waddle-sidecar's
+# mcaprec.rs doc: "any MCAP reader can decode the messages without this repo
+# checked out") — used by the report_proprio read-back test to assert actual
+# merged field values, not just topic/message counts.
+dev = ["pytest>=8", "mcap>=1.1", "mcap-protobuf-support>=0.5", "maturin>=1.14,<2"]
 
 [tool.maturin]
 manifest-path = "rust/Cargo.toml"

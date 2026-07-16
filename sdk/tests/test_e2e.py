@@ -9,6 +9,7 @@ import time
 import numpy as np
 import pytest
 from mcap.reader import make_reader
+from mcap_protobuf.decoder import DecoderFactory
 
 import waddle
 import waddle._testing
@@ -48,14 +49,43 @@ def _topic_counts(mcap_path):
     return counts
 
 
+def _decoded_observations(mcap_path):
+    """Every `/waddle/observations` message, decoded via the channel's own
+    embedded `FileDescriptorSet` schema (`mcap-protobuf-support`) — the same
+    schema-driven decode any external MCAP reader would use, per
+    waddle-sidecar's mcaprec.rs doc ("any MCAP reader can decode the
+    messages without this repo checked out")."""
+    with open(mcap_path, "rb") as f:
+        reader = make_reader(f, decoder_factories=[DecoderFactory()])
+        return [
+            msg
+            for _, channel, _, msg in reader.iter_decoded_messages()
+            if channel.topic == "/waddle/observations"
+        ]
+
+
 def test_nominal_episode(tmp_path):
-    waddle.init("py-e2e", _robot(), _control(), recording_dir=tmp_path)
+    session = waddle.init("py-e2e", _robot(), _control(), recording_dir=tmp_path)
 
     with waddle.rollout(task="stack the blocks") as ep:
         episode_id = ep.id
         action = np.array([0.1, 0.2, 0.3])
         obs = np.array([0.9, 0.8, 0.7])
-        for _ in range(50):
+        out = ep.gate(action, obs)
+        assert out is action  # Pass returns the caller's exact object
+
+        # report_proprio: a richer sample than the bare joint_pos every
+        # gate(obs=...) call already records, merged into every subsequent
+        # tick's recorded ProprioSample (Task 19).
+        session.report_proprio(
+            joint_vel=[0.01, 0.02, 0.03],
+            ee_pose=np.array([1.0, 2.0, 3.0, 1.0, 0.0, 0.0, 0.0]),
+            ee_pose_frame="ee",
+            gripper=0.5,
+        )
+        time.sleep(0.1)  # settle past the reducer's <=20ms drain cadence
+
+        for _ in range(49):
             out = ep.gate(action, obs)
             assert out is action  # Pass returns the caller's exact object
         assert ep.last_gate.kind == "pass"
@@ -72,9 +102,31 @@ def test_nominal_episode(tmp_path):
     assert (tmp_path / "manifest.jsonl").exists()
 
     # The end-to-end proof of obs logging + persistence through Python.
-    counts = _topic_counts(tmp_path / f"{episode_id}.mcap")
+    mcap_path = tmp_path / f"{episode_id}.mcap"
+    counts = _topic_counts(mcap_path)
     assert counts.get("/waddle/actions", 0) >= 50
     assert counts.get("/waddle/observations", 0) >= 50
+
+    # report_proprio's merge, read back through the actual decoded MCAP
+    # content (not just topic counts): the LAST recorded observation must
+    # carry both the gate's own joint_pos and the reported extras.
+    observations = _decoded_observations(mcap_path)
+    last = observations[-1].proprio
+    assert list(last.joint_pos) == list(obs)
+    assert list(last.joint_vel) == [0.01, 0.02, 0.03]
+    assert last.gripper == pytest.approx(0.5)
+    assert last.ee_pose.frame_id == "ee"
+    assert (last.ee_pose.position.x, last.ee_pose.position.y, last.ee_pose.position.z) == (
+        1.0,
+        2.0,
+        3.0,
+    )
+    assert (
+        last.ee_pose.rotation.w,
+        last.ee_pose.rotation.x,
+        last.ee_pose.rotation.y,
+        last.ee_pose.rotation.z,
+    ) == (1.0, 0.0, 0.0, 0.0)
 
 
 def test_intervention(tmp_path):
@@ -161,6 +213,20 @@ def test_gate_accepts_lists(tmp_path):
         out = ep.gate(action, [0.4, 0.5, 0.6], gripper=0.5)
         assert out is action  # identity-preserved even for lists
         ep.terminate("success")
+
+
+def test_report_proprio_validates_ee_pose_shape(tmp_path):
+    session = waddle.init("py-proprio-shape", _robot(), _control())
+
+    with waddle.rollout(task="task"):
+        # numpy or list accepted for both joint_vel and ee_pose.
+        session.report_proprio(joint_vel=[0.1, 0.2, 0.3])
+        session.report_proprio(joint_vel=np.array([0.1, 0.2, 0.3]))
+        session.report_proprio(gripper=0.3)  # every field is optional
+        with pytest.raises(ValueError, match="exactly 7 values"):
+            session.report_proprio(ee_pose=[1.0, 2.0, 3.0])
+        with pytest.raises(ValueError, match="exactly 7 values"):
+            session.report_proprio(ee_pose=np.zeros(6))
 
 
 def test_init_twice_raises(tmp_path):

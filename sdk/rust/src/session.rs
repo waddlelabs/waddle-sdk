@@ -15,17 +15,19 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use bytes::Bytes;
 use numpy::{PyArray3, PyArrayMethods, PyUntypedArrayMethods};
 use parking_lot::Mutex;
-use pyo3::exceptions::{PyRuntimeError, PyTypeError};
+use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use waddle_media::{DataTopic, LoopbackFarEnd, LoopbackMedia};
-use waddle_runtime::{ControlRegistry, EpisodeOptions, EstopDecl, FrameData, Session};
+use waddle_runtime::{
+    ControlRegistry, EePose, EpisodeOptions, EstopDecl, FrameData, ProprioReport, Session,
+};
 use waddle_types::ActorKind;
 use waddle_types::pb::v0 as pb;
 
 use crate::convert::{
-    parse_enforcement, parse_handoff, parse_reset_spec, parse_robot_json, parse_verification_mode,
-    runtime_err,
+    extract_f64s, parse_enforcement, parse_handoff, parse_reset_spec, parse_robot_json,
+    parse_verification_mode, runtime_err,
 };
 use crate::episode::PyEpisode;
 use crate::verbs::{PySend, PyUnit};
@@ -196,6 +198,64 @@ impl PySession {
         let (height, width) = (shape[0] as u32, shape[1] as u32);
         let data = FrameData::rgb8(width, height, Bytes::copy_from_slice(slice));
         self.inner.publish_frame(camera, data).map_err(runtime_err)
+    }
+
+    /// Report a richer proprioceptive sample than the bare `joint_pos`
+    /// every `gate(action, obs)` call already records. Every argument
+    /// PATCHES the core's latest known sample — omit one (or pass `None`)
+    /// to leave its previously reported value in place (there is no way to
+    /// clear one in v0). The merged sample lands in every subsequent
+    /// gate-tick's recorded `/waddle/observations` entry (Local recording)
+    /// and in the periodic `StreamObservations` uplink whenever a
+    /// supervision plane is connected.
+    ///
+    /// `joint_vel` and `ee_pose` accept a numpy `float64` ndarray or a plain
+    /// list (numpy is zero-copy; anything else is a one-time owned copy —
+    /// same convention as `gate(action, obs)`). `ee_pose`, when given, must
+    /// have exactly 7 values: xyz position followed by a wxyz unit
+    /// quaternion (w first — this protocol's pinned convention), expressed
+    /// in `ee_pose_frame` (default `"ee"`) — every reported pose must name
+    /// its frame (there is no frame-less default at the wire level: an
+    /// untagged pose is exactly how misaligned data corrupts a corpus
+    /// silently). Raises `ValueError` for a wrong `ee_pose` length or an
+    /// empty `ee_pose_frame`.
+    #[pyo3(signature = (joint_vel=None, ee_pose=None, ee_pose_frame="ee", gripper=None))]
+    fn report_proprio(
+        &self,
+        joint_vel: Option<&Bound<'_, PyAny>>,
+        ee_pose: Option<&Bound<'_, PyAny>>,
+        ee_pose_frame: &str,
+        gripper: Option<f64>,
+    ) -> PyResult<()> {
+        let joint_vel = joint_vel
+            .map(extract_f64s)
+            .transpose()?
+            .map(|row| row.as_slice().to_vec());
+        let ee_pose = ee_pose
+            .map(|obj| {
+                let row = extract_f64s(obj)?;
+                let values = row.as_slice();
+                if values.len() != 7 {
+                    return Err(PyValueError::new_err(format!(
+                        "ee_pose must have exactly 7 values (xyz position + wxyz \
+                         orientation); got {}",
+                        values.len()
+                    )));
+                }
+                EePose::new(
+                    [values[0], values[1], values[2]],
+                    [values[3], values[4], values[5], values[6]],
+                    ee_pose_frame,
+                )
+                .map_err(|e| PyValueError::new_err(e.to_string()))
+            })
+            .transpose()?;
+        self.inner.report_proprio(ProprioReport {
+            joint_vel,
+            ee_pose,
+            gripper,
+        });
+        Ok(())
     }
 
     /// PRIVATE/UNSTABLE: every raw frame payload the loopback media plane's
