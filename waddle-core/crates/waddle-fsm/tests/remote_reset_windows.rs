@@ -18,6 +18,14 @@ struct Driver {
     trace: Vec<String>,
     lease_seq: u32,
     clock: i64,
+    /// When true, `MintLeaseToken` effects queue an answer instead of the
+    /// instant reply `try_apply` gives by default. The production reducer
+    /// answers via the TAIL of its single event queue, so any event already
+    /// queued (a plane's back-to-back COMPLETE, a racing `claim_released`)
+    /// is processed BEFORE the answer — deferral is how tests express
+    /// exactly those interleavings.
+    defer_mints: bool,
+    outstanding_mints: u32,
 }
 
 impl Driver {
@@ -34,6 +42,8 @@ impl Driver {
             trace: Vec::new(),
             lease_seq: 0,
             clock: 0,
+            defer_mints: false,
+            outstanding_mints: 0,
         }
     }
 
@@ -53,18 +63,34 @@ impl Driver {
         for effect in &stepped.effects {
             self.trace.push(render(effect));
             if let Effect::MintLeaseToken(_) = effect {
-                self.lease_seq += 1;
-                let at = self.tick();
-                follow_ups.push(SessionEvent::LeaseTokenMinted {
-                    minted: LeaseId::new(format!("L{}", self.lease_seq)),
-                    at,
-                });
+                if self.defer_mints {
+                    self.outstanding_mints += 1;
+                } else {
+                    self.lease_seq += 1;
+                    let at = self.tick();
+                    follow_ups.push(SessionEvent::LeaseTokenMinted {
+                        minted: LeaseId::new(format!("L{}", self.lease_seq)),
+                        at,
+                    });
+                }
             }
         }
         for f in follow_ups {
             self.ok(f);
         }
         Ok(())
+    }
+
+    /// Deliver ONE deferred mint answer. FIFO identity is irrelevant: the
+    /// FSM matches every answer to its single current `pending_lease` slot,
+    /// exactly as the runtime's uncorrelated `LeaseTokenMinted` does.
+    fn answer_mint(&mut self) -> Result<(), String> {
+        assert!(self.outstanding_mints > 0, "no deferred mint to answer");
+        self.outstanding_mints -= 1;
+        self.lease_seq += 1;
+        let minted = LeaseId::new(format!("L{}", self.lease_seq));
+        let at = self.tick();
+        self.try_apply(SessionEvent::LeaseTokenMinted { minted, at })
     }
 
     fn phase(&self) -> Phase {
@@ -488,4 +514,233 @@ fn e19b_post_reset_result_rejected_while_post_window_open() {
         "post_reset_result illegal while a remote post window is open (E19b)"
     );
     assert_eq!(d.phase(), Phase::PostReset, "unchanged");
+}
+
+// E20/E21 interaction: an in-flight engage mint vs. racing events -----------
+// The production reducer answers `MintLeaseToken` via the TAIL of its single
+// event queue, so a COMPLETE the plane sent back-to-back with ENGAGE (or a
+// legal `claim_released`) is processed BEFORE the mint answer. This is the
+// deferred-mint regression rig for that ordering: pre-fix, an early COMPLETE
+// closed the window, released the claim, went READY with the engage's
+// `pending_lease` still populated, and the stale answer then handed the
+// lease to the released claimant and panicked ("reset claim held"), killing
+// the reducer thread.
+
+#[test]
+fn e21_complete_rejected_while_engage_mint_in_flight_then_honored() {
+    let mut d = open_pre_and_grant(ActorKind::Teleoperator);
+    d.defer_mints = true;
+    let at = d.tick();
+    d.ok(SessionEvent::ResetWindowEngage {
+        claim: ClaimId::new("claim-rw"),
+        at,
+    });
+    assert_eq!(d.outstanding_mints, 1, "engage mint in flight");
+
+    // The racing COMPLETE: rejected, state untouched — the window never
+    // observably ENGAGED, so there is nothing to honorably complete yet.
+    let at = d.tick();
+    let res = d.try_apply(SessionEvent::ResetWindowComplete {
+        claim: ClaimId::new("claim-rw"),
+        ok: true,
+        verified: Some(true),
+        at,
+    });
+    assert!(
+        res.is_err(),
+        "complete must be rejected while the engage mint is in flight"
+    );
+    assert_eq!(d.phase(), Phase::Resetting, "unchanged");
+    assert!(d.state.claim.is_some(), "reset claim untouched");
+    assert!(d.state.pending_lease.is_some(), "pending engage untouched");
+
+    // The mint answer applies: window ENGAGED, gate → RESET, claimant holds.
+    d.answer_mint().expect("engage mint applies");
+    assert!(
+        d.state
+            .episode
+            .as_ref()
+            .unwrap()
+            .reset_window
+            .as_ref()
+            .unwrap()
+            .engaged
+    );
+    assert_eq!(d.state.gate_mode, GateMode::Reset);
+
+    // The plane's retried COMPLETE now works end-to-end.
+    let at = d.tick();
+    d.ok(SessionEvent::ResetWindowComplete {
+        claim: ClaimId::new("claim-rw"),
+        ok: true,
+        verified: Some(true),
+        at,
+    });
+    d.answer_mint().expect("handback mint applies");
+    assert_eq!(d.phase(), Phase::Ready);
+    assert!(d.state.claim.is_none(), "C7 release");
+    assert_eq!(d.state.gate_mode, GateMode::Passthrough);
+    match &d.state.lease {
+        LeaseState::Held { client, .. } => assert_eq!(client.as_str(), "loop-client"),
+        LeaseState::Vacant => panic!("lease must be home with the loop client"),
+    }
+}
+
+#[test]
+fn stale_engage_mint_after_claim_release_never_panics() {
+    let mut d = open_pre_and_grant(ActorKind::Teleoperator);
+    d.defer_mints = true;
+    let at = d.tick();
+    d.ok(SessionEvent::ResetWindowEngage {
+        claim: ClaimId::new("claim-rw"),
+        at,
+    });
+
+    // A LEGAL `claim_released` races the mint answer (nothing closes the
+    // window; the claim is simply gone before the token applies).
+    let at = d.tick();
+    d.ok(SessionEvent::ClaimReleased {
+        id: ClaimId::new("claim-rw"),
+        at,
+    });
+    assert!(d.state.claim.is_none());
+
+    // Pre-fix this first applied the lease handoff to the released
+    // claimant, then panicked ("reset claim held"). It must degrade: the
+    // minted token is discarded and the lease does not move.
+    let holder_before = d.state.lease.holder().map(|(_, c)| c.clone());
+    d.answer_mint()
+        .expect("stale mint answer is consumed, never a panic");
+    assert_eq!(
+        d.state.lease.holder().map(|(_, c)| c.clone()),
+        holder_before,
+        "lease must not move on a stale engage mint"
+    );
+    assert!(d.state.pending_lease.is_none());
+    assert!(
+        !d.state
+            .episode
+            .as_ref()
+            .unwrap()
+            .reset_window
+            .as_ref()
+            .unwrap()
+            .engaged,
+        "window still open, un-engaged"
+    );
+    assert_eq!(d.state.gate_mode, GateMode::Passthrough);
+
+    // The window is still serviceable: a fresh claim engages and completes.
+    grant(&mut d, "claim-rw2", ActorKind::Teleoperator).expect("C6 re-admits");
+    let at = d.tick();
+    d.ok(SessionEvent::ResetWindowEngage {
+        claim: ClaimId::new("claim-rw2"),
+        at,
+    });
+    d.answer_mint().expect("fresh engage mint applies");
+    assert_eq!(d.state.gate_mode, GateMode::Reset);
+    let at = d.tick();
+    d.ok(SessionEvent::ResetWindowComplete {
+        claim: ClaimId::new("claim-rw2"),
+        ok: true,
+        verified: Some(true),
+        at,
+    });
+    d.answer_mint().expect("handback applies");
+    assert_eq!(d.phase(), Phase::Ready);
+}
+
+#[test]
+fn engage_overwriting_pending_initial_acquire_stays_sound() {
+    // A pre-window episode opens with the loop client's initial acquire
+    // still in flight; the window's engage overwrites the single
+    // `pending_lease` slot. The first (uncorrelated) mint answer applies as
+    // the ENGAGE op; the second finds nothing pending and is rejected.
+    // Sound end state: one holder throughout, window engaged, and the
+    // handback still routes the lease home.
+    let mut d = Driver::new();
+    d.defer_mints = true;
+    open_with(&mut d, Some(teleop_window()), None);
+    assert_eq!(d.outstanding_mints, 1, "initial acquire in flight");
+    grant(&mut d, "claim-rw", ActorKind::Teleoperator).expect("C6 admits");
+    let at = d.tick();
+    d.ok(SessionEvent::ResetWindowEngage {
+        claim: ClaimId::new("claim-rw"),
+        at,
+    });
+    assert_eq!(
+        d.outstanding_mints, 2,
+        "engage overwrote the pending op; both answers still arrive"
+    );
+
+    d.answer_mint()
+        .expect("first answer applies as the engage acquire");
+    assert!(
+        d.state
+            .episode
+            .as_ref()
+            .unwrap()
+            .reset_window
+            .as_ref()
+            .unwrap()
+            .engaged
+    );
+    assert_eq!(d.state.gate_mode, GateMode::Reset);
+    match &d.state.lease {
+        LeaseState::Held { client, .. } => assert_eq!(client.as_str(), "teleop"),
+        LeaseState::Vacant => panic!("claimant must hold the lease"),
+    }
+
+    let res = d.answer_mint();
+    assert!(
+        res.is_err(),
+        "second answer finds no pending op and is rejected"
+    );
+
+    let at = d.tick();
+    d.ok(SessionEvent::ResetWindowComplete {
+        claim: ClaimId::new("claim-rw"),
+        ok: true,
+        verified: Some(true),
+        at,
+    });
+    d.answer_mint().expect("handback applies");
+    assert_eq!(d.phase(), Phase::Ready);
+    match &d.state.lease {
+        LeaseState::Held { client, .. } => assert_eq!(client.as_str(), "loop-client"),
+        LeaseState::Vacant => panic!("lease must be home"),
+    }
+}
+
+#[test]
+fn window_timeout_during_engage_mint_stays_sound() {
+    // E22 while the engage mint is in flight: the timeout path runs the
+    // shared run-closing block, which clears `pending_lease` — the stale
+    // answer is then rejected, never applied. (Pinned so a future refactor
+    // of the timeout path cannot reintroduce the stale-mint hazard the
+    // COMPLETE path had.)
+    let mut d = open_pre_and_grant(ActorKind::Teleoperator);
+    d.defer_mints = true;
+    let at = d.tick();
+    d.ok(SessionEvent::ResetWindowEngage {
+        claim: ClaimId::new("claim-rw"),
+        at,
+    });
+    let at = d.tick();
+    d.ok(SessionEvent::TimerFired {
+        id: TimerId::ResetWindowTimeout,
+        at,
+    });
+    assert_eq!(
+        d.phase(),
+        Phase::Terminal(TerminalOutcome::Abort),
+        "E22 pre → abort"
+    );
+    assert!(
+        d.state.pending_lease.is_none(),
+        "the run-closing block cleared the pending engage"
+    );
+    let res = d.answer_mint();
+    assert!(res.is_err(), "the stale answer is rejected, never applied");
+    assert!(d.state.claim.is_none());
 }

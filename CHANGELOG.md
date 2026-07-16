@@ -720,6 +720,35 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   in the episode MCAP; callers no longer see the ring.
 
 ### Fixed
+- **`waddle-fsm` — a `reset_window_complete` racing an in-flight engage
+  lease mint panicked the reducer thread and hung every blocked caller**:
+  E20's lease routing is asynchronous (the runtime answers
+  `Effect::MintLeaseToken` via the tail of its single event queue), so a
+  plane sending ENGAGE and COMPLETE back-to-back gets the COMPLETE processed
+  before the engage's mint answer. The COMPLETE handler had no
+  engage-in-flight guard: it saw the window un-engaged, closed it, released
+  the reset claim, and (PRE, ok) went READY with the engage's
+  `pending_lease` still populated — the stale mint answer then handed the
+  lease to the released claimant and panicked (`expect("reset claim
+  held")`), killing the reducer (no catch_unwind) so `start_episode*` /
+  `terminate_episode` waits hung forever. Two-part fix, pinned as normative
+  prose in FSM.md §1.4 ("Engage atomicity"): (1) a COMPLETE arriving while
+  an engage mint is in flight is **rejected** — a window that never
+  observably ENGAGED has nothing to honorably complete; the plane retries
+  after it sees `reset_window{ENGAGED}`; (2) a minted engage lease whose
+  reset claim (or window) is gone by the time it applies — e.g. a legal
+  `claim_released` raced the answer — is discarded (`lease{DENIED}`, lease
+  unmoved, window still serviceable) instead of panicking: the FSM never
+  panics on a legal event ordering. The invisibility root cause was that
+  every existing harness (the FSM test drivers and the conformance runner)
+  answered mints synchronously, so the interleaving was inexpressible;
+  the FSM test driver and the property-test alphabet now support deferred
+  mint answers (`DeferMints`/`AnswerMint` random-walk commands run all 14
+  session invariants over these interleavings), four deferred-mint FSM
+  regression tests pin rejection/degradation/benign-overwrite/timeout
+  behavior, and two runtime tests drive ENGAGE+COMPLETE back-to-back
+  through the production plane-directive path and assert the session
+  always resolves with the reducer alive.
 - **`waddle-controlplane`'s `tonic-transport` test build (pre-existing,
   unrelated to Task 19's own scope)**: `grpc_transport.rs`'s two
   `ClaimDirective` struct literals predated the directive-acks feature

@@ -1004,6 +1004,29 @@ pub fn step(
                 return Err(rejected("no pending lease operation"));
             };
             ctx.s.pending_lease = None;
+            // A stale reset-engage mint: the reset claim (or the window
+            // itself) is gone — a legal `claim_released` raced the answer.
+            // The minted token is discarded and the lease does not move; an
+            // FSM must never panic on a legal event ordering. The window (if
+            // still open) stays un-engaged and serviceable by a fresh claim.
+            if matches!(pending.then, AfterLease::ResetEngageComplete)
+                && (state.claim.is_none()
+                    || state
+                        .episode
+                        .as_ref()
+                        .is_none_or(|e| e.reset_window.is_none()))
+            {
+                let ep = state.episode.as_ref().map(|e| e.id.clone());
+                ctx.emit(emit::lease_event(
+                    *at,
+                    ep.as_ref(),
+                    pb::LeaseEventKind::Denied,
+                    None,
+                    cfg.enforcement,
+                    "stale reset-engage mint: the reset claim closed before the token applied",
+                ));
+                return Ok(ctx.finish());
+            }
             let cmd = match &pending.op {
                 LeaseOpKind::Acquire { client } => LeaseCmd::Acquire {
                     client: client.clone(),
@@ -1089,7 +1112,9 @@ pub fn step(
                     }
                 }
                 // E20: the reset claimant now holds the lease — gate → RESET
-                // and emit ENGAGED (in that order).
+                // and emit ENGAGED (in that order). The claim and window are
+                // both present here: stale mints (either gone) were discarded
+                // at the top of this handler.
                 AfterLease::ResetEngageComplete => {
                     let claim_id = ctx.s.claim.as_ref().expect("reset claim held").id.clone();
                     if let Some(window) = ctx.episode_mut().reset_window.as_mut() {
@@ -1506,6 +1531,24 @@ pub fn step(
                         "reset_window_complete without the active reset claim",
                     ));
                 }
+            }
+            // E20/E21 interaction (FSM.md §1.4 prose): an engage's lease
+            // mint is still in flight — the window never observably ENGAGED,
+            // so a COMPLETE is not honorable yet. Honoring it here would
+            // close the window and release the reset claim underneath the
+            // pending mint, and the answer would then apply the lease to a
+            // released claimant. Rejected; the plane retries after it
+            // observes `reset_window{ENGAGED}`.
+            if matches!(
+                &state.pending_lease,
+                Some(PendingLeaseOp {
+                    then: AfterLease::ResetEngageComplete,
+                    ..
+                })
+            ) {
+                return Err(rejected(
+                    "reset window engage in flight; complete not honorable until it applies",
+                ));
             }
             let result = Some(pb::ResetResult {
                 ok: *ok,

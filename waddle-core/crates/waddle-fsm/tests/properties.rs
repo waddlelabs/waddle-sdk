@@ -98,6 +98,17 @@ enum Cmd {
     Advance {
         ns: i64,
     },
+    /// Toggle deferred lease-mint answers. The production reducer answers
+    /// `MintLeaseToken` via the TAIL of its single event queue, so any event
+    /// already queued (a plane's back-to-back COMPLETE, a `claim_released`)
+    /// is processed BEFORE the answer — deferral lets the walk explore
+    /// exactly those interleavings.
+    DeferMints {
+        defer: bool,
+    },
+    /// Deliver ONE deferred mint answer (a no-op when none is outstanding —
+    /// the runtime sends exactly one answer per mint effect, never more).
+    AnswerMint,
 }
 
 /// A fixed remote-window spec (flag `waddle.v0.reset.remote`): the actor is
@@ -151,6 +162,8 @@ fn cmd_strategy() -> impl Strategy<Value = Cmd> {
         1 => Just(Cmd::PartitionStart),
         1 => Just(Cmd::PartitionEnd),
         2 => (1_000_000i64..5_000_000_000).prop_map(|ns| Cmd::Advance { ns }),
+        2 => any::<bool>().prop_map(|defer| Cmd::DeferMints { defer }),
+        3 => Just(Cmd::AnswerMint),
     ]
 }
 
@@ -199,6 +212,11 @@ struct Driver {
     /// deterministic smoke test's emission-order assertions (unused by the
     /// random walk itself).
     trace: Vec<String>,
+    /// `Cmd::DeferMints`: when true, `MintLeaseToken` effects queue instead
+    /// of being answered inline (see the Cmd's doc).
+    defer_mints: bool,
+    /// Mint effects awaiting a `Cmd::AnswerMint`.
+    outstanding_mints: u32,
 }
 
 impl Driver {
@@ -230,6 +248,8 @@ impl Driver {
             last_post_reset_failed: None,
             ever_post_reset: HashSet::new(),
             trace: Vec::new(),
+            defer_mints: false,
+            outstanding_mints: 0,
         }
     }
 
@@ -358,11 +378,15 @@ impl Driver {
                     self.trace.push(render(effect));
                     match effect {
                         Effect::MintLeaseToken(_) => {
-                            self.lease_seq += 1;
-                            follow_ups.push(SessionEvent::LeaseTokenMinted {
-                                minted: LeaseId::new(format!("L{}", self.lease_seq)),
-                                at: self.tick(),
-                            });
+                            if self.defer_mints {
+                                self.outstanding_mints += 1;
+                            } else {
+                                self.lease_seq += 1;
+                                follow_ups.push(SessionEvent::LeaseTokenMinted {
+                                    minted: LeaseId::new(format!("L{}", self.lease_seq)),
+                                    at: self.tick(),
+                                });
+                            }
                         }
                         Effect::OpenSuccessor {
                             successor,
@@ -734,6 +758,21 @@ impl Driver {
             },
             Cmd::PartitionStart => SessionEvent::PartitionStart { at },
             Cmd::PartitionEnd => SessionEvent::PartitionEnd { at },
+            Cmd::DeferMints { defer } => {
+                self.defer_mints = *defer;
+                return;
+            }
+            Cmd::AnswerMint => {
+                if self.outstanding_mints == 0 {
+                    return;
+                }
+                self.outstanding_mints -= 1;
+                self.lease_seq += 1;
+                SessionEvent::LeaseTokenMinted {
+                    minted: LeaseId::new(format!("L{}", self.lease_seq)),
+                    at,
+                }
+            }
             Cmd::Advance { ns } => {
                 self.now = self.now.saturating_add(*ns);
                 // Fire due timers in deadline order.

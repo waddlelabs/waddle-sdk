@@ -121,6 +121,21 @@ enters INTERVENTION; `InterventionPhase` is untouched). `clutch` during
 reset windows stays a recorded edge, not a claim (current behavior,
 unchanged). E13 (late verification) applies unchanged in POST_RESET.
 
+Engage atomicity (E20/E21 interaction, normative): E20's lease routing is
+asynchronous — between `reset_window_engage`'s acceptance and the minted
+lease applying, the engage is *in flight* and the window has not observably
+ENGAGED. A `reset_window_complete` arriving in that interval (a plane
+sending ENGAGE and COMPLETE back-to-back; a CANCEL, which decodes to the
+same event) is **rejected**, not honored: a window that never observably
+ENGAGED has nothing to honorably complete, and honoring it would close the
+window and release the reset claim underneath the in-flight lease
+operation. The plane retries after it observes `reset_window{ENGAGED}`.
+Symmetrically, a minted engage lease whose reset claim (or window) is gone
+by the time it applies — e.g. a legal `claim_released` raced the mint — is
+discarded: the lease does not move, a `lease{DENIED}` records the stale
+mint, and the still-open window remains serviceable by a fresh claim (C6).
+This pins the atomicity of E20's engage; it adds no new states or rows.
+
 ---
 
 ## 2. Claim lifecycle
