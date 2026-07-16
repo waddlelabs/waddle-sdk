@@ -12,6 +12,50 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 ## [Unreleased]
 
 ### Added
+- **waddle-gate/waddle-runtime (Claimed-mode agent-chunk intake + jitter
+  horizon + `ReplanPolicy`)**: cloud-agent interventions are now real
+  outside a reset window too. `forward_server_msg`'s `InterventionChunk` arm
+  (Task 10 built Reset-mode-only intake) now accepts a chunk whenever a
+  claim is active — the same `claim_active`-alone gate `spawn_media_intake`'s
+  teleop path already uses, so a chunk arriving during the ENGAGE handoff
+  sub-phase still buffers correctly and is ready the instant the handoff
+  completes.
+  - `waddle-gate::jitter::JitterBuffer` is chunk-aware on the `AgentChunk`
+    channel: each arrival carries the wire chunk's `ChunkMeta`
+    (`seq`/`t_emitted_ns`); a chunk boundary (a step from a different chunk
+    than the channel's currently-executing one) decides stale-vs-supersede —
+    a chunk not strictly newer by BOTH `chunk_seq` and `t_emitted_ns` is
+    rejected wholesale (`dropped_stale_chunks`); a genuinely newer one
+    applies the declared `descriptors.proto` `ChunkingSemantics.replan`:
+    `REPLAN_POLICY_IMMEDIATE`/`REPLAN_POLICY_BLEND` drop the executing
+    chunk's still-pending steps (BLEND has no declared blend duration/curve
+    for a chunk-to-chunk splice and its own comment steers away from it, so
+    it maps onto the same replace-remaining behavior as IMMEDIATE — flagged
+    in the task report); `REPLAN_POLICY_CHUNK_BOUNDARY` lets them finish
+    first. `clear_pending` (the existing claim/window-teardown discard) also
+    forgets the executing-chunk pointer, so a brand-new claim's first chunk
+    is never wrongly rejected as stale against an unrelated prior claim's
+    last one. `GateShared::new`/`JitterBuffer::new` take the declared
+    `ReplanPolicy` (from `ActionSpace.chunking.replan`) as a new parameter.
+  - Playout scheduling stays session-receive-time + each step's
+    `t_offset_ns` (unchanged from Task 10) — chunk `seq`/`t_emitted_ns` are
+    used only for the boundary/staleness decision, never as the playout
+    anchor.
+  - Dims validation: a chunk whose flattened width doesn't match the
+    declared action space now raises `SessionEvent::InterventionRejected`
+    (once per claim window, chunk dropped) — the same event/fault the
+    teleop path already uses. The event gained a `source` field
+    (`"media-intake"` / `"agent-chunk"`) so the emitted fault names the
+    actual rejecting producer instead of always saying "teleop action" /
+    "media-intake"; every other wire-validation error (missing field, wrong
+    target arm, Opaque space, …) still only gets a `tracing::warn!` (Task
+    10's reasoning: a dims-only event would misreport those).
+  - New runtime e2e tests (`claimed_chunk_intake.rs`, `InMemoryTransport`):
+    a 5-step Claimed-mode chunk substitutes in order via the caller's own
+    `gate()`, tagged `Provenance::Agent`, with MCAP read-back; a superseding
+    chunk mid-horizon under `IMMEDIATE` drops the executing chunk's
+    remaining steps; a dims-mismatched chunk faults once per claim window
+    and drops, a subsequent correct one still substitutes.
 - **waddle-controlplane (real tonic gRPC `ControlTransport`, feature
   `tonic-transport`)**: the `tonic-transport` feature is no longer an empty
   stub — `waddle_controlplane::grpc::{GrpcConfig, GrpcTransport}` implements
