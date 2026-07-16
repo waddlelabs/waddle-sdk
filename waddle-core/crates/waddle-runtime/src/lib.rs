@@ -20,8 +20,8 @@ pub use media_uplink::{FrameData, FramePixels};
 pub use mirror::Status;
 pub use pumps::STALL_THRESHOLD_NS;
 pub use session::{
-    Episode, EpisodeOptions, ResetHook, ResetSpec, Session, SessionBuilder, grant_and_engage,
-    release_claim, reset_window_complete, reset_window_engage,
+    EePose, Episode, EpisodeOptions, ProprioReport, ResetHook, ResetSpec, Session, SessionBuilder,
+    grant_and_engage, release_claim, reset_window_complete, reset_window_engage,
 };
 pub use verbs::{ControlRegistry, EstopDecl, SendVerb, UnitVerb, VerbDispatch, VerbError};
 

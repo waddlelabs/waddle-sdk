@@ -23,8 +23,51 @@ use waddle_types::{
 
 use crate::ack::Injected;
 use crate::mirror::Mirror;
-use crate::session::{ObsSlot, RecordSlot, ResetSpec, TaskSlot};
+use crate::session::{ObsSlot, ProprioReport, RecordSlot, ResetSpec, TaskSlot};
 use crate::verbs::VerbDispatch;
+
+/// The `StreamObservations` uplink cadence (Task 19): no dedicated
+/// "observation rate" field exists on `RobotDescription` to key off —
+/// `series` entries are arbitrary customer-named channels (no canonical
+/// "proprio" name), and `action_space.rate_hz` is the CONTROL cadence, not a
+/// bandwidth budget for this control-plane RPC (`services.proto`'s header is
+/// explicit that "nothing high-bandwidth ever touches these RPCs"; a
+/// declared control rate of e.g. 500 Hz would blow straight through that for
+/// what is meant to be a low-rate status summary). So this always uses the
+/// conservative default rather than risk keying a chatty control-plane send
+/// off an unrelated field.
+const DEFAULT_OBSERVATION_UPLINK_HZ: f64 = 10.0;
+const OBSERVATION_UPLINK_PERIOD_NS: i64 = (1_000_000_000.0 / DEFAULT_OBSERVATION_UPLINK_HZ) as i64;
+
+/// The latest reported proprio extras (Task 19), maintained by the reducer
+/// and merged into every subsequent gate-tick's `ProprioSample` (both the
+/// MCAP recording and the `StreamObservations` uplink). See
+/// [`crate::session::ProprioReport`] for the per-field patch semantics this
+/// mirrors exactly.
+#[derive(Clone, Debug, Default)]
+struct ProprioExtras {
+    joint_vel: Vec<f64>,
+    ee_pose: Option<pb::Pose>,
+    gripper: Option<f64>,
+}
+
+impl ProprioExtras {
+    fn merge(&mut self, report: &ProprioReport) {
+        if let Some(v) = &report.joint_vel {
+            self.joint_vel = v.clone();
+        }
+        if let Some(pose) = &report.ee_pose {
+            self.ee_pose = Some(pose.to_pb());
+        }
+        if let Some(g) = report.gripper {
+            self.gripper = Some(g);
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.joint_vel.is_empty() && self.ee_pose.is_none() && self.gripper.is_none()
+    }
+}
 
 /// Everything the reducer owns.
 pub(crate) struct Reducer {
@@ -57,6 +100,19 @@ pub(crate) struct Reducer {
     /// carrying an obs publishes it here, regardless of whether local MCAP
     /// recording is even on.
     obs_slot: ObsSlot,
+    /// `Session::report_proprio`'s side channel (Task 19) — drained every
+    /// wake, same discipline as `record_slot`/`records_rx`.
+    proprio_rx: Receiver<ProprioReport>,
+    /// The latest joint_pos from a ring-drained gate record (Task 19's
+    /// "merged with the latest joint_pos from gate records"), independent of
+    /// `write_record`'s own per-tick `obs` — this is what the periodic
+    /// `StreamObservations` uplink reads between ticks.
+    latest_joint_pos: Vec<f64>,
+    /// The latest reported proprio extras (Task 19), merged into every
+    /// subsequent gate-tick's `ProprioSample` and the periodic uplink.
+    latest_extras: ProprioExtras,
+    /// Last `StreamObservations` send time (Task 19), for the cadence check.
+    last_obs_uplink_ns: Option<i64>,
 
     // Per-episode state.
     sidecar: Option<SidecarBuilder>,
@@ -82,6 +138,7 @@ impl Reducer {
         task: TaskSlot,
         post_reset: Option<ResetSpec>,
         obs_slot: ObsSlot,
+        proprio_rx: Receiver<ProprioReport>,
     ) -> Self {
         let fsm = SessionFsm::new(&cfg);
         let manifest = recording_dir
@@ -104,6 +161,10 @@ impl Reducer {
             record_slot,
             records_rx: None,
             obs_slot,
+            proprio_rx,
+            latest_joint_pos: Vec::new(),
+            latest_extras: ProprioExtras::default(),
+            last_obs_uplink_ns: None,
             sidecar: None,
             mcap: None,
             manifest,
@@ -115,14 +176,17 @@ impl Reducer {
     pub fn run(mut self, rx: &Receiver<Injected>, self_tx: &Sender<Injected>) {
         loop {
             // Every wake (≤20 ms cadence): drain the gate-record ring onto
-            // the episode recording.
+            // the episode recording, and any queued `report_proprio` calls
+            // (Task 19) onto the reducer's own latest-known state.
             self.drain_gate_records();
+            self.drain_proprio_reports();
             if self.mirror.read().shutdown {
                 self.finalize_episode_if_terminal(true);
                 return;
             }
             // Fire due timers first.
             let now = self.clock.stamp_now().mono_ns();
+            self.maybe_uplink_observation(now);
             let mut due: Vec<(TimerId, MonoNs)> = self
                 .armed
                 .iter()
@@ -435,9 +499,54 @@ impl Reducer {
         while let Some(rec) = self.records_rx.as_mut().and_then(|rx| rx.pop().ok()) {
             if let Some(obs) = &rec.obs {
                 self.publish_obs(rec.stamp.mono_ns(), obs);
+                self.latest_joint_pos = obs.to_vec();
             }
             self.write_record(&rec);
         }
+    }
+
+    /// Drain `Session::report_proprio` calls (Task 19) onto the reducer's
+    /// own latest-known proprio state — merged into every subsequent
+    /// gate-tick's recorded `ProprioSample` (`write_record`) and into the
+    /// periodic `StreamObservations` uplink (`maybe_uplink_observation`).
+    /// Deliberately NOT the `Injected`/`SessionEvent` funnel: a proprio
+    /// report carries no FSM guard, so it never touches `step()` — the
+    /// hollow-frontend rule is about claim/lease/handoff/timeline logic,
+    /// none of which this is.
+    fn drain_proprio_reports(&mut self) {
+        while let Ok(report) = self.proprio_rx.try_recv() {
+            self.latest_extras.merge(&report);
+        }
+    }
+
+    /// `StreamObservations` (Task 19): a periodic summary of the reducer's
+    /// latest known proprio state, sent whenever a transport is configured.
+    /// Buffering/dropping while disconnected is entirely the client's
+    /// existing `ClientMsg::buffer_when_offline` classification (unchanged
+    /// by this task) — this only decides WHEN to send.
+    fn maybe_uplink_observation(&mut self, now: MonoNs) {
+        let Some(plane) = &self.plane else { return };
+        if self.latest_joint_pos.is_empty() && self.latest_extras.is_empty() {
+            return; // nothing observed yet
+        }
+        if let Some(last) = self.last_obs_uplink_ns
+            && now.0 - last < OBSERVATION_UPLINK_PERIOD_NS
+        {
+            return;
+        }
+        self.last_obs_uplink_ns = Some(now.0);
+        plane.send(ClientMsg::Observation(pb::ObservationUpdate {
+            t_ns: now.0,
+            payload: Some(pb::observation_update::Payload::Proprio(
+                pb::ProprioSample {
+                    joint_pos: self.latest_joint_pos.clone(),
+                    joint_vel: self.latest_extras.joint_vel.clone(),
+                    ee_pose: self.latest_extras.ee_pose.clone(),
+                    gripper: self.latest_extras.gripper,
+                    part: String::new(),
+                },
+            )),
+        }));
     }
 
     /// Tripwire `ObsSource` wiring (Task 15): every gate tick's `obs` (the
@@ -464,20 +573,33 @@ impl Reducer {
     /// `ActionChunk` on `/waddle/actions`. Noop and Hold write `NoopMarker`
     /// actions rather than being skipped, so `/waddle/actions` is the
     /// complete per-tick trace (provenance spans, bypass windows, holds).
+    ///
+    /// The `ProprioSample` carries `joint_pos` from this tick's own `obs`
+    /// merged with the latest `Session::report_proprio` extras (Task 19) —
+    /// exactly the same per-tick cadence `joint_pos` alone used before this
+    /// task; a `report_proprio` call with no further gate tick afterward
+    /// still reaches the periodic `StreamObservations` uplink
+    /// (`maybe_uplink_observation`), just never gains its own MCAP row (a
+    /// tick with no `obs` at all was never recorded either).
     fn write_record(&mut self, rec: &GateRecord) {
-        let Some(mcap) = &mut self.mcap else { return };
         let t_ns = rec.stamp.mono_ns().0;
+        let observation = rec.obs.as_ref().map(|obs| pb::ObservationUpdate {
+            t_ns,
+            payload: Some(pb::observation_update::Payload::Proprio(
+                pb::ProprioSample {
+                    joint_pos: obs.to_vec(),
+                    joint_vel: self.latest_extras.joint_vel.clone(),
+                    ee_pose: self.latest_extras.ee_pose.clone(),
+                    gripper: self.latest_extras.gripper,
+                    part: String::new(),
+                },
+            )),
+        });
 
-        if let Some(obs) = &rec.obs {
-            let _ = mcap.write_observation(&pb::ObservationUpdate {
-                t_ns,
-                payload: Some(pb::observation_update::Payload::Proprio(
-                    pb::ProprioSample {
-                        joint_pos: obs.to_vec(),
-                        ..Default::default()
-                    },
-                )),
-            });
+        let Some(mcap) = &mut self.mcap else { return };
+
+        if let Some(update) = &observation {
+            let _ = mcap.write_observation(update);
         }
 
         let noop = |reason: pb::NoopReason| pb::Action {

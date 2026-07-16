@@ -180,6 +180,72 @@ pub(crate) type StreamProducer = Arc<parking_lot::Mutex<rtrb::Producer<TimedActi
 /// the reducer thread, never `Gate::gate()`'s fast path.
 pub(crate) type ObsSlot = Arc<LatestSlot<ObsSnapshot>>;
 
+/// A frame-tagged end-effector pose (Task 19: [`ProprioReport::ee_pose`]).
+/// `descriptors.proto`'s `Pose` is always frame-tagged ("an empty frame_id
+/// is a validation error, never a default: untagged geometry is how
+/// misaligned data corrupts a corpus silently") — so, unlike a bare
+/// `[f64; 7]`, this can only be constructed with a non-empty frame
+/// ([`Self::new`]). This widens the brief's literal `Option<[f64; 7]>`
+/// shape by one required argument for exactly this reason.
+#[derive(Clone, Debug, PartialEq)]
+pub struct EePose {
+    /// xyz position, expressed in `frame_id`.
+    pub position: [f64; 3],
+    /// wxyz unit quaternion (w first — the protocol's pinned convention).
+    pub orientation: [f64; 4],
+    pub frame_id: waddle_types::FrameId,
+}
+
+impl EePose {
+    /// `frame_id` must be non-empty (see the struct rustdoc); an empty one
+    /// is [`waddle_types::TypesError::EmptyFrame`], the same error
+    /// `waddle-types` already raises for every other untagged `Pose` in
+    /// this workspace.
+    pub fn new(
+        position: [f64; 3],
+        orientation: [f64; 4],
+        frame_id: impl AsRef<str>,
+    ) -> Result<Self, waddle_types::TypesError> {
+        Ok(Self {
+            position,
+            orientation,
+            frame_id: waddle_types::FrameId::new(frame_id)?,
+        })
+    }
+
+    pub(crate) fn to_pb(&self) -> pb::Pose {
+        pb::Pose {
+            position: Some(pb::Vec3 {
+                x: self.position[0],
+                y: self.position[1],
+                z: self.position[2],
+            }),
+            rotation: Some(pb::Quat {
+                w: self.orientation[0],
+                x: self.orientation[1],
+                y: self.orientation[2],
+                z: self.orientation[3],
+            }),
+            frame_id: self.frame_id.as_str().to_owned(),
+        }
+    }
+}
+
+/// One reported proprioceptive sample (Task 19): [`Session::report_proprio`]'s
+/// payload, merged with the reducer's own `joint_pos` (from the caller's
+/// `gate(obs=...)` stream) into a richer `ProprioSample` than the bare
+/// `joint_pos` every gate tick already records. Every field PATCHES the
+/// reducer's latest known sample — `None` leaves the previously reported
+/// value in place (there is no way to clear a previously-reported field in
+/// v0), so a caller can e.g. report `gripper` on every tick without
+/// re-supplying `ee_pose` each time.
+#[derive(Clone, Debug, Default)]
+pub struct ProprioReport {
+    pub joint_vel: Option<Vec<f64>>,
+    pub ee_pose: Option<EePose>,
+    pub gripper: Option<f64>,
+}
+
 pub struct SessionBuilder {
     project: String,
     robot: Option<pb::RobotDescription>,
@@ -518,6 +584,11 @@ impl SessionBuilder {
             mirror.update(|s| s.estop_unregistered = true);
         }
         let (inject_tx, inject_rx) = std::sync::mpsc::channel::<Injected>();
+        // Task 19: `Session::report_proprio`'s side channel into the
+        // reducer — deliberately NOT the `Injected`/`SessionEvent` funnel
+        // (this carries no FSM guard, so it never touches `step()`; see
+        // `Reducer::drain_proprio_reports`).
+        let (proprio_tx, proprio_rx) = std::sync::mpsc::channel::<ProprioReport>();
         let record_slot: RecordSlot = Arc::new(parking_lot::Mutex::new(None));
         let task_slot: TaskSlot = Arc::new(parking_lot::Mutex::new(String::new()));
         // Tripwire ObsSource wiring (Task 15): published by the reducer from
@@ -542,6 +613,7 @@ impl SessionBuilder {
             task_slot.clone(),
             self.post_reset.clone(),
             obs_slot.clone(),
+            proprio_rx,
         );
         let reducer_tx = inject_tx.clone();
         let reducer_thread = std::thread::Builder::new()
@@ -681,6 +753,7 @@ impl SessionBuilder {
                 gate_shared,
                 mirror,
                 inject_tx,
+                proprio_tx,
                 record_slot,
                 task_slot,
                 pre_reset: self.pre_reset,
@@ -716,6 +789,8 @@ struct SessionInner {
     gate_shared: Arc<GateShared>,
     mirror: Arc<Mirror>,
     inject_tx: Sender<Injected>,
+    /// See [`Session::report_proprio`].
+    proprio_tx: Sender<ProprioReport>,
     record_slot: RecordSlot,
     task_slot: TaskSlot,
     pre_reset: Option<ResetSpec>,
@@ -1034,6 +1109,24 @@ impl Session {
         let now_ns = self.inner.clock.stamp_now().mono_ns().0;
         media_uplink::admit_and_enqueue(uplink, now_ns, frame);
         Ok(())
+    }
+
+    /// Report a richer proprioceptive sample than the bare `joint_pos`
+    /// every `gate(obs=...)` call already records (Task 19): the reducer
+    /// merges `report` with its latest known `joint_pos` into every
+    /// subsequent gate-tick's recorded `/waddle/observations` `ProprioSample`
+    /// (Local mode — see [`ProprioReport`]'s rustdoc for the patch
+    /// semantics) and into the periodic `StreamObservations` uplink,
+    /// whenever a transport is configured. Cheap on the caller's thread: an
+    /// unbounded fire-and-forget enqueue (occasional-call traffic, not the
+    /// gate fast path — unlike `publish_frame`'s per-frame throttle, there
+    /// is no declared rate to enforce here). Merged fields are stamped with
+    /// whichever event actually lands them (the owning gate tick, or the
+    /// uplink pump's own `SessionClock` read) — v0 accepts no
+    /// caller-supplied timestamp on the report itself (the two-clock
+    /// discipline).
+    pub fn report_proprio(&self, report: ProprioReport) {
+        let _ = self.inner.proprio_tx.send(report);
     }
 
     /// Frames dropped for `camera` because the uplink pump fell behind (the

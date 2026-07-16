@@ -12,6 +12,21 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 ## [Unreleased]
 
 ### Added
+- **waddle-runtime (`Session::report_proprio` + `StreamObservations` uplink,
+  Task 19)**: `report_proprio(ProprioReport { joint_vel, ee_pose, gripper })`
+  reports a richer proprioceptive sample than the bare `joint_pos` every
+  `gate(obs=...)` call already records; the reducer merges it with the
+  latest gate-tick `joint_pos` into every recorded `ProprioSample` (Local
+  mode, `/waddle/observations`) and into a periodic `ClientMsg::Observation`
+  uplink sent whenever a transport is configured (10 Hz conservative
+  default — no declared per-robot rate exists on this control-plane RPC to
+  key off; see `Reducer::DEFAULT_OBSERVATION_UPLINK_HZ`'s doc). Every field
+  PATCHES the reducer's latest known sample; `None` leaves a previously
+  reported value in place (no way to clear one in v0). `ee_pose` is a
+  frame-tagged `EePose` (position + wxyz orientation + a non-empty
+  `frame_id`, per `descriptors.proto`'s `Pose` invariant) rather than the
+  design sketch's bare `[f64; 7]`, since an untagged pose is exactly the
+  silent-corruption failure mode that invariant exists to prevent.
 - **waddle-protocol/waddle-runtime (directive acks, new feature flag
   `waddle.v0.plane.acks`)**: plane→SDK directives are no longer blind
   fire-and-forget — an FSM rejection is now observable to the plane.
