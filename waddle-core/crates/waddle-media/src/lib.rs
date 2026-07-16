@@ -164,6 +164,9 @@ struct LoopbackState {
     /// Far-end receivers for topics the near end writes.
     outbound: HashMap<&'static str, Receiver<Bytes>>,
     frames: Vec<(String, EncodedFrame)>,
+    /// Every `publish_track` call, in order (Task 15): lets tests assert a
+    /// track was published lazily, exactly once, despite many frames.
+    published_tracks: Vec<String>,
 }
 
 /// In-memory media plane: the test/conformance "far end" is scripted through
@@ -195,6 +198,7 @@ impl LoopbackMedia {
 
 impl MediaPlane for LoopbackMedia {
     fn publish_track(&self, camera: &str) -> Result<TrackHandle, MediaError> {
+        self.state.lock().published_tracks.push(camera.to_owned());
         Ok(TrackHandle {
             name: camera.to_owned(),
         })
@@ -246,6 +250,14 @@ impl LoopbackFarEnd {
     #[must_use]
     pub fn frames(&self) -> Vec<(String, EncodedFrame)> {
         self.state.lock().frames.clone()
+    }
+
+    /// Every `publish_track` call this media plane has serviced, in order
+    /// (Task 15) — lets tests assert a camera's track was published lazily,
+    /// exactly once, despite many frames.
+    #[must_use]
+    pub fn published_tracks(&self) -> Vec<String> {
+        self.state.lock().published_tracks.clone()
     }
 }
 

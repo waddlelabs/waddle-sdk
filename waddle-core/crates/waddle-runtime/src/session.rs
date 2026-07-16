@@ -6,6 +6,7 @@
 //! tripwire evaluator — and the control-plane client thread. Nothing
 //! executes on the caller's thread except `Episode::gate()`.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
@@ -17,9 +18,11 @@ use waddle_gate::gate::{Gate, GateOutput, GateShared};
 use waddle_gate::jitter::TimedAction;
 use waddle_gate::plan::GatePlan;
 use waddle_gate::record::GateRecord;
-use waddle_ingest::SessionClock;
+use waddle_ingest::{LatestSlot, SessionClock};
 use waddle_media::MediaPlane;
-use waddle_tripwire::{Evaluator, ShutdownToken, Tripwire, TripwireFire, TripwireSink};
+use waddle_tripwire::{
+    Evaluator, ObsSnapshot, ShutdownToken, Tripwire, TripwireFire, TripwireSink,
+};
 use waddle_types::pb::v0 as pb;
 use waddle_types::time::Clock;
 use waddle_types::{
@@ -28,6 +31,7 @@ use waddle_types::{
 };
 
 use crate::RuntimeError;
+use crate::media_uplink::{self, CameraUplink, FrameData};
 use crate::mirror::Mirror;
 use crate::pumps;
 use crate::reducer::Reducer;
@@ -167,6 +171,13 @@ pub(crate) type ResetSpecSlot = Arc<parking_lot::Mutex<Option<EpisodeResetSpecs>
 /// `waddle.v0.reset.remote`). Never touched from the caller thread or the
 /// gate fast path; both writers already take other locks.
 pub(crate) type StreamProducer = Arc<parking_lot::Mutex<rtrb::Producer<TimedAction>>>;
+
+/// The gate record stream's latest observation (Task 15): published by the
+/// reducer on every ring-drained record that carries one (regardless of
+/// whether local MCAP recording is even on), read by the tripwire
+/// evaluator's `ObsSource`. Wait-free (`LatestSlot`) — the write lives on
+/// the reducer thread, never `Gate::gate()`'s fast path.
+pub(crate) type ObsSlot = Arc<LatestSlot<ObsSnapshot>>;
 
 pub struct SessionBuilder {
     project: String,
@@ -359,6 +370,27 @@ impl SessionBuilder {
         let robot_pb = self.robot.ok_or(RuntimeError::MissingRobot)?;
         let robot = RobotDescription::try_from(&robot_pb)?;
 
+        // Cameras (Task 15): `declared_cameras` backs `publish_frame`'s
+        // unknown-camera + declared-resolution checks regardless of whether
+        // a media plane is wired at all; `camera_uplinks` (one per declared
+        // camera, only when a media plane IS wired) is what actually
+        // publishes — an unwired declaration is a cheap no-op, never an
+        // error. Resolving each camera's uplink policy here (not lazily on
+        // first frame) means an unsupported encoding fails loudly at build
+        // time instead of silently dropping every frame later.
+        let mut declared_cameras: HashMap<String, (u32, u32)> = HashMap::new();
+        for cam in &robot_pb.cameras {
+            declared_cameras.insert(cam.name.clone(), (cam.width, cam.height));
+        }
+        let media_for_cameras = self.media.clone();
+        let mut camera_uplinks: HashMap<String, Arc<CameraUplink>> = HashMap::new();
+        if media_for_cameras.is_some() {
+            for cam in &robot_pb.cameras {
+                let uplink = media_uplink::build_camera_uplink(cam)?;
+                camera_uplinks.insert(cam.name.clone(), Arc::new(uplink));
+            }
+        }
+
         // A live engage path: a wired media plane, or `hold`/`send`
         // registered directly. `grant_and_engage` doesn't consult
         // `self.media` at all, so registering either verb without media is
@@ -475,6 +507,9 @@ impl SessionBuilder {
         let (inject_tx, inject_rx) = std::sync::mpsc::channel::<SessionEvent>();
         let record_slot: RecordSlot = Arc::new(parking_lot::Mutex::new(None));
         let task_slot: TaskSlot = Arc::new(parking_lot::Mutex::new(String::new()));
+        // Tripwire ObsSource wiring (Task 15): published by the reducer from
+        // the gate record stream, read by the tripwire evaluator below.
+        let obs_slot: ObsSlot = Arc::new(LatestSlot::new());
 
         // The reducer thread. `self.post_reset` is the session-level default
         // a reducer-opened retake successor inherits (`Effect::OpenSuccessor`
@@ -493,6 +528,7 @@ impl SessionBuilder {
             record_slot.clone(),
             task_slot.clone(),
             self.post_reset.clone(),
+            obs_slot.clone(),
         );
         let reducer_tx = inject_tx.clone();
         let reducer_thread = std::thread::Builder::new()
@@ -550,6 +586,20 @@ impl SessionBuilder {
             )?);
         }
 
+        // Camera uplink (Task 15): one dedicated pump servicing every
+        // declared camera that has a media plane to publish into;
+        // `Session::publish_frame` feeds it through the per-camera bounded
+        // queues built above.
+        if !camera_uplinks.is_empty() {
+            let media = media_for_cameras
+                .expect("camera_uplinks is only ever populated when media is wired");
+            threads.push(media_uplink::spawn_media_uplink(
+                media,
+                camera_uplinks.values().cloned().collect(),
+                mirror.clone(),
+            ));
+        }
+
         // Plane directives → FSM events (claims, episode directives, reset
         // windows, reset-window agent chunks).
         if let Some(plane) = plane.clone() {
@@ -564,8 +614,9 @@ impl SessionBuilder {
         }
 
         // Tripwires: fires REQUEST verbs through dispatch (never an
-        // envelope). The observation source is wired by capture
-        // integrations; until one registers, the evaluator idles.
+        // envelope). The observation source (Task 15) is the gate record
+        // stream: `obs_slot` above, published by the reducer from every
+        // `gate(obs=...)` call the customer's loop makes.
         if !self.tripwires.is_empty() {
             struct Sink {
                 verbs: Arc<VerbDispatch>,
@@ -581,16 +632,28 @@ impl SessionBuilder {
                     self.verbs.request(req);
                 }
             }
-            struct EmptySource;
-            impl waddle_tripwire::ObsSource for EmptySource {
+            /// Reads the latest gate-record obs (Task 15): the customer's
+            /// flat `gate(obs=...)` vector maps onto `ObsSnapshot::joint_pos`
+            /// verbatim; `ee_pos`/`force_n` stay `None` (this seam carries a
+            /// flat vector, not semantically-tagged fields), so
+            /// `JointLimitMargin`/`Staleness` tripwires fire from it and
+            /// `WorkspaceAabb`/`ForceThreshold` never do — those need a
+            /// capture integration publishing structured obs, out of scope
+            /// here.
+            struct RecordObsSource {
+                slot: ObsSlot,
+            }
+            impl waddle_tripwire::ObsSource for RecordObsSource {
                 fn latest(&self) -> Option<waddle_tripwire::ObsSnapshot> {
-                    None
+                    self.slot.latest().map(|snap| (*snap).clone())
                 }
             }
             threads.push(waddle_tripwire::spawn_evaluator(
                 Evaluator::new(self.tripwires),
                 clock.clone(),
-                Arc::new(EmptySource),
+                Arc::new(RecordObsSource {
+                    slot: obs_slot.clone(),
+                }),
                 Arc::new(Sink {
                     verbs: verbs.clone(),
                 }),
@@ -614,6 +677,8 @@ impl SessionBuilder {
                 verification_mode: self.verification_mode,
                 threads: parking_lot::Mutex::new(threads),
                 tripwire_shutdown,
+                declared_cameras,
+                camera_uplinks,
                 _verbs: verbs,
                 _plane: plane,
             }),
@@ -649,6 +714,14 @@ struct SessionInner {
     verification_mode: ResetVerificationMode,
     threads: parking_lot::Mutex<Vec<JoinHandle<()>>>,
     tripwire_shutdown: ShutdownToken,
+    /// Every camera the robot declared (name → (width, height)), regardless
+    /// of whether a media plane is wired — backs `publish_frame`'s
+    /// unknown-camera and declared-resolution checks (Task 15).
+    declared_cameras: HashMap<String, (u32, u32)>,
+    /// One entry per declared camera, present only when a media plane is
+    /// wired: `publish_frame` enqueues into these; absent means "declared,
+    /// but nothing to publish into" (a cheap no-op, never an error).
+    camera_uplinks: HashMap<String, Arc<CameraUplink>>,
     _verbs: Arc<VerbDispatch>,
     _plane: Option<Arc<ControlPlaneClient>>,
 }
@@ -898,6 +971,58 @@ impl Session {
     #[must_use]
     pub fn status(&self) -> crate::mirror::Status {
         self.inner.mirror.read()
+    }
+
+    /// Publish one raw RGB8 video frame for a declared camera (Task 15).
+    /// Cheap on the caller's thread — validates `camera` against the
+    /// robot's declared `cameras` and `frame`'s dimensions against that
+    /// camera's declaration, applies the declared uplink fps throttle (a
+    /// wait-free timestamp check — a too-soon frame is silently dropped,
+    /// never an error, never counted in [`Self::camera_frames_dropped`]),
+    /// and otherwise only enqueues the frame onto a small per-camera bounded
+    /// queue. The (lazy, once-per-camera) `publish_track` call and the
+    /// actual encode/`push_frame` run off this thread, on the dedicated
+    /// `waddle-media-uplink` pump.
+    ///
+    /// - Unknown camera name (not in `RobotDescription.cameras`):
+    ///   [`RuntimeError::UnknownCamera`].
+    /// - `frame`'s (width, height) doesn't match the camera's declaration:
+    ///   [`RuntimeError::Media`] (`MediaError::BadFrame`).
+    /// - Declared camera, but no media plane wired at all: `Ok(())`,
+    ///   nothing published — Local mode records no video in v0.
+    pub fn publish_frame(&self, camera: &str, frame: FrameData) -> Result<(), RuntimeError> {
+        let Some(&(width, height)) = self.inner.declared_cameras.get(camera) else {
+            return Err(RuntimeError::UnknownCamera(camera.to_owned()));
+        };
+        let Some(uplink) = self.inner.camera_uplinks.get(camera) else {
+            // Declared, but no media plane wired: nothing to publish into.
+            return Ok(());
+        };
+        let expected_len = (width as usize) * (height as usize) * 3;
+        if frame.width() != width || frame.height() != height || frame.byte_len() != expected_len {
+            return Err(RuntimeError::Media(waddle_media::MediaError::BadFrame {
+                got: frame.byte_len(),
+                expected: expected_len,
+                layout: "RGB8 at the camera's declared resolution",
+            }));
+        }
+        let now_ns = self.inner.clock.stamp_now().mono_ns().0;
+        media_uplink::admit_and_enqueue(uplink, now_ns, frame);
+        Ok(())
+    }
+
+    /// Frames dropped for `camera` because the uplink pump fell behind (the
+    /// bounded per-camera queue overflowed and the oldest queued frame was
+    /// discarded to admit the newest) — or because `publish_track`/encode/
+    /// `push_frame` itself failed. `0` for an unknown camera or one with no
+    /// media plane wired. Never counts fps-throttled frames: those are the
+    /// declared policy working as intended, not data loss.
+    #[must_use]
+    pub fn camera_frames_dropped(&self, camera: &str) -> u64 {
+        self.inner
+            .camera_uplinks
+            .get(camera)
+            .map_or(0, |u| u.dropped())
     }
 
     /// Join all core threads and flush recorders. Ordered teardown: signal

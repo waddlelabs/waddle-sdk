@@ -13,6 +13,7 @@ grpc = ["waddle-controlplane/tonic-transport"]
 livekit = ["waddle-media/livekit"]
 
 [dependencies]
+bytes = { workspace = true }
 waddle-types = { workspace = true }
 waddle-fsm = { workspace = true }
 waddle-gate = { workspace = true }

@@ -22,7 +22,7 @@ use waddle_types::{
 };
 
 use crate::mirror::Mirror;
-use crate::session::{RecordSlot, ResetSpec, TaskSlot};
+use crate::session::{ObsSlot, RecordSlot, ResetSpec, TaskSlot};
 use crate::verbs::VerbDispatch;
 
 /// Everything the reducer owns.
@@ -52,6 +52,10 @@ pub(crate) struct Reducer {
     record_slot: RecordSlot,
     /// The active episode's gate-record consumer, drained every wake.
     records_rx: Option<rtrb::Consumer<GateRecord>>,
+    /// Tripwire `ObsSource` wiring (Task 15): every ring-drained record
+    /// carrying an obs publishes it here, regardless of whether local MCAP
+    /// recording is even on.
+    obs_slot: ObsSlot,
 
     // Per-episode state.
     sidecar: Option<SidecarBuilder>,
@@ -76,6 +80,7 @@ impl Reducer {
         record_slot: RecordSlot,
         task: TaskSlot,
         post_reset: Option<ResetSpec>,
+        obs_slot: ObsSlot,
     ) -> Self {
         let fsm = SessionFsm::new(&cfg);
         let manifest = recording_dir
@@ -97,6 +102,7 @@ impl Reducer {
             post_reset,
             record_slot,
             records_rx: None,
+            obs_slot,
             sidecar: None,
             mcap: None,
             manifest,
@@ -398,8 +404,29 @@ impl Reducer {
 
     fn drain_current_ring(&mut self) {
         while let Some(rec) = self.records_rx.as_mut().and_then(|rx| rx.pop().ok()) {
+            if let Some(obs) = &rec.obs {
+                self.publish_obs(rec.stamp.mono_ns(), obs);
+            }
             self.write_record(&rec);
         }
+    }
+
+    /// Tripwire `ObsSource` wiring (Task 15): every gate tick's `obs` (the
+    /// customer's `gate(obs=...)` argument) becomes the latest snapshot a
+    /// declared tripwire evaluates — this runs unconditionally per drained
+    /// record, before `write_record`'s own (local-recording-only) early
+    /// return, so tripwires evaluate real obs even when `recording_dir` is
+    /// unset. The flat customer vector maps onto `ObsSnapshot::joint_pos`
+    /// verbatim; `ee_pos`/`force_n` stay `None` (this seam carries a flat
+    /// vector, not semantically-tagged fields). Runs on the reducer thread,
+    /// never `Gate::gate()`'s fast path.
+    fn publish_obs(&self, at: MonoNs, obs: &waddle_types::ObsValues) {
+        self.obs_slot.publish(waddle_tripwire::ObsSnapshot {
+            at,
+            joint_pos: obs.iter().copied().collect(),
+            ee_pos: None,
+            force_n: None,
+        });
     }
 
     /// One gate record → the episode MCAP, via the canonical wire messages:

@@ -6,12 +6,14 @@
 //! `Episode::gate()` fast path. There is deliberately no async runtime:
 //! dedicated threads + channels until the tonic/LiveKit integrations land.
 
+mod media_uplink;
 pub mod mirror;
 pub mod pumps;
 pub mod reducer;
 pub mod session;
 pub mod verbs;
 
+pub use media_uplink::{FrameData, FramePixels};
 pub use mirror::Status;
 pub use pumps::STALL_THRESHOLD_NS;
 pub use session::{
@@ -34,6 +36,31 @@ pub enum RuntimeError {
     Media(#[from] waddle_media::MediaError),
     #[error("the session is shutting down")]
     ShuttingDown,
+    /// `Session::publish_frame` named a camera the robot never declared in
+    /// `RobotDescription.cameras`.
+    #[error("unknown camera {0:?} (not declared in the robot's cameras)")]
+    UnknownCamera(String),
+    /// A build-time check (`SessionBuilder::build`): a declared camera's
+    /// `StreamPolicy.uplink.encoding` names a codec no encoder implements
+    /// yet (currently: H.264 — see `waddle_media::VideoEncoding::H264`).
+    /// Caught here, for cameras a wired media plane will actually publish,
+    /// instead of failing every frame silently at runtime.
+    #[error(
+        "camera {camera:?} declares uplink encoding {encoding} but that codec integration is \
+         not implemented yet — declare rgb8 (raw passthrough) or jpeg instead"
+    )]
+    UnsupportedCameraEncoding {
+        camera: String,
+        encoding: &'static str,
+    },
+    /// A build-time check: a camera declares an uplink policy at all (`
+    /// StreamPolicy.uplink` is present) but its `fps` is not positive. A
+    /// non-positive fps is meaningful only as "no policy declared" (the
+    /// unthrottled default for a camera with none) — a *present* policy
+    /// with `fps <= 0` is always a misconfiguration, never a request to
+    /// suppress every frame or run unthrottled.
+    #[error("camera {camera:?} declares an uplink policy with fps {fps} (must be > 0)")]
+    InvalidCameraUplinkFps { camera: String, fps: f64 },
     /// A build-time verb-registration check: the session's configuration
     /// (its handoff policy, or a wired feature) requires a verb whose
     /// callable the integrator never registered on the `ControlRegistry`.
