@@ -19,6 +19,9 @@ use parking_lot::Mutex;
 use prost::Message;
 use waddle_types::pb::v0 as pb;
 
+mod encode;
+pub use encode::{JpegEncoder, VideoEncoding, make_encoder, rgb8_to_i420};
+
 #[derive(Debug, thiserror::Error)]
 pub enum MediaError {
     #[error("unknown track {0:?}")]
@@ -27,8 +30,18 @@ pub enum MediaError {
     TopicClosed(&'static str),
     #[error("payload decode failed: {0}")]
     Decode(#[from] prost::DecodeError),
-    #[error("the `livekit` feature is a stub until the WebRTC integration milestone")]
-    Unimplemented,
+    #[error("frame buffer is {got} bytes; expected {expected} ({layout})")]
+    BadFrame {
+        got: usize,
+        expected: usize,
+        layout: &'static str,
+    },
+    #[error("video encode failed: {0}")]
+    Encode(String),
+    #[error("media transport error: {0}")]
+    Transport(String),
+    #[error("not yet implemented: {0}")]
+    Unimplemented(&'static str),
 }
 
 /// The data topics of `media.proto`'s normative table, with their topic
@@ -76,8 +89,9 @@ pub struct EncodedFrame {
     pub data: Bytes,
 }
 
-/// Raw pixels in, encoded frames out. The production implementation is
-/// H.264; [`PassthroughEncoder`] treats input as already encoded.
+/// Raw pixels in, encoded frames out. [`JpegEncoder`] is the real encoder
+/// (Motion JPEG over RGB8); [`PassthroughEncoder`] treats input as already
+/// encoded; H.264 stays a typed TODO in [`VideoEncoding::H264`].
 pub trait VideoEncoder: Send {
     fn encode(&mut self, t_ns: i64, raw: &[u8]) -> Result<EncodedFrame, MediaError>;
 }
@@ -243,7 +257,7 @@ pub mod livekit {
     use std::sync::Arc;
 
     pub fn connect(_url: &str, _token: &str) -> Result<Arc<dyn MediaPlane>, MediaError> {
-        Err(MediaError::Unimplemented)
+        Err(MediaError::Unimplemented("the LiveKit/WebRTC integration"))
     }
 }
 

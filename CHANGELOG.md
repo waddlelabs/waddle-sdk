@@ -12,6 +12,16 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 ## [Unreleased]
 
 ### Added
+- **waddle-media (real JPEG `VideoEncoder` + RGB8→I420 conversion)**:
+  `JpegEncoder` (Motion JPEG over RGB8 via the pure-Rust `jpeg-encoder`
+  crate; every frame a keyframe) joins `PassthroughEncoder` behind a new
+  `VideoEncoding` selector (`make_encoder(encoding, width, height)`).
+  `VideoEncoding::H264` stays a typed TODO — requesting it returns
+  `MediaError::Unimplemented`, never a silent fallback. `rgb8_to_i420`
+  converts RGB8 frames to planar I420 (BT.601 studio swing, 2x2
+  block-averaged chroma, odd dims round chroma up) for raw-frame WebRTC
+  video sources. `MediaError` gains `BadFrame`/`Encode`/`Transport`
+  variants and `Unimplemented` now names what is deferred.
 - **sdk (Python reset API: `TeleopReset`/`AgentReset`, `init`/`rollout`
   kwargs)**: the headline user-facing surface for the reset-phases branch.
   `waddle.TeleopReset(prompt, *, timeout_s=600.0)` and
