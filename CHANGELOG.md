@@ -27,19 +27,15 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     and enqueues onto a small (4-deep) per-camera bounded queue that
     drops the OLDEST frame under backpressure — counted, and surfaced via
     the new `Session::camera_frames_dropped(camera)`. Everything past the
-    queue (the lazy, once-per-camera `publish_track` call; encode —
-    `JpegEncoder` for a declared JPEG uplink encoding, raw passthrough
-    otherwise; `push_frame`) runs on one new dedicated
+    queue (the lazy, once-per-camera `publish_track` call; encode — raw
+    passthrough for `RGB8`/`BGR8`/`JPEG`, the declared encoding being
+    bandwidth-intent for the track rather than a literal wire format (see
+    the Fixed entry below); `push_frame`) runs on one new dedicated
     `waddle-media-uplink` pump thread, never the customer's own thread. A
     declared `CAMERA_ENCODING_H264` uplink policy is a build-time error
     (`RuntimeError::UnsupportedCameraEncoding`) for any camera a wired
     media plane will actually publish — never a silent per-frame failure
-    later. Known gap: the real transport this wires against
-    (`LiveKitMedia`, Task 14) ingests raw RGB8/I420 only for its video
-    track, no pre-encoded JPEG — a camera declaring JPEG uplink encoding
-    against a real LiveKit session will fail every frame
-    (`MediaError::BadFrame`) until a future task adds a JPEG-aware
-    ingestion path.
+    later.
   - `waddle-tripwire`'s `ObsSource` is no longer wired to an always-`None`
     stub: the reducer now publishes every gate tick's `obs` (the
     customer's `gate(obs=...)` argument) onto a wait-free `LatestSlot`
@@ -573,6 +569,33 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   in the episode MCAP; callers no longer see the ring.
 
 ### Fixed
+- **`Session::publish_frame` — a declared `CAMERA_ENCODING_JPEG` uplink
+  policy would fail every frame against a real LiveKit-backed session**:
+  the previous behavior ran a declared JPEG uplink through the real
+  `JpegEncoder` (Motion JPEG bytes) before handing it to `MediaPlane::
+  push_frame`, but a WebRTC video track (the only real transport wired,
+  `LiveKitMedia`) ingests raw RGB8/I420 only — libwebrtc encodes the
+  uplink itself, and a still-image byte stream is not a track format at
+  all. Neither `media.proto` nor `descriptors.proto`'s `StreamPolicy`/
+  `UplinkPolicy` comments promise JPEG-on-the-wire for tracks, so the fix
+  reconciles the encoding contract instead of the transport: a declared
+  `UplinkPolicy.encoding` is now bandwidth-intent for the customer, not a
+  literal byte format — `RGB8`, `BGR8`, and `JPEG` all resolve to raw
+  passthrough on the track path and publish identically (the transport
+  converts to whatever the track needs; `LiveKitMedia::push_frame` already
+  did this conversion, `rgb8_to_i420`, for RGB8 — it now also receives
+  correctly-shaped bytes for a JPEG-declared camera instead of a mismatched
+  compressed buffer). `CAMERA_ENCODING_H264` is unchanged: still the one
+  genuinely unsupported encoding, still a build-time
+  `RuntimeError::UnsupportedCameraEncoding`, never a silent per-frame
+  failure. `waddle-media`'s real `JpegEncoder` (Task 14) is untouched and
+  remains available for a genuine still-image byte stream path (e.g. a
+  future data-channel/recording snapshot) — nothing on the track path
+  calls it today. Regression-tested with a LiveKit-shaped `MediaPlane`
+  test double (validates the same RGB8-or-I420 track shape `LiveKitMedia`
+  does, without the `livekit` feature or a live server): RGB8 and JPEG
+  declarations both publish a raw frame through to the track with zero
+  drops; H264 stays a clear build-time error.
 - **`sdk/tests/test_e2e.py::test_intervention`'s pre-existing flake**: the
   test declared a 3-joint robot but pushed teleop `Twist` packets, which
   `pumps::flatten_packet` always flattens to exactly 6 values (linear xyz +

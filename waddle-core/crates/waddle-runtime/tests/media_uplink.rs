@@ -349,6 +349,131 @@ fn backpressure_from_a_stalled_uplink_step_drops_the_oldest_frame_and_counts_it(
     session.shutdown();
 }
 
+// --- uniform per-encoding behavior on the track path (Task 15b) ------------
+
+/// Mimics `LiveKitMedia::push_frame`'s real validation (see
+/// `waddle-media::livekit`): a video track only ever ingests raw RGB8 or
+/// already-planar I420 bytes at the track's resolution — never a
+/// pre-encoded still-image byte stream (JPEG). Wrapping `LoopbackMedia` with
+/// this exact shape check exercises the track path's real constraint
+/// without the `livekit` feature or a live server — the same technique
+/// `SlowMedia` above uses to exercise backpressure through the public
+/// `MediaPlane` trait alone.
+struct TrackShapedMedia {
+    inner: Arc<LoopbackMedia>,
+    width: u32,
+    height: u32,
+}
+
+impl MediaPlane for TrackShapedMedia {
+    fn publish_track(&self, camera: &str) -> Result<TrackHandle, MediaError> {
+        self.inner.publish_track(camera)
+    }
+
+    fn push_frame(&self, track: &TrackHandle, frame: EncodedFrame) -> Result<(), MediaError> {
+        let (w, h) = (self.width as usize, self.height as usize);
+        let (cw, ch) = (w.div_ceil(2), h.div_ceil(2));
+        let rgb_len = w * h * 3;
+        let i420_len = w * h + 2 * cw * ch;
+        if frame.data.len() != rgb_len && frame.data.len() != i420_len {
+            return Err(MediaError::BadFrame {
+                got: frame.data.len(),
+                expected: rgb_len,
+                layout: "RGB8 or planar I420 at the track's declared resolution",
+            });
+        }
+        self.inner.push_frame(track, frame)
+    }
+
+    fn open_data_rx(&self, topic: DataTopic) -> Result<DataRx, MediaError> {
+        self.inner.open_data_rx(topic)
+    }
+
+    fn open_data_tx(&self, topic: DataTopic) -> Result<DataTx, MediaError> {
+        self.inner.open_data_tx(topic)
+    }
+}
+
+/// Task 15b: a declared `CameraEncoding` on `StreamPolicy.uplink` is the
+/// customer's bandwidth-intent for the track, not a promise that literal
+/// byte format lands on the wire — the transport always receives raw frames
+/// and converts to whatever the track actually needs (raw RGB8/I420;
+/// libwebrtc's own codec does the real compression). RGB8 and JPEG
+/// declarations must therefore behave identically here (both "accept": the
+/// session builds cleanly and the frame reaches the track unmodified);
+/// H264 remains the one genuinely unsupported encoding — a clear
+/// build-time error, never a silent per-frame failure.
+#[test]
+fn rgb8_jpeg_and_h264_uplink_declarations_are_treated_uniformly_on_the_track_path() {
+    for encoding in [pb::CameraEncoding::Rgb8, pb::CameraEncoding::Jpeg] {
+        let cam = camera(
+            "overhead",
+            Some(pb::stream_policy::UplinkPolicy {
+                fps: 30.0,
+                encoding: encoding as i32,
+                max_kbps: None,
+            }),
+        );
+        let (loopback, far) = LoopbackMedia::new();
+        let media = Arc::new(TrackShapedMedia {
+            inner: loopback,
+            width: 4,
+            height: 4,
+        });
+        let session = Session::builder(format!("media-uniform-{encoding:?}"))
+            .robot(robot(vec![cam]))
+            .control(registry())
+            .media(media)
+            .build()
+            .unwrap_or_else(|e| panic!("{encoding:?} uplink must build cleanly: {e:?}"));
+
+        session.publish_frame("overhead", frame_4x4(3)).unwrap();
+        assert!(
+            wait_until(|| !far.frames().is_empty(), Duration::from_secs(2)),
+            "{encoding:?}: a declared uplink encoding must still publish through the track path"
+        );
+        assert_eq!(
+            session.camera_frames_dropped("overhead"),
+            0,
+            "{encoding:?}: the track-shaped media plane must accept the raw frame, not reject it"
+        );
+        let (_, encoded) = &far.frames()[0];
+        assert_eq!(
+            encoded.data.len(),
+            4 * 4 * 3,
+            "{encoding:?}: uplink must route raw RGB8 bytes to the track, not an actual re-encode"
+        );
+        session.shutdown();
+    }
+
+    // H264 is the one genuinely unsupported encoding: a clear build-time
+    // error, never a silent per-frame failure once wired.
+    let cam = camera(
+        "overhead",
+        Some(pb::stream_policy::UplinkPolicy {
+            fps: 30.0,
+            encoding: pb::CameraEncoding::H264 as i32,
+            max_kbps: None,
+        }),
+    );
+    let (loopback, _far) = LoopbackMedia::new();
+    let media = Arc::new(TrackShapedMedia {
+        inner: loopback,
+        width: 4,
+        height: 4,
+    });
+    let err = Session::builder("media-uniform-h264")
+        .robot(robot(vec![cam]))
+        .control(registry())
+        .media(media)
+        .build()
+        .expect_err("H264 must remain a clear build-time error");
+    assert!(
+        matches!(err, RuntimeError::UnsupportedCameraEncoding { ref camera, .. } if camera == "overhead"),
+        "expected UnsupportedCameraEncoding, got {err:?}"
+    );
+}
+
 #[test]
 fn fps_throttle_does_not_count_as_a_drop() {
     // A steady stream well beyond a slow declared fps must be silently

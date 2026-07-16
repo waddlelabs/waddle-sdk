@@ -15,18 +15,24 @@
 //! this is distinct from (and never conflated with) an fps-throttled frame,
 //! which is simply never enqueued at all and never counted as a drop.
 //!
-//! Encoding: a declared `CAMERA_ENCODING_JPEG` uplink policy resolves to the
-//! Task 14 `JpegEncoder`; every other declared value (including
-//! UNSPECIFIED/RGB8/BGR8, and Z16 — depth is out of scope for this rgb8-only
-//! task) resolves to raw passthrough. `CAMERA_ENCODING_H264` is a build-time
-//! error (never a silent per-frame failure): no encoder produces it yet.
-//! Known gap: the one real transport this wires against, `LiveKitMedia`
-//! (Task 14), ingests raw RGB8/I420 only for its video track — no
-//! pre-encoded-JPEG path exists there — so a camera declaring JPEG uplink
-//! encoding against a real LiveKit-backed session will fail every frame
-//! (`MediaError::BadFrame`, logged and counted as dropped) until a future
-//! task adds a JPEG-aware ingestion path. `LoopbackMedia` (tests,
-//! conformance) accepts arbitrary bytes regardless.
+//! Encoding (Task 15b): the one real transport this wires against,
+//! `LiveKitMedia` (Task 14), publishes a WebRTC video *track* — libwebrtc
+//! encodes the uplink itself and its native video source ingests raw
+//! RGB8/I420 only; a still-image byte stream (JPEG) is not a track format
+//! at all. A declared `StreamPolicy.uplink.encoding` is therefore treated as
+//! the customer's **bandwidth-intent**, not a promise of that literal byte
+//! format landing on the wire: every encoding this pump can actually wire
+//! onto a track — `CAMERA_ENCODING_UNSPECIFIED`/`RGB8`/`BGR8`/`JPEG` (and
+//! `Z16` — depth is out of scope for this rgb8-only task) — resolves to raw
+//! passthrough, and the transport (`LiveKitMedia::push_frame`, or
+//! `LoopbackMedia` in tests) converts to whatever the track needs
+//! (`rgb8_to_i420`) and its own codec does the real compression. The Task 14
+//! `JpegEncoder` remains available for a genuine still-image byte stream
+//! path (e.g. a future data-channel/recording snapshot) — nothing on the
+//! track path calls it. `CAMERA_ENCODING_H264` is the one genuinely
+//! unsupported encoding and stays a build-time error (never a silent
+//! per-frame failure): no encoder produces it, and no track can ingest it,
+//! yet.
 //!
 //! Known limitations of the single-pump design (acceptable for this task's
 //! scope; worth revisiting if multi-camera deployments need it):
@@ -65,11 +71,6 @@ use crate::mirror::Mirror;
 /// between the customer's loop and the uplink pump without building a real
 /// queue depth.
 const QUEUE_CAPACITY: usize = 4;
-
-/// JPEG quality used for cameras whose declared `StreamPolicy.uplink`
-/// requests `CAMERA_ENCODING_JPEG` (the proto has no quality field to carry
-/// a customer-declared value).
-const DEFAULT_JPEG_QUALITY: u8 = 85;
 
 /// One raw video frame for [`crate::Session::publish_frame`]. RGB8 only in
 /// this task; `pixels` is an enum (not a bare `Bytes` field) so a future
@@ -152,11 +153,15 @@ fn resolve_policy(
             });
         }
     };
+    // Every declared encoding this pump can actually wire onto a track
+    // resolves to raw passthrough — see the module doc: the declared
+    // encoding is bandwidth-intent, not a promise of that literal byte
+    // format on the wire, and the transport does the real conversion +
+    // compression. `H264` is the one genuinely unsupported encoding: no
+    // encoder produces it and no track can ingest it, so it stays a
+    // build-time error rather than a silent per-frame failure.
     let encoding_tag = uplink.map_or(0, |u| u.encoding);
     let encoding = match pb::CameraEncoding::try_from(encoding_tag) {
-        Ok(pb::CameraEncoding::Jpeg) => VideoEncoding::Jpeg {
-            quality: DEFAULT_JPEG_QUALITY,
-        },
         Ok(pb::CameraEncoding::H264) => {
             return Err(RuntimeError::UnsupportedCameraEncoding {
                 camera: camera.to_owned(),

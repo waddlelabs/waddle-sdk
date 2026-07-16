@@ -24,6 +24,14 @@ uplink fps (dropping frames faster than the declared rate — the policy
 working as intended, never an error), and publishes the track lazily on the
 first frame. A camera declared with no media plane wired is a cheap no-op.
 
+The camera's ``Uplink.encoding`` (``rgb8``/``bgr8``/``jpeg``) declares
+bandwidth-intent for the video track, not a literal wire format: every one
+of those publishes this same raw RGB8 frame through to the track, and the
+wired transport (a real LiveKit session) converts and compresses it itself
+— WebRTC tracks carry raw pixels, never a pre-encoded still image.
+``h264`` is the one unsupported encoding: declaring it against a wired
+media plane is a clean error at :func:`init` time, not a per-frame failure.
+
 This package is a hollow frontend: every claim/lease/handoff/timeline
 decision is made in waddle-core (the Rust runtime under ``waddle._core``);
 Python only declares and marshals.

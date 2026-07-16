@@ -990,6 +990,17 @@ impl Session {
     ///   [`RuntimeError::Media`] (`MediaError::BadFrame`).
     /// - Declared camera, but no media plane wired at all: `Ok(())`,
     ///   nothing published — Local mode records no video in v0.
+    ///
+    /// The camera's declared `StreamPolicy.uplink.encoding` (Task 15b) is
+    /// bandwidth-intent for the video track, not a literal wire format:
+    /// `RGB8`/`BGR8`/`JPEG` (and unspecified) all publish this same raw RGB8
+    /// frame through to the track, which the wired transport converts as it
+    /// needs (a real `LiveKit`-backed session encodes the track itself; a
+    /// still-image byte stream is never produced on this path). `H264` is
+    /// the one unsupported encoding — declaring it against a wired media
+    /// plane is a build-time [`crate::SessionBuilder::build`] error, never a
+    /// silent per-frame failure discovered later. See
+    /// `crate::media_uplink`'s module docs for the full mapping.
     pub fn publish_frame(&self, camera: &str, frame: FrameData) -> Result<(), RuntimeError> {
         let Some(&(width, height)) = self.inner.declared_cameras.get(camera) else {
             return Err(RuntimeError::UnknownCamera(camera.to_owned()));
