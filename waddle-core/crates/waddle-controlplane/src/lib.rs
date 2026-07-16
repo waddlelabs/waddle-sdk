@@ -6,9 +6,9 @@
 //!
 //! The transport is a trait; the tested default is the in-memory
 //! [`transport::InMemoryTransport`] with a scriptable server. The real tonic
-//! gRPC transport is deferred behind the `tonic-transport` feature.
-//! Everything here is synchronous (std channels + one client thread); the
-//! runtime owns any async.
+//! gRPC transport lives in [`grpc`] behind the `tonic-transport` feature
+//! (tokio stays confined to its dedicated worker thread). Everything on the
+//! public surface is synchronous (std channels + one client thread).
 
 pub mod backoff;
 pub mod buffer;
@@ -32,15 +32,4 @@ pub enum PlaneError {
 }
 
 #[cfg(feature = "tonic-transport")]
-pub mod tonic_transport {
-    //! Typed stub: the live gRPC transport is a named-trigger deferral.
-
-    use super::{ControlTransport, PlaneError};
-    use std::sync::Arc;
-
-    pub fn connect(_endpoint: &str) -> Result<Arc<dyn ControlTransport>, PlaneError> {
-        Err(PlaneError::Transport(
-            "tonic transport is a stub until the gRPC integration milestone".into(),
-        ))
-    }
-}
+pub mod grpc;

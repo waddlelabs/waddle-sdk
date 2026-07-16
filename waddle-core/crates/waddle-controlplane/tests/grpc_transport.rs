@@ -1,0 +1,369 @@
+//! In-process integration tests for the tonic `ControlTransport`: a minimal
+//! test plane (the generated tonic server) exercises connect → auto-Register,
+//! gate-stream round-trips, bearer-token metadata, and the kill → reconnect →
+//! in-order replay path the client crate already owns.
+#![cfg(feature = "tonic-transport")]
+
+use std::net::SocketAddr;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::sync::mpsc as std_mpsc;
+use std::time::Duration;
+
+use parking_lot::Mutex;
+use tokio::sync::mpsc as tokio_mpsc;
+use tokio_stream::StreamExt;
+use tokio_stream::wrappers::{TcpListenerStream, UnboundedReceiverStream};
+use tonic::{Request, Response, Status, Streaming};
+use waddle_controlplane::grpc::proto::control_plane_server::{ControlPlane, ControlPlaneServer};
+use waddle_controlplane::grpc::{GrpcConfig, GrpcTransport};
+use waddle_controlplane::{
+    Backoff, ClientConfig, ClientMsg, ControlPlaneClient, ControlTransport, PlaneEvent, ServerMsg,
+};
+use waddle_types::pb::v0 as pb;
+
+// ---------------------------------------------------------------------------
+// Test plane
+// ---------------------------------------------------------------------------
+
+#[derive(Default)]
+struct PlaneState {
+    registers: Mutex<u32>,
+    /// The `authorization` metadata seen on Register calls.
+    auth_seen: Mutex<Vec<Option<String>>>,
+    seen_gate: Mutex<Vec<pb::GateClientMessage>>,
+    seen_obs: Mutex<Vec<pb::ObservationUpdate>>,
+    /// Push handle for plane → client gate messages (set when GateActions opens).
+    gate_push: Mutex<Option<tokio_mpsc::UnboundedSender<Result<pb::GateServerMessage, Status>>>>,
+}
+
+struct TestPlane {
+    state: Arc<PlaneState>,
+}
+
+type ServerStream<T> = Pin<Box<dyn tokio_stream::Stream<Item = Result<T, Status>> + Send>>;
+
+#[tonic::async_trait]
+impl ControlPlane for TestPlane {
+    async fn register(
+        &self,
+        request: Request<pb::RegisterRequest>,
+    ) -> Result<Response<pb::RegisterResponse>, Status> {
+        *self.state.registers.lock() += 1;
+        self.state.auth_seen.lock().push(
+            request
+                .metadata()
+                .get("authorization")
+                .and_then(|v| v.to_str().ok())
+                .map(String::from),
+        );
+        Ok(Response::new(pb::RegisterResponse {
+            session_id: "s-grpc".into(),
+            ..Default::default()
+        }))
+    }
+
+    async fn negotiate(
+        &self,
+        _request: Request<pb::NegotiateRequest>,
+    ) -> Result<Response<pb::NegotiateResponse>, Status> {
+        Err(Status::unimplemented("not part of this test plane"))
+    }
+
+    type StreamObservationsStream = ServerStream<pb::ObservationAck>;
+
+    async fn stream_observations(
+        &self,
+        request: Request<Streaming<pb::ObservationUpdate>>,
+    ) -> Result<Response<Self::StreamObservationsStream>, Status> {
+        let state = self.state.clone();
+        let mut inbound = request.into_inner();
+        let (tx, rx) = tokio_mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            while let Some(Ok(obs)) = inbound.next().await {
+                state.seen_obs.lock().push(obs);
+                let _ = tx.send(Ok(pb::ObservationAck::default()));
+            }
+        });
+        Ok(Response::new(Box::pin(UnboundedReceiverStream::new(rx))))
+    }
+
+    type GateActionsStream = ServerStream<pb::GateServerMessage>;
+
+    async fn gate_actions(
+        &self,
+        request: Request<Streaming<pb::GateClientMessage>>,
+    ) -> Result<Response<Self::GateActionsStream>, Status> {
+        let state = self.state.clone();
+        let mut inbound = request.into_inner();
+        let (tx, rx) = tokio_mpsc::unbounded_channel();
+        *state.gate_push.lock() = Some(tx);
+        tokio::spawn(async move {
+            while let Some(Ok(msg)) = inbound.next().await {
+                state.seen_gate.lock().push(msg);
+            }
+        });
+        Ok(Response::new(Box::pin(UnboundedReceiverStream::new(rx))))
+    }
+
+    async fn claim_episode(
+        &self,
+        _request: Request<pb::ClaimEpisodeRequest>,
+    ) -> Result<Response<pb::ClaimEpisodeResponse>, Status> {
+        Ok(Response::new(pb::ClaimEpisodeResponse {
+            granted: true,
+            ..Default::default()
+        }))
+    }
+
+    async fn handoff_lease(
+        &self,
+        _request: Request<pb::HandoffLeaseRequest>,
+    ) -> Result<Response<pb::HandoffLeaseResponse>, Status> {
+        Err(Status::unimplemented("not part of this test plane"))
+    }
+
+    type RequestResetStream = ServerStream<pb::ResetProgress>;
+
+    async fn request_reset(
+        &self,
+        _request: Request<pb::ResetRequest>,
+    ) -> Result<Response<Self::RequestResetStream>, Status> {
+        // Two-phase progress ending in DONE, then the stream closes normally.
+        let (tx, rx) = tokio_mpsc::unbounded_channel();
+        let _ = tx.send(Ok(pb::ResetProgress {
+            phase: pb::ResetPhase::Executing as i32,
+            ..Default::default()
+        }));
+        let _ = tx.send(Ok(pb::ResetProgress {
+            phase: pb::ResetPhase::Done as i32,
+            ..Default::default()
+        }));
+        Ok(Response::new(Box::pin(UnboundedReceiverStream::new(rx))))
+    }
+
+    type HeartbeatStream = ServerStream<pb::HeartbeatAck>;
+
+    async fn heartbeat(
+        &self,
+        request: Request<Streaming<pb::HeartbeatPing>>,
+    ) -> Result<Response<Self::HeartbeatStream>, Status> {
+        let mut inbound = request.into_inner();
+        let (tx, rx) = tokio_mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            while let Some(Ok(ping)) = inbound.next().await {
+                let _ = tx.send(Ok(pb::HeartbeatAck {
+                    echo_t_ns: ping.t_ns,
+                    ..Default::default()
+                }));
+            }
+        });
+        Ok(Response::new(Box::pin(UnboundedReceiverStream::new(rx))))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Server harness: hard-kill on demand (dropping the runtime resets sockets)
+// ---------------------------------------------------------------------------
+
+struct TestServer {
+    addr: SocketAddr,
+    stop_tx: std_mpsc::Sender<()>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl TestServer {
+    /// Bind and serve on `127.0.0.1:port` (0 = pick a free port).
+    fn start(state: Arc<PlaneState>, port: u16) -> Self {
+        let (addr_tx, addr_rx) = std_mpsc::channel::<SocketAddr>();
+        let (stop_tx, stop_rx) = std_mpsc::channel::<()>();
+        let thread = std::thread::Builder::new()
+            .name("waddle-test-plane".into())
+            .spawn(move || {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("test-plane runtime");
+                rt.block_on(async move {
+                    let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
+                        .await
+                        .expect("bind test plane");
+                    addr_tx
+                        .send(listener.local_addr().expect("local addr"))
+                        .expect("report addr");
+                    let (halt_tx, halt_rx) = tokio_mpsc::unbounded_channel::<()>();
+                    // Bridge the sync stop signal into the async world.
+                    std::thread::spawn(move || {
+                        let _ = stop_rx.recv();
+                        let _ = halt_tx.send(());
+                    });
+                    let serve = tonic::transport::Server::builder()
+                        .add_service(ControlPlaneServer::new(TestPlane { state }))
+                        .serve_with_incoming(TcpListenerStream::new(listener));
+                    let mut halt_rx = halt_rx;
+                    tokio::select! {
+                        res = serve => res.expect("test plane serve"),
+                        _ = halt_rx.recv() => {} // hard kill: fall out, drop the runtime
+                    }
+                });
+                // Runtime drops here: every live connection is reset.
+            })
+            .expect("spawn test plane");
+        let addr = addr_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("test plane never bound");
+        Self {
+            addr,
+            stop_tx,
+            thread: Some(thread),
+        }
+    }
+
+    fn kill(mut self) {
+        let _ = self.stop_tx.send(());
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+    }
+}
+
+impl Drop for TestServer {
+    fn drop(&mut self) {
+        let _ = self.stop_tx.send(());
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+fn client_config() -> ClientConfig {
+    let mut cfg = ClientConfig::new(pb::RegisterRequest {
+        project: "p-grpc".into(),
+        ..Default::default()
+    });
+    cfg.backoff = Backoff {
+        steps_ns: vec![20_000_000, 40_000_000],
+        plateau_ns: 40_000_000,
+    };
+    cfg
+}
+
+#[allow(clippy::disallowed_methods)] // wall-clock deadlines are test-only
+fn wait_for(what: &str, mut done: impl FnMut() -> bool) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !done() {
+        assert!(std::time::Instant::now() < deadline, "timed out: {what}");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+fn expect_connected_and_registered(client: &ControlPlaneClient) {
+    wait_for("Connected event", || {
+        matches!(
+            client.recv_event_timeout(Duration::from_secs(1)),
+            Some(PlaneEvent::Connected)
+        )
+    });
+    wait_for("Registered event", || {
+        matches!(
+            client.recv_event_timeout(Duration::from_secs(1)),
+            Some(PlaneEvent::Registered(r)) if r.session_id == "s-grpc"
+        )
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn connect_to_unreachable_server_fails_cleanly() {
+    // TEST-NET-1 address: nothing listens there; connect_timeout bounds it.
+    let transport = GrpcTransport::new(GrpcConfig::new("http://127.0.0.1:9"));
+    let err = transport.connect().expect_err("must fail");
+    let msg = format!("{err}");
+    assert!(msg.contains("transport"), "unexpected error: {msg}");
+}
+
+#[test]
+fn registers_round_trips_and_replays_after_server_restart() {
+    let state = Arc::new(PlaneState::default());
+    let server = TestServer::start(state.clone(), 0);
+    let addr = server.addr;
+
+    let transport =
+        GrpcTransport::new(GrpcConfig::new(format!("http://{addr}")).with_token("secret-token"));
+    let client = ControlPlaneClient::spawn(transport, client_config());
+
+    // Connect → auto-Register arrives (with the bearer token as metadata).
+    expect_connected_and_registered(&client);
+    wait_for("register seen server-side", || *state.registers.lock() >= 1);
+    assert_eq!(
+        state.auth_seen.lock().first().cloned().flatten().as_deref(),
+        Some("Bearer secret-token"),
+    );
+
+    // A GateClientMessage round-trips onto the plane's ordered stream.
+    let status = pb::GateClientMessage {
+        msg: Some(pb::gate_client_message::Msg::Status(pb::GateStatus {
+            tick_rate_hz: 30.0,
+            ..Default::default()
+        })),
+    };
+    client.send(ClientMsg::Gate(status.clone()));
+    wait_for("gate message seen server-side", || {
+        !state.seen_gate.lock().is_empty()
+    });
+    assert_eq!(state.seen_gate.lock()[0], status);
+
+    // A plane-side ClaimDirective arrives on the single ordered rx.
+    let directive = pb::GateServerMessage {
+        msg: Some(pb::gate_server_message::Msg::Claim(pb::ClaimDirective {
+            kind: pb::ClaimDirectiveKind::Grant as i32,
+            claim: None,
+        })),
+    };
+    state
+        .gate_push
+        .lock()
+        .as_ref()
+        .expect("gate stream open")
+        .send(Ok(directive.clone()))
+        .expect("push directive");
+    wait_for("ClaimDirective on the ordered rx", || {
+        matches!(
+            client.recv_event_timeout(Duration::from_secs(1)),
+            Some(PlaneEvent::Server(ServerMsg::Gate(m))) if m == directive
+        )
+    });
+
+    // Kill the plane: the transport reports disconnected.
+    server.kill();
+    wait_for("Disconnected event", || {
+        matches!(
+            client.recv_event_timeout(Duration::from_secs(1)),
+            Some(PlaneEvent::Disconnected)
+        )
+    });
+
+    // Send while down: buffered (heartbeats would be dropped; observations replay).
+    let obs = pb::ObservationUpdate {
+        t_ns: 42,
+        ..Default::default()
+    };
+    client.send(ClientMsg::Observation(obs.clone()));
+
+    // Restart on the SAME port: reconnect, re-Register, replay in order.
+    let _server2 = TestServer::start(state.clone(), addr.port());
+    expect_connected_and_registered(&client);
+    wait_for("second register", || *state.registers.lock() >= 2);
+    wait_for("buffered observation replayed", || {
+        state.seen_obs.lock().first() == Some(&obs)
+    });
+
+    client.shutdown();
+}

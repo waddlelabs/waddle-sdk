@@ -5,18 +5,52 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Waddle control-plane client: session/grant negotiation, reconnect/backoff, offline event buffering, heartbeat proxy signals"
+description = "Waddle control-plane client: session/grant negotiation, reconnect/backoff, offline event buffering, heartbeat proxy signals, and the tonic gRPC transport behind the `tonic-transport` feature"
 
 [features]
-# Real gRPC transport (tonic) is a deferred integration; the in-memory
-# transport is the tested default.
-tonic-transport = []
+# The real gRPC transport (tonic). Tokio confinement: one dedicated
+# `waddle-controlplane-grpc` thread per live connection owns a private
+# current-thread runtime; the `ControlTransport` surface stays sync/channel-
+# based and default builds are tokio-free. tonic's `server`+`router` features
+# ride along solely for the in-process test plane in tests/grpc_transport.rs
+# (cargo cannot feature-gate dev-dependencies) — compile-time cost only.
+tonic-transport = [
+    "dep:tonic",
+    "dep:tonic-prost",
+    "dep:tokio",
+    "dep:tokio-stream",
+    "dep:tonic-prost-build",
+    "dep:protox",
+]
 
 [dependencies]
 waddle-types = { workspace = true }
 waddle-fsm = { workspace = true }
 thiserror = { workspace = true }
 parking_lot = { workspace = true }
+tonic = { version = "0.14.6", default-features = false, features = [
+    "codegen",
+    "channel",
+    "server",
+    "router",
+    "tls-native-roots",
+], optional = true }
+tonic-prost = { version = "0.14.6", optional = true }
+tokio = { version = "1", default-features = false, features = [
+    "rt",
+    "sync",
+    "macros",
+], optional = true }
+tokio-stream = { version = "0.1", default-features = false, features = [
+    "net",
+], optional = true }
+
+[build-dependencies]
+# Service codegen for the tonic transport: protox compiles the schemas (no
+# system protoc), tonic-prost-build emits ONLY the client/server service code
+# (`extern_path` maps every message back to waddle_types::pb::v0).
+tonic-prost-build = { version = "0.14.6", optional = true }
+protox = { workspace = true, optional = true }
 
 [lints]
 workspace = true
