@@ -148,7 +148,7 @@ top-level dirs; they are not built yet.
   waddle-media's `livekit` feature (one dedicated `waddle-media-livekit` thread)
   and waddle-controlplane's `tonic-transport` feature (one dedicated
   `waddle-controlplane-grpc` thread per live connection, plus its
-  `-tx` bridge thread) — in both, the thread owns a private current-thread
+  `-tx` forwarder thread) — in both, the thread owns a private current-thread
   runtime, no tokio type appears in any public signature, and default builds
   are tokio-free (`cargo tree -p waddle-media` / `-p waddle-controlplane` must
   show no tokio without the features). Everything else stays dedicated named

@@ -26,7 +26,7 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     existing backoff/replay machinery — the transport duplicates none of it.
   - Tokio confinement (the Task-14 pattern): one dedicated
     `waddle-controlplane-grpc` thread per live connection owns a private
-    current-thread runtime (plus a `waddle-controlplane-grpc-tx` bridge
+    current-thread runtime (plus a `waddle-controlplane-grpc-tx` forwarder
     thread); the trait surface stays sync/channel-based and featureless
     builds stay tokio-free (`cargo tree` verified).
   - Auth per services.proto: `GrpcConfig { url, token }` sends
@@ -97,7 +97,7 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   `LiveKitMedia::connect(LiveKitConfig { url, token, track_resolutions })`
   spawns ONE dedicated thread (`waddle-media-livekit`) owning a private
   current-thread tokio runtime; all `MediaPlane` methods stay synchronous
-  and bridge over channels, so **tokio stays confined to this feature** —
+  and forward over channels, so **tokio stays confined to this feature** —
   no tokio type crosses the public API and featureless builds have no
   tokio in the tree at all. `DataTopic` maps to LiveKit data-channel
   publishes on the normative `media.proto` topic strings with the

@@ -2,10 +2,11 @@
 //!
 //! # Tokio confinement (repo invariant)
 //!
-//! This module owns the only tokio in the workspace. [`LiveKitMedia::connect`]
+//! This module is a tokio confinement point (the other is
+//! waddle-controlplane's `tonic-transport` feature). [`LiveKitMedia::connect`]
 //! spawns ONE dedicated thread (`waddle-media-livekit`) that runs a private
 //! current-thread tokio runtime; every [`MediaPlane`] method stays
-//! synchronous and bridges to it over channels. No tokio type appears in any
+//! synchronous and forwards to it over channels. No tokio type appears in any
 //! public signature, and default (featureless) builds contain no tokio at
 //! all.
 //!
@@ -108,7 +109,7 @@ impl fmt::Debug for LiveKitConfig {
 
 /// Commands the synchronous side sends to the worker thread. The channel is
 /// a tokio unbounded sender because its `send` is synchronous and
-/// non-blocking — it is the sync→async bridge.
+/// non-blocking — it is the sync→async forwarder.
 enum Command {
     PublishTrack {
         camera: String,
