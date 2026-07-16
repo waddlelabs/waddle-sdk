@@ -6,11 +6,16 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
 use waddle_gate::{Gate, GatePlan, gate::GateShared};
 use waddle_ingest::SessionClock;
-use waddle_types::MonoNs;
+use waddle_types::{MonoNs, ReplanPolicy};
 
 fn bench_passthrough(c: &mut Criterion) {
     let clock = SessionClock::capture();
-    let (shared, _stream_tx) = GateShared::new(GatePlan::passthrough(MonoNs(0)), 64, 0);
+    let (shared, _stream_tx) = GateShared::new(
+        GatePlan::passthrough(MonoNs(0)),
+        64,
+        0,
+        ReplanPolicy::Immediate,
+    );
     let (mut gate, mut records_rx) = Gate::new(shared, clock, 8192);
     let action = [0.1f64; 14];
 

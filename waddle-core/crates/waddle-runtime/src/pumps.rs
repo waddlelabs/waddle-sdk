@@ -9,14 +9,14 @@ use std::time::Duration;
 use waddle_controlplane::{ControlPlaneClient, PlaneEvent, ServerMsg};
 use waddle_fsm::{GrantChangeDirective, Phase, SessionEvent};
 use waddle_gate::gate::{GateShared, OwnedAction};
-use waddle_gate::jitter::{StreamChannel, TimedAction};
+use waddle_gate::jitter::{ChunkMeta, StreamChannel, TimedAction};
 use waddle_ingest::SessionClock;
 use waddle_media::{DataTopic, MediaPlane};
 use waddle_types::pb::v0 as pb;
 use waddle_types::time::Clock;
 use waddle_types::{
     ActionChunk, ActionSpace, ActorKind, ClaimId, EpisodeId, GateMode, GrantStatus, MonoNs, Step,
-    VerbRequest,
+    TypesError, VerbRequest,
 };
 
 use crate::RuntimeError;
@@ -379,12 +379,14 @@ pub(crate) fn spawn_media_intake(
                                 seq: packet.seq,
                                 received: now,
                                 action,
+                                chunk: None,
                             });
                         } else if !validation_fault_sent {
                             validation_fault_sent = true;
                             let _ = inject.send(SessionEvent::InterventionRejected {
                                 dims_got: action.values.len(),
                                 dims_want: expected_dims.unwrap_or(0),
+                                source: "media-intake",
                                 at: now,
                             });
                         }
@@ -441,7 +443,8 @@ fn flatten_packet(packet: &pb::TeleopStreamPacket) -> Option<OwnedAction> {
 
 /// Plane events → FSM events (claim directives, episode directives,
 /// partitions, heartbeat-carried grant changes, reset-window directives,
-/// reset-window agent-chunk actuation).
+/// agent-chunk actuation — Reset-mode window actuation (Task 10) and the
+/// general Claimed-mode intake, Task 17).
 pub(crate) fn spawn_plane_pump(
     plane: Arc<ControlPlaneClient>,
     inject: Sender<SessionEvent>,
@@ -458,9 +461,17 @@ pub(crate) fn spawn_plane_pump(
             // `InterventionChunk` arm below — see that arm's doc comment for
             // why this can't just reuse `chunk.seq`.
             let mut next_chunk_seq: u64 = 0;
+            // Bug 2 (action-space validation) guard for the agent-chunk
+            // path, mirroring `spawn_media_intake`'s `validation_fault_sent`:
+            // a dims-mismatched chunk faults at most once per claim window.
+            let mut chunk_dims_fault_sent = false;
             loop {
-                if mirror.read().shutdown {
+                let status = mirror.read();
+                if status.shutdown {
                     return;
+                }
+                if !status.claim_active {
+                    chunk_dims_fault_sent = false;
                 }
                 let Some(event) = plane.recv_event_timeout(Duration::from_millis(20)) else {
                     continue;
@@ -488,6 +499,7 @@ pub(crate) fn spawn_plane_pump(
                         &stream,
                         &action_space,
                         &mut next_chunk_seq,
+                        &mut chunk_dims_fault_sent,
                     ),
                 }
             }
@@ -504,6 +516,7 @@ fn forward_server_msg(
     stream: &StreamProducer,
     space: &ActionSpace,
     next_chunk_seq: &mut u64,
+    chunk_dims_fault_sent: &mut bool,
 ) {
     match msg {
         ServerMsg::Gate(gate_msg) => match gate_msg.msg {
@@ -616,34 +629,57 @@ fn forward_server_msg(
                     _ => {}
                 }
             }
-            // Agent-chunk reset actuation ONLY (flag `waddle.v0.reset.remote`):
-            // while the mirror shows `GateMode::Reset`, an engaged AGENT
-            // claimant's chunk steps join the same intervention ring the
-            // bypass pump's RESET arm drains, timed off this arrival (`at`
-            // + each step's declared offset). The general Claimed-mode
-            // chunk intake (jitter horizon, ReplanPolicy) is a later
-            // milestone — every other gate mode still drops this arm
-            // silently, unchanged from before this task.
+            // Agent-chunk intake (Task 10: Reset-mode window actuation;
+            // Task 17: general Claimed-mode intake): an `intervention_chunk`
+            // is accepted whenever a claim is active — the SAME gate
+            // `spawn_media_intake`'s teleop path already uses (`claim_active`
+            // alone, no `GateMode` match), so a chunk arriving during the
+            // ENGAGE handoff sub-phase (claim granted, lease not yet handed
+            // over — gate mode hasn't flipped to `Intervention`/`Reset` yet)
+            // still buffers correctly and is ready the instant the handoff
+            // completes, exactly like a teleop packet would. Legality
+            // (which claim, which mode) is never re-derived here — only a
+            // plain mirror read (hollow-frontend); the jitter buffer is what
+            // actually plays these out only while `Claimed`/`Reset`/`Bypass`
+            // is polling it.
             //
             // Ring seq: `next_chunk_seq` is a fresh per-pump counter, not
-            // `chunk.seq` — the jitter buffer's reorder map is keyed by seq
-            // *per step*, and a chunk's own `seq` is one value for the
-            // whole chunk (every step in it would collide on the same key).
-            // Tagged `StreamChannel::AgentChunk` so this counter's seq space
-            // never shares a reorder/late-drop cursor with the media
-            // intake's teleop-packet seq space, even though both producers
-            // push into the same physical ring (`JitterBuffer` keeps one
-            // cursor per channel — see `jitter.rs`'s module doc): an earlier
-            // teleop claim (ordinary Intervention/Bypass, or an earlier
-            // teleop-driven reset window) advancing its own cursor high must
-            // never cause THIS window's first agent-chunk step to look
-            // "late" and be dropped.
+            // `chunk.seq` — the jitter buffer's per-item reorder map is
+            // keyed by seq *per step*, and a chunk's own `seq` is one value
+            // for the whole chunk (every step in it would collide on the
+            // same key). Tagged `StreamChannel::AgentChunk` so this
+            // counter's seq space never shares a reorder/late-drop cursor
+            // with the media intake's teleop-packet seq space, even though
+            // both producers push into the same physical ring (`JitterBuffer`
+            // keeps one cursor per channel — see `jitter.rs`'s module doc).
+            //
+            // `chunk.seq`/`chunk.t_emitted_ns` (the WIRE chunk's own
+            // identity, distinct from `next_chunk_seq` above) ride along on
+            // every step as a `ChunkMeta` so the jitter buffer can detect a
+            // chunk boundary and apply the declared `ReplanPolicy`
+            // (`jitter.rs`'s module doc) — a newer chunk arriving mid-horizon
+            // supersedes the executing one's still-pending steps (IMMEDIATE/
+            // BLEND) or queues behind them (CHUNK_BOUNDARY).
+            //
+            // Playout scheduling stays session-receive-time (`at`) + each
+            // step's declared `t_offset_ns` — NOT `chunk.t_emitted_ns` +
+            // offset — matching Task 10's Reset-mode arm: `ActionChunk`'s
+            // `_ns` fields are session-timeline per `VERSIONING.md` §7 (not
+            // `_client_ns`, so no cross-clock offset-estimator mapping
+            // applies), but nothing guarantees a remote agent's own
+            // `t_emitted_ns` is usable as an absolute playout anchor on this
+            // side, so it is used only for the chunk-boundary/staleness
+            // decision above, never for scheduling.
             Some(pb::gate_server_message::Msg::InterventionChunk(chunk)) => {
-                if !matches!(mirror.read().gate_mode, Some(GateMode::Reset)) {
+                if !mirror.read().claim_active {
                     return;
                 }
                 match ActionChunk::from_pb(&chunk, space) {
                     Ok(action_chunk) => {
+                        let meta = ChunkMeta {
+                            chunk_seq: action_chunk.seq,
+                            t_emitted_ns: action_chunk.t_emitted_ns,
+                        };
                         let mut producer = stream.lock();
                         for step in &action_chunk.steps {
                             *next_chunk_seq += 1;
@@ -655,26 +691,34 @@ fn forward_server_msg(
                                     values: step.values.clone(),
                                     gripper: step.gripper,
                                 },
+                                chunk: Some(meta),
+                            });
+                        }
+                    }
+                    // Bug 2 (action-space validation), mirroring
+                    // `spawn_media_intake`'s teleop path: a genuine dims
+                    // mismatch faults once per claim window, chunk dropped.
+                    Err(TypesError::DimensionMismatch { expected, got }) => {
+                        if !*chunk_dims_fault_sent {
+                            *chunk_dims_fault_sent = true;
+                            let _ = inject.send(SessionEvent::InterventionRejected {
+                                dims_got: got,
+                                dims_want: expected,
+                                source: "agent-chunk",
+                                at,
                             });
                         }
                     }
                     Err(err) => {
-                        // Unlike the media-intake teleop path (which raises
-                        // `SessionEvent::InterventionRejected` on a dims
-                        // mismatch), there is no FSM event shaped for an
-                        // arbitrary wire-validation error: `TypesError` has
-                        // several non-dims variants (missing field, wrong
-                        // target arm, Opaque space, …) that a dims-only
-                        // event would misreport. This is the ONLY actuation
-                        // channel for an Agent-kind reset window (no teleop
-                        // fallback), so a silent drop here is a real
-                        // operability gap — surface it loudly instead of
-                        // fabricating a fault event that would lie about
-                        // what actually went wrong.
+                        // Every other `TypesError` variant (missing field,
+                        // wrong target arm, Opaque space, …) doesn't fit the
+                        // dims-shaped `InterventionRejected` event without
+                        // misreporting what actually went wrong — surfaced
+                        // as a trace warning instead of a fabricated fault.
                         tracing::warn!(
                             error = %err,
-                            "reset-window intervention_chunk rejected: incompatible \
-                             with the declared action space"
+                            "intervention_chunk rejected: incompatible with the \
+                             declared action space"
                         );
                     }
                 }

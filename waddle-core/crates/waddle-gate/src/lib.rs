@@ -23,7 +23,7 @@ pub mod stats;
 
 pub use dualwrite::{DivergenceDetector, DualWriteVerdict};
 pub use gate::{Gate, GateOutput, OwnedAction};
-pub use jitter::{JitterBuffer, StreamChannel, TimedAction};
+pub use jitter::{ChunkMeta, JitterBuffer, StreamChannel, TimedAction};
 pub use plan::{BlendSchedule, GatePlan, PlanMode};
 pub use record::{GateDecision, GateRecord};
 pub use stats::TickStats;

@@ -26,7 +26,7 @@ use waddle_ingest::FakeClock;
 use waddle_types::action::ActionValues;
 use waddle_types::{
     ActionSpace, ActorKind, ClaimId, EpisodeId, GateMode, GrantStatus, Interp, LeaseEnforcement,
-    LeaseId, MonoNs, Provenance, ProvenanceTag, TerminalOutcome, Verb, pb::v0 as pb,
+    LeaseId, MonoNs, Provenance, ProvenanceTag, ReplanPolicy, TerminalOutcome, Verb, pb::v0 as pb,
 };
 
 use crate::emissions::{
@@ -122,19 +122,23 @@ impl Target {
             TargetKind::Fsm => None,
             TargetKind::Gate => {
                 let clock = FakeClock::default();
-                let (shared, producer) = GateShared::new(
-                    GatePlan::passthrough(MonoNs(0)),
-                    STREAM_CAPACITY,
-                    PLAYOUT_DELAY_NS,
-                );
-                let (gate, records) =
-                    Gate::new(Arc::clone(&shared), clock.clone(), RECORD_CAPACITY);
                 let space = scenario
                     .setup
                     .robot
                     .as_ref()
                     .map(|r| r.action_space.clone());
                 let interp = space.as_ref().map_or(Interp::Linear, |s| s.chunking.interp);
+                let replan = space
+                    .as_ref()
+                    .map_or(ReplanPolicy::Immediate, |s| s.chunking.replan);
+                let (shared, producer) = GateShared::new(
+                    GatePlan::passthrough(MonoNs(0)),
+                    STREAM_CAPACITY,
+                    PLAYOUT_DELAY_NS,
+                    replan,
+                );
+                let (gate, records) =
+                    Gate::new(Arc::clone(&shared), clock.clone(), RECORD_CAPACITY);
                 Some(GateParts {
                     shared,
                     gate,
@@ -849,6 +853,7 @@ impl Target {
                             values: ActionValues::from_slice(&values),
                             gripper,
                         },
+                        chunk: None,
                     })
                     .map_err(|_| scenario_err("intervention stream ring full"))?;
             } else if !gp.validation_fault_sent {
@@ -865,6 +870,7 @@ impl Target {
             self.dispatch(SessionEvent::InterventionRejected {
                 dims_got,
                 dims_want,
+                source: "media-intake",
                 at,
             })?;
         }

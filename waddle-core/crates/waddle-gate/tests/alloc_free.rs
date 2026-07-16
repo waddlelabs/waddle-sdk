@@ -36,10 +36,15 @@ static GLOBAL: CountingAlloc = CountingAlloc;
 fn passthrough_is_allocation_free_and_fast() {
     use waddle_gate::{Gate, GateOutput, GatePlan, gate::GateShared};
     use waddle_ingest::FakeClock;
-    use waddle_types::MonoNs;
+    use waddle_types::{MonoNs, ReplanPolicy};
 
     let clock = FakeClock::default();
-    let (shared, _stream_tx) = GateShared::new(GatePlan::passthrough(MonoNs(0)), 64, 0);
+    let (shared, _stream_tx) = GateShared::new(
+        GatePlan::passthrough(MonoNs(0)),
+        64,
+        0,
+        ReplanPolicy::Immediate,
+    );
     let (mut gate, mut records_rx) = Gate::new(shared, clock.clone(), 4096);
     let action = [0.25f64; 14];
     let obs = [0.5f64; 30];
@@ -87,10 +92,15 @@ fn passthrough_is_allocation_free_and_fast() {
 fn wide_obs_spills_but_round_trips() {
     use waddle_gate::{Gate, GateOutput, GatePlan, gate::GateShared};
     use waddle_ingest::FakeClock;
-    use waddle_types::MonoNs;
+    use waddle_types::{MonoNs, ReplanPolicy};
 
     let clock = FakeClock::default();
-    let (shared, _stream_tx) = GateShared::new(GatePlan::passthrough(MonoNs(0)), 64, 0);
+    let (shared, _stream_tx) = GateShared::new(
+        GatePlan::passthrough(MonoNs(0)),
+        64,
+        0,
+        ReplanPolicy::Immediate,
+    );
     let (mut gate, mut records_rx) = Gate::new(shared, clock.clone(), 64);
     let action = [0.25f64; 14];
     let obs: Vec<f64> = (0..64).map(f64::from).collect();

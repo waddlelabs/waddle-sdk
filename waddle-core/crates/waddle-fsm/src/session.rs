@@ -1432,6 +1432,7 @@ pub fn step(
         SessionEvent::InterventionRejected {
             dims_got,
             dims_want,
+            source,
             at,
         } => {
             if !active {
@@ -1442,11 +1443,8 @@ pub fn step(
                 *at,
                 Some(&ep),
                 pb::FaultKind::ValidationError,
-                "media-intake",
-                &format!(
-                    "teleop action carried {dims_got} dims; declared action \
-                     space wants {dims_want}"
-                ),
+                source,
+                &format!("action carried {dims_got} dims; declared action space wants {dims_want}"),
             ));
         }
 

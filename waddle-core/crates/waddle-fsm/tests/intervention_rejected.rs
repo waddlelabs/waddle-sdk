@@ -43,6 +43,7 @@ fn intervention_rejected_emits_exactly_one_validation_fault() {
         &SessionEvent::InterventionRejected {
             dims_got: 7,
             dims_want: 6,
+            source: "media-intake",
             at: MonoNs(1_000),
         },
     )
@@ -75,6 +76,43 @@ fn intervention_rejected_emits_exactly_one_validation_fault() {
     );
 }
 
+/// Task 17: the fault's `source` must reflect the ACTUAL rejecting
+/// producer, not a hardcoded "media-intake" — an agent-chunk mismatch
+/// (`forward_server_msg`'s `InterventionChunk` arm) must never be
+/// misreported as a teleop one.
+#[test]
+fn intervention_rejected_carries_the_producers_source_into_the_fault() {
+    let (cfg, state) = opened_fsm();
+
+    let stepped = step(
+        &cfg,
+        &state,
+        &SessionEvent::InterventionRejected {
+            dims_got: 3,
+            dims_want: 6,
+            source: "agent-chunk",
+            at: MonoNs(1_000),
+        },
+    )
+    .expect("intervention_rejected is legal with an active episode");
+
+    let faults: Vec<pb::Fault> = stepped
+        .effects
+        .iter()
+        .filter_map(|effect| match effect {
+            waddle_fsm::Effect::Emit(ev) => match &ev.event {
+                Some(pb::episode_event::Event::Fault(f)) => Some(f.clone()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    assert_eq!(faults.len(), 1);
+    assert_eq!(faults[0].source, "agent-chunk");
+    assert!(faults[0].detail.contains("3 dims"));
+    assert!(faults[0].detail.contains("6"));
+}
+
 #[test]
 fn intervention_rejected_without_an_active_episode_is_rejected() {
     let cfg = SessionConfig::minimal(
@@ -89,6 +127,7 @@ fn intervention_rejected_without_an_active_episode_is_rejected() {
         &SessionEvent::InterventionRejected {
             dims_got: 7,
             dims_want: 6,
+            source: "media-intake",
             at: MonoNs(0),
         },
     );

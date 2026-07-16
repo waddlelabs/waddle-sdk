@@ -8,7 +8,7 @@ use arc_swap::ArcSwap;
 use parking_lot::Mutex;
 use waddle_types::action::{ActionValues, ObsValues};
 use waddle_types::time::Clock;
-use waddle_types::{MonoNs, ProvenanceTag};
+use waddle_types::{MonoNs, ProvenanceTag, ReplanPolicy};
 
 use crate::blend::blend_step;
 use crate::jitter::{JitterBuffer, TimedAction};
@@ -92,12 +92,16 @@ pub struct GateShared {
 
 impl GateShared {
     /// Build the shared state plus the media-intake producer end of the
-    /// intervention stream.
+    /// intervention stream. `agent_chunk_replan` is the declared action
+    /// space's `ChunkingSemantics.replan` (`descriptors.proto`) — how a
+    /// newer agent chunk supersedes an executing one (see `jitter`'s module
+    /// doc); unused on the `Teleop` channel.
     #[must_use]
     pub fn new(
         initial: GatePlan,
         stream_capacity: usize,
         playout_delay_ns: i64,
+        agent_chunk_replan: ReplanPolicy,
     ) -> (Arc<Self>, rtrb::Producer<TimedAction>) {
         let (tx, rx) = rtrb::RingBuffer::new(stream_capacity);
         (
@@ -106,7 +110,7 @@ impl GateShared {
                 stats: TickStats::new(),
                 stream: Mutex::new(StreamIntake {
                     rx,
-                    jitter: JitterBuffer::new(playout_delay_ns),
+                    jitter: JitterBuffer::new(playout_delay_ns, agent_chunk_replan),
                 }),
             }),
             tx,
@@ -346,7 +350,12 @@ mod tests {
         FakeClock,
     ) {
         let clock = FakeClock::default();
-        let (shared, tx) = GateShared::new(GatePlan::passthrough(MonoNs(0)), 64, 0);
+        let (shared, tx) = GateShared::new(
+            GatePlan::passthrough(MonoNs(0)),
+            64,
+            0,
+            ReplanPolicy::Immediate,
+        );
         let (gate, records) = Gate::new(shared.clone(), clock.clone(), 256);
         (gate, shared, tx, records, clock)
     }
@@ -410,6 +419,7 @@ mod tests {
                 values: smallvec![9.0],
                 gripper: None,
             },
+            chunk: None,
         })
         .unwrap();
         clock.advance(1_000);
@@ -448,6 +458,7 @@ mod tests {
                 values: smallvec![10.0],
                 gripper: None,
             },
+            chunk: None,
         })
         .unwrap();
         clock.set(MonoNs(1_500)); // halfway through the window

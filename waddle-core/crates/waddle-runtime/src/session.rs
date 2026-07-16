@@ -451,8 +451,12 @@ impl SessionBuilder {
         let dims = robot.action_space.dims();
         let gripper_spec = robot.action_space.gripper.clone();
 
-        let (gate_shared, stream_tx) =
-            GateShared::new(GatePlan::passthrough(MonoNs(0)), 1024, 20_000_000);
+        let (gate_shared, stream_tx) = GateShared::new(
+            GatePlan::passthrough(MonoNs(0)),
+            1024,
+            20_000_000,
+            robot.action_space.chunking.replan,
+        );
         // Shared (see `StreamProducer`): media intake and the plane pump's
         // reset-window agent-chunk arm both write into it.
         let stream_tx: StreamProducer = Arc::new(parking_lot::Mutex::new(stream_tx));
