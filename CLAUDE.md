@@ -64,8 +64,9 @@ top-level dirs; they are not built yet.
 
 - Toolchain: Rust (see `waddle-core/rust-toolchain.toml`). **No system `protoc` or
   `buf` is required or assumed** — proto compilation happens in
-  `crates/waddle-types/build.rs` via `protox` (pure Rust). Generated code is never
-  checked in, in either repo.
+  `crates/waddle-types/build.rs` via `protox` (pure Rust); the gRPC service
+  codegen in `crates/waddle-controlplane/build.rs` (`tonic-transport` feature
+  only) is also protox-based. Generated code is never checked in, in either repo.
 - Everything Rust runs from `waddle-core/`:
   - `cargo build --workspace` / `cargo test --workspace` (includes the
     conformance suite: `cargo test -p waddle-conformance -- --nocapture`
@@ -73,12 +74,17 @@ top-level dirs; they are not built yet.
   - `cargo clippy --workspace --all-targets -- -D warnings` and `cargo fmt --check`
     must be clean before any commit.
   - Feature checks: `cargo check -p waddle-runtime --features grpc,livekit` must
-    keep compiling. `grpc` is still a typed stub; `livekit` is the REAL LiveKit
-    transport (`waddle-media/src/livekit.rs`). Build cost: the `webrtc-sys` build
+    keep compiling. Both are REAL transports now: `grpc` is the tonic
+    `ControlTransport` (`waddle-controlplane/src/grpc.rs`, feature
+    `tonic-transport`; test it with `cargo test -p waddle-controlplane
+    --features tonic-transport`), `livekit` is the LiveKit media plane
+    (`waddle-media/src/livekit.rs`). Build cost: the `webrtc-sys` build
     script downloads a prebuilt libwebrtc (~hundreds of MB compressed, ~690 MB
     extracted into the target dir) on the first build per target dir — network
     required on cold builds, ~30 s wall on a fast machine, warm re-checks are
-    seconds. Featureless builds are unaffected (no tokio/livekit in the tree).
+    seconds; the tonic stack is ordinary crates.io deps (~1 min cold, no
+    special downloads). Featureless builds are unaffected (no tokio, tonic,
+    or livekit in the tree).
   - `cargo run -p xtask -- gen-header` emits the libwaddle C header to
     `target/include/waddle.h` (a CI artifact, never checked in).
   - `cargo bench -p waddle-gate` tracks the gate fast path (sub-µs target;
@@ -139,13 +145,15 @@ top-level dirs; they are not built yet.
   client threads in waddle-controlplane, whose lifecycles runtime owns, and
   waddle-media's LiveKit worker + data-tx forwarder threads behind the `livekit`
   feature). **Tokio is confined to transports**: it exists ONLY inside
-  waddle-media's `livekit` feature (one dedicated `waddle-media-livekit` thread
-  owning a private current-thread runtime; no tokio type in any public signature;
-  default builds are tokio-free — `cargo tree -p waddle-media` must show no tokio
-  without the feature). The same rule applies to waddle-controlplane's `grpc`
-  feature when tonic lands. Everything else stays dedicated named threads +
-  channels. `waddle-codecs` is independently versioned and may depend only on
-  `waddle-types` + serde (N4).
+  waddle-media's `livekit` feature (one dedicated `waddle-media-livekit` thread)
+  and waddle-controlplane's `tonic-transport` feature (one dedicated
+  `waddle-controlplane-grpc` thread per live connection, plus its
+  `-tx` bridge thread) — in both, the thread owns a private current-thread
+  runtime, no tokio type appears in any public signature, and default builds
+  are tokio-free (`cargo tree -p waddle-media` / `-p waddle-controlplane` must
+  show no tokio without the features). Everything else stays dedicated named
+  threads + channels. `waddle-codecs` is independently versioned and may depend
+  only on `waddle-types` + serde (N4).
 - **The gate fast path is sacred.** `Gate::gate()` must remain synchronous, wait-free
   in passthrough, and allocation-free up to 16 action dims and 32 obs dims (wider
   observations spill to the heap — a documented degradation, never truncation).

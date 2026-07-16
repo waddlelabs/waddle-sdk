@@ -8,9 +8,10 @@ repository.workspace = true
 description = "Waddle media plane: track publication and data-topic transport traits, JPEG encoding, an in-memory loopback, and the real LiveKit/WebRTC transport behind the `livekit` feature"
 
 [features]
-# The real LiveKit/WebRTC transport. Tokio confinement: this feature is the
-# ONLY place tokio exists in the workspace — one dedicated thread owns a
-# private current-thread runtime; no tokio type crosses the public API.
+# The real LiveKit/WebRTC transport. Tokio confinement: one dedicated thread
+# owns a private current-thread runtime; no tokio type crosses the public API
+# (the only other tokio in the workspace is waddle-controlplane's
+# `tonic-transport` feature, confined the same way).
 # Build note: `webrtc-sys` downloads a prebuilt libwebrtc at build time
 # (network required on a cold build).
 livekit = ["dep:livekit", "dep:tokio", "dep:tracing"]

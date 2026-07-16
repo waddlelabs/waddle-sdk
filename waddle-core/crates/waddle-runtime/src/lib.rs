@@ -3,8 +3,10 @@
 //! intake, and the control-plane client onto core-owned named threads.
 //!
 //! Nothing in the core executes on a caller's thread except the synchronous
-//! `Episode::gate()` fast path. There is deliberately no async runtime:
-//! dedicated threads + channels until the tonic/LiveKit integrations land.
+//! `Episode::gate()` fast path. Everything runs on dedicated named threads +
+//! channels; tokio exists only inside the transport features (`grpc` →
+//! waddle-controlplane's tonic worker, `livekit` → waddle-media's worker),
+//! each confined to its own thread's private current-thread runtime.
 
 mod media_uplink;
 pub mod mirror;

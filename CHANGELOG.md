@@ -12,6 +12,39 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 ## [Unreleased]
 
 ### Added
+- **waddle-controlplane (real tonic gRPC `ControlTransport`, feature
+  `tonic-transport`)**: the `tonic-transport` feature is no longer an empty
+  stub — `waddle_controlplane::grpc::{GrpcConfig, GrpcTransport}` implements
+  the same `ControlTransport` trait the in-memory transport does, over the
+  eight `ControlPlane` RPCs of services.proto.
+  - Mapping: `Register`/`Negotiate`/`ClaimEpisode`/`HandoffLease` are unary;
+    `GateActions` + `Heartbeat` are eager long-lived bidi streams (the
+    plane's directive/demotion down-paths); `StreamObservations` opens
+    lazily on the first observation (acks are drained); `RequestReset`
+    progress funnels back through the single ordered rx. Any transport-level
+    error severs the connection channels, handing recovery to the client's
+    existing backoff/replay machinery — the transport duplicates none of it.
+  - Tokio confinement (the Task-14 pattern): one dedicated
+    `waddle-controlplane-grpc` thread per live connection owns a private
+    current-thread runtime (plus a `waddle-controlplane-grpc-tx` bridge
+    thread); the trait surface stays sync/channel-based and featureless
+    builds stay tokio-free (`cargo tree` verified).
+  - Auth per services.proto: `GrpcConfig { url, token }` sends
+    `authorization: Bearer <token>` metadata on every RPC (`Debug` redacts
+    the token). `https://` URLs use rustls with the platform's native roots.
+  - Codegen stays protoc-free: `waddle-controlplane/build.rs` feeds a
+    protox-compiled descriptor set to `tonic-prost-build` with `extern_path`
+    mapping every message back to `waddle_types::pb::v0`, so only service
+    glue is generated and exactly one copy of the wire types exists.
+  - In-process integration tests (generated tonic server as the test plane):
+    connect → auto-Register with bearer metadata, gate round-trip both ways,
+    hard server kill → `Disconnected`, restart on the same port →
+    re-register + in-order replay of messages buffered while offline.
+  - Deps (all optional, behind the feature): tonic 0.14.6 + tonic-prost
+    0.14.6 (the prost-0.14 pairing), tokio (rt/sync/macros), tokio-stream;
+    build-deps tonic-prost-build + protox. tonic's `server`/`router`
+    features ride the same feature solely for the in-process test plane
+    (cargo cannot feature-gate dev-dependencies) — compile-time cost only.
 - **waddle-runtime (`Session::publish_frame` — cameras are live) + tripwires
   evaluate real observations + `session.publish_frame` (Python)**: the
   biggest Milestone-A gap closes — declared cameras and tripwires actually
