@@ -390,6 +390,33 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   `target/include/waddle.h` (marked `WADDLE_ABI_UNSTABLE` per N5); verified
   by Rust round-trip tests and a real C caller compiled with gcc against the
   generated header and linked to `libwaddle.so`.
+- **sdk (descriptors: intrinsics, stream policy, URDF, frame graph, joint
+  limits)**: `sdk/python/waddle/descriptors.py` widens to cover the rest of
+  `descriptors.proto`'s declaration surface (shape only — the hollow-frontend
+  rule: no new semantic validation, `RobotDescription::try_from` remains the
+  one semantic validator). `Camera` gains optional `intrinsics: Intrinsics`
+  (`fx, fy, cx, cy`, `distortion_model` — short names, defaults to
+  `"unspecified"` — `distortion: tuple[float, ...]`, `depth_scale_mm`),
+  optional `stream_policy: StreamPolicy` (`local_full_rate: bool`, optional
+  `uplink: Uplink(fps, encoding, max_kbps)`, compiling to the `stream` wire
+  field), and `vendor: dict[str, str]`. `Robot` gains optional
+  `kinematics_urdf: bytes | str | Path` (`bytes` passes through as-is;
+  `str`/`Path` is read from disk **at compile time** — pick one, document
+  it, no silent XML-vs-path guessing), `frames: tuple[FrameTransform, ...]`
+  (new dataclass: `parent`, `child`, `position` (x, y, z), `quaternion`
+  — **wxyz**, pinned by a dedicated non-symmetric test — compiling to a
+  `FrameGraph`; the nested `Pose.frame_id` is filled from `parent`, the
+  frame the transform's numbers are expressed in), and `series: dict[str,
+  TimeSeries]` (`dtype`, `shape`, `units`, `frame_id`, `rate_hz`).
+  `JointSpace.joints` and the new `Gripper.dexterous(joints)` both now
+  accept either a bare name (names-only form, unchanged) or a new `Joint`
+  dataclass (`min_position`, `max_position`, `max_velocity`, `max_effort`)
+  via a shared `_compile_joint` helper. Validation stays minimal and
+  objective: `min_position <= max_position`, `max_velocity`/`max_effort`
+  `>= 0`, `fps > 0`, `max_kbps > 0`, `depth_scale_mm > 0` — everything else
+  is shape-only and deferred to waddle-core. Back-compat is a golden assert:
+  descriptors that set none of the new fields compile to the exact same
+  dict as before.
 
 ### Changed
 - **`Session::episode_done` / `Episode::done` flip at `Phase::PostReset`**,

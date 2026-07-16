@@ -10,19 +10,31 @@ validation happens in waddle-core when the JSON crosses the shim
 from __future__ import annotations
 
 import abc
+import base64
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 
 __all__ = [
     "Camera",
     "Chunking",
     "Composite",
     "EEDelta",
+    "FrameTransform",
     "Gripper",
+    "Intrinsics",
+    "Joint",
     "JointSpace",
     "Opaque",
     "Robot",
+    "StreamPolicy",
+    "TimeSeries",
+    "Uplink",
 ]
+
+# Shared by Camera and Uplink (a camera's uplink policy re-declares its own
+# encoding, independent of the local-capture encoding).
+_CAMERA_ENCODINGS = {"rgb8": "RGB8", "bgr8": "BGR8", "z16": "Z16", "jpeg": "JPEG", "h264": "H264"}
 
 
 def _enum_name(value: str, prefix: str, allowed: dict[str, str], field_name: str) -> str:
@@ -35,6 +47,61 @@ def _enum_name(value: str, prefix: str, allowed: dict[str, str], field_name: str
         options = ", ".join(sorted(allowed))
         raise ValueError(f"{field_name}={value!r}: expected one of {options}")
     return f"{prefix}_{allowed[key]}"
+
+
+@dataclass(frozen=True)
+class Joint:
+    """A named joint with optional limits (radians/SI, per the
+    ``JointDescriptor`` proto comments: revolute joints in radians,
+    prismatic in meters; rate limits rad/s or m/s; effort N*m or N).
+
+    Use a bare string in ``JointSpace(joints=...)`` / ``Gripper.dexterous``
+    for the names-only form (unchanged); use ``Joint(...)`` per-joint only
+    where a limit needs declaring.
+    """
+
+    name: str
+    min_position: float | None = None
+    max_position: float | None = None
+    max_velocity: float | None = None
+    max_effort: float | None = None
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("Joint must declare a name")
+        if (
+            self.min_position is not None
+            and self.max_position is not None
+            and self.min_position > self.max_position
+        ):
+            raise ValueError(
+                f"joint {self.name!r}: min_position ({self.min_position}) must be "
+                f"<= max_position ({self.max_position})"
+            )
+        if self.max_velocity is not None and self.max_velocity < 0:
+            raise ValueError(f"joint {self.name!r}: max_velocity must be >= 0")
+        if self.max_effort is not None and self.max_effort < 0:
+            raise ValueError(f"joint {self.name!r}: max_effort must be >= 0")
+
+    def _compile(self) -> dict:
+        out: dict = {"name": self.name}
+        if self.min_position is not None:
+            out["minPosition"] = float(self.min_position)
+        if self.max_position is not None:
+            out["maxPosition"] = float(self.max_position)
+        if self.max_velocity is not None:
+            out["maxVelocity"] = float(self.max_velocity)
+        if self.max_effort is not None:
+            out["maxEffort"] = float(self.max_effort)
+        return out
+
+
+def _compile_joint(item: str | Joint) -> dict:
+    """Compile one ``joints=[...]`` entry: a bare name (names-only form,
+    unchanged) or a ``Joint`` with limits."""
+    if isinstance(item, Joint):
+        return item._compile()
+    return {"name": str(item)}
 
 
 @dataclass(frozen=True)
@@ -91,6 +158,15 @@ class Gripper:
     def suction(cls) -> "Gripper":
         return cls({"suction": {}})
 
+    @classmethod
+    def dexterous(cls, joints: Sequence[str | Joint]) -> "Gripper":
+        """A multi-joint hand. ``joints`` entries follow the same
+        names-only-or-``Joint`` rule as ``JointSpace.joints``."""
+        compiled = [_compile_joint(j) for j in joints]
+        if not compiled:
+            raise ValueError("Gripper.dexterous must declare at least one joint")
+        return cls({"dexterous": {"joints": compiled}})
+
     def _compile(self) -> dict:
         return self._kind
 
@@ -123,9 +199,11 @@ class _Space(abc.ABC):
 
 @dataclass(frozen=True)
 class JointSpace(_Space):
-    """Absolute joint positions, radians (v0 pins radians)."""
+    """Absolute joint positions, radians (v0 pins radians). Each entry in
+    ``joints`` is either a bare name (names-only form, unchanged) or a
+    :class:`Joint` declaring per-joint limits."""
 
-    joints: Sequence[str]
+    joints: Sequence[str | Joint]
     rate_hz: float | None = None
     units: str | None = None
     chunking: Chunking | None = None
@@ -141,7 +219,7 @@ class JointSpace(_Space):
             raise ValueError("JointSpace must declare at least one joint")
 
     def _compile_kind(self) -> dict:
-        return {"jointPosition": {"joints": [{"name": str(j)} for j in self.joints]}}
+        return {"jointPosition": {"joints": [_compile_joint(j) for j in self.joints]}}
 
     def _space_kind(self) -> str:
         return "SPACE_KIND_JOINT_POSITION"
@@ -257,6 +335,98 @@ class Opaque(_Space):
 
 
 @dataclass(frozen=True)
+class Intrinsics:
+    """Pinhole + distortion, ROS ``CameraInfo`` lineage. ``distortion_model``
+    accepts short case-insensitive names (``"plumb_bob"``,
+    ``"rational_polynomial"``, ``"kannala_brandt"``) or ``"unspecified"``
+    (the default: no distortion model declared)."""
+
+    fx: float
+    fy: float
+    cx: float
+    cy: float
+    distortion_model: str = "unspecified"
+    distortion: tuple[float, ...] = ()
+    depth_scale_mm: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.depth_scale_mm is not None and self.depth_scale_mm <= 0:
+            raise ValueError("depth_scale_mm must be > 0")
+
+    def _compile(self) -> dict:
+        out: dict = {
+            "fx": float(self.fx),
+            "fy": float(self.fy),
+            "cx": float(self.cx),
+            "cy": float(self.cy),
+        }
+        model = _enum_name(
+            self.distortion_model,
+            "DISTORTION_MODEL",
+            {
+                "unspecified": "UNSPECIFIED",
+                "plumb_bob": "PLUMB_BOB",
+                "rational_polynomial": "RATIONAL_POLYNOMIAL",
+                "kannala_brandt": "KANNALA_BRANDT",
+            },
+            "distortion_model",
+        )
+        if model != "DISTORTION_MODEL_UNSPECIFIED":
+            out["model"] = model
+        if self.distortion:
+            out["distortion"] = [float(d) for d in self.distortion]
+        if self.depth_scale_mm is not None:
+            out["depthScaleMm"] = float(self.depth_scale_mm)
+        return out
+
+
+@dataclass(frozen=True)
+class Uplink:
+    """The uplink half of a camera's :class:`StreamPolicy`: what leaves the
+    site, as opposed to the local full-rate archive."""
+
+    fps: float
+    encoding: str
+    max_kbps: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.fps <= 0:
+            raise ValueError("fps must be > 0")
+        if self.max_kbps is not None and self.max_kbps <= 0:
+            raise ValueError("max_kbps must be > 0")
+
+    def _compile(self) -> dict:
+        out: dict = {
+            "fps": float(self.fps),
+            "encoding": _enum_name(
+                self.encoding, "CAMERA_ENCODING", _CAMERA_ENCODINGS, "encoding"
+            ),
+        }
+        if self.max_kbps is not None:
+            out["maxKbps"] = int(self.max_kbps)
+        return out
+
+
+@dataclass(frozen=True)
+class StreamPolicy:
+    """What persists locally vs. what flows uplink for a camera. Nothing
+    high-bandwidth ever touches the control plane; ``local_full_rate``
+    keeps the full-rate archive on the local recorder regardless of
+    ``uplink``."""
+
+    local_full_rate: bool = False
+    uplink: Uplink | None = None
+
+    def _compile(self) -> dict:
+        out: dict = {}
+        if self.local_full_rate:
+            out["localFullRate"] = True
+        if self.uplink is not None:
+            out["uplink"] = self.uplink._compile()
+        return out
+
+
+@dataclass(frozen=True)
 class Camera:
     """Declaration-only camera description (no capture tap in v1)."""
 
@@ -265,6 +435,9 @@ class Camera:
     fps: float
     encoding: str = "rgb8"
     frame_id: str | None = None
+    intrinsics: Intrinsics | None = None
+    stream_policy: StreamPolicy | None = None
+    vendor: dict[str, str] | None = None
 
     def _compile(self, name: str) -> dict:
         out: dict = {
@@ -273,14 +446,94 @@ class Camera:
             "height": int(self.height),
             "fps": float(self.fps),
             "encoding": _enum_name(
-                self.encoding,
-                "CAMERA_ENCODING",
-                {"rgb8": "RGB8", "bgr8": "BGR8", "z16": "Z16", "jpeg": "JPEG", "h264": "H264"},
-                "encoding",
+                self.encoding, "CAMERA_ENCODING", _CAMERA_ENCODINGS, "encoding"
             ),
         }
         if self.frame_id:
             out["frameId"] = self.frame_id
+        if self.intrinsics is not None:
+            out["intrinsics"] = self.intrinsics._compile()
+        if self.stream_policy is not None:
+            # CameraDescription's field is named `stream`, not `streamPolicy`.
+            out["stream"] = self.stream_policy._compile()
+        if self.vendor:
+            out["vendor"] = {str(k): str(v) for k, v in self.vendor.items()}
+        return out
+
+
+@dataclass(frozen=True)
+class FrameTransform:
+    """A named static transform: the pose of ``child`` expressed in
+    ``parent``. ``quaternion`` is **wxyz** order (w first) — this
+    protocol's pinned convention (see ``descriptors.proto``'s ``Quat``); a
+    transposed xyzw quaternion is the classic conversion bug."""
+
+    parent: str
+    child: str
+    position: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    quaternion: tuple[float, float, float, float] = (1.0, 0.0, 0.0, 0.0)
+
+    def __post_init__(self) -> None:
+        if not self.parent:
+            raise ValueError("FrameTransform must declare parent")
+        if not self.child:
+            raise ValueError("FrameTransform must declare child")
+        if len(self.position) != 3:
+            raise ValueError("position must be an (x, y, z) triple")
+        if len(self.quaternion) != 4:
+            raise ValueError("quaternion must be a (w, x, y, z) quadruple")
+
+    def _compile(self) -> dict:
+        px, py, pz = self.position
+        w, x, y, z = self.quaternion
+        return {
+            "parent": self.parent,
+            "child": self.child,
+            # Pose.frame_id: the frame this pose's numbers are expressed
+            # in — always `parent`, per the proto's own field comment.
+            "transform": {
+                "position": {"x": float(px), "y": float(py), "z": float(pz)},
+                "rotation": {"w": float(w), "x": float(x), "y": float(y), "z": float(z)},
+                "frameId": self.parent,
+            },
+        }
+
+
+@dataclass(frozen=True)
+class TimeSeries:
+    """A generic non-camera sensor stream: joint states, F/T, IMU — without
+    enumerating sensor types forever."""
+
+    dtype: str = "f32"
+    shape: tuple[int, ...] = ()
+    units: str = ""
+    frame_id: str | None = None
+    rate_hz: float | None = None
+
+    def __post_init__(self) -> None:
+        if any(s < 0 for s in self.shape):
+            raise ValueError("shape entries must be >= 0")
+        if self.rate_hz is not None and self.rate_hz <= 0:
+            raise ValueError("rate_hz must be > 0")
+
+    def _compile(self, name: str) -> dict:
+        out: dict = {
+            "name": name,
+            "dtype": _enum_name(
+                self.dtype,
+                "DTYPE",
+                {"f32": "F32", "f64": "F64", "i32": "I32", "i64": "I64", "u8": "U8"},
+                "dtype",
+            ),
+        }
+        if self.shape:
+            out["shape"] = [int(s) for s in self.shape]
+        if self.units:
+            out["units"] = self.units
+        if self.frame_id:
+            out["frameId"] = self.frame_id
+        if self.rate_hz is not None:
+            out["rateHz"] = float(self.rate_hz)
         return out
 
 
@@ -288,13 +541,22 @@ class Camera:
 class Robot:
     """The robot declaration compiled to ``waddle.v0.RobotDescription``.
     Grants are NOT declared here — ``waddle.init`` derives them from which
-    ``Control`` verbs are provided."""
+    ``Control`` verbs are provided.
+
+    ``kinematics_urdf`` accepts raw ``bytes`` (passed through as-is) or a
+    path (``str`` / ``pathlib.Path``) that is read at compile time; to
+    embed literal URDF XML text, encode it yourself
+    (``robot_xml.encode()``).
+    """
 
     name: str
     action_space: _Space
     robot_id: str = ""
     cell_id: str = ""
     cameras: dict[str, Camera] = field(default_factory=dict)
+    kinematics_urdf: bytes | str | Path | None = None
+    frames: tuple[FrameTransform, ...] = ()
+    series: dict[str, TimeSeries] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not isinstance(self.action_space, _Space):
@@ -311,6 +573,18 @@ class Robot:
             out["cellId"] = self.cell_id
         if self.cameras:
             out["cameras"] = [cam._compile(name) for name, cam in self.cameras.items()]
+        if self.kinematics_urdf is not None:
+            data = (
+                self.kinematics_urdf
+                if isinstance(self.kinematics_urdf, bytes)
+                else Path(self.kinematics_urdf).read_bytes()
+            )
+            # proto3 canonical JSON encodes `bytes` fields as base64.
+            out["kinematicsUrdf"] = base64.b64encode(data).decode("ascii")
+        if self.frames:
+            out["frames"] = {"transforms": [ft._compile() for ft in self.frames]}
+        if self.series:
+            out["series"] = [ts._compile(name) for name, ts in self.series.items()]
         if grants:
             out["grants"] = grants
         return out
