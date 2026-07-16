@@ -12,6 +12,28 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 ## [Unreleased]
 
 ### Added
+- **waddle-media (real LiveKit `MediaPlane` behind the `livekit` feature)**:
+  `livekit::LiveKitMedia` is the first real transport.
+  `LiveKitMedia::connect(LiveKitConfig { url, token, track_resolutions })`
+  spawns ONE dedicated thread (`waddle-media-livekit`) owning a private
+  current-thread tokio runtime; all `MediaPlane` methods stay synchronous
+  and bridge over channels, so **tokio stays confined to this feature** —
+  no tokio type crosses the public API and featureless builds have no
+  tokio in the tree at all. `DataTopic` maps to LiveKit data-channel
+  publishes on the normative `media.proto` topic strings with the
+  normative reliability classes (TeleopPose/Telemetry lossy latest-wins,
+  TeleopClutch/TeleopMark reliable ordered); inbound packets route by
+  topic into the existing `DataRx` seam. `publish_track` publishes a
+  native video track at the camera's declared resolution (default
+  640x480); because LiveKit video sources consume RAW frames (libwebrtc
+  encodes uplink itself, no pre-encoded JPEG accepted), `push_frame`
+  accepts RGB8 (converted via `rgb8_to_i420`) or already-planar I420 —
+  the JPEG encoder is for the data-channel/recording path. Feature-gated
+  tests: a CI-safe unreachable-server test plus an `#[ignore]`d live
+  end-to-end test driven by `WADDLE_LIVEKIT_URL`/`WADDLE_LIVEKIT_TOKEN`.
+  Build note: with `--features livekit`, `webrtc-sys` downloads a
+  prebuilt libwebrtc at build time (network on cold builds, ~690 MB
+  extracted per target dir, ~30 s cold check); default builds unaffected.
 - **waddle-media (real JPEG `VideoEncoder` + RGB8→I420 conversion)**:
   `JpegEncoder` (Motion JPEG over RGB8 via the pure-Rust `jpeg-encoder`
   crate; every frame a keyframe) joins `PassthroughEncoder` behind a new

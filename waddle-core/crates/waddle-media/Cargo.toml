@@ -5,12 +5,15 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Waddle media plane: track publication and data-topic transport traits with an in-memory loopback; LiveKit/WebRTC deferred behind a feature"
+description = "Waddle media plane: track publication and data-topic transport traits, JPEG encoding, an in-memory loopback, and the real LiveKit/WebRTC transport behind the `livekit` feature"
 
 [features]
-# The real WebRTC integration lands behind this flag; until then the module
-# is a typed stub so downstream feature wiring stays compiling.
-livekit = []
+# The real LiveKit/WebRTC transport. Tokio confinement: this feature is the
+# ONLY place tokio exists in the workspace — one dedicated thread owns a
+# private current-thread runtime; no tokio type crosses the public API.
+# Build note: `webrtc-sys` downloads a prebuilt libwebrtc at build time
+# (network required on a cold build).
+livekit = ["dep:livekit", "dep:tokio", "dep:tracing"]
 
 [dependencies]
 waddle-types = { workspace = true }
@@ -19,6 +22,16 @@ bytes = { workspace = true }
 thiserror = { workspace = true }
 parking_lot = { workspace = true }
 jpeg-encoder = "0.7"
+livekit = { version = "0.7.52", default-features = false, features = [
+    "tokio",
+    "rustls-tls-native-roots",
+], optional = true }
+tokio = { version = "1", default-features = false, features = [
+    "rt",
+    "sync",
+    "macros",
+], optional = true }
+tracing = { workspace = true, optional = true }
 
 [dev-dependencies]
 jpeg-decoder = "0.3"

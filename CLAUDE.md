@@ -72,8 +72,13 @@ top-level dirs; they are not built yet.
     prints per-scenario PASS/FAIL)
   - `cargo clippy --workspace --all-targets -- -D warnings` and `cargo fmt --check`
     must be clean before any commit.
-  - Feature-gated stubs: `cargo check -p waddle-runtime --features grpc,livekit`
-    must keep compiling (both are typed stubs until those integrations land).
+  - Feature checks: `cargo check -p waddle-runtime --features grpc,livekit` must
+    keep compiling. `grpc` is still a typed stub; `livekit` is the REAL LiveKit
+    transport (`waddle-media/src/livekit.rs`). Build cost: the `webrtc-sys` build
+    script downloads a prebuilt libwebrtc (~hundreds of MB compressed, ~690 MB
+    extracted into the target dir) on the first build per target dir — network
+    required on cold builds, ~30 s wall on a fast machine, warm re-checks are
+    seconds. Featureless builds are unaffected (no tokio/livekit in the tree).
   - `cargo run -p xtask -- gen-header` emits the libwaddle C header to
     `target/include/waddle.h` (a CI artifact, never checked in).
   - `cargo bench -p waddle-gate` tracks the gate fast path (sub-µs target;
@@ -130,13 +135,17 @@ top-level dirs; they are not built yet.
   exactly that schema — if they drift, the .md wins and the runner is wrong.
 - **Crate layering.** `waddle-types`/`-fsm`/`-gate`/`-codecs` must stay free of tokio,
   threads, I/O, clocks, and randomness. Only `waddle-ingest` reads OS clocks. Threads
-  are owned by `waddle-runtime` (plus the thread harnesses in waddle-tripwire and the
-  client threads in waddle-controlplane, whose lifecycles runtime owns). There is
-  deliberately **no async runtime anywhere yet** — everything is dedicated named
-  threads + channels; tokio arrives only if/when the tonic (`grpc`) or LiveKit
-  (`livekit`) integrations land and stays confined to those transports.
-  `waddle-codecs` is independently versioned and may depend only on `waddle-types` +
-  serde (N4).
+  are owned by `waddle-runtime` (plus the thread harnesses in waddle-tripwire, the
+  client threads in waddle-controlplane, whose lifecycles runtime owns, and
+  waddle-media's LiveKit worker + data-tx forwarder threads behind the `livekit`
+  feature). **Tokio is confined to transports**: it exists ONLY inside
+  waddle-media's `livekit` feature (one dedicated `waddle-media-livekit` thread
+  owning a private current-thread runtime; no tokio type in any public signature;
+  default builds are tokio-free — `cargo tree -p waddle-media` must show no tokio
+  without the feature). The same rule applies to waddle-controlplane's `grpc`
+  feature when tonic lands. Everything else stays dedicated named threads +
+  channels. `waddle-codecs` is independently versioned and may depend only on
+  `waddle-types` + serde (N4).
 - **The gate fast path is sacred.** `Gate::gate()` must remain synchronous, wait-free
   in passthrough, and allocation-free up to 16 action dims and 32 obs dims (wider
   observations spill to the heap — a documented degradation, never truncation).

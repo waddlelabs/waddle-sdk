@@ -2,10 +2,11 @@
 //!
 //! Camera/depth video and the teleop data topics ride WebRTC in production
 //! (`media.proto` defines the payloads and the topic table, including
-//! reliability classes). This crate owns the *trait boundary* and an
-//! in-memory [`LoopbackMedia`] used by tests and the conformance harness;
-//! the LiveKit/WebRTC integration is deferred behind the `livekit` feature
-//! (a typed stub until that milestone).
+//! reliability classes). This crate owns the *trait boundary*, an in-memory
+//! [`LoopbackMedia`] used by tests and the conformance harness, and — behind
+//! the `livekit` cargo feature — the real LiveKit/WebRTC transport
+//! (`livekit::LiveKitMedia`). Tokio exists ONLY inside that feature, on one
+//! dedicated worker thread; see the `livekit` module docs.
 //!
 //! Nothing stateful ever rides the media plane; nothing high-bandwidth ever
 //! rides the control plane.
@@ -249,17 +250,7 @@ impl LoopbackFarEnd {
 }
 
 #[cfg(feature = "livekit")]
-pub mod livekit {
-    //! Typed stub: the LiveKit/WebRTC integration is a named-trigger
-    //! deferral. Every constructor returns [`MediaError::Unimplemented`].
-
-    use super::{MediaError, MediaPlane};
-    use std::sync::Arc;
-
-    pub fn connect(_url: &str, _token: &str) -> Result<Arc<dyn MediaPlane>, MediaError> {
-        Err(MediaError::Unimplemented("the LiveKit/WebRTC integration"))
-    }
-}
+pub mod livekit;
 
 #[cfg(test)]
 mod tests {
