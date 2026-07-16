@@ -14,6 +14,16 @@ The six-line tutorial loop::
 not send": Pass returns your exact object, Substitute/Blend a fresh float64
 ndarray, Noop and Hold return ``None``.
 
+Cameras declared on the :class:`Robot` become live once a media plane is
+wired (``media=`` on :func:`init`, or ``_testing=True``): call
+``session.publish_frame(name, frame)`` with a numpy ``uint8`` array shaped
+``(height, width, 3)`` (packed row-major RGB8) each time a new frame is
+available — the ``name`` must match a declared camera. The core validates
+the camera and frame shape, polices the camera's declared ``StreamPolicy``
+uplink fps (dropping frames faster than the declared rate — the policy
+working as intended, never an error), and publishes the track lazily on the
+first frame. A camera declared with no media plane wired is a cheap no-op.
+
 This package is a hollow frontend: every claim/lease/handoff/timeline
 decision is made in waddle-core (the Rust runtime under ``waddle._core``);
 Python only declares and marshals.
@@ -60,6 +70,7 @@ __all__ = [
     "Intrinsics",
     "Joint",
     "JointSpace",
+    "LiveKit",
     "Opaque",
     "Outcome",
     "Robot",
@@ -112,6 +123,35 @@ class Control:
             value = getattr(self, name)
             if value is not None and not callable(value):
                 raise TypeError(f"Control.{name} must be callable or None")
+
+
+@dataclass(frozen=True)
+class LiveKit:
+    """Declare a real LiveKit-backed media plane: camera frames
+    (``session.publish_frame``), teleop pose/clutch/mark, and telemetry all
+    ride this WebRTC connection instead of the in-process ``_testing``
+    loopback.
+
+    Not yet wired end-to-end from this SDK build: ``waddle-core``'s LiveKit
+    transport exists (``waddle_media::livekit``, see the Task 14 report) but
+    lives behind its own ``livekit`` Cargo feature — a real WebRTC/
+    ``webrtc-sys`` dependency chain (~700 MB on a cold build, plus tokio)
+    that this Python SDK does not compile in by default, to keep
+    ``uv sync --dev`` and the iterate-on-the-shim loop fast. Passing this to
+    :func:`init` today raises a clear ``RuntimeError`` naming the gap;
+    wiring the `livekit` feature through this SDK's build for real is a
+    later task's job — Task 15 exposes the config shape only, per its
+    brief. Use ``waddle.init(_testing=True)`` (the in-process loopback) to
+    exercise ``publish_frame`` and the teleop stream today."""
+
+    url: str
+    token: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.url, str) or not self.url:
+            raise ValueError("LiveKit.url must be a non-empty str")
+        if not isinstance(self.token, str) or not self.token:
+            raise ValueError("LiveKit.token must be a non-empty str")
 
 
 @dataclass(frozen=True)
@@ -325,12 +365,22 @@ def init(
     recording_dir: str | PathLike | None = None,
     handoff: _Handoff = Handoff.HOLD_FIRST,
     lease_enforcement: str = "advisory",
+    media: LiveKit | None = None,
     pre_reset: Callable | TeleopReset | AgentReset | None = None,
     post_reset: Callable | TeleopReset | AgentReset | None = None,
     reset_verification: str = "blocking",
     _testing: bool = False,
 ) -> _core.Session:
     """Open the supervision session. One session per process in v1.
+
+    ``media`` wires the session's media plane — camera frames
+    (``session.publish_frame``, documented there) and the teleop stream all
+    ride it. ``waddle.LiveKit(url, token)`` declares a real WebRTC
+    connection; see its docstring for why this SDK build raises a clean
+    ``RuntimeError`` for it today rather than connecting. Mutually
+    exclusive with ``_testing=True`` (the in-process loopback, which wires
+    its own media plane) — the private test/example path, not for
+    production use.
 
     ``pre_reset``/``post_reset`` declare the session's default reset for
     each phase; ``None`` (the default for both) means no reset is declared
@@ -363,6 +413,19 @@ def init(
         raise TypeError("control must be a waddle.Control")
     if not isinstance(handoff, _Handoff):
         raise TypeError("handoff must be a waddle.Handoff declaration")
+    if media is not None and not isinstance(media, LiveKit):
+        raise TypeError("media must be a waddle.LiveKit or None")
+    if media is not None and _testing:
+        raise ValueError(
+            "media and _testing=True both wire a media plane — pass only one"
+        )
+    if media is not None:
+        raise RuntimeError(
+            "waddle.LiveKit media wiring is not compiled into this SDK build yet "
+            "(the config shape is exposed; real wiring lands behind a future "
+            "`livekit` build feature) — use waddle.init(_testing=True) for the "
+            "in-process loopback today"
+        )
 
     reset_kwargs = {
         **_reset_spec_kwargs("pre_reset", pre_reset),

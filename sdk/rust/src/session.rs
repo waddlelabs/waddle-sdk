@@ -12,11 +12,14 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+use bytes::Bytes;
+use numpy::{PyArray3, PyArrayMethods, PyUntypedArrayMethods};
 use parking_lot::Mutex;
-use pyo3::exceptions::PyRuntimeError;
+use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
+use pyo3::types::PyBytes;
 use waddle_media::{DataTopic, LoopbackFarEnd, LoopbackMedia};
-use waddle_runtime::{ControlRegistry, EpisodeOptions, EstopDecl, Session};
+use waddle_runtime::{ControlRegistry, EpisodeOptions, EstopDecl, FrameData, Session};
 use waddle_types::ActorKind;
 use waddle_types::pb::v0 as pb;
 
@@ -149,6 +152,64 @@ impl PySession {
             let session = self.inner.clone();
             py.detach(move || session.shutdown());
         }
+    }
+
+    /// Publish one raw video frame for a declared camera. `frame` must be a
+    /// numpy `uint8` ndarray shaped `(height, width, 3)` (packed row-major
+    /// RGB8 — the only layout this SDK supports today); a C-contiguous
+    /// array is copied once into the frame the core queues, never mutated.
+    /// Cheap: the declared uplink fps throttle, the lazy `publish_track`,
+    /// and the actual encode all run in core, never here (hollow frontend —
+    /// this method only marshals a name and an array).
+    ///
+    /// Raises `TypeError` for a wrong dtype/rank/shape or an array that
+    /// isn't C-contiguous (row-major) — `numpy`'s own "contiguous" also
+    /// accepts Fortran/column-major order, which would silently transpose
+    /// this method's row-major byte assumption instead of raising, so this
+    /// checks C-order specifically rather than reusing that broader
+    /// definition; `RuntimeError` for an undeclared camera name or a
+    /// `frame` whose (height, width) disagrees with that camera's
+    /// declaration (both mapped from the core's `RuntimeError`).
+    fn publish_frame(&self, camera: &str, frame: &Bound<'_, PyAny>) -> PyResult<()> {
+        let arr = frame.cast::<PyArray3<u8>>().map_err(|_| {
+            PyTypeError::new_err("frame must be a numpy uint8 ndarray shaped (height, width, 3)")
+        })?;
+        let ro = arr.readonly();
+        let shape = ro.shape();
+        if shape.len() != 3 || shape[2] != 3 {
+            return Err(PyTypeError::new_err(format!(
+                "frame must be shaped (height, width, 3); got {shape:?}"
+            )));
+        }
+        if !ro.is_c_contiguous() {
+            return Err(PyTypeError::new_err(
+                "frame must be a C-contiguous (row-major) numpy array — a Fortran-ordered \
+                 array passes numpy's own (layout-agnostic) contiguity check but would \
+                 transpose the pixel bytes this method assumes; call \
+                 numpy.ascontiguousarray(frame) first",
+            ));
+        }
+        let slice = ro
+            .as_slice()
+            .map_err(|_| PyTypeError::new_err("frame must be a contiguous numpy array"))?;
+        // numpy image convention: shape is (height, width, channels).
+        let (height, width) = (shape[0] as u32, shape[1] as u32);
+        let data = FrameData::rgb8(width, height, Bytes::copy_from_slice(slice));
+        self.inner.publish_frame(camera, data).map_err(runtime_err)
+    }
+
+    /// PRIVATE/UNSTABLE: every raw frame payload the loopback media plane's
+    /// far end has received for `camera`, in publish order — lets pytest
+    /// observe `publish_frame` without a real transport.
+    fn _testing_frames(&self, py: Python<'_>, camera: &str) -> PyResult<Vec<Py<PyAny>>> {
+        let far = self.testing_far()?;
+        Ok(far
+            .lock()
+            .frames()
+            .into_iter()
+            .filter(|(name, _)| name == camera)
+            .map(|(_, f)| PyBytes::new(py, &f.data).into_any().unbind())
+            .collect())
     }
 
     /// PRIVATE/UNSTABLE: grant + engage a local claim (what a control-plane

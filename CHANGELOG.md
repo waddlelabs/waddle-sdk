@@ -12,6 +12,57 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 ## [Unreleased]
 
 ### Added
+- **waddle-runtime (`Session::publish_frame` — cameras are live) + tripwires
+  evaluate real observations + `session.publish_frame` (Python)**: the
+  biggest Milestone-A gap closes — declared cameras and tripwires actually
+  do something.
+  - `Session::publish_frame(camera, FrameData)` (`FrameData::rgb8(width,
+    height, bytes)`, RGB8 only for now — typed as an enum so a future
+    `Depth16` variant can land without breaking the constructor): validates
+    `camera` against the robot's declared `cameras` (unknown → `Err`;
+    declared but no media plane wired → a cheap `Ok(())` no-op — Local mode
+    still records no video in v0), applies the declared
+    `StreamPolicy.uplink` fps throttle (a wait-free atomic-timestamp check;
+    a throttled frame is silently dropped, never an error, never counted),
+    and enqueues onto a small (4-deep) per-camera bounded queue that
+    drops the OLDEST frame under backpressure — counted, and surfaced via
+    the new `Session::camera_frames_dropped(camera)`. Everything past the
+    queue (the lazy, once-per-camera `publish_track` call; encode —
+    `JpegEncoder` for a declared JPEG uplink encoding, raw passthrough
+    otherwise; `push_frame`) runs on one new dedicated
+    `waddle-media-uplink` pump thread, never the customer's own thread. A
+    declared `CAMERA_ENCODING_H264` uplink policy is a build-time error
+    (`RuntimeError::UnsupportedCameraEncoding`) for any camera a wired
+    media plane will actually publish — never a silent per-frame failure
+    later. Known gap: the real transport this wires against
+    (`LiveKitMedia`, Task 14) ingests raw RGB8/I420 only for its video
+    track, no pre-encoded JPEG — a camera declaring JPEG uplink encoding
+    against a real LiveKit session will fail every frame
+    (`MediaError::BadFrame`) until a future task adds a JPEG-aware
+    ingestion path.
+  - `waddle-tripwire`'s `ObsSource` is no longer wired to an always-`None`
+    stub: the reducer now publishes every gate tick's `obs` (the
+    customer's `gate(obs=...)` argument) onto a wait-free `LatestSlot`
+    (`waddle_ingest::LatestSlot`) as it drains the gate-record ring —
+    unconditionally, whether or not local MCAP recording is on, and never
+    touching `Gate::gate()`'s fast path. The flat customer vector maps onto
+    `ObsSnapshot::joint_pos` verbatim, so a declared `JointLimitMargin` or
+    `Staleness` tripwire now genuinely fires a HOLD (or whatever verb it
+    declares) through dispatch; `WorkspaceAabb`/`ForceThreshold` still need
+    a capture integration publishing structured `ee_pos`/`force_n`.
+  - `session.publish_frame(camera, frame)` (PyO3): accepts a numpy `uint8`
+    ndarray shaped `(height, width, 3)` (packed row-major RGB8); a
+    contiguous array is copied once into the frame the core queues. A
+    wrong dtype/rank/shape (or a non-contiguous array) raises `TypeError`;
+    an unknown camera or a resolution mismatch raises `RuntimeError` (from
+    the core). `waddle.init(..., media=waddle.LiveKit(url, token))`
+    exposes the config shape for a real WebRTC-backed media plane, but
+    this SDK build does not compile the heavy `livekit` Cargo feature
+    (~700 MB webrtc-sys download, tokio) in by default — passing it raises
+    a clean, actionable `RuntimeError` naming the gap, exactly like the
+    deferred `grpc` transport; `_testing=True` (the in-process loopback)
+    is unaffected and is how `publish_frame` is exercised end-to-end today
+    (`waddle._testing.frames(session, camera)` observes the far end).
 - **waddle-media (real LiveKit `MediaPlane` behind the `livekit` feature)**:
   `livekit::LiveKitMedia` is the first real transport.
   `LiveKitMedia::connect(LiveKitConfig { url, token, track_resolutions })`

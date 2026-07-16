@@ -47,3 +47,10 @@ def reset_window_complete(
     would do): the pipeline result applies as if the pre/post-reset had
     produced it directly."""
     session._testing_reset_window_complete(claim_id, ok, verified)
+
+
+def frames(session: _core.Session, camera: str) -> list[bytes]:
+    """Every raw frame payload the loopback media plane's far end has
+    received for `camera` so far, in publish order — lets tests observe
+    `session.publish_frame(camera, ...)` without a real transport."""
+    return session._testing_frames(camera)
