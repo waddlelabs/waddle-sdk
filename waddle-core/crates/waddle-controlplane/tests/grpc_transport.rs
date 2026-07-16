@@ -7,6 +7,7 @@
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc as std_mpsc;
 use std::time::Duration;
 
@@ -33,6 +34,9 @@ struct PlaneState {
     auth_seen: Mutex<Vec<Option<String>>>,
     seen_gate: Mutex<Vec<pb::GateClientMessage>>,
     seen_obs: Mutex<Vec<pb::ObservationUpdate>>,
+    /// When set, `StreamObservations` accepts the RPC but never answers
+    /// (a stalled — not dead — plane).
+    stall_obs: AtomicBool,
     /// Push handle for plane → client gate messages (set when GateActions opens).
     gate_push: Mutex<Option<tokio_mpsc::UnboundedSender<Result<pb::GateServerMessage, Status>>>>,
 }
@@ -76,6 +80,9 @@ impl ControlPlane for TestPlane {
         &self,
         request: Request<Streaming<pb::ObservationUpdate>>,
     ) -> Result<Response<Self::StreamObservationsStream>, Status> {
+        if self.state.stall_obs.load(Ordering::SeqCst) {
+            std::future::pending::<()>().await;
+        }
         let state = self.state.clone();
         let mut inbound = request.into_inner();
         let (tx, rx) = tokio_mpsc::unbounded_channel();
@@ -192,7 +199,7 @@ impl TestServer {
                         .send(listener.local_addr().expect("local addr"))
                         .expect("report addr");
                     let (halt_tx, halt_rx) = tokio_mpsc::unbounded_channel::<()>();
-                    // Bridge the sync stop signal into the async world.
+                    // Forward the sync stop signal into the async world.
                     std::thread::spawn(move || {
                         let _ = stop_rx.recv();
                         let _ = halt_tx.send(());
@@ -287,6 +294,60 @@ fn connect_to_unreachable_server_fails_cleanly() {
     let err = transport.connect().expect_err("must fail");
     let msg = format!("{err}");
     assert!(msg.contains("transport"), "unexpected error: {msg}");
+}
+
+#[test]
+fn stalled_observation_stream_open_does_not_freeze_the_pump() {
+    let state = Arc::new(PlaneState::default());
+    state.stall_obs.store(true, Ordering::SeqCst);
+    let server = TestServer::start(state.clone(), 0);
+
+    let transport = GrpcTransport::new(GrpcConfig::new(format!("http://{}", server.addr)));
+    let client = ControlPlaneClient::spawn(transport, client_config());
+    expect_connected_and_registered(&client);
+
+    // The first observation opens StreamObservations lazily; this plane
+    // accepts the RPC and then stalls forever (slow, not dead — nothing
+    // errors, so `Disconnected` must NOT be the escape hatch here).
+    client.send(ClientMsg::Observation(pb::ObservationUpdate {
+        t_ns: 1,
+        ..Default::default()
+    }));
+
+    // The connection's pump must keep flowing in both directions regardless.
+    let status = pb::GateClientMessage {
+        msg: Some(pb::gate_client_message::Msg::Status(pb::GateStatus {
+            tick_rate_hz: 15.0,
+            ..Default::default()
+        })),
+    };
+    client.send(ClientMsg::Gate(status.clone()));
+    wait_for("gate message pumped despite the stalled obs open", || {
+        !state.seen_gate.lock().is_empty()
+    });
+    assert_eq!(state.seen_gate.lock()[0], status);
+
+    let directive = pb::GateServerMessage {
+        msg: Some(pb::gate_server_message::Msg::Claim(pb::ClaimDirective {
+            kind: pb::ClaimDirectiveKind::Grant as i32,
+            claim: None,
+        })),
+    };
+    state
+        .gate_push
+        .lock()
+        .as_ref()
+        .expect("gate stream open")
+        .send(Ok(directive.clone()))
+        .expect("push directive");
+    wait_for("ClaimDirective still arrives on the ordered rx", || {
+        matches!(
+            client.recv_event_timeout(Duration::from_secs(1)),
+            Some(PlaneEvent::Server(ServerMsg::Gate(m))) if m == directive
+        )
+    });
+
+    client.shutdown();
 }
 
 #[test]

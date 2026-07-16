@@ -241,7 +241,7 @@ async fn run_conn(
 
     let _ = ready.send(Ok(()));
 
-    // sync → async bridge for the conn's tx side. The forwarder exits when
+    // sync → async forwarder for the conn's tx side. The forwarder exits when
     // the client drops the `ControlConn` (recv errs) or the worker dies
     // (send errs on the next forward).
     let (cmd_tx, mut cmd_rx) = tokio_mpsc::unbounded_channel::<ClientMsg>();
@@ -264,7 +264,7 @@ async fn run_conn(
         tokio::select! {
             cmd = cmd_rx.recv() => {
                 let Some(msg) = cmd else { break }; // conn dropped by the client
-                if !dispatch(msg, &mut client, &gate_tx, &hb_tx, &mut obs_tx, &out, &fatal_tx).await {
+                if !dispatch(msg, &mut client, &gate_tx, &hb_tx, &mut obs_tx, &out, &fatal_tx) {
                     break;
                 }
             }
@@ -291,7 +291,11 @@ async fn run_conn(
 
 /// Route one client message to its RPC. Returns `false` on a fatal
 /// transport condition (the caller tears the connection down).
-async fn dispatch(
+///
+/// Deliberately NOT async: every RPC here is fired as a spawned task (or a
+/// non-blocking channel send), so nothing a stalled plane does can freeze
+/// the connection's message pump — failures funnel back via `fatal`.
+fn dispatch(
     msg: ClientMsg,
     client: &mut Client,
     gate_tx: &tokio_mpsc::UnboundedSender<pb::GateClientMessage>,
@@ -326,18 +330,24 @@ async fn dispatch(
         ClientMsg::Gate(m) => gate_tx.send(m).is_ok(),
         ClientMsg::Heartbeat(m) => hb_tx.send(m).is_ok(),
         ClientMsg::Observation(o) => {
-            if obs_tx.is_none() {
+            let tx = obs_tx.get_or_insert_with(|| {
+                // Lazy open, but spawned like every other RPC: a plane that
+                // accepts the stream and then stalls must not freeze the
+                // pump. Observations buffer in the channel until the stream
+                // is live; an open failure funnels back as fatal.
                 let (tx, rx) = tokio_mpsc::unbounded_channel();
-                match client
-                    .stream_observations(UnboundedReceiverStream::new(rx))
-                    .await
-                {
-                    Ok(resp) => {
-                        // Acks carry nothing the client consumes; drain them
-                        // and treat a broken ack stream as connection death.
-                        let mut acks = resp.into_inner();
-                        let fatal = fatal.clone();
-                        tokio::spawn(async move {
+                let mut c = client.clone();
+                let fatal = fatal.clone();
+                tokio::spawn(async move {
+                    match c
+                        .stream_observations(UnboundedReceiverStream::new(rx))
+                        .await
+                    {
+                        Ok(resp) => {
+                            // Acks carry nothing the client consumes; drain
+                            // them and treat a broken ack stream as
+                            // connection death.
+                            let mut acks = resp.into_inner();
                             loop {
                                 match acks.next().await {
                                     Some(Ok(_)) => {}
@@ -347,13 +357,15 @@ async fn dispatch(
                                     }
                                 }
                             }
-                        });
-                        *obs_tx = Some(tx);
+                        }
+                        Err(_) => {
+                            let _ = fatal.send(());
+                        }
                     }
-                    Err(_) => return false,
-                }
-            }
-            obs_tx.as_ref().is_some_and(|tx| tx.send(o).is_ok())
+                });
+                tx
+            });
+            tx.send(o).is_ok()
         }
         ClientMsg::Register(r) => unary!(register, r, ServerMsg::Registered),
         ClientMsg::Negotiate(r) => unary!(negotiate, r, ServerMsg::Negotiated),
