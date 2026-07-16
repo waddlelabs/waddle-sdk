@@ -8,6 +8,7 @@
 //! waddle-controlplane's tonic worker, `livekit` → waddle-media's worker),
 //! each confined to its own thread's private current-thread runtime.
 
+mod ack;
 mod media_uplink;
 pub mod mirror;
 pub mod pumps;

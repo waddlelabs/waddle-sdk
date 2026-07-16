@@ -31,6 +31,7 @@ use waddle_types::{
 };
 
 use crate::RuntimeError;
+use crate::ack::{ACKS_FLAG, Injected};
 use crate::media_uplink::{self, CameraUplink, FrameData};
 use crate::mirror::Mirror;
 use crate::pumps;
@@ -474,7 +475,15 @@ impl SessionBuilder {
         // have already declared a Remote spec for that phase (or the other
         // one) at build time, since flags are negotiated once, at Register,
         // before any episode opens.
-        let mut feature_flags = vec!["waddle.v0.core".to_owned(), "waddle.v0.reset".to_owned()];
+        // Directive acks (`waddle.v0.plane.acks`) are always declared when a
+        // transport is configured — safe unconditionally, since emission
+        // additionally requires the plane to accept the flag AND the
+        // directive to carry a `directive_id` (see `crate::ack`).
+        let mut feature_flags = vec![
+            "waddle.v0.core".to_owned(),
+            "waddle.v0.reset".to_owned(),
+            ACKS_FLAG.to_owned(),
+        ];
         if self.post_reset.is_some() {
             feature_flags.push("waddle.v0.reset.phases".to_owned());
         }
@@ -508,7 +517,7 @@ impl SessionBuilder {
             // from the first `session.status()` read onward.
             mirror.update(|s| s.estop_unregistered = true);
         }
-        let (inject_tx, inject_rx) = std::sync::mpsc::channel::<SessionEvent>();
+        let (inject_tx, inject_rx) = std::sync::mpsc::channel::<Injected>();
         let record_slot: RecordSlot = Arc::new(parking_lot::Mutex::new(None));
         let task_slot: TaskSlot = Arc::new(parking_lot::Mutex::new(String::new()));
         // Tripwire ObsSource wiring (Task 15): published by the reducer from
@@ -706,7 +715,7 @@ struct SessionInner {
     clock: SessionClock,
     gate_shared: Arc<GateShared>,
     mirror: Arc<Mirror>,
-    inject_tx: Sender<SessionEvent>,
+    inject_tx: Sender<Injected>,
     record_slot: RecordSlot,
     task_slot: TaskSlot,
     pre_reset: Option<ResetSpec>,
@@ -750,9 +759,10 @@ impl Session {
 
     /// Advanced/testing surface: inject a session event directly (the same
     /// funnel the pumps use). Local intervention sources and tests drive
-    /// claims through this.
+    /// claims through this. Never carries directive-ack correlation — acks
+    /// answer plane directives only (`crate::ack`).
     pub fn inject(&self, event: SessionEvent) {
-        let _ = self.inner.inject_tx.send(event);
+        let _ = self.inner.inject_tx.send(event.into());
     }
 
     /// [`Self::start_episode_with`] using the session's declared reset specs

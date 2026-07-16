@@ -20,6 +20,7 @@ use waddle_types::{
 };
 
 use crate::RuntimeError;
+use crate::ack::{ACKS_FLAG, AckGroup, Injected};
 use crate::mirror::Mirror;
 use crate::session::{
     EpisodeResetSpecs, ResetOwnerSlot, ResetSpec, ResetSpecSlot, StreamProducer, TaskSlot,
@@ -33,7 +34,7 @@ pub const STALL_THRESHOLD_NS: i64 = 500_000_000;
 /// Verb outcomes → `SessionEvent::VerbResult`.
 pub(crate) fn spawn_outcome_pump(
     outcomes: Receiver<VerbOutcome>,
-    inject: Sender<SessionEvent>,
+    inject: Sender<Injected>,
     clock: SessionClock,
 ) -> JoinHandle<()> {
     std::thread::Builder::new()
@@ -41,15 +42,18 @@ pub(crate) fn spawn_outcome_pump(
         .spawn(move || {
             while let Ok(outcome) = outcomes.recv() {
                 let _ = clock.stamp_now();
-                let _ = inject.send(SessionEvent::VerbResult {
-                    verb: outcome.verb,
-                    ok: outcome.result.is_ok(),
-                    fault: outcome
-                        .result
-                        .is_err()
-                        .then_some(pb::FaultKind::AdapterError),
-                    at: outcome.at,
-                });
+                let _ = inject.send(
+                    SessionEvent::VerbResult {
+                        verb: outcome.verb,
+                        ok: outcome.result.is_ok(),
+                        fault: outcome
+                            .result
+                            .is_err()
+                            .then_some(pb::FaultKind::AdapterError),
+                        at: outcome.at,
+                    }
+                    .into(),
+                );
             }
         })
         .expect("spawn verb-outcome pump")
@@ -111,7 +115,7 @@ pub(crate) fn spawn_bypass_pump(
     gate_shared: Arc<GateShared>,
     mirror: Arc<Mirror>,
     verbs: Arc<VerbDispatch>,
-    inject: Sender<SessionEvent>,
+    inject: Sender<Injected>,
     clock: SessionClock,
     dims: usize,
 ) -> JoinHandle<()> {
@@ -131,7 +135,7 @@ pub(crate) fn spawn_bypass_pump(
                         if let Some(last) = last_tick
                             && now.0 - last.0 > STALL_THRESHOLD_NS
                         {
-                            let _ = inject.send(SessionEvent::StallDetected { at: now });
+                            let _ = inject.send(SessionEvent::StallDetected { at: now }.into());
                         }
                     }
                     Some(GateMode::Bypass) => {
@@ -139,7 +143,7 @@ pub(crate) fn spawn_bypass_pump(
                         if let Some(last) = last_tick
                             && now.0 - last.0 <= STALL_THRESHOLD_NS
                         {
-                            let _ = inject.send(SessionEvent::TicksResumed { at: now });
+                            let _ = inject.send(SessionEvent::TicksResumed { at: now }.into());
                         } else {
                             dispatch_due_intervention(&gate_shared, &status, &verbs, dims, now);
                         }
@@ -194,7 +198,7 @@ fn effective_spec(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_reset_pump(
     mirror: Arc<Mirror>,
-    inject: Sender<SessionEvent>,
+    inject: Sender<Injected>,
     clock: SessionClock,
     task: TaskSlot,
     inline_owner: ResetOwnerSlot,
@@ -248,11 +252,14 @@ pub(crate) fn spawn_reset_pump(
                                     // inline path injects).
                                     _ => (true, Some(true)),
                                 };
-                                let _ = inject.send(SessionEvent::ResetResult {
-                                    ok,
-                                    verified,
-                                    at: clock.stamp_now().mono_ns(),
-                                });
+                                let _ = inject.send(
+                                    SessionEvent::ResetResult {
+                                        ok,
+                                        verified,
+                                        at: clock.stamp_now().mono_ns(),
+                                    }
+                                    .into(),
+                                );
                             }
                         }
                     }
@@ -264,11 +271,14 @@ pub(crate) fn spawn_reset_pump(
                             Some(ResetSpec::Hook(hook)) => {
                                 let task = task.lock().clone();
                                 let (ok, _verified) = hook(&task);
-                                let _ = inject.send(SessionEvent::PostResetResult {
-                                    ok,
-                                    detail: String::new(),
-                                    at: clock.stamp_now().mono_ns(),
-                                });
+                                let _ = inject.send(
+                                    SessionEvent::PostResetResult {
+                                        ok,
+                                        detail: String::new(),
+                                        at: clock.stamp_now().mono_ns(),
+                                    }
+                                    .into(),
+                                );
                             }
                             Some(ResetSpec::Remote { .. }) | None => {
                                 // Remote: the window machinery owns it
@@ -315,7 +325,7 @@ pub(crate) fn spawn_reset_pump(
 pub(crate) fn spawn_media_intake(
     media: Arc<dyn MediaPlane>,
     stream_tx: StreamProducer,
-    inject: Sender<SessionEvent>,
+    inject: Sender<Injected>,
     clock: SessionClock,
     mirror: Arc<Mirror>,
     expected_dims: Option<usize>,
@@ -383,12 +393,15 @@ pub(crate) fn spawn_media_intake(
                             });
                         } else if !validation_fault_sent {
                             validation_fault_sent = true;
-                            let _ = inject.send(SessionEvent::InterventionRejected {
-                                dims_got: action.values.len(),
-                                dims_want: expected_dims.unwrap_or(0),
-                                source: "media-intake",
-                                at: now,
-                            });
+                            let _ = inject.send(
+                                SessionEvent::InterventionRejected {
+                                    dims_got: action.values.len(),
+                                    dims_want: expected_dims.unwrap_or(0),
+                                    source: "media-intake",
+                                    at: now,
+                                }
+                                .into(),
+                            );
                         }
                     }
                     // The clutch state rides every pose packet; edges also
@@ -399,10 +412,13 @@ pub(crate) fn spawn_media_intake(
                     if let Ok(clutch) =
                         <pb::ClutchTransition as prost::Message>::decode(bytes.as_ref())
                     {
-                        let _ = inject.send(SessionEvent::Clutch {
-                            engaged: clutch.engaged,
-                            at: clock.stamp_now().mono_ns(),
-                        });
+                        let _ = inject.send(
+                            SessionEvent::Clutch {
+                                engaged: clutch.engaged,
+                                at: clock.stamp_now().mono_ns(),
+                            }
+                            .into(),
+                        );
                     }
                 }
                 if idle {
@@ -444,10 +460,14 @@ fn flatten_packet(packet: &pb::TeleopStreamPacket) -> Option<OwnedAction> {
 /// Plane events → FSM events (claim directives, episode directives,
 /// partitions, heartbeat-carried grant changes, reset-window directives,
 /// agent-chunk actuation — Reset-mode window actuation (Task 10) and the
-/// general Claimed-mode intake, Task 17).
+/// general Claimed-mode intake, Task 17). Also the attachment point for
+/// directive-ack correlation (flag `waddle.v0.plane.acks`, Task 18): the
+/// pump tracks whether the plane accepted the flag at Register and, when it
+/// did, wraps id-carrying directives' events in a shared [`AckGroup`] the
+/// reducer completes.
 pub(crate) fn spawn_plane_pump(
     plane: Arc<ControlPlaneClient>,
-    inject: Sender<SessionEvent>,
+    inject: Sender<Injected>,
     clock: SessionClock,
     mirror: Arc<Mirror>,
     stream: StreamProducer,
@@ -457,6 +477,12 @@ pub(crate) fn spawn_plane_pump(
         .name("waddle-plane-pump".into())
         .spawn(move || {
             let mut was_connected = true;
+            // Directive acks: whether the CURRENT connection negotiated
+            // `waddle.v0.plane.acks`. Flags are (re-)negotiated at every
+            // Register (the client re-registers on each reconnect), so each
+            // `Registered` refreshes this — per VERSIONING §3, a behavior
+            // the connection did not accept is never emitted.
+            let mut acks_negotiated = false;
             // Monotonic ring-seq counter for agent-chunk steps pushed by the
             // `InterventionChunk` arm below — see that arm's doc comment for
             // why this can't just reuse `chunk.seq`.
@@ -479,15 +505,19 @@ pub(crate) fn spawn_plane_pump(
                 let at = clock.stamp_now().mono_ns();
                 match event {
                     PlaneEvent::Connected | PlaneEvent::Registered(_) => {
+                        if let PlaneEvent::Registered(resp) = &event {
+                            acks_negotiated =
+                                resp.accepted_feature_flags.iter().any(|f| f == ACKS_FLAG);
+                        }
                         if !was_connected {
                             was_connected = true;
-                            let _ = inject.send(SessionEvent::PartitionEnd { at });
+                            let _ = inject.send(SessionEvent::PartitionEnd { at }.into());
                         }
                     }
                     PlaneEvent::Disconnected => {
                         if was_connected {
                             was_connected = false;
-                            let _ = inject.send(SessionEvent::PartitionStart { at });
+                            let _ = inject.send(SessionEvent::PartitionStart { at }.into());
                         }
                     }
                     PlaneEvent::BufferOverflowed { .. } => {}
@@ -500,6 +530,7 @@ pub(crate) fn spawn_plane_pump(
                         &action_space,
                         &mut next_chunk_seq,
                         &mut chunk_dims_fault_sent,
+                        acks_negotiated,
                     ),
                 }
             }
@@ -507,20 +538,41 @@ pub(crate) fn spawn_plane_pump(
         .expect("spawn plane pump")
 }
 
+/// The ack correlation for one directive, when there is one: `Some` only
+/// when the connection negotiated `waddle.v0.plane.acks` AND the directive
+/// carried a `directive_id`; `None` keeps the pre-flag fire-and-forget path
+/// byte-for-byte. `events` is how many session events the directive decodes
+/// into (the group acks once, when the last lands).
+fn ack_group(
+    acks_negotiated: bool,
+    directive_id: Option<&String>,
+    events: u32,
+) -> Option<Arc<AckGroup>> {
+    if !acks_negotiated {
+        return None;
+    }
+    directive_id.map(|id| AckGroup::new(id.clone(), events))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn forward_server_msg(
     msg: ServerMsg,
-    inject: &Sender<SessionEvent>,
+    inject: &Sender<Injected>,
     at: MonoNs,
     mirror: &Mirror,
     stream: &StreamProducer,
     space: &ActionSpace,
     next_chunk_seq: &mut u64,
     chunk_dims_fault_sent: &mut bool,
+    acks_negotiated: bool,
 ) {
     match msg {
         ServerMsg::Gate(gate_msg) => match gate_msg.msg {
             Some(pb::gate_server_message::Msg::Claim(directive)) => {
+                // Directive acks: a directive too malformed to decode into
+                // session events at all (no claim, unknown kind) produces no
+                // ack — only FSM step outcomes are acked (services.proto's
+                // DirectiveAck doc pins this).
                 let Some(claim) = directive.claim else { return };
                 let claim_id = ClaimId::new(&claim.claim_id);
                 let actor = claim
@@ -530,32 +582,49 @@ fn forward_server_msg(
                     .unwrap_or(ActorKind::Teleoperator);
                 match pb::ClaimDirectiveKind::try_from(directive.kind) {
                     Ok(pb::ClaimDirectiveKind::Grant) => {
-                        let _ = inject.send(SessionEvent::ClaimGranted {
-                            id: claim_id.clone(),
-                            source: claim.source_name.clone(),
-                            actor,
-                            self_initiated: claim.self_initiated,
-                            at,
+                        // TWO events, ONE ack: accepted iff both accepted,
+                        // reason from the first rejection.
+                        let ack = ack_group(acks_negotiated, directive.directive_id.as_ref(), 2);
+                        let _ = inject.send(Injected {
+                            event: SessionEvent::ClaimGranted {
+                                id: claim_id.clone(),
+                                source: claim.source_name.clone(),
+                                actor,
+                                self_initiated: claim.self_initiated,
+                                at,
+                            },
+                            ack: ack.clone(),
                         });
-                        let _ = inject.send(SessionEvent::Engage {
-                            claim: claim_id,
-                            at,
+                        let _ = inject.send(Injected {
+                            event: SessionEvent::Engage {
+                                claim: claim_id,
+                                at,
+                            },
+                            ack,
                         });
                     }
                     Ok(pb::ClaimDirectiveKind::Release) => {
-                        let _ = inject.send(SessionEvent::Release {
-                            claim: claim_id,
-                            at,
+                        let ack = ack_group(acks_negotiated, directive.directive_id.as_ref(), 1);
+                        let _ = inject.send(Injected {
+                            event: SessionEvent::Release {
+                                claim: claim_id,
+                                at,
+                            },
+                            ack,
                         });
                     }
                     Ok(pb::ClaimDirectiveKind::Retake) => {
                         let successor =
                             EpisodeId::new(format!("ep-{}", uuid::Uuid::new_v4().simple()));
-                        let _ = inject.send(SessionEvent::Retake {
-                            claim: claim_id,
-                            initiator: actor,
-                            successor,
-                            at,
+                        let ack = ack_group(acks_negotiated, directive.directive_id.as_ref(), 1);
+                        let _ = inject.send(Injected {
+                            event: SessionEvent::Retake {
+                                claim: claim_id,
+                                initiator: actor,
+                                successor,
+                                at,
+                            },
+                            ack,
                         });
                     }
                     _ => {}
@@ -564,10 +633,14 @@ fn forward_server_msg(
             Some(pb::gate_server_message::Msg::Episode(directive)) => {
                 let outcome = waddle_types::TerminalOutcome::from_pb(directive.outcome)
                     .unwrap_or(waddle_types::TerminalOutcome::Abort);
-                let _ = inject.send(SessionEvent::Terminate {
-                    outcome,
-                    reason: directive.reason,
-                    at,
+                let ack = ack_group(acks_negotiated, directive.directive_id.as_ref(), 1);
+                let _ = inject.send(Injected {
+                    event: SessionEvent::Terminate {
+                        outcome,
+                        reason: directive.reason,
+                        at,
+                    },
+                    ack,
                 });
             }
             // Remote reset windows (flag `waddle.v0.reset.remote`): the
@@ -584,22 +657,30 @@ fn forward_server_msg(
                         // the FSM's; this just relays the plane's directive
                         // as the same two events a local claim/engage would
                         // produce (Task 5's `ClaimGranted` then
-                        // `ResetWindowEngage`, in that order).
+                        // `ResetWindowEngage`, in that order). TWO events,
+                        // ONE ack, same as a claim GRANT.
                         let actor = claim
                             .actor
                             .as_ref()
                             .and_then(|a| ActorKind::from_pb(a.kind).ok())
                             .unwrap_or(ActorKind::Teleoperator);
-                        let _ = inject.send(SessionEvent::ClaimGranted {
-                            id: claim_id.clone(),
-                            source: claim.source_name.clone(),
-                            actor,
-                            self_initiated: claim.self_initiated,
-                            at,
+                        let ack = ack_group(acks_negotiated, directive.directive_id.as_ref(), 2);
+                        let _ = inject.send(Injected {
+                            event: SessionEvent::ClaimGranted {
+                                id: claim_id.clone(),
+                                source: claim.source_name.clone(),
+                                actor,
+                                self_initiated: claim.self_initiated,
+                                at,
+                            },
+                            ack: ack.clone(),
                         });
-                        let _ = inject.send(SessionEvent::ResetWindowEngage {
-                            claim: claim_id,
-                            at,
+                        let _ = inject.send(Injected {
+                            event: SessionEvent::ResetWindowEngage {
+                                claim: claim_id,
+                                at,
+                            },
+                            ack,
                         });
                     }
                     Ok(pb::ResetWindowDirectiveKind::Complete) => {
@@ -607,11 +688,15 @@ fn forward_server_msg(
                             return;
                         };
                         let verified = result.verification.as_ref().map(|v| v.verified);
-                        let _ = inject.send(SessionEvent::ResetWindowComplete {
-                            claim: claim_id,
-                            ok: result.ok,
-                            verified,
-                            at,
+                        let ack = ack_group(acks_negotiated, directive.directive_id.as_ref(), 1);
+                        let _ = inject.send(Injected {
+                            event: SessionEvent::ResetWindowComplete {
+                                claim: claim_id,
+                                ok: result.ok,
+                                verified,
+                                at,
+                            },
+                            ack,
                         });
                     }
                     Ok(pb::ResetWindowDirectiveKind::Cancel) => {
@@ -619,11 +704,15 @@ fn forward_server_msg(
                         // cancel: it is observably a failed completion
                         // (E21 with ok=false) from the session's point of
                         // view — the same event COMPLETE{ok:false} uses.
-                        let _ = inject.send(SessionEvent::ResetWindowComplete {
-                            claim: claim_id,
-                            ok: false,
-                            verified: None,
-                            at,
+                        let ack = ack_group(acks_negotiated, directive.directive_id.as_ref(), 1);
+                        let _ = inject.send(Injected {
+                            event: SessionEvent::ResetWindowComplete {
+                                claim: claim_id,
+                                ok: false,
+                                verified: None,
+                                at,
+                            },
+                            ack,
                         });
                     }
                     _ => {}
@@ -701,12 +790,15 @@ fn forward_server_msg(
                     Err(TypesError::DimensionMismatch { expected, got }) => {
                         if !*chunk_dims_fault_sent {
                             *chunk_dims_fault_sent = true;
-                            let _ = inject.send(SessionEvent::InterventionRejected {
-                                dims_got: got,
-                                dims_want: expected,
-                                source: "agent-chunk",
-                                at,
-                            });
+                            let _ = inject.send(
+                                SessionEvent::InterventionRejected {
+                                    dims_got: got,
+                                    dims_want: expected,
+                                    source: "agent-chunk",
+                                    at,
+                                }
+                                .into(),
+                            );
                         }
                     }
                     Err(err) => {
@@ -742,10 +834,13 @@ fn forward_server_msg(
                 })
                 .collect();
             if !changes.is_empty() {
-                let _ = inject.send(SessionEvent::HeartbeatAck {
-                    grant_changes: changes,
-                    at,
-                });
+                let _ = inject.send(
+                    SessionEvent::HeartbeatAck {
+                        grant_changes: changes,
+                        at,
+                    }
+                    .into(),
+                );
             }
         }
         _ => {}

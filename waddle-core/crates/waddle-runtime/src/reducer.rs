@@ -21,6 +21,7 @@ use waddle_types::{
     VerbRequest, unflatten_action,
 };
 
+use crate::ack::Injected;
 use crate::mirror::Mirror;
 use crate::session::{ObsSlot, RecordSlot, ResetSpec, TaskSlot};
 use crate::verbs::VerbDispatch;
@@ -111,7 +112,7 @@ impl Reducer {
     }
 
     /// The reducer loop. Exits on channel close or shutdown event.
-    pub fn run(mut self, rx: &Receiver<SessionEvent>, self_tx: &Sender<SessionEvent>) {
+    pub fn run(mut self, rx: &Receiver<Injected>, self_tx: &Sender<Injected>) {
         loop {
             // Every wake (≤20 ms cadence): drain the gate-record ring onto
             // the episode recording.
@@ -131,7 +132,7 @@ impl Reducer {
             due.sort_by_key(|(_, d)| *d);
             self.armed.retain(|(_, d)| *d > now);
             for (id, d) in due {
-                self.step_and_apply(&SessionEvent::TimerFired { id, at: d }, self_tx);
+                self.step_and_apply(SessionEvent::TimerFired { id, at: d }.into(), self_tx);
             }
 
             let timeout = self
@@ -145,14 +146,15 @@ impl Reducer {
                 });
 
             match rx.recv_timeout(timeout) {
-                Ok(event) => self.step_and_apply(&event, self_tx),
+                Ok(injected) => self.step_and_apply(injected, self_tx),
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => return,
             }
         }
     }
 
-    fn step_and_apply(&mut self, event: &SessionEvent, self_tx: &Sender<SessionEvent>) {
+    fn step_and_apply(&mut self, injected: Injected, self_tx: &Sender<Injected>) {
+        let event = &injected.event;
         // Episode bookkeeping BEFORE the step so the sidecar exists when the
         // open event's emissions arrive.
         if let SessionEvent::EpisodeOpen {
@@ -166,9 +168,12 @@ impl Reducer {
             self.open_episode_records(id, *born_claimed, parent.as_ref(), *post_reset);
         }
 
-        match step(&self.cfg, &self.fsm, event) {
-            Err(_rejected) => {
-                // Expected outcome for illegal events; recorded nowhere yet.
+        let outcome = match step(&self.cfg, &self.fsm, event) {
+            Err(rejected) => {
+                // The expected outcome for illegal events. State unchanged;
+                // observable to the plane only through the directive ack
+                // below (never an EpisodeEvent emission).
+                Err(rejected.reason)
             }
             Ok(stepped) => {
                 self.fsm = stepped.next;
@@ -177,11 +182,29 @@ impl Reducer {
                 }
                 self.publish_mirror();
                 self.finalize_episode_if_terminal(false);
+                Ok(())
             }
+        };
+
+        // Directive acks (flag `waddle.v0.plane.acks`): the pump attached a
+        // group only when the directive carried an id AND the flag was
+        // negotiated, so emission needs no further gating here. A directive
+        // decoding into two events acks once, when its last event lands.
+        if let Some(group) = &injected.ack
+            && let Some(fin) = group.record(outcome)
+            && let Some(plane) = &self.plane
+        {
+            plane.send(ClientMsg::Gate(pb::GateClientMessage {
+                msg: Some(pb::gate_client_message::Msg::Ack(pb::DirectiveAck {
+                    directive_id: fin.directive_id,
+                    accepted: fin.accepted,
+                    reason: fin.reason,
+                })),
+            }));
         }
     }
 
-    fn apply_effect(&mut self, effect: Effect, self_tx: &Sender<SessionEvent>) {
+    fn apply_effect(&mut self, effect: Effect, self_tx: &Sender<Injected>) {
         match effect {
             Effect::SetGateMode(mode) => {
                 let plan = self.plan_for(mode);
@@ -220,10 +243,13 @@ impl Reducer {
             Effect::CancelTimer { id } => self.armed.retain(|(t, _)| *t != id),
             Effect::MintLeaseToken(_) => {
                 let minted = LeaseId::new(uuid::Uuid::new_v4().to_string());
-                let _ = self_tx.send(SessionEvent::LeaseTokenMinted {
-                    minted,
-                    at: self.clock.stamp_now().mono_ns(),
-                });
+                let _ = self_tx.send(
+                    SessionEvent::LeaseTokenMinted {
+                        minted,
+                        at: self.clock.stamp_now().mono_ns(),
+                    }
+                    .into(),
+                );
             }
             Effect::OpenSuccessor {
                 predecessor,
@@ -250,16 +276,19 @@ impl Reducer {
                 // have resolved it earlier.
                 let post_window = self.post_reset.as_ref().and_then(ResetSpec::window);
                 let post_reset_declared = self.post_reset.is_some();
-                let _ = self_tx.send(SessionEvent::EpisodeOpen {
-                    id: successor,
-                    verification: mode,
-                    born_claimed: true,
-                    parent: Some(predecessor),
-                    post_reset: post_reset_declared,
-                    pre_window: None,
-                    post_window,
-                    at: self.clock.stamp_now().mono_ns(),
-                });
+                let _ = self_tx.send(
+                    SessionEvent::EpisodeOpen {
+                        id: successor,
+                        verification: mode,
+                        born_claimed: true,
+                        parent: Some(predecessor),
+                        post_reset: post_reset_declared,
+                        pre_window: None,
+                        post_window,
+                        at: self.clock.stamp_now().mono_ns(),
+                    }
+                    .into(),
+                );
             }
             Effect::ReprimePolicy => {
                 // The policy is re-primed by the caller's next observation;
