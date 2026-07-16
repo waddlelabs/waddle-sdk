@@ -339,12 +339,16 @@ fn claimed_mode_newer_chunk_supersedes_the_executing_one_under_immediate_replan(
     }
     assert!(saw_step1, "chunk 1's first step must substitute");
 
-    // Chunk 2 supersedes mid-horizon (newer seq AND newer t_emitted_ns).
+    // Chunk 2 supersedes mid-horizon on a newer `seq` ALONE — `t_emitted_ns`
+    // is left at the proto3 default 0 on both chunks (a wire-legal producer
+    // that never bothers to set it), proving `seq` is sufficient on its own
+    // and an unset/tied `t_emitted_ns` never wrongly vetoes the supersede
+    // (see `jitter.rs`'s staleness rule and its regression test).
     send_chunk(
         &tx,
         vec![twist_step(9.0, 0), twist_step(10.0, 100_000_000)],
         2,
-        1,
+        0,
     );
 
     // Keep ticking well past chunk 1's remaining steps' due times (900ms

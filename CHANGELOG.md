@@ -24,9 +24,17 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     channel: each arrival carries the wire chunk's `ChunkMeta`
     (`seq`/`t_emitted_ns`); a chunk boundary (a step from a different chunk
     than the channel's currently-executing one) decides stale-vs-supersede —
-    a chunk not strictly newer by BOTH `chunk_seq` and `t_emitted_ns` is
-    rejected wholesale (`dropped_stale_chunks`); a genuinely newer one
-    applies the declared `descriptors.proto` `ChunkingSemantics.replan`:
+    `chunk_seq` (the one field `control.proto` normatively requires to be
+    monotone per stream) is the primary staleness signal, so a chunk whose
+    `seq` is not strictly newer is rejected wholesale (`dropped_stale_chunks`);
+    `t_emitted_ns` is consulted only as an additional rejection when BOTH the
+    executing and candidate chunk declare a nonzero value and the new one
+    isn't strictly newer, so a wire-legal producer that leaves it at the
+    proto3 default 0 (or ties it) is never wrongly locked out (a fixed review
+    finding: the original `chunk_seq` **AND** `t_emitted_ns` rule rejected
+    every subsequent chunk of a claim window forever the moment a producer
+    left the timestamp unset). A genuinely newer chunk applies the declared
+    `descriptors.proto` `ChunkingSemantics.replan`:
     `REPLAN_POLICY_IMMEDIATE`/`REPLAN_POLICY_BLEND` drop the executing
     chunk's still-pending steps (BLEND has no declared blend duration/curve
     for a chunk-to-chunk splice and its own comment steers away from it, so

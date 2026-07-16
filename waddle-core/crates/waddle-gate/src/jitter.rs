@@ -52,11 +52,16 @@
 //! chunk it came from. `ingest` detects a chunk BOUNDARY (the first step of
 //! a chunk different from the channel's currently-tracked
 //! [`ChannelState::active_chunk`]) and, at that instant only: rejects the
-//! whole chunk as stale if it is not strictly newer by BOTH `chunk_seq` and
-//! `t_emitted_ns` (`dropped_stale_chunks`), else applies the declared
-//! replan policy. An EMPTY chunk (zero steps) never reaches `ingest` at all
-//! (the producer has nothing to push), so it is a true no-op by
-//! construction — it can neither supersede nor be rejected.
+//! whole chunk as stale (`dropped_stale_chunks`) if it is not strictly newer
+//! by `chunk_seq` — the one field `control.proto` normatively requires to be
+//! monotone per stream — additionally rejecting on `t_emitted_ns` only when
+//! BOTH chunks declare a nonzero value and the new one is not strictly newer
+//! (a wire-legal producer that leaves `t_emitted_ns` at the proto3 default 0,
+//! or ties it, is never penalized for a field the protocol never requires to
+//! be set or increasing); else applies the declared replan policy. An EMPTY
+//! chunk (zero steps) never reaches `ingest` at all (the producer has
+//! nothing to push), so it is a true no-op by construction — it can neither
+//! supersede nor be rejected.
 
 use std::collections::BTreeMap;
 
@@ -77,15 +82,19 @@ pub enum StreamChannel {
 }
 
 /// Identifies which wire `ActionChunk` an `AgentChunk` arrival came from:
-/// `seq` is `ActionChunk.seq` ("monotone per stream" per the proto comment),
-/// `t_emitted_ns` is `ActionChunk.t_emitted_ns`. Used ONLY to detect a chunk
-/// boundary and decide stale-vs-supersede (see the module doc) — never for
-/// playout scheduling (that stays session-receive-time + `t_offset_ns`,
-/// matching Task 10's Reset-mode arm: `ActionChunk`'s `_ns` fields are
-/// already session-timeline per `VERSIONING.md` §7, not `_client_ns`, but
-/// there is no guarantee a remote agent's own chunk-seq numbering is
-/// claim-scoped or session-scoped, so trusting it as an absolute playout
-/// anchor is not assumed here).
+/// `seq` is `ActionChunk.seq` ("monotone per stream" per the proto comment —
+/// the only field the protocol normatively requires for ordering, and hence
+/// the PRIMARY staleness signal), `t_emitted_ns` is `ActionChunk.t_emitted_ns`
+/// (an ADDITIONAL, defense-in-depth signal, consulted only when a producer
+/// bothers to set it on both the executing and the candidate chunk — proto3
+/// cannot distinguish "unset" from 0, so a lone/zero value is never treated
+/// as evidence of staleness). Used ONLY to detect a chunk boundary and decide
+/// stale-vs-supersede (see the module doc) — never for playout scheduling
+/// (that stays session-receive-time + `t_offset_ns`, matching Task 10's
+/// Reset-mode arm: `ActionChunk`'s `_ns` fields are already session-timeline
+/// per `VERSIONING.md` §7, not `_client_ns`, but there is no guarantee a
+/// remote agent's own chunk-seq numbering is claim-scoped or session-scoped,
+/// so trusting it as an absolute playout anchor is not assumed here).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChunkMeta {
     pub chunk_seq: u64,
@@ -179,9 +188,26 @@ impl JitterBuffer {
                 let state = self.state_mut(action.channel);
                 match state.active_chunk {
                     Some(active) if active == meta => Transition::Same,
+                    // `seq` is the ONLY field `control.proto` normatively
+                    // requires for ordering ("Monotone per stream; gaps are
+                    // visible, reordering is detectable" — nothing says
+                    // `t_emitted_ns` must be set or strictly increasing, and
+                    // proto3 can't distinguish "unset" from 0). So `seq` is
+                    // the primary and sufficient staleness signal; a NOT
+                    // strictly newer seq is stale regardless of
+                    // `t_emitted_ns`. `t_emitted_ns` is consulted as an
+                    // ADDITIONAL rejection only when BOTH chunks declare a
+                    // nonzero value (so a producer that legally leaves the
+                    // default 0 on every chunk, or ties it, is never
+                    // penalized for a field the protocol doesn't require) —
+                    // this still catches a genuinely newer `seq` whose
+                    // declared emission time regressed, which would
+                    // otherwise indicate clock/reordering trouble upstream.
                     Some(active)
                         if meta.chunk_seq <= active.chunk_seq
-                            || meta.t_emitted_ns <= active.t_emitted_ns =>
+                            || (meta.t_emitted_ns != 0
+                                && active.t_emitted_ns != 0
+                                && meta.t_emitted_ns <= active.t_emitted_ns) =>
                     {
                         Transition::Stale
                     }
@@ -489,10 +515,14 @@ mod tests {
         assert_eq!(jb.pop_due(MonoNs(3_000)).unwrap().values[0], 9.0);
     }
 
-    /// A chunk that is not strictly newer than the currently-executing one
-    /// by BOTH `chunk_seq` and `t_emitted_ns` is rejected wholesale — the
-    /// executing chunk's horizon is undisturbed, and no step of the stale
-    /// chunk is ever inserted (so it can never accidentally play out).
+    /// A chunk is rejected wholesale if its `chunk_seq` is not strictly
+    /// newer than the currently-executing one (the primary, protocol-backed
+    /// signal — regardless of `t_emitted_ns`), OR — when BOTH chunks declare
+    /// a nonzero `t_emitted_ns` — that emitted-time is not strictly newer
+    /// either (a defense-in-depth signal, but never on its own veto power
+    /// over a bare/zero value). Either way, the executing chunk's horizon is
+    /// undisturbed, and no step of the stale chunk is ever inserted (so it
+    /// can never accidentally play out).
     #[test]
     fn a_stale_chunk_is_rejected_by_either_seq_or_emitted_time() {
         let mut jb = jb(0, ReplanPolicy::Immediate);
@@ -501,11 +531,13 @@ mod tests {
         ));
         assert_eq!(jb.dropped_stale_chunks(), 0);
 
-        // Lower seq, even with a higher t_emitted: stale.
+        // Lower seq is stale on its own, no matter how much higher
+        // t_emitted claims to be (seq is the primary signal).
         jb.ingest(ta_chunk(2, 100, 4, 900, 99.0));
         assert_eq!(jb.dropped_stale_chunks(), 1);
 
-        // Higher seq, but not-newer t_emitted: also stale.
+        // Higher seq, but both sides declare a nonzero t_emitted and the new
+        // one isn't newer: also stale (the defense-in-depth signal fires).
         jb.ingest(ta_chunk(3, 100, 6, 500, 99.0));
         assert_eq!(jb.dropped_stale_chunks(), 2);
 
@@ -544,6 +576,86 @@ mod tests {
         // Only chunk 1's own step is ever observable.
         assert_eq!(jb.pop_due(MonoNs(10_000)).unwrap().values[0], 1.0);
         assert!(jb.pop_due(MonoNs(10_000)).is_none());
+    }
+
+    /// Regression (review finding on `jitter.rs:184`): `control.proto` makes
+    /// only `ActionChunk.seq` normative for ordering ("Monotone per stream;
+    /// gaps are visible, reordering is detectable") — nothing requires
+    /// `t_emitted_ns` to be set, and proto3 cannot distinguish "unset" from
+    /// its default 0. A wire-legal producer that leaves `t_emitted_ns` at 0
+    /// on every chunk (or ties it) must still have its genuinely newer `seq`
+    /// chunks accepted — the old `meta.t_emitted_ns <= active.t_emitted_ns`
+    /// check treated `0 <= 0` as stale, which would have wrongly rejected
+    /// chunk 2 here and then, because a stale arrival never advances
+    /// `active_chunk`, silently rejected EVERY subsequent chunk in the claim
+    /// window too (the failure this test locks in against a regression).
+    #[test]
+    fn a_producer_that_leaves_t_emitted_ns_at_the_proto3_default_is_never_treated_as_stale_by_that_alone()
+     {
+        let mut jb = jb(0, ReplanPolicy::Immediate);
+        // Chunk 1: t_emitted_ns left at the proto3 default 0.
+        jb.ingest(ta_chunk(
+            1, 0, /* chunk_seq */ 1, /* t_emitted */ 0, 1.0,
+        ));
+        assert_eq!(jb.pop_due(MonoNs(0)).unwrap().values[0], 1.0);
+
+        // Chunk 2: genuinely newer by seq, but the same producer still
+        // leaves (or ties) t_emitted_ns at 0 — must be accepted, not
+        // rejected as stale.
+        jb.ingest(ta_chunk(
+            2, 100, /* chunk_seq */ 2, /* t_emitted */ 0, 2.0,
+        ));
+        assert_eq!(
+            jb.dropped_stale_chunks(),
+            0,
+            "an unset/tied t_emitted_ns must never veto a strictly newer seq"
+        );
+        assert_eq!(jb.pop_due(MonoNs(100)).unwrap().values[0], 2.0);
+
+        // Chunk 3: newer seq again, this time BOTH sides tie a genuinely
+        // nonzero t_emitted_ns — the defense-in-depth signal only fires when
+        // it can't be, so this ties on t_emitted while still being newer by
+        // seq alone: must still be accepted (seq is primary, sufficient on
+        // its own).
+        jb.ingest(ta_chunk(
+            3, 200, /* chunk_seq */ 3, /* t_emitted */ 0, 3.0,
+        ));
+        assert_eq!(jb.dropped_stale_chunks(), 0);
+        assert_eq!(jb.pop_due(MonoNs(200)).unwrap().values[0], 3.0);
+
+        // Every subsequent chunk in the window keeps substituting normally —
+        // the exact regression: under the old logic, chunk 2 above would
+        // have been rejected as stale and NEVER updated `active_chunk`, so
+        // chunk 3 (chunk_seq=3 <= active's still-1) would ALSO have been
+        // rejected, and so on forever.
+        jb.ingest(ta_chunk(
+            4, 300, /* chunk_seq */ 4, /* t_emitted */ 0, 4.0,
+        ));
+        assert_eq!(jb.dropped_stale_chunks(), 0);
+        assert_eq!(jb.pop_due(MonoNs(300)).unwrap().values[0], 4.0);
+    }
+
+    /// A newer `seq` whose declared emission time actually regresses (both
+    /// sides nonzero) is still caught — the additional `t_emitted_ns` signal
+    /// is defense-in-depth, not a no-op, when the producer does supply it.
+    #[test]
+    fn a_newer_seq_with_a_regressing_nonzero_t_emitted_ns_is_still_stale() {
+        let mut jb = jb(0, ReplanPolicy::Immediate);
+        jb.ingest(ta_chunk(
+            1, 0, /* chunk_seq */ 1, /* t_emitted */ 1_000, 1.0,
+        ));
+        assert_eq!(jb.pop_due(MonoNs(0)).unwrap().values[0], 1.0);
+
+        // seq is newer (2 > 1), but t_emitted_ns regressed (500 < 1_000) and
+        // both sides are nonzero: the additional signal rejects it.
+        jb.ingest(ta_chunk(
+            2, 100, /* chunk_seq */ 2, /* t_emitted */ 500, 9.0,
+        ));
+        assert_eq!(jb.dropped_stale_chunks(), 1);
+        assert!(
+            jb.pop_due(MonoNs(100)).is_none(),
+            "the stale step never queued"
+        );
     }
 
     /// An empty wire chunk never reaches `ingest` at all (the producer has
