@@ -9,7 +9,7 @@
 //! any emission or effect ordering, one of these assertions fails.
 //!
 //! Note: the run-closing cancel list later gained `ResetWindowTimeout` (timer
-//! hygiene, D7 edge 6). That is an emission-invisible, no-op `CancelTimer`
+//! hygiene rule). That is an emission-invisible, no-op `CancelTimer`
 //! effect for undeclared episodes (no such timer is ever armed) — the
 //! observable emission subsequence is unchanged.
 

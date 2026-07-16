@@ -19,7 +19,7 @@
 //! 12. `post_reset_failed` is monotone; false at Terminal (from PostReset)
 //!     ⇒ the last post-reset result was ok.
 //! 13. `gate_mode == Reset ⇒ claim.is_some() ∧ phase ∈ {Resetting, PostReset}`
-//!     (D7 edge 3).
+//!     (the stale-handle contract).
 //! 14. Retake acceptance ⇒ predecessor Terminal{ABORTED_RETAKE} with no
 //!     intervening PostReset phase (E18 bypass).
 
@@ -58,7 +58,7 @@ enum Cmd {
         invalidated: bool,
     },
     Start,
-    /// A caller-loop gate tick (D7 edge 3): must not transition the episode
+    /// A caller-loop gate tick (the stale-handle contract): must not transition the episode
     /// out of RESETTING/POST_RESET — the guard against a stale handle
     /// double-driving a reset while a remote actor (or the pipeline hook)
     /// owns it.
@@ -284,7 +284,7 @@ impl Driver {
             self.state.episode.as_ref().map(|e| e.phase),
             Some(Phase::PostReset)
         );
-        // D7 edge 3: a GateTick landing in RESETTING/POST_RESET must not
+        // the stale-handle contract: a GateTick landing in RESETTING/POST_RESET must not
         // transition the phase — those windows are owned by a remote actor
         // (or the pipeline hook), and the gate is already returning
         // Noop{RESET_ACTIVE} to any stale caller ticking it (waddle-gate's
@@ -338,7 +338,7 @@ impl Driver {
                     );
                 }
 
-                // D7 edge 3: GateTick in RESETTING/POST_RESET is a no-op —
+                // the stale-handle contract: GateTick in RESETTING/POST_RESET is a no-op —
                 // it must never drive a transition (unlike a GateTick landing
                 // in READY, which is E6's first-gated-action trigger).
                 if gate_tick
@@ -350,7 +350,7 @@ impl Driver {
                     assert_eq!(
                         self.state.episode.as_ref().map(|e| e.phase),
                         phase_before_gate_tick,
-                        "D7 edge 3: GateTick in RESETTING/POST_RESET must not transition"
+                        "the stale-handle contract: GateTick in RESETTING/POST_RESET must not transition"
                     );
                 }
 
@@ -560,7 +560,7 @@ impl Driver {
         }
 
         // I13: gate RESET implies an active claim and phase ∈ {Resetting,
-        // PostReset} (D7 edge 3).
+        // PostReset} (the stale-handle contract).
         if s.gate_mode == GateMode::Reset {
             assert!(
                 s.claim.is_some(),

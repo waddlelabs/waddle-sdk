@@ -7,7 +7,7 @@
 //!
 //! This closes a long-documented gap: a retake successor
 //! opened under a session-level `Remote` PRE spec is born-claimed, so its
-//! `EpisodeOpen`'s `pre_window` never opens (D7 edge 5 — the guard requires
+//! `EpisodeOpen`'s `pre_window` never opens (born-claimed suppression — the guard requires
 //! `claim.is_none()`, and a born-claimed successor's claim survives the
 //! retake) — nothing else in the runtime can ever complete that successor's
 //! RESETTING. A plane-executed reset's `ResetProgress{DONE, result}`
@@ -92,7 +92,7 @@ fn wait_for(session: &Session, pred: impl Fn(&waddle_runtime::Status) -> bool) {
 }
 
 /// A retake successor under a session-level `Remote` PRE spec sits in
-/// RESETTING with no window (the born-claimed suppression, D7 edge 5) —
+/// RESETTING with no window (born-claimed suppression) —
 /// only a plane-executed `ResetProgress{DONE, result}` can complete it.
 /// Progress before DONE must never transition anything.
 #[test]
@@ -203,7 +203,7 @@ fn reset_progress_done_completes_retake_successor_with_no_window() {
         at: waddle_types::MonoNs(3_000_000),
     });
 
-    // Born-claimed suppression (D7 edge 5): the successor reaches RESETTING
+    // Born-claimed suppression (born-claimed suppression): the successor reaches RESETTING
     // with no window ever opening — the pre-existing gap this task closes.
     wait_for(&session, |s| {
         s.episode_id.as_ref() == Some(&successor)

@@ -216,7 +216,7 @@ fn e19_no_window_when_undeclared() {
 #[test]
 fn e19_no_window_for_born_claimed_successor() {
     // Drive a retake so the claim survives, then open the born-claimed
-    // successor with a pre window declared: no window opens (D7 edge 5).
+    // successor with a pre window declared: no window opens (born-claimed suppression).
     let mut d = Driver::new();
     open_with(&mut d, None, None);
     let at = d.tick();

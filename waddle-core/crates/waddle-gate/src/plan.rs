@@ -42,7 +42,7 @@ pub enum PlanMode {
     /// `waddle.v0.reset.remote`, gate mode RESET): the reset claimant holds
     /// the lease and the SDK drives `send` on its behalf from its own
     /// thread. A caller ticking `gate()` on this now-stale handle is a
-    /// spectator (D7 edge 3) — same shape as `Bypass`, distinct so the
+    /// spectator (the stale-handle contract) — same shape as `Bypass`, distinct so the
     /// reducer can render `NoopReason::RESET_ACTIVE` instead of
     /// `BYPASS_ACTIVE`.
     Reset { provenance: ProvenanceTag },

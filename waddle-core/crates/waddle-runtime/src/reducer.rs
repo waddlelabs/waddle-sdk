@@ -322,7 +322,7 @@ impl Reducer {
                 ..
             } => {
                 // Retake successors carry a surviving claim (born-claimed):
-                // no remote pre-window opens (D7 edge 5; `EpisodeOpen`'s
+                // no remote pre-window opens (born-claimed suppression; `EpisodeOpen`'s
                 // `pre_window` arm only opens one when `ctx.s.claim.is_none()`,
                 // which a born-claimed episode never satisfies) — the reset
                 // pump services PRE the same way it does for any episode with
@@ -413,7 +413,7 @@ impl Reducer {
                     _ => None,
                 },
             },
-            // D7 edge 3: a remote reset window's claimant holds the lease;
+            // A remote reset window's claimant holds the lease;
             // the caller's own gate() handle is stale and must dispatch
             // nothing (Noop{RESET_ACTIVE}), same shape as Bypass.
             GateMode::Reset => PlanMode::Reset { provenance },

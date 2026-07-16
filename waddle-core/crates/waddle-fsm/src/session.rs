@@ -178,7 +178,7 @@ impl Ctx<'_> {
         for id in [
             TimerId::EngageTimeout,
             TimerId::ChunkBoundaryCap,
-            // Timer hygiene (D7 edge 6): a run may close with a reset window
+            // Timer hygiene (window-timer hygiene): a run may close with a reset window
             // still armed (E17 estop). Cancelling here is emission-invisible
             // and a no-op for episodes that never armed it.
             TimerId::ResetWindowTimeout,
@@ -676,7 +676,7 @@ pub fn step(
             ));
             // E19 (PRE): a declared remote pre window opens on entry — but not
             // for a born-claimed successor, whose surviving claim keeps the
-            // hand-reset-under-claim story (D7 edge 5; C6 needs no active
+            // hand-reset-under-claim story (born-claimed suppression; C6 needs no active
             // claim).
             if let Some(spec) = pre_window
                 && ctx.s.claim.is_none()

@@ -319,7 +319,7 @@ fn remote_pre_reset_window_dispatches_teleop_then_completes_to_ready() {
     wait_for(&session, |s| s.gate_mode == Some(GateMode::Reset));
 
     // The stale ep0 handle's gate ticks are spectator NOOPs during the
-    // window (D7 edge 3) — and, since `Gate`/`GateShared` is shared across
+    // window (the stale-handle contract) — and, since `Gate`/`GateShared` is shared across
     // the whole session, they land on the NEW episode's now-open MCAP as
     // RESET_ACTIVE NoopMarkers tagged with the claimant's provenance
     // (checked at the bottom of this test).
@@ -510,7 +510,7 @@ fn remote_post_reset_window_dispatches_agent_chunk_then_completes_to_terminal() 
         "reset-window agent-chunk actuation never reached `send`"
     );
 
-    // A stale gate tick during the window is a spectator NOOP (D7 edge 3).
+    // A stale gate tick during the window is a spectator NOOP (the stale-handle contract).
     assert!(matches!(
         ep.gate(&[0.0; 6], None, None),
         GateOutput::Noop { .. }
@@ -623,7 +623,7 @@ fn post_reset_window_timeout_pins_outcome_and_flags_failure() {
 
 // --- Timer hygiene: one episode, two remote windows -----------------------
 
-/// Design D7 edge 6 ("timer leak → cancel-then-arm on reuse"), verified at
+/// The window-timer hygiene rule ("timer leak → cancel-then-arm on reuse"), verified at
 /// the runtime level, not reimplemented: one episode declares BOTH a
 /// Remote pre- and post-reset. The PRE window engages and completes well
 /// inside its own deadline; the POST window is never engaged and times out
@@ -763,7 +763,7 @@ fn remote_pre_and_post_windows_reuse_the_window_timer_independently() {
 
 // --- Born-claimed guard: no remote pre-window for a retake successor ------
 
-/// Design C6/D7 edge 5, verified at the runtime level, not reimplemented: a
+/// The C6 born-claimed suppression rule, verified at the runtime level, not reimplemented: a
 /// retake successor is born-claimed (the surviving claim keeps driving the
 /// hand reset), so it never gets a remote pre-window even though the
 /// session's default is `Remote` — `reducer.rs`'s `Effect::OpenSuccessor`

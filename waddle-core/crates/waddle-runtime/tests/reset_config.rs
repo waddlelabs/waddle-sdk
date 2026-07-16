@@ -2,7 +2,7 @@
 //! setters (`pre_reset`/`post_reset`/`verification_mode`, and the deprecated
 //! `reset_hook` alias), `EpisodeOptions` per-episode overrides, and
 //! `start_episode`/`start_episode_with`'s pre-reset routing + the
-//! predecessor-in-`Phase::PostReset` wait (design §D4, first two bullets).
+//! predecessor-in-`Phase::PostReset` wait (the reset-window design, first two bullets).
 //!
 //! The reset pump (`waddle-reset-hooks`) is the single post-reset hook
 //! invocation site: a declared POST hook runs there the moment the mirror

@@ -225,7 +225,7 @@ fn post_reset_failure_sets_sidecar_flag_and_never_alters_outcome() {
 
 // --- The reset pump -------------------------------------------------------
 
-/// THE headline regression (design §D4): a reducer-opened retake successor
+/// THE headline regression (the reset-window design): a reducer-opened retake successor
 /// never received a `ResetResult` — only `start_episode`'s inline path ran
 /// the pre-reset pipeline, so the successor hung in RESETTING forever. The
 /// reset pump (mirror-watch) services it now, running the effective PRE
@@ -404,7 +404,7 @@ fn remote_post_reset_window_records_reset_active_noop_markers() {
     );
 
     // C6 → E20: the expected actor claims and engages; the gate flips to
-    // RESET (the loop's own handle is stale, D7 edge 3).
+    // RESET (the loop's own handle is stale).
     session.inject(SessionEvent::ClaimGranted {
         id: ClaimId::new("reset-claim"),
         source: "teleop".to_owned(),
@@ -558,7 +558,7 @@ fn retake_successor_inherits_session_post_reset_hook() {
 
 /// A retake successor with a SESSION-level `Remote` post-reset spec opens
 /// the window on the successor's own E14, exactly as any other episode
-/// would: the born-claimed suppression (D7 edge 5) is a PRE-window-only
+/// would: the born-claimed suppression (born-claimed suppression) is a PRE-window-only
 /// guard (checked only at `EpisodeOpen`'s `pre_window` arm) and does not
 /// apply to the POST window opened later at `enter_post_reset`.
 #[test]

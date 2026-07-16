@@ -238,7 +238,7 @@ impl<C: Clock> Gate<C> {
                     provenance: provenance.clone(),
                 }
             }
-            // D7 edge 3: a stale caller handle ticking during a remote reset
+            // A stale caller handle ticking during a remote reset
             // window must dispatch nothing. Same cost class as Bypass (one
             // record push, one marker return) — no locks/syscalls/allocs.
             PlanMode::Reset { provenance } => {
@@ -490,7 +490,7 @@ mod tests {
         assert_eq!(records.pop().unwrap().decision, GateDecision::Noop);
     }
 
-    /// D7 edge 3: a caller ticking `gate()` on a stale handle while a remote
+    /// a caller ticking `gate()` on a stale handle while a remote
     /// actor holds the reset window dispatches nothing — same shape as
     /// bypass, distinct decision so the reducer can render
     /// `NoopReason::RESET_ACTIVE` instead of `BYPASS_ACTIVE`.
