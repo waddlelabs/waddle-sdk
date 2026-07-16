@@ -276,9 +276,13 @@ impl JitterBuffer {
         self.dropped_late
     }
 
-    /// Whole chunks rejected outright as stale/out-of-order (`ingest`'s
-    /// `Transition::Stale`) — distinct from `dropped_late`, which counts
-    /// individual late STEPS within an already-accepted chunk.
+    /// Arrivals rejected outright as belonging to a stale/out-of-order chunk
+    /// (`ingest`'s `Transition::Stale`) — distinct from `dropped_late`, which
+    /// counts individual late steps within an already-accepted chunk. Counts
+    /// per ARRIVAL, not per distinct chunk: a stale chunk with N steps
+    /// increments this by N (every step independently re-evaluates against
+    /// the same unchanged `active_chunk`, since a stale arrival never
+    /// advances it), not by 1.
     #[must_use]
     pub fn dropped_stale_chunks(&self) -> u64 {
         self.dropped_stale_chunks
@@ -513,6 +517,33 @@ mod tests {
         jb.ingest(ta_chunk(4, 100, 6, 600, 2.0));
         assert_eq!(jb.pop_due(MonoNs(10_000)).unwrap().values[0], 2.0);
         assert_eq!(jb.dropped_stale_chunks(), 2, "no further rejection");
+    }
+
+    /// `dropped_stale_chunks` counts per ARRIVAL, not per distinct chunk: a
+    /// multi-step stale chunk increments it once per step (every step
+    /// independently re-evaluates against the same unchanged
+    /// `active_chunk`), never per whole chunk. All of them must still be
+    /// rejected — none may leak into `pending`.
+    #[test]
+    fn a_multi_step_stale_chunk_increments_dropped_stale_chunks_once_per_step() {
+        let mut jb = jb(0, ReplanPolicy::Immediate);
+        jb.ingest(ta_chunk(
+            1, 0, /* chunk_seq */ 5, /* t_emitted */ 500, 1.0,
+        ));
+
+        // A 3-step stale chunk (chunk_seq=2, older than active's 5).
+        jb.ingest(ta_chunk(2, 100, 2, 100, 91.0));
+        jb.ingest(ta_chunk(3, 100, 2, 100, 92.0));
+        jb.ingest(ta_chunk(4, 100, 2, 100, 93.0));
+        assert_eq!(
+            jb.dropped_stale_chunks(),
+            3,
+            "each step of the stale chunk is independently rejected"
+        );
+
+        // Only chunk 1's own step is ever observable.
+        assert_eq!(jb.pop_due(MonoNs(10_000)).unwrap().values[0], 1.0);
+        assert!(jb.pop_due(MonoNs(10_000)).is_none());
     }
 
     /// An empty wire chunk never reaches `ingest` at all (the producer has
