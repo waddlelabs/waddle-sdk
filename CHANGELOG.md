@@ -720,6 +720,15 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   in the episode MCAP; callers no longer see the ring.
 
 ### Fixed
+- **`waddle-controlplane`'s `tonic-transport` test build (pre-existing,
+  unrelated to Task 19's own scope)**: `grpc_transport.rs`'s two
+  `ClaimDirective` struct literals predated the directive-acks feature
+  (`waddle.v0.plane.acks`) that added its `directive_id` field and were
+  never updated for it — a compile break invisible to `cargo test
+  --workspace` (featureless) and never caught because no task since then
+  had re-run this crate's feature-gated tests. Discovered while running
+  the full gate suite for Task 19; fixed with `directive_id: None` (no
+  production code touched).
 - **`Session::publish_frame` — a declared `CAMERA_ENCODING_JPEG` uplink
   policy would fail every frame against a real LiveKit-backed session**:
   the previous behavior ran a declared JPEG uplink through the real

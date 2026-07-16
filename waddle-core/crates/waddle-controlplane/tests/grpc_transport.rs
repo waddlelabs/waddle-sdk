@@ -331,6 +331,7 @@ fn stalled_observation_stream_open_does_not_freeze_the_pump() {
         msg: Some(pb::gate_server_message::Msg::Claim(pb::ClaimDirective {
             kind: pb::ClaimDirectiveKind::Grant as i32,
             claim: None,
+            directive_id: None,
         })),
     };
     state
@@ -386,6 +387,7 @@ fn registers_round_trips_and_replays_after_server_restart() {
         msg: Some(pb::gate_server_message::Msg::Claim(pb::ClaimDirective {
             kind: pb::ClaimDirectiveKind::Grant as i32,
             claim: None,
+            directive_id: None,
         })),
     };
     state
