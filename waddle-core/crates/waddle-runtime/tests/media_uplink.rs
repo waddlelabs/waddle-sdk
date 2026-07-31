@@ -64,6 +64,7 @@ fn camera(name: &str, uplink: Option<pb::stream_policy::UplinkPolicy>) -> pb::Ca
         stream: Some(pb::StreamPolicy {
             local_full_rate: false,
             uplink,
+            ..Default::default()
         }),
         ..Default::default()
     }
