@@ -143,12 +143,27 @@ Preface (normative): rows E23–E26/E26b and C8 exist only when
 (the customer asked Waddle to drive; the open carries
 `agent_invite{prompt, timeout_ns}`). An agent-invited episode is otherwise a
 NORMAL episode: E7 engage, intervention chunks, E10 termination, and the
-reset phases all apply verbatim, and an agent-invited episode with
-`post_reset` declared behaves per E14 unchanged. The invited agent claims
-with the same `Claim`/`Lease` machinery as every other actor — C8 restricts
-admission, nothing else. Exactly two things differ: the caller's own
-`gate()` ticks never dispatch while no claim is engaged (E24), and only
-`ACTOR_KIND_AGENT` claims are admitted (C8).
+reset phases all apply verbatim. The two terminating triggers this section
+adds — E25's invite timeout and E26's pre-engage DENIED — are **members of
+E10's trigger set** with a fixed outcome (ABORT); with `post_reset`
+declared, E14 therefore governs them from RUNNING exactly as it governs
+every other E10 trigger, so they terminate through the episode's normal
+termination routing (TERMINAL{ABORT} per E10, POST_RESET{ABORT pinned} per
+E14), never around it. The invited agent claims with the same
+`Claim`/`Lease` machinery as every other actor — C8 restricts admission,
+nothing else. Exactly two things differ: the caller's own `gate()` ticks
+never dispatch while no claim is engaged (E24), and only `ACTOR_KIND_AGENT`
+claims are admitted (C8).
+
+The **invite is open** from E23 until the first of: an agent claim ENGAGEs
+(E7 on this episode), or the episode leaves {RESETTING, READY, RUNNING} by
+any row (E5, E10, E11, E14, E25, E26; transitions within that set — E2–E4,
+E6 — do not close it). On an agent-invited episode, every row that closes
+the invite carries `cancel_timer{agent_invite_timeout}` (if still armed) as
+an additional effect: E7 as below, and E5/E10/E11/E14/E25/E26 alike. A
+`timer{agent_invite_timeout}` delivered after the invite has closed (an
+implementation's expiry racing the cancellation) is **discarded** — no
+transition, no event; a stale expiry can never abort a pinned outcome.
 
 E7 on an agent-invited episode additionally emits
 `cancel_timer{agent_invite_timeout}` and latches `episode.agent_engaged`
@@ -159,9 +174,9 @@ episode — a release/re-engage cycle does not re-arm the invite timer).
 |---|---|---|---|---|---|---|
 | E23 | (open) | `episode_open{agent_invite}` | E1 guard (no other episode active in session) | RESETTING | E1's effect set, plus emission `agent_invite{prompt, timeout_ns}` and `arm_timer{agent_invite_timeout, deadline = open + timeout_ns}` | `agent_invite_happy` |
 | E24 | RUNNING | `gate_tick` | episode agent-invited ∧ no engaged claim | unchanged | the caller's action NEVER dispatches: the gate plan is Noop with reason `NOOP_REASON_AGENT_EPISODE` (no fault, no state change). With an engaged claim, ordinary intervention semantics apply unchanged — substitution flows through `gate()` as ever | `agent_caller_tick_noop` |
-| E25 | RESETTING, READY, or RUNNING | `timer{agent_invite_timeout}` | no agent claim has ENGAGEd (the first ENGAGE cancels this timer) | TERMINAL{ABORT} | `state{→TERMINAL, ABORT, "no agent engaged"}` with E10's effect set | `agent_invite_timeout` |
-| E26 | RESETTING, READY, or RUNNING | `agent_update{DENIED}` | no agent claim has ENGAGEd | TERMINAL{ABORT} | `cancel_timer{agent_invite_timeout}`; `state{→TERMINAL, ABORT}` carrying the update's detail, with E10's effect set | `agent_invite_denied` |
-| E26b | any non-TERMINAL | `agent_update{DENIED}` | an agent claim has ENGAGEd | unchanged (rejected) | none — a late DENIED is recorded as an event only, never a transition | `agent_invite_denied_after_engage` |
+| E25 | RESETTING, READY, or RUNNING | `timer{agent_invite_timeout}` | invite open (no agent claim has ENGAGEd; E7 cancels this timer) | from RESETTING or READY: TERMINAL{ABORT}; from RUNNING: TERMINAL{ABORT} per E10, or POST_RESET{ABORT pinned} per E14 when post-reset declared ∧ not yet entered | termination carries detail "no agent engaged"; the taken route's effect set applies verbatim (E10's, or E14's with the outcome pinned to ABORT) | `agent_invite_timeout`, `agent_invite_timeout_post_reset` |
+| E26 | RESETTING, READY, or RUNNING | `agent_update{DENIED}` | invite open (no agent claim has ENGAGEd) | routes exactly as E25: from RESETTING or READY TERMINAL{ABORT}; from RUNNING per E10, or per E14 when post-reset declared ∧ not yet entered | `cancel_timer{agent_invite_timeout}`; termination carries the update's detail; the taken route's effect set applies verbatim | `agent_invite_denied` |
+| E26b | any non-TERMINAL | `agent_update{DENIED}` | invite not open (an agent claim has ENGAGEd, or the episode already left {RESETTING, READY, RUNNING} — e.g. a plane DENIED racing a pre-engage E14 into POST_RESET) | unchanged (rejected) | none — a late DENIED is recorded as an event only, never a transition; a pinned outcome is untouched | `agent_invite_denied_after_engage`, `agent_invite_denied_in_post_reset` |
 
 QUEUED and COMPLETED updates (`AgentTaskUpdate`, services.proto) are
 informational on every state: recorded, never a transition. The invite
