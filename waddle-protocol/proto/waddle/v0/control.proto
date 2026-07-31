@@ -126,6 +126,9 @@ enum NoopReason {
   // is driving `send` on the reset claimant's behalf from its own thread, on
   // a stale caller `gate()` handle.
   NOOP_REASON_RESET_ACTIVE = 3;
+  // The episode is agent-invited (flag waddle.v0.agent): a Waddle-hosted
+  // agent drives it end to end, and the caller's own ticks never dispatch.
+  NOOP_REASON_AGENT_EPISODE = 4;
 }
 
 message NoopMarker {

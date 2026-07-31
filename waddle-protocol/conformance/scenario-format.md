@@ -71,7 +71,7 @@ as unknown:
 
 | kind | payload | targets | meaning |
 |---|---|---|---|
-| `episode_open` | `episode_id`, `verification_mode?`, `born_claimed?`, `parent_episode_id?`, `post_reset?: bool` (needs `waddle.v0.reset.phases`), `pre_reset_window?: {expected_actor, prompt?, timeout_ns}` (needs `waddle.v0.reset.remote`), `post_reset_window?: {expected_actor, prompt?, timeout_ns}` (needs both flags) | fsm, gate | open an episode in RESETTING; the optional keys declare the post-reset phase and/or remote reset windows for this episode |
+| `episode_open` | `episode_id`, `verification_mode?`, `born_claimed?`, `parent_episode_id?`, `post_reset?: bool` (needs `waddle.v0.reset.phases`), `pre_reset_window?: {expected_actor, prompt?, timeout_ns}` (needs `waddle.v0.reset.remote`), `post_reset_window?: {expected_actor, prompt?, timeout_ns}` (needs both flags), `agent_invite?: {prompt, timeout_ns}` (needs `waddle.v0.agent`) | fsm, gate | open an episode in RESETTING; the optional keys declare the post-reset phase, remote reset windows, and/or the agent invite for this episode |
 | `reset_result` | `result`: `waddle.v0.ResetResult` | fsm, gate | the reset pipeline reported |
 | `verification_result` | `verification`: `waddle.v0.ResetVerification` | fsm, gate | a (possibly late/async) reset verification |
 | `start` | — | fsm | READY → RUNNING without modeling gate ticks |
@@ -91,6 +91,7 @@ as unknown:
 | `post_reset_result` | `result`: `waddle.v0.ResetResult` | fsm, gate | the post-reset pipeline reported (needs `waddle.v0.reset.phases`) |
 | `reset_window_engage` | `claim_id` | fsm, gate | a granted reset claim engages: lease → claimant, gate → RESET (needs `waddle.v0.reset.remote`) |
 | `reset_window_complete` | `claim_id`, `result`: `waddle.v0.ResetResult` | fsm, gate | the remote actor finished the reset (needs `waddle.v0.reset.remote`) |
+| `agent_task_update` | `episode_id`, `kind`: `waddle.v0.AgentTaskUpdateKind`, `detail?` | fsm, gate | the plane reported agent-task status for an agent-invited episode (needs `waddle.v0.agent`) |
 | `judge_result` | `judgment`: `waddle.v0.Judgment` | fsm, gate | an episode judgment arrives |
 | `mark` | `mark`: `waddle.v0.MarkEvent` | fsm, gate | a human mark arrives |
 | `proxy_signals` | `signals`: `waddle.v0.ProxySignals` | fsm | heartbeat proxy signals sampled |
@@ -174,7 +175,9 @@ enum spellings):
     "parent_episode_id": "",
     "post_reset_declared": false,
     "post_reset_failed": false,
-    "pinned_outcome": "TERMINAL_OUTCOME_UNSPECIFIED"
+    "pinned_outcome": "TERMINAL_OUTCOME_UNSPECIFIED",
+    "agent_invited": false,
+    "agent_engaged": false
   },
   "gate":  { "mode": "GATE_MODE_*" },
   "lease": { "holder_client_id": "", "lease_id": "", "enforcement": "LEASE_ENFORCEMENT_*" },
@@ -192,6 +195,14 @@ enum spellings):
 set on a POST_RESET transition). The top-level `reset_window` document needs
 `waddle.v0.reset.remote`.
 
+`episode.agent_invited` / `episode.agent_engaged` need `waddle.v0.agent`:
+`agent_invited` is true iff the episode was opened with the `agent_invite`
+key; `agent_engaged` latches true when an `ACTOR_KIND_AGENT` claim engages
+(FSM.md §1.5) and never resets within the episode. The gate-plan noop reason
+`NOOP_REASON_AGENT_EPISODE` (asserted via `expect_output`) and the
+`agent_invite` `EpisodeEvent` arm (asserted via `expect_emission.event`)
+likewise need `waddle.v0.agent`.
+
 `grants` is matched by `(verb, send_interface)` lookup, expressed as
 `grants[VERB_HOLD].status` or `grants[VERB_SEND/SPACE_KIND_EE_POSE_DELTA].status`.
 
@@ -204,7 +215,7 @@ targets expose them as emissions matchable by `expect_emission.effect`:
 |---|---|
 | `set_gate_mode` | `mode` (`GATE_MODE_RESET` needs `waddle.v0.reset.remote`) |
 | `request_verb` | `verb`, `chunk?` |
-| `arm_timer` / `cancel_timer` | `timer_id` (`"reset_window_timeout"` needs `waddle.v0.reset.remote`; exercised via the existing `advance_ns` step like every other timer), `deadline_ns` |
+| `arm_timer` / `cancel_timer` | `timer_id` (`"reset_window_timeout"` needs `waddle.v0.reset.remote`; `"agent_invite_timeout"` needs `waddle.v0.agent`; both exercised via the existing `advance_ns` step like every other timer), `deadline_ns` |
 | `open_successor` | `predecessor_episode_id`, `claim_id`, `born_claimed`, `verification_mode` |
 | `mint_lease_token` | `to_client_id` |
 | `set_flag` | `flag` (e.g. `"reset_unverified"`, or `"post_reset_failed"` which needs `waddle.v0.reset.phases`) |

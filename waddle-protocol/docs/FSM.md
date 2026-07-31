@@ -136,6 +136,38 @@ discarded: the lease does not move, a `lease{DENIED}` records the stale
 mint, and the still-open window remains serviceable by a fresh claim (C6).
 This pins the atomicity of E20's engage; it adds no new states or rows.
 
+### 1.5 Agent-invited episodes (flag `waddle.v0.agent`)
+
+Preface (normative): rows E23–E26/E26b and C8 exist only when
+`waddle.v0.agent` is negotiated **and** the episode was opened agent-invited
+(the customer asked Waddle to drive; the open carries
+`agent_invite{prompt, timeout_ns}`). An agent-invited episode is otherwise a
+NORMAL episode: E7 engage, intervention chunks, E10 termination, and the
+reset phases all apply verbatim, and an agent-invited episode with
+`post_reset` declared behaves per E14 unchanged. The invited agent claims
+with the same `Claim`/`Lease` machinery as every other actor — C8 restricts
+admission, nothing else. Exactly two things differ: the caller's own
+`gate()` ticks never dispatch while no claim is engaged (E24), and only
+`ACTOR_KIND_AGENT` claims are admitted (C8).
+
+E7 on an agent-invited episode additionally emits
+`cancel_timer{agent_invite_timeout}` and latches `episode.agent_engaged`
+(true from the first agent ENGAGE onward; it never resets within the
+episode — a release/re-engage cycle does not re-arm the invite timer).
+
+| # | From | Trigger | Guard | To | Effects / emissions | Fixture |
+|---|---|---|---|---|---|---|
+| E23 | (open) | `episode_open{agent_invite}` | E1 guard (no other episode active in session) | RESETTING | E1's effect set, plus emission `agent_invite{prompt, timeout_ns}` and `arm_timer{agent_invite_timeout, deadline = open + timeout_ns}` | `agent_invite_happy` |
+| E24 | RUNNING | `gate_tick` | episode agent-invited ∧ no engaged claim | unchanged | the caller's action NEVER dispatches: the gate plan is Noop with reason `NOOP_REASON_AGENT_EPISODE` (no fault, no state change). With an engaged claim, ordinary intervention semantics apply unchanged — substitution flows through `gate()` as ever | `agent_caller_tick_noop` |
+| E25 | RESETTING, READY, or RUNNING | `timer{agent_invite_timeout}` | no agent claim has ENGAGEd (the first ENGAGE cancels this timer) | TERMINAL{ABORT} | `state{→TERMINAL, ABORT, "no agent engaged"}` with E10's effect set | `agent_invite_timeout` |
+| E26 | RESETTING, READY, or RUNNING | `agent_update{DENIED}` | no agent claim has ENGAGEd | TERMINAL{ABORT} | `cancel_timer{agent_invite_timeout}`; `state{→TERMINAL, ABORT}` carrying the update's detail, with E10's effect set | `agent_invite_denied` |
+| E26b | any non-TERMINAL | `agent_update{DENIED}` | an agent claim has ENGAGEd | unchanged (rejected) | none — a late DENIED is recorded as an event only, never a transition | `agent_invite_denied_after_engage` |
+
+QUEUED and COMPLETED updates (`AgentTaskUpdate`, services.proto) are
+informational on every state: recorded, never a transition. The invite
+emission and timer are episode-open effects (E23); nothing else about
+episode open changes.
+
 ---
 
 ## 2. Claim lifecycle
@@ -151,6 +183,7 @@ States (per claim): REQUESTED → GRANTED | DENIED; GRANTED → RELEASED.
 | C5 | GRANTED | `retake` | — | GRANTED (survives) | the claim is NOT released; the successor episode is born claimed under it | `retake_operator_optimistic` |
 | C6 | — | `claim_granted` | episode in RESETTING or POST_RESET ∧ window OPENED ∧ actor matches expected (a TELEOPERATOR window also admits SITE_OPERATOR; an AGENT window admits AGENT only) ∧ no active claim | GRANTED | `claim{GRANTED}` — a real `Claim`; the N18 one-claim rule applies (flag `waddle.v0.reset.remote`; see §1.4) | `remote_pre_reset_claim_engage_complete`, `remote_reset_wrong_actor_denied` |
 | C7 | GRANTED (reset claim) | E21 / E22 / `estop` | — | RELEASED | `claim{RELEASED, "reset window closed"}` (flag `waddle.v0.reset.remote`; see §1.4) | `remote_pre_reset_claim_engage_complete` |
+| C8 | — | `claim_granted` | episode agent-invited ∧ actor matches expected (an agent-invited episode admits `ACTOR_KIND_AGENT` only; any other actor's grant is rejected, `claim{DENIED}`) ∧ C1's episode-state and no-conflicting-claim conditions unchanged | GRANTED | `claim{GRANTED}` — a real `Claim`; the N18 one-claim rule applies (flag `waddle.v0.agent`; see §1.5) | `agent_invite_happy`, `agent_invite_wrong_actor_denied` |
 
 **Self-initiated claims** (`Claim.self_initiated`): a local source's clutch
 edge (`clutch{engaged}`) both requests and grants the claim in one step — the

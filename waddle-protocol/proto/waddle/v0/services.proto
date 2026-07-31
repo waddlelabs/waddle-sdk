@@ -2,8 +2,11 @@
 //
 // The control plane: typed, versioned gRPC for session lifecycle, grant
 // negotiation, intervention claims, and reset requests. Nothing
-// high-bandwidth ever touches these RPCs (pixels ride the media plane);
-// nothing stateful ever touches the media plane.
+// high-bandwidth ever touches these RPCs (pixels ride the media plane), with
+// exactly one bounded exception: FrameStill stills on StreamObservations,
+// rate-capped by the declared StreamPolicy.still_fps (flag
+// waddle.v0.obs.stills) — never video. Nothing stateful ever touches the
+// media plane.
 //
 // Service shape decisions (normative rationale in docs/FSM.md):
 //   - ClaimEpisode / HandoffLease are UNARY: atomic decisions with an
@@ -121,7 +124,8 @@ message NegotiateResponse {
 }
 
 // ---------------------------------------------------------------------------
-// Observations (control-plane summaries; pixels ride the media plane)
+// Observations (control-plane summaries; pixels ride the media plane, with
+// one bounded exception: FrameStill, flag waddle.v0.obs.stills)
 // ---------------------------------------------------------------------------
 
 message ProprioSample {
@@ -145,12 +149,26 @@ message FrameNotice {
   string stream_id = 3;
 }
 
+// A single encoded still for agent perception (flag waddle.v0.obs.stills).
+// Shares FrameNotice's per-camera sequence numbering; the rate is bounded by
+// the camera's declared StreamPolicy.still_fps. This is NOT a video path —
+// LiveKit media remains the only video transport.
+message FrameStill {
+  string camera = 1;
+  uint64 frame_seq = 2;
+  CameraEncoding encoding = 3;
+  uint32 width = 4;
+  uint32 height = 5;
+  bytes data = 6;
+}
+
 message ObservationUpdate {
   int64 t_ns = 1;
   oneof payload {
     ProprioSample proprio = 2;
     TimeSeriesSample series = 3;
     FrameNotice frame = 4;
+    FrameStill still = 5;  // flag waddle.v0.obs.stills
   }
 }
 
@@ -237,6 +255,7 @@ message GateServerMessage {
     GrantStatusChange grant_change = 4;
     EpisodeDirective episode = 5;
     ResetWindowDirective reset_window = 6; // flag waddle.v0.reset.remote
+    AgentTaskUpdate agent_update = 7;      // flag waddle.v0.agent
   }
 }
 
@@ -266,6 +285,40 @@ message ResetWindowDirective {
   // Flag waddle.v0.plane.acks: correlation id for a DirectiveAck. The SDK
   // emits an ack only when this is set AND the flag was negotiated;
   // fire-and-forget remains valid for planes that don't set ids.
+  optional string directive_id = 5;
+}
+
+// ---------------------------------------------------------------------------
+// Agent task updates (flag waddle.v0.agent)
+// ---------------------------------------------------------------------------
+//
+// Status of an agent-invited episode, plane → SDK. The invite itself is an
+// EpisodeEvent (agent_invite, episode.proto) and reaches the plane through
+// the existing uplink; the invited agent claims, engages, streams chunks,
+// and finishes through the EXISTING intervention machinery (ClaimDirective,
+// intervention_chunk, EpisodeDirective). This message adds status only,
+// never authority.
+
+enum AgentTaskUpdateKind {
+  AGENT_TASK_UPDATE_KIND_UNSPECIFIED = 0;
+  // The invite was advertised to the agent fleet.
+  AGENT_TASK_UPDATE_KIND_QUEUED = 1;
+  // The task will never run (reason in detail). Legal only before an agent
+  // engages; a DENIED after ENGAGE is rejected (docs/FSM.md row E26b).
+  AGENT_TASK_UPDATE_KIND_DENIED = 2;
+  // Informational: the task finished; recording_ref carries an opaque
+  // Waddle-side recording reference.
+  AGENT_TASK_UPDATE_KIND_COMPLETED = 3;
+}
+
+message AgentTaskUpdate {
+  string episode_id = 1;
+  AgentTaskUpdateKind kind = 2;
+  string detail = 3;
+  // Opaque Waddle-side recording reference; set on COMPLETED.
+  string recording_ref = 4;
+  // Flag waddle.v0.plane.acks: present only when acks are in use and this
+  // update answers a specific request.
   optional string directive_id = 5;
 }
 
