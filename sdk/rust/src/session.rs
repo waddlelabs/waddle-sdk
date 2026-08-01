@@ -138,6 +138,10 @@ impl PySession {
         let opts = EpisodeOptions {
             pre_reset,
             post_reset,
+            // Append-proof against runtime-side EpisodeOptions growth; the
+            // Python surface for `agent_invite` (flag `waddle.v0.agent`)
+            // lands with the connected-build stage.
+            ..EpisodeOptions::default()
         };
         let session = self.inner.clone();
         let task = task.to_owned();

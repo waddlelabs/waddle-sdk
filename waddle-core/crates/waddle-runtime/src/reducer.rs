@@ -690,6 +690,11 @@ impl Reducer {
             .episode
             .as_ref()
             .is_some_and(|e| e.post_reset_failed);
+        // Agent-invited progress (flag `waddle.v0.agent`): published so a
+        // caller blocked in `Session::run_agent` (mirror-watch, like the
+        // reset waits) can observe invited → engaged → terminal.
+        let agent_invited = self.fsm.episode.as_ref().is_some_and(|e| e.agent_invited);
+        let agent_engaged = self.fsm.episode.as_ref().is_some_and(|e| e.agent_engaged);
         let gate_mode = Some(self.fsm.gate_mode);
         let claim_active = self.fsm.claim.is_some();
         let provenance = claim_active.then(|| self.claim_provenance());
@@ -703,6 +708,8 @@ impl Reducer {
             s.outcome = outcome;
             s.pinned_outcome = pinned_outcome;
             s.post_reset_failed = post_reset_failed;
+            s.agent_invited = agent_invited;
+            s.agent_engaged = agent_engaged;
             s.plane_connected = plane_connected;
         });
     }

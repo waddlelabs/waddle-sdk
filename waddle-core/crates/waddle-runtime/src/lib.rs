@@ -17,13 +17,17 @@ pub mod session;
 pub mod verbs;
 
 pub use media_uplink::{FrameData, FramePixels};
-pub use mirror::{ResetProgressPhase, ResetProgressStatus, Status};
+pub use mirror::{AgentTaskKind, AgentTaskStatus, ResetProgressPhase, ResetProgressStatus, Status};
 pub use pumps::STALL_THRESHOLD_NS;
 pub use session::{
-    EePose, Episode, EpisodeOptions, ProprioReport, ResetHook, ResetSpec, Session, SessionBuilder,
-    grant_and_engage, release_claim, reset_window_complete, reset_window_engage,
+    AgentOutcome, EePose, Episode, EpisodeOptions, ProprioReport, ResetHook, ResetSpec, Session,
+    SessionBuilder, grant_and_engage, release_claim, reset_window_complete, reset_window_engage,
 };
+// The invite payload `EpisodeOptions::agent_invite` carries is waddle-fsm's
+// own type (the FSM is the authority on what an invite is — hollow
+// frontend); re-exported so runtime callers need not name the fsm crate.
 pub use verbs::{ControlRegistry, EstopDecl, SendVerb, UnitVerb, VerbDispatch, VerbError};
+pub use waddle_fsm::AgentInvite;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RuntimeError {

@@ -13,7 +13,7 @@ use std::sync::mpsc::Sender;
 use std::thread::JoinHandle;
 
 use waddle_controlplane::{ClientConfig, ControlPlaneClient, ControlTransport};
-use waddle_fsm::{Phase, SessionConfig, SessionEvent, WindowSpec};
+use waddle_fsm::{AgentInvite, Phase, SessionConfig, SessionEvent, WindowSpec};
 use waddle_gate::gate::{Gate, GateOutput, GateShared};
 use waddle_gate::jitter::TimedAction;
 use waddle_gate::plan::GatePlan;
@@ -37,6 +37,12 @@ use crate::mirror::Mirror;
 use crate::pumps;
 use crate::reducer::Reducer;
 use crate::verbs::{ControlRegistry, VerbDispatch, VerbOutcome};
+
+/// Flag `waddle.v0.agent` (VERSIONING.md registry): declared at Register
+/// unconditionally, like `crate::ack::ACKS_FLAG` — the SDK always supports
+/// being agent-driven; the plane routes invites only when it accepted the
+/// flag.
+pub(crate) const AGENT_FLAG: &str = "waddle.v0.agent";
 
 /// How resets run until the closed reset planner is wired: a callable
 /// returning (ok, verified). The default reports ok+verified — honest only
@@ -127,6 +133,42 @@ impl std::fmt::Debug for ResetSpec {
 pub struct EpisodeOptions {
     pub pre_reset: Option<Option<ResetSpec>>,
     pub post_reset: Option<Option<ResetSpec>>,
+    /// Open this episode agent-invited (flag `waddle.v0.agent`, FSM.md E23):
+    /// the invite is emitted to the plane at open — like any other emission
+    /// — and the invite deadline (`AgentInviteTimeout`, E25) is armed. The
+    /// invited agent then drives through the EXISTING claim machinery (C8
+    /// restricts admission to `ACTOR_KIND_AGENT`, nothing else changes);
+    /// the caller's own `gate()` ticks never dispatch while no claim is
+    /// engaged (E24, `NOOP_REASON_AGENT_EPISODE`).
+    ///
+    /// [`Session::run_agent`] is the blocking convenience that sets this;
+    /// setting it directly opens the episode WITHOUT blocking — the caller
+    /// keeps the [`Episode`] handle and watches `done()`/`outcome()` (or the
+    /// mirror's `agent_invited`/`agent_engaged`) themselves.
+    pub agent_invite: Option<AgentInvite>,
+}
+
+/// The result of one agent-driven episode ([`Session::run_agent`], flag
+/// `waddle.v0.agent`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentOutcome {
+    /// The episode's terminal outcome — the FSM's word, not the plane's:
+    /// SUCCESS/FAILURE per the plane's `MARK_DONE`, ABORT for an invite
+    /// timeout (FSM.md E25) or a pre-engage DENIED (E26),
+    /// ABORTED_RETAKE when a retake successor replaced the episode.
+    pub outcome: TerminalOutcome,
+    pub episode_id: EpisodeId,
+    /// The opaque Waddle-side recording reference from an
+    /// `AgentTaskUpdate{COMPLETED}` addressed to this episode. Retention is
+    /// best-effort by design: the plane pump processes updates and
+    /// directives in arrival order, so a plane that sends COMPLETED before
+    /// `MARK_DONE` (the expected ordering) always lands it here; a
+    /// COMPLETED arriving only after TERMINAL was observed is not waited
+    /// for.
+    pub recording_ref: Option<String>,
+    /// The last `AgentTaskUpdate.detail` addressed to this episode (a
+    /// DENIED's reason, or COMPLETED's summary). Empty when none arrived.
+    pub detail: String,
 }
 
 /// Hand-off slot for the gate-record consumer: born on the caller thread
@@ -466,32 +508,34 @@ impl SessionBuilder {
         // note on `grant_and_engage`).
         let intervention_wired =
             self.media.is_some() || self.control.hold.is_some() || self.control.send.is_some();
+        // The one shared engage-path verb check (see `missing_engage_verb`
+        // for the effective-handoff degrade it encodes); the error prose
+        // stays call-site so a build failure names the wiring that made the
+        // path live.
+        let engage_verb_gap = missing_engage_verb(
+            self.handoff,
+            robot.action_space.contains_delta(),
+            self.control.hold.is_some(),
+            self.control.send.is_some(),
+        );
         if intervention_wired {
-            // Same degrade `begin_engage` applies at engage time (FSM.md
-            // §5): under a delta action space, a declared IMMEDIATE becomes
-            // HOLD_FIRST for the first engage. Gate the `hold` requirement on
-            // that effective policy, not the raw declared enum variant.
-            let effective_handoff = match self.handoff {
-                HandoffPolicy::Immediate { .. } if robot.action_space.contains_delta() => {
-                    HandoffPolicy::HoldFirst
+            match engage_verb_gap {
+                Some("hold") => {
+                    return Err(RuntimeError::MissingVerb {
+                        verb: "hold",
+                        required_by: "handoff HOLD_FIRST",
+                        remedy: "choose a different handoff policy",
+                    });
                 }
-                other => other,
-            };
-            if matches!(effective_handoff, HandoffPolicy::HoldFirst) && self.control.hold.is_none()
-            {
-                return Err(RuntimeError::MissingVerb {
-                    verb: "hold",
-                    required_by: "handoff HOLD_FIRST",
-                    remedy: "choose a different handoff policy",
-                });
-            }
-            if self.control.send.is_none() {
-                return Err(RuntimeError::MissingVerb {
-                    verb: "send",
-                    required_by: "a wired media plane or a registered `hold` verb \
-                                  (bypass/intervention dispatch)",
-                    remedy: "remove that wiring",
-                });
+                Some(_) => {
+                    return Err(RuntimeError::MissingVerb {
+                        verb: "send",
+                        required_by: "a wired media plane or a registered `hold` verb \
+                                      (bypass/intervention dispatch)",
+                        remedy: "remove that wiring",
+                    });
+                }
+                None => {}
             }
         }
         let estop_unregistered = self.control.estop.is_none();
@@ -545,10 +589,16 @@ impl SessionBuilder {
         // transport is configured — safe unconditionally, since emission
         // additionally requires the plane to accept the flag AND the
         // directive to carry a `directive_id` (see `crate::ack`).
+        // `waddle.v0.agent` rides the same rule: the SDK always supports
+        // being agent-driven (the invite machinery is config-free — an
+        // `EpisodeOptions.agent_invite` needs nothing declared at build
+        // time), and the plane routes invites only when it accepted the
+        // flag at Register.
         let mut feature_flags = vec![
             "waddle.v0.core".to_owned(),
             "waddle.v0.reset".to_owned(),
             ACKS_FLAG.to_owned(),
+            AGENT_FLAG.to_owned(),
         ];
         if self.post_reset.is_some() {
             feature_flags.push("waddle.v0.reset.phases".to_owned());
@@ -758,6 +808,7 @@ impl SessionBuilder {
                 task_slot,
                 pre_reset: self.pre_reset,
                 post_reset: self.post_reset,
+                agent_verb_gap: engage_verb_gap,
                 inline_reset_owner,
                 episode_reset_specs,
                 verification_mode: self.verification_mode,
@@ -770,6 +821,62 @@ impl SessionBuilder {
             }),
         })
     }
+}
+
+/// Assemble a [`AgentOutcome`] from the terminal mirror snapshot: the
+/// retained `AgentTaskUpdate` contributes `recording_ref`/`detail` only
+/// when it addresses THIS episode (`agent_task` is never cleared at close —
+/// a stale predecessor's COMPLETED must not leak into a later episode's
+/// result).
+fn assemble_agent_outcome(
+    outcome: TerminalOutcome,
+    id: EpisodeId,
+    status: &crate::mirror::Status,
+) -> AgentOutcome {
+    let (recording_ref, detail) = match &status.agent_task {
+        Some(task) if task.episode_id == id.as_str() => (
+            (!task.recording_ref.is_empty()).then(|| task.recording_ref.clone()),
+            task.detail.clone(),
+        ),
+        _ => (None, String::new()),
+    };
+    AgentOutcome {
+        outcome,
+        episode_id: id,
+        recording_ref,
+        detail,
+    }
+}
+
+/// Which engage-path verb is missing (if any): the ONE validation behind
+/// both `SessionBuilder::build`'s build-time check (applied when an engage
+/// path is visibly wired — see the `build` rustdoc) and
+/// [`Session::run_agent`]'s call-time precondition (an accepted agent invite
+/// IS a live engage path, whether or not one was visible at build time).
+///
+/// Encodes the same degrade `waddle_fsm::begin_engage` applies at engage
+/// time (FSM.md §5): under a delta action space, a declared IMMEDIATE
+/// becomes HOLD_FIRST for the first engage, so the `hold` requirement keys
+/// on that effective policy, not the raw declared enum variant. `send` is
+/// required regardless of handoff policy — the bypass pump drives it
+/// directly once a claimed loop stalls.
+fn missing_engage_verb(
+    declared: HandoffPolicy,
+    space_contains_delta: bool,
+    hold_registered: bool,
+    send_registered: bool,
+) -> Option<&'static str> {
+    let effective = match declared {
+        HandoffPolicy::Immediate { .. } if space_contains_delta => HandoffPolicy::HoldFirst,
+        other => other,
+    };
+    if matches!(effective, HandoffPolicy::HoldFirst) && !hold_registered {
+        return Some("hold");
+    }
+    if !send_registered {
+        return Some("send");
+    }
+    None
 }
 
 fn robot_digest(robot: &pb::RobotDescription) -> String {
@@ -795,6 +902,14 @@ struct SessionInner {
     task_slot: TaskSlot,
     pre_reset: Option<ResetSpec>,
     post_reset: Option<ResetSpec>,
+    /// [`Session::run_agent`]'s call-time precondition, computed once at
+    /// build time by the same `missing_engage_verb` check `build` applies
+    /// when an engage path is visibly wired. `Some` only for the
+    /// fully-unwired shape build deliberately lets through (no media plane,
+    /// neither `hold` nor `send` registered — the descriptors-only case):
+    /// inviting an agent on such a session must fail loudly here instead of
+    /// stalling undiagnosably at the agent's first engage.
+    agent_verb_gap: Option<&'static str>,
     /// See [`ResetOwnerSlot`]; shared with the reset pump.
     inline_reset_owner: ResetOwnerSlot,
     /// See [`ResetSpecSlot`]; shared with the reset pump.
@@ -945,7 +1060,10 @@ impl Session {
             post_reset: post_reset_declared,
             pre_window,
             post_window,
-            agent_invite: None,
+            // E23 (flag `waddle.v0.agent`): the FSM emits the invite and
+            // arms its deadline; everything else about the open is
+            // unchanged (see `EpisodeOptions::agent_invite`).
+            agent_invite: opts.agent_invite,
             at: now,
         });
 
@@ -1011,6 +1129,106 @@ impl Session {
             gate,
             started: false,
         })
+    }
+
+    /// Ask Waddle to drive one episode (flag `waddle.v0.agent`): opens an
+    /// agent-invited episode through the normal start path (`prompt` is both
+    /// the invite prompt and the episode task), then BLOCKS — mirror-watch,
+    /// like the reset waits — until the episode reaches TERMINAL (through
+    /// `Phase::PostReset` when a post-reset is declared: the outcome is
+    /// pinned at entry, but "returns" here means the whole pipeline is
+    /// done). Zero new authority: the invited agent claims with the
+    /// EXISTING intervention machinery (C8 restricts admission to
+    /// `ACTOR_KIND_AGENT`), its chunks ride the EXISTING
+    /// `intervention_chunk` intake, and the plane finishes with the
+    /// EXISTING `MARK_DONE`/`RELEASE` directives.
+    ///
+    /// The caller's blocked thread + the session's pumps are the actuation
+    /// carrier — the same doctrine as a remote (teleop) reset window: this
+    /// thread never ticks, so once the agent's claim engages, the
+    /// claimed-while-stalled BYPASS pump drives the registered `send`
+    /// directly. That is why the same verb preconditions the
+    /// supervised/bypass path requires apply here (a registered `send`, and
+    /// `hold` under the effective HOLD_FIRST handoff — the shared
+    /// `missing_engage_verb` check): a session without them would accept
+    /// the invite and then stall undiagnosably at the agent's first engage.
+    ///
+    /// `timeout_ns` is the invite deadline (FSM.md E25): if no agent claim
+    /// engages in time, the episode aborts and this returns
+    /// `AgentOutcome { outcome: ABORT, .. }`. A plane
+    /// `AgentTaskUpdate{DENIED}` before engage aborts the same way, with
+    /// the plane's detail (E26); QUEUED/COMPLETED updates are informational
+    /// (COMPLETED's `recording_ref`/`detail` come back on the
+    /// [`AgentOutcome`]). `opts.agent_invite` is overwritten by this call;
+    /// the reset overrides pass through unchanged.
+    pub fn run_agent(
+        &self,
+        prompt: &str,
+        timeout_ns: i64,
+        opts: EpisodeOptions,
+    ) -> Result<AgentOutcome, RuntimeError> {
+        if let Some(verb) = self.inner.agent_verb_gap {
+            return Err(RuntimeError::MissingVerb {
+                verb,
+                required_by: "run_agent (an agent invite is a live engage path)",
+                remedy: "wire the robot's control before inviting an agent",
+            });
+        }
+        let opts = EpisodeOptions {
+            agent_invite: Some(AgentInvite {
+                prompt: prompt.to_owned(),
+                timeout_ns,
+            }),
+            ..opts
+        };
+        let episode = match self.start_episode_with(prompt, opts) {
+            Ok(episode) => episode,
+            // The invite deadline (or a plane DENIED) can close the episode
+            // while `start_episode_with` is still blocked in RESETTING —
+            // e.g. under a pre-reset hook slower than the invite timeout.
+            // E25/E26 are E10-trigger members, so that is a legitimate agent
+            // outcome (ABORT), not a reset failure: recover it from the
+            // mirror instead of surfacing an error for a state this call's
+            // contract covers.
+            Err(RuntimeError::ResetFailed(detail)) => {
+                let s = self.status();
+                if let (Some(id), Some(Phase::Terminal(outcome)), true) =
+                    (s.episode_id.clone(), s.episode_state, s.agent_invited)
+                {
+                    return Ok(assemble_agent_outcome(outcome, id, &s));
+                }
+                return Err(RuntimeError::ResetFailed(detail));
+            }
+            Err(err) => return Err(err),
+        };
+        let id = episode.id().clone();
+        // READY → RUNNING without the caller modeling gate ticks: E7 admits
+        // the agent's engage from RUNNING only, and this thread is about to
+        // block instead of ticking E6's "first gated action" — `Start` is
+        // the FSM's own seam for exactly this shape.
+        self.inject(SessionEvent::Start {
+            at: self.inner.clock.stamp_now().mono_ns(),
+        });
+        // `episode` (and with it the gate-record ring) stays alive across
+        // the whole wait; unblock on TERMINAL for this id, or on the episode
+        // being replaced (a retake successor — the predecessor's Terminal
+        // snapshot can be transient).
+        let status = self.inner.mirror.wait_until(|s| {
+            s.episode_id.as_ref() != Some(&id)
+                || matches!(s.episode_state, Some(Phase::Terminal(_)))
+        });
+        drop(episode);
+        if status.shutdown {
+            return Err(RuntimeError::ShuttingDown);
+        }
+        let outcome = match (&status.episode_id, status.episode_state) {
+            (Some(current), Some(Phase::Terminal(outcome))) if current == &id => outcome,
+            // Replaced by a successor: the predecessor closed
+            // ABORTED_RETAKE (C5) even when its transient terminal snapshot
+            // was missed between mirror reads.
+            _ => TerminalOutcome::AbortedRetake,
+        };
+        Ok(assemble_agent_outcome(outcome, id, &status))
     }
 
     /// True once `id` is no longer the live, still-rolling episode — because

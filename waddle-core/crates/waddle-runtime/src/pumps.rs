@@ -21,7 +21,9 @@ use waddle_types::{
 
 use crate::RuntimeError;
 use crate::ack::{ACKS_FLAG, AckGroup, Injected};
-use crate::mirror::{Mirror, ResetProgressPhase, ResetProgressStatus};
+use crate::mirror::{
+    AgentTaskKind, AgentTaskStatus, Mirror, ResetProgressPhase, ResetProgressStatus,
+};
 use crate::session::{
     EpisodeResetSpecs, ResetOwnerSlot, ResetSpec, ResetSpecSlot, StreamProducer, TaskSlot,
 };
@@ -132,9 +134,20 @@ pub(crate) fn spawn_bypass_pump(
 
                 match status.gate_mode {
                     Some(GateMode::Intervention) if status.claim_active => {
-                        if let Some(last) = last_tick
-                            && now.0 - last.0 > STALL_THRESHOLD_NS
-                        {
+                        // `None` means no tick has EVER landed on this
+                        // session's gate — definitionally stalled, not
+                        // exempt: an agent-invited episode driven through
+                        // `Session::run_agent` (flag `waddle.v0.agent`)
+                        // reaches RUNNING via `Start` with the caller's
+                        // thread blocked, so its very first engage must trip
+                        // this without waiting for a tick that will never
+                        // come. `Some` keeps the threshold contract
+                        // unchanged. Either way the FSM's own guard (engaged
+                        // claim, INTERVENTION phase) decides — this only
+                        // reports the stall.
+                        let stalled =
+                            last_tick.is_none_or(|last| now.0 - last.0 > STALL_THRESHOLD_NS);
+                        if stalled {
                             let _ = inject.send(SessionEvent::StallDetected { at: now }.into());
                         }
                     }
@@ -459,8 +472,8 @@ fn flatten_packet(packet: &pb::TeleopStreamPacket) -> Option<OwnedAction> {
 
 /// Plane events → FSM events (claim directives, episode directives,
 /// partitions, heartbeat-carried grant changes, reset-window directives,
-/// agent-chunk actuation — both the Reset-mode window actuation and the
-/// general Claimed-mode intake). Also the attachment point for
+/// agent task updates, agent-chunk actuation — both the Reset-mode window
+/// actuation and the general Claimed-mode intake). Also the attachment point for
 /// directive-ack correlation (flag `waddle.v0.plane.acks`): the
 /// pump tracks whether the plane accepted the flag at Register and, when it
 /// did, wraps id-carrying directives' events in a shared [`AckGroup`] the
@@ -813,6 +826,45 @@ fn forward_server_msg(
                              declared action space"
                         );
                     }
+                }
+            }
+            // Agent task updates (flag `waddle.v0.agent`): every update is
+            // retained on the mirror — QUEUED/COMPLETED are runtime-side
+            // information only, never FSM events (FSM.md §1.5), and
+            // COMPLETED's `recording_ref`/`detail` are what
+            // `Session::run_agent` assembles its result from. A DENIED
+            // addressed to the ACTIVE episode additionally dispatches
+            // `AgentTaskDenied`; the FSM alone picks E26 (invite open:
+            // abort) vs E26b (late: recorded-only rejection) — the
+            // episode-id filter here is addressing, never legality (a DENIED
+            // for some other episode has no event for the FSM to judge, so
+            // it stays mirror-only, exactly like the conformance runner's
+            // inert-record contract).
+            Some(pb::gate_server_message::Msg::AgentUpdate(update)) => {
+                let kind = AgentTaskKind::from_pb(update.kind);
+                mirror.update(|s| {
+                    s.agent_task = Some(AgentTaskStatus {
+                        episode_id: update.episode_id.clone(),
+                        kind,
+                        detail: update.detail.clone(),
+                        recording_ref: update.recording_ref.clone(),
+                    });
+                });
+                if kind == AgentTaskKind::Denied
+                    && mirror
+                        .read()
+                        .episode_id
+                        .as_ref()
+                        .is_some_and(|id| id.as_str() == update.episode_id)
+                {
+                    let ack = ack_group(acks_negotiated, update.directive_id.as_ref(), 1);
+                    let _ = inject.send(Injected {
+                        event: SessionEvent::AgentTaskDenied {
+                            detail: update.detail,
+                            at,
+                        },
+                        ack,
+                    });
                 }
             }
             _ => {}
