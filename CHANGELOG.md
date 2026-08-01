@@ -195,6 +195,13 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     and the interrupt path (a real `SIGINT` mid-run, asserting both that
     `KeyboardInterrupt` arrives promptly and that the session can open a
     fresh episode afterwards — i.e. the run really ended).
+- **sdk (`waddle.StreamPolicy(still_fps=…)`)**: the Python declaration for
+  control-plane stills (flag `waddle.v0.obs.stills`), which core has
+  honoured since the entry above but no Python program could ask for. `None`
+  (the default) and `0` both mean no stills, matching the wire; a negative
+  rate is rejected as a shape error. It compiles to the `stillFps` key, held
+  to that by a round trip through core's own robot-JSON decode rather than
+  by a hand-written expectation.
 - **waddle-protocol (fixture `remote_reset_caller_tick_noop`)**: pins FSM.md
   E20's caller-tick marker, previously asserted by no golden — a `gate_tick`
   during an ENGAGED remote reset window returns

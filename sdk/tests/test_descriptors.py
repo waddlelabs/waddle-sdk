@@ -216,6 +216,43 @@ def test_uplink_validates_positive_fps_and_kbps():
         waddle.Uplink(fps=15.0, encoding="h264", max_kbps=0)
 
 
+def test_stream_policy_still_fps_compiles_and_is_absent_by_default():
+    # The control-plane stills declaration (flag `waddle.v0.obs.stills`):
+    # a distinct key from the media plane's `uplink.fps`, and absent
+    # entirely unless declared — an undeclared camera must not start
+    # putting pictures on the control plane.
+    assert waddle.StreamPolicy(local_full_rate=True)._compile() == {"localFullRate": True}
+    assert waddle.StreamPolicy(still_fps=2)._compile() == {"stillFps": 2.0}
+    both = waddle.StreamPolicy(
+        still_fps=2, uplink=waddle.Uplink(fps=15, encoding="rgb8")
+    )._compile()
+    assert both == {
+        "stillFps": 2.0,
+        "uplink": {"fps": 15.0, "encoding": "CAMERA_ENCODING_RGB8"},
+    }
+    with pytest.raises(ValueError, match="still_fps"):
+        waddle.StreamPolicy(still_fps=-1.0)
+
+
+def test_still_fps_survives_the_round_trip_into_core():
+    # The compiled key has to be the one the wire spells (`stillFps`), or
+    # core's own JSON decode rejects the robot — the whole point of
+    # declaring it in Python.
+    robot = waddle.Robot(
+        name="stills-bot",
+        action_space=waddle.JointSpace(joints=["j0"], rate_hz=20),
+        cameras={
+            "wrist": waddle.Camera(
+                width=320,
+                height=240,
+                fps=20,
+                stream_policy=waddle.StreamPolicy(still_fps=2.0),
+            )
+        },
+    )
+    _core.validate_robot_json(json.dumps(robot._compile([])))
+
+
 def test_frame_transform_pins_wxyz_order():
     # A quarter-turn about y: distinct w/x/y/z values so a transposition
     # (e.g. xyzw written into wxyz slots) is caught, not just a symmetric
