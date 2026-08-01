@@ -59,7 +59,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     `agent_invite_timeout_post_reset`, `agent_invite_denied`,
     `agent_invite_denied_after_engage`, `agent_invite_wrong_actor_denied`,
     `agent_invite_denied_in_post_reset`), all listing `waddle.v0.agent` in
-    `requires_features`. `scenario-format.md` gains the `episode_open`
+    `requires_features`; a ninth, `agent_invite_retake_successor`, arrives
+    with the E24 re-projection fix below. `scenario-format.md` gains the `episode_open`
     `agent_invite` key, the `agent_task_update` inject kind (the update
     nests as a canonical `waddle.v0.AgentTaskUpdate` under `update`, the
     shape `reset_result` already uses — the message's own `kind` field
@@ -839,6 +840,38 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   in the episode MCAP; callers no longer see the ring.
 
 ### Fixed
+- **`waddle-fsm` — the E24 agent-episode gate plan is now re-projected
+  whenever its inputs move, not only when the gate MODE does**: the gate plan
+  is derived state, and plan derivers (the runtime reducer, the conformance
+  target) re-derive it only when they see `Effect::SetGateMode`. E24's Noop
+  plan also depends on the EPISODE (agent-invited, phase), so any row that
+  moved that without touching the mode left every deriver holding a stale
+  plan. **The reachable failure**: an agent-invited episode closed by a
+  **retake** (C5 — the claim survives, so the shared run-closing block skips
+  the re-projection it does on a claim-releasing close) handed its
+  born-claimed successor, a NORMAL episode, the predecessor's Noop plan; the
+  customer's own `gate()` ticks then returned
+  `Noop{NOOP_REASON_AGENT_EPISODE}` forever, with no fault — a control loop
+  that silently stops actuating. Retake is plane-reachable from the engage
+  timeout, and no fixture covered retake on an agent-invited episode, so
+  every gate stayed green. The mode-unchanged re-projection now happens
+  centrally, in the one place every row funnels through (`Ctx::finish`,
+  keyed on the FSM-owned plan inputs `(gate_mode, agent_episode_noop())`),
+  replacing the two per-row pushes that covered only episode open and
+  claim-releasing closes; new session invariant **I20** asserts it for every
+  step of the random walk, and the new fixture
+  `agent_invite_retake_successor` pins the retake path end to end. E24's
+  scope also gained INTERVENTION — the *engage window*, where the handoff is
+  in flight, the gate is still PASSTHROUGH and nothing is engaged yet, so
+  E24's own guard ("no engaged claim") holds: the predicate said otherwise
+  while the installed plan noop'd, and the plan was right. **FSM.md**'s E24
+  row stated `RUNNING` alone in its From column while the implementation (and
+  the fixtures) also noop'd in RESETTING and READY; it now states the full
+  set, and §1.5 says outright that the plan is scoped to the episode it was
+  derived for and must be re-derived when the episode state behind it moves
+  — a second implementation can no longer dispatch the caller's actions
+  inside an agent-invited episode's reset, or keep noop'ing after it, and
+  still pass the suite.
 - **The bypass pump exempted a never-ticked gate from stall detection, so an
   engaged claim in a session whose gate never ticks would have gone undriven
   forever**: `spawn_bypass_pump` only reported a stall when a previous

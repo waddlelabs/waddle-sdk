@@ -75,18 +75,38 @@ impl SessionFsm {
     /// gate plan derived for PASSTHROUGH is `Noop{AGENT_EPISODE}` instead of
     /// a pass. True exactly when a plan deriver (waddle-runtime's reducer,
     /// the conformance target) must render the agent-episode Noop plan for
-    /// gate mode PASSTHROUGH. Scoped to {RESETTING, READY, RUNNING}:
-    /// POST_RESET and TERMINAL return the caller's loop to ordinary
-    /// passthrough, and an engaged claim (gate INTERVENTION/BYPASS/RESET)
-    /// never derives from this — ordinary intervention semantics, BYPASS
-    /// eligibility included, apply unchanged.
+    /// gate mode PASSTHROUGH. Scoped to the episode's RUN — {RESETTING,
+    /// READY, RUNNING, INTERVENTION}: an engaged claim (gate
+    /// INTERVENTION/BYPASS/RESET) never derives from this, so ordinary
+    /// intervention semantics (BYPASS eligibility included) apply unchanged,
+    /// but INTERVENTION with the gate still PASSTHROUGH is the *engage
+    /// window* — the handoff is in flight and no claim is engaged yet, so
+    /// E24's guard still holds and the caller's ticks still must not
+    /// dispatch. POST_RESET and TERMINAL return the caller's loop to
+    /// ordinary passthrough: the run is over, and its cleanup (or the
+    /// successor) is the caller's to drive.
     #[must_use]
     pub fn agent_episode_noop(&self) -> bool {
         self.gate_mode == GateMode::Passthrough
             && self.episode.as_ref().is_some_and(|e| {
                 e.agent_invited
-                    && matches!(e.phase, Phase::Resetting | Phase::Ready | Phase::Running)
+                    && matches!(
+                        e.phase,
+                        Phase::Resetting | Phase::Ready | Phase::Running | Phase::Intervention(_)
+                    )
             })
+    }
+
+    /// The gate-plan inputs the FSM owns: the mode, plus E24's agent-episode
+    /// predicate. Plan derivers (waddle-runtime's reducer, the conformance
+    /// target) project a plan from the post-step FSM, but they only do it
+    /// when they see an `Effect::SetGateMode` — so every step that changes
+    /// this pair must leave one in its effect list or a deriver keeps a
+    /// stale plan forever. `Ctx::finish` enforces that centrally; no row has
+    /// to remember. (Provenance and blend are the derivers' own inputs and
+    /// only reach plans that a mode change already installs.)
+    fn gate_plan_inputs(&self) -> (GateMode, bool) {
+        (self.gate_mode, self.agent_episode_noop())
     }
 }
 
@@ -114,6 +134,8 @@ struct Ctx<'c> {
     cfg: &'c SessionConfig,
     s: SessionFsm,
     effects: Vec<Effect>,
+    /// `SessionFsm::gate_plan_inputs` as the step began; `finish` compares.
+    plan_inputs_at_entry: (GateMode, bool),
 }
 
 impl Ctx<'_> {
@@ -182,15 +204,11 @@ impl Ctx<'_> {
     ) {
         if release_claim && self.s.gate_mode != GateMode::Passthrough {
             self.set_gate(at, GateMode::Passthrough, reason);
-        } else if release_claim && self.episode().agent_invited {
-            // E24 (§1.5): leaving {RESETTING, READY, RUNNING} ends the
-            // agent-episode Noop plan even when the gate MODE was already
-            // PASSTHROUGH (no claim engaged at close) — push the
-            // mode-unchanged effect so plan derivers re-project from the
-            // post-transition state. Emission-invisible (no GateModeChange).
-            self.effects
-                .push(Effect::SetGateMode(GateMode::Passthrough));
         }
+        // E24 (§1.5): closing the run also ends the agent-episode Noop plan
+        // when the gate MODE never moved (no claim engaged at close, or a
+        // retake whose claim survives). `Ctx::finish` re-projects for that
+        // — it watches the plan inputs for every row at once.
         self.transition(at, to, reason, outcome);
         if release_claim && let Some(claim) = self.s.claim.take() {
             let ep = self.episode().id.clone();
@@ -632,7 +650,26 @@ impl Ctx<'_> {
         self.effects.push(Effect::MintLeaseToken(pending));
     }
 
-    fn finish(self) -> Step {
+    /// Close the step, restoring the derived-state invariant plan derivers
+    /// depend on: if this step changed `gate_plan_inputs` but left no
+    /// `Effect::SetGateMode` carrying the final mode, push the
+    /// mode-unchanged one now. Derivers project from the post-step FSM, so
+    /// the effect re-projects correctly whatever produced the change; it is
+    /// emission-invisible (no `GateModeChange` — `set_gate` owns that).
+    /// Without this a row that flips E24's predicate without touching the
+    /// gate MODE (an agent invite opening, an agent-invited run closing —
+    /// including one closed by a retake, whose claim survives) would leave
+    /// the caller's ticks noop'ing, or dispatching, forever.
+    fn finish(mut self) -> Step {
+        let last_mode = self.effects.iter().rev().find_map(|e| match e {
+            Effect::SetGateMode(mode) => Some(*mode),
+            _ => None,
+        });
+        if self.s.gate_plan_inputs() != self.plan_inputs_at_entry
+            && last_mode != Some(self.s.gate_mode)
+        {
+            self.effects.push(Effect::SetGateMode(self.s.gate_mode));
+        }
         Step {
             next: self.s,
             effects: self.effects,
@@ -674,6 +711,7 @@ pub fn step(
         cfg,
         s: state.clone(),
         effects: Vec::new(),
+        plan_inputs_at_entry: state.gate_plan_inputs(),
     };
 
     // Helper guards -------------------------------------------------------
@@ -732,14 +770,9 @@ pub fn step(
                     id: TimerId::AgentInviteTimeout,
                     deadline: at.saturating_add(invite.timeout_ns),
                 });
-                // The gate plan is derived state: an agent-invited episode's
-                // PASSTHROUGH projects to Noop{AGENT_EPISODE} (E24) even
-                // though the gate MODE never changes at open — push the
-                // mode-unchanged effect so plan derivers re-project.
-                // Emission-invisible (no GateModeChange).
-                if ctx.s.gate_mode == GateMode::Passthrough {
-                    ctx.effects.push(Effect::SetGateMode(GateMode::Passthrough));
-                }
+                // The E24 plan turns on here even though the gate MODE never
+                // changes at open; `Ctx::finish` pushes the mode-unchanged
+                // re-projection for that.
             }
             // E19 (PRE): a declared remote pre window opens on entry — but not
             // for a born-claimed successor, whose surviving claim keeps the

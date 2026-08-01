@@ -183,10 +183,22 @@ blocking ask-an-agent call can distinguish "the ask was declined or went
 unanswered" from "the episode broke for unrelated reasons" without parsing
 termination reasons. Emission-invisible state, like `agent_engaged`.
 
+E24's Noop plan is **derived state scoped to the episode it was derived
+for**: it holds while THAT episode is in {RESETTING, READY, RUNNING,
+INTERVENTION} with no engaged claim, and ends the instant the episode leaves
+that set — including into POST_RESET, where the caller drives the cleanup.
+A successor episode that was not opened agent-invited dispatches its
+caller's ticks normally, and that holds for a born-claimed retake successor
+(C5) too: the surviving claim carries the predecessor's gate arrangement
+across the boundary, never its invite (`agent_invite_retake_successor`).
+An implementation that caches the plan MUST re-derive it whenever the
+episode state behind these conditions moves, not only when the gate mode
+does.
+
 | # | From | Trigger | Guard | To | Effects / emissions | Fixture |
 |---|---|---|---|---|---|---|
 | E23 | (open) | `episode_open{agent_invite}` | E1 guard (no other episode active in session) | RESETTING | E1's effect set, plus emission `agent_invite{prompt, timeout_ns}` and `arm_timer{agent_invite_timeout, deadline = open + timeout_ns}` | `agent_invite_happy` |
-| E24 | RUNNING | `gate_tick` | episode agent-invited ∧ no engaged claim | unchanged | the caller's action NEVER dispatches: the gate plan is Noop with reason `NOOP_REASON_AGENT_EPISODE` (no fault, no state change). With an engaged claim, ordinary intervention semantics apply unchanged — substitution flows through `gate()` as ever | `agent_caller_tick_noop` |
+| E24 | RESETTING, READY, RUNNING, or INTERVENTION | `gate_tick` | episode agent-invited ∧ no engaged claim (gate mode PASSTHROUGH; INTERVENTION with the gate still PASSTHROUGH is the *engage window* — the handoff is in flight and nothing is engaged yet) | unchanged | the caller's action NEVER dispatches: the gate plan is Noop with reason `NOOP_REASON_AGENT_EPISODE` (no fault, no state change). With an engaged claim, ordinary intervention semantics apply unchanged — substitution flows through `gate()` as ever. POST_RESET and TERMINAL are outside this row: the run is over, and its cleanup (or the successor) is the caller's to drive | `agent_caller_tick_noop`, `agent_invite_retake_successor` |
 | E25 | RESETTING, READY, or RUNNING | `timer{agent_invite_timeout}` | invite open (no agent claim has ENGAGEd; E7 cancels this timer) | from RESETTING or READY: TERMINAL{ABORT}; from RUNNING: TERMINAL{ABORT} per E10, or POST_RESET{ABORT pinned} per E14 when post-reset declared ∧ not yet entered | termination carries detail "no agent engaged"; the taken route's effect set applies verbatim (E10's, or E14's with the outcome pinned to ABORT) | `agent_invite_timeout`, `agent_invite_timeout_post_reset` |
 | E26 | RESETTING, READY, or RUNNING | `agent_update{DENIED}` | invite open (no agent claim has ENGAGEd) | routes exactly as E25: from RESETTING or READY TERMINAL{ABORT}; from RUNNING per E10, or per E14 when post-reset declared ∧ not yet entered | `cancel_timer{agent_invite_timeout}`; termination carries the update's detail; the taken route's effect set applies verbatim | `agent_invite_denied` |
 | E26b | any non-TERMINAL | `agent_update{DENIED}` | invite not open (an agent claim has ENGAGEd, or the episode already left {RESETTING, READY, RUNNING} — e.g. a plane DENIED racing a pre-engage E14 into POST_RESET) | unchanged (rejected) | none — a late DENIED is recorded as an event only, never a transition; a pinned outcome is untouched | `agent_invite_denied_after_engage`, `agent_invite_denied_in_post_reset` |

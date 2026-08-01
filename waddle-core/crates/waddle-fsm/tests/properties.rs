@@ -32,6 +32,11 @@
 //! 19. `invite_aborted ⇒ agent_invited ∧ ¬agent_engaged` (§1.5: only E25/E26
 //!     latch it, and both require the invite open), and it is monotone
 //!     within an episode.
+//! 20. Gate-plan re-projection: any step that changes the FSM-owned gate-plan
+//!     inputs — `(gate_mode, agent_episode_noop())` — leaves an
+//!     `Effect::SetGateMode` carrying the step's FINAL mode. Plan derivers
+//!     re-project only on that effect, so without it a deriver keeps a stale
+//!     plan (the caller's ticks noop'ing, or dispatching, forever).
 
 use std::collections::HashSet;
 
@@ -356,6 +361,10 @@ impl Driver {
         } else {
             None
         };
+        // I20: the gate plan is DERIVED state, re-projected by plan derivers
+        // only when they see `Effect::SetGateMode` — captured BEFORE the
+        // event so the pair can be compared across the step.
+        let plan_inputs_before = (self.state.gate_mode, self.state.agent_episode_noop());
         match first {
             Err(Rejected { .. }) => {
                 // Rejections never mutate: nothing to fold in.
@@ -412,6 +421,24 @@ impl Driver {
                          PostReset{{ABORT pinned}}, got {:?} (pinned {:?})",
                         ep.phase,
                         ep.pinned_outcome
+                    );
+                }
+
+                // I20: the plan inputs moved ⇒ this step's effects carry a
+                // re-projection for the mode it ended in. A stale plan is
+                // invisible to the FSM's own state assertions — this is the
+                // only place it can be caught.
+                let plan_inputs_after = (self.state.gate_mode, self.state.agent_episode_noop());
+                if plan_inputs_after != plan_inputs_before {
+                    let last_mode = s.effects.iter().rev().find_map(|e| match e {
+                        Effect::SetGateMode(mode) => Some(*mode),
+                        _ => None,
+                    });
+                    assert_eq!(
+                        last_mode,
+                        Some(self.state.gate_mode),
+                        "I20: gate-plan inputs moved {plan_inputs_before:?} -> \
+                         {plan_inputs_after:?} without a SetGateMode re-projection"
                     );
                 }
 

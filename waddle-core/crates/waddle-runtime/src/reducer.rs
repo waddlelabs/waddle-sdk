@@ -271,6 +271,11 @@ impl Reducer {
     fn apply_effect(&mut self, effect: Effect, self_tx: &Sender<Injected>) {
         match effect {
             Effect::SetGateMode(mode) => {
+                // Not always a mode CHANGE: the FSM also emits this
+                // mode-unchanged to re-project a plan whose non-mode inputs
+                // moved (E24's agent-episode Noop plan — an invite opening,
+                // an agent-invited run closing). The plan is derived from
+                // the post-step FSM either way.
                 let plan = self.plan_for(mode);
                 self.gate_shared.store_plan(plan);
                 // The transition back to PASSTHROUGH is the one point every
@@ -285,7 +290,12 @@ impl Reducer {
                 // ended; left alone it would sit there until some LATER,
                 // unrelated claim/window starts polling the ring and pop it
                 // under THAT claimant's mirror provenance (see
-                // `jitter.rs`'s module doc and `StreamIntake::clear`).
+                // `jitter.rs`'s module doc and `StreamIntake::clear`). The
+                // re-projections above land here too, and the same reasoning
+                // holds: an invite opening has an empty ring, and a run
+                // closing (retake included — its claim survives, but into a
+                // successor that resets the scene first) leaves nothing an
+                // intervenor could still legitimately want dispatched.
                 if mode == GateMode::Passthrough {
                     self.gate_shared.stream.lock().clear();
                 }
