@@ -1,0 +1,43 @@
+{
+  "format": "waddle.behavior/v0",
+  "name": "agent_invite_denied_after_engage",
+  "description": "Pins FSM.md E26b's engaged branch and §1.5's latch: once the invited agent's claim ENGAGEs (E7 — invite closed, timer cancelled, agent_engaged latched), a plane DENIED is rejected outright — no state emission, phase unchanged; after the agent releases (E8, back to RUNNING) the invite STAYS closed (agent_engaged never resets, the invite timer is never re-armed), so a second DENIED in RUNNING is equally inert; the episode then terminates normally with the outcome the denials never touched.",
+  "target": "fsm",
+  "requires_features": ["waddle.v0.core", "waddle.v0.agent"],
+  "setup": {
+    "lease_enforcement": "LEASE_ENFORCEMENT_ENFORCED",
+    "handoff": { "immediate": { "blendNs": "0" } },
+    "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING"
+  },
+  "steps": [
+    { "inject": { "kind": "episode_open", "episode_id": "ep-ade-0001", "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING", "agent_invite": { "prompt": "restock the shelf", "timeout_ns": "10000000000" } } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "reset_result", "result": { "ok": true, "strategy": "scripted_home", "verification": { "mode": "RESET_VERIFICATION_MODE_BLOCKING", "verified": true, "judgeId": "judge-reset", "judgeVersion": "2.1.0", "score": 0.95, "tNs": "100000000" } } } },
+    { "inject": { "kind": "start" } },
+
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "claim_granted", "claim": { "claimId": "claim-ade-0001", "episodeId": "ep-ade-0001", "actor": { "kind": "ACTOR_KIND_AGENT", "id": "agent-waddle-1", "displayName": "Waddle agent" }, "sourceName": "waddle-agent", "selfInitiated": false, "tGrantedNs": "200000000", "handoff": { "immediate": { "blendNs": "0" } }, "spaces": ["SPACE_KIND_EE_POSE_DELTA"] } } },
+    { "inject": { "kind": "engage", "claim_id": "claim-ade-0001", "initiator": "ACTOR_KIND_AGENT" } },
+    { "expect_emission": { "effect": { "cancel_timer": { "timer_id": "agent_invite_timeout" } }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_INTERVENTION", "episode.agent_engaged": true } },
+
+    { "inject": { "kind": "agent_task_update", "update": { "episodeId": "ep-ade-0001", "kind": "AGENT_TASK_UPDATE_KIND_DENIED", "detail": "stale denial racing the engage" } } },
+    { "expect_no_emission": { "event": { "state": {} }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_INTERVENTION", "episode.agent_engaged": true } },
+
+    { "advance_ns": "300000000" },
+    { "expect_state": { "episode.intervention_phase": "INTERVENTION_PHASE_SETTLE" } },
+    { "inject": { "kind": "release", "claim_id": "claim-ade-0001" } },
+    { "expect_emission": { "event": { "state": { "to": "EPISODE_STATE_RUNNING", "reason": "release" } }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RUNNING", "episode.agent_engaged": true, "claim.active_claim_id": "" } },
+    { "expect_no_emission": { "effect": { "arm_timer": { "timer_id": "agent_invite_timeout" } }, "within_ns": "0" } },
+
+    { "inject": { "kind": "agent_task_update", "update": { "episodeId": "ep-ade-0001", "kind": "AGENT_TASK_UPDATE_KIND_DENIED", "detail": "second denial after release" } } },
+    { "expect_no_emission": { "event": { "state": {} }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RUNNING" } },
+
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "terminate", "outcome": "TERMINAL_OUTCOME_SUCCESS", "reason": "task done" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_TERMINAL", "episode.outcome": "TERMINAL_OUTCOME_SUCCESS" } }
+  ]
+}

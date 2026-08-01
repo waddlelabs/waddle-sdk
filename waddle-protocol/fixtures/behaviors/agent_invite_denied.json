@@ -1,0 +1,32 @@
+{
+  "format": "waddle.behavior/v0",
+  "name": "agent_invite_denied",
+  "description": "Pins FSM.md E26 and §1.5's informational updates: an agent_task_update{QUEUED} is recorded, never a transition (no state emission, RUNNING unchanged); a DENIED arriving while the invite is still open (no agent claim ever engaged) is a member of E10's trigger set with fixed outcome ABORT — the episode terminates with the update's detail as the reason and close_run cancels the still-armed agent_invite_timeout on the way out.",
+  "target": "fsm",
+  "requires_features": ["waddle.v0.core", "waddle.v0.agent"],
+  "setup": {
+    "lease_enforcement": "LEASE_ENFORCEMENT_ENFORCED",
+    "handoff": { "immediate": { "blendNs": "0" } },
+    "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING"
+  },
+  "steps": [
+    { "inject": { "kind": "episode_open", "episode_id": "ep-aid-0001", "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING", "agent_invite": { "prompt": "load the dishwasher", "timeout_ns": "10000000000" } } },
+    { "expect_emission": { "effect": { "arm_timer": { "timer_id": "agent_invite_timeout", "deadline_ns": "10000000000" } }, "within_ns": "0" } },
+
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "reset_result", "result": { "ok": true, "strategy": "scripted_home", "verification": { "mode": "RESET_VERIFICATION_MODE_BLOCKING", "verified": true, "judgeId": "judge-reset", "judgeVersion": "2.1.0", "score": 0.95, "tNs": "100000000" } } } },
+    { "inject": { "kind": "start" } },
+    { "expect_emission": { "event": { "state": { "to": "EPISODE_STATE_RUNNING" } }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RUNNING", "episode.agent_invited": true } },
+
+    { "inject": { "kind": "agent_task_update", "update": { "episodeId": "ep-aid-0001", "kind": "AGENT_TASK_UPDATE_KIND_QUEUED", "detail": "queued for agent pool" } } },
+    { "expect_no_emission": { "event": { "state": {} }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RUNNING" } },
+
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "agent_task_update", "update": { "episodeId": "ep-aid-0001", "kind": "AGENT_TASK_UPDATE_KIND_DENIED", "detail": "no agent available for this task" } } },
+    { "expect_emission": { "event": { "state": { "to": "EPISODE_STATE_TERMINAL", "outcome": "TERMINAL_OUTCOME_ABORT", "reason": "no agent available for this task" } }, "within_ns": "0" } },
+    { "expect_emission": { "effect": { "cancel_timer": { "timer_id": "agent_invite_timeout" } }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_TERMINAL", "episode.outcome": "TERMINAL_OUTCOME_ABORT", "episode.agent_engaged": false } }
+  ]
+}

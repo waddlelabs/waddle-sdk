@@ -1,0 +1,26 @@
+{
+  "format": "waddle.behavior/v0",
+  "name": "agent_invite_timeout",
+  "description": "Pins FSM.md E25 without post-reset declared: the agent_invite_timeout timer armed at open (E23) fires in RUNNING with no agent claim ever engaged, and — as a member of E10's trigger set with fixed outcome ABORT — terminates the episode directly: state{→TERMINAL, ABORT} carrying detail 'no agent engaged', with E10's effect set applying verbatim.",
+  "target": "fsm",
+  "requires_features": ["waddle.v0.core", "waddle.v0.agent"],
+  "setup": {
+    "lease_enforcement": "LEASE_ENFORCEMENT_ENFORCED",
+    "handoff": { "immediate": { "blendNs": "0" } },
+    "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING"
+  },
+  "steps": [
+    { "inject": { "kind": "episode_open", "episode_id": "ep-ait-0001", "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING", "agent_invite": { "prompt": "fold the towels", "timeout_ns": "5000000000" } } },
+    { "expect_emission": { "event": { "agentInvite": { "prompt": "fold the towels", "timeoutNs": "5000000000" } }, "within_ns": "0" } },
+    { "expect_emission": { "effect": { "arm_timer": { "timer_id": "agent_invite_timeout", "deadline_ns": "5000000000" } }, "within_ns": "0" } },
+
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "reset_result", "result": { "ok": true, "strategy": "scripted_home", "verification": { "mode": "RESET_VERIFICATION_MODE_BLOCKING", "verified": true, "judgeId": "judge-reset", "judgeVersion": "2.1.0", "score": 0.95, "tNs": "100000000" } } } },
+    { "inject": { "kind": "start" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RUNNING", "episode.agent_invited": true, "episode.agent_engaged": false } },
+
+    { "advance_ns": "4900000000" },
+    { "expect_emission": { "event": { "state": { "to": "EPISODE_STATE_TERMINAL", "outcome": "TERMINAL_OUTCOME_ABORT", "reason": "no agent engaged" } }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_TERMINAL", "episode.outcome": "TERMINAL_OUTCOME_ABORT", "episode.agent_engaged": false } }
+  ]
+}
