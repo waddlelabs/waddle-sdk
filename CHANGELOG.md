@@ -721,6 +721,19 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   in the episode MCAP; callers no longer see the ring.
 
 ### Fixed
+- **`waddle-fsm` — a wrong-actor grant on an agent-invited episode now
+  records `claim{DENIED}` (FSM.md C8) instead of being silently dropped**:
+  C8 specifies "any other actor's grant is rejected, `claim{DENIED}`" — the
+  plane already sent GRANT, so the SDK's refusal must go on the timeline —
+  but the reference FSM returned a bare rejection and emitted nothing, and
+  the `agent_invite_wrong_actor_denied` fixture asserted only the absence of
+  a GRANTED emission, so a spec-following implementation (emitting DENIED)
+  and a silently-dropping one both passed conformance. The refusal now
+  emits `ClaimEvent{DENIED, detail}` with no state change (same shape as the
+  stale reset-engage mint's `lease{DENIED}`; the first production emitter of
+  `CLAIM_EVENT_KIND_DENIED`), the fixture asserts the emission, and the FSM
+  lifecycle smoke test walks it. C6's wrong-actor rejection stays silent —
+  its row never specified a DENIED record and its released golden pins that.
 - **`waddle-fsm` — a `reset_window_complete` racing an in-flight engage
   lease mint panicked the reducer thread and hung every blocked caller**:
   E20's lease routing is asynchronous (the runtime answers

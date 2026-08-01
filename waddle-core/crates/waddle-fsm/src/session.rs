@@ -880,14 +880,30 @@ pub fn step(
                 }
             } else if ctx.episode().agent_invited && *actor != ActorKind::Agent {
                 // C8 (§1.5): an agent-invited episode admits ACTOR_KIND_AGENT
-                // only; any other actor's grant is rejected. Reset-window
-                // claims stay C6's business (the branch above): an
-                // agent-invited episode with a declared teleop reset window
-                // still admits the teleoperator's reset claim in
-                // RESETTING/POST_RESET.
-                return Err(rejected(
+                // only; any other actor's grant is refused. Unlike most guard
+                // failures the refusal is RECORDED, not silently dropped —
+                // the plane already sent GRANT, so a `claim{DENIED}` puts the
+                // SDK's refusal on the timeline (FSM.md C8; same shape as the
+                // stale-mint `lease{DENIED}`). No state changes: the
+                // claim never becomes active. Reset-window claims stay C6's
+                // business (the branch above): an agent-invited episode with
+                // a declared teleop reset window still admits the
+                // teleoperator's reset claim in RESETTING/POST_RESET.
+                let refused = ActiveClaim {
+                    id: id.clone(),
+                    source: source.clone(),
+                    actor: *actor,
+                    self_initiated: *self_initiated,
+                };
+                let ep = ctx.episode().id.clone();
+                ctx.emit(emit::claim_event(
+                    *at,
+                    &ep,
+                    pb::ClaimEventKind::Denied,
+                    &refused,
                     "agent-invited episode admits ACTOR_KIND_AGENT only (C8)",
                 ));
+                return Ok(ctx.finish());
             }
             let claim = ActiveClaim {
                 id: id.clone(),

@@ -210,6 +210,7 @@ fn render(effect: &Effect) -> String {
             Some(pb::episode_event::Event::ResetWindow(w)) => {
                 format!("reset_window kind={}", w.kind)
             }
+            Some(pb::episode_event::Event::Claim(c)) => format!("claim kind={}", c.kind),
             _ => "emit other".to_owned(),
         },
         _ => "effect other".to_owned(),
@@ -1129,9 +1130,21 @@ fn agent_invite_lifecycle_smoke() {
         "E24: RUNNING with no engaged claim never dispatches"
     );
 
-    // C8: a teleoperator grant is rejected; the agent's is admitted.
+    // C8: a teleoperator grant is refused — no active claim, and the
+    // refusal is RECORDED as `claim{DENIED}` (the plane already sent GRANT,
+    // so the SDK's refusal goes on the timeline); the agent's is admitted.
+    let claim_denied = pb::ClaimEventKind::Denied as i32;
+    let denied_marker = format!("claim kind={claim_denied}");
+    assert!(
+        d.index_of(|s| s == denied_marker).is_none(),
+        "no claim{{DENIED}} before the wrong-actor grant"
+    );
     d.run(&Cmd::ClaimGranted { agent: false });
     assert!(d.state.claim.is_none(), "C8 rejects a non-AGENT grant");
+    assert!(
+        d.index_of(|s| s == denied_marker).is_some(),
+        "C8 records the refusal as claim{{DENIED}}"
+    );
     d.run(&Cmd::ClaimGranted { agent: true });
     assert!(d.state.claim.is_some(), "C8 admits the AGENT grant");
 

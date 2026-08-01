@@ -1,7 +1,7 @@
 {
   "format": "waddle.behavior/v0",
   "name": "agent_invite_wrong_actor_denied",
-  "description": "Pins FSM.md C8: an agent-invited episode admits ACTOR_KIND_AGENT claims only — a TELEOPERATOR claim_granted in RUNNING is rejected outright (no ClaimEvent{GRANTED} emission, no active claim, episode unaffected, the invite stays open); a subsequent AGENT grant (the invited actor) is then admitted normally, showing the guard is actor-specific rather than a blanket rejection.",
+  "description": "Pins FSM.md C8: an agent-invited episode admits ACTOR_KIND_AGENT claims only — a TELEOPERATOR claim_granted in RUNNING is rejected AND the refusal is recorded as ClaimEvent{DENIED} (the plane already sent GRANT, so the SDK's refusal goes on the timeline; no ClaimEvent{GRANTED}, no active claim, episode unaffected, the invite stays open); a subsequent AGENT grant (the invited actor) is then admitted normally, showing the guard is actor-specific rather than a blanket rejection.",
   "target": "fsm",
   "requires_features": ["waddle.v0.core", "waddle.v0.agent"],
   "setup": {
@@ -17,6 +17,7 @@
     { "expect_state": { "episode.state": "EPISODE_STATE_RUNNING", "episode.agent_invited": true } },
 
     { "inject": { "kind": "claim_granted", "claim": { "claimId": "claim-awa-wrong", "episodeId": "ep-awa-0001", "actor": { "kind": "ACTOR_KIND_TELEOPERATOR", "id": "top-7", "displayName": "Teleoperator 7" }, "sourceName": "teleop", "selfInitiated": false } } },
+    { "expect_emission": { "event": { "claim": { "kind": "CLAIM_EVENT_KIND_DENIED", "claim": { "claimId": "claim-awa-wrong" } } }, "within_ns": "0" } },
     { "expect_no_emission": { "event": { "claim": { "kind": "CLAIM_EVENT_KIND_GRANTED" } }, "within_ns": "0" } },
     { "expect_state": { "claim.active_claim_id": "", "episode.state": "EPISODE_STATE_RUNNING", "episode.agent_engaged": false } },
 
