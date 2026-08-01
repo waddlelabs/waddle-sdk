@@ -14,6 +14,20 @@ publish = false
 [lib]
 crate-type = ["cdylib"]
 
+# Connected builds. NO default features: the featureless shim is what plain
+# `cargo clippy`/`check` and the offline (recording-only) wheel build, and it
+# must stay tokio- and libwebrtc-free. Each feature only turns on the
+# corresponding core transport — the shim itself grows kwargs, never logic.
+# `waddle-runtime/{grpc,livekit}` are the same leaf features by another name;
+# naming both keeps the intent readable if runtime's own wiring ever grows.
+[features]
+grpc = [
+    "dep:waddle-controlplane",
+    "waddle-controlplane/tonic-transport",
+    "waddle-runtime/grpc",
+]
+livekit = ["waddle-media/livekit", "waddle-runtime/livekit"]
+
 [dependencies]
 pyo3 = { version = "0.29", features = ["abi3-py310"] }
 numpy = "0.29"
@@ -24,3 +38,7 @@ waddle-types = { path = "../../waddle-core/crates/waddle-types" }
 waddle-gate = { path = "../../waddle-core/crates/waddle-gate" }
 waddle-sidecar = { path = "../../waddle-core/crates/waddle-sidecar" }
 waddle-media = { path = "../../waddle-core/crates/waddle-media" }
+# Only the `grpc` feature needs this directly: waddle-runtime takes an
+# `Arc<dyn ControlTransport>` and deliberately does not re-export the tonic
+# constructor, so `grpc::connect(GrpcConfig)` is reached from here.
+waddle-controlplane = { path = "../../waddle-core/crates/waddle-controlplane", optional = true }

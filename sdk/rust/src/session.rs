@@ -8,9 +8,12 @@
 //! | `Episode::terminate`               | mirror condvar                  | detach (mandatory) |
 //! | `Session::shutdown`                | joins core threads; the verb thread is waited on transitively (the outcome pump only exits once verb dispatch drops its sender) | detach (mandatory — the verb thread may be inside `Python::try_attach` waiting for the GIL we hold: classic deadlock) |
 //! | `Episode::gate`, `done`, `outcome` | nothing                         | keep GIL |
+//! | `Session::agent`                   | a whole agent-driven episode    | detach in short slices (see [`PySession::agent`]) |
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc::{RecvTimeoutError, channel};
+use std::time::Duration;
 
 use bytes::Bytes;
 use numpy::{PyArray3, PyArrayMethods, PyUntypedArrayMethods};
@@ -20,14 +23,15 @@ use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use waddle_media::{DataTopic, LoopbackFarEnd, LoopbackMedia};
 use waddle_runtime::{
-    ControlRegistry, EePose, EpisodeOptions, EstopDecl, FrameData, ProprioReport, Session,
+    AgentOutcome, ControlRegistry, EePose, EpisodeOptions, EstopDecl, FrameData, ProprioReport,
+    Session,
 };
-use waddle_types::ActorKind;
 use waddle_types::pb::v0 as pb;
+use waddle_types::{ActorKind, TerminalOutcome};
 
 use crate::convert::{
-    extract_f64s, parse_enforcement, parse_handoff, parse_reset_spec, parse_robot_json,
-    parse_verification_mode, runtime_err,
+    extract_f64s, outcome_str, parse_enforcement, parse_handoff, parse_reset_spec,
+    parse_robot_json, parse_verification_mode, runtime_err,
 };
 use crate::episode::PyEpisode;
 use crate::verbs::{PySend, PyUnit};
@@ -36,6 +40,101 @@ use crate::verbs::{PySend, PyUnit};
 /// `TeleopReset`/`AgentReset` default, used whenever a caller declares a
 /// remote reset phase without an explicit timeout.
 const DEFAULT_RESET_TIMEOUT_NS: i64 = 600_000_000_000;
+
+/// How long each GIL-released slice of [`PySession::agent`]'s wait lasts
+/// before the calling thread reattaches to run Python's pending signal
+/// handlers. Short enough that Ctrl-C reads as immediate, long enough that
+/// an episode running for minutes costs nothing to wait on.
+const AGENT_POLL_SLICE: Duration = Duration::from_millis(50);
+
+/// The result of one agent-driven episode — a verbatim marshalling of
+/// `waddle_runtime::AgentOutcome` (flag `waddle.v0.agent`). Every field is
+/// core's word: this class computes nothing.
+#[pyclass(name = "AgentResult", frozen, skip_from_py_object)]
+pub(crate) struct AgentResult {
+    /// "success" | "failure" | "abort" | "aborted_retake" — the same
+    /// spelling `Episode.outcome` uses.
+    #[pyo3(get)]
+    outcome: &'static str,
+    #[pyo3(get)]
+    episode_id: String,
+    /// The opaque Waddle-side recording reference from the plane's
+    /// `AgentTaskUpdate{COMPLETED}`, when one arrived for this episode.
+    #[pyo3(get)]
+    recording_ref: Option<String>,
+    /// The plane's last `AgentTaskUpdate.detail` for this episode (a
+    /// DENIED's reason, or COMPLETED's summary); empty when none arrived.
+    #[pyo3(get)]
+    detail: String,
+}
+
+impl From<AgentOutcome> for AgentResult {
+    fn from(outcome: AgentOutcome) -> Self {
+        Self {
+            outcome: outcome_str(outcome.outcome),
+            episode_id: outcome.episode_id.to_string(),
+            recording_ref: outcome.recording_ref,
+            detail: outcome.detail,
+        }
+    }
+}
+
+#[pymethods]
+impl AgentResult {
+    fn __repr__(&self) -> String {
+        format!(
+            "AgentResult(outcome={:?}, episode_id={:?}, recording_ref={:?}, detail={:?})",
+            self.outcome, self.episode_id, self.recording_ref, self.detail
+        )
+    }
+}
+
+/// Build one episode's [`EpisodeOptions`] from the eight per-phase reset
+/// kwargs `start_episode` and `agent` share. `None` for a `*_kind` inherits
+/// the session default for that phase (see [`PySession::start_episode`]);
+/// pure kwarg-to-type mapping, zero reset logic.
+#[allow(clippy::too_many_arguments)]
+fn episode_options(
+    pre_reset_kind: Option<&str>,
+    pre_reset_hook: Option<Py<PyAny>>,
+    pre_reset_prompt: Option<&str>,
+    pre_reset_timeout_ns: i64,
+    post_reset_kind: Option<&str>,
+    post_reset_hook: Option<Py<PyAny>>,
+    post_reset_prompt: Option<&str>,
+    post_reset_timeout_ns: i64,
+) -> PyResult<EpisodeOptions> {
+    let pre_reset = pre_reset_kind
+        .map(|kind| {
+            parse_reset_spec(
+                "pre_reset",
+                kind,
+                pre_reset_hook,
+                pre_reset_prompt,
+                pre_reset_timeout_ns,
+            )
+        })
+        .transpose()?;
+    let post_reset = post_reset_kind
+        .map(|kind| {
+            parse_reset_spec(
+                "post_reset",
+                kind,
+                post_reset_hook,
+                post_reset_prompt,
+                post_reset_timeout_ns,
+            )
+        })
+        .transpose()?;
+    Ok(EpisodeOptions {
+        pre_reset,
+        post_reset,
+        // Append-proof against runtime-side EpisodeOptions growth.
+        // `agent_invite` is NOT set here: `Session::run_agent` owns it (it
+        // is the invite, not an episode option a caller composes).
+        ..EpisodeOptions::default()
+    })
+}
 
 #[pyclass(name = "Session", frozen)]
 pub(crate) struct PySession {
@@ -77,6 +176,24 @@ impl PySession {
             )
         })
     }
+
+    /// Request an abort of the live agent-invited episode — what a Ctrl-C
+    /// during [`PySession::agent`] means. The single mirror snapshot only
+    /// NAMES the episode this call is waiting on (both fields come from the
+    /// same read, and `agent_invited` stays readable through TERMINAL); the
+    /// abort itself is the core operation `Episode.terminate()` already
+    /// exposes, and the core makes it a no-op once that episode is no
+    /// longer the live one or its outcome is already pinned.
+    fn abort_live_agent_episode(&self, py: Python<'_>) {
+        let status = self.inner.status();
+        let Some(id) = status.episode_id.filter(|_| status.agent_invited) else {
+            return;
+        };
+        py.detach(|| {
+            self.inner
+                .terminate_episode(&id, TerminalOutcome::Abort, "keyboard interrupt")
+        });
+    }
 }
 
 #[pymethods]
@@ -113,42 +230,132 @@ impl PySession {
         post_reset_prompt: Option<&str>,
         post_reset_timeout_ns: i64,
     ) -> PyResult<PyEpisode> {
-        let pre_reset = pre_reset_kind
-            .map(|kind| {
-                parse_reset_spec(
-                    "pre_reset",
-                    kind,
-                    pre_reset_hook,
-                    pre_reset_prompt,
-                    pre_reset_timeout_ns,
-                )
-            })
-            .transpose()?;
-        let post_reset = post_reset_kind
-            .map(|kind| {
-                parse_reset_spec(
-                    "post_reset",
-                    kind,
-                    post_reset_hook,
-                    post_reset_prompt,
-                    post_reset_timeout_ns,
-                )
-            })
-            .transpose()?;
-        let opts = EpisodeOptions {
-            pre_reset,
-            post_reset,
-            // Append-proof against runtime-side EpisodeOptions growth; the
-            // Python surface for `agent_invite` (flag `waddle.v0.agent`)
-            // lands with the connected-build stage.
-            ..EpisodeOptions::default()
-        };
+        let opts = episode_options(
+            pre_reset_kind,
+            pre_reset_hook,
+            pre_reset_prompt,
+            pre_reset_timeout_ns,
+            post_reset_kind,
+            post_reset_hook,
+            post_reset_prompt,
+            post_reset_timeout_ns,
+        )?;
         let session = self.inner.clone();
         let task = task.to_owned();
         let episode = py
             .detach(move || session.start_episode_with(&task, opts))
             .map_err(runtime_err)?;
         Ok(PyEpisode::new(episode))
+    }
+
+    /// Ask Waddle to drive one episode (flag `waddle.v0.agent`): opens an
+    /// agent-invited episode (`prompt` is both the invite prompt and the
+    /// episode task) and BLOCKS until it reaches a terminal outcome,
+    /// returning an [`AgentResult`]. `timeout_ns` is the invite deadline —
+    /// no agent claim engaged in time aborts the episode (FSM.md E25), as
+    /// does a plane DENIED before engage (E26). The reset kwargs are
+    /// `start_episode`'s, unchanged.
+    ///
+    /// While this blocks, the caller's thread is not ticking `gate()` —
+    /// that is the point: the invited agent claims through the EXISTING
+    /// intervention machinery and the core's bypass pump drives the
+    /// registered `send`. Everything about that lives in core; this method
+    /// marshals a prompt in and an outcome out.
+    ///
+    /// # Interruption
+    ///
+    /// `Session::run_agent` blocks for the whole episode (minutes), so it
+    /// runs on a dedicated `waddle-py-agent` thread while THIS thread waits
+    /// in short GIL-released slices, running Python's signal handlers
+    /// between them. A Ctrl-C therefore does not sit unheard until the
+    /// deadline: it asks the core to end the live agent-invited episode
+    /// (the same abort `Episode.terminate()` requests — the shim decides
+    /// nothing about the timeline, and the core no-ops if that episode is
+    /// no longer live), and re-requests it on every later signal. The call
+    /// still returns only once the core reports the run finished, so the
+    /// robot is never left driven by an agent whose caller has walked away,
+    /// and the thread is never orphaned; `KeyboardInterrupt` is raised then.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        prompt,
+        timeout_ns,
+        pre_reset_kind=None,
+        pre_reset_hook=None,
+        pre_reset_prompt=None,
+        pre_reset_timeout_ns=DEFAULT_RESET_TIMEOUT_NS,
+        post_reset_kind=None,
+        post_reset_hook=None,
+        post_reset_prompt=None,
+        post_reset_timeout_ns=DEFAULT_RESET_TIMEOUT_NS,
+    ))]
+    fn agent(
+        &self,
+        py: Python<'_>,
+        prompt: &str,
+        timeout_ns: i64,
+        pre_reset_kind: Option<&str>,
+        pre_reset_hook: Option<Py<PyAny>>,
+        pre_reset_prompt: Option<&str>,
+        pre_reset_timeout_ns: i64,
+        post_reset_kind: Option<&str>,
+        post_reset_hook: Option<Py<PyAny>>,
+        post_reset_prompt: Option<&str>,
+        post_reset_timeout_ns: i64,
+    ) -> PyResult<AgentResult> {
+        let opts = episode_options(
+            pre_reset_kind,
+            pre_reset_hook,
+            pre_reset_prompt,
+            pre_reset_timeout_ns,
+            post_reset_kind,
+            post_reset_hook,
+            post_reset_prompt,
+            post_reset_timeout_ns,
+        )?;
+        let session = self.inner.clone();
+        let prompt = prompt.to_owned();
+        let (tx, rx) = channel();
+        // Detached, not joined: the thread's last act is this send, so it
+        // is already unwinding by the time we read it — and joining while
+        // holding the GIL is exactly the deadlock shape `shutdown` warns
+        // about.
+        std::thread::Builder::new()
+            .name("waddle-py-agent".to_owned())
+            .spawn(move || {
+                let _ = tx.send(session.run_agent(&prompt, timeout_ns, opts));
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("failed to spawn the agent run: {e}")))?;
+
+        // The receiver is used only by this thread; the mutex is what makes
+        // it shareable into the detached wait at all (`Receiver` is Send,
+        // not Sync), never contention.
+        let rx = Mutex::new(rx);
+        let mut interrupt: Option<PyErr> = None;
+        loop {
+            match py.detach(|| rx.lock().recv_timeout(AGENT_POLL_SLICE)) {
+                Ok(result) => {
+                    // An interrupt that already landed wins over whatever
+                    // the (aborted) run reported — the caller asked to stop.
+                    return match interrupt {
+                        Some(err) => Err(err),
+                        None => result.map(AgentResult::from).map_err(runtime_err),
+                    };
+                }
+                Err(RecvTimeoutError::Timeout) => {
+                    if let Err(err) = py.check_signals() {
+                        self.abort_live_agent_episode(py);
+                        interrupt.get_or_insert(err);
+                    }
+                }
+                // The run thread died without reporting (a panic): there is
+                // no outcome to wait for.
+                Err(RecvTimeoutError::Disconnected) => {
+                    return Err(interrupt.unwrap_or_else(|| {
+                        PyRuntimeError::new_err("the agent run ended without an outcome")
+                    }));
+                }
+            }
+        }
     }
 
     /// Join all core threads and flush recorders. Idempotent; blocks with
@@ -374,6 +581,14 @@ impl PySession {
 
 /// Build the session. Every argument is plain data; the callables cross as
 /// opaque objects invoked only on the core's verb-dispatch thread.
+///
+/// `transport_url`/`media_url` (with their tokens — the plane mints both,
+/// this SDK never does) wire the CONNECTED build: the tonic control
+/// transport (`grpc` feature) and the LiveKit media plane (`livekit`). Both
+/// are compiled out by default; naming one a build does not carry raises
+/// rather than degrading to a silent offline session — losing supervision
+/// quietly is the one failure mode a supervision layer must not have.
+/// `_core.FEATURES` is how the Python layer sees which are present.
 #[pyfunction]
 #[allow(clippy::too_many_arguments)]
 #[pyo3(signature = (
@@ -400,6 +615,10 @@ impl PySession {
     post_reset_prompt=None,
     post_reset_timeout_ns=DEFAULT_RESET_TIMEOUT_NS,
     reset_verification="blocking",
+    transport_url=None,
+    transport_token=None,
+    media_url=None,
+    media_token=None,
 ))]
 pub(crate) fn create_session(
     py: Python<'_>,
@@ -426,6 +645,10 @@ pub(crate) fn create_session(
     post_reset_prompt: Option<&str>,
     post_reset_timeout_ns: i64,
     reset_verification: &str,
+    transport_url: Option<&str>,
+    transport_token: Option<&str>,
+    media_url: Option<&str>,
+    media_token: Option<&str>,
 ) -> PyResult<PySession> {
     let robot = parse_robot_json(robot_json)?;
     let handoff = parse_handoff(handoff_kind, handoff_ns)?;
@@ -445,6 +668,64 @@ pub(crate) fn create_session(
         post_reset_timeout_ns,
     )?;
     let verification = parse_verification_mode(reset_verification)?;
+
+    // Connected transports. The "this build has no such transport" refusal
+    // comes first: it is the actionable one, and it must never be reached
+    // by accident — a supervision session that silently ran offline because
+    // a URL was ignored is the failure mode this whole layer exists to
+    // prevent. (Python raises its own friendlier version before ever
+    // getting here; this is defence in depth for `_core` callers.)
+    #[cfg(not(feature = "grpc"))]
+    if transport_url.is_some() {
+        return Err(PyRuntimeError::new_err(
+            "transport_url requires a waddle-sdk built with the `grpc` feature; this build has \
+             none (see waddle._core.FEATURES)",
+        ));
+    }
+    #[cfg(not(feature = "livekit"))]
+    if media_url.is_some() {
+        return Err(PyRuntimeError::new_err(
+            "media_url requires a waddle-sdk built with the `livekit` feature; this build has \
+             none (see waddle._core.FEATURES)",
+        ));
+    }
+    if transport_token.is_some() && transport_url.is_none() {
+        return Err(PyValueError::new_err(
+            "transport_token was given without transport_url",
+        ));
+    }
+    if media_token.is_some() && media_url.is_none() {
+        return Err(PyValueError::new_err(
+            "media_token was given without media_url",
+        ));
+    }
+    if media_url.is_some() && media_token.is_none() {
+        return Err(PyValueError::new_err(
+            "media_url requires media_token: the supervision plane mints the room token, this \
+             SDK never does",
+        ));
+    }
+    if media_url.is_some() && testing_loopback {
+        return Err(PyValueError::new_err(
+            "media_url cannot be combined with testing_loopback: a session has exactly one media \
+             plane, and the loopback one replaces the real transport",
+        ));
+    }
+    // Gap J: a LiveKit track publishes at ONE declared resolution and every
+    // frame disagreeing with it is dropped, so declare each camera the
+    // robot itself declared — inheriting the 640x480 default would drop
+    // 100% of the frames of every other camera, silently.
+    #[cfg(feature = "livekit")]
+    let media_config = media_url.map(|url| {
+        robot.cameras.iter().fold(
+            waddle_media::livekit::LiveKitConfig::new(
+                url.to_owned(),
+                // Checked present above.
+                media_token.unwrap_or_default().to_owned(),
+            ),
+            |config, cam| config.with_track_resolution(&cam.name, cam.width, cam.height),
+        )
+    });
 
     let mut registry = ControlRegistry::default();
     if let Some(cb) = send {
@@ -490,8 +771,32 @@ pub(crate) fn create_session(
         builder = builder.media(media);
         testing_far = Some(Mutex::new(far));
     }
+    // Constructing the transport dials nothing (the core client owns
+    // connect/backoff/replay on its own thread), so this stays out of the
+    // detached region.
+    #[cfg(feature = "grpc")]
+    if let Some(url) = transport_url {
+        let mut config = waddle_controlplane::grpc::GrpcConfig::new(url);
+        if let Some(token) = transport_token {
+            config = config.with_token(token);
+        }
+        builder = builder.transport(waddle_controlplane::grpc::connect(config));
+    }
 
-    let session = py.detach(move || builder.build()).map_err(runtime_err)?;
+    let session = py
+        .detach(move || -> Result<Session, waddle_runtime::RuntimeError> {
+            #[cfg_attr(not(feature = "livekit"), allow(unused_mut))]
+            let mut builder = builder;
+            // `LiveKitMedia::connect` blocks on the signal handshake, so it
+            // belongs inside this GIL-released region with the core build,
+            // never before it.
+            #[cfg(feature = "livekit")]
+            if let Some(config) = media_config {
+                builder = builder.media(waddle_media::livekit::LiveKitMedia::connect(config)?);
+            }
+            builder.build()
+        })
+        .map_err(runtime_err)?;
     Ok(PySession {
         inner: session,
         closed: AtomicBool::new(false),

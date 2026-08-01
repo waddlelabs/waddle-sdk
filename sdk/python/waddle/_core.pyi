@@ -6,6 +6,13 @@ from typing import Any
 import numpy as np
 import numpy.typing as npt
 
+__version__: str
+
+# Which connected transports this build carries ("grpc", "livekit"); empty
+# for the offline (recording-only) build. The only feature detection the
+# Python layer is allowed to do.
+FEATURES: frozenset[str]
+
 class GateInfo:
     @property
     def kind(self) -> str: ...
@@ -43,6 +50,16 @@ class Episode:
     ) -> Any: ...
     def terminate(self, outcome: str = "abort", reason: str = "") -> None: ...
 
+class AgentResult:
+    @property
+    def outcome(self) -> str: ...
+    @property
+    def episode_id(self) -> str: ...
+    @property
+    def recording_ref(self) -> str | None: ...
+    @property
+    def detail(self) -> str: ...
+
 class Session:
     def start_episode(
         self,
@@ -56,6 +73,19 @@ class Session:
         post_reset_prompt: str | None = None,
         post_reset_timeout_ns: int = 600_000_000_000,
     ) -> Episode: ...
+    def agent(
+        self,
+        prompt: str,
+        timeout_ns: int,
+        pre_reset_kind: str | None = None,
+        pre_reset_hook: Callable | None = None,
+        pre_reset_prompt: str | None = None,
+        pre_reset_timeout_ns: int = 600_000_000_000,
+        post_reset_kind: str | None = None,
+        post_reset_hook: Callable | None = None,
+        post_reset_prompt: str | None = None,
+        post_reset_timeout_ns: int = 600_000_000_000,
+    ) -> AgentResult: ...
     def shutdown(self) -> None: ...
     def _testing_engage(self, claim_id: str, source: str) -> None: ...
     def _testing_release(self, claim_id: str) -> None: ...
@@ -91,5 +121,9 @@ def create_session(
     post_reset_prompt: str | None = None,
     post_reset_timeout_ns: int = 600_000_000_000,
     reset_verification: str = "blocking",
+    transport_url: str | None = None,
+    transport_token: str | None = None,
+    media_url: str | None = None,
+    media_token: str | None = None,
 ) -> Session: ...
 def validate_robot_json(json: str) -> None: ...

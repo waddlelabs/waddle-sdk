@@ -121,6 +121,48 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     Control-plane stills are also the first *droppable* history-free message
     class: see the `waddle-controlplane` entry under Fixed for how they are
     shed rather than buffered while a plane is unreachable or stalled.
+- **sdk (connected shim: transport features, `_core.FEATURES`,
+  `Session.agent`)**: the PyO3 shim can now be BUILT with the transports the
+  core has always been able to drive. Two cargo features, both off by
+  default — `grpc` (the tonic `ControlTransport`) and `livekit` (the media
+  plane) — plus four `create_session` kwargs
+  (`transport_url`/`transport_token`, `media_url`/`media_token`). A build
+  without the matching feature REFUSES the kwarg with an actionable error
+  instead of degrading to a silent offline session: quietly losing
+  supervision is the one failure mode this layer exists to prevent.
+  `_core.FEATURES` (a frozenset of the built feature names) is the only
+  feature detection the Python layer may do, and `_core.__version__`
+  reports the extension's own version. The shim gains kwargs, never logic.
+  - **Gap J fixed: every declared camera's resolution is now declared to
+    LiveKit** (`LiveKitConfig::with_track_resolution` for each
+    `RobotDescription.cameras` entry). A LiveKit track publishes at ONE
+    declared resolution and drops every frame that disagrees, so inheriting
+    the 640x480 default dropped 100% of the frames of every camera that was
+    not exactly 640x480 — silently, since a dropped frame is not an error.
+  - `Session.agent(prompt, timeout_ns, **reset overrides)` binds
+    `Session::run_agent` (flag `waddle.v0.agent`) and returns
+    `AgentResult { outcome, episode_id, recording_ref, detail }`, each field
+    core's word verbatim. It blocks for a whole episode, so the core call
+    runs on a dedicated `waddle-py-agent` thread while the calling thread
+    waits in 50 ms GIL-released slices and runs Python's signal handlers
+    between them. A Ctrl-C is therefore heard within a slice instead of at
+    the invite deadline; it asks the core to abort the live agent-invited
+    episode (the same abort `Episode.terminate()` requests — the shim
+    decides nothing about the timeline, and the core no-ops when that
+    episode is no longer live) and raises `KeyboardInterrupt` only once the
+    core reports the run finished, so no agent is left driving a robot
+    whose caller has walked away, and no thread is orphaned.
+  - `sdk/rust/Cargo.lock` pins the livekit crates to the set
+    `waddle-core/Cargo.lock` already resolves (livekit 0.7.52, -api 0.5.5,
+    -protocol 0.7.10, -common 0.1.0, -data-stream 0.1.0, -datatrack
+    0.1.11): the newest published set does not compile (livekit-api 0.5.6
+    is missing a field livekit-protocol 0.7.12 added). Keeping two
+    lockfiles honest is the standing cost of the shim's separate workspace.
+  - New pytest module `tests/test_agent.py` covers the probe's shape, the
+    refusals, an invite-timeout `agent()` returning `outcome == "abort"`,
+    and the interrupt path (a real `SIGINT` mid-run, asserting both that
+    `KeyboardInterrupt` arrives promptly and that the session can open a
+    fresh episode afterwards — i.e. the run really ended).
 - **waddle-protocol (fixture `remote_reset_caller_tick_noop`)**: pins FSM.md
   E20's caller-tick marker, previously asserted by no golden — a `gate_tick`
   during an ENGAGED remote reset window returns

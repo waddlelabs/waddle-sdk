@@ -105,11 +105,28 @@ top-level dirs; they are not built yet.
     and `cargo fmt --manifest-path rust/Cargo.toml --check` must be clean
     (this works because pyo3's `extension-module` feature lives only in
     `[tool.maturin].features`, never in Cargo.toml).
+  - The shim carries the core's two transport features, **off by default**:
+    `grpc` (adds a direct optional `waddle-controlplane` dep — runtime takes
+    an `Arc<dyn ControlTransport>` and does not re-export `grpc::connect`)
+    and `livekit`. They only turn transports on; the shim itself grows
+    kwargs (`create_session(transport_url=, transport_token=, media_url=,
+    media_token=)`), never logic. A build without a feature REFUSES the
+    matching kwarg rather than degrading to a silent offline session, and
+    `_core.FEATURES` (a frozenset) is the only feature detection the Python
+    layer may do. Clippy must be clean in three passes: featureless,
+    `--features grpc`, `--features grpc,livekit`. Build a connected
+    extension with `uv run maturin develop --uv --features grpc,livekit`.
   - `sdk/rust` is deliberately its **own cargo workspace** with path-deps into
     `../waddle-core/crates/*` — do NOT add it to the waddle-core workspace
     (extension-module would make plain `cargo test` unlinkable there and drag
     a Python-interpreter probe into core CI). Cost: a second lockfile/target
     dir. Path deps always build the working-tree core, so no version skew.
+    That second lockfile is why `sdk/rust/Cargo.lock` pins the livekit
+    crates to the set `waddle-core/Cargo.lock` resolves (livekit 0.7.52,
+    -api 0.5.5, -protocol 0.7.10, -common 0.1.0, -data-stream 0.1.0,
+    -datatrack 0.1.11): the newest published set does not compile
+    (livekit-api 0.5.6 against livekit-protocol 0.7.12). Pin in BOTH locks,
+    or the shim's `livekit` feature breaks while core's stays green.
   - The built extension (`python/waddle/_core*.so`) is a build artifact,
     never checked in.
 

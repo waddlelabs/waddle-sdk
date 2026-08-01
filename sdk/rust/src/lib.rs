@@ -5,11 +5,27 @@
 //! once. If an `if` about claims appears here, that is a defect.
 
 use pyo3::prelude::*;
+use pyo3::types::PyFrozenSet;
 
 mod convert;
 mod episode;
 mod session;
 mod verbs;
+
+/// Which connected transports this extension was compiled with — the ONLY
+/// feature-detection surface the Python layer may branch on (it decides
+/// which kwargs it can honor and what to say when it cannot; everything
+/// behind them stays core's). Names match the cargo features one-for-one:
+/// `"grpc"` (the tonic control transport), `"livekit"` (the media plane).
+fn built_features() -> Vec<&'static str> {
+    [
+        cfg!(feature = "grpc").then_some("grpc"),
+        cfg!(feature = "livekit").then_some("livekit"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}
 
 /// Parse a canonical proto3 JSON `waddle.v0.RobotDescription` and validate
 /// it against the domain layer. Raises `ValueError` with the underlying
@@ -25,10 +41,13 @@ fn validate_robot_json(json: &str) -> PyResult<()> {
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<session::PySession>()?;
+    m.add_class::<session::AgentResult>()?;
     m.add_class::<episode::PyEpisode>()?;
     m.add_class::<episode::GateInfo>()?;
     m.add_class::<verbs::PyChunk>()?;
     m.add_function(wrap_pyfunction!(session::create_session, m)?)?;
     m.add_function(wrap_pyfunction!(validate_robot_json, m)?)?;
+    m.add("__version__", env!("CARGO_PKG_VERSION"))?;
+    m.add("FEATURES", PyFrozenSet::new(m.py(), built_features())?)?;
     Ok(())
 }
