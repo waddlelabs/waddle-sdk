@@ -928,17 +928,22 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   the tests wait for a full drain cycle (two refused dials, a happens-before
   they can observe) before healing the partition. No production behavior
   changed; the suite is also ~60x faster for dropping the long sleeps.
-- **sdk — every declared camera's resolution is now declared to the media
-  plane (Gap J)**: a LiveKit track publishes at ONE declared resolution and
-  drops every frame that disagrees, so a session that inherited the 640x480
+- **Every declared camera's resolution is now declared to the media plane
+  (Gap J)**: a LiveKit track publishes at ONE declared resolution and drops
+  every frame that disagrees, so a session that inherited the 640x480
   default dropped **100% of the frames of every camera that was not exactly
-  640x480** — silently, since a dropped frame is not an error and nothing
-  counts it. `create_session` now declares a track resolution for each
-  `RobotDescription.cameras` entry (`LiveKitConfig::with_track_resolution`),
-  from the same declaration the rest of the pipeline validates frames
-  against. Unreachable until this branch wired the media plane through the
-  Python surface at all, and it would have presented as "teleop sees
-  nothing" with every log clean.
+  640x480** — with nothing raising (the uplink pump warns and counts the
+  drop; `publish_frame` still returns Ok), so it presents as "the
+  teleoperator sees nothing" on a session that reports success.
+  `LiveKitConfig::with_robot_cameras(&RobotDescription)` (new, in
+  waddle-media) declares a track resolution for every `cameras` entry, from
+  the same declaration `Session::publish_frame` validates frames against;
+  the Python `create_session` calls it, and any other binding with a robot
+  declaration must. The mapping lives in core — with the test that a
+  two-camera robot yields both resolutions and no camera inherits the
+  default — rather than in each binding, where nothing would have caught it
+  going missing again. Unreachable until this branch wired the media plane
+  through the Python surface at all.
 - **sdk — `_core.pyi` no longer under-describes the extension**: the type
   stub had drifted behind the shim (`publish_frame`, `report_proprio`,
   `records_dropped`, the `_testing_*` hooks and the new connected seam were

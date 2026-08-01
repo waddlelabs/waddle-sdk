@@ -734,19 +734,18 @@ pub(crate) fn create_session(
         ));
     }
     // Gap J: a LiveKit track publishes at ONE declared resolution and every
-    // frame disagreeing with it is dropped, so declare each camera the
-    // robot itself declared — inheriting the 640x480 default would drop
-    // 100% of the frames of every other camera, silently.
+    // frame disagreeing with it is dropped, so every declared camera must
+    // reach the media plane at the resolution the robot declared. The
+    // mapping is core's (`with_robot_cameras`, tested there); this is the
+    // marshalling.
     #[cfg(feature = "livekit")]
     let media_config = media_url.map(|url| {
-        robot.cameras.iter().fold(
-            waddle_media::livekit::LiveKitConfig::new(
-                url.to_owned(),
-                // Checked present above.
-                media_token.unwrap_or_default().to_owned(),
-            ),
-            |config, cam| config.with_track_resolution(&cam.name, cam.width, cam.height),
+        waddle_media::livekit::LiveKitConfig::new(
+            url.to_owned(),
+            // Checked present above.
+            media_token.unwrap_or_default().to_owned(),
         )
+        .with_robot_cameras(&robot)
     });
 
     let mut registry = ControlRegistry::default();
