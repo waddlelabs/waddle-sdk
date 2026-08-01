@@ -58,6 +58,9 @@ waddle-sdk/
                              #   descriptors; _native.py picks the compiled core
     teleop/                  # the `waddle-sdk-teleop` companion distribution:
                              #   same rust/Cargo.toml, + the livekit feature
+    examples/                # toy_robot.py: the runnable customer program
+                             #   (simulated 6-dof arm; offline, connected,
+                             #   and agent modes) + its README
     tests/                   # pytest: descriptors + e2e (incl. MCAP read-back)
 ```
 

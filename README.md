@@ -39,6 +39,15 @@ The Python package ships as two distributions from this one source tree —
 `pip install 'waddle-sdk[teleop]'` adds the LiveKit media plane on top. See
 [`sdk/README.md`](sdk/README.md).
 
+For a running program rather than a snippet,
+[`sdk/examples/toy_robot.py`](sdk/examples/) is a whole robot integration in
+one file — a simulated 6-dof arm with a camera, the rollout loop, and
+`waddle.agent()`. It needs no hardware and no plane:
+
+```bash
+cd sdk && uv run python examples/toy_robot.py
+```
+
 Contributors and agents: read [`CLAUDE.md`](CLAUDE.md) first.
 
 ## License

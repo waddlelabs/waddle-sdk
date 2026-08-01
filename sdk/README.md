@@ -51,6 +51,11 @@ anyway (FSM.md E24), which is why this call takes the thread instead of
 handing back an episode handle. An ask nobody answers comes back
 `outcome == "abort"` at the deadline — a result, not an exception.
 
+All of the above in one runnable file — a simulated 6-dof arm with a
+camera, the loop, and `waddle.agent()`, offline by default — is
+[`examples/toy_robot.py`](examples/): `uv run python
+examples/toy_robot.py`.
+
 ## Installing
 
 ```bash

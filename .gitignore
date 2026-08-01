@@ -31,3 +31,6 @@ sdk/teleop/python/waddle_teleop/_core*.so
 
 # Built wheels (`uv build --wheel -o dist .` / `-o dist teleop`)
 dist/
+
+# The toy example's default local recording dir (sidecars + MCAPs)
+toy-recordings/

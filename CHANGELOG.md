@@ -195,6 +195,24 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     and the interrupt path (a real `SIGINT` mid-run, asserting both that
     `KeyboardInterrupt` arrives promptly and that the session can open a
     fresh episode afterwards — i.e. the run really ended).
+- **sdk (`examples/toy_robot.py`: a whole robot integration in one file)**:
+  the program a customer would actually run, and the first artifact in this
+  repo that exercises the declaration surface, the loop, the media/stills
+  legs and `waddle.agent()` together rather than one at a time. A 6-dof arm
+  with per-joint limits, a parallel gripper declared in **metres** (`0.0`
+  open / `0.04` closed — deliberately not 0/1, so the normalized-to-declared
+  mapping a claimant's gripper command goes through is actually exercised), a
+  generated 6-joint URDF, and one 320x240 camera declaring both an `uplink`
+  (media plane) and `still_fps=2` (control plane). The robot is a small
+  kinematic simulator in the same file, so the example runs with no hardware,
+  no network and no plane — offline it still gates every action and lands a
+  sidecar + MCAP per episode, which is what makes it usable as a first
+  five-minute experience. One environment variable
+  (`WADDLE_TOY_TRANSPORT`) turns the same program into a supervised session;
+  `WADDLE_TOY_MODE=agent` makes it hand a whole episode to Waddle and report
+  the `AgentResult`. Status lines are prefixed `[toy] ` and flushed, so a
+  harness can drive it. `examples/README.md` documents the three
+  configurations and what the `[teleop]` extra adds on top.
 - **sdk (`waddle.StreamPolicy(still_fps=…)`)**: the Python declaration for
   control-plane stills (flag `waddle.v0.obs.stills`), which core has
   honoured since the entry above but no Python program could ask for. `None`
