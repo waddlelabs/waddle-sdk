@@ -38,7 +38,14 @@ from typing import TYPE_CHECKING
 
 def _select_core():
     """Return the core module this process should use (see the rules in the
-    module docstring). Called exactly once, at import."""
+    module docstring). Called exactly once, at import.
+
+    The bundled core is imported first and unconditionally: it is the one
+    that is always present, and it is what every rule falls back to. When
+    the companion wins, both extension modules stay loaded — two
+    independent modules with their own statics, of which only the selected
+    one ever builds a session, so the cost is a few pages of memory and
+    nothing is shared between them."""
     from . import _core as bundled
 
     try:
