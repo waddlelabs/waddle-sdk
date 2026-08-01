@@ -14,7 +14,8 @@ This monorepo hosts the open artifacts:
 |---|---|---|
 | [`waddle-protocol/`](waddle-protocol/) | v0 | The standard: protobuf schemas, the episode/claim/lease FSM spec, the sidecar schema, conformance fixtures. Implementable without waddle-core — that is the point. |
 | [`waddle-core/`](waddle-core/) | 0.1 | The Rust reference implementation: episode/claim/lease FSMs, the gate, tripwires, sidecar + MCAP recording, codecs, control-plane client. Emits the `libwaddle` C ABI. |
-| Python SDK, `waddle-proxy`, `waddle-cpp`, `waddle_ros` | planned | Hollow frontends over waddle-core, per the design doc's artifact family. |
+| [`sdk/`](sdk/) | 0.1 | The Python frontend (`waddle-sdk`): the six-line rollout loop, local recording, and the connected surface. A hollow frontend — every decision lives in waddle-core. |
+| `waddle-proxy`, `waddle-cpp`, `waddle_ros` | planned | Further hollow frontends over waddle-core, per the design doc's artifact family. |
 
 The design rationale (including three adversarial stress-test passes) lives at
 [`waddle-protocol/docs/rationale/waddle_api_design_doc.md`](waddle-protocol/docs/rationale/waddle_api_design_doc.md).
@@ -28,7 +29,15 @@ The normative docs are
 ```bash
 cd waddle-core
 cargo test --workspace          # builds protos via protox — no system protoc needed
+
+cd ../sdk
+uv sync --dev && uv run pytest  # the Python frontend: build + test
 ```
+
+The Python package ships as two distributions from this one source tree —
+`pip install waddle-sdk` carries the control-plane transport, and
+`pip install 'waddle-sdk[teleop]'` adds the LiveKit media plane on top. See
+[`sdk/README.md`](sdk/README.md).
 
 Contributors and agents: read [`CLAUDE.md`](CLAUDE.md) first.
 
