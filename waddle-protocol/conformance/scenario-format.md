@@ -91,7 +91,7 @@ as unknown:
 | `post_reset_result` | `result`: `waddle.v0.ResetResult` | fsm, gate | the post-reset pipeline reported (needs `waddle.v0.reset.phases`) |
 | `reset_window_engage` | `claim_id` | fsm, gate | a granted reset claim engages: lease → claimant, gate → RESET (needs `waddle.v0.reset.remote`) |
 | `reset_window_complete` | `claim_id`, `result`: `waddle.v0.ResetResult` | fsm, gate | the remote actor finished the reset (needs `waddle.v0.reset.remote`) |
-| `agent_task_update` | `episode_id`, `kind`: `waddle.v0.AgentTaskUpdateKind`, `detail?` | fsm, gate | the plane reported agent-task status for an agent-invited episode (needs `waddle.v0.agent`) |
+| `agent_task_update` | `update`: `waddle.v0.AgentTaskUpdate` (carrying `episode_id`, `kind`, `detail?`; the message's own `kind` field cannot ride flat next to the inject dispatcher's `kind` key, so the payload nests like `reset_result`'s) | fsm, gate | the plane reported agent-task status for an agent-invited episode (needs `waddle.v0.agent`) |
 | `judge_result` | `judgment`: `waddle.v0.Judgment` | fsm, gate | an episode judgment arrives |
 | `mark` | `mark`: `waddle.v0.MarkEvent` | fsm, gate | a human mark arrives |
 | `proxy_signals` | `signals`: `waddle.v0.ProxySignals` | fsm | heartbeat proxy signals sampled |

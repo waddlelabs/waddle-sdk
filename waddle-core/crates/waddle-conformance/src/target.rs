@@ -14,8 +14,8 @@ use serde_json::{Map, Value, json};
 use waddle_fsm::effect::Effect;
 use waddle_fsm::session::EngageStage;
 use waddle_fsm::{
-    GrantChangeDirective, MarkKind, ProxySample, SessionConfig, SessionEvent, SessionFsm, TimerId,
-    WindowSpec,
+    AgentInvite, GrantChangeDirective, MarkKind, ProxySample, SessionConfig, SessionEvent,
+    SessionFsm, TimerId, WindowSpec,
 };
 use waddle_gate::gate::GateShared;
 use waddle_gate::{
@@ -63,6 +63,11 @@ struct GateParts {
     space: Option<ActionSpace>,
     interp: Interp,
     last_output: Option<GateOutput>,
+    /// The Noop reason of the most recent tick, captured from the plan mode
+    /// that produced it (`GateOutput::Noop` deliberately carries no reason —
+    /// the reducer's marker translation owns it; here the harness plays
+    /// that role). `None` when the last output was not a Noop.
+    last_noop_reason: Option<pb::NoopReason>,
     last_tick_ns: Option<i64>,
     /// An intervention stream has produced traffic (stall → bypass only
     /// matters when there is someone to starve).
@@ -148,6 +153,7 @@ impl Target {
                     space,
                     interp,
                     last_output: None,
+                    last_noop_reason: None,
                     last_tick_ns: None,
                     traffic: false,
                     validation_fault_sent: false,
@@ -510,6 +516,10 @@ impl Target {
                     .get("post_reset_window")
                     .map(|v| self.parse_window_spec(v))
                     .transpose()?;
+                let agent_invite = payload
+                    .get("agent_invite")
+                    .map(parse_agent_invite)
+                    .transpose()?;
                 self.dispatch(SessionEvent::EpisodeOpen {
                     id: EpisodeId::new(id),
                     verification,
@@ -518,7 +528,7 @@ impl Target {
                     post_reset,
                     pre_window,
                     post_window,
-                    agent_invite: None,
+                    agent_invite,
                     at,
                 })?;
             }
@@ -768,6 +778,48 @@ impl Target {
                     at,
                 })?;
             }
+            "agent_task_update" => {
+                // The update rides as a `waddle.v0.AgentTaskUpdate` under
+                // `update` (the message's own `kind` field cannot ride flat
+                // next to the inject dispatcher's `kind` key —
+                // scenario-format.md nests it like `reset_result`'s).
+                let update: pb::AgentTaskUpdate =
+                    self.parse_payload(payload, "update", "waddle.v0.AgentTaskUpdate")?;
+                let update_kind = pb::AgentTaskUpdateKind::try_from(update.kind)
+                    .map_err(|_| scenario_err(format!("unknown update kind {}", update.kind)))?;
+                let targets_active = self
+                    .fsm
+                    .episode
+                    .as_ref()
+                    .is_some_and(|ep| ep.id.as_str() == update.episode_id);
+                match update_kind {
+                    pb::AgentTaskUpdateKind::Unspecified => {
+                        return Err(scenario_err("agent_task_update requires a specified kind"));
+                    }
+                    // E26/E26b: only a DENIED addressed to the active
+                    // episode becomes an FSM event; the FSM decides between
+                    // the E26 transition and the E26b recorded-only
+                    // rejection.
+                    pb::AgentTaskUpdateKind::Denied if targets_active => {
+                        self.dispatch(SessionEvent::AgentTaskDenied {
+                            detail: update.detail.clone(),
+                            at,
+                        })?;
+                    }
+                    // QUEUED and COMPLETED are informational on every state
+                    // (FSM.md §1.5) — recorded as inert, never a transition;
+                    // likewise any update addressed to a non-active episode.
+                    _ => {
+                        self.rejections.push(format!(
+                            "t={}ns agent_task_update{{{}, episode {:?}}}: \
+                             informational, recorded inert (FSM.md §1.5)",
+                            self.now,
+                            update_kind.as_str_name(),
+                            update.episode_id,
+                        ));
+                    }
+                }
+            }
             other => {
                 // Closed set (scenario-format.md): unknown kinds are a
                 // scenario error, never silently ignored.
@@ -797,6 +849,23 @@ impl Target {
                 }
                 GateOutput::Noop { .. } | GateOutput::Hold => {}
             }
+            // `GateOutput::Noop` deliberately carries no reason — the
+            // reducer's marker translation derives it from the gate
+            // decision. The harness plays that role here, from the plan
+            // that produced this tick (captured NOW: a later event may
+            // legally change the plan before `expect_output` runs).
+            gp.last_noop_reason = match (&output, &gp.shared.load_plan().mode) {
+                (GateOutput::Noop { .. }, PlanMode::Bypass { .. }) => {
+                    Some(pb::NoopReason::BypassActive)
+                }
+                (GateOutput::Noop { .. }, PlanMode::Reset { .. }) => {
+                    Some(pb::NoopReason::ResetActive)
+                }
+                (GateOutput::Noop { .. }, PlanMode::AgentEpisode { .. }) => {
+                    Some(pb::NoopReason::AgentEpisode)
+                }
+                _ => None,
+            };
             gp.last_output = Some(output);
             gp.last_tick_ns = Some(now);
         }
@@ -1027,6 +1096,8 @@ impl Target {
                     "post_reset_declared": ep.post_reset_declared,
                     "post_reset_failed": ep.post_reset_failed,
                     "pinned_outcome": pinned_outcome,
+                    "agent_invited": ep.agent_invited,
+                    "agent_engaged": ep.agent_engaged,
                 })
             }
             None => json!({
@@ -1040,6 +1111,8 @@ impl Target {
                 "post_reset_declared": false,
                 "post_reset_failed": false,
                 "pinned_outcome": pb::TerminalOutcome::Unspecified.as_str_name(),
+                "agent_invited": false,
+                "agent_engaged": false,
             }),
         };
         let reset_window = match self
@@ -1141,7 +1214,10 @@ impl Target {
             }),
             GateOutput::Noop { provenance } => json!({
                 "kind": "noop",
-                "reason": pb::NoopReason::BypassActive.as_str_name(),
+                "reason": gp
+                    .last_noop_reason
+                    .unwrap_or(pb::NoopReason::Unspecified)
+                    .as_str_name(),
                 "provenance": self.provenance_json(provenance)?,
             }),
             GateOutput::Hold => json!({ "kind": "hold" }),
@@ -1152,6 +1228,20 @@ impl Target {
     fn provenance_json(&self, tag: &ProvenanceTag) -> Result<Value, ConformanceError> {
         self.codec.provenance_to_value(&tag.to_pb())
     }
+}
+
+/// Parse an `episode_open` agent-invite declaration (`{prompt, timeout_ns}`,
+/// scenario-format.md's `agent_invite` key — flag `waddle.v0.agent`).
+fn parse_agent_invite(value: &Value) -> Result<AgentInvite, ConformanceError> {
+    let obj = value
+        .as_object()
+        .ok_or_else(|| scenario_err("agent_invite must be an object"))?;
+    let prompt = str_field(obj, "prompt")?.to_owned();
+    let timeout_ns = parse_ns(
+        obj.get("timeout_ns")
+            .ok_or_else(|| scenario_err("agent_invite missing \"timeout_ns\""))?,
+    )?;
+    Ok(AgentInvite { prompt, timeout_ns })
 }
 
 fn parse_actor_kind(s: &str) -> Result<ActorKind, ConformanceError> {
