@@ -17,7 +17,9 @@ It shows, in one place:
 - the five-verb `Control` contract — `send`, `hold`, `estop` — which is how
   anything Waddle grants a lease to actually moves the robot;
 - the six-line loop: `ep.gate(action, obs)` returns your action, a
-  different action, or `None`;
+  different action, or `None` — and, when something intervened,
+  `ep.last_gate.gripper` carries the claimant's grasp already converted
+  into the metres the robot declared;
 - `session.publish_frame(...)` and `session.report_proprio(...)` every
   tick;
 - a scripted `pre_reset` hook, run before every episode;

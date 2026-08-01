@@ -479,7 +479,16 @@ def run_rollout(session, arm: ToyArm, number: int, task: str, seconds: float) ->
             action, gripper = scripted_policy(tick)
             out = ep.gate(action, arm.joint_positions(), gripper=gripper)
             if out is not None:
-                arm.command(out, gripper)
+                # The gripper is the second half of the answer, and it does
+                # NOT ride the return value: when something intervened,
+                # `last_gate.gripper` carries the claimant's command already
+                # mapped from its normalized 0..1 into the metres this robot
+                # declared. It is None on a passthrough tick — nobody
+                # overrode you — and then your own value stands. Sending
+                # `gripper` unconditionally would move the arm where the
+                # teleoperator asked while quietly ignoring the grasp.
+                decided = ep.last_gate
+                arm.command(out, gripper if decided.gripper is None else decided.gripper)
             robot_tick(session, arm, period)
             deadline += period
             time.sleep(max(0.0, deadline - time.monotonic()))

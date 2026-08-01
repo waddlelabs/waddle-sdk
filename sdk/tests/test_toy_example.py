@@ -8,9 +8,10 @@ The subprocess test cannot see everything, though. Offline, `publish_frame`
 is a documented no-op that returns before it validates anything — so a
 camera declaration that disagrees with the rendered frame, or an uplink
 policy core would reject, stays invisible until the day someone points the
-example at a real plane. The second test wires the in-process loopback
-media plane and pushes one real rendered frame through, which is where
-that disagreement surfaces.
+example at a real plane. The tests that follow it run the example's own
+loop in-process against the loopback media plane, which is where the frames
+it publishes, the proprioception it reports, and the actions it sends under
+an intervention all become observable.
 """
 
 import importlib.util
@@ -18,12 +19,14 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
 import numpy as np
 import pytest
 from mcap.reader import make_reader
+from mcap_protobuf.decoder import DecoderFactory
 
 import waddle
 import waddle._testing
@@ -50,6 +53,34 @@ def _load_example():
 def _clean_session():
     yield
     waddle.shutdown()
+
+
+def _until(predicate, what: str, timeout: float = 20.0, tick=None):
+    """Wait for something the example does to become observable, doing
+    `tick()` (if given) while waiting. Bounded only so a broken build fails
+    instead of hanging — the wait always ends on the observation, never on
+    the clock."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        got = predicate()
+        if got:
+            return got
+        if tick is not None:
+            tick()
+        time.sleep(0.005)
+    pytest.fail(what)
+
+
+def _decoded_observations(mcap_path):
+    """Every `/waddle/observations` message, decoded through the schema the
+    MCAP embeds (see tests/test_e2e.py)."""
+    with open(mcap_path, "rb") as f:
+        reader = make_reader(f, decoder_factories=[DecoderFactory()])
+        return [
+            msg
+            for _, channel, _, msg in reader.iter_decoded_messages()
+            if channel.topic == "/waddle/observations"
+        ]
 
 
 def test_example_runs_offline_and_records_every_episode(tmp_path):
@@ -133,6 +164,118 @@ def test_the_examples_declared_camera_matches_the_frames_it_renders():
         time.sleep(0.005)
     assert got, "the declared camera never accepted the example's own frame"
     assert got[-1] == frame.tobytes()
+
+
+def test_the_examples_loop_publishes_frames_and_reports_proprio(tmp_path):
+    # The brief's "publishes frames and proprio at 20 Hz from the main
+    # loop" — asserted against the example's OWN rollout, not against a
+    # call this test makes on its behalf. Ripping `publish_frame` or
+    # `report_proprio` out of `robot_tick` (or the `robot_tick` call out of
+    # the loop) has to fail here: offline `publish_frame` leaves no trace at
+    # all, and the gate's own obs records go on arriving without a single
+    # `report_proprio`, so nothing else in this file would notice.
+    example = _load_example()
+    arm = example.ToyArm()
+    session = waddle.init(
+        "py-toy-loop",
+        example.robot_description(),
+        waddle.Control(send=lambda chunk: None, hold=arm.hold, estop=arm.estop),
+        recording_dir=tmp_path,
+        _testing=True,
+    )
+
+    outcome = example.run_rollout(session, arm, 1, "publish while you roll", 0.5)
+    assert outcome == "success"
+
+    frames = _until(
+        lambda: waddle._testing.frames(session, example.CAMERA_NAME),
+        "the example's loop never published a frame",
+    )
+    assert len(frames[-1]) == example.CAMERA_W * example.CAMERA_H * 3
+
+    waddle.shutdown()
+    observations = _decoded_observations(next(iter(tmp_path.glob("*.mcap"))))
+    assert observations, "the episode recorded no observations"
+    last = observations[-1].proprio
+    # joint_pos rides the gate; everything below can only have come from
+    # the loop's own `report_proprio`.
+    assert len(last.joint_pos) == len(example._CHAIN)
+    assert len(last.joint_vel) == len(example._CHAIN)
+    assert last.ee_pose.frame_id == example._TOOL_FRAME
+    # A real FK pose, not a default-initialized one: the tool sits ~0.77 m
+    # up the chain at home and never reaches the base plane.
+    assert last.ee_pose.position.z > 0.1
+
+
+def test_the_example_sends_an_intervening_claimants_gripper(tmp_path):
+    # The claimant's gripper does NOT ride `gate()`'s return value — it
+    # arrives on `last_gate.gripper`, already mapped out of the normalized
+    # 0..1 wire into this robot's declared metres. An example that sent its
+    # own scripted gripper alongside the substituted joints would leave a
+    # teleoperator's grasp silently unexecuted, so the loop is run for real
+    # and the values it sends are recorded.
+    example = _load_example()
+
+    class RecordingArm(example.ToyArm):
+        def __init__(self) -> None:
+            super().__init__()
+            self.gripper_commands: list[float | None] = []
+
+        def command(self, joints, gripper=None) -> None:
+            self.gripper_commands.append(gripper)
+            super().command(joints, gripper)
+
+    arm = RecordingArm()
+    session = waddle.init(
+        "py-toy-intervention",
+        example.robot_description(),
+        waddle.Control(send=lambda chunk: None, hold=arm.hold, estop=arm.estop),
+        recording_dir=tmp_path,
+        _testing=True,
+    )
+
+    # Normalized 0.5 lands halfway between the declared 0.0 open and 0.04
+    # closed. The scripted policy only ever commands the endpoints, so
+    # 0.02 m can have come from nowhere but the claimant — through core's
+    # own unit conversion.
+    claimant_normalized = 0.5
+    expected_m = 0.02
+
+    failed: list[BaseException] = []
+
+    def drive() -> None:
+        # A long episode: it ends when this test has its answer, not when a
+        # timer runs out.
+        try:
+            example.run_rollout(session, arm, 1, "intervene on me", 60.0)
+        except BaseException as exc:  # re-raised on the main thread
+            failed.append(exc)
+
+    loop = threading.Thread(target=drive, name="toy-rollout", daemon=True)
+    loop.start()
+    try:
+        _until(lambda: arm.gripper_commands, "the example's loop never dispatched an action")
+        waddle._testing.engage(session, "claim-1", "teleop")
+        _until(
+            lambda: any(g == pytest.approx(expected_m) for g in list(arm.gripper_commands)),
+            "the example never sent the claimant's gripper (it sent its own)",
+            tick=lambda: waddle._testing.push_teleop(
+                session, [0.3, 0.0, 0.0, 0.0, 0.0, 0.0], claimant_normalized
+            ),
+        )
+    finally:
+        # End the episode the instant the answer is in (or the instant this
+        # test gives up): the loop breaks on `ep.done`, so nothing here ever
+        # waits out those 60 seconds. Skipped if the loop already died — its
+        # own exception is the interesting one, not "no live episode".
+        if loop.is_alive() and not failed:
+            waddle._testing.mark_done(session, "success")
+        loop.join(timeout=10.0)
+    if failed:
+        raise failed[0]
+    assert not loop.is_alive(), "the example's loop ignored a plane-ended episode"
+    # The scripted endpoints are still what it sends when nobody overrides.
+    assert example.GRIPPER_OPEN_M in arm.gripper_commands
 
 
 def test_the_examples_success_criterion_is_not_free():

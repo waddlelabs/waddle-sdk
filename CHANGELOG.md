@@ -213,6 +213,15 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   the `AgentResult`. Status lines are prefixed `[toy] ` and flushed, so a
   harness can drive it. `examples/README.md` documents the three
   configurations and what the `[teleop]` extra adds on top.
+  Three details the reference integration is deliberate about, because a
+  customer copies this file:
+  - **The claimant's gripper is sent, not the policy's.** A grasp does not
+    ride `gate()`'s return value — it arrives on `ep.last_gate.gripper`,
+    already converted out of the normalized 0..1 wire into the metres this
+    robot declared — so the loop sends that whenever it is present and its
+    own value only on a passthrough tick. Sending the scripted value beside
+    substituted joints would move the arm where the teleoperator asked while
+    silently dropping the grasp.
 - **sdk (`waddle.StreamPolicy(still_fps=…)`)**: the Python declaration for
   control-plane stills (flag `waddle.v0.obs.stills`), which core has
   honoured since the entry above but no Python program could ask for. `None`
