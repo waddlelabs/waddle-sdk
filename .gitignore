@@ -28,3 +28,6 @@ __pycache__/
 # teleop companion wheel's)
 sdk/python/waddle/_core*.so
 sdk/teleop/python/waddle_teleop/_core*.so
+
+# Built wheels (`uv build --wheel -o dist .` / `-o dist teleop`)
+dist/

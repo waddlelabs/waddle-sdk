@@ -34,3 +34,6 @@ manifest-path = "../rust/Cargo.toml"
 python-source = "python"
 module-name = "waddle_teleop._core"
 features = ["pyo3/extension-module", "grpc", "livekit"]
+# Same reason as the default wheel's (see `sdk/pyproject.toml`): keep dev-run
+# bytecode out, so a wheel is a function of the commit and nothing else.
+exclude = ["python/**/__pycache__/**"]

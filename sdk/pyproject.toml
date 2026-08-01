@@ -67,3 +67,10 @@ module-name = "waddle._core"
 # the tonic stack is ordinary crates.io deps. `livekit` is deliberately NOT
 # here — it lives in the `teleop` extra above.
 features = ["pyo3/extension-module", "grpc"]
+# `python-source` is the working tree, so anything a dev run left in it gets
+# swept into the wheel. Bytecode is the one thing that actually does: without
+# this, a build after `uv run pytest` ships `__pycache__/*.cpython-3XX.pyc`
+# for whichever interpreter ran the tests and a build on a clean checkout
+# does not — the same commit, two different wheels. pip compiles bytecode at
+# install time for the interpreter that will actually import it.
+exclude = ["python/**/__pycache__/**"]
