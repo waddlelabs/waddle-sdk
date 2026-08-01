@@ -97,6 +97,7 @@ pub fn timer_name(id: TimerId) -> &'static str {
         TimerId::ChunkBoundaryCap => "chunk_boundary_cap",
         TimerId::HeartbeatStale => "heartbeat_stale",
         TimerId::ResetWindowTimeout => "reset_window_timeout",
+        TimerId::AgentInviteTimeout => "agent_invite_timeout",
     }
 }
 

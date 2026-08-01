@@ -69,6 +69,25 @@ impl SessionFsm {
             clutch_seq: 0,
         }
     }
+
+    /// E24 (flag `waddle.v0.agent`): the caller's own `gate()` ticks never
+    /// dispatch in an agent-invited episode while no claim is engaged — the
+    /// gate plan derived for PASSTHROUGH is `Noop{AGENT_EPISODE}` instead of
+    /// a pass. True exactly when a plan deriver (waddle-runtime's reducer,
+    /// the conformance target) must render the agent-episode Noop plan for
+    /// gate mode PASSTHROUGH. Scoped to {RESETTING, READY, RUNNING}:
+    /// POST_RESET and TERMINAL return the caller's loop to ordinary
+    /// passthrough, and an engaged claim (gate INTERVENTION/BYPASS/RESET)
+    /// never derives from this — ordinary intervention semantics, BYPASS
+    /// eligibility included, apply unchanged.
+    #[must_use]
+    pub fn agent_episode_noop(&self) -> bool {
+        self.gate_mode == GateMode::Passthrough
+            && self.episode.as_ref().is_some_and(|e| {
+                e.agent_invited
+                    && matches!(e.phase, Phase::Resetting | Phase::Ready | Phase::Running)
+            })
+    }
 }
 
 #[derive(Debug)]
@@ -163,6 +182,14 @@ impl Ctx<'_> {
     ) {
         if release_claim && self.s.gate_mode != GateMode::Passthrough {
             self.set_gate(at, GateMode::Passthrough, reason);
+        } else if release_claim && self.episode().agent_invited {
+            // E24 (§1.5): leaving {RESETTING, READY, RUNNING} ends the
+            // agent-episode Noop plan even when the gate MODE was already
+            // PASSTHROUGH (no claim engaged at close) — push the
+            // mode-unchanged effect so plan derivers re-project from the
+            // post-transition state. Emission-invisible (no GateModeChange).
+            self.effects
+                .push(Effect::SetGateMode(GateMode::Passthrough));
         }
         self.transition(at, to, reason, outcome);
         if release_claim && let Some(claim) = self.s.claim.take() {
@@ -182,6 +209,10 @@ impl Ctx<'_> {
             // still armed (E17 estop). Cancelling here is emission-invisible
             // and a no-op for episodes that never armed it.
             TimerId::ResetWindowTimeout,
+            // §1.5: every row that closes the invite cancels its timer (if
+            // still armed) — same hygiene class as the window timer above;
+            // a no-op for episodes that never armed it.
+            TimerId::AgentInviteTimeout,
         ] {
             self.effects.push(Effect::CancelTimer { id });
         }
@@ -507,6 +538,17 @@ impl Ctx<'_> {
             InterventionPhase::Engage,
             &claim_id,
         ));
+        // E7 on an agent-invited episode (§1.5): the engage closes the
+        // invite — cancel its deadline and latch `agent_engaged` (true from
+        // the first agent ENGAGE onward; never reset within the episode, so
+        // a release/re-engage cycle does not re-arm the invite timer). C8
+        // admission already guaranteed the engaging claim is the agent's.
+        if self.episode().agent_invited && !self.episode().agent_engaged {
+            self.episode_mut().agent_engaged = true;
+            self.effects.push(Effect::CancelTimer {
+                id: TimerId::AgentInviteTimeout,
+            });
+        }
         self.effects.push(Effect::ArmTimer {
             id: TimerId::EngageTimeout,
             deadline: at.saturating_add(self.cfg.engage_timeout_ns),
@@ -651,6 +693,7 @@ pub fn step(
             post_reset,
             pre_window,
             post_window,
+            agent_invite,
             at,
         } => {
             if active {
@@ -665,6 +708,7 @@ pub fn step(
             // one); `post_reset` alone declares a hook.
             ep.post_reset_declared = *post_reset || post_window.is_some();
             ep.post_window = post_window.clone();
+            ep.agent_invited = agent_invite.is_some();
             ctx.s.episode = Some(ep);
             ctx.emit(emit::state_transition(
                 *at,
@@ -674,6 +718,29 @@ pub fn step(
                 "open",
                 None,
             ));
+            // E23 (flag `waddle.v0.agent`): the open carries an agent invite
+            // — emit the ask and arm the invite deadline (E25). Everything
+            // else about the open is E1's effect set, unchanged (§1.5).
+            if let Some(invite) = agent_invite {
+                ctx.emit(emit::agent_invite(
+                    *at,
+                    id,
+                    &invite.prompt,
+                    invite.timeout_ns,
+                ));
+                ctx.effects.push(Effect::ArmTimer {
+                    id: TimerId::AgentInviteTimeout,
+                    deadline: at.saturating_add(invite.timeout_ns),
+                });
+                // The gate plan is derived state: an agent-invited episode's
+                // PASSTHROUGH projects to Noop{AGENT_EPISODE} (E24) even
+                // though the gate MODE never changes at open — push the
+                // mode-unchanged effect so plan derivers re-project.
+                // Emission-invisible (no GateModeChange).
+                if ctx.s.gate_mode == GateMode::Passthrough {
+                    ctx.effects.push(Effect::SetGateMode(GateMode::Passthrough));
+                }
+            }
             // E19 (PRE): a declared remote pre window opens on entry — but not
             // for a born-claimed successor, whose surviving claim keeps the
             // hand-reset-under-claim story (born-claimed suppression; C6 needs no active
@@ -805,10 +872,21 @@ pub fn step(
             if matches!(phase, Some(Phase::Resetting | Phase::PostReset))
                 && let Some(window) = &ctx.episode().reset_window
                 && !window.engaged
-                && !window_admits(window.expected, *actor)
             {
+                if !window_admits(window.expected, *actor) {
+                    return Err(rejected(
+                        "reset claim actor does not match the window's expected actor (C6)",
+                    ));
+                }
+            } else if ctx.episode().agent_invited && *actor != ActorKind::Agent {
+                // C8 (§1.5): an agent-invited episode admits ACTOR_KIND_AGENT
+                // only; any other actor's grant is rejected. Reset-window
+                // claims stay C6's business (the branch above): an
+                // agent-invited episode with a declared teleop reset window
+                // still admits the teleoperator's reset claim in
+                // RESETTING/POST_RESET.
                 return Err(rejected(
-                    "reset claim actor does not match the window's expected actor (C6)",
+                    "agent-invited episode admits ACTOR_KIND_AGENT only (C8)",
                 ));
             }
             let claim = ActiveClaim {
@@ -926,9 +1004,17 @@ pub fn step(
         // C-section: engagement-initiated claims ------------------------------
         SessionEvent::Clutch { engaged, at } => {
             if *engaged {
-                if state.claim.is_some() || !matches!(phase, Some(Phase::Running)) {
-                    // Already claimed or not in a claimable phase: the edge
-                    // is recorded by the source, not a transition.
+                // C8 (§1.5): a clutch both requests and grants its claim in
+                // one step, so admission applies to it like any other grant —
+                // an agent-invited episode admits AGENT claims only. The
+                // physical edge is still recorded by the source; it just
+                // never becomes a claim here.
+                let agent_admits = !state.episode.as_ref().is_some_and(|e| e.agent_invited)
+                    || cfg.clutch_actor == ActorKind::Agent;
+                if state.claim.is_some() || !matches!(phase, Some(Phase::Running)) || !agent_admits
+                {
+                    // Already claimed, not in a claimable phase, or C8: the
+                    // edge is recorded by the source, not a transition.
                 } else {
                     ctx.s.clutch_seq += 1;
                     let claim = ActiveClaim {
@@ -1384,6 +1470,25 @@ pub fn step(
                     }
                 }
             }
+            // E25: the invite deadline elapsed before any agent engaged.
+            TimerId::AgentInviteTimeout => {
+                if ctx
+                    .s
+                    .episode
+                    .as_ref()
+                    .is_some_and(EpisodeState::invite_open)
+                {
+                    // A member of E10's trigger set with fixed outcome ABORT
+                    // (§1.5): `request_terminal` routes it exactly as any
+                    // other E10 trigger — from RUNNING to TERMINAL{ABORT},
+                    // or to POST_RESET{ABORT pinned} per E14 when post-reset
+                    // is declared; from RESETTING/READY straight to
+                    // TERMINAL{ABORT} (E14 never applies there).
+                    ctx.request_terminal(*at, TerminalOutcome::Abort, "no agent engaged");
+                }
+                // Otherwise: a stale expiry racing the cancellation —
+                // discarded, no transition, no event (§1.5).
+            }
             // E22: the remote window's deadline elapsed while still open.
             TimerId::ResetWindowTimeout => {
                 if let Some(window) = ctx.episode().reset_window.clone() {
@@ -1581,6 +1686,37 @@ pub fn step(
                 }
             };
             ctx.begin_reset_handback(*at, then);
+        }
+
+        // E26 / E26b -----------------------------------------------------------
+        SessionEvent::AgentTaskDenied { detail, at } => {
+            let Some(ep) = &state.episode else {
+                return Err(rejected("agent_update{DENIED} without an episode"));
+            };
+            if !ep.agent_invited {
+                return Err(rejected(
+                    "agent_update{DENIED} on a non-agent-invited episode",
+                ));
+            }
+            if !ep.invite_open() {
+                // E26b: a late DENIED — after an agent claim ENGAGEd, or
+                // after the episode already left {RESETTING, READY, RUNNING}
+                // (e.g. a plane DENIED racing a pre-engage E14 into
+                // POST_RESET) — is recorded as an event only (by the
+                // runtime's update log), never a transition; a pinned
+                // outcome is untouched (E14b's rejection style).
+                return Err(rejected("agent task DENIED after the invite closed (E26b)"));
+            }
+            // E26: routes exactly as E25 — a member of E10's trigger set
+            // with fixed outcome ABORT; the taken route's effect set (which
+            // includes cancelling the invite timer in `close_run`) applies
+            // verbatim, carrying the update's detail.
+            let reason = if detail.is_empty() {
+                "agent task denied"
+            } else {
+                detail
+            };
+            ctx.request_terminal(*at, TerminalOutcome::Abort, reason);
         }
     }
 

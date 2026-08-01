@@ -349,6 +349,7 @@ impl Reducer {
                         post_reset: post_reset_declared,
                         pre_window: None,
                         post_window,
+                        agent_invite: None,
                         at: self.clock.stamp_now().mono_ns(),
                     }
                     .into(),
@@ -400,6 +401,15 @@ impl Reducer {
         let now = self.clock.stamp_now().mono_ns();
         let provenance = self.claim_provenance();
         let mode = match mode {
+            // E24 (flag `waddle.v0.agent`): an agent-invited episode's
+            // PASSTHROUGH projects to Noop{AGENT_EPISODE} while no claim is
+            // engaged — the caller's own ticks never dispatch; the invited
+            // agent drives via the ordinary claim machinery. The predicate
+            // lives on the FSM (hollow-frontend rule); this is projection,
+            // not policy.
+            GateMode::Passthrough if self.fsm.agent_episode_noop() => {
+                PlanMode::AgentEpisode { provenance }
+            }
             GateMode::Passthrough => PlanMode::Passthrough,
             GateMode::Bypass => PlanMode::Bypass { provenance },
             GateMode::Intervention => PlanMode::Claimed {
@@ -623,6 +633,7 @@ impl Reducer {
             (GateDecision::Noop, _) => vec![noop(pb::NoopReason::BypassActive)],
             (GateDecision::Hold, _) => vec![noop(pb::NoopReason::HoldActive)],
             (GateDecision::ResetActive, _) => vec![noop(pb::NoopReason::ResetActive)],
+            (GateDecision::AgentEpisode, _) => vec![noop(pb::NoopReason::AgentEpisode)],
             // Pass/Substitute/Blend always carry an action.
             (_, None) => return,
         };

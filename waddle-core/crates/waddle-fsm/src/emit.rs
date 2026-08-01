@@ -311,6 +311,25 @@ pub fn reset_window(
     ev
 }
 
+/// The agent-invite emission (flag `waddle.v0.agent`, E23): the open asked a
+/// Waddle-hosted agent to drive this episode. Carries the ask, never
+/// authority — the agent claims via the ordinary machinery (C8).
+pub fn agent_invite(
+    at: MonoNs,
+    episode: &EpisodeId,
+    prompt: &str,
+    timeout_ns: i64,
+) -> pb::EpisodeEvent {
+    let mut ev = base(at, Some(episode));
+    ev.event = Some(pb::episode_event::Event::AgentInvite(
+        pb::AgentInviteEvent {
+            prompt: prompt.to_owned(),
+            timeout_ns,
+        },
+    ));
+    ev
+}
+
 pub fn mark(at: MonoNs, episode: &EpisodeId, kind: pb::MarkKind) -> pb::EpisodeEvent {
     let mut ev = base(at, Some(episode));
     ev.event = Some(pb::episode_event::Event::Mark(pb::MarkEvent {

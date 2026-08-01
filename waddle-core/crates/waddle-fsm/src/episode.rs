@@ -85,6 +85,14 @@ pub struct EpisodeState {
     /// The declared POST reset remote window, stashed at open so E14 can open
     /// it. `None` means the post-reset pipeline (if declared) is a hook.
     pub post_window: Option<WindowSpec>,
+    /// The episode was opened agent-invited (flag `waddle.v0.agent`, E23):
+    /// C8 claim admission and the E24 caller-tick Noop plan apply. Otherwise
+    /// this is a NORMAL episode (FSM.md §1.5).
+    pub agent_invited: bool,
+    /// LATCHED at the first agent ENGAGE (E7 on an agent-invited episode):
+    /// true from then on, never reset within the episode — a
+    /// release/re-engage cycle does not re-arm the invite timer.
+    pub agent_engaged: bool,
 }
 
 impl EpisodeState {
@@ -110,6 +118,20 @@ impl EpisodeState {
             post_reset_failed: false,
             reset_window: None,
             post_window: None,
+            agent_invited: false,
+            agent_engaged: false,
         }
+    }
+
+    /// The invite is open (FSM.md §1.5): from E23 until the first agent
+    /// ENGAGE (E7) or any exit from {RESETTING, READY, RUNNING}. E25/E26
+    /// transition only while open; a stale `AgentInviteTimeout` expiry after
+    /// close is discarded, and a late DENIED is E26b's recorded-only
+    /// rejection.
+    #[must_use]
+    pub fn invite_open(&self) -> bool {
+        self.agent_invited
+            && !self.agent_engaged
+            && matches!(self.phase, Phase::Resetting | Phase::Ready | Phase::Running)
     }
 }

@@ -30,6 +30,7 @@ fn running_fsm(cfg: &SessionConfig) -> SessionFsm {
             post_reset: false,
             pre_window: None,
             post_window: None,
+            agent_invite: None,
             at: MonoNs(0),
         },
     )

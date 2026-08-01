@@ -25,6 +25,7 @@ fn opened_fsm() -> (SessionConfig, SessionFsm) {
             post_reset: false,
             pre_window: None,
             post_window: None,
+            agent_invite: None,
             at: MonoNs(0),
         },
     )

@@ -99,6 +99,7 @@ impl Driver {
             post_reset,
             pre_window,
             post_window,
+            agent_invite: None,
             at,
         });
     }
@@ -207,6 +208,7 @@ fn episode_open_while_active_is_rejected_n18() {
             post_reset: false,
             pre_window: None,
             post_window: None,
+            agent_invite: None,
             at,
         },
         "one active episode per session (N18)",
@@ -226,6 +228,7 @@ fn born_claimed_open_without_a_held_claim_is_rejected() {
             post_reset: false,
             pre_window: None,
             post_window: None,
+            agent_invite: None,
             at,
         },
         "a born-claimed successor requires a held claim",

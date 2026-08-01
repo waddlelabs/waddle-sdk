@@ -19,6 +19,11 @@ pub enum GateDecision {
     /// translation can render `NoopReason::RESET_ACTIVE` instead of
     /// `BYPASS_ACTIVE` (the stale-handle contract).
     ResetActive,
+    /// The caller ticked an agent-invited episode with no engaged claim
+    /// (`PlanMode::AgentEpisode`, FSM.md E24); shaped like `Noop` (dispatch
+    /// nothing) but distinct so the reducer's marker translation can render
+    /// `NoopReason::AGENT_EPISODE`.
+    AgentEpisode,
 }
 
 #[derive(Debug, Clone)]

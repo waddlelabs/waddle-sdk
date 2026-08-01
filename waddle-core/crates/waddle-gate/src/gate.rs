@@ -253,6 +253,22 @@ impl<C: Clock> Gate<C> {
                     provenance: provenance.clone(),
                 }
             }
+            // E24: the caller's own ticks in an agent-invited episode
+            // dispatch nothing while no claim is engaged. Same cost class as
+            // Bypass (one record push, one marker return) — no
+            // locks/syscalls/allocs.
+            PlanMode::AgentEpisode { provenance } => {
+                self.record(
+                    stamp,
+                    GateDecision::AgentEpisode,
+                    provenance.clone(),
+                    None,
+                    obs,
+                );
+                GateOutput::Noop {
+                    provenance: provenance.clone(),
+                }
+            }
             PlanMode::Claimed { provenance, blend } => {
                 let due = self.shared.stream.lock().pop_due(now);
                 match due {
@@ -514,6 +530,32 @@ mod tests {
             rec.decision,
             GateDecision::Noop,
             "reset-active must be distinguishable from bypass for the reducer's marker mapping"
+        );
+    }
+
+    /// A caller ticking an agent-invited episode with no engaged claim
+    /// dispatches nothing (FSM.md E24) — same shape as bypass, distinct
+    /// decision so the reducer can render `NoopReason::AGENT_EPISODE`.
+    #[test]
+    fn agent_episode_returns_noop_and_records_distinctly() {
+        let (mut gate, shared, _tx, mut records, clock) = setup();
+        shared.store_plan(GatePlan {
+            mode: PlanMode::AgentEpisode {
+                provenance: ProvenanceTag::policy(),
+            },
+            since: MonoNs(0),
+        });
+        clock.advance(1_000);
+        assert!(matches!(
+            gate.gate(&[1.0], None, None),
+            GateOutput::Noop { .. }
+        ));
+        let rec = records.pop().unwrap();
+        assert_eq!(rec.decision, GateDecision::AgentEpisode);
+        assert_ne!(
+            rec.decision,
+            GateDecision::Noop,
+            "agent-episode must be distinguishable from bypass for the reducer's marker mapping"
         );
     }
 }

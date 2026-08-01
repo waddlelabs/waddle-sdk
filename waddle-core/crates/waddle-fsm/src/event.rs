@@ -17,6 +17,10 @@ pub enum TimerId {
     /// A remote reset window's deadline (flag `waddle.v0.reset.remote`, E19);
     /// firing drives E22 (window not completed in time).
     ResetWindowTimeout,
+    /// An agent invite's deadline (flag `waddle.v0.agent`, E23); firing
+    /// drives E25 (no agent claim engaged in time). A stale expiry racing
+    /// the cancellation is discarded (FSM.md §1.5).
+    AgentInviteTimeout,
 }
 
 /// A declared remote reset window (flag `waddle.v0.reset.remote`). Carried on
@@ -28,6 +32,19 @@ pub struct WindowSpec {
     pub expected: ActorKind,
     pub prompt: String,
     /// Deadline offset from window open; arms `ResetWindowTimeout`.
+    pub timeout_ns: i64,
+}
+
+/// A declared agent invite (flag `waddle.v0.agent`), carried on
+/// `EpisodeOpen` (E23): the customer asked Waddle to drive this episode. The
+/// invite is emitted to the plane and arms `AgentInviteTimeout`; the invited
+/// agent then claims with the ordinary `Claim`/`Lease` machinery (C8
+/// restricts admission, nothing else — FSM.md §1.5).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct AgentInvite {
+    /// The natural-language task for the invited agent.
+    pub prompt: String,
+    /// Deadline offset from episode open; arms `AgentInviteTimeout` (E25).
     pub timeout_ns: i64,
 }
 
@@ -96,6 +113,9 @@ pub enum SessionEvent {
         pre_window: Option<WindowSpec>,
         /// A remote POST reset window, stashed for E14 to open.
         post_window: Option<WindowSpec>,
+        /// An agent invite (flag `waddle.v0.agent`, E23): emitted at open,
+        /// arming `AgentInviteTimeout`.
+        agent_invite: Option<AgentInvite>,
         at: MonoNs,
     },
     /// The reset pipeline reported. `verified` carries an inline
@@ -266,6 +286,14 @@ pub enum SessionEvent {
         verified: Option<bool>,
         at: MonoNs,
     },
+    /// The plane denied the agent task (flag `waddle.v0.agent`, E26/E26b) —
+    /// injected by the runtime when `AgentTaskUpdate{DENIED}` arrives.
+    /// QUEUED/COMPLETED updates are runtime-side information, never FSM
+    /// events (FSM.md §1.5).
+    AgentTaskDenied {
+        detail: String,
+        at: MonoNs,
+    },
 }
 
 impl SessionEvent {
@@ -303,7 +331,8 @@ impl SessionEvent {
             | Self::InterventionRejected { at, .. }
             | Self::PostResetResult { at, .. }
             | Self::ResetWindowEngage { at, .. }
-            | Self::ResetWindowComplete { at, .. } => *at,
+            | Self::ResetWindowComplete { at, .. }
+            | Self::AgentTaskDenied { at, .. } => *at,
         }
     }
 }

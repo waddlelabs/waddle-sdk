@@ -145,6 +145,7 @@ fn open_declared(d: &mut Driver) {
         post_reset: true,
         pre_window: None,
         post_window: None,
+        agent_invite: None,
         at,
     });
     let at = d.tick();

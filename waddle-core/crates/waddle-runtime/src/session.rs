@@ -945,6 +945,7 @@ impl Session {
             post_reset: post_reset_declared,
             pre_window,
             post_window,
+            agent_invite: None,
             at: now,
         });
 

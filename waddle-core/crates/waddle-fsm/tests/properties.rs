@@ -22,13 +22,20 @@
 //!     (the stale-handle contract).
 //! 14. Retake acceptance ⇒ predecessor Terminal{ABORTED_RETAKE} with no
 //!     intervening PostReset phase (E18 bypass).
+//! 15. `agent_engaged ⇒ agent_invited` (§1.5 latch).
+//! 16. In an agent-invited episode, every ENGAGEd (RUNNING-phase) claim has
+//!     actor AGENT (C8) — reset-window claims (C6) never enter INTERVENTION.
+//! 17. Agent-invited ∧ never engaged ∧ invite timer fired ⇒ Terminal{ABORT}
+//!     (or PostReset{ABORT pinned}, then Terminal, when post-reset declared —
+//!     E25 through E14).
+//! 18. `AgentTaskDenied` after engage never changes phase (E26b).
 
 use std::collections::HashSet;
 
 use proptest::prelude::*;
 use waddle_fsm::{
-    Effect, LeaseState, MarkKind, Phase, ProxySample, Rejected, SessionConfig, SessionEvent,
-    SessionFsm, TimerId, WindowSpec, step,
+    AgentInvite, Effect, EpisodeState, LeaseState, MarkKind, Phase, ProxySample, Rejected,
+    SessionConfig, SessionEvent, SessionFsm, TimerId, WindowSpec, step,
 };
 use waddle_types::{
     ActorKind, ClaimId, EpisodeId, GateMode, Grant, HandoffPolicy, InterventionPhase,
@@ -49,6 +56,17 @@ enum Cmd {
         pre_window: bool,
         post_window: bool,
     },
+    /// Opens an agent-invited episode (flag `waddle.v0.agent`, E23),
+    /// independently varying a declared post-reset (hook or remote window)
+    /// so I17's E14 detour and E26b's POST_RESET inertness get walked, and
+    /// so C6 window claims inside an agent-invited episode stay covered.
+    OpenAgent {
+        optimistic: bool,
+        post_reset: bool,
+        post_window: bool,
+    },
+    /// The plane denied the agent task (E26 before engage, E26b after).
+    AgentDenied,
     ResetOk {
         verified: Option<bool>,
     },
@@ -63,7 +81,11 @@ enum Cmd {
     /// double-driving a reset while a remote actor (or the pipeline hook)
     /// owns it.
     GateTick,
-    ClaimGranted,
+    /// `agent` picks the granted actor (AGENT vs TELEOPERATOR) so C8
+    /// admission on agent-invited episodes is walked from both sides.
+    ClaimGranted {
+        agent: bool,
+    },
     Engage,
     HoldOk,
     ChunkBoundary,
@@ -142,9 +164,17 @@ fn cmd_strategy() -> impl Strategy<Value = Cmd> {
         1 => Just(Cmd::ResetFail),
         2 => (any::<bool>(), any::<bool>())
             .prop_map(|(verified, invalidated)| Cmd::Verification { verified, invalidated }),
+        2 => (any::<bool>(), any::<bool>(), any::<bool>()).prop_map(
+            |(optimistic, post_reset, post_window)| Cmd::OpenAgent {
+                optimistic,
+                post_reset,
+                post_window,
+            }
+        ),
         3 => Just(Cmd::Start),
         2 => Just(Cmd::GateTick),
-        3 => Just(Cmd::ClaimGranted),
+        3 => any::<bool>().prop_map(|agent| Cmd::ClaimGranted { agent }),
+        1 => Just(Cmd::AgentDenied),
         3 => Just(Cmd::Engage),
         2 => Just(Cmd::HoldOk),
         2 => Just(Cmd::ChunkBoundary),
@@ -296,6 +326,30 @@ impl Driver {
         } else {
             None
         };
+        // I17: the invite timer firing while the invite is open must
+        // terminate with ABORT (directly, or through the E14 detour with
+        // ABORT pinned). Captured BEFORE the event; a stale expiry (invite
+        // closed) is exempt — it must be discarded instead.
+        let invite_timeout_while_open = matches!(
+            ev,
+            SessionEvent::TimerFired {
+                id: TimerId::AgentInviteTimeout,
+                ..
+            }
+        ) && self
+            .state
+            .episode
+            .as_ref()
+            .is_some_and(EpisodeState::invite_open);
+        // I18: a DENIED landing after the agent engaged must never change
+        // phase (E26b).
+        let denied_after_engage = matches!(ev, SessionEvent::AgentTaskDenied { .. })
+            && self.state.episode.as_ref().is_some_and(|e| e.agent_engaged);
+        let phase_before_denied = if denied_after_engage {
+            self.state.episode.as_ref().map(|e| e.phase)
+        } else {
+            None
+        };
         match first {
             Err(Rejected { .. }) => {
                 // Rejections never mutate: nothing to fold in.
@@ -335,6 +389,33 @@ impl Driver {
                         self.state.lease,
                         LeaseState::Vacant,
                         "I11: estop from PostReset must leave the lease vacant"
+                    );
+                }
+
+                // I17: E25 fired while the invite was open — the episode
+                // terminates with ABORT, directly or via the E14 detour
+                // (POST_RESET with ABORT pinned; I10's machinery then pins
+                // the eventual Terminal).
+                if invite_timeout_while_open {
+                    let ep = self.state.episode.as_ref().expect("episode was open");
+                    assert!(
+                        ep.phase == Phase::Terminal(TerminalOutcome::Abort)
+                            || (ep.phase == Phase::PostReset
+                                && ep.pinned_outcome == Some(TerminalOutcome::Abort)),
+                        "I17: open-invite timeout must reach Terminal{{ABORT}} or \
+                         PostReset{{ABORT pinned}}, got {:?} (pinned {:?})",
+                        ep.phase,
+                        ep.pinned_outcome
+                    );
+                }
+
+                // I18: an accepted DENIED after engage would be a bug; a
+                // rejected one never mutates. Either way the phase stands.
+                if denied_after_engage {
+                    assert_eq!(
+                        self.state.episode.as_ref().map(|e| e.phase),
+                        phase_before_denied,
+                        "I18: AgentTaskDenied after engage must never change phase (E26b)"
                     );
                 }
 
@@ -411,6 +492,7 @@ impl Driver {
                                 post_reset: false,
                                 pre_window: None,
                                 post_window: None,
+                                agent_invite: None,
                                 at: self.tick(),
                             });
                         }
@@ -538,6 +620,25 @@ impl Driver {
             }
             self.last_post_reset_failed = Some((ep.id.clone(), ep.post_reset_failed));
 
+            // I15: the §1.5 latch — agent_engaged only ever on an
+            // agent-invited episode.
+            if ep.agent_engaged {
+                assert!(ep.agent_invited, "I15: agent_engaged without agent_invited");
+            }
+
+            // I16: every ENGAGEd (RUNNING-phase, E7) claim in an
+            // agent-invited episode is the invited agent's (C8). Reset-window
+            // claims (C6) never enter INTERVENTION, so the phase check
+            // scopes this exactly to E7 engages.
+            if ep.agent_invited && matches!(ep.phase, Phase::Intervention(_)) {
+                assert!(
+                    s.claim
+                        .as_ref()
+                        .is_some_and(|c| c.actor == ActorKind::Agent),
+                    "I16: engaged claim in an agent-invited episode must be ACTOR_KIND_AGENT"
+                );
+            }
+
             // Invariant 6: verified-or-flagged.
             if !matches!(ep.phase, Phase::Resetting) && !ep.phase.is_terminal() {
                 match ep.verification {
@@ -593,6 +694,7 @@ impl Driver {
                     post_reset: false,
                     pre_window: None,
                     post_window: None,
+                    agent_invite: None,
                     at,
                 }
             }
@@ -622,9 +724,46 @@ impl Driver {
                     } else {
                         None
                     },
+                    agent_invite: None,
                     at,
                 }
             }
+            Cmd::OpenAgent {
+                optimistic,
+                post_reset,
+                post_window,
+            } => {
+                self.episode_seq += 1;
+                SessionEvent::EpisodeOpen {
+                    id: EpisodeId::new(format!("ep-{}", self.episode_seq)),
+                    verification: if *optimistic {
+                        ResetVerificationMode::OptimisticAsync
+                    } else {
+                        ResetVerificationMode::Blocking
+                    },
+                    born_claimed: false,
+                    parent: None,
+                    post_reset: *post_reset,
+                    pre_window: None,
+                    post_window: if *post_window {
+                        Some(reset_window_spec())
+                    } else {
+                        None
+                    },
+                    agent_invite: Some(AgentInvite {
+                        prompt: "proptest agent task".to_owned(),
+                        // Inside the walk's `Advance` range so the invite
+                        // timer fires under random exploration (like the
+                        // window timer).
+                        timeout_ns: 2_000_000_000,
+                    }),
+                    at,
+                }
+            }
+            Cmd::AgentDenied => SessionEvent::AgentTaskDenied {
+                detail: "denied by plane".to_owned(),
+                at,
+            },
             Cmd::ResetOk { verified } => SessionEvent::ResetResult {
                 ok: true,
                 verified: *verified,
@@ -645,12 +784,16 @@ impl Driver {
             },
             Cmd::Start => SessionEvent::Start { at },
             Cmd::GateTick => SessionEvent::GateTick { at },
-            Cmd::ClaimGranted => {
+            Cmd::ClaimGranted { agent } => {
                 self.claim_seq += 1;
                 SessionEvent::ClaimGranted {
                     id: ClaimId::new(format!("claim-{}", self.claim_seq)),
-                    source: "teleop".to_owned(),
-                    actor: ActorKind::Teleoperator,
+                    source: if *agent { "agent" } else { "teleop" }.to_owned(),
+                    actor: if *agent {
+                        ActorKind::Agent
+                    } else {
+                        ActorKind::Teleoperator
+                    },
                     self_initiated: false,
                     at,
                 }
@@ -825,7 +968,7 @@ fn retake_lifecycle_smoke() {
         verified: Some(true),
     });
     d.run(&Cmd::Start);
-    d.run(&Cmd::ClaimGranted);
+    d.run(&Cmd::ClaimGranted { agent: false });
     d.run(&Cmd::Engage);
     let ep = d.state.episode.as_ref().unwrap();
     assert_eq!(ep.phase, Phase::Intervention(InterventionPhase::Settle));
@@ -862,7 +1005,7 @@ fn autonomous_retake_blocks_on_verification() {
         verified: Some(true),
     });
     d.run(&Cmd::Start);
-    d.run(&Cmd::ClaimGranted);
+    d.run(&Cmd::ClaimGranted { agent: false });
     d.run(&Cmd::Engage);
     d.run(&Cmd::Retake {
         by_teleoperator: false,
@@ -905,7 +1048,7 @@ fn remote_post_reset_window_smoke() {
     assert!(ep.reset_window.is_some(), "post window opened at E14 (E19)");
     assert_eq!(ep.pinned_outcome, Some(TerminalOutcome::Success));
 
-    d.run(&Cmd::ClaimGranted);
+    d.run(&Cmd::ClaimGranted { agent: false });
     assert!(d.state.claim.is_some(), "reset claim admitted (C6)");
     d.run(&Cmd::WindowEngage);
     assert_eq!(
@@ -949,5 +1092,189 @@ fn remote_post_reset_window_smoke() {
     assert!(
         handback_idx < terminal_idx,
         "E21: the deferred handback precedes the pinned →TERMINAL transition"
+    );
+}
+
+/// A deterministic agent-invited lifecycle (flag `waddle.v0.agent`): E23 open
+/// (invite emitted, timer armed, E24 predicate on), C8 admission (teleop
+/// rejected, agent admitted), E7 engage (timer cancelled, `agent_engaged`
+/// latched), E26b inert DENIED, then an ordinary E10 termination.
+#[test]
+fn agent_invite_lifecycle_smoke() {
+    let mut d = Driver::new();
+    d.run(&Cmd::OpenAgent {
+        optimistic: false,
+        post_reset: false,
+        post_window: false,
+    });
+    let ep = d.state.episode.as_ref().unwrap();
+    assert!(ep.agent_invited, "E23 marks the episode agent-invited");
+    assert!(
+        d.armed
+            .iter()
+            .any(|(t, _)| *t == TimerId::AgentInviteTimeout),
+        "E23 arms the invite timer"
+    );
+    assert!(
+        d.state.agent_episode_noop(),
+        "E24 predicate holds from open"
+    );
+
+    d.run(&Cmd::ResetOk {
+        verified: Some(true),
+    });
+    d.run(&Cmd::Start);
+    assert!(
+        d.state.agent_episode_noop(),
+        "E24: RUNNING with no engaged claim never dispatches"
+    );
+
+    // C8: a teleoperator grant is rejected; the agent's is admitted.
+    d.run(&Cmd::ClaimGranted { agent: false });
+    assert!(d.state.claim.is_none(), "C8 rejects a non-AGENT grant");
+    d.run(&Cmd::ClaimGranted { agent: true });
+    assert!(d.state.claim.is_some(), "C8 admits the AGENT grant");
+
+    d.run(&Cmd::Engage);
+    let ep = d.state.episode.as_ref().unwrap();
+    assert!(ep.agent_engaged, "E7 latches agent_engaged");
+    assert!(
+        !d.armed
+            .iter()
+            .any(|(t, _)| *t == TimerId::AgentInviteTimeout),
+        "E7 cancels the invite timer"
+    );
+    assert!(
+        !d.state.agent_episode_noop(),
+        "an engaged claim gets ordinary intervention semantics"
+    );
+
+    // E26b: a late DENIED is inert.
+    d.run(&Cmd::AgentDenied);
+    assert!(matches!(
+        d.state.episode.as_ref().unwrap().phase,
+        Phase::Intervention(_)
+    ));
+
+    // Ordinary E10 termination (the agent's MARK_DONE path).
+    d.run(&Cmd::Terminate { success: true });
+    assert_eq!(
+        d.state.episode.as_ref().unwrap().phase,
+        Phase::Terminal(TerminalOutcome::Success)
+    );
+    assert!(d.state.claim.is_none(), "claim released at terminal");
+    assert!(
+        !d.state.agent_episode_noop(),
+        "TERMINAL returns the caller's loop to passthrough"
+    );
+}
+
+/// E25 both ways: undeclared → straight TERMINAL{ABORT}; with a declared
+/// post-reset → the E14 detour with ABORT pinned (I17's second arm), then
+/// TERMINAL{ABORT} after cleanup.
+#[test]
+fn agent_invite_timeout_aborts_or_detours_to_post_reset() {
+    let mut d = Driver::new();
+    d.run(&Cmd::OpenAgent {
+        optimistic: false,
+        post_reset: false,
+        post_window: false,
+    });
+    d.run(&Cmd::ResetOk {
+        verified: Some(true),
+    });
+    d.run(&Cmd::Start);
+    d.run(&Cmd::Advance { ns: 3_000_000_000 });
+    assert_eq!(
+        d.state.episode.as_ref().unwrap().phase,
+        Phase::Terminal(TerminalOutcome::Abort),
+        "E25: open-invite timeout aborts"
+    );
+
+    let mut d = Driver::new();
+    d.run(&Cmd::OpenAgent {
+        optimistic: false,
+        post_reset: true,
+        post_window: false,
+    });
+    d.run(&Cmd::ResetOk {
+        verified: Some(true),
+    });
+    d.run(&Cmd::Start);
+    d.run(&Cmd::Advance { ns: 3_000_000_000 });
+    let ep = d.state.episode.as_ref().unwrap();
+    assert_eq!(ep.phase, Phase::PostReset, "E25 detours through E14");
+    assert_eq!(ep.pinned_outcome, Some(TerminalOutcome::Abort));
+    d.run(&Cmd::PostResetOk);
+    assert_eq!(
+        d.state.episode.as_ref().unwrap().phase,
+        Phase::Terminal(TerminalOutcome::Abort)
+    );
+}
+
+/// E26: a DENIED before any engage cancels the invite timer and terminates
+/// with ABORT through the same routing as E25.
+#[test]
+fn agent_denied_before_engage_aborts() {
+    let mut d = Driver::new();
+    d.run(&Cmd::OpenAgent {
+        optimistic: false,
+        post_reset: false,
+        post_window: false,
+    });
+    d.run(&Cmd::ResetOk {
+        verified: Some(true),
+    });
+    d.run(&Cmd::Start);
+    d.run(&Cmd::AgentDenied);
+    assert_eq!(
+        d.state.episode.as_ref().unwrap().phase,
+        Phase::Terminal(TerminalOutcome::Abort),
+        "E26: pre-engage DENIED aborts"
+    );
+    assert!(
+        !d.armed
+            .iter()
+            .any(|(t, _)| *t == TimerId::AgentInviteTimeout),
+        "E26 cancels the invite timer"
+    );
+}
+
+/// C6 admission survives inside an agent-invited episode: the declared
+/// teleop POST window still admits the teleoperator's reset claim in
+/// POST_RESET (C8 constrains RUNNING-phase claims only).
+#[test]
+fn agent_episode_post_reset_window_still_admits_teleoperator() {
+    let mut d = Driver::new();
+    d.run(&Cmd::OpenAgent {
+        optimistic: false,
+        post_reset: true,
+        post_window: true,
+    });
+    d.run(&Cmd::ResetOk {
+        verified: Some(true),
+    });
+    d.run(&Cmd::Start);
+    d.run(&Cmd::ClaimGranted { agent: true });
+    d.run(&Cmd::Engage);
+    d.run(&Cmd::Terminate { success: true });
+    let ep = d.state.episode.as_ref().unwrap();
+    assert_eq!(ep.phase, Phase::PostReset);
+    assert!(ep.reset_window.is_some(), "post window opened at E14");
+
+    // The teleoperator's reset claim is admitted per C6 even though the
+    // episode is agent-invited.
+    d.run(&Cmd::ClaimGranted { agent: false });
+    assert!(
+        d.state.claim.is_some(),
+        "C6: teleop reset claim admitted in the agent-invited episode's POST_RESET"
+    );
+    d.run(&Cmd::WindowEngage);
+    assert_eq!(d.state.gate_mode, GateMode::Reset);
+    d.run(&Cmd::WindowComplete { ok: true });
+    assert_eq!(
+        d.state.episode.as_ref().unwrap().phase,
+        Phase::Terminal(TerminalOutcome::Success),
+        "pinned SUCCESS survives the remote post-reset window"
     );
 }

@@ -250,6 +250,7 @@ impl Target {
                         post_reset: false,
                         pre_window: None,
                         post_window: None,
+                        agent_invite: None,
                         at: self.at(),
                     })?;
                 }
@@ -291,6 +292,13 @@ impl Target {
         let blend = self.blend_schedule();
         let Some(gp) = &self.gate else { return };
         let plan = match mode {
+            // E24 (flag `waddle.v0.agent`): an agent-invited episode's
+            // PASSTHROUGH projects to Noop{AGENT_EPISODE} while no claim is
+            // engaged (predicate on the FSM — hollow-frontend rule).
+            GateMode::Passthrough if self.fsm.agent_episode_noop() => GatePlan {
+                mode: PlanMode::AgentEpisode { provenance },
+                since: MonoNs(self.now),
+            },
             GateMode::Passthrough => GatePlan::passthrough(MonoNs(self.now)),
             GateMode::Intervention => GatePlan {
                 mode: PlanMode::Claimed { provenance, blend },
@@ -510,6 +518,7 @@ impl Target {
                     post_reset,
                     pre_window,
                     post_window,
+                    agent_invite: None,
                     at,
                 })?;
             }
