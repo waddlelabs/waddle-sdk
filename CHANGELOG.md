@@ -12,6 +12,16 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 ## [Unreleased]
 
 ### Added
+- **waddle-protocol (fixture `remote_reset_caller_tick_noop`)**: pins FSM.md
+  E20's caller-tick marker, previously asserted by no golden — a `gate_tick`
+  during an ENGAGED remote reset window returns
+  `Noop{NOOP_REASON_RESET_ACTIVE}` and causes no episode transition (the
+  stale-handle contract), and the first tick after `reset_window_complete`
+  passes through and drives E6 READY→RUNNING, pinning the marker as
+  window-scoped rather than sticky. Before this fixture the conformance
+  runner's `(Noop, PlanMode::Reset)` marker-translation arm could be
+  reverted to `BYPASS_ACTIVE` with the whole suite staying green; the E20
+  row's Fixture column now lists it.
 - **waddle-runtime (`ServerMsg::ResetProgress` handling)**: the
   plane-executed reset completion path (`RequestReset`/`ResetProgress`,
   `waddle.v0.reset`) is no longer dropped — every message updates a new

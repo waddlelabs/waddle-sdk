@@ -192,7 +192,9 @@ enum spellings):
 `episode.pinned_outcome` need `waddle.v0.reset.phases`; `pinned_outcome` is
 `TERMINAL_OUTCOME_UNSPECIFIED` until POST_RESET entry pins it, and
 `episode.outcome` stays TERMINAL-only (unlike `pinned_outcome`, it is never
-set on a POST_RESET transition). The top-level `reset_window` document needs
+set on a POST_RESET transition). The top-level `reset_window` document and
+the gate-plan noop reason `NOOP_REASON_RESET_ACTIVE` (asserted via
+`expect_output`; FSM.md E20's caller-tick marker) need
 `waddle.v0.reset.remote`.
 
 `episode.agent_invited` / `episode.agent_engaged` need `waddle.v0.agent`:
