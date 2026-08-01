@@ -222,6 +222,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     own value only on a passthrough tick. Sending the scripted value beside
     substituted joints would move the arm where the teleoperator asked while
     silently dropping the grasp.
+  - **A latched e-stop survives the scene reset.** `ToyArm.home()` refuses
+    (returns `False`, moving nothing) while stopped, and `pre_reset` returns
+    `False` rather than vouching for a scene it did not reset; only
+    `clear_estop()` — standing in for the human at the machine — releases
+    it. The envelope is the owner's, so no supervision flow may clear it.
 - **sdk (`waddle.StreamPolicy(still_fps=…)`)**: the Python declaration for
   control-plane stills (flag `waddle.v0.obs.stills`), which core has
   honoured since the entry above but no Python program could ask for. `None`

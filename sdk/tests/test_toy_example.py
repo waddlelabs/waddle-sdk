@@ -278,6 +278,42 @@ def test_the_example_sends_an_intervening_claimants_gripper(tmp_path):
     assert example.GRIPPER_OPEN_M in arm.gripper_commands
 
 
+def test_the_examples_estop_survives_the_scene_reset():
+    # `pre_reset` runs the scene reset before EVERY episode. A latched
+    # e-stop is the owner's envelope; if the reset cleared it, every e-stop
+    # Waddle ever asked for would be undone by the supervision flow itself,
+    # with no human in the loop.
+    example = _load_example()
+    arm = example.ToyArm()
+    target = np.full(len(example._CHAIN), 0.3)
+
+    arm.command(target)
+    arm.step(0.05)
+    assert np.any(arm.joint_positions() != 0.0), "the arm never moved to begin with"
+
+    arm.estop()
+    frozen = arm.joint_positions()
+    arm.command(-target)
+    arm.step(0.05)
+    assert np.array_equal(arm.joint_positions(), frozen), "a latched arm moved"
+
+    # The reset declines rather than pretending — which is what makes the
+    # example's `pre_reset` return False and keep the episode out of
+    # RESETTING.
+    assert arm.home() is False
+    assert np.array_equal(arm.joint_positions(), frozen), "the reset moved a latched arm"
+    arm.command(target)
+    arm.step(0.05)
+    assert np.array_equal(arm.joint_positions(), frozen), "the reset cleared the latch"
+
+    # Only the human at the machine clears it.
+    arm.clear_estop()
+    assert arm.home() is True
+    arm.command(target)
+    arm.step(0.05)
+    assert np.any(arm.joint_positions() != 0.0), "the arm never recovered"
+
+
 def test_the_examples_success_criterion_is_not_free():
     # The example decides its own outcome, so the criterion has to be able
     # to say "no". An episode in which nothing ever dispatched leaves the

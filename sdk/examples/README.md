@@ -22,7 +22,9 @@ It shows, in one place:
   into the metres the robot declared;
 - `session.publish_frame(...)` and `session.report_proprio(...)` every
   tick;
-- a scripted `pre_reset` hook, run before every episode;
+- a scripted `pre_reset` hook, run before every episode — which declines,
+  rather than vouching for a scene it did not reset, while the simulated
+  e-stop is latched (only a human clears that, never the reset flow);
 - `waddle.agent(prompt)` — handing a whole episode to Waddle.
 
 ### Run it offline
@@ -139,6 +141,7 @@ Everything the program wants you (or another process) to see is prefixed
 |---|---|
 | `[toy] session up ...` | the session is open; the configuration is echoed |
 | `[toy] pre_reset '<task>'` | the scripted scene reset ran |
+| `[toy] pre_reset refused: e-stop latched ...` | the reset declined instead of vouching; clear the e-stop at the robot |
 | `[toy] rollout <n> start id=<episode> task=...` | an episode opened |
 | `[toy] rollout <n> done <outcome>` | it reached a terminal outcome |
 | `[toy] agent invite prompt=... timeout_s=...` | the invite went out |

@@ -274,15 +274,31 @@ class ToyArm:
             self._q = np.clip(self._q + delta, _LOWER, _UPPER)
             self._qd = delta / dt
 
-    def home(self) -> None:
+    def home(self) -> bool:
         """Snap back to the home pose — what this robot's "reset the scene"
-        amounts to."""
+        amounts to. Returns False, having moved nothing, while the e-stop
+        is latched.
+
+        The latch deliberately SURVIVES a reset: the envelope is the
+        owner's, and clearing it is a human action at the machine
+        (:meth:`clear_estop`). A reset flow that cleared it would mean every
+        e-stop Waddle asked for got undone by the next episode — by
+        supervision, on nobody's authority."""
         with self._lock:
-            self._estopped = False
+            if self._estopped:
+                return False
             self._q = _HOME.copy()
             self._qd[:] = 0.0
             self._target = _HOME.copy()
             self._gripper = GRIPPER_CLOSED_M
+            return True
+
+    def clear_estop(self) -> None:
+        """Release the latch. Nothing Waddle sends reaches this — it stands
+        in for the human who walks up, checks the cell, and twists the
+        button back out."""
+        with self._lock:
+            self._estopped = False
 
     # -- state readers ----------------------------------------------------
 
@@ -558,9 +574,13 @@ def main(argv: list[str] | None = None) -> int:
     def pre_reset(task: str) -> bool:
         """Scripted scene reset, run before every episode. Returning True
         vouches for it; returning False keeps the episode out of RESETTING
-        rather than handing a policy an invalid scene."""
+        rather than handing a policy an invalid scene — which is exactly
+        what a latched e-stop means here: the arm did not move, so there is
+        nothing to vouch for until a human clears it at the machine."""
         status(f"pre_reset {task!r}")
-        arm.home()
+        if not arm.home():
+            status("pre_reset refused: e-stop latched (clear it at the robot)")
+            return False
         return True
 
     control = waddle.Control(send=send, hold=arm.hold, estop=arm.estop)
