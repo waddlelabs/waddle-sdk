@@ -480,22 +480,33 @@ impl SessionBuilder {
         let robot = RobotDescription::try_from(&robot_pb)?;
 
         // Cameras: `declared_cameras` backs `publish_frame`'s
-        // unknown-camera + declared-resolution checks regardless of whether
-        // a media plane is wired at all; `camera_uplinks` (one per declared
-        // camera, only when a media plane IS wired) is what actually
-        // publishes — an unwired declaration is a cheap no-op, never an
-        // error. Resolving each camera's uplink policy here (not lazily on
-        // first frame) means an unsupported encoding fails loudly at build
-        // time instead of silently dropping every frame later.
+        // unknown-camera + declared-resolution checks regardless of what is
+        // wired; `camera_uplinks` (built only for cameras a published frame
+        // can actually go SOMEWHERE from) is what actually publishes — a
+        // declaration with nowhere to go is a cheap no-op, never an error.
+        // A frame has two possible destinations, independently:
+        //   - the media plane (video track), when one is wired at all;
+        //   - the control plane (bounded-rate `FrameStill`, flag
+        //     `waddle.v0.obs.stills`), when the camera declared
+        //     `StreamPolicy.still_fps > 0` AND a transport exists to carry
+        //     it.
+        // Resolving each camera's uplink policy here (not lazily on first
+        // frame) means an unsupported encoding fails loudly at build time
+        // instead of silently dropping every frame later.
         let mut declared_cameras: HashMap<String, (u32, u32)> = HashMap::new();
         for cam in &robot_pb.cameras {
             declared_cameras.insert(cam.name.clone(), (cam.width, cam.height));
         }
         let media_for_cameras = self.media.clone();
+        let media_wired = media_for_cameras.is_some();
+        let stills_wired = self.transport.is_some();
         let mut camera_uplinks: HashMap<String, Arc<CameraUplink>> = HashMap::new();
-        if media_for_cameras.is_some() {
-            for cam in &robot_pb.cameras {
-                let uplink = media_uplink::build_camera_uplink(cam)?;
+        let mut declares_stills = false;
+        for cam in &robot_pb.cameras {
+            let stills = media_uplink::declares_stills(cam);
+            declares_stills |= stills;
+            if media_wired || (stills && stills_wired) {
+                let uplink = media_uplink::build_camera_uplink(cam, media_wired)?;
                 camera_uplinks.insert(cam.name.clone(), Arc::new(uplink));
             }
         }
@@ -607,6 +618,15 @@ impl SessionBuilder {
             || matches!(self.post_reset, Some(ResetSpec::Remote { .. }))
         {
             feature_flags.push("waddle.v0.reset.remote".to_owned());
+        }
+        // Control-plane stills (`waddle.v0.obs.stills`) are declared from the
+        // ROBOT's declaration, not from session config: a camera's
+        // `StreamPolicy.still_fps` is the only thing that asks for them, and
+        // the declaration is fixed for the session (it rides the same
+        // `RegisterRequest`). Declaring the flag with no camera asking would
+        // claim a behavior this session can never produce.
+        if declares_stills {
+            feature_flags.push(media_uplink::STILLS_FLAG.to_owned());
         }
 
         let plane = self.transport.map(|t| {
@@ -721,15 +741,15 @@ impl SessionBuilder {
             )?);
         }
 
-        // Camera uplink: one dedicated pump servicing every
-        // declared camera that has a media plane to publish into;
-        // `Session::publish_frame` feeds it through the per-camera bounded
-        // queues built above.
+        // Camera uplink: one dedicated pump servicing every declared camera
+        // that has somewhere to publish — a media plane (video track), a
+        // control plane (bounded-rate stills), or both;
+        // `Session::publish_frame` feeds it through the per-camera queues
+        // built above.
         if !camera_uplinks.is_empty() {
-            let media = media_for_cameras
-                .expect("camera_uplinks is only ever populated when media is wired");
             threads.push(media_uplink::spawn_media_uplink(
-                media,
+                media_for_cameras,
+                plane.clone(),
                 camera_uplinks.values().cloned().collect(),
                 mirror.clone(),
             ));
@@ -921,9 +941,11 @@ struct SessionInner {
     /// of whether a media plane is wired — backs `publish_frame`'s
     /// unknown-camera and declared-resolution checks.
     declared_cameras: HashMap<String, (u32, u32)>,
-    /// One entry per declared camera, present only when a media plane is
-    /// wired: `publish_frame` enqueues into these; absent means "declared,
-    /// but nothing to publish into" (a cheap no-op, never an error).
+    /// One entry per declared camera a published frame can actually go
+    /// somewhere from — a wired media plane (video track) and/or declared
+    /// control-plane stills (`StreamPolicy.still_fps` with a transport
+    /// configured). `publish_frame` feeds these; absent means "declared, but
+    /// nothing to publish into" (a cheap no-op, never an error).
     camera_uplinks: HashMap<String, Arc<CameraUplink>>,
     _verbs: Arc<VerbDispatch>,
     _plane: Option<Arc<ControlPlaneClient>>,
@@ -1298,12 +1320,20 @@ impl Session {
     /// actual encode/`push_frame` run off this thread, on the dedicated
     /// `waddle-media-uplink` pump.
     ///
+    /// A camera declaring `StreamPolicy.still_fps > 0` (flag
+    /// `waddle.v0.obs.stills`) additionally has this same frame teed into a
+    /// latest-wins slot the same pump samples at that declared rate,
+    /// JPEG-encodes, and sends as a bounded-rate `FrameStill` observation on
+    /// the CONTROL plane — for agent perception, never a video path, and
+    /// independent of whether a media plane exists at all.
+    ///
     /// - Unknown camera name (not in `RobotDescription.cameras`):
     ///   [`RuntimeError::UnknownCamera`].
     /// - `frame`'s (width, height) doesn't match the camera's declaration:
     ///   [`RuntimeError::Media`] (`MediaError::BadFrame`).
-    /// - Declared camera, but no media plane wired at all: `Ok(())`,
-    ///   nothing published — Local mode records no video in v0.
+    /// - Declared camera with nowhere to publish (no media plane wired, and
+    ///   no `still_fps`/transport for stills): `Ok(())`, nothing published —
+    ///   Local mode records no video in v0.
     ///
     /// The camera's declared `StreamPolicy.uplink.encoding` is
     /// bandwidth-intent for the video track, not a literal wire format:
@@ -1320,7 +1350,8 @@ impl Session {
             return Err(RuntimeError::UnknownCamera(camera.to_owned()));
         };
         let Some(uplink) = self.inner.camera_uplinks.get(camera) else {
-            // Declared, but no media plane wired: nothing to publish into.
+            // Declared, but neither leg has anywhere to go (no media plane
+            // wired, no declared stills with a transport to carry them).
             return Ok(());
         };
         let expected_len = (width as usize) * (height as usize) * 3;
@@ -1359,7 +1390,9 @@ impl Session {
     /// discarded to admit the newest) — or because `publish_track`/encode/
     /// `push_frame` itself failed. `0` for an unknown camera or one with no
     /// media plane wired. Never counts fps-throttled frames: those are the
-    /// declared policy working as intended, not data loss.
+    /// declared policy working as intended, not data loss. Control-plane
+    /// stills stay out of this counter entirely — they are droppable by
+    /// design (latest-wins), so it keeps meaning exactly media-uplink loss.
     #[must_use]
     pub fn camera_frames_dropped(&self, camera: &str) -> u64 {
         self.inner

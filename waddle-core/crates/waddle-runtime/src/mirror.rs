@@ -136,6 +136,12 @@ pub struct Status {
     /// The plane's most recent `AgentTaskUpdate`; see [`AgentTaskStatus`].
     pub agent_task: Option<AgentTaskStatus>,
     pub plane_connected: bool,
+    /// The CURRENT connection accepted `waddle.v0.obs.stills` at Register.
+    /// Refreshed by the plane pump on every registration (flags are
+    /// (re-)negotiated on each reconnect) and read by the media uplink pump,
+    /// which emits control-plane stills only while it is set — VERSIONING §3:
+    /// a behavior the connection did not accept is never emitted.
+    pub stills_negotiated: bool,
     pub shutdown: bool,
     /// Set once, at build time, when the session's `ControlRegistry` has no
     /// `estop` callable. Missing `estop` never fails the build (unlike

@@ -21,6 +21,7 @@ use waddle_types::{
 
 use crate::RuntimeError;
 use crate::ack::{ACKS_FLAG, AckGroup, Injected};
+use crate::media_uplink::STILLS_FLAG;
 use crate::mirror::{
     AgentTaskKind, AgentTaskStatus, Mirror, ResetProgressPhase, ResetProgressStatus,
 };
@@ -521,6 +522,15 @@ pub(crate) fn spawn_plane_pump(
                         if let PlaneEvent::Registered(resp) = &event {
                             acks_negotiated =
                                 resp.accepted_feature_flags.iter().any(|f| f == ACKS_FLAG);
+                            // Control-plane stills (flag
+                            // `waddle.v0.obs.stills`) are emitted by the
+                            // media uplink pump, not this one, so this
+                            // acceptance crosses threads on the mirror —
+                            // same per-connection refresh rule as
+                            // `acks_negotiated` above.
+                            let stills =
+                                resp.accepted_feature_flags.iter().any(|f| f == STILLS_FLAG);
+                            mirror.update(|s| s.stills_negotiated = stills);
                         }
                         if !was_connected {
                             was_connected = true;
