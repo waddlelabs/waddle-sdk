@@ -32,6 +32,16 @@ wired transport (a real LiveKit session) converts and compresses it itself
 ``h264`` is the one unsupported encoding: declaring it against a wired
 media plane is a clean error at :func:`init` time, not a per-frame failure.
 
+Everything above works with no supervision plane at all: with
+``recording_dir`` set, every episode lands as a local sidecar + MCAP.
+``init(transport=waddle.Grpc(url, token))`` connects the session to a
+plane, which is what makes supervision (teleoperator intervention, remote
+reset windows) and :func:`agent` — "Waddle, drive this one" — possible. The
+control transport is compiled into the published ``waddle-sdk`` wheel; the
+LiveKit media plane :class:`LiveKit` declares rides the teleop companion
+wheel (``pip install 'waddle-sdk[teleop]'``), which is also the only
+difference between the two.
+
 This package is a hollow frontend: every claim/lease/handoff/timeline
 decision is made in waddle-core (the Rust runtime under ``waddle._core``);
 Python only declares and marshals.
@@ -46,8 +56,10 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from os import PathLike
+from typing import TYPE_CHECKING
 
-from . import _core, descriptors
+from . import _native, descriptors
+from ._native import core
 from .descriptors import (
     Camera,
     Chunking,
@@ -65,8 +77,16 @@ from .descriptors import (
     Uplink,
 )
 
+if TYPE_CHECKING:  # `_core.pyi` types whichever core `_native` selected
+    from . import _core
+
+#: The compiled core's version — the ONE version this package has (the
+#: Python surface and the shim ship together, from one Cargo.toml).
+__version__: str = core.__version__
+
 __all__ = [
     "AgentReset",
+    "AgentResult",
     "Camera",
     "Chunking",
     "Composite",
@@ -74,6 +94,7 @@ __all__ = [
     "EEDelta",
     "FrameTransform",
     "Gripper",
+    "Grpc",
     "Handoff",
     "Intrinsics",
     "Joint",
@@ -86,6 +107,7 @@ __all__ = [
     "TeleopReset",
     "TimeSeries",
     "Uplink",
+    "agent",
     "descriptors",
     "init",
     "rollout",
@@ -134,23 +156,55 @@ class Control:
 
 
 @dataclass(frozen=True)
+class Grpc:
+    """Declare the session's control-plane transport: the connection over
+    which the supervision plane sees this session's timeline and sends its
+    directives (claims, remote reset windows, agent task updates). Without
+    one, a session is a local recorder — everything still runs, nothing is
+    supervised.
+
+    ``token`` is the plane's own credential for this session; this SDK
+    never mints one. Leave it ``None`` only for a plane that asks for no
+    credential (a local development plane).
+
+    Pure declaration: connecting, backoff, replay after a partition, and
+    every directive's meaning are waddle-core's, on its own thread — this
+    call does not dial anything."""
+
+    url: str
+    token: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.url, str) or not self.url:
+            raise ValueError("Grpc.url must be a non-empty str")
+        if self.token is not None and (
+            not isinstance(self.token, str) or not self.token
+        ):
+            raise ValueError("Grpc.token must be a non-empty str or None")
+
+
+@dataclass(frozen=True)
 class LiveKit:
     """Declare a real LiveKit-backed media plane: camera frames
     (``session.publish_frame``), teleop pose/clutch/mark, and telemetry all
     ride this WebRTC connection instead of the in-process ``_testing``
     loopback.
 
-    Not yet wired end-to-end from this SDK build: ``waddle-core``'s LiveKit
-    transport is real (``waddle_media::livekit``) but lives behind its own
-    ``livekit`` Cargo feature — a real WebRTC/``webrtc-sys`` dependency
-    chain (~700 MB on a cold build, plus tokio) that this Python SDK does
-    not compile in by default, to keep ``uv sync --dev`` and the
-    iterate-on-the-shim loop fast. Passing this to :func:`init` today
-    raises a clear ``RuntimeError`` naming the gap; this build exposes the
-    config shape only — wiring the ``livekit`` feature through the SDK
-    build is future work. Use ``waddle.init(_testing=True)`` (the
-    in-process loopback) to exercise ``publish_frame`` and the teleop
-    stream today."""
+    This is the *teleop* media path — a live human at the other end of a
+    WebRTC session — and it is the one thing the default ``waddle-sdk``
+    wheel does not carry: LiveKit's ``webrtc-sys``/libwebrtc dependency
+    chain is ~690 MB of build, which an install that only supervises a
+    policy should never pay for. It ships in the companion wheel instead::
+
+        pip install 'waddle-sdk[teleop]'
+
+    Passing this to :func:`init` on a core without the ``livekit`` feature
+    raises a ``RuntimeError`` naming that extra rather than degrading to a
+    session with no media. Low-rate stills for a Waddle-hosted agent are a
+    different path entirely (they ride the control plane, bounded by each
+    camera's declared ``StreamPolicy.still_fps``) and need no media plane.
+    Use ``waddle.init(_testing=True)`` (the in-process loopback) to
+    exercise ``publish_frame`` and the teleop stream in tests."""
 
     url: str
     token: str
@@ -204,12 +258,11 @@ class TeleopReset:
     complete. Pure declaration — Python never drives the window itself; the
     claim/lease/gate-mode sequencing lives entirely in waddle-core.
 
-    In production this requires a connected supervision plane to grant and
-    complete the window. The ``grpc`` control-plane and ``livekit`` media
-    transports are real in ``waddle-core``, but neither is compiled into
-    the default SDK build (both sit behind Cargo features), so today a
-    window declared this way can only be driven end-to-end via the private
-    `waddle._testing` reset-window hooks (tests only)."""
+    A window declared this way needs a connected supervision plane to grant
+    and complete it — ``waddle.init(transport=waddle.Grpc(url, token))``.
+    With no plane declared, the window opens and can only run out its
+    timeout; the private `waddle._testing` reset-window hooks (tests only)
+    are what drive one without a plane."""
 
     prompt: str
     timeout_s: float = field(default=600.0, kw_only=True)
@@ -222,10 +275,12 @@ class TeleopReset:
 class AgentReset:
     """Declare that this reset phase is a remote reset window performed by
     an autonomous reset agent through the SDK. Same shape and semantics as
-    :class:`TeleopReset` (including the production supervision-plane
-    requirement); only the expected actor kind differs (FSM.md §1.4 guard
-    C6 — a window declared for one actor kind rejects a claim from the
-    other)."""
+    :class:`TeleopReset` (including the connected-plane requirement); only
+    the expected actor kind differs (FSM.md §1.4 guard C6 — a window
+    declared for one actor kind rejects a claim from the other).
+
+    A *reset* agent cleaning the scene between episodes; distinct from
+    :func:`agent`, which hands a whole episode to a Waddle-hosted agent."""
 
     prompt: str
     timeout_s: float = field(default=600.0, kw_only=True)
@@ -338,6 +393,13 @@ def _reset_override_kwargs(
 
 _lock = threading.Lock()
 _session: _core.Session | None = None
+# Did the open session declare a supervision plane at all — a `transport`,
+# or the private `_testing` loopback that stands in for one in tests? The
+# single thing :func:`agent` must know before marshalling a prompt into
+# core, since a session that declared no plane can only ever run the invite
+# out to its deadline. A declaration fact recorded at `init` time, never
+# plane state: nothing here observes a connection.
+_session_has_plane = False
 _atexit_registered = False
 
 
@@ -374,6 +436,7 @@ def init(
     recording_dir: str | PathLike | None = None,
     handoff: _Handoff = Handoff.HOLD_FIRST,
     lease_enforcement: str = "advisory",
+    transport: Grpc | None = None,
     media: LiveKit | None = None,
     pre_reset: Callable | TeleopReset | AgentReset | None = None,
     post_reset: Callable | TeleopReset | AgentReset | None = None,
@@ -382,14 +445,21 @@ def init(
 ) -> _core.Session:
     """Open the supervision session. One session per process in v1.
 
-    ``media`` wires the session's media plane — camera frames
+    ``transport`` connects the session to the supervision plane
+    (``waddle.Grpc(url, token)``); without it the session is a local
+    recorder, and everything a plane would drive — teleoperator
+    intervention, remote reset windows, :func:`agent` — has nothing at the
+    other end. ``media`` wires the session's media plane — camera frames
     (``session.publish_frame``, documented there) and the teleop stream all
-    ride it. ``waddle.LiveKit(url, token)`` declares a real WebRTC
-    connection; see its docstring for why this SDK build raises a clean
-    ``RuntimeError`` for it today rather than connecting. Mutually
-    exclusive with ``_testing=True`` (the in-process loopback, which wires
-    its own media plane) — the private test/example path, not for
-    production use.
+    ride it — and needs the teleop companion wheel (see
+    :class:`LiveKit`). Both are mutually exclusive with ``_testing=True``
+    (the in-process loopback, which stands in for a plane): the private
+    test/example path, not for production use.
+
+    Neither is silently ignorable. If this core was not built with the
+    matching transport, declaring one raises a ``RuntimeError`` naming the
+    fix — a supervision session that quietly ran unsupervised because a URL
+    went nowhere is the exact failure this layer exists to prevent.
 
     ``pre_reset``/``post_reset`` declare the session's default reset for
     each phase; ``None`` (the default for both) means no reset is declared
@@ -415,25 +485,41 @@ def init(
     late verification failure permanently flags the episode's record as
     unverified — core-only today, not yet a Python getter).
     """
-    global _session, _atexit_registered
+    global _session, _session_has_plane, _atexit_registered
     if not isinstance(robot, Robot):
         raise TypeError("robot must be a waddle.Robot")
     if not isinstance(control, Control):
         raise TypeError("control must be a waddle.Control")
     if not isinstance(handoff, _Handoff):
         raise TypeError("handoff must be a waddle.Handoff declaration")
+    if transport is not None and not isinstance(transport, Grpc):
+        raise TypeError("transport must be a waddle.Grpc or None")
     if media is not None and not isinstance(media, LiveKit):
         raise TypeError("media must be a waddle.LiveKit or None")
+    if transport is not None and _testing:
+        raise ValueError(
+            "transport and _testing=True are mutually exclusive: the loopback "
+            "session stands in for a plane, it does not dial one"
+        )
     if media is not None and _testing:
         raise ValueError(
             "media and _testing=True both wire a media plane — pass only one"
         )
-    if media is not None:
+    # Keyed on what this core was BUILT with (`_core.FEATURES`), never on a
+    # try-import or on anything about a live connection: the question here
+    # is "can this build do it at all", and the answer decides which error
+    # names the actionable fix.
+    if media is not None and "livekit" not in _native.FEATURES:
         raise RuntimeError(
-            "waddle.LiveKit media wiring is not compiled into this SDK build yet "
-            "(the config shape is exposed; real wiring lands behind a future "
-            "`livekit` build feature) — use waddle.init(_testing=True) for the "
-            "in-process loopback today"
+            "LiveKit media is teleop-only and not compiled into this core — "
+            "install the teleop extra: pip install 'waddle-sdk[teleop]'"
+        )
+    if transport is not None and "grpc" not in _native.FEATURES:
+        raise RuntimeError(
+            "the control-plane transport is not compiled into this core: this is "
+            "a from-source build without the `grpc` cargo feature (the published "
+            "waddle-sdk wheel carries it) — rebuild the extension with "
+            "`maturin develop --features grpc`"
         )
 
     reset_kwargs = {
@@ -446,7 +532,7 @@ def init(
         if _session is not None:
             raise RuntimeError("waddle.init() called while a session is open; "
                                "call waddle.shutdown() first")
-        session = _core.create_session(
+        session = core.create_session(
             project=project,
             robot_json=robot_json,
             send=control.send,
@@ -466,9 +552,14 @@ def init(
             lease_enforcement=lease_enforcement,
             reset_verification=reset_verification,
             testing_loopback=_testing,
+            transport_url=(None if transport is None else transport.url),
+            transport_token=(None if transport is None else transport.token),
+            media_url=(None if media is None else media.url),
+            media_token=(None if media is None else media.token),
             **reset_kwargs,
         )
         _session = session
+        _session_has_plane = transport is not None or _testing
         if not _atexit_registered:
             atexit.register(shutdown)
             _atexit_registered = True
@@ -557,11 +648,92 @@ def rollout(
     return _Rollout(_require_session().start_episode(task, **kwargs))
 
 
+@dataclass(frozen=True)
+class AgentResult:
+    """What one :func:`agent` run produced. Every field is core's word,
+    marshalled verbatim — nothing here is computed in Python.
+
+    ``outcome`` uses the same spelling ``ep.outcome`` does (``"success"``,
+    ``"failure"``, ``"abort"``, or ``"aborted_retake"`` when a retake
+    replaced the episode). ``episode_id`` names the episode the agent drove,
+    so the run is findable in the recordings. ``recording_ref`` is the
+    plane's own opaque reference to its recording of the run, when the
+    plane reported one; ``detail`` is the plane's last word about the task
+    (why it was declined, or what it did), empty when it said nothing."""
+
+    outcome: str
+    episode_id: str
+    recording_ref: str | None
+    detail: str
+
+
+def agent(prompt: str, *, timeout_s: float = 600.0) -> AgentResult:
+    """Ask Waddle to drive one episode (protocol flag ``waddle.v0.agent``).
+
+    Opens an *agent-invited* episode on the module session and blocks until
+    it reaches a terminal outcome::
+
+        result = waddle.agent("clear the table and stack the cups")
+        if result.outcome == "success":
+            ...
+
+    ``prompt`` is both the invite and the episode's task. ``timeout_s`` is
+    the invite deadline: if no agent claims the episode in that time the
+    episode aborts and this returns ``outcome == "abort"`` — a normal
+    result, not an exception. The same goes for a plane that declines the
+    task; ``result.detail`` carries its reason.
+
+    While this blocks, this thread is not the one driving the robot: the
+    invited agent claims the episode through the very same intervention
+    machinery a teleoperator uses, and its actions reach the robot through
+    the ``send`` verb you registered at :func:`init`. Your own ``gate()``
+    ticks would not dispatch in such an episode anyway (FSM.md E24) — which
+    is why this call blocks instead of handing back an episode handle. A
+    Ctrl-C asks the core to end the run and raises ``KeyboardInterrupt``
+    once it has, never leaving an agent driving a robot whose caller
+    walked away.
+
+    Raises ``RuntimeError`` if no session is open, if the session declared
+    no supervision plane (there would be nobody to ask), or — surfaced
+    verbatim from core — if this session registered no way for the agent to
+    actuate (a ``send`` verb, and ``hold`` under the default HOLD_FIRST
+    handoff): an invite that no engage could ever carry would otherwise
+    stall with nothing to diagnose. A plane that never negotiated
+    ``waddle.v0.agent`` is *not* an error here — it simply never routes an
+    invite, and the deadline returns the ordinary ``"abort"``.
+
+    Everything else about the run (the invite, its deadline, who may claim
+    the episode, when the actions dispatch, how the outcome is decided) is
+    waddle-core's; this function marshals a prompt in and an
+    :class:`AgentResult` out."""
+    if not isinstance(prompt, str) or not prompt:
+        raise ValueError("waddle.agent() needs a non-empty prompt")
+    if isinstance(timeout_s, bool) or not isinstance(timeout_s, (int, float)):
+        raise TypeError("timeout_s must be a positive number of seconds")
+    if timeout_s <= 0:
+        raise ValueError("timeout_s must be a positive number of seconds")
+    session = _require_session()
+    if not _session_has_plane:
+        raise RuntimeError(
+            "waddle.agent() asks the supervision plane to drive the episode, and "
+            "this session declared no plane — pass "
+            "transport=waddle.Grpc(url, token) to waddle.init()"
+        )
+    result = session.agent(prompt, int(timeout_s * 1_000_000_000))
+    return AgentResult(
+        outcome=result.outcome,
+        episode_id=result.episode_id,
+        recording_ref=result.recording_ref,
+        detail=result.detail,
+    )
+
+
 def shutdown() -> None:
     """Join all core threads and flush recorders. Idempotent; also
     registered via ``atexit`` by ``init``."""
-    global _session
+    global _session, _session_has_plane
     with _lock:
         session, _session = _session, None
+        _session_has_plane = False
     if session is not None:
         session.shutdown()

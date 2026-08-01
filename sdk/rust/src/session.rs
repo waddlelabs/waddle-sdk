@@ -30,7 +30,7 @@ use waddle_types::pb::v0 as pb;
 use waddle_types::{ActorKind, TerminalOutcome};
 
 use crate::convert::{
-    extract_f64s, outcome_str, parse_enforcement, parse_handoff, parse_reset_spec,
+    extract_f64s, outcome_str, parse_enforcement, parse_handoff, parse_outcome, parse_reset_spec,
     parse_robot_json, parse_verification_mode, runtime_err,
 };
 use crate::episode::PyEpisode;
@@ -560,6 +560,28 @@ impl PySession {
             _ => ActorKind::Custom,
         };
         waddle_runtime::reset_window_engage(&self.inner, claim_id, actor, actor_kind);
+        Ok(())
+    }
+
+    /// PRIVATE/UNSTABLE: end the live episode the way a plane
+    /// `EpisodeDirective{MARK_DONE}` does — the directive's runtime-side
+    /// half is `SessionEvent::Terminate`, which is exactly what
+    /// `terminate_episode` injects (`pumps::forward_server_msg`'s
+    /// `Msg::Episode` arm). The live episode is read from the same mirror
+    /// snapshot that names it, because a `waddle.agent()` caller holds no
+    /// episode handle to terminate through — that is the whole point of a
+    /// plane-driven episode, and it is why this seam exists at all.
+    /// Blocks through the terminal (and any post-reset) with the GIL
+    /// released, like every other terminating call.
+    #[pyo3(signature = (outcome="success", reason=""))]
+    fn _testing_mark_done(&self, py: Python<'_>, outcome: &str, reason: &str) -> PyResult<()> {
+        self.testing_far()?;
+        let outcome = parse_outcome(outcome)?;
+        let id =
+            self.inner.status().episode_id.ok_or_else(|| {
+                PyRuntimeError::new_err("no live episode for a MARK_DONE to address")
+            })?;
+        py.detach(|| self.inner.terminate_episode(&id, outcome, reason));
         Ok(())
     }
 

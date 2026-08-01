@@ -8,8 +8,11 @@ vocabulary exists in Python.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
-from . import _core
+if TYPE_CHECKING:  # annotations only — the session object comes from the
+    # caller, and which core built it is `_native`'s decision, not ours.
+    from . import _core
 
 
 def engage(session: _core.Session, claim_id: str, source: str = "teleop") -> None:
@@ -47,6 +50,17 @@ def reset_window_complete(
     would do): the pipeline result applies as if the pre/post-reset had
     produced it directly."""
     session._testing_reset_window_complete(claim_id, ok, verified)
+
+
+def mark_done(
+    session: _core.Session, outcome: str = "success", reason: str = ""
+) -> None:
+    """End the live episode the way a plane `EpisodeDirective{MARK_DONE}`
+    would: the terminal outcome comes from outside the customer's loop.
+    This is how a `waddle.agent(...)` run finishes without a plane — the
+    caller of `agent()` is blocked and holds no episode handle, so there is
+    nothing else for a test to terminate through."""
+    session._testing_mark_done(outcome, reason)
 
 
 def frames(session: _core.Session, camera: str) -> list[bytes]:

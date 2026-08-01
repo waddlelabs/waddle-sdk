@@ -1,7 +1,14 @@
-"""Typed surface of the PyO3 shim (waddle._core)."""
+"""Typed surface of the PyO3 shim (`waddle._core`).
+
+Types BOTH compiled cores: the bundled `waddle._core` and the teleop
+companion wheel's `waddle_teleop._core` are the same shim built with
+different cargo features (`waddle._native` picks one), so one stub
+describes both. Keep this file in step with `sdk/rust/src/*.rs` — it is
+hand-written, and nothing regenerates it.
+"""
 
 from collections.abc import Callable, Sequence
-from typing import Any
+from typing import Any, Final
 
 import numpy as np
 import numpy.typing as npt
@@ -9,9 +16,9 @@ import numpy.typing as npt
 __version__: str
 
 # Which connected transports this build carries ("grpc", "livekit"); empty
-# for the offline (recording-only) build. The only feature detection the
+# for a from-source build with no features. The only feature detection the
 # Python layer is allowed to do.
-FEATURES: frozenset[str]
+FEATURES: Final[frozenset[str]]
 
 class GateInfo:
     @property
@@ -22,6 +29,7 @@ class GateInfo:
     def progress(self) -> float | None: ...
     @property
     def gripper(self) -> float | None: ...
+    def __repr__(self) -> str: ...
 
 class Chunk:
     @property
@@ -41,6 +49,8 @@ class Episode:
     @property
     def post_reset_failed(self) -> bool: ...
     @property
+    def records_dropped(self) -> int: ...
+    @property
     def last_gate(self) -> GateInfo | None: ...
     def gate(
         self,
@@ -59,6 +69,7 @@ class AgentResult:
     def recording_ref(self) -> str | None: ...
     @property
     def detail(self) -> str: ...
+    def __repr__(self) -> str: ...
 
 class Session:
     def start_episode(
@@ -86,7 +97,16 @@ class Session:
         post_reset_prompt: str | None = None,
         post_reset_timeout_ns: int = 600_000_000_000,
     ) -> AgentResult: ...
+    def publish_frame(self, camera: str, frame: npt.NDArray[np.uint8]) -> None: ...
+    def report_proprio(
+        self,
+        joint_vel: npt.NDArray[np.float64] | Sequence[float] | None = None,
+        ee_pose: npt.NDArray[np.float64] | Sequence[float] | None = None,
+        ee_pose_frame: str = "ee",
+        gripper: float | None = None,
+    ) -> None: ...
     def shutdown(self) -> None: ...
+    def _testing_frames(self, camera: str) -> list[bytes]: ...
     def _testing_engage(self, claim_id: str, source: str) -> None: ...
     def _testing_release(self, claim_id: str) -> None: ...
     def _testing_push_teleop(
@@ -95,6 +115,9 @@ class Session:
     def _testing_reset_window_engage(self, claim_id: str, actor: str) -> None: ...
     def _testing_reset_window_complete(
         self, claim_id: str, ok: bool, verified: bool | None = None
+    ) -> None: ...
+    def _testing_mark_done(
+        self, outcome: str = "success", reason: str = ""
     ) -> None: ...
 
 def create_session(
