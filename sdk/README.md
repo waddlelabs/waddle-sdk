@@ -109,7 +109,11 @@ The companion wheel is `sdk/teleop/pyproject.toml`: same
 construction), `module-name = "waddle_teleop._core"`, features
 `grpc,livekit`. `sdk/pyproject.toml`'s `[tool.uv.sources]` points the
 `teleop` extra at it so `uv` can resolve the lock; nothing builds it
-unless the extra is actually installed.
+unless the extra is actually installed. The extra's exact pin
+(`waddle-sdk-teleop==X`) is the ONE version here that maturin cannot
+derive from the manifest, so a version bump must edit it too —
+`tests/test_features.py` holds it to `waddle.__version__` (and the two
+projects to one manifest) rather than to memory.
 
 ## Hollow-frontend checklist (review gate for every change here)
 

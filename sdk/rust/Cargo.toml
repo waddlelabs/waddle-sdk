@@ -14,10 +14,13 @@ publish = false
 [lib]
 crate-type = ["cdylib"]
 
-# Connected builds. NO default features: the featureless shim is what plain
-# `cargo clippy`/`check` and the offline (recording-only) wheel build, and it
-# must stay tokio- and libwebrtc-free. Each feature only turns on the
-# corresponding core transport — the shim itself grows kwargs, never logic.
+# Connected builds. NO default features: the featureless shim is the baseline
+# plain `cargo clippy`/`check` build, and it must stay tokio- and
+# libwebrtc-free — that is what keeps the transports genuinely optional in the
+# core beneath it. No distribution ships featureless: `sdk/pyproject.toml`
+# builds `grpc`, `sdk/teleop/pyproject.toml` builds `grpc,livekit`. Each
+# feature only turns on the corresponding core transport — the shim itself
+# grows kwargs, never logic.
 # `waddle-runtime/{grpc,livekit}` are the same leaf features by another name;
 # naming both keeps the intent readable if runtime's own wiring ever grows.
 [features]

@@ -487,6 +487,7 @@ dev = [
     { name = "mcap" },
     { name = "mcap-protobuf-support" },
     { name = "pytest" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
 ]
 
 [package.metadata]
@@ -502,6 +503,7 @@ dev = [
     { name = "mcap", specifier = ">=1.1" },
     { name = "mcap-protobuf-support", specifier = ">=0.5" },
     { name = "pytest", specifier = ">=8" },
+    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2" },
 ]
 
 [[package]]

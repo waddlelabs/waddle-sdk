@@ -4,23 +4,39 @@
 built twice; `waddle._native` decides which of the two compiled cores this
 process runs on, and `waddle.init` keys its refusals off what that core was
 BUILT with (`FEATURES`) rather than trying an import and hoping. These
-tests pin all three: the default build's features, the selection rules, and
-the refusals — plus one offline smoke over the real gRPC transport, because
-"the transport is compiled in" is only worth anything if a session that
-declares an unreachable plane still starts, runs, and shuts down.
+tests pin that: the two projects' metadata held to each other, the default
+build's features, the selection rules, and the refusals — plus one smoke
+over the real gRPC transport, which watches a session dial a declared plane
+and then keep running locally once that plane vanishes, because "the
+transport is compiled in" is only worth anything if it is also wired up and
+a partition is survivable.
 """
 
 from __future__ import annotations
 
+import socket
 import sys
 import time
 import types
+from pathlib import Path
 
 import pytest
 
 import waddle
 import waddle._core as _core
 import waddle._native as _native
+
+try:  # 3.11+
+    import tomllib
+except ModuleNotFoundError:  # 3.10 (see the `dev` group in pyproject.toml)
+    import tomli as tomllib  # type: ignore[no-redef]
+
+_SDK_DIR = Path(__file__).resolve().parents[1]
+
+
+def _pyproject(*parts: str) -> dict:
+    with (_SDK_DIR.joinpath(*parts)).open("rb") as fh:
+        return tomllib.load(fh)
 
 
 @pytest.fixture(autouse=True)
@@ -84,6 +100,45 @@ def test_version_is_the_cores_own():
     which is what makes `_native`'s version check meaningful."""
     assert waddle.__version__ == _core.__version__
     assert isinstance(waddle.__version__, str) and waddle.__version__
+
+
+# --- The two projects' metadata, held to each other ------------------------
+
+
+def test_the_teleop_extra_pins_this_builds_version():
+    """`teleop = ["waddle-sdk-teleop==X"]` is the one version in this project
+    that maturin does NOT derive from `rust/Cargo.toml`, so it is the one
+    that can drift: bump the crate, ship two 0.2.0 wheels, and an extra
+    still pinned to 0.1.0 either fails to resolve or installs last
+    release's companion — whereupon `_native` sees the mismatch, warns, and
+    falls back to the bundled core, i.e. `pip install 'waddle-sdk[teleop]'`
+    silently yields no LiveKit. That is exactly what the exact pin exists to
+    prevent, so the pin is checked here rather than left to whoever
+    remembers to edit two files."""
+    extras = _pyproject("pyproject.toml")["project"]["optional-dependencies"]
+    assert extras["teleop"] == [f"waddle-sdk-teleop=={waddle.__version__}"]
+
+
+def test_both_distributions_are_one_build_of_one_manifest():
+    """What makes the exact pin (and `_native`'s version check) mean
+    anything: the companion is not a separate project that happens to
+    share a version, it is this project's shim built from the SAME
+    Cargo.toml with one feature added."""
+    default = _pyproject("pyproject.toml")["tool"]["maturin"]
+    companion_project = _pyproject("teleop", "pyproject.toml")
+    companion = companion_project["tool"]["maturin"]
+
+    assert companion_project["project"]["name"] == "waddle-sdk-teleop"
+    assert (_SDK_DIR / default["manifest-path"]).resolve() == (
+        _SDK_DIR / "teleop" / companion["manifest-path"]
+    ).resolve()
+
+    # A strict superset, and the extra is exactly the media plane: the
+    # default wheel must never grow libwebrtc, and the companion must never
+    # lose the control transport it is a superset of.
+    assert set(default["features"]) < set(companion["features"])
+    assert set(companion["features"]) - set(default["features"]) == {"livekit"}
+    assert "livekit" not in default["features"]
 
 
 # --- Choosing a core -------------------------------------------------------
@@ -200,25 +255,73 @@ def test_transport_declaration_validates_its_shape():
 
 # --- The real transport, with nothing at the other end ---------------------
 
+#: What an HTTP/2 client writes before anything else (RFC 9113 §3.4). Seeing
+#: it proves the accepted connection came from the gRPC client, not from
+#: something that merely opened a socket.
+_H2_PREFACE = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
+
+
+def _read_exactly(conn: socket.socket, count: int, timeout_s: float) -> bytes:
+    conn.settimeout(timeout_s)
+    buf = b""
+    while len(buf) < count:
+        chunk = conn.recv(count - len(buf))
+        if not chunk:
+            break
+        buf += chunk
+    return buf
+
 
 @pytest.mark.skipif(
     "grpc" not in _core.FEATURES, reason="this build has no control transport"
 )
-def test_grpc_session_runs_and_shuts_down_while_the_plane_is_unreachable(tmp_path):
-    """Port 9 (discard) refuses instantly, so this exercises the partition
-    path from the first connect attempt: constructing the transport dials
-    nothing, the core client owns connect/backoff/replay on its own thread,
-    and a rollout must run locally throughout. Shutdown then has to JOIN
+def test_grpc_session_dials_the_plane_and_then_survives_losing_it(tmp_path):
+    """The one test that proves `init(transport=...)` reaches the real
+    transport: a listener stands in for the plane just long enough to
+    observe the dial, then goes away.
+
+    The accept() is the load-bearing assertion. Everything else here — a
+    rollout that gates locally, a prompt shutdown, a sidecar on disk — is
+    equally true of a session with no transport at all, so a regression
+    that dropped the wiring and quietly ran unsupervised (the failure
+    `init`'s own FEATURES refusals exist to prevent) would sail past them.
+
+    Once the listener closes, the port refuses and the rest is the
+    partition path: the core client owns connect/backoff/replay on its own
+    thread, the rollout runs locally throughout, and shutdown has to JOIN
     that thread mid-backoff — a supervision session must never take a
     reconnect timer's worth of time to exit."""
-    session = waddle.init(
-        "py-grpc-offline",
-        _robot(),
-        _control(),
-        recording_dir=tmp_path,
-        transport=waddle.Grpc("http://127.0.0.1:9", token="not-a-real-token"),
-    )
-    assert session is not None
+    plane = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    plane.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    plane.bind(("127.0.0.1", 0))
+    plane.listen(1)
+    plane.settimeout(15.0)
+    port = plane.getsockname()[1]
+
+    try:
+        session = waddle.init(
+            "py-grpc-offline",
+            _robot(),
+            _control(),
+            recording_dir=tmp_path,
+            transport=waddle.Grpc(f"http://127.0.0.1:{port}", token="not-a-real-token"),
+        )
+        assert session is not None
+
+        try:
+            conn, _ = plane.accept()
+        except TimeoutError:
+            pytest.fail(
+                "the session never dialed the declared plane: the gRPC "
+                "transport is not wired into init(transport=...)"
+            )
+        with conn:
+            assert _read_exactly(conn, len(_H2_PREFACE), 15.0) == _H2_PREFACE
+        # Hanging up here (and closing the listener below) is what puts the
+        # client into the connect → backoff → retry loop the rest of this
+        # test rides on.
+    finally:
+        plane.close()
 
     with waddle.rollout(task="the plane is not home") as ep:
         action = [0.1, 0.2, 0.3]

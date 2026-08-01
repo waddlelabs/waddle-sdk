@@ -19,6 +19,14 @@ dynamic = ["version"]
 # is EXACT: the two wheels are one build of one Cargo.toml, and
 # `waddle._native` refuses a mismatched pair at import rather than loading a
 # core built from other sources.
+#
+# This literal is the ONE version in this project that maturin does not
+# derive from `rust/Cargo.toml` (PEP 621 has no dynamic
+# optional-dependencies), so a version bump must edit it too — otherwise the
+# extra resolves to the previous release, `_native` sees the mismatch, and
+# `pip install 'waddle-sdk[teleop]'` silently yields no LiveKit.
+# `tests/test_features.py::test_the_teleop_extra_pins_this_builds_version`
+# fails until the two agree.
 teleop = ["waddle-sdk-teleop==0.1.0"]
 
 [tool.uv.sources]
@@ -38,7 +46,16 @@ waddle-sdk-teleop = { path = "teleop" }
 # mcaprec.rs doc: "any MCAP reader can decode the messages without this repo
 # checked out") — used by the report_proprio read-back test to assert actual
 # merged field values, not just topic/message counts.
-dev = ["pytest>=8", "mcap>=1.1", "mcap-protobuf-support>=0.5", "maturin>=1.14,<2"]
+# tomli: `tests/test_features.py` reads THIS file (and the companion's) to
+# hold the exact teleop pin to the version both wheels build from; stdlib
+# tomllib covers 3.11+, this backfills 3.10.
+dev = [
+    "pytest>=8",
+    "mcap>=1.1",
+    "mcap-protobuf-support>=0.5",
+    "maturin>=1.14,<2",
+    "tomli>=2; python_version < '3.11'",
+]
 
 [tool.maturin]
 manifest-path = "rust/Cargo.toml"
