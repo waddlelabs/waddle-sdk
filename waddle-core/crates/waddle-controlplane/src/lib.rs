@@ -4,6 +4,11 @@
 //! offline event buffering (bounded, drop-oldest, replay in order), and the
 //! N11 heartbeat (proxy signals, never live verb latencies).
 //!
+//! One classification — [`ClientMsg::is_droppable`] — decides what may be
+//! shed, and it binds twice: while the plane is offline nothing droppable
+//! enters the [`buffer`], and while the plane is connected but not draining
+//! nothing droppable queues without bound inside a transport ([`inflight`]).
+//!
 //! The transport is a trait; the tested default is the in-memory
 //! [`transport::InMemoryTransport`] with a scriptable server. The real tonic
 //! gRPC transport lives in [`grpc`] behind the `tonic-transport` feature
@@ -14,6 +19,7 @@ pub mod backoff;
 pub mod buffer;
 pub mod client;
 pub mod heartbeat;
+pub mod inflight;
 pub mod negotiate;
 pub mod transport;
 
@@ -21,6 +27,7 @@ pub use backoff::Backoff;
 pub use buffer::OfflineBuffer;
 pub use client::{ClientConfig, ControlPlaneClient, PlaneEvent};
 pub use heartbeat::{HeartbeatTracker, HostLoad};
+pub use inflight::{DEFAULT_INFLIGHT_CAP, Inflight, InflightLimit};
 pub use transport::{ClientMsg, ControlConn, ControlTransport, InMemoryTransport, ServerMsg};
 
 #[derive(Debug, thiserror::Error)]

@@ -731,6 +731,28 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   in the episode MCAP; callers no longer see the ring.
 
 ### Fixed
+- **`waddle-controlplane` — droppable messages can no longer queue without
+  bound while the plane is unreachable or stalled**: `ClientMsg` now answers
+  "is this perception/liveness, or history?" in exactly one place
+  (`is_droppable`; `buffer_when_offline` is its negation), and BOTH moments a
+  message can be shed honour it. (1) While connect attempts fail, the client
+  thread now drains its command channel into the bounded offline buffer on
+  every backoff slice (`backoff_draining`) instead of only before and after
+  the sleep: an unreachable plane used to let the unbounded command channel
+  grow for a whole backoff plateau (16 s in production) with the drop-oldest
+  bound and its loud `BufferOverflowed` never applying, and every message
+  parked there — including droppable ones — was handed to the plane the
+  moment it came up, so a partition's worth of stale pictures replayed as if
+  fresh. (2) The gRPC transport meters every outbound stream with its own
+  `InflightLimit` (new `inflight` module; cap 4 per stream, shed count on
+  `GrpcTransport::droppable_dropped`): a plane that accepts
+  `StreamObservations` and then stops reading it never errors, so no
+  `Disconnected` is ever raised and the offline classification never runs —
+  the stills piled up in the transport's internal channels behind a stream
+  h2 had stopped polling, unbounded, until OOM. History is never shed by
+  either mechanism; only heartbeats and control-plane stills are droppable.
+  The `ControlTransport` trait now states the contract: a transport that
+  buffers internally must bound what it holds for droppable messages.
 - **`Session::run_agent` no longer masks a genuine pre-reset failure (E5)
   as a normal-looking agent ABORT**: the recovery arm that turns a
   `ResetFailed` from the start path into an `AgentOutcome` exists for

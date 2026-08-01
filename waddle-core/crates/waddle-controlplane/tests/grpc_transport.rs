@@ -1,7 +1,8 @@
 //! In-process integration tests for the tonic `ControlTransport`: a minimal
 //! test plane (the generated tonic server) exercises connect → auto-Register,
-//! gate-stream round-trips, bearer-token metadata, and the kill → reconnect →
-//! in-order replay path the client crate already owns.
+//! gate-stream round-trips, bearer-token metadata, the in-flight bound on
+//! droppable messages when the plane is connected but not draining, and the
+//! kill → reconnect → in-order replay path the client crate already owns.
 #![cfg(feature = "tonic-transport")]
 
 use std::net::SocketAddr;
@@ -347,6 +348,63 @@ fn stalled_observation_stream_open_does_not_freeze_the_pump() {
             Some(PlaneEvent::Server(ServerMsg::Gate(m))) if m == directive
         )
     });
+
+    client.shutdown();
+}
+
+/// A plane that is CONNECTED but not draining must not turn bounded-rate
+/// perception into unbounded memory: nothing errors in that state (so the
+/// client never sees `Disconnected`, and its offline classification never
+/// runs), which before the in-flight bound left every sampled still queued
+/// forever behind a stream h2 had stopped polling.
+///
+/// This plane accepts `StreamObservations` and never reads it, so the
+/// flow-control window closes and stays closed. The stills offered after
+/// that must be shed (counted), not queued — and shedding must not tear the
+/// connection down: it is the declared degradation, not a failure.
+#[test]
+fn stalled_observation_stream_sheds_stills_instead_of_queueing_them() {
+    let state = Arc::new(PlaneState::default());
+    state.stall_obs.store(true, Ordering::SeqCst);
+    let server = TestServer::start(state.clone(), 0);
+
+    let transport = GrpcTransport::new(GrpcConfig::new(format!("http://{}", server.addr)));
+    let client = ControlPlaneClient::spawn(transport.clone(), client_config());
+    expect_connected_and_registered(&client);
+
+    // 16 MB of stills offered at 16 KB each — an order of magnitude past any
+    // plausible h2 window, so the sink is unmistakably not draining.
+    const STILLS: u64 = 1000;
+    for seq in 0..STILLS {
+        client.send(ClientMsg::Observation(pb::ObservationUpdate {
+            t_ns: seq as i64,
+            payload: Some(pb::observation_update::Payload::Still(pb::FrameStill {
+                camera: "overhead".into(),
+                frame_seq: seq,
+                encoding: pb::CameraEncoding::Jpeg as i32,
+                width: 1280,
+                height: 720,
+                data: vec![0xab; 16 * 1024],
+            })),
+        }));
+    }
+
+    // Most of them never enter the transport at all.
+    wait_for("stills shed by the in-flight bound", || {
+        transport.droppable_dropped() >= STILLS * 4 / 5
+    });
+
+    // Shedding perception is not a connection failure: no Disconnected, and
+    // the client keeps taking sends.
+    assert_eq!(
+        client.try_recv_event(),
+        None,
+        "a shed still must not surface as a plane event"
+    );
+    client.send(ClientMsg::Observation(pb::ObservationUpdate {
+        t_ns: 1,
+        ..Default::default()
+    }));
 
     client.shutdown();
 }

@@ -44,10 +44,16 @@
 //! are droppable by design (latest-wins: a slow pump loses intermediate
 //! frames, never the freshest) and stay OUT of that counter, which means
 //! exactly what it always meant: media-uplink loss. That same
-//! droppable-by-design contract continues past this seam: a still is dropped
-//! rather than buffered while the plane is partitioned (see
-//! `ClientMsg::buffer_when_offline`), so stills can never evict real episode
-//! history from the client's bounded offline buffer.
+//! droppable-by-design contract continues past this seam, in both directions
+//! a slow plane can fail — `ClientMsg::is_droppable` classifies a still once
+//! and the control-plane client honours it twice: a still is dropped rather
+//! than buffered while the plane is PARTITIONED (`buffer_when_offline`), so
+//! stills can never evict real episode history from the bounded offline
+//! buffer, and it is dropped rather than queued once the transport's
+//! in-flight bound is full while the plane is CONNECTED but not draining
+//! (`waddle_controlplane::inflight`), so a plane that accepts the
+//! observation stream and then stops reading it cannot turn this
+//! bounded-rate tee into unbounded memory growth.
 //!
 //! Encoding: the one real transport this wires against,
 //! `LiveKitMedia`, publishes a WebRTC video *track* — libwebrtc

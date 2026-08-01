@@ -27,28 +27,46 @@ pub enum ClientMsg {
 }
 
 impl ClientMsg {
-    /// Heartbeats are liveness, not history: they are dropped while
-    /// disconnected. Everything else buffers and replays in order.
+    /// Perception and liveness, never history — THE classification, and the
+    /// only place this question is answered. It governs both moments a
+    /// message can be shed:
     ///
-    /// Control-plane stills (`FrameStill`, flag `waddle.v0.obs.stills`) are
-    /// the one other exception, for the same reason: they are perception,
-    /// not history. They are droppable by declaration (the SDK already
-    /// samples latest-wins per camera), each is orders of magnitude larger
-    /// than any other message here, and replaying a partition's worth of
-    /// them on reconnect would both evict real episode history from this
-    /// bounded buffer and hand the plane pictures of a world that has since
-    /// moved on. A `ProprioSample` observation still buffers — it is small,
-    /// and its history is the point.
+    /// - plane offline: a droppable message is not buffered
+    ///   ([`Self::buffer_when_offline`]);
+    /// - plane connected but not draining: a droppable message is bounded in
+    ///   flight inside the transport ([`crate::inflight::InflightLimit`]).
+    ///
+    /// Heartbeats are liveness: one that could not go out now says nothing
+    /// the next one won't. Control-plane stills (`FrameStill`, flag
+    /// `waddle.v0.obs.stills`) are perception: droppable by declaration (the
+    /// SDK already samples them latest-wins per camera), each orders of
+    /// magnitude larger than any other message here, and a late one is a
+    /// picture of a world that has moved on. Everything else — including a
+    /// `ProprioSample` observation, small and historical — is never dropped
+    /// by Waddle.
+    ///
+    /// A new droppable variant must also be routed through a metered sender
+    /// in every transport, or only half of this contract holds for it.
     #[must_use]
-    pub fn buffer_when_offline(&self) -> bool {
+    pub fn is_droppable(&self) -> bool {
         match self {
-            Self::Heartbeat(_) => false,
-            Self::Observation(update) => !matches!(
+            Self::Heartbeat(_) => true,
+            Self::Observation(update) => matches!(
                 update.payload,
                 Some(pb::observation_update::Payload::Still(_))
             ),
-            _ => true,
+            _ => false,
         }
+    }
+
+    /// Whether this message survives a partition in the client's bounded
+    /// offline buffer and replays in order on reconnect. Droppable messages
+    /// do not: replaying a partition's worth of them would both evict real
+    /// episode history from that bounded buffer and hand the plane a stale
+    /// world.
+    #[must_use]
+    pub fn buffer_when_offline(&self) -> bool {
+        !self.is_droppable()
     }
 }
 
@@ -83,6 +101,15 @@ impl ControlConn {
     }
 }
 
+/// A transport opens connections; the client owns backoff, offline
+/// buffering, and replay.
+///
+/// Contract: a transport that buffers internally (anything that does not
+/// write synchronously inside its `ControlConn` consumer) MUST bound what it
+/// holds for [`ClientMsg::is_droppable`] messages — see
+/// [`crate::inflight::InflightLimit`]. A plane that is connected but not
+/// draining never severs the channels, so an unbounded internal queue turns
+/// bounded-rate perception (stills) into unbounded memory growth.
 pub trait ControlTransport: Send + Sync + 'static {
     fn connect(&self) -> Result<ControlConn, PlaneError>;
 }
@@ -98,6 +125,10 @@ struct ServerSide {
 /// spawns a server thread that feeds every client message to the handler;
 /// tests inject failures (`fail_next`) and cut live connections
 /// (`drop_connections`) to exercise backoff and buffering.
+///
+/// It needs no in-flight bound of its own (see [`ControlTransport`]): the
+/// server thread consumes each message synchronously, so nothing accumulates
+/// behind it unless a test's own handler blocks.
 pub struct InMemoryTransport {
     handler: Arc<ServerHandler>,
     fail_next: Mutex<u32>,
@@ -204,26 +235,37 @@ mod tests {
     /// like a heartbeat, so a partition can never evict episode history —
     /// or replay stale pictures — on its behalf. A `ProprioSample` on the
     /// same message type still buffers.
+    ///
+    /// The two halves of the contract are ONE classification: whatever is
+    /// dropped while offline is also the only thing a transport may shed
+    /// while connected-but-stalled (`crate::inflight`), and nothing else is
+    /// ever droppable.
     #[test]
     fn stills_are_dropped_while_disconnected_but_proprio_still_buffers() {
-        assert!(
-            !observation(pb::observation_update::Payload::Still(pb::FrameStill {
-                camera: "overhead".into(),
-                data: vec![0xff, 0xd8, 0xff],
+        let still = observation(pb::observation_update::Payload::Still(pb::FrameStill {
+            camera: "overhead".into(),
+            data: vec![0xff, 0xd8, 0xff],
+            ..Default::default()
+        }));
+        let proprio = observation(pb::observation_update::Payload::Proprio(
+            pb::ProprioSample {
+                joint_pos: vec![0.0],
                 ..Default::default()
-            }))
-            .buffer_when_offline()
-        );
-        assert!(
-            observation(pb::observation_update::Payload::Proprio(
-                pb::ProprioSample {
-                    joint_pos: vec![0.0],
-                    ..Default::default()
-                }
-            ))
-            .buffer_when_offline()
-        );
-        assert!(!ClientMsg::Heartbeat(pb::HeartbeatPing::default()).buffer_when_offline());
-        assert!(ClientMsg::Gate(pb::GateClientMessage::default()).buffer_when_offline());
+            },
+        ));
+        let heartbeat = ClientMsg::Heartbeat(pb::HeartbeatPing::default());
+        let gate = ClientMsg::Gate(pb::GateClientMessage::default());
+
+        assert!(still.is_droppable());
+        assert!(heartbeat.is_droppable());
+        assert!(!proprio.is_droppable(), "history, not perception");
+        assert!(!gate.is_droppable());
+        for msg in [&still, &proprio, &heartbeat, &gate] {
+            assert_eq!(
+                msg.buffer_when_offline(),
+                !msg.is_droppable(),
+                "one classification governs both halves: {msg:?}"
+            );
+        }
     }
 }
