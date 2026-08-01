@@ -54,7 +54,10 @@ waddle-sdk/
   sdk/                       # the Python `waddle-sdk` frontend (PyO3 + maturin)
     pyproject.toml           # maturin backend; module waddle._core; uv-managed
     rust/                    # the shim: its OWN cargo workspace (see build notes)
-    python/waddle/           # pure-Python surface: init/rollout/Control + descriptors
+    python/waddle/           # pure-Python surface: init/rollout/Control/agent +
+                             #   descriptors; _native.py picks the compiled core
+    teleop/                  # the `waddle-sdk-teleop` companion distribution:
+                             #   same rust/Cargo.toml, + the livekit feature
     tests/                   # pytest: descriptors + e2e (incl. MCAP read-back)
 ```
 
@@ -104,18 +107,52 @@ top-level dirs; they are not built yet.
   - `cargo clippy --manifest-path rust/Cargo.toml --all-targets -- -D warnings`
     and `cargo fmt --manifest-path rust/Cargo.toml --check` must be clean
     (this works because pyo3's `extension-module` feature lives only in
-    `[tool.maturin].features`, never in Cargo.toml).
-  - The shim carries the core's two transport features, **off by default**:
-    `grpc` (adds a direct optional `waddle-controlplane` dep — runtime takes
-    an `Arc<dyn ControlTransport>` and does not re-export `grpc::connect`)
-    and `livekit`. They only turn transports on; the shim itself grows
-    kwargs (`create_session(transport_url=, transport_token=, media_url=,
-    media_token=)`), never logic. A build without a feature REFUSES the
-    matching kwarg rather than degrading to a silent offline session, and
-    `_core.FEATURES` (a frozenset) is the only feature detection the Python
-    layer may do. Clippy must be clean in three passes: featureless,
-    `--features grpc`, `--features grpc,livekit`. Build a connected
-    extension with `uv run maturin develop --uv --features grpc,livekit`.
+    `[tool.maturin].features`, never in Cargo.toml). Clippy must be clean in
+    **three passes** — featureless, `--features grpc`, `--features
+    grpc,livekit` — since no single pass compiles all the cfg'd code; the
+    featureless pass is the baseline that must stay tokio- and
+    libwebrtc-free, and is not what either wheel ships.
+  - **Two distributions from one source tree** (the psycopg / psycopg-binary
+    shape). Both are one build of `rust/Cargo.toml`, so they can never
+    disagree on a version:
+    - `waddle-sdk` (`sdk/pyproject.toml`, module `waddle._core`):
+      `[tool.maturin] features = ["pyo3/extension-module", "grpc"]`. The gRPC
+      control transport is in the DEFAULT build — a supervision layer whose
+      default install cannot reach the supervision plane would be a strange
+      thing to ship — and therefore in `uv sync` / `maturin develop` too, so
+      the dev extension is connected, not offline.
+    - `waddle-sdk-teleop` (`sdk/teleop/pyproject.toml`, module
+      `waddle_teleop._core`): the same manifest with `livekit` added.
+      Installed as the extra, never by name: `pip install
+      'waddle-sdk[teleop]'`. It is separate because libwebrtc is ~690 MB of
+      build that an install which only supervises a policy should not pay
+      for; measured on this tree, 3.7 MB wheel / 9.8 MB `.so` against
+      16.7 MB / 45.1 MB — ~4.5x.
+    - `python/waddle/_native.py` is the ONE place that picks a core: the
+      bundled one unless a version-matched `waddle_teleop._core` is installed
+      and `WADDLE_NO_TELEOP != "1"` (a mismatch warns and falls back).
+      `_core.FEATURES` (a frozenset) is the only feature detection the Python
+      layer may do — never a try-import.
+    - **Release checklist**: `teleop = ["waddle-sdk-teleop==X"]` in
+      `sdk/pyproject.toml` is the ONE version maturin cannot derive from the
+      manifest (PEP 621 has no dynamic optional-dependencies), so a version
+      bump must edit it — otherwise the extra resolves to the previous
+      release and `_native` silently falls back to a core with no LiveKit.
+      `tests/test_features.py` fails until the pin equals
+      `waddle.__version__`. Build and publish the two wheels together.
+  - Build the wheels with `uv build --wheel -o dist .` and `uv build --wheel
+    -o dist teleop` (`dist/` is git-ignored). Both `[tool.maturin]` blocks
+    carry `exclude = ["python/**/__pycache__/**"]`: `python-source` is the
+    working tree, so without it a build after a test run ships that
+    interpreter's bytecode and a build on a clean checkout does not.
+  - A build without a feature REFUSES the matching `create_session` kwarg
+    (`transport_url`/`transport_token`, `media_url`/`media_token`) rather
+    than degrading to a silent offline session; the LiveKit refusal names the
+    `[teleop]` extra. The shim grows kwargs, never logic. `grpc` adds a
+    direct optional `waddle-controlplane` dep (runtime takes an
+    `Arc<dyn ControlTransport>` and does not re-export `grpc::connect`).
+    Build the companion's flavour in place with
+    `uv run maturin develop --uv --features grpc,livekit`.
   - `sdk/rust` is deliberately its **own cargo workspace** with path-deps into
     `../waddle-core/crates/*` — do NOT add it to the waddle-core workspace
     (extension-module would make plain `cargo test` unlinkable there and drag
@@ -127,7 +164,8 @@ top-level dirs; they are not built yet.
     -datatrack 0.1.11): the newest published set does not compile
     (livekit-api 0.5.6 against livekit-protocol 0.7.12). Pin in BOTH locks,
     or the shim's `livekit` feature breaks while core's stays green.
-  - The built extension (`python/waddle/_core*.so`) is a build artifact,
+  - The built extensions (`python/waddle/_core*.so`,
+    `teleop/python/waddle_teleop/_core*.so`) and `dist/` are build artifacts,
     never checked in.
 
 ## Load-bearing invariants (violating these is a bug, not a style choice)

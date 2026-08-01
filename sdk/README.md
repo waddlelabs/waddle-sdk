@@ -149,6 +149,15 @@ Concretely, in this package:
   once at import, and the only state `init` records about a session is
   *whether a plane was declared at all* (a declaration fact, not plane
   state).
+- **Feature raises key off `_core.FEATURES`, never a try-import.** A
+  `try: ... except (ImportError, AttributeError)` reads as "can this build
+  do it?" and answers "did this particular call happen to fail?", so a
+  genuine runtime error becomes a not-compiled message and the user chases
+  the wrong thing. `FEATURES` is a build fact the core states outright.
+  Teleop-only surfaces must name the extra in the error text (`pip install
+  'waddle-sdk[teleop]'`): the caller cannot act on "not compiled" alone,
+  and the whole point of the two-wheel split is that this is a one-command
+  fix rather than a rebuild.
 - **Agent runs** (`waddle.agent`, `Session.agent`): a prompt goes in, an
   `AgentResult` comes out. The invite, its deadline, who may claim the
   episode, and what the caller's own ticks do meanwhile are all FSM rows;

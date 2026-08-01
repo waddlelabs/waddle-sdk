@@ -121,24 +121,56 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     Control-plane stills are also the first *droppable* history-free message
     class: see the `waddle-controlplane` entry under Fixed for how they are
     shed rather than buffered while a plane is unreachable or stalled.
+- **sdk (Python: `init(transport=…, media=…)`, `waddle.agent()`, and the
+  `[teleop]` companion distribution)**: the connected surface, in the two
+  places a user actually touches it.
+  - **`waddle.init(transport=waddle.Grpc(url, token=None))`** connects the
+    supervision plane, and **`waddle.init(media=waddle.LiveKit(url, token))`**
+    the teleop media plane — both small frozen config dataclasses handed
+    straight to core constructors; nothing in Python inspects a connection.
+    The two are mutually exclusive with `_testing=True` (which wires the
+    in-process loopback), and `media` requires its token, because the plane
+    mints room tokens and this SDK never does.
+  - **`waddle.agent(prompt, *, timeout_s=600.0) -> AgentResult`**: hand a
+    whole episode to Waddle instead of driving it. It blocks until the
+    episode reaches an outcome and returns a frozen
+    `AgentResult { outcome, episode_id, recording_ref, detail }`, each field
+    the core's word verbatim. An ask nobody answers comes back
+    `outcome == "abort"` at the invite deadline — a result, not an
+    exception. It refuses up front only when there is nobody to ask (no
+    plane declared) or when the verbs an invited claimant would need are
+    unwired; everything else — who may claim the episode, what the caller's
+    own ticks do meanwhile — is an FSM row, not a Python branch.
+  - **Two distributions from one source tree** (the psycopg / psycopg-binary
+    shape): `pip install waddle-sdk` carries the gRPC control transport, and
+    `pip install 'waddle-sdk[teleop]'` adds the exact-pinned
+    **`waddle-sdk-teleop`** companion — the SAME shim, same
+    `rust/Cargo.toml`, built with `livekit` as well. Splitting them keeps
+    libwebrtc's ~690 MB of build out of installs that only supervise a
+    policy; measured, the companion is ~4.5x the default wheel. Either way
+    you `import waddle`: **`waddle._native`** is the one module that picks a
+    core, preferring the companion when a version-matched one is installed,
+    warning and falling back to the bundled core when the two versions
+    disagree (a half-upgraded environment must not load a core built from
+    other sources), and honouring `WADDLE_NO_TELEOP=1`. The extra's exact
+    pin is the one version maturin cannot derive from the manifest, so a
+    test holds it to `waddle.__version__` rather than to memory.
+  - `waddle.__version__` re-exports `_core.__version__`, so the Python
+    surface and the compiled core can always be reported as one thing.
 - **sdk (connected shim: transport features, `_core.FEATURES`,
   `Session.agent`)**: the PyO3 shim can now be BUILT with the transports the
-  core has always been able to drive. Two cargo features, both off by
-  default — `grpc` (the tonic `ControlTransport`) and `livekit` (the media
-  plane) — plus four `create_session` kwargs
-  (`transport_url`/`transport_token`, `media_url`/`media_token`). A build
-  without the matching feature REFUSES the kwarg with an actionable error
-  instead of degrading to a silent offline session: quietly losing
-  supervision is the one failure mode this layer exists to prevent.
-  `_core.FEATURES` (a frozenset of the built feature names) is the only
-  feature detection the Python layer may do, and `_core.__version__`
-  reports the extension's own version. The shim gains kwargs, never logic.
-  - **Gap J fixed: every declared camera's resolution is now declared to
-    LiveKit** (`LiveKitConfig::with_track_resolution` for each
-    `RobotDescription.cameras` entry). A LiveKit track publishes at ONE
-    declared resolution and drops every frame that disagrees, so inheriting
-    the 640x480 default dropped 100% of the frames of every camera that was
-    not exactly 640x480 — silently, since a dropped frame is not an error.
+  core has always been able to drive. Two cargo features — `grpc` (the tonic
+  `ControlTransport`) and `livekit` (the media plane) — plus four
+  `create_session` kwargs (`transport_url`/`transport_token`,
+  `media_url`/`media_token`). A build without the matching feature REFUSES
+  the kwarg with an actionable error instead of degrading to a silent
+  offline session: quietly losing supervision is the one failure mode this
+  layer exists to prevent. `_core.FEATURES` (a frozenset of the built
+  feature names) is the only feature detection the Python layer may do, and
+  `_core.__version__` reports the extension's own version. The shim gains
+  kwargs, never logic. Neither feature is a cargo default (the featureless
+  build stays the tokio- and libwebrtc-free clippy baseline), but no shipped
+  distribution is featureless — see the two-distribution entry below.
   - `Session.agent(prompt, timeout_ns, **reset overrides)` binds
     `Session::run_agent` (flag `waddle.v0.agent`) and returns
     `AgentResult { outcome, episode_id, recording_ref, detail }`, each field
@@ -882,6 +914,24 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   in the episode MCAP; callers no longer see the ring.
 
 ### Fixed
+- **sdk — every declared camera's resolution is now declared to the media
+  plane (Gap J)**: a LiveKit track publishes at ONE declared resolution and
+  drops every frame that disagrees, so a session that inherited the 640x480
+  default dropped **100% of the frames of every camera that was not exactly
+  640x480** — silently, since a dropped frame is not an error and nothing
+  counts it. `create_session` now declares a track resolution for each
+  `RobotDescription.cameras` entry (`LiveKitConfig::with_track_resolution`),
+  from the same declaration the rest of the pipeline validates frames
+  against. Unreachable until this branch wired the media plane through the
+  Python surface at all, and it would have presented as "teleop sees
+  nothing" with every log clean.
+- **sdk — `_core.pyi` no longer under-describes the extension**: the type
+  stub had drifted behind the shim (`publish_frame`, `report_proprio`,
+  `records_dropped`, the `_testing_*` hooks and the new connected seam were
+  all missing), so type checkers reported errors on correct calls and, worse,
+  silently accepted wrong ones. It is now cross-checked method by method
+  against `sdk/rust/src/*.rs`. One stub types BOTH cores, because both are
+  the same shim built with different features.
 - **`waddle-fsm` — the E24 agent-episode gate plan is now re-projected
   whenever its inputs move, not only when the gate MODE does**: the gate plan
   is derived state, and plan derivers (the runtime reducer, the conformance
