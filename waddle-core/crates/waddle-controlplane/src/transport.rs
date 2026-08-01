@@ -29,9 +29,26 @@ pub enum ClientMsg {
 impl ClientMsg {
     /// Heartbeats are liveness, not history: they are dropped while
     /// disconnected. Everything else buffers and replays in order.
+    ///
+    /// Control-plane stills (`FrameStill`, flag `waddle.v0.obs.stills`) are
+    /// the one other exception, for the same reason: they are perception,
+    /// not history. They are droppable by declaration (the SDK already
+    /// samples latest-wins per camera), each is orders of magnitude larger
+    /// than any other message here, and replaying a partition's worth of
+    /// them on reconnect would both evict real episode history from this
+    /// bounded buffer and hand the plane pictures of a world that has since
+    /// moved on. A `ProprioSample` observation still buffers — it is small,
+    /// and its history is the point.
     #[must_use]
     pub fn buffer_when_offline(&self) -> bool {
-        !matches!(self, Self::Heartbeat(_))
+        match self {
+            Self::Heartbeat(_) => false,
+            Self::Observation(update) => !matches!(
+                update.payload,
+                Some(pb::observation_update::Payload::Still(_))
+            ),
+            _ => true,
+        }
     }
 }
 
@@ -168,5 +185,45 @@ impl ControlTransport for InMemoryTransport {
             tx: client_tx,
             rx: client_rx,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn observation(payload: pb::observation_update::Payload) -> ClientMsg {
+        ClientMsg::Observation(pb::ObservationUpdate {
+            t_ns: 1,
+            payload: Some(payload),
+        })
+    }
+
+    /// The offline buffer holds history, not perception: a `FrameStill`
+    /// (flag `waddle.v0.obs.stills`) is dropped while disconnected exactly
+    /// like a heartbeat, so a partition can never evict episode history —
+    /// or replay stale pictures — on its behalf. A `ProprioSample` on the
+    /// same message type still buffers.
+    #[test]
+    fn stills_are_dropped_while_disconnected_but_proprio_still_buffers() {
+        assert!(
+            !observation(pb::observation_update::Payload::Still(pb::FrameStill {
+                camera: "overhead".into(),
+                data: vec![0xff, 0xd8, 0xff],
+                ..Default::default()
+            }))
+            .buffer_when_offline()
+        );
+        assert!(
+            observation(pb::observation_update::Payload::Proprio(
+                pb::ProprioSample {
+                    joint_pos: vec![0.0],
+                    ..Default::default()
+                }
+            ))
+            .buffer_when_offline()
+        );
+        assert!(!ClientMsg::Heartbeat(pb::HeartbeatPing::default()).buffer_when_offline());
+        assert!(ClientMsg::Gate(pb::GateClientMessage::default()).buffer_when_offline());
     }
 }
