@@ -2,9 +2,10 @@
 transport kwargs on `create_session`, and `Session.agent` (flag
 `waddle.v0.agent`).
 
-Drives `waddle._core` directly: the friendly Python surface (`waddle.agent`,
-`waddle.init(transport=...)`) is a later task, so these tests end at the
-`_core` module surface, exactly as `test_reset.py` does.
+Drives `waddle._core` directly, exactly as `test_reset.py` does: these
+tests end at the `_core` module surface. The friendly Python surface built
+on top of it (`waddle.agent`, `waddle.init(transport=...)`) is
+`test_agent_api.py`'s and `test_features.py`'s.
 """
 
 from __future__ import annotations
