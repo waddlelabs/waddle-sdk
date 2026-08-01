@@ -235,9 +235,13 @@ def test_stream_policy_still_fps_compiles_and_is_absent_by_default():
 
 
 def test_still_fps_survives_the_round_trip_into_core():
-    # The compiled key has to be the one the wire spells (`stillFps`), or
-    # core's own JSON decode rejects the robot — the whole point of
-    # declaring it in Python.
+    # The compiled key has to be a field core actually knows, and only a
+    # ROUND TRIP can say so: decoding tolerates unknown fields on purpose
+    # (append-only evolution), so a misspelled key validates perfectly and
+    # is dropped in silence — the declaration would then be honored by
+    # nobody, and the first symptom would be a customer's connected session
+    # sending no stills. `robot_json_roundtrip` hands back core's own
+    # canonical JSON of what it understood.
     robot = waddle.Robot(
         name="stills-bot",
         action_space=waddle.JointSpace(joints=["j0"], rate_hz=20),
@@ -250,7 +254,20 @@ def test_still_fps_survives_the_round_trip_into_core():
             )
         },
     )
-    _core.validate_robot_json(json.dumps(robot._compile([])))
+    compiled = robot._compile([])
+    _core.validate_robot_json(json.dumps(compiled))
+    decoded = json.loads(_core.robot_json_roundtrip(json.dumps(compiled)))
+    # The declared rate, read back out of the field it landed in.
+    assert decoded["cameras"][0]["stream"]["stillFps"] == 2.0
+
+    # And the check has teeth: the spelling this test exists to catch
+    # disappears on the way in, which is exactly why "it validated" proves
+    # nothing.
+    misspelled = json.loads(json.dumps(compiled))
+    misspelled["cameras"][0]["stream"] = {"stillfps": 2.0}
+    _core.validate_robot_json(json.dumps(misspelled))  # still valid!
+    survivors = json.loads(_core.robot_json_roundtrip(json.dumps(misspelled)))
+    assert "stillFps" not in survivors["cameras"][0].get("stream", {})
 
 
 def test_frame_transform_pins_wxyz_order():

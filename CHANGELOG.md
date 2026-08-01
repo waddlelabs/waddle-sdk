@@ -237,8 +237,14 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   honoured since the entry above but no Python program could ask for. `None`
   (the default) and `0` both mean no stills, matching the wire; a negative
   rate is rejected as a shape error. It compiles to the `stillFps` key, held
-  to that by a round trip through core's own robot-JSON decode rather than
-  by a hand-written expectation.
+  to that by reading the value back out of core rather than by a
+  hand-written expectation: the new `_core.robot_json_roundtrip(json)`
+  decodes a compiled robot exactly as core does and returns core's own
+  canonical JSON of what it *understood*. Validation alone could not have
+  said — decoding tolerates unknown fields by design (append-only
+  evolution), so a misspelled key validates perfectly and is dropped in
+  silence, and the first symptom would have been a customer's connected
+  session sending no stills.
 - **waddle-protocol (fixture `remote_reset_caller_tick_noop`)**: pins FSM.md
   E20's caller-tick marker, previously asserted by no golden — a `gate_tick`
   during an ENGAGED remote reset window returns
