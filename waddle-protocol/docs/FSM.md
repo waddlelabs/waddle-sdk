@@ -170,6 +170,15 @@ E7 on an agent-invited episode additionally emits
 (true from the first agent ENGAGE onward; it never resets within the
 episode — a release/re-engage cycle does not re-arm the invite timer).
 
+E25 and E26 — and ONLY those two rows — latch `episode.invite_aborted`
+before routing to termination: it marks a close produced by the invite
+machinery itself (deadline elapsed, or DENIED while open), a legitimate
+agent outcome. Every other close of an agent-invited episode (E5 reset
+failure, E10 triggers, E11 estop, E14) leaves it false, so an embedder's
+blocking ask-an-agent call can distinguish "the ask was declined or went
+unanswered" from "the episode broke for unrelated reasons" without parsing
+termination reasons. Emission-invisible state, like `agent_engaged`.
+
 | # | From | Trigger | Guard | To | Effects / emissions | Fixture |
 |---|---|---|---|---|---|---|
 | E23 | (open) | `episode_open{agent_invite}` | E1 guard (no other episode active in session) | RESETTING | E1's effect set, plus emission `agent_invite{prompt, timeout_ns}` and `arm_timer{agent_invite_timeout, deadline = open + timeout_ns}` | `agent_invite_happy` |

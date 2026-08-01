@@ -236,6 +236,11 @@ fn feature_flags_declare_reset_phases_and_remote_from_session_config() {
         "waddle.v0.reset",
         "waddle.v0.reset.phases",
         "waddle.v0.reset.remote",
+        // Unconditional whenever a transport is configured (like the acks
+        // flag, asserted in directive_acks.rs): the plane routes agent
+        // invites only when this was advertised at Register, so dropping it
+        // silently severs real-plane invite routing.
+        "waddle.v0.agent",
     ] {
         assert!(
             req.feature_flags.iter().any(|f| f == flag),
@@ -273,6 +278,9 @@ fn feature_flags_omit_phases_and_remote_when_unconfigured() {
     let req = captured.lock()[0].clone();
     assert!(req.feature_flags.iter().any(|f| f == "waddle.v0.core"));
     assert!(req.feature_flags.iter().any(|f| f == "waddle.v0.reset"));
+    // `waddle.v0.agent` needs no reset config at all — the SDK always
+    // supports being agent-driven, so it rides every Register.
+    assert!(req.feature_flags.iter().any(|f| f == "waddle.v0.agent"));
     assert!(
         !req.feature_flags
             .iter()

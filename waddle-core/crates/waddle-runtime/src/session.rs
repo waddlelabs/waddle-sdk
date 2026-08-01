@@ -1189,12 +1189,18 @@ impl Session {
             // E25/E26 are E10-trigger members, so that is a legitimate agent
             // outcome (ABORT), not a reset failure: recover it from the
             // mirror instead of surfacing an error for a state this call's
-            // contract covers.
+            // contract covers. The `agent_invite_aborted` latch is set by
+            // E25/E26 and nothing else (FSM.md §1.5), so ONLY those two
+            // closes recover — a genuine pre-reset failure (E5) on an
+            // agent-invited episode surfaces the same `ResetFailed` the
+            // non-agent start path surfaces, never a normal-looking ABORT.
             Err(RuntimeError::ResetFailed(detail)) => {
                 let s = self.status();
-                if let (Some(id), Some(Phase::Terminal(outcome)), true) =
-                    (s.episode_id.clone(), s.episode_state, s.agent_invited)
-                {
+                if let (Some(id), Some(Phase::Terminal(outcome)), true) = (
+                    s.episode_id.clone(),
+                    s.episode_state,
+                    s.agent_invite_aborted,
+                ) {
                     return Ok(assemble_agent_outcome(outcome, id, &s));
                 }
                 return Err(RuntimeError::ResetFailed(detail));

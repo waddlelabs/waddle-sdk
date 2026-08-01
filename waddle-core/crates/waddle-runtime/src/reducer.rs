@@ -695,6 +695,7 @@ impl Reducer {
         // reset waits) can observe invited → engaged → terminal.
         let agent_invited = self.fsm.episode.as_ref().is_some_and(|e| e.agent_invited);
         let agent_engaged = self.fsm.episode.as_ref().is_some_and(|e| e.agent_engaged);
+        let agent_invite_aborted = self.fsm.episode.as_ref().is_some_and(|e| e.invite_aborted);
         let gate_mode = Some(self.fsm.gate_mode);
         let claim_active = self.fsm.claim.is_some();
         let provenance = claim_active.then(|| self.claim_provenance());
@@ -710,6 +711,7 @@ impl Reducer {
             s.post_reset_failed = post_reset_failed;
             s.agent_invited = agent_invited;
             s.agent_engaged = agent_engaged;
+            s.agent_invite_aborted = agent_invite_aborted;
             s.plane_connected = plane_connected;
         });
     }

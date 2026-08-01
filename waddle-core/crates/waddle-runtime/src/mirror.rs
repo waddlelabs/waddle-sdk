@@ -125,6 +125,14 @@ pub struct Status {
     /// LATCHED at the first agent ENGAGE on an agent-invited episode
     /// (FSM.md §1.5): true from then on, never reset within the episode.
     pub agent_engaged: bool,
+    /// LATCHED when the invite machinery itself closed the run — E25's
+    /// deadline expiry or E26's pre-engage DENIED (FSM.md §1.5) — and by
+    /// nothing else. This is what lets a blocked `Session::run_agent`
+    /// classify a close it observes only as `Phase::Terminal`: with this
+    /// set, the abort IS the agent outcome (returned as `AgentOutcome`);
+    /// without it (e.g. an E5 reset failure), the error surfaces exactly
+    /// as the non-agent start path would surface it.
+    pub agent_invite_aborted: bool,
     /// The plane's most recent `AgentTaskUpdate`; see [`AgentTaskStatus`].
     pub agent_task: Option<AgentTaskStatus>,
     pub plane_connected: bool,

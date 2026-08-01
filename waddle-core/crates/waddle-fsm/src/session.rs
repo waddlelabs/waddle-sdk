@@ -1499,7 +1499,10 @@ pub fn step(
                     // other E10 trigger — from RUNNING to TERMINAL{ABORT},
                     // or to POST_RESET{ABORT pinned} per E14 when post-reset
                     // is declared; from RESETTING/READY straight to
-                    // TERMINAL{ABORT} (E14 never applies there).
+                    // TERMINAL{ABORT} (E14 never applies there). The
+                    // `invite_aborted` latch (§1.5) marks this close as the
+                    // invite's own — E5/E10/E11 closes never set it.
+                    ctx.episode_mut().invite_aborted = true;
                     ctx.request_terminal(*at, TerminalOutcome::Abort, "no agent engaged");
                 }
                 // Otherwise: a stale expiry racing the cancellation —
@@ -1726,12 +1729,14 @@ pub fn step(
             // E26: routes exactly as E25 — a member of E10's trigger set
             // with fixed outcome ABORT; the taken route's effect set (which
             // includes cancelling the invite timer in `close_run`) applies
-            // verbatim, carrying the update's detail.
+            // verbatim, carrying the update's detail. Latches
+            // `invite_aborted` like E25 (§1.5).
             let reason = if detail.is_empty() {
                 "agent task denied"
             } else {
                 detail
             };
+            ctx.episode_mut().invite_aborted = true;
             ctx.request_terminal(*at, TerminalOutcome::Abort, reason);
         }
     }

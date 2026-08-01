@@ -25,8 +25,8 @@ use waddle_fsm::Phase;
 use waddle_gate::gate::GateOutput;
 use waddle_media::{DataTopic, LoopbackMedia};
 use waddle_runtime::{
-    AgentInvite, AgentTaskKind, ControlRegistry, EpisodeOptions, Session, VerbError,
-    grant_and_engage,
+    AgentInvite, AgentTaskKind, ControlRegistry, EpisodeOptions, ResetSpec, RuntimeError, Session,
+    VerbError, grant_and_engage,
 };
 use waddle_types::pb::v0 as pb;
 use waddle_types::{ActorKind, GateMode, Provenance, TerminalOutcome};
@@ -374,6 +374,69 @@ fn run_agent_invite_timeout_aborts() {
     assert!(send_log.lock().is_empty(), "nothing may actuate");
     let status = session.status();
     assert!(status.agent_invited && !status.agent_engaged);
+    session.shutdown();
+}
+
+// --- Invite timeout during a slow pre-reset: still an agent outcome -------
+
+/// E25 can fire while `start_episode_with` is still blocked in RESETTING
+/// (the pre-reset hook outlives the invite deadline). That close is the
+/// invite's own (`agent_invite_aborted`, FSM.md §1.5), so `run_agent`
+/// recovers it from the mirror as a normal ABORT outcome instead of
+/// surfacing the start path's `ResetFailed`.
+#[test]
+fn run_agent_recovers_invite_timeout_during_slow_pre_reset() {
+    let send_log: SendLog = Arc::new(Mutex::new(Vec::new()));
+    let session = Session::builder("agent-timeout-slow-reset")
+        .robot(twist_robot())
+        .control(registry(&send_log))
+        .pre_reset(ResetSpec::Hook(Arc::new(|_| {
+            // Outlive the 100 ms invite deadline; the reducer's timer wheel
+            // services E25 on its own thread while this blocks the caller.
+            std::thread::sleep(Duration::from_millis(400));
+            (true, Some(true))
+        })))
+        .build()
+        .unwrap();
+
+    let result = session
+        .run_agent("nobody home", 100_000_000, EpisodeOptions::default())
+        .unwrap();
+    assert_eq!(result.outcome, TerminalOutcome::Abort);
+    assert!(result.recording_ref.is_none());
+    assert!(send_log.lock().is_empty(), "nothing may actuate");
+    let status = session.status();
+    assert!(status.agent_invite_aborted, "E25 latches the invite abort");
+    session.shutdown();
+}
+
+// --- A genuine pre-reset failure is an ERROR, never an agent outcome ------
+
+/// The recovery above is scoped to E25/E26 exactly: a pre-reset hook that
+/// FAILS (E5) on an agent-invited episode must surface the same
+/// `RuntimeError::ResetFailed` the non-agent start path surfaces — a
+/// customer with a broken reset rig must see the error channel, not a
+/// normal-looking ABORT with empty detail.
+#[test]
+fn run_agent_surfaces_pre_reset_failure_as_error() {
+    let send_log: SendLog = Arc::new(Mutex::new(Vec::new()));
+    let session = Session::builder("agent-reset-failure")
+        .robot(twist_robot())
+        .control(registry(&send_log))
+        .pre_reset(ResetSpec::Hook(Arc::new(|_| (false, Some(false)))))
+        .build()
+        .unwrap();
+
+    let result = session.run_agent("stack the cups", 30_000_000_000, EpisodeOptions::default());
+    assert!(
+        matches!(result, Err(RuntimeError::ResetFailed(_))),
+        "a genuine E5 reset failure must surface as ResetFailed, got {result:?}"
+    );
+    let status = session.status();
+    assert!(
+        !status.agent_invite_aborted,
+        "E5 must never latch the invite abort"
+    );
     session.shutdown();
 }
 

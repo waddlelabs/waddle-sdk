@@ -731,6 +731,26 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   in the episode MCAP; callers no longer see the ring.
 
 ### Fixed
+- **`Session::run_agent` no longer masks a genuine pre-reset failure (E5)
+  as a normal-looking agent ABORT**: the recovery arm that turns a
+  `ResetFailed` from the start path into an `AgentOutcome` exists for
+  closes the invite machinery itself produces while the caller is still
+  blocked in RESETTING (E25's deadline expiry, E26's pre-engage DENIED),
+  but it keyed on `agent_invited` alone — the mirror carried no "why", so
+  a failing pre-reset hook on an agent-invited episode returned
+  `Ok(AgentOutcome{ABORT, detail: ""})` (indistinguishable from "no agent
+  engaged") instead of the `RuntimeError::ResetFailed` every other start
+  path surfaces, and retry loops would grind against broken reset hardware
+  with no error ever raised. The FSM now latches `episode.invite_aborted`
+  on exactly E25/E26 (documented in FSM.md §1.5 alongside the
+  `agent_engaged` latch; pinned by session-invariant I19), the mirror
+  publishes it as `Status.agent_invite_aborted`, and the recovery arm keys
+  on that: E25/E26-during-RESETTING still return the ABORT outcome (new
+  test drives a real invite timeout under a slow pre-reset hook), while an
+  E5 reset failure surfaces as `ResetFailed` (new test). Also pinned by
+  test: the unconditional `waddle.v0.agent` Register advertisement
+  (deleting it previously kept the whole suite green while silently
+  severing real-plane invite routing).
 - **`waddle-fsm` — a wrong-actor grant on an agent-invited episode now
   records `claim{DENIED}` (FSM.md C8) instead of being silently dropped**:
   C8 specifies "any other actor's grant is rejected, `claim{DENIED}`" — the

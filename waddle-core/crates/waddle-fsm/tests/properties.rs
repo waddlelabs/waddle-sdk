@@ -29,6 +29,9 @@
 //!     (or PostReset{ABORT pinned}, then Terminal, when post-reset declared —
 //!     E25 through E14).
 //! 18. `AgentTaskDenied` after engage never changes phase (E26b).
+//! 19. `invite_aborted ⇒ agent_invited ∧ ¬agent_engaged` (§1.5: only E25/E26
+//!     latch it, and both require the invite open), and it is monotone
+//!     within an episode.
 
 use std::collections::HashSet;
 
@@ -236,6 +239,7 @@ struct Driver {
     /// I12: the last-seen `post_reset_failed` per episode, to catch it
     /// reverting from true to false.
     last_post_reset_failed: Option<(EpisodeId, bool)>,
+    last_invite_aborted: Option<(EpisodeId, bool)>,
     /// I14: episodes that have ever visited PostReset (retake must never
     /// have passed through it).
     ever_post_reset: HashSet<EpisodeId>,
@@ -277,6 +281,7 @@ impl Driver {
             last_phase: None,
             last_pinned_outcome: None,
             last_post_reset_failed: None,
+            last_invite_aborted: None,
             ever_post_reset: HashSet::new(),
             trace: Vec::new(),
             defer_mints: false,
@@ -626,6 +631,26 @@ impl Driver {
             if ep.agent_engaged {
                 assert!(ep.agent_invited, "I15: agent_engaged without agent_invited");
             }
+
+            // I19: invite_aborted is E25/E26's latch alone — both rows
+            // require the invite open, so it never coexists with an engage
+            // and never appears on a non-invited episode. Monotone within
+            // the episode (like the other §1.5 latches).
+            if ep.invite_aborted {
+                assert!(
+                    ep.agent_invited && !ep.agent_engaged,
+                    "I19: invite_aborted requires agent_invited and no engage"
+                );
+            }
+            if let Some((last_id, last_aborted)) = &self.last_invite_aborted
+                && last_id == &ep.id
+            {
+                assert!(
+                    !*last_aborted || ep.invite_aborted,
+                    "I19: invite_aborted must be monotone"
+                );
+            }
+            self.last_invite_aborted = Some((ep.id.clone(), ep.invite_aborted));
 
             // I16: every ENGAGEd (RUNNING-phase, E7) claim in an
             // agent-invited episode is the invited agent's (C8). Reset-window

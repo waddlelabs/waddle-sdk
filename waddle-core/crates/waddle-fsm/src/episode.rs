@@ -93,6 +93,14 @@ pub struct EpisodeState {
     /// true from then on, never reset within the episode — a
     /// release/re-engage cycle does not re-arm the invite timer.
     pub agent_engaged: bool,
+    /// LATCHED when the invite machinery itself closes the run: E25 (the
+    /// invite deadline elapsed) or E26 (a plane DENIED while the invite was
+    /// open). Never set by any other close — an E5 reset failure, E10
+    /// terminate, or E11 estop on an agent-invited episode leaves this
+    /// false, so an embedder can tell "the ask was declined / unanswered"
+    /// (a legitimate agent outcome) apart from "the episode broke for
+    /// reasons unrelated to the invite" (an error to surface).
+    pub invite_aborted: bool,
 }
 
 impl EpisodeState {
@@ -120,6 +128,7 @@ impl EpisodeState {
             post_window: None,
             agent_invited: false,
             agent_engaged: false,
+            invite_aborted: false,
         }
     }
 
