@@ -64,7 +64,10 @@ def test_the_default_build_carries_the_control_transport():
     strange thing to ship."""
     assert "grpc" in _core.FEATURES
     assert _core.FEATURES <= {"grpc", "livekit"}
-    assert _native.FEATURES == _core.FEATURES
+    # Whatever `_native` selected, its FEATURES are that core's own — never
+    # a Python-side idea of what should be available.
+    assert _native.FEATURES == _native.core.FEATURES
+    assert "grpc" in _native.FEATURES
 
 
 @pytest.mark.skipif(
