@@ -53,6 +53,10 @@ Configuration (every flag also has an environment variable):
 ``WADDLE_TOY_RECORDING_DIR``    where sidecars + MCAPs land
 ===========================  ================================================
 
+An EMPTY value counts as unset everywhere above (``WADDLE_TOY_TOKEN=`` is
+"no credential", not "the empty credential"), so a harness can pass
+``VAR=${MAYBE_UNSET}`` straight through.
+
 Status lines are printed unbuffered, prefixed ``[toy]``, so another process
 can drive this one and wait on them::
 
@@ -525,8 +529,19 @@ def run_rollout(session, arm: ToyArm, number: int, task: str, seconds: float) ->
     return outcome
 
 
+def env(name: str, default: str | None = None) -> str | None:
+    """Read one of the ``WADDLE_TOY_*`` variables, treating an EMPTY value
+    as unset.
+
+    A harness parameterizes a child with ``VAR=${MAYBE_UNSET}``, and an
+    empty value there means "I have nothing for this" — not "use the empty
+    string", which would otherwise reach ``int("")`` or a credential
+    validator as a traceback before the first status line is printed."""
+    value = os.environ.get(name, "")
+    return value if value.strip() else default
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    env = os.environ.get
     parser = argparse.ArgumentParser(
         description="Run the Waddle toy robot (see the module docstring).",
     )
@@ -546,7 +561,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--recording-dir", default=env("WADDLE_TOY_RECORDING_DIR", "toy-recordings")
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    # Same rule one layer up, for `--token ""` and friends: empty means
+    # unset, so an unset credential stays None rather than becoming an
+    # empty one the SDK will (rightly) refuse.
+    for name in ("transport", "token", "media", "media_token"):
+        setattr(args, name, getattr(args, name) or None)
+    return args
 
 
 def main(argv: list[str] | None = None) -> int:

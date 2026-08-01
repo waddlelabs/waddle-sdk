@@ -314,6 +314,42 @@ def test_the_examples_estop_survives_the_scene_reset():
     assert np.any(arm.joint_positions() != 0.0), "the arm never recovered"
 
 
+def test_empty_environment_variables_mean_unset(monkeypatch):
+    # `VAR=${MAYBE_UNSET}` is how a harness parameterizes a child, and this
+    # program's job is to be driven by one. Empty has to mean unset, not a
+    # traceback out of `int("")` or an empty credential the SDK refuses.
+    example = _load_example()
+    for name in (
+        "WADDLE_TOY_MODE",
+        "WADDLE_TOY_TRANSPORT",
+        "WADDLE_TOY_TOKEN",
+        "WADDLE_TOY_MEDIA",
+        "WADDLE_TOY_MEDIA_TOKEN",
+        "WADDLE_TOY_PROMPT",
+        "WADDLE_TOY_EPISODES",
+        "WADDLE_TOY_EPISODE_SECONDS",
+        "WADDLE_TOY_AGENT_TIMEOUT",
+        "WADDLE_TOY_RECORDING_DIR",
+    ):
+        monkeypatch.setenv(name, "")
+
+    args = example.parse_args([])
+    assert args.mode == "loop"
+    assert (args.transport, args.token, args.media, args.media_token) == (None, None, None, None)
+    assert args.episodes == 0
+    assert args.episode_seconds == 4.0
+    assert args.agent_timeout == 120.0
+    assert args.recording_dir == "toy-recordings"
+    assert args.prompt
+
+    # Same rule for an explicitly empty flag, and the promise it keeps: a
+    # plane that asks for no credential is configured by leaving the token
+    # empty (examples/README.md), so that has to build a real transport.
+    args = example.parse_args(["--transport", "http://127.0.0.1:9", "--token", ""])
+    assert args.token is None
+    waddle.Grpc(args.transport, args.token)
+
+
 def test_the_examples_success_criterion_is_not_free():
     # The example decides its own outcome, so the criterion has to be able
     # to say "no". An episode in which nothing ever dispatched leaves the

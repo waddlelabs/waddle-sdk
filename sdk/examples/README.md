@@ -70,7 +70,9 @@ whole point of routing every action through it.
 
 The token is the plane's own credential for the session; the SDK never
 mints one. A plane that asks for no credential (a local development plane)
-needs no `WADDLE_TOY_TOKEN`.
+needs no `WADDLE_TOY_TOKEN` — leaving it unset and passing it empty mean
+the same thing, so a harness can forward `VAR=${MAYBE_UNSET}` without
+knowing which case it is in.
 
 The declared camera also carries `still_fps=2`, so with a plane connected
 the program samples 2 JPEG stills per second onto the **control** plane.

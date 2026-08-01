@@ -227,6 +227,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     `False` rather than vouching for a scene it did not reset; only
     `clear_estop()` — standing in for the human at the machine — releases
     it. The envelope is the owner's, so no supervision flow may clear it.
+  - **An empty environment variable means unset**, at both layers
+    (`WADDLE_TOY_TOKEN=` is "no credential", `--token ""` likewise), because
+    `VAR=${MAYBE_UNSET}` is how a harness parameterizes a child; previously
+    those died in `int("")` or in credential validation before the first
+    status line.
 - **sdk (`waddle.StreamPolicy(still_fps=…)`)**: the Python declaration for
   control-plane stills (flag `waddle.v0.obs.stills`), which core has
   honoured since the entry above but no Python program could ask for. `None`
