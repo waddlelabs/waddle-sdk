@@ -153,7 +153,11 @@ E14), never around it. The invited agent claims with the same
 `Claim`/`Lease` machinery as every other actor — C8 restricts admission,
 nothing else. Exactly two things differ: the caller's own `gate()` ticks
 never dispatch while no claim is engaged (E24), and only `ACTOR_KIND_AGENT`
-claims are admitted (C8).
+claims are admitted (C8). C8 constrains only the grants C1 governs: a claim
+landing in RESETTING or POST_RESET with a window OPEN is a **reset** claim
+and stays C6's business, so an agent-invited episode with a declared
+TELEOPERATOR reset window admits its teleoperator exactly as any other
+episode does (`agent_invite_denied_in_post_reset` pins this).
 
 The **invite is open** from E23 until the first of: an agent claim ENGAGEs
 (E7 on this episode), or the episode leaves {RESETTING, READY, RUNNING} by
