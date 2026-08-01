@@ -44,7 +44,8 @@ waddle-sdk/
   waddle-protocol/           # THE STANDARD: schemas + fixtures + normative docs
     proto/waddle/v0/         # descriptors, control, episode, sidecar, services, media
     fixtures/                # wire/ sidecars/ behaviors/ (JSON, semantic-compared)
-    conformance/             # scenario-format.md (normative), tiers, timing envelopes
+    conformance/             # scenario-format.md (normative), README.md (the
+                             #   three tiers), timing-envelopes.md
     docs/                    # GLOSSARY.md FSM.md VERSIONING.md + rationale/
   waddle-core/               # Rust workspace: the reference implementation
     crates/waddle-{types,fsm,gate,tripwire,ingest,media,controlplane,
@@ -164,6 +165,15 @@ top-level dirs; they are not built yet.
   observations spill to the heap — a documented degradation, never truncation).
   Benchmarks in `waddle-gate` track this; don't add locks, syscalls, or allocations
   to that path.
+- **The control plane carries no bandwidth.** Media rides the media plane; the local
+  recorder keeps the full-rate archive. There is exactly ONE declared exception —
+  `FrameStill` observations behind `waddle.v0.obs.stills`, bounded by the camera's
+  declared `StreamPolicy.still_fps` — and it is not a precedent: anything else
+  high-bandwidth needs its own flag and its own bound, or it doesn't ride these RPCs.
+  Messages that may be shed answer `ClientMsg::is_droppable` in waddle-controlplane
+  (the ONE place that classifies), and every point a droppable message can queue —
+  offline buffer and in-flight transport alike — must honor it; history is never
+  shed.
 
 ## Working conventions
 

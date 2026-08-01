@@ -12,6 +12,114 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 ## [Unreleased]
 
 ### Added
+- **waddle-protocol/waddle-core (agent-invited episodes, new feature flag
+  `waddle.v0.agent`)**: a customer can now ask Waddle to drive an episode
+  rather than driving it themselves — `Session::run_agent(prompt, timeout_ns,
+  opts)` opens an *agent-invited* episode and blocks until it terminates,
+  returning `AgentOutcome { outcome, episode_id, recording_ref, detail }`.
+  **The invite adds no authority concepts.** It is one `EpisodeEvent`
+  (`AgentInviteEvent { prompt, timeout_ns }`, arm 18) forwarded to the plane
+  like any other emission; the hosted agent then claims the episode with the
+  EXISTING intervention machinery (`ClaimDirective{GRANT, ACTOR_KIND_AGENT}`
+  → engage), streams chunks on the EXISTING `intervention_chunk` arm, and
+  finishes with the EXISTING `EpisodeDirective{MARK_DONE}` +
+  `ClaimDirective{RELEASE}`. Everything else about the episode — E7 engage,
+  chunk handoff, E10 termination, both reset phases — applies verbatim.
+  - **Protocol**: `AgentInviteEvent` (episode.proto);
+    `AgentTaskUpdate { episode_id, kind, detail, recording_ref,
+    directive_id? }` with `AgentTaskUpdateKind`
+    (UNSPECIFIED/QUEUED/DENIED/COMPLETED) as `GateServerMessage` arm 7 — the
+    plane's status channel for the ask itself, distinct from the episode's
+    own timeline; `NOOP_REASON_AGENT_EPISODE = 4` (control.proto). All
+    append-only; registry row in VERSIONING.md.
+  - **FSM.md §1.5** (guard rows E23–E26/E26b, C8): E23 opens the episode,
+    emits the invite, and arms `agent_invite_timeout`; **E24** — the caller's
+    own `gate()` ticks NEVER dispatch while no claim is engaged (plan Noop,
+    reason `NOOP_REASON_AGENT_EPISODE`; no fault, no state change), which is
+    what makes "you asked, Waddle drives" honest rather than a race between
+    two writers; **E25/E26** (deadline elapsed, or a plane `DENIED` while the
+    invite is open) are declared **members of E10's trigger set** with the
+    outcome fixed to ABORT, so E14 routes them through the episode's normal
+    termination (TERMINAL{ABORT}, or POST_RESET{ABORT pinned} when
+    post-reset is declared) instead of around it; **E26b** records a late
+    `DENIED` as an event only, so it can never disturb a pinned outcome.
+    **C8** admits `ACTOR_KIND_AGENT` claims only, and records the refusal of
+    any other actor as `claim{DENIED}` — a declared reset window on an
+    agent-invited episode still admits its teleoperator under C6, which
+    C8 does not touch. Two latches are emission-invisible state:
+    `agent_engaged` (set by the first agent ENGAGE; never re-arms the invite
+    timer on a release/re-engage) and `invite_aborted` (set by E25/E26 and
+    nothing else, so an embedder can tell "the ask went unanswered" from
+    "the episode broke for unrelated reasons" without parsing reasons).
+    The invite closes on the first of an agent ENGAGE or any exit from
+    {RESETTING, READY, RUNNING}; every closing row cancels the timer, and a
+    stale expiry after close is discarded.
+  - **Conformance**: eight new scenarios in `fixtures/behaviors/`
+    (`agent_invite_happy`, `agent_caller_tick_noop`, `agent_invite_timeout`,
+    `agent_invite_timeout_post_reset`, `agent_invite_denied`,
+    `agent_invite_denied_after_engage`, `agent_invite_wrong_actor_denied`,
+    `agent_invite_denied_in_post_reset`), all listing `waddle.v0.agent` in
+    `requires_features`. `scenario-format.md` gains the `episode_open`
+    `agent_invite` key, the `agent_task_update` inject kind (the update
+    nests as a canonical `waddle.v0.AgentTaskUpdate` under `update`, the
+    shape `reset_result` already uses — the message's own `kind` field
+    cannot ride flat beside the inject dispatcher's `kind`), the
+    `episode.agent_invited` / `episode.agent_engaged` snapshot paths, and
+    the `agent_invite_timeout` timer id. The runner now captures a Noop's
+    reason from the plan mode that produced the tick instead of hardcoding
+    `BYPASS_ACTIVE`, which also fixed a latent runner-vs-E20 drift.
+  - **Runtime**: `EpisodeOptions.agent_invite` (waddle-fsm's own
+    `AgentInvite`, re-exported — the frontend stays hollow) opens without
+    blocking; `run_agent` is the blocking convenience and fails loudly up
+    front when the engage-path verbs the invite needs are unwired. The plane
+    pump retains every `AgentTaskUpdate` on the mirror
+    (`Status.agent_task`); only a DENIED addressed to the ACTIVE episode is
+    dispatched to the FSM, which alone picks E26 vs E26b — QUEUED/COMPLETED
+    never touch it, and COMPLETED's `recording_ref`/`detail` feed the
+    outcome. The mirror publishes `agent_invited` / `agent_engaged` /
+    `agent_invite_aborted`. The flag is declared at Register
+    unconditionally whenever a transport is configured: the SDK always
+    supports being agent-driven, and a plane that did not accept it simply
+    never routes an invite (the deadline then closes the episode via E25).
+- **waddle-protocol/waddle-runtime (control-plane stills, new feature flag
+  `waddle.v0.obs.stills`)**: a hosted agent needs to SEE the scene, and until
+  now `publish_frame` fed only the media plane — an agent-only session with no
+  LiveKit anywhere had no frame path to the control plane at all. A camera
+  declaring `StreamPolicy.still_fps > 0` (descriptors.proto field 3; 0/absent
+  means no stills) now has each published frame teed into a latest-wins
+  per-camera slot, which the existing `waddle-media-uplink` pump samples at
+  the declared rate, JPEG-encodes (never on the customer's thread, never on
+  the gate path), and sends as `ObservationUpdate{ still: FrameStill }`
+  (`FrameStill { camera, frame_seq, encoding, width, height, data }`,
+  services.proto payload arm 5). **Bounded by declaration — never a video
+  path; LiveKit media remains the only video transport**, and the file-header
+  and StreamPolicy comments asserting that nothing high-bandwidth rides these
+  RPCs now name this bounded exception explicitly.
+  - The intake grew a second, independent leg rather than a branch: the media
+    leg keeps its own fps throttle and bounded drop-oldest queue, the stills
+    leg its own frame-timeline throttle and capacity-one slot; neither
+    rate-limits the other. `CameraUplink` is built whenever EITHER leg has
+    somewhere to go, so a stills-only camera works with no media plane, while
+    a session with neither keeps `publish_frame`'s cheap no-op early return
+    and declared-uplink validation stays scoped to cameras that would
+    actually be wired.
+  - The throttle reads the frame's own `SessionClock` stamp, never a
+    pump-side clock, so the sampled rate is a property of the frames and the
+    sampling is deterministic under test; a not-yet-due frame is kept rather
+    than discarded, so a publisher slower than its declared rate still gets
+    every frame sampled. `frame_seq` is minted once per validated
+    `publish_frame`, before either throttle — it numbers the camera's frames,
+    not the subset a policy admitted, and is THE per-camera `FrameNotice`
+    counter for whatever emits `FrameNotice` later. Stills stay out of
+    `camera_frames_dropped`, which keeps meaning exactly media-uplink loss.
+  - The flag is declared at Register iff some camera asks for stills
+    (declaring it otherwise would claim a behavior the session cannot
+    produce), and stills are emitted only while the CURRENT connection
+    accepted it (VERSIONING §3), refreshed on every registration by the plane
+    pump — the emitting thread is not the one that sees the response.
+    Control-plane stills are also the first *droppable* history-free message
+    class: see the `waddle-controlplane` entry under Fixed for how they are
+    shed rather than buffered while a plane is unreachable or stalled.
 - **waddle-protocol (fixture `remote_reset_caller_tick_noop`)**: pins FSM.md
   E20's caller-tick marker, previously asserted by no golden — a `gate_tick`
   during an ENGAGED remote reset window returns
@@ -731,6 +839,18 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   in the episode MCAP; callers no longer see the ring.
 
 ### Fixed
+- **The bypass pump exempted a never-ticked gate from stall detection, so an
+  engaged claim in a session whose gate never ticks would have gone undriven
+  forever**: `spawn_bypass_pump` only reported a stall when a previous
+  `gate_tick` existed and was older than the threshold, so a `None` last tick
+  was silently exempt. FSM.md §6's condition is "no `gate_tick` within the
+  stall threshold", which holds *vacuously* when there has never been one —
+  and that is exactly the shape of an agent-invited episode driven through
+  `Session::run_agent`, which reaches RUNNING with the caller's thread
+  blocked and therefore never ticks at all. A `None` last tick now counts as
+  stalled (the `Some` threshold contract is unchanged); the FSM's own
+  `StallDetected` guard still decides whether anything follows, so no guard
+  row changed — the pump only reports.
 - **`waddle-controlplane` — droppable messages can no longer queue without
   bound while the plane is unreachable or stalled**: `ClientMsg` now answers
   "is this perception/liveness, or history?" in exactly one place
