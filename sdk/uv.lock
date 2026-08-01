@@ -476,6 +476,11 @@ dependencies = [
     { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
 ]
 
+[package.optional-dependencies]
+teleop = [
+    { name = "waddle-sdk-teleop" },
+]
+
 [package.dev-dependencies]
 dev = [
     { name = "maturin" },
@@ -485,7 +490,11 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "numpy", specifier = ">=1.24" }]
+requires-dist = [
+    { name = "numpy", specifier = ">=1.24" },
+    { name = "waddle-sdk-teleop", marker = "extra == 'teleop'", directory = "teleop" },
+]
+provides-extras = ["teleop"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -494,6 +503,18 @@ dev = [
     { name = "mcap-protobuf-support", specifier = ">=0.5" },
     { name = "pytest", specifier = ">=8" },
 ]
+
+[[package]]
+name = "waddle-sdk-teleop"
+source = { directory = "teleop" }
+dependencies = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
+    { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "numpy", specifier = ">=1.24" }]
 
 [[package]]
 name = "zstandard"

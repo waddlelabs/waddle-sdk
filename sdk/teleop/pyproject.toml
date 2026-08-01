@@ -1,0 +1,36 @@
+# `waddle-sdk-teleop` — the companion distribution of `waddle-sdk`.
+#
+# Same source tree, same shim, same Cargo.toml (hence the same version): the
+# ONLY difference from the default wheel is one extra cargo feature, the
+# LiveKit media plane. It ships separately because LiveKit's libwebrtc
+# dependency chain is ~690 MB of build that belongs nowhere near an install
+# whose job is to supervise a policy rollout — the psycopg / psycopg-binary
+# shape, two distributions from one source tree.
+#
+# Install it as the extra, never by name: `pip install 'waddle-sdk[teleop]'`.
+# Then `import waddle` as always — `waddle._native` finds this core and
+# prefers it (see its module docstring for the selection rules).
+[build-system]
+requires = ["maturin>=1.14,<2"]
+build-backend = "maturin"
+
+[project]
+name = "waddle-sdk-teleop"
+description = "LiveKit-enabled core for waddle-sdk (install via: pip install 'waddle-sdk[teleop]')"
+license = "Apache-2.0"
+requires-python = ">=3.10"
+# No dependency on `waddle-sdk` itself: the extra points this way, and a
+# dependency back would be a cycle. numpy is real, though — the compiled
+# module talks to numpy's C API the moment an action array crosses.
+dependencies = ["numpy>=1.24"]
+dynamic = ["version"]
+
+[tool.maturin]
+# The shim lives one directory up and is built verbatim; the version comes
+# from that same Cargo.toml, so the two wheels can never disagree unless
+# they were built from different checkouts (which is exactly what
+# `waddle._native`'s version check catches).
+manifest-path = "../rust/Cargo.toml"
+python-source = "python"
+module-name = "waddle_teleop._core"
+features = ["pyo3/extension-module", "grpc", "livekit"]
