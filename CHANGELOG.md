@@ -914,6 +914,20 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   in the episode MCAP; callers no longer see the ring.
 
 ### Fixed
+- **`waddle-controlplane` — the offline-classification tests no longer race
+  the reconnect clock**: both tests that assert what a message does while
+  the plane is unreachable held the window open with a 300 ms backoff step
+  and then sent into it, so a test thread stalled past that step (a loaded
+  CI runner, or the run right after a heavy build) sent AFTER the client had
+  reconnected. The messages were then forwarded live and legitimately, but
+  the assertions scan everything the plane ever received and cannot tell a
+  live forward from a replay — a real failure of a gate this repo requires
+  clean before every commit, and a false one. `InMemoryTransport` gained
+  `refuse_connections`/`allow_connections`, so the offline window lasts as
+  long as the test needs rather than as long as a step happens to take, and
+  the tests wait for a full drain cycle (two refused dials, a happens-before
+  they can observe) before healing the partition. No production behavior
+  changed; the suite is also ~60x faster for dropping the long sleeps.
 - **sdk — every declared camera's resolution is now declared to the media
   plane (Gap J)**: a LiveKit track publishes at ONE declared resolution and
   drops every frame that disagrees, so a session that inherited the 640x480

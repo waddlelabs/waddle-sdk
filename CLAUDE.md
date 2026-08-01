@@ -238,5 +238,12 @@ top-level dirs; they are not built yet.
   an abstraction exists (or should).
 - Tests are the spec: FSM invariants are proptests, behavior is fixture scenarios;
   when fixing a bug, first add the failing scenario/property, then fix.
+- No test may depend on winning a wall-clock race. A window a test needs open (the
+  plane unreachable, a claim un-engaged) is held open explicitly — e.g.
+  `InMemoryTransport::refuse_connections` until the test heals the partition — and
+  closed on an observable happens-before, never on a sleep or a backoff step chosen
+  to be "long enough". A test that fails under load fails a gate this repo requires
+  clean before every commit, and its assertions usually cannot tell the racing
+  outcome from the intended one anyway.
 - When you finish a work session, verify: workspace tests green, clippy/fmt clean,
   CHANGELOG.md updated, this file still accurate.

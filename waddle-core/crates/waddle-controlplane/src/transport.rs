@@ -160,6 +160,26 @@ impl InMemoryTransport {
         *self.fail_next.lock() = n;
     }
 
+    /// Refuse every dial until [`Self::allow_connections`] heals the
+    /// partition.
+    ///
+    /// This is how a test opens an offline window it can reason about: the
+    /// window lasts as long as the test needs, not as long as a backoff
+    /// step happens to last. A long step only makes the window *probably*
+    /// wide enough — a loaded machine (or the run right after a heavy
+    /// build) loses that race, the client reconnects early, and messages
+    /// the test meant to classify offline are forwarded live instead, which
+    /// no assertion over the plane's received messages can tell apart from
+    /// a replay.
+    pub fn refuse_connections(&self) {
+        self.fail_next(u32::MAX);
+    }
+
+    /// Accept dials again (the partition heals).
+    pub fn allow_connections(&self) {
+        self.fail_next(0);
+    }
+
     /// Sever all live connections (simulates a partition).
     pub fn drop_connections(&self) {
         self.live.lock().clear();
