@@ -1,20 +1,27 @@
 //! The frame-ingestion seam: `Session::publish_frame` validates
 //! the declared camera + frame shape, honors the declared `StreamPolicy`
 //! uplink fps throttle, lazily `publish_track`s a camera on its first frame,
-//! and drops (counted) under backpressure from a slow media plane — never
+//! drops (counted) under backpressure from a slow media plane, and — for a
+//! camera declaring `StreamPolicy.still_fps` (flag `waddle.v0.obs.stills`) —
+//! samples bounded-rate JPEG `FrameStill`s onto the CONTROL plane. Never
 //! touching `Gate::gate()`'s fast path (this whole seam lives on the
 //! customer thread plus one dedicated `waddle-media-uplink` pump).
 
 #![allow(clippy::disallowed_methods)] // wall-clock deadlines are test-only
 
 use std::sync::Arc;
+use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant};
 
+use parking_lot::Mutex;
+use waddle_controlplane::{ClientMsg, InMemoryTransport, ServerMsg};
 use waddle_media::{
     DataRx, DataTopic, DataTx, EncodedFrame, LoopbackMedia, MediaError, MediaPlane, TrackHandle,
 };
 use waddle_runtime::{ControlRegistry, FrameData, RuntimeError, Session, VerbError};
 use waddle_types::pb::v0 as pb;
+
+const STILLS_FLAG: &str = "waddle.v0.obs.stills";
 
 /// A registry with `hold`/`send` so a wired media plane's build-time
 /// HOLD_FIRST check is satisfied (unrelated to this task; every test here
@@ -53,6 +60,26 @@ fn robot(cameras: Vec<pb::CameraDescription>) -> pb::RobotDescription {
     }
 }
 
+/// The same robot, additionally declaring the grants an episode needs — for
+/// the stills tests that also run gate ticks (to prove stills and the
+/// reducer's own proprio uplink don't rate-limit each other).
+fn robot_granted(cameras: Vec<pb::CameraDescription>) -> pb::RobotDescription {
+    let mut robot = robot(cameras);
+    robot.grants = vec![
+        pb::Grant {
+            verb: pb::Verb::Hold as i32,
+            declared_latency_bound_ns: Some(50_000_000),
+            ..Default::default()
+        },
+        pb::Grant {
+            verb: pb::Verb::Send as i32,
+            send_interfaces: vec![pb::SpaceKind::JointPosition as i32],
+            ..Default::default()
+        },
+    ];
+    robot
+}
+
 /// A tiny (4x4) declared camera, with an optional uplink policy.
 fn camera(name: &str, uplink: Option<pb::stream_policy::UplinkPolicy>) -> pb::CameraDescription {
     pb::CameraDescription {
@@ -64,9 +91,20 @@ fn camera(name: &str, uplink: Option<pb::stream_policy::UplinkPolicy>) -> pb::Ca
         stream: Some(pb::StreamPolicy {
             local_full_rate: false,
             uplink,
+            ..Default::default()
         }),
         ..Default::default()
     }
+}
+
+/// The same tiny camera, additionally declaring control-plane stills.
+fn stills_camera(name: &str, still_fps: f64) -> pb::CameraDescription {
+    let mut cam = camera(name, None);
+    cam.stream
+        .as_mut()
+        .expect("the helper always declares a StreamPolicy")
+        .still_fps = Some(still_fps);
+    cam
 }
 
 /// A packed 4x4 RGB8 frame (all pixels the same value, for easy round-trip
@@ -505,4 +543,294 @@ fn fps_throttle_does_not_count_as_a_drop() {
         "fps-throttled frames must never increment the drop counter"
     );
     session.shutdown();
+}
+
+// --- control-plane stills (flag `waddle.v0.obs.stills`) ---------------------
+
+/// Everything the plane saw: the feature flags each `Register` declared, and
+/// every `ObservationUpdate` uplinked.
+#[derive(Default)]
+struct PlaneLog {
+    registered_flags: Vec<Vec<String>>,
+    observations: Vec<pb::ObservationUpdate>,
+}
+
+impl PlaneLog {
+    fn stills(&self) -> Vec<pb::FrameStill> {
+        self.observations
+            .iter()
+            .filter_map(|o| match &o.payload {
+                Some(pb::observation_update::Payload::Still(still)) => Some(still.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn proprio_count(&self) -> usize {
+        self.observations
+            .iter()
+            .filter(|o| matches!(o.payload, Some(pb::observation_update::Payload::Proprio(_))))
+            .count()
+    }
+}
+
+/// A control plane that records what it was told and accepts exactly
+/// `accepted` at `Register` — the one knob every stills test turns.
+fn logging_transport(accepted: &[&str]) -> (Arc<InMemoryTransport>, Arc<Mutex<PlaneLog>>) {
+    let log: Arc<Mutex<PlaneLog>> = Arc::new(Mutex::new(PlaneLog::default()));
+    let sink = log.clone();
+    let accepted: Vec<String> = accepted.iter().map(|f| (*f).to_owned()).collect();
+    let transport = InMemoryTransport::new(move |msg, tx: &Sender<ServerMsg>| match msg {
+        ClientMsg::Register(req) => {
+            sink.lock().registered_flags.push(req.feature_flags.clone());
+            let _ = tx.send(ServerMsg::Registered(pb::RegisterResponse {
+                accepted_feature_flags: accepted.clone(),
+                ..Default::default()
+            }));
+        }
+        ClientMsg::Observation(update) => sink.lock().observations.push(update),
+        _ => {}
+    });
+    (transport, log)
+}
+
+/// The headline: a camera declaring `still_fps` with a transport but NO
+/// media plane at all (the agent-only session shape — no LiveKit anywhere)
+/// still gets bounded-rate JPEG stills onto the control plane, carrying the
+/// camera's own `FrameNotice` sequence numbers.
+#[test]
+fn stills_ride_the_control_plane_without_a_media_plane() {
+    const STILL_FPS: f64 = 20.0;
+    let (transport, log) = logging_transport(&["waddle.v0.core", STILLS_FLAG]);
+    let session = Session::builder("stills-no-media")
+        .robot(robot(vec![stills_camera("overhead", STILL_FPS)]))
+        .control(registry())
+        .transport(transport)
+        .build()
+        .unwrap();
+
+    // 20 fps stills = a 50ms period on the frame timeline; 60 frames ~5ms
+    // apart is ~300ms of publishing, comfortably several stills.
+    let started = Instant::now();
+    let mut published = 0u64;
+    for i in 0..60u8 {
+        session.publish_frame("overhead", frame_4x4(i)).unwrap();
+        published += 1;
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        wait_until(|| log.lock().stills().len() >= 3, Duration::from_secs(2)),
+        "a declared still_fps must publish stills with no media plane wired at all"
+    );
+    let elapsed = started.elapsed();
+    session.shutdown();
+
+    let stills = log.lock().stills();
+    let mut last_seq = 0;
+    for still in &stills {
+        assert_eq!(still.camera, "overhead");
+        assert_eq!(still.encoding, pb::CameraEncoding::Jpeg as i32);
+        assert_eq!((still.width, still.height), (4, 4));
+        assert_eq!(
+            still.data.get(..3),
+            Some([0xff, 0xd8, 0xff].as_slice()),
+            "a FrameStill must carry real JPEG bytes (SOI marker)"
+        );
+        assert!(
+            still.frame_seq > last_seq,
+            "frame_seq must advance with the camera's own frame sequence: {} after {last_seq}",
+            still.frame_seq
+        );
+        assert!(
+            still.frame_seq <= published,
+            "frame_seq must number published frames (1-based), got {} of {published}",
+            still.frame_seq
+        );
+        last_seq = still.frame_seq;
+    }
+    // The declared rate is a CAP, and the only load-independent way to say
+    // so: however long the publishing loop actually took, no more stills may
+    // have been sampled than that window allows (+1 for the first frame,
+    // which is always due, and +1 for rounding).
+    #[allow(clippy::cast_precision_loss)]
+    let allowed = elapsed.as_secs_f64().mul_add(STILL_FPS, 2.0);
+    assert!(
+        (stills.len() as f64) <= allowed,
+        "stills must be SAMPLED at the declared {STILL_FPS} fps, never one per published frame: \
+         {} stills in {elapsed:?} (cap {allowed})",
+        stills.len()
+    );
+}
+
+/// VERSIONING §3: a behavior the connection did not accept is never
+/// emitted. Same wiring as the test above, one flag removed — and the
+/// session must stay otherwise alive (its proprio uplink keeps flowing), so
+/// this pins the flag gate specifically, not a dead session.
+#[test]
+fn stills_stay_silent_when_the_flag_was_not_accepted() {
+    let (transport, log) = logging_transport(&["waddle.v0.core"]);
+    let session = Session::builder("stills-unnegotiated")
+        .robot(robot_granted(vec![stills_camera("overhead", 100.0)]))
+        .control(registry())
+        .transport(transport)
+        .build()
+        .unwrap();
+
+    let mut ep = session.start_episode("task").unwrap();
+    for i in 0..60u8 {
+        session.publish_frame("overhead", frame_4x4(i)).unwrap();
+        let _ = ep.gate(&[0.0; 3], None, Some(&[0.1, 0.2, 0.3]));
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        wait_until(|| log.lock().proprio_count() >= 2, Duration::from_secs(3)),
+        "the session must still be uplinking observations — otherwise this proves nothing"
+    );
+    session.shutdown();
+
+    assert!(
+        log.lock().stills().is_empty(),
+        "stills must never be emitted on a connection that did not accept the flag"
+    );
+}
+
+/// The flag is declared at `Register` from the ROBOT's declaration: exactly
+/// when some camera asks for stills, never otherwise (declaring it with no
+/// camera asking would claim a behavior the session cannot produce).
+#[test]
+fn the_stills_flag_is_declared_only_when_a_camera_declares_still_fps() {
+    for (cameras, expected) in [
+        (vec![stills_camera("overhead", 2.0)], true),
+        (vec![camera("overhead", None)], false),
+        (vec![stills_camera("overhead", 0.0)], false),
+        (
+            vec![camera("front", None), stills_camera("wrist", 1.0)],
+            true,
+        ),
+    ] {
+        let (transport, log) = logging_transport(&[]);
+        let session = Session::builder("stills-flag")
+            .robot(robot(cameras))
+            .control(registry())
+            .transport(transport)
+            .build()
+            .unwrap();
+        assert!(
+            wait_until(
+                || !log.lock().registered_flags.is_empty(),
+                Duration::from_secs(2)
+            ),
+            "the session must register"
+        );
+        let flags = log.lock().registered_flags[0].clone();
+        assert_eq!(
+            flags.iter().any(|f| f == STILLS_FLAG),
+            expected,
+            "declared flags {flags:?} disagree with the cameras' still_fps"
+        );
+        session.shutdown();
+    }
+}
+
+/// The two `ObservationUpdate` producers are independent in both
+/// directions: stills are not capped by the reducer's 10 Hz proprio
+/// cadence, and proprio keeps flowing while stills do.
+#[test]
+fn stills_and_proprio_observations_do_not_rate_limit_each_other() {
+    let (transport, log) = logging_transport(&["waddle.v0.core", STILLS_FLAG]);
+    let session = Session::builder("stills-vs-proprio")
+        .robot(robot_granted(vec![stills_camera("overhead", 50.0)]))
+        .control(registry())
+        .transport(transport)
+        .build()
+        .unwrap();
+
+    let mut ep = session.start_episode("task").unwrap();
+    for i in 0..80u8 {
+        session.publish_frame("overhead", frame_4x4(i)).unwrap();
+        let _ = ep.gate(&[0.0; 3], None, Some(&[0.1, 0.2, 0.3]));
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        wait_until(
+            || {
+                let log = log.lock();
+                log.stills().len() >= 5 && log.proprio_count() >= 2
+            },
+            Duration::from_secs(3)
+        ),
+        "both observation producers must keep flowing alongside each other"
+    );
+    session.shutdown();
+
+    let log = log.lock();
+    assert!(
+        log.stills().len() > log.proprio_count(),
+        "a 50 fps stills declaration must outpace the 10 Hz proprio cadence, \
+         not inherit it: {} stills vs {} proprio",
+        log.stills().len(),
+        log.proprio_count()
+    );
+}
+
+/// Stills and media are separate legs of the same intake: a camera wired to
+/// both publishes video frames onto the track AND samples stills onto the
+/// control plane, from the same `publish_frame` calls.
+#[test]
+fn a_camera_with_both_legs_feeds_the_track_and_the_control_plane() {
+    let (transport, log) = logging_transport(&["waddle.v0.core", STILLS_FLAG]);
+    let (media, far) = LoopbackMedia::new();
+    let session = Session::builder("stills-and-media")
+        .robot(robot(vec![stills_camera("overhead", 20.0)]))
+        .control(registry())
+        .media(media)
+        .transport(transport)
+        .build()
+        .unwrap();
+
+    for i in 0..40u8 {
+        session.publish_frame("overhead", frame_4x4(i)).unwrap();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        wait_until(
+            || !far.frames().is_empty() && log.lock().stills().len() >= 2,
+            Duration::from_secs(2)
+        ),
+        "both legs must run from the same publish_frame intake"
+    );
+    // The track carries RAW frames (the transport does its own encoding);
+    // only the stills leg ever produces a JPEG byte stream.
+    let (_, encoded) = &far.frames()[0];
+    assert_eq!(
+        encoded.data.len(),
+        4 * 4 * 3,
+        "the media track must still receive raw RGB8, never the stills JPEG"
+    );
+    session.shutdown();
+}
+
+/// A camera with no `still_fps` and no media plane stays exactly the cheap
+/// no-op it always was, even with a transport configured — no uplink state,
+/// no stills, nothing counted.
+#[test]
+fn no_still_fps_and_no_media_is_still_a_cheap_noop_with_a_transport() {
+    let (transport, log) = logging_transport(&["waddle.v0.core", STILLS_FLAG]);
+    let session = Session::builder("stills-absent")
+        .robot(robot(vec![camera("overhead", None)]))
+        .control(registry())
+        .transport(transport)
+        .build()
+        .unwrap();
+
+    for i in 0..40u8 {
+        session.publish_frame("overhead", frame_4x4(i)).unwrap();
+    }
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(session.camera_frames_dropped("overhead"), 0);
+    session.shutdown();
+    assert!(
+        log.lock().stills().is_empty(),
+        "a camera that declared no still_fps must never produce stills"
+    );
 }

@@ -7,7 +7,7 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use waddle_controlplane::{ControlPlaneClient, PlaneEvent, ServerMsg};
-use waddle_fsm::{GrantChangeDirective, Phase, SessionEvent};
+use waddle_fsm::{GrantChangeDirective, Phase, RejectReason, SessionEvent};
 use waddle_gate::gate::{GateShared, OwnedAction};
 use waddle_gate::jitter::{ChunkMeta, StreamChannel, TimedAction};
 use waddle_ingest::SessionClock;
@@ -15,13 +15,16 @@ use waddle_media::{DataTopic, MediaPlane};
 use waddle_types::pb::v0 as pb;
 use waddle_types::time::Clock;
 use waddle_types::{
-    ActionChunk, ActionSpace, ActorKind, ClaimId, EpisodeId, GateMode, GrantStatus, MonoNs, Step,
-    TypesError, VerbRequest,
+    ActionChunk, ActionSpace, ActorKind, ActorRef, ClaimId, EpisodeId, GateMode, GrantStatus,
+    MonoNs, Step, TypesError, VerbRequest,
 };
 
 use crate::RuntimeError;
 use crate::ack::{ACKS_FLAG, AckGroup, Injected};
-use crate::mirror::{Mirror, ResetProgressPhase, ResetProgressStatus};
+use crate::media_uplink::STILLS_FLAG;
+use crate::mirror::{
+    AgentTaskKind, AgentTaskStatus, Mirror, ResetProgressPhase, ResetProgressStatus,
+};
 use crate::session::{
     EpisodeResetSpecs, ResetOwnerSlot, ResetSpec, ResetSpecSlot, StreamProducer, TaskSlot,
 };
@@ -59,26 +62,62 @@ pub(crate) fn spawn_outcome_pump(
         .expect("spawn verb-outcome pump")
 }
 
-/// Pop one due intervention action off the gate's stream ring (if any) and
-/// dispatch it straight to `send`, tagged with the mirror's claim
-/// provenance — the shared mechanics behind both the BYPASS arm
-/// (claimed-while-stalled) and the RESET arm (remote reset-window
-/// actuation) of [`spawn_bypass_pump`]: same chunk shape, same source id.
-/// Neither caller re-derives legality here — that's the FSM's job, encoded
-/// entirely in which `GateMode` the mirror shows.
+/// The wire `source_id` the bypass pump's own dispatches are recorded
+/// under. `ActionChunk.seq` is "monotone per stream" and the pump is a
+/// SECOND stream into the same episode alongside the caller's gate
+/// (`waddle.gate`), so it gets its own name and its own seq space.
+pub(crate) const BYPASS_PUMP_SOURCE: &str = "waddle.bypass-pump";
+
+/// One action the bypass pump drove straight to the declared `send` verb —
+/// the moment an intervenor's action actually reaches the robot WITHOUT
+/// passing through the caller's `gate()`. Handed to the reducer so it
+/// becomes an `/waddle/actions` row like any gate tick's: an episode driven
+/// entirely this way (an agent-invited one, where the caller never ticks)
+/// would otherwise record no actions at all.
+pub(crate) struct DispatchedAction {
+    /// Stamped by the session clock at dispatch, both twins — never a
+    /// remote actor's clock and never derived later (two-clock discipline).
+    pub stamp: waddle_types::time::Stamp,
+    pub seq: u64,
+    pub provenance: waddle_types::ProvenanceTag,
+    pub action: OwnedAction,
+}
+
+/// Pop one due intervention action off the gate's stream ring (if any),
+/// dispatch it straight to `send` tagged with the mirror's claim
+/// provenance, and hand the reducer the same action to record — the shared
+/// mechanics behind both the BYPASS arm (claimed-while-stalled) and the
+/// RESET arm (remote reset-window actuation) of [`spawn_bypass_pump`]: same
+/// chunk shape, same source id. Neither caller re-derives legality here —
+/// that's the FSM's job, encoded entirely in which `GateMode` the mirror
+/// shows.
 fn dispatch_due_intervention(
     gate_shared: &GateShared,
     status: &crate::mirror::Status,
     verbs: &VerbDispatch,
     dims: usize,
-    now: MonoNs,
+    stamp: waddle_types::time::Stamp,
+    seq: &mut u64,
+    recorder: &Sender<DispatchedAction>,
 ) {
+    let now = stamp.mono_ns();
     let due: Option<OwnedAction> = gate_shared.stream.lock().pop_due(now);
     if let Some(action) = due {
         let provenance = status
             .provenance
             .clone()
             .unwrap_or_else(waddle_types::ProvenanceTag::policy);
+        *seq += 1;
+        // Recorded BEFORE the send request, so a `send` that blocks or
+        // fails cannot cost the recording its row: the row says what the
+        // platform asked the robot to do, which is exactly what an audit
+        // of a failed dispatch needs to see.
+        let _ = recorder.send(DispatchedAction {
+            stamp,
+            seq: *seq,
+            provenance: provenance.clone(),
+            action: action.clone(),
+        });
         let chunk = ActionChunk {
             steps: vec![Step {
                 offset_ns: 0,
@@ -89,8 +128,8 @@ fn dispatch_due_intervention(
             horizon_ns: 0,
             t_emitted_ns: now.0,
             t_obs_ns: now.0,
-            seq: 0,
-            source: waddle_types::SourceId::new("bypass-pump"),
+            seq: *seq,
+            source: waddle_types::SourceId::new(BYPASS_PUMP_SOURCE),
             provenance,
         };
         verbs.request(VerbRequest::Send {
@@ -118,23 +157,39 @@ pub(crate) fn spawn_bypass_pump(
     inject: Sender<Injected>,
     clock: SessionClock,
     dims: usize,
+    recorder: Sender<DispatchedAction>,
 ) -> JoinHandle<()> {
     std::thread::Builder::new()
         .name("waddle-bypass-pump".into())
         .spawn(move || {
+            // This pump's own `ActionChunk.seq` space (see
+            // `BYPASS_PUMP_SOURCE`), session-lifetime like the gate's.
+            let mut seq: u64 = 0;
             loop {
                 let status = mirror.read();
                 if status.shutdown {
                     return;
                 }
-                let now = clock.stamp_now().mono_ns();
+                let stamp = clock.stamp_now();
+                let now = stamp.mono_ns();
                 let last_tick = gate_shared.stats.last_tick();
 
                 match status.gate_mode {
                     Some(GateMode::Intervention) if status.claim_active => {
-                        if let Some(last) = last_tick
-                            && now.0 - last.0 > STALL_THRESHOLD_NS
-                        {
+                        // `None` means no tick has EVER landed on this
+                        // session's gate — definitionally stalled, not
+                        // exempt: an agent-invited episode driven through
+                        // `Session::run_agent` (flag `waddle.v0.agent`)
+                        // reaches RUNNING via `Start` with the caller's
+                        // thread blocked, so its very first engage must trip
+                        // this without waiting for a tick that will never
+                        // come. `Some` keeps the threshold contract
+                        // unchanged. Either way the FSM's own guard (engaged
+                        // claim, INTERVENTION phase) decides — this only
+                        // reports the stall.
+                        let stalled =
+                            last_tick.is_none_or(|last| now.0 - last.0 > STALL_THRESHOLD_NS);
+                        if stalled {
                             let _ = inject.send(SessionEvent::StallDetected { at: now }.into());
                         }
                     }
@@ -145,11 +200,27 @@ pub(crate) fn spawn_bypass_pump(
                         {
                             let _ = inject.send(SessionEvent::TicksResumed { at: now }.into());
                         } else {
-                            dispatch_due_intervention(&gate_shared, &status, &verbs, dims, now);
+                            dispatch_due_intervention(
+                                &gate_shared,
+                                &status,
+                                &verbs,
+                                dims,
+                                stamp,
+                                &mut seq,
+                                &recorder,
+                            );
                         }
                     }
                     Some(GateMode::Reset) if status.claim_active => {
-                        dispatch_due_intervention(&gate_shared, &status, &verbs, dims, now);
+                        dispatch_due_intervention(
+                            &gate_shared,
+                            &status,
+                            &verbs,
+                            dims,
+                            stamp,
+                            &mut seq,
+                            &recorder,
+                        );
                     }
                     _ => {}
                 }
@@ -395,9 +466,11 @@ pub(crate) fn spawn_media_intake(
                             validation_fault_sent = true;
                             let _ = inject.send(
                                 SessionEvent::InterventionRejected {
-                                    dims_got: action.values.len(),
-                                    dims_want: expected_dims.unwrap_or(0),
                                     source: "media-intake",
+                                    reason: RejectReason::Dims {
+                                        got: action.values.len(),
+                                        want: expected_dims.unwrap_or(0),
+                                    },
                                     at: now,
                                 }
                                 .into(),
@@ -459,8 +532,8 @@ fn flatten_packet(packet: &pb::TeleopStreamPacket) -> Option<OwnedAction> {
 
 /// Plane events → FSM events (claim directives, episode directives,
 /// partitions, heartbeat-carried grant changes, reset-window directives,
-/// agent-chunk actuation — both the Reset-mode window actuation and the
-/// general Claimed-mode intake). Also the attachment point for
+/// agent task updates, agent-chunk actuation — both the Reset-mode window
+/// actuation and the general Claimed-mode intake). Also the attachment point for
 /// directive-ack correlation (flag `waddle.v0.plane.acks`): the
 /// pump tracks whether the plane accepted the flag at Register and, when it
 /// did, wraps id-carrying directives' events in a shared [`AckGroup`] the
@@ -487,17 +560,16 @@ pub(crate) fn spawn_plane_pump(
             // `InterventionChunk` arm below — see that arm's doc comment for
             // why this can't just reuse `chunk.seq`.
             let mut next_chunk_seq: u64 = 0;
-            // Dims-validation guard for the agent-chunk
-            // path, mirroring `spawn_media_intake`'s `validation_fault_sent`:
-            // a dims-mismatched chunk faults at most once per claim window.
-            let mut chunk_dims_fault_sent = false;
+            // Validation guards for the agent-chunk path, mirroring
+            // `spawn_media_intake`'s `validation_fault_sent`.
+            let mut chunk_faults = ChunkIntakeFaults::default();
             loop {
                 let status = mirror.read();
                 if status.shutdown {
                     return;
                 }
                 if !status.claim_active {
-                    chunk_dims_fault_sent = false;
+                    chunk_faults = ChunkIntakeFaults::default();
                 }
                 let Some(event) = plane.recv_event_timeout(Duration::from_millis(20)) else {
                     continue;
@@ -508,6 +580,15 @@ pub(crate) fn spawn_plane_pump(
                         if let PlaneEvent::Registered(resp) = &event {
                             acks_negotiated =
                                 resp.accepted_feature_flags.iter().any(|f| f == ACKS_FLAG);
+                            // Control-plane stills (flag
+                            // `waddle.v0.obs.stills`) are emitted by the
+                            // media uplink pump, not this one, so this
+                            // acceptance crosses threads on the mirror —
+                            // same per-connection refresh rule as
+                            // `acks_negotiated` above.
+                            let stills =
+                                resp.accepted_feature_flags.iter().any(|f| f == STILLS_FLAG);
+                            mirror.update(|s| s.stills_negotiated = stills);
                         }
                         if !was_connected {
                             was_connected = true;
@@ -529,13 +610,27 @@ pub(crate) fn spawn_plane_pump(
                         &stream,
                         &action_space,
                         &mut next_chunk_seq,
-                        &mut chunk_dims_fault_sent,
+                        &mut chunk_faults,
                         acks_negotiated,
                     ),
                 }
             }
         })
         .expect("spawn plane pump")
+}
+
+/// The claimant a `ClaimDirective`/`ResetWindowDirective` names, decoded
+/// WHOLE: the kind the FSM's admission guards read (C6/C8) plus the identity
+/// the plane stamped, which is what every claim emission and provenance tag
+/// under this claim then carries. A directive with no actor at all, or one
+/// naming an actor kind this protocol version does not know, keeps the
+/// long-standing default (an anonymous teleoperator) rather than dropping the
+/// directive — the FSM's guards still decide whether such a claim is
+/// admissible at all.
+fn directive_actor(actor: Option<&pb::ActorRef>) -> ActorRef {
+    actor
+        .and_then(|a| ActorRef::try_from(a).ok())
+        .unwrap_or_else(|| ActorRef::of_kind(ActorKind::Teleoperator))
 }
 
 /// The ack correlation for one directive, when there is one: `Some` only
@@ -554,6 +649,24 @@ fn ack_group(
     directive_id.map(|id| AckGroup::new(id.clone(), events))
 }
 
+/// The `source` every agent-chunk intake fault is attributed to — a WIRE
+/// value a reader of the recording keys on, so it is named once here.
+const AGENT_CHUNK_SOURCE: &str = "agent-chunk";
+
+/// "Already faulted about this" guards for the agent-chunk intake, one per
+/// [`RejectReason`] and all reset when the claim window ends. A chunk
+/// stream that keeps making the same mistake must not fill the episode
+/// timeline with the same fault, and the reasons are independent: a
+/// dims-mismatched chunk, a chunk that doesn't fit the declared space, and
+/// a chunk with inert steps each say something different, and the sender
+/// deserves to hear each of them once.
+#[derive(Default)]
+pub(crate) struct ChunkIntakeFaults {
+    dims_sent: bool,
+    not_executable_sent: bool,
+    inert_sent: bool,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn forward_server_msg(
     msg: ServerMsg,
@@ -563,7 +676,7 @@ fn forward_server_msg(
     stream: &StreamProducer,
     space: &ActionSpace,
     next_chunk_seq: &mut u64,
-    chunk_dims_fault_sent: &mut bool,
+    faults: &mut ChunkIntakeFaults,
     acks_negotiated: bool,
 ) {
     match msg {
@@ -575,11 +688,7 @@ fn forward_server_msg(
                 // DirectiveAck doc pins this).
                 let Some(claim) = directive.claim else { return };
                 let claim_id = ClaimId::new(&claim.claim_id);
-                let actor = claim
-                    .actor
-                    .as_ref()
-                    .and_then(|a| ActorKind::from_pb(a.kind).ok())
-                    .unwrap_or(ActorKind::Teleoperator);
+                let actor = directive_actor(claim.actor.as_ref());
                 match pb::ClaimDirectiveKind::try_from(directive.kind) {
                     Ok(pb::ClaimDirectiveKind::Grant) => {
                         // TWO events, ONE ack: accepted iff both accepted,
@@ -589,7 +698,7 @@ fn forward_server_msg(
                             event: SessionEvent::ClaimGranted {
                                 id: claim_id.clone(),
                                 source: claim.source_name.clone(),
-                                actor,
+                                actor: actor.clone(),
                                 self_initiated: claim.self_initiated,
                                 at,
                             },
@@ -620,7 +729,7 @@ fn forward_server_msg(
                         let _ = inject.send(Injected {
                             event: SessionEvent::Retake {
                                 claim: claim_id,
-                                initiator: actor,
+                                initiator: actor.kind,
                                 successor,
                                 at,
                             },
@@ -659,11 +768,7 @@ fn forward_server_msg(
                         // produce (`ClaimGranted` then
                         // `ResetWindowEngage`, in that order). TWO events,
                         // ONE ack, same as a claim GRANT.
-                        let actor = claim
-                            .actor
-                            .as_ref()
-                            .and_then(|a| ActorKind::from_pb(a.kind).ok())
-                            .unwrap_or(ActorKind::Teleoperator);
+                        let actor = directive_actor(claim.actor.as_ref());
                         let ack = ack_group(acks_negotiated, directive.directive_id.as_ref(), 2);
                         let _ = inject.send(Injected {
                             event: SessionEvent::ClaimGranted {
@@ -763,56 +868,125 @@ fn forward_server_msg(
                 if !mirror.read().claim_active {
                     return;
                 }
+                let total = chunk.actions.len();
                 match ActionChunk::from_pb(&chunk, space) {
-                    Ok(action_chunk) => {
+                    Ok(flattened) => {
+                        let action_chunk = flattened.chunk;
                         let meta = ChunkMeta {
                             chunk_seq: action_chunk.seq,
                             t_emitted_ns: action_chunk.t_emitted_ns,
                         };
-                        let mut producer = stream.lock();
-                        for step in &action_chunk.steps {
-                            *next_chunk_seq += 1;
-                            let _ = producer.push(TimedAction {
-                                channel: StreamChannel::AgentChunk,
-                                seq: *next_chunk_seq,
-                                received: MonoNs(at.0.saturating_add(step.offset_ns)),
-                                action: OwnedAction {
-                                    values: step.values.clone(),
-                                    gripper: step.gripper,
-                                },
-                                chunk: Some(meta),
-                            });
+                        {
+                            let mut producer = stream.lock();
+                            for step in &action_chunk.steps {
+                                *next_chunk_seq += 1;
+                                let _ = producer.push(TimedAction {
+                                    channel: StreamChannel::AgentChunk,
+                                    seq: *next_chunk_seq,
+                                    received: MonoNs(at.0.saturating_add(step.offset_ns)),
+                                    action: OwnedAction {
+                                        values: step.values.clone(),
+                                        gripper: step.gripper,
+                                    },
+                                    chunk: Some(meta),
+                                });
+                            }
                         }
-                    }
-                    // Dims-validation contract, mirroring
-                    // `spawn_media_intake`'s teleop path: a genuine dims
-                    // mismatch faults once per claim window, chunk dropped.
-                    Err(TypesError::DimensionMismatch { expected, got }) => {
-                        if !*chunk_dims_fault_sent {
-                            *chunk_dims_fault_sent = true;
+                        // The steps that carried nothing to dispatch were
+                        // skipped, not dropped in silence: the sender asked
+                        // for something this session could not perform, and
+                        // an episode recording has to be able to say so.
+                        if !flattened.inert.is_empty() && !faults.inert_sent {
+                            faults.inert_sent = true;
                             let _ = inject.send(
                                 SessionEvent::InterventionRejected {
-                                    dims_got: got,
-                                    dims_want: expected,
-                                    source: "agent-chunk",
+                                    source: AGENT_CHUNK_SOURCE,
+                                    reason: RejectReason::InertStepsSkipped {
+                                        skipped: flattened.inert.len(),
+                                        of: total,
+                                    },
                                     at,
                                 }
                                 .into(),
                             );
                         }
                     }
-                    Err(err) => {
-                        // Every other `TypesError` variant (missing field,
-                        // wrong target arm, Opaque space, …) doesn't fit the
-                        // dims-shaped `InterventionRejected` event without
-                        // misreporting what actually went wrong — surfaced
-                        // as a trace warning instead of a fabricated fault.
-                        tracing::warn!(
-                            error = %err,
-                            "intervention_chunk rejected: incompatible with the \
-                             declared action space"
-                        );
+                    // Dims-validation contract, mirroring
+                    // `spawn_media_intake`'s teleop path: a genuine dims
+                    // mismatch faults once per claim window, chunk dropped.
+                    Err(TypesError::DimensionMismatch { expected, got }) => {
+                        if !faults.dims_sent {
+                            faults.dims_sent = true;
+                            let _ = inject.send(
+                                SessionEvent::InterventionRejected {
+                                    source: AGENT_CHUNK_SOURCE,
+                                    reason: RejectReason::Dims {
+                                        got,
+                                        want: expected,
+                                    },
+                                    at,
+                                }
+                                .into(),
+                            );
+                        }
                     }
+                    // Every other `TypesError` (missing field, wrong target
+                    // arm, an opaque space) means this chunk isn't speaking
+                    // the declared space: the whole chunk is refused, and
+                    // the refusal is reported in its own words rather than
+                    // forced into the dims-shaped report.
+                    Err(err) => {
+                        if !faults.not_executable_sent {
+                            faults.not_executable_sent = true;
+                            let _ = inject.send(
+                                SessionEvent::InterventionRejected {
+                                    source: AGENT_CHUNK_SOURCE,
+                                    reason: RejectReason::NotExecutable(err.to_string()),
+                                    at,
+                                }
+                                .into(),
+                            );
+                        }
+                    }
+                }
+            }
+            // Agent task updates (flag `waddle.v0.agent`): every update is
+            // retained on the mirror — QUEUED/COMPLETED are runtime-side
+            // information only, never FSM events (FSM.md §1.5), and
+            // COMPLETED's `recording_ref`/`detail` are what
+            // `Session::run_agent` assembles its result from. A DENIED
+            // addressed to the ACTIVE episode additionally dispatches
+            // `AgentTaskDenied`; the FSM alone picks E26 (invite open:
+            // abort) vs E26b (late: recorded-only rejection) — the
+            // episode-id filter here is addressing, never legality (a DENIED
+            // for some other episode has no event for the FSM to judge, so
+            // it stays mirror-only, exactly like the conformance runner's
+            // inert-record contract).
+            Some(pb::gate_server_message::Msg::AgentUpdate(update)) => {
+                let kind = AgentTaskKind::from_pb(update.kind);
+                mirror.update(|s| {
+                    s.agent_task = Some(AgentTaskStatus {
+                        episode_id: update.episode_id.clone(),
+                        kind,
+                        detail: update.detail.clone(),
+                        recording_ref: update.recording_ref.clone(),
+                    });
+                });
+                if kind == AgentTaskKind::Denied
+                    && mirror
+                        .read()
+                        .episode_id
+                        .as_ref()
+                        .is_some_and(|id| id.as_str() == update.episode_id)
+                {
+                    let ack = ack_group(acks_negotiated, update.directive_id.as_ref(), 1);
+                    let _ = inject.send(Injected {
+                        event: SessionEvent::AgentTaskDenied {
+                            detail: update.detail,
+                            at,
+                        },
+                        ack,
+                    });
                 }
             }
             _ => {}

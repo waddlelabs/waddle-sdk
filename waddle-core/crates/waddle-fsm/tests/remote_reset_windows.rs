@@ -8,8 +8,8 @@ use waddle_fsm::{
     Effect, LeaseState, Phase, SessionConfig, SessionEvent, SessionFsm, TimerId, WindowSpec, step,
 };
 use waddle_types::{
-    ActorKind, ClaimId, EpisodeId, GateMode, HandoffPolicy, LeaseEnforcement, LeaseId, MonoNs,
-    ResetVerificationMode, TerminalOutcome, Verb, pb::v0 as pb,
+    ActorKind, ActorRef, ClaimId, EpisodeId, GateMode, HandoffPolicy, LeaseEnforcement, LeaseId,
+    MonoNs, ResetVerificationMode, TerminalOutcome, Verb, pb::v0 as pb,
 };
 
 struct Driver {
@@ -169,6 +169,7 @@ fn open_with(d: &mut Driver, pre: Option<WindowSpec>, post: Option<WindowSpec>) 
         post_reset: false,
         pre_window: pre,
         post_window: post,
+        agent_invite: None,
         at,
     });
 }
@@ -178,7 +179,7 @@ fn grant(d: &mut Driver, id: &str, actor: ActorKind) -> Result<(), String> {
     d.try_apply(SessionEvent::ClaimGranted {
         id: ClaimId::new(id),
         source: "teleop".to_owned(),
-        actor,
+        actor: ActorRef::of_kind(actor),
         self_initiated: false,
         at,
     })
@@ -259,6 +260,7 @@ fn e19_no_window_for_born_claimed_successor() {
         post_reset: false,
         pre_window: Some(teleop_window()),
         post_window: None,
+        agent_invite: None,
         at,
     });
     assert!(

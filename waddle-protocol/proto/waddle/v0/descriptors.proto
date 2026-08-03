@@ -314,7 +314,9 @@ message Intrinsics {
 
 // What persists locally vs what flows uplink. Nothing high-bandwidth ever
 // touches the control plane; media rides the media plane and the local
-// recorder keeps the full-rate archive.
+// recorder keeps the full-rate archive. Bounded-rate FrameStill stills
+// (still_fps below, flag waddle.v0.obs.stills) are the deliberate,
+// rate-capped exception.
 message StreamPolicy {
   message UplinkPolicy {
     double fps = 1;
@@ -323,6 +325,11 @@ message StreamPolicy {
   }
   bool local_full_rate = 1;
   optional UplinkPolicy uplink = 2;
+  // Low-rate stills for agent perception on the control plane (flag
+  // waddle.v0.obs.stills): published frames are sampled at this rate into
+  // FrameStill observation updates (services.proto). 0/absent means no
+  // stills. Bounded by declaration — never a video path.
+  optional double still_fps = 3;
 }
 
 message CameraDescription {

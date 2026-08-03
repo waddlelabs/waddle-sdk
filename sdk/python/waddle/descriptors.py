@@ -409,13 +409,29 @@ class Uplink:
 
 @dataclass(frozen=True)
 class StreamPolicy:
-    """What persists locally vs. what flows uplink for a camera. Nothing
-    high-bandwidth ever touches the control plane; ``local_full_rate``
-    keeps the full-rate archive on the local recorder regardless of
-    ``uplink``."""
+    """What persists locally vs. what flows uplink for a camera.
+    ``local_full_rate`` keeps the full-rate archive on the local recorder
+    regardless of ``uplink``; ``uplink`` is the video path (the media
+    plane).
+
+    ``still_fps`` declares the ONE bounded exception to "nothing
+    high-bandwidth touches the control plane" (protocol flag
+    ``waddle.v0.obs.stills``): published frames are sampled at this rate
+    into low-rate JPEG stills that ride the control plane, so a
+    Waddle-hosted agent (:func:`waddle.agent`) can see the scene without a
+    media plane wired at all. It is bounded by declaration and is never a
+    video path — for live video to a human teleoperator, declare
+    ``uplink`` and wire ``media=`` instead. ``None`` (the default) and
+    ``0`` both mean no stills, matching the wire ("0/absent means no
+    stills")."""
 
     local_full_rate: bool = False
     uplink: Uplink | None = None
+    still_fps: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.still_fps is not None and self.still_fps < 0:
+            raise ValueError("still_fps must be >= 0 (0 or None = no stills)")
 
     def _compile(self) -> dict:
         out: dict = {}
@@ -423,6 +439,10 @@ class StreamPolicy:
             out["localFullRate"] = True
         if self.uplink is not None:
             out["uplink"] = self.uplink._compile()
+        if self.still_fps is not None:
+            # `optional double` (explicit presence): a declared 0.0 is sent
+            # as 0.0, not omitted — same meaning either way.
+            out["stillFps"] = float(self.still_fps)
         return out
 
 

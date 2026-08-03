@@ -216,6 +216,60 @@ def test_uplink_validates_positive_fps_and_kbps():
         waddle.Uplink(fps=15.0, encoding="h264", max_kbps=0)
 
 
+def test_stream_policy_still_fps_compiles_and_is_absent_by_default():
+    # The control-plane stills declaration (flag `waddle.v0.obs.stills`):
+    # a distinct key from the media plane's `uplink.fps`, and absent
+    # entirely unless declared — an undeclared camera must not start
+    # putting pictures on the control plane.
+    assert waddle.StreamPolicy(local_full_rate=True)._compile() == {"localFullRate": True}
+    assert waddle.StreamPolicy(still_fps=2)._compile() == {"stillFps": 2.0}
+    both = waddle.StreamPolicy(
+        still_fps=2, uplink=waddle.Uplink(fps=15, encoding="rgb8")
+    )._compile()
+    assert both == {
+        "stillFps": 2.0,
+        "uplink": {"fps": 15.0, "encoding": "CAMERA_ENCODING_RGB8"},
+    }
+    with pytest.raises(ValueError, match="still_fps"):
+        waddle.StreamPolicy(still_fps=-1.0)
+
+
+def test_still_fps_survives_the_round_trip_into_core():
+    # The compiled key has to be a field core actually knows, and only a
+    # ROUND TRIP can say so: decoding tolerates unknown fields on purpose
+    # (append-only evolution), so a misspelled key validates perfectly and
+    # is dropped in silence — the declaration would then be honored by
+    # nobody, and the first symptom would be a customer's connected session
+    # sending no stills. `robot_json_roundtrip` hands back core's own
+    # canonical JSON of what it understood.
+    robot = waddle.Robot(
+        name="stills-bot",
+        action_space=waddle.JointSpace(joints=["j0"], rate_hz=20),
+        cameras={
+            "wrist": waddle.Camera(
+                width=320,
+                height=240,
+                fps=20,
+                stream_policy=waddle.StreamPolicy(still_fps=2.0),
+            )
+        },
+    )
+    compiled = robot._compile([])
+    _core.validate_robot_json(json.dumps(compiled))
+    decoded = json.loads(_core.robot_json_roundtrip(json.dumps(compiled)))
+    # The declared rate, read back out of the field it landed in.
+    assert decoded["cameras"][0]["stream"]["stillFps"] == 2.0
+
+    # And the check has teeth: the spelling this test exists to catch
+    # disappears on the way in, which is exactly why "it validated" proves
+    # nothing.
+    misspelled = json.loads(json.dumps(compiled))
+    misspelled["cameras"][0]["stream"] = {"stillfps": 2.0}
+    _core.validate_robot_json(json.dumps(misspelled))  # still valid!
+    survivors = json.loads(_core.robot_json_roundtrip(json.dumps(misspelled)))
+    assert "stillFps" not in survivors["cameras"][0].get("stream", {})
+
+
 def test_frame_transform_pins_wxyz_order():
     # A quarter-turn about y: distinct w/x/y/z values so a transposition
     # (e.g. xyzw written into wxyz slots) is caught, not just a symmetric

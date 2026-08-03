@@ -34,6 +34,46 @@ Works fully offline: with `recording_dir` set, every episode lands as a
 sidecar JSON + MCAP (`/waddle/actions`, `/waddle/observations`) plus a
 `manifest.jsonl`, no control plane required.
 
+Connect a supervision plane with `waddle.init(transport=waddle.Grpc(url,
+token))` and the same loop is supervised: a teleoperator can intervene, a
+reset window can be handed out — and you can hand over a whole episode:
+
+```python
+result = waddle.agent("clear the table and stack the cups")
+print(result.outcome, result.episode_id, result.detail)
+```
+
+`waddle.agent()` blocks until the episode reaches an outcome. The invited
+agent claims it through the very same intervention machinery a
+teleoperator uses, so its actions arrive at the `send` verb you already
+registered; your own `gate()` ticks would not dispatch in such an episode
+anyway (FSM.md E24), which is why this call takes the thread instead of
+handing back an episode handle. An ask nobody answers comes back
+`outcome == "abort"` at the deadline — a result, not an exception.
+
+All of the above in one runnable file — a simulated 6-dof arm with a
+camera, the loop, and `waddle.agent()`, offline by default — is
+[`examples/toy_robot.py`](examples/): `uv run python
+examples/toy_robot.py`.
+
+## Installing
+
+```bash
+pip install waddle-sdk              # control plane included
+pip install 'waddle-sdk[teleop]'    # + the LiveKit media plane
+```
+
+Two distributions from one source tree (the psycopg / psycopg-binary
+shape): `waddle-sdk` bundles the core built with the `grpc` control
+transport, and the `teleop` extra adds the exact-pinned `waddle-sdk-teleop`
+wheel, which is the SAME shim built with `livekit` too. LiveKit's libwebrtc
+dependency chain is ~690 MB of build, and an install whose job is to
+supervise a policy should not pay for a teleop media plane it will never
+open. Either way you `import waddle`: `waddle._native` picks the richer
+core when it is installed, warns and falls back to the bundled one if the
+two versions disagree (a half-upgraded environment), and honours
+`WADDLE_NO_TELEOP=1`.
+
 ## Development
 
 ```bash
@@ -47,6 +87,42 @@ cargo fmt --manifest-path rust/Cargo.toml --check
 The shim is its own cargo workspace (`rust/`) with path-deps into
 `../waddle-core/crates/*`; pyo3's `extension-module` feature lives only in
 `[tool.maturin].features` so plain `cargo check/clippy` keep working.
+
+### Connected builds
+
+The transports are cargo features on the shim. `grpc` (the control plane:
+`create_session(transport_url=, transport_token=)`) is in the DEFAULT
+build, so `uv sync --dev`/`maturin develop` already carry it; `livekit`
+(the media plane: `media_url=, media_token=` — the plane mints both
+tokens, this SDK never does) is not, since it belongs to the
+`waddle-sdk-teleop` companion:
+
+```bash
+uv run maturin develop --uv --features grpc,livekit    # the companion's flavour
+cargo clippy --manifest-path rust/Cargo.toml --features grpc,livekit --all-targets -- -D warnings
+```
+
+Clippy must be clean featureless, `--features grpc`, and
+`--features grpc,livekit`. A build that lacks a feature refuses the
+matching kwarg rather than running offline in silence.
+**`waddle._native.FEATURES` is the probe**, not `waddle._core.FEATURES`:
+`_native` selects which core this process runs on and re-exports that
+core's features, so on a `[teleop]` install `waddle._core.FEATURES` still
+reports the bundled core's grpc-only set while the process is running the
+teleop core. It is the only feature detection the Python layer does, and
+two places read it — `_native` itself, to pick a core, and `init()`, to
+refuse a `transport=`/`media=` this build cannot honour.
+
+The companion wheel is `sdk/teleop/pyproject.toml`: same
+`manifest-path = "../rust/Cargo.toml"` (hence the same version by
+construction), `module-name = "waddle_teleop._core"`, features
+`grpc,livekit`. `sdk/pyproject.toml`'s `[tool.uv.sources]` points the
+`teleop` extra at it so `uv` can resolve the lock; nothing builds it
+unless the extra is actually installed. The extra's exact pin
+(`waddle-sdk-teleop==X`) is the ONE version here that maturin cannot
+derive from the manifest, so a version bump must edit it too —
+`tests/test_features.py` holds it to `waddle.__version__` (and the two
+projects to one manifest) rather than to memory.
 
 ## Hollow-frontend checklist (review gate for every change here)
 
@@ -73,14 +149,43 @@ Concretely, in this package:
   claim/lease/gate-mode sequencing, `post_reset_failed`'s permanence, the
   outcome-pinning at POST_RESET entry) lives in waddle-core; Python never
   branches on any of it.
+- **Connected build** (`waddle.Grpc`/`waddle.LiveKit`, the
+  `transport_url`/`media_url` kwargs, `FEATURES`): URLs and tokens are
+  config handed to core constructors; nothing here inspects a connection.
+  Feature detection answers "can this build do it at all", never "what
+  should happen now" — no branch on plane state, negotiated flags, or
+  connectivity. `waddle._native`'s core selection is packaging, decided
+  once at import, and the only state `init` records about a session is
+  *whether a plane was declared at all* (a declaration fact, not plane
+  state).
+- **Feature raises key off `_native.FEATURES`, never a try-import.** A
+  `try: ... except (ImportError, AttributeError)` reads as "can this build
+  do it?" and answers "did this particular call happen to fail?", so a
+  genuine runtime error becomes a not-compiled message and the user chases
+  the wrong thing. `FEATURES` is a build fact the core states outright.
+  Teleop-only surfaces must name the extra in the error text (`pip install
+  'waddle-sdk[teleop]'`): the caller cannot act on "not compiled" alone,
+  and the whole point of the two-wheel split is that this is a one-command
+  fix rather than a rebuild.
+- **Agent runs** (`waddle.agent`, `Session.agent`): a prompt goes in, an
+  `AgentResult` comes out. The invite, its deadline, who may claim the
+  episode, and what the caller's own ticks do meanwhile are all FSM rows;
+  Python refuses early only when there is nobody to ask. The only other
+  decision made here is *when to reattach and run Python's signal
+  handlers*.
 - Review heuristic: descriptors may validate *shape* ("must declare"),
   never *behavior*.
 
 ## Private test hooks
 
 `waddle._testing` (`engage`/`release`/`push_teleop`/`reset_window_engage`/
-`reset_window_complete`) requires `waddle.init(_testing=True)`, which
-wires an in-process loopback media plane. Private and unstable — it
-exists so the intervention and remote-reset-window paths are testable
-without a control plane (the open-source runtime has no supervision-plane
-transport wired yet; see `TeleopReset`/`AgentReset`'s docstrings).
+`reset_window_complete`/`mark_done`/`frames`) requires
+`waddle.init(_testing=True)`, which wires an in-process loopback media
+plane. Private and unstable — it exists so the intervention, remote-reset-
+window and agent-invited paths are testable with no real plane at all. Each
+hook stands in for one thing a plane would send: `mark_done`, for instance,
+is an `EpisodeDirective{MARK_DONE}` — the only way to end a
+`waddle.agent()` run in a test, since its caller is blocked and holds no
+episode handle. Because it stands in for a plane, `_testing=True` counts as
+a plane declaration for `waddle.agent()`'s "nobody to ask" refusal, exactly
+as a `transport` does.

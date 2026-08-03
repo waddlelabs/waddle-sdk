@@ -1,5 +1,10 @@
 //! The control-plane client: one thread owning connect → register →
 //! pump, with backoff reconnect and in-order replay of buffered messages.
+//!
+//! The one thread is also what makes the offline classification real: it
+//! drains the (unbounded) command channel into the bounded offline buffer
+//! continuously while backing off, so nothing queues behind a sleeping
+//! reconnect. See [`backoff_draining`].
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -126,7 +131,7 @@ fn run(
             Err(_) => {
                 let delay = config.backoff.delay_ns(attempt);
                 attempt = attempt.saturating_add(1);
-                sleep_interruptible(delay, shutdown);
+                backoff_draining(delay, shutdown, cmd_rx, &mut buffer, events_tx);
                 continue 'reconnect;
             }
         };
@@ -193,14 +198,44 @@ fn run(
         // off, so nothing is lost out of order.
         let delay = config.backoff.delay_ns(attempt);
         attempt = attempt.saturating_add(1);
-        let overflow_before = buffer.dropped();
-        buffer_pending(cmd_rx, &mut buffer);
-        sleep_interruptible(delay, shutdown);
-        buffer_pending(cmd_rx, &mut buffer);
-        let dropped = buffer.dropped() - overflow_before;
-        if dropped > 0 {
-            let _ = events_tx.send(PlaneEvent::BufferOverflowed { dropped });
+        backoff_draining(delay, shutdown, cmd_rx, &mut buffer, events_tx);
+    }
+}
+
+/// Back off before the next connection attempt, draining the command channel
+/// into the offline buffer the whole time, and report any overflow it caused.
+///
+/// The drain must happen DURING the wait, not merely around it. The command
+/// channel is unbounded and everything the session produces while the plane
+/// is unreachable lands there, so a wait that does not drain is exactly the
+/// unbounded queue the bounded offline buffer exists to prevent: a droppable
+/// message ([`ClientMsg::is_droppable`] — control-plane stills, heartbeats)
+/// would sit there for a whole backoff plateau (16 s in production) and then
+/// be handed to the plane as a stale picture, instead of being dropped
+/// within milliseconds of arriving, and history would grow without the
+/// drop-oldest bound (or its loud `BufferOverflowed`) applying at all.
+fn backoff_draining(
+    delay_ns: i64,
+    shutdown: &AtomicBool,
+    cmd_rx: &Receiver<ClientMsg>,
+    buffer: &mut OfflineBuffer<ClientMsg>,
+    events_tx: &Sender<PlaneEvent>,
+) {
+    let before = buffer.dropped();
+    let mut remaining = delay_ns.max(0) as u64;
+    const SLICE: u64 = 5_000_000; // 5 ms
+    loop {
+        buffer_pending(cmd_rx, buffer);
+        if remaining == 0 || shutdown.load(Ordering::SeqCst) {
+            break;
         }
+        let step = remaining.min(SLICE);
+        std::thread::sleep(Duration::from_nanos(step));
+        remaining -= step;
+    }
+    let dropped = buffer.dropped() - before;
+    if dropped > 0 {
+        let _ = events_tx.send(PlaneEvent::BufferOverflowed { dropped });
     }
 }
 
@@ -209,16 +244,6 @@ fn buffer_pending(cmd_rx: &Receiver<ClientMsg>, buffer: &mut OfflineBuffer<Clien
         if msg.buffer_when_offline() {
             buffer.push(msg);
         }
-    }
-}
-
-fn sleep_interruptible(ns: i64, shutdown: &AtomicBool) {
-    let mut remaining = ns.max(0) as u64;
-    const SLICE: u64 = 5_000_000; // 5 ms
-    while remaining > 0 && !shutdown.load(Ordering::SeqCst) {
-        let step = remaining.min(SLICE);
-        std::thread::sleep(Duration::from_nanos(step));
-        remaining -= step;
     }
 }
 
@@ -239,6 +264,32 @@ mod tests {
             plateau_ns: 2_000_000,
         };
         cfg
+    }
+
+    /// Block until the client has drained its command channel *while
+    /// offline*: every message queued before this call is now classified —
+    /// buffered as history, or dropped as droppable — and can only reach
+    /// the plane as a replay.
+    ///
+    /// The offline loop is `connect` → [`backoff_draining`] → `connect`, so
+    /// two further refused dials bracket one complete drain that began
+    /// after this call returned from its first `connect_attempts()` read.
+    /// That is a happens-before a test can assert on; "sleep less than the
+    /// backoff step" is a wall-clock race a loaded machine loses, and
+    /// losing it silently turns a live forward into what reads like a
+    /// replay. The transport must be refusing dials
+    /// ([`InMemoryTransport::refuse_connections`]) — a connected client
+    /// dials no more.
+    fn wait_offline_drain(transport: &InMemoryTransport) {
+        let target = transport.connect_attempts().saturating_add(2);
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while transport.connect_attempts() < target {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the client stopped dialling a refused plane"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
     }
 
     #[test]
@@ -278,6 +329,78 @@ mod tests {
         client.shutdown();
     }
 
+    /// A plane that is unreachable from the start is the same "not taking
+    /// messages" condition as a partition, and the classification must hold
+    /// there too: while connect attempts fail, the client drains its command
+    /// channel into the bounded offline buffer on every backoff slice, so a
+    /// still is dropped within milliseconds of arriving. Before that drain,
+    /// the whole outage sat in the unbounded command channel and every stale
+    /// still was handed to the plane the moment it came up.
+    #[test]
+    fn stills_offered_while_connects_fail_are_dropped_never_replayed() {
+        let seen: Arc<Mutex<Vec<ClientMsg>>> = Arc::new(Mutex::new(Vec::new()));
+        let seen2 = seen.clone();
+        let transport = InMemoryTransport::new(move |msg, _tx| {
+            seen2.lock().push(msg);
+        });
+        // Unreachable from the start and until this test heals it — the
+        // offline window is bounded by the test's own progress, never by a
+        // backoff step.
+        transport.refuse_connections();
+        let client = ControlPlaneClient::spawn(transport.clone(), test_config());
+
+        let still = ClientMsg::Observation(pb::ObservationUpdate {
+            t_ns: 7,
+            payload: Some(pb::observation_update::Payload::Still(pb::FrameStill {
+                camera: "overhead".into(),
+                data: vec![0xff, 0xd8, 0xff],
+                ..Default::default()
+            })),
+        });
+        let proprio = ClientMsg::Observation(pb::ObservationUpdate {
+            t_ns: 8,
+            payload: Some(pb::observation_update::Payload::Proprio(
+                pb::ProprioSample {
+                    joint_pos: vec![1.0],
+                    ..Default::default()
+                },
+            )),
+        });
+        client.send(still);
+        client.send(proprio.clone());
+        // Both are classified offline before the plane can come back, so
+        // anything the plane sees below is a replay, never a live forward.
+        wait_offline_drain(&transport);
+        transport.allow_connections();
+
+        // The connection now succeeds and replays history in order.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let msgs = seen.lock();
+            if msgs.contains(&proprio) {
+                assert!(
+                    !msgs.iter().any(|m| matches!(
+                        m,
+                        ClientMsg::Observation(o)
+                            if matches!(
+                                o.payload,
+                                Some(pb::observation_update::Payload::Still(_))
+                            )
+                    )),
+                    "a still offered while the plane was unreachable must never reach it"
+                );
+                break;
+            }
+            drop(msgs);
+            assert!(
+                std::time::Instant::now() < deadline,
+                "history never replayed"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        client.shutdown();
+    }
+
     #[test]
     fn partition_buffers_and_replays_in_order_after_reconnect() {
         let seen: Arc<Mutex<Vec<ClientMsg>>> = Arc::new(Mutex::new(Vec::new()));
@@ -285,20 +408,20 @@ mod tests {
         let transport = InMemoryTransport::new(move |msg, _tx| {
             seen2.lock().push(msg);
         });
-        // A long first backoff step guarantees a wide offline window for the
-        // sends below (no reconnect race).
-        let mut cfg = test_config();
-        cfg.backoff = Backoff {
-            steps_ns: vec![300_000_000],
-            plateau_ns: 300_000_000,
-        };
-        let client = ControlPlaneClient::spawn(transport.clone(), cfg);
+        let client = ControlPlaneClient::spawn(transport.clone(), test_config());
         assert_eq!(
             client.recv_event_timeout(Duration::from_secs(1)),
             Some(PlaneEvent::Connected)
         );
 
-        // Sever the connection and wait for the client to notice.
+        // Partition: sever the live connection AND refuse redials, so the
+        // offline window below lasts as long as this test needs.
+        //
+        // Waiting for `Disconnected` is load-bearing too: the event is only
+        // emitted once the severed connection's server side is gone, so
+        // nothing sent after it can still be recorded by the old
+        // connection.
+        transport.refuse_connections();
         transport.drop_connections();
         let deadline = std::time::Instant::now() + Duration::from_secs(2);
         loop {
@@ -319,9 +442,14 @@ mod tests {
         client.send(ev1.clone());
         client.send(ClientMsg::Heartbeat(pb::HeartbeatPing::default())); // dropped offline
         client.send(ev2.clone());
+        // All three are classified offline before the plane can come back:
+        // the heartbeat is dropped there and now cannot reach the plane by
+        // any route, which is exactly what the assertion below reads.
+        wait_offline_drain(&transport);
+        transport.allow_connections();
 
-        // Reconnect happens on backoff; wait for the two observations to
-        // arrive after the new Register, in order.
+        // The redial now succeeds; wait for the two observations to arrive
+        // after the new Register, in order.
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         loop {
             let msgs = seen.lock();

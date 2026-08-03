@@ -50,6 +50,53 @@ pub struct ResetProgressStatus {
     pub detail: String,
 }
 
+/// The kind of one plane `AgentTaskUpdate` (flag `waddle.v0.agent`).
+/// Mirrors `services.proto`'s `AgentTaskUpdateKind` permissively (like
+/// [`ResetProgressPhase`]): an unrecognized wire value maps to
+/// `Unspecified` rather than erroring — this is observational status; the
+/// one FSM-relevant kind (DENIED) is dispatched by the plane pump, not read
+/// back off this mirror.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AgentTaskKind {
+    #[default]
+    Unspecified,
+    Queued,
+    Denied,
+    Completed,
+}
+
+impl AgentTaskKind {
+    #[must_use]
+    pub fn from_pb(value: i32) -> Self {
+        match pb::AgentTaskUpdateKind::try_from(value) {
+            Ok(pb::AgentTaskUpdateKind::Queued) => Self::Queued,
+            Ok(pb::AgentTaskUpdateKind::Denied) => Self::Denied,
+            Ok(pb::AgentTaskUpdateKind::Completed) => Self::Completed,
+            _ => Self::Unspecified,
+        }
+    }
+}
+
+/// The plane's most recent `AgentTaskUpdate` (flag `waddle.v0.agent`),
+/// retained by the plane pump. QUEUED and COMPLETED are runtime-side
+/// information only — never FSM events (FSM.md §1.5) — and COMPLETED's
+/// `recording_ref`/`detail` are what `Session::run_agent` assembles its
+/// `AgentOutcome` from. A DENIED is retained here too (its `detail` is the
+/// abort reason a blocked caller reads back) and, when addressed to the
+/// ACTIVE episode, additionally dispatched as `AgentTaskDenied` — the FSM
+/// alone picks E26 (invite open: abort) vs E26b (late: recorded-only
+/// rejection). Keyed by `episode_id` and never cleared at episode close;
+/// readers filter by the episode they care about.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct AgentTaskStatus {
+    /// The episode the update addresses (`AgentTaskUpdate.episode_id`).
+    pub episode_id: String,
+    pub kind: AgentTaskKind,
+    pub detail: String,
+    /// Opaque Waddle-side recording reference; set on COMPLETED.
+    pub recording_ref: String,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Status {
     pub episode_id: Option<EpisodeId>,
@@ -71,7 +118,30 @@ pub struct Status {
     /// The plane's most recent plane-executed reset progress; see
     /// [`ResetProgressStatus`].
     pub reset_progress: Option<ResetProgressStatus>,
+    /// The live episode was opened agent-invited (flag `waddle.v0.agent`,
+    /// FSM.md E23). Stays readable at TERMINAL (the FSM retains the episode)
+    /// so a blocked `run_agent` can classify what just closed.
+    pub agent_invited: bool,
+    /// LATCHED at the first agent ENGAGE on an agent-invited episode
+    /// (FSM.md §1.5): true from then on, never reset within the episode.
+    pub agent_engaged: bool,
+    /// LATCHED when the invite machinery itself closed the run — E25's
+    /// deadline expiry or E26's pre-engage DENIED (FSM.md §1.5) — and by
+    /// nothing else. This is what lets a blocked `Session::run_agent`
+    /// classify a close it observes only as `Phase::Terminal`: with this
+    /// set, the abort IS the agent outcome (returned as `AgentOutcome`);
+    /// without it (e.g. an E5 reset failure), the error surfaces exactly
+    /// as the non-agent start path would surface it.
+    pub agent_invite_aborted: bool,
+    /// The plane's most recent `AgentTaskUpdate`; see [`AgentTaskStatus`].
+    pub agent_task: Option<AgentTaskStatus>,
     pub plane_connected: bool,
+    /// The CURRENT connection accepted `waddle.v0.obs.stills` at Register.
+    /// Refreshed by the plane pump on every registration (flags are
+    /// (re-)negotiated on each reconnect) and read by the media uplink pump,
+    /// which emits control-plane stills only while it is set — VERSIONING §3:
+    /// a behavior the connection did not accept is never emitted.
+    pub stills_negotiated: bool,
     pub shutdown: bool,
     /// Set once, at build time, when the session's `ControlRegistry` has no
     /// `estop` callable. Missing `estop` never fails the build (unlike

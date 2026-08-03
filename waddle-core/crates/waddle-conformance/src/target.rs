@@ -14,8 +14,8 @@ use serde_json::{Map, Value, json};
 use waddle_fsm::effect::Effect;
 use waddle_fsm::session::EngageStage;
 use waddle_fsm::{
-    GrantChangeDirective, MarkKind, ProxySample, SessionConfig, SessionEvent, SessionFsm, TimerId,
-    WindowSpec,
+    AgentInvite, GrantChangeDirective, MarkKind, ProxySample, SessionConfig, SessionEvent,
+    SessionFsm, TimerId, WindowSpec,
 };
 use waddle_gate::gate::GateShared;
 use waddle_gate::{
@@ -25,8 +25,9 @@ use waddle_gate::{
 use waddle_ingest::FakeClock;
 use waddle_types::action::ActionValues;
 use waddle_types::{
-    ActionSpace, ActorKind, ClaimId, EpisodeId, GateMode, GrantStatus, Interp, LeaseEnforcement,
-    LeaseId, MonoNs, Provenance, ProvenanceTag, ReplanPolicy, TerminalOutcome, Verb, pb::v0 as pb,
+    ActionSpace, ActorKind, ActorRef, ClaimId, EpisodeId, GateMode, GrantStatus, Interp,
+    LeaseEnforcement, LeaseId, MonoNs, ProvenanceTag, ReplanPolicy, TerminalOutcome, Verb,
+    pb::v0 as pb,
 };
 
 use crate::emissions::{
@@ -63,6 +64,11 @@ struct GateParts {
     space: Option<ActionSpace>,
     interp: Interp,
     last_output: Option<GateOutput>,
+    /// The Noop reason of the most recent tick, captured from the plan mode
+    /// that produced it (`GateOutput::Noop` deliberately carries no reason —
+    /// the reducer's marker translation owns it; here the harness plays
+    /// that role). `None` when the last output was not a Noop.
+    last_noop_reason: Option<pb::NoopReason>,
     last_tick_ns: Option<i64>,
     /// An intervention stream has produced traffic (stall → bypass only
     /// matters when there is someone to starve).
@@ -148,6 +154,7 @@ impl Target {
                     space,
                     interp,
                     last_output: None,
+                    last_noop_reason: None,
                     last_tick_ns: None,
                     traffic: false,
                     validation_fault_sent: false,
@@ -250,6 +257,7 @@ impl Target {
                         post_reset: false,
                         pre_window: None,
                         post_window: None,
+                        agent_invite: None,
                         at: self.at(),
                     })?;
                 }
@@ -291,6 +299,13 @@ impl Target {
         let blend = self.blend_schedule();
         let Some(gp) = &self.gate else { return };
         let plan = match mode {
+            // E24 (flag `waddle.v0.agent`): an agent-invited episode's
+            // PASSTHROUGH projects to Noop{AGENT_EPISODE} while no claim is
+            // engaged (predicate on the FSM — hollow-frontend rule).
+            GateMode::Passthrough if self.fsm.agent_episode_noop() => GatePlan {
+                mode: PlanMode::AgentEpisode { provenance },
+                since: MonoNs(self.now),
+            },
             GateMode::Passthrough => GatePlan::passthrough(MonoNs(self.now)),
             GateMode::Intervention => GatePlan {
                 mode: PlanMode::Claimed { provenance, blend },
@@ -325,26 +340,13 @@ impl Target {
         }
     }
 
-    /// Provenance carried by intervention actions under the active claim.
+    /// Provenance carried by intervention actions under the active claim —
+    /// the claim's own (`ActiveClaim::provenance`), never re-derived here.
     fn claim_provenance(&self) -> ProvenanceTag {
-        match &self.fsm.claim {
-            None => ProvenanceTag::policy(),
-            Some(claim) => {
-                let provenance = match claim.actor {
-                    ActorKind::Teleoperator => Provenance::Teleop,
-                    ActorKind::Agent => Provenance::Agent,
-                    ActorKind::Policy => Provenance::Policy,
-                    ActorKind::SiteOperator | ActorKind::System | ActorKind::Custom => {
-                        Provenance::Custom(claim.source.clone())
-                    }
-                };
-                ProvenanceTag {
-                    provenance,
-                    actor: None,
-                    bypass_approval: claim.self_initiated,
-                }
-            }
-        }
+        self.fsm
+            .claim
+            .as_ref()
+            .map_or_else(ProvenanceTag::policy, waddle_fsm::ActiveClaim::provenance)
     }
 
     // -- Virtual time -------------------------------------------------------
@@ -502,6 +504,10 @@ impl Target {
                     .get("post_reset_window")
                     .map(|v| self.parse_window_spec(v))
                     .transpose()?;
+                let agent_invite = payload
+                    .get("agent_invite")
+                    .map(parse_agent_invite)
+                    .transpose()?;
                 self.dispatch(SessionEvent::EpisodeOpen {
                     id: EpisodeId::new(id),
                     verification,
@@ -510,6 +516,7 @@ impl Target {
                     post_reset,
                     pre_window,
                     post_window,
+                    agent_invite,
                     at,
                 })?;
             }
@@ -549,13 +556,23 @@ impl Target {
                     .and_then(Value::as_str)
                     .unwrap_or("")
                     .to_owned();
-                let actor = match payload
-                    .get("actor")
-                    .and_then(|a| a.get("kind"))
-                    .and_then(Value::as_str)
-                {
-                    Some(s) => parse_actor_kind(s)?,
-                    None => ActorKind::Custom,
+                // `claim_request` carries a `waddle.v0.ClaimEpisodeRequest`,
+                // whose `actor` is a full `ActorRef` — decoded whole, since
+                // the claim emission this produces carries it whole.
+                let actor = match payload.get("actor") {
+                    Some(a) => ActorRef {
+                        kind: match a.get("kind").and_then(Value::as_str) {
+                            Some(k) => parse_actor_kind(k)?,
+                            None => ActorKind::Custom,
+                        },
+                        id: a.get("id").and_then(Value::as_str).unwrap_or("").to_owned(),
+                        display_name: a
+                            .get("displayName")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_owned(),
+                    },
+                    None => ActorRef::of_kind(ActorKind::Custom),
                 };
                 let self_initiated = payload
                     .get("self_initiated")
@@ -576,12 +593,15 @@ impl Target {
             }
             "claim_granted" => {
                 let claim: pb::Claim = self.parse_payload(payload, "claim", "waddle.v0.Claim")?;
+                // The scenario's `waddle.v0.Claim` carries the actor WHOLE
+                // (kind, id, display name) — dispatched whole, so the claim
+                // emissions the scenario then asserts against carry it too.
                 let actor = claim
                     .actor
                     .as_ref()
-                    .map(|a| ActorKind::from_pb(a.kind))
+                    .map(ActorRef::try_from)
                     .transpose()?
-                    .unwrap_or(ActorKind::Custom);
+                    .unwrap_or_else(|| ActorRef::of_kind(ActorKind::Custom));
                 self.dispatch(SessionEvent::ClaimGranted {
                     id: ClaimId::new(&claim.claim_id),
                     source: claim.source_name.clone(),
@@ -759,6 +779,48 @@ impl Target {
                     at,
                 })?;
             }
+            "agent_task_update" => {
+                // The update rides as a `waddle.v0.AgentTaskUpdate` under
+                // `update` (the message's own `kind` field cannot ride flat
+                // next to the inject dispatcher's `kind` key —
+                // scenario-format.md nests it like `reset_result`'s).
+                let update: pb::AgentTaskUpdate =
+                    self.parse_payload(payload, "update", "waddle.v0.AgentTaskUpdate")?;
+                let update_kind = pb::AgentTaskUpdateKind::try_from(update.kind)
+                    .map_err(|_| scenario_err(format!("unknown update kind {}", update.kind)))?;
+                let targets_active = self
+                    .fsm
+                    .episode
+                    .as_ref()
+                    .is_some_and(|ep| ep.id.as_str() == update.episode_id);
+                match update_kind {
+                    pb::AgentTaskUpdateKind::Unspecified => {
+                        return Err(scenario_err("agent_task_update requires a specified kind"));
+                    }
+                    // E26/E26b: only a DENIED addressed to the active
+                    // episode becomes an FSM event; the FSM decides between
+                    // the E26 transition and the E26b recorded-only
+                    // rejection.
+                    pb::AgentTaskUpdateKind::Denied if targets_active => {
+                        self.dispatch(SessionEvent::AgentTaskDenied {
+                            detail: update.detail.clone(),
+                            at,
+                        })?;
+                    }
+                    // QUEUED and COMPLETED are informational on every state
+                    // (FSM.md §1.5) — recorded as inert, never a transition;
+                    // likewise any update addressed to a non-active episode.
+                    _ => {
+                        self.rejections.push(format!(
+                            "t={}ns agent_task_update{{{}, episode {:?}}}: \
+                             informational, recorded inert (FSM.md §1.5)",
+                            self.now,
+                            update_kind.as_str_name(),
+                            update.episode_id,
+                        ));
+                    }
+                }
+            }
             other => {
                 // Closed set (scenario-format.md): unknown kinds are a
                 // scenario error, never silently ignored.
@@ -788,6 +850,23 @@ impl Target {
                 }
                 GateOutput::Noop { .. } | GateOutput::Hold => {}
             }
+            // `GateOutput::Noop` deliberately carries no reason — the
+            // reducer's marker translation derives it from the gate
+            // decision. The harness plays that role here, from the plan
+            // that produced this tick (captured NOW: a later event may
+            // legally change the plan before `expect_output` runs).
+            gp.last_noop_reason = match (&output, &gp.shared.load_plan().mode) {
+                (GateOutput::Noop { .. }, PlanMode::Bypass { .. }) => {
+                    Some(pb::NoopReason::BypassActive)
+                }
+                (GateOutput::Noop { .. }, PlanMode::Reset { .. }) => {
+                    Some(pb::NoopReason::ResetActive)
+                }
+                (GateOutput::Noop { .. }, PlanMode::AgentEpisode { .. }) => {
+                    Some(pb::NoopReason::AgentEpisode)
+                }
+                _ => None,
+            };
             gp.last_output = Some(output);
             gp.last_tick_ns = Some(now);
         }
@@ -866,11 +945,10 @@ impl Target {
         // never dispatched — nothing goes to the ring, and the claim
         // window gets exactly one Fault{VALIDATION_ERROR} (waddle-fsm's
         // `InterventionRejected` handling), not one per mismatched packet.
-        if let Some((dims_got, dims_want)) = rejected {
+        if let Some((got, want)) = rejected {
             self.dispatch(SessionEvent::InterventionRejected {
-                dims_got,
-                dims_want,
                 source: "media-intake",
+                reason: waddle_fsm::RejectReason::Dims { got, want },
                 at,
             })?;
         }
@@ -1018,6 +1096,8 @@ impl Target {
                     "post_reset_declared": ep.post_reset_declared,
                     "post_reset_failed": ep.post_reset_failed,
                     "pinned_outcome": pinned_outcome,
+                    "agent_invited": ep.agent_invited,
+                    "agent_engaged": ep.agent_engaged,
                 })
             }
             None => json!({
@@ -1031,6 +1111,8 @@ impl Target {
                 "post_reset_declared": false,
                 "post_reset_failed": false,
                 "pinned_outcome": pb::TerminalOutcome::Unspecified.as_str_name(),
+                "agent_invited": false,
+                "agent_engaged": false,
             }),
         };
         let reset_window = match self
@@ -1132,7 +1214,10 @@ impl Target {
             }),
             GateOutput::Noop { provenance } => json!({
                 "kind": "noop",
-                "reason": pb::NoopReason::BypassActive.as_str_name(),
+                "reason": gp
+                    .last_noop_reason
+                    .unwrap_or(pb::NoopReason::Unspecified)
+                    .as_str_name(),
                 "provenance": self.provenance_json(provenance)?,
             }),
             GateOutput::Hold => json!({ "kind": "hold" }),
@@ -1143,6 +1228,20 @@ impl Target {
     fn provenance_json(&self, tag: &ProvenanceTag) -> Result<Value, ConformanceError> {
         self.codec.provenance_to_value(&tag.to_pb())
     }
+}
+
+/// Parse an `episode_open` agent-invite declaration (`{prompt, timeout_ns}`,
+/// scenario-format.md's `agent_invite` key — flag `waddle.v0.agent`).
+fn parse_agent_invite(value: &Value) -> Result<AgentInvite, ConformanceError> {
+    let obj = value
+        .as_object()
+        .ok_or_else(|| scenario_err("agent_invite must be an object"))?;
+    let prompt = str_field(obj, "prompt")?.to_owned();
+    let timeout_ns = parse_ns(
+        obj.get("timeout_ns")
+            .ok_or_else(|| scenario_err("agent_invite missing \"timeout_ns\""))?,
+    )?;
+    Ok(AgentInvite { prompt, timeout_ns })
 }
 
 fn parse_actor_kind(s: &str) -> Result<ActorKind, ConformanceError> {

@@ -20,10 +20,21 @@
 //! the connection: the worker exits, both channels sever, and the client's
 //! existing disconnect → backoff → replay machinery takes over.
 //!
+//! Backpressure: a plane can be connected and yet not draining — it accepts
+//! `StreamObservations` and then stops reading it (or is simply slower than
+//! the declared still rate, closing the h2 flow-control window). Nothing
+//! errors in that state, so the client never sees `Disconnected` and its
+//! offline classification never runs. Every stream sender here is therefore
+//! metered by its own [`InflightLimit`]: droppable messages (stills,
+//! heartbeats) stop at the cap instead of piling up in the channel behind a
+//! stream h2 has stopped polling, and the shed count is readable via
+//! [`GrpcTransport::droppable_dropped`]. History is never shed.
+//!
 //! Authentication is transport metadata per services.proto: a configured
 //! token rides every RPC as `authorization: Bearer <token>`.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver as StdReceiver, Sender as StdSender};
 use std::time::Duration;
 
@@ -36,6 +47,7 @@ use tonic::transport::{Channel, ClientTlsConfig, Endpoint};
 use waddle_types::pb::v0 as pb;
 
 use crate::PlaneError;
+use crate::inflight::{DEFAULT_INFLIGHT_CAP, Inflight, InflightLimit};
 use crate::transport::{ClientMsg, ControlConn, ControlTransport, ServerMsg};
 
 /// The generated `ControlPlane` service code (client + in-process test
@@ -85,16 +97,33 @@ impl GrpcConfig {
     }
 }
 
-/// The tonic-backed [`ControlTransport`]. Stateless between connections:
-/// every `connect()` dials fresh (reconnect policy lives in the client).
+/// The tonic-backed [`ControlTransport`]. Stateless between connections
+/// except for the shed counter: every `connect()` dials fresh (reconnect
+/// policy lives in the client).
 #[derive(Debug)]
 pub struct GrpcTransport {
     config: GrpcConfig,
+    /// Droppable messages shed by the in-flight bound, summed over every
+    /// connection this transport has made (see [`crate::inflight`]).
+    dropped: Arc<AtomicU64>,
 }
 
 impl GrpcTransport {
     pub fn new(config: GrpcConfig) -> Arc<Self> {
-        Arc::new(Self { config })
+        Arc::new(Self {
+            config,
+            dropped: Arc::new(AtomicU64::new(0)),
+        })
+    }
+
+    /// How many droppable messages (control-plane stills, heartbeats) this
+    /// transport has shed to stay bounded while the plane was connected but
+    /// not draining. Non-zero means the plane is not keeping up with the
+    /// declared still rate — the designed degradation, never a loss of
+    /// episode history, which is bounded only by the offline buffer.
+    #[must_use]
+    pub fn droppable_dropped(&self) -> u64 {
+        self.dropped.load(Ordering::Relaxed)
     }
 }
 
@@ -106,6 +135,7 @@ pub fn connect(config: GrpcConfig) -> Arc<dyn ControlTransport> {
 impl ControlTransport for GrpcTransport {
     fn connect(&self) -> Result<ControlConn, PlaneError> {
         let config = self.config.clone();
+        let dropped = self.dropped.clone();
         let (client_tx, cmd_std_rx) = std::sync::mpsc::channel::<ClientMsg>();
         let (server_tx, client_rx) = std::sync::mpsc::channel::<ServerMsg>();
         let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<(), PlaneError>>();
@@ -124,7 +154,7 @@ impl ControlTransport for GrpcTransport {
                         return;
                     }
                 };
-                rt.block_on(run_conn(config, cmd_std_rx, server_tx, &ready_tx));
+                rt.block_on(run_conn(config, dropped, cmd_std_rx, server_tx, &ready_tx));
                 // Dropping the runtime here cancels every in-flight task and
                 // drops their `ServerMsg` senders: the client's rx severs.
             })
@@ -179,6 +209,7 @@ fn build_endpoint(config: &GrpcConfig) -> Result<Endpoint, PlaneError> {
 /// then pump until anything breaks or the client drops the conn.
 async fn run_conn(
     config: GrpcConfig,
+    dropped: Arc<AtomicU64>,
     cmd_std_rx: StdReceiver<ClientMsg>,
     out: StdSender<ServerMsg>,
     ready: &StdSender<Result<(), PlaneError>>,
@@ -213,16 +244,19 @@ async fn run_conn(
             .map_err(|e| PlaneError::Transport(format!("connect: {e}")))?;
         let mut client: Client = GeneratedClient::with_interceptor(channel, BearerAuth { header });
 
-        // The two eager long-lived streams: the plane's down-paths.
-        let (gate_tx, gate_rx) = tokio_mpsc::unbounded_channel::<pb::GateClientMessage>();
+        // The two eager long-lived streams: the plane's down-paths. Each is
+        // polled through `Inflight::into_inner`, which is where a metered
+        // message releases its in-flight slot — the bound therefore tracks
+        // what h2 has actually taken, not what was handed to the channel.
+        let (gate_tx, gate_rx) = tokio_mpsc::unbounded_channel::<Inflight<pb::GateClientMessage>>();
         let gate_in = client
-            .gate_actions(UnboundedReceiverStream::new(gate_rx))
+            .gate_actions(UnboundedReceiverStream::new(gate_rx).map(Inflight::into_inner))
             .await
             .map_err(|e| PlaneError::Transport(format!("GateActions open: {e}")))?
             .into_inner();
-        let (hb_tx, hb_rx) = tokio_mpsc::unbounded_channel::<pb::HeartbeatPing>();
+        let (hb_tx, hb_rx) = tokio_mpsc::unbounded_channel::<Inflight<pb::HeartbeatPing>>();
         let hb_in = client
-            .heartbeat(UnboundedReceiverStream::new(hb_rx))
+            .heartbeat(UnboundedReceiverStream::new(hb_rx).map(Inflight::into_inner))
             .await
             .map_err(|e| PlaneError::Transport(format!("Heartbeat open: {e}")))?
             .into_inner();
@@ -258,13 +292,23 @@ async fn run_conn(
 
     // Fatal-error funnel for spawned per-RPC tasks.
     let (fatal_tx, mut fatal_rx) = tokio_mpsc::unbounded_channel::<()>();
-    let mut obs_tx: Option<tokio_mpsc::UnboundedSender<pb::ObservationUpdate>> = None;
+    // One in-flight bound PER stream: they drain independently, so a
+    // saturated observation stream must not shed the heartbeats that keep
+    // the session alive.
+    let mut outbound = Outbound {
+        gate_tx,
+        gate_limit: InflightLimit::new(DEFAULT_INFLIGHT_CAP, dropped.clone()),
+        hb_tx,
+        hb_limit: InflightLimit::new(DEFAULT_INFLIGHT_CAP, dropped.clone()),
+        obs_tx: None,
+        obs_limit: InflightLimit::new(DEFAULT_INFLIGHT_CAP, dropped),
+    };
 
     loop {
         tokio::select! {
             cmd = cmd_rx.recv() => {
                 let Some(msg) = cmd else { break }; // conn dropped by the client
-                if !dispatch(msg, &mut client, &gate_tx, &hb_tx, &mut obs_tx, &out, &fatal_tx) {
+                if !dispatch(msg, &mut client, &mut outbound, &out, &fatal_tx) {
                     break;
                 }
             }
@@ -289,6 +333,33 @@ async fn run_conn(
     }
 }
 
+/// The connection's outbound stream senders, each with its own in-flight
+/// bound. `obs_tx` is `None` until the first observation opens the stream.
+struct Outbound {
+    gate_tx: tokio_mpsc::UnboundedSender<Inflight<pb::GateClientMessage>>,
+    gate_limit: Arc<InflightLimit>,
+    hb_tx: tokio_mpsc::UnboundedSender<Inflight<pb::HeartbeatPing>>,
+    hb_limit: Arc<InflightLimit>,
+    obs_tx: Option<tokio_mpsc::UnboundedSender<Inflight<pb::ObservationUpdate>>>,
+    obs_limit: Arc<InflightLimit>,
+}
+
+/// Queue one message on a stream sender, metered by that stream's in-flight
+/// bound. `false` means the stream is gone (fatal to the connection); a
+/// message shed by the bound returns `true` — shedding perception is the
+/// declared degradation, not a connection failure.
+fn queue<T>(
+    tx: &tokio_mpsc::UnboundedSender<Inflight<T>>,
+    limit: &Arc<InflightLimit>,
+    value: T,
+    droppable: bool,
+) -> bool {
+    match limit.admit(value, droppable) {
+        Some(item) => tx.send(item).is_ok(),
+        None => true,
+    }
+}
+
 /// Route one client message to its RPC. Returns `false` on a fatal
 /// transport condition (the caller tears the connection down).
 ///
@@ -298,9 +369,7 @@ async fn run_conn(
 fn dispatch(
     msg: ClientMsg,
     client: &mut Client,
-    gate_tx: &tokio_mpsc::UnboundedSender<pb::GateClientMessage>,
-    hb_tx: &tokio_mpsc::UnboundedSender<pb::HeartbeatPing>,
-    obs_tx: &mut Option<tokio_mpsc::UnboundedSender<pb::ObservationUpdate>>,
+    outbound: &mut Outbound,
     out: &StdSender<ServerMsg>,
     fatal: &tokio_mpsc::UnboundedSender<()>,
 ) -> bool {
@@ -326,21 +395,27 @@ fn dispatch(
         }};
     }
 
+    // The classification, answered once per message (waddle-controlplane's
+    // `ClientMsg::is_droppable`), then honoured by whichever stream carries
+    // it: only a droppable message can ever be shed by the bound.
+    let droppable = msg.is_droppable();
     match msg {
-        ClientMsg::Gate(m) => gate_tx.send(m).is_ok(),
-        ClientMsg::Heartbeat(m) => hb_tx.send(m).is_ok(),
+        ClientMsg::Gate(m) => queue(&outbound.gate_tx, &outbound.gate_limit, m, droppable),
+        ClientMsg::Heartbeat(m) => queue(&outbound.hb_tx, &outbound.hb_limit, m, droppable),
         ClientMsg::Observation(o) => {
-            let tx = obs_tx.get_or_insert_with(|| {
+            let tx = outbound.obs_tx.get_or_insert_with(|| {
                 // Lazy open, but spawned like every other RPC: a plane that
                 // accepts the stream and then stalls must not freeze the
                 // pump. Observations buffer in the channel until the stream
                 // is live; an open failure funnels back as fatal.
-                let (tx, rx) = tokio_mpsc::unbounded_channel();
+                let (tx, rx) = tokio_mpsc::unbounded_channel::<Inflight<pb::ObservationUpdate>>();
                 let mut c = client.clone();
                 let fatal = fatal.clone();
                 tokio::spawn(async move {
                     match c
-                        .stream_observations(UnboundedReceiverStream::new(rx))
+                        .stream_observations(
+                            UnboundedReceiverStream::new(rx).map(Inflight::into_inner),
+                        )
                         .await
                     {
                         Ok(resp) => {
@@ -365,7 +440,7 @@ fn dispatch(
                 });
                 tx
             });
-            tx.send(o).is_ok()
+            queue(tx, &outbound.obs_limit, o, droppable)
         }
         ClientMsg::Register(r) => unary!(register, r, ServerMsg::Registered),
         ClientMsg::Negotiate(r) => unary!(negotiate, r, ServerMsg::Negotiated),

@@ -24,5 +24,13 @@ __pycache__/
 /tmp/
 *.log
 
-# maturin develop output (built extension)
+# maturin develop output (built extensions: the default core and the
+# teleop companion wheel's)
 sdk/python/waddle/_core*.so
+sdk/teleop/python/waddle_teleop/_core*.so
+
+# Built wheels (`uv build --wheel -o dist .` / `-o dist teleop`)
+dist/
+
+# The toy example's default local recording dir (sidecars + MCAPs)
+toy-recordings/

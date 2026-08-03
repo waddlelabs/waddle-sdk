@@ -111,7 +111,7 @@ in §2 document the claim side).
 | # | From | Trigger | Guard | To | Effects / emissions | Fixture |
 |---|---|---|---|---|---|---|
 | E19 | entry to RESETTING (E1) or POST_RESET (E14) | — | that reset declared remote | unchanged | `reset_window{OPENED, kind, prompt, expected_actor}`; `arm_timer{reset_window_timeout}` | `remote_pre_reset_claim_engage_complete` |
-| E20 | RESETTING or POST_RESET | `reset_window_engage{claim}` | claim GRANTED per C6 | unchanged | lease → claimant (L1 if vacant, else L6 handoff, fresh token); on lease applied: gate→RESET (`GateModeChange{→RESET}`), `reset_window{ENGAGED, claim_id}`. Actuation authorization = held lease + gate RESET; the SDK pump drives `send`; caller ticks get `NoopMarker{RESET_ACTIVE}` | `remote_pre_reset_claim_engage_complete` |
+| E20 | RESETTING or POST_RESET | `reset_window_engage{claim}` | claim GRANTED per C6 | unchanged | lease → claimant (L1 if vacant, else L6 handoff, fresh token); on lease applied: gate→RESET (`GateModeChange{→RESET}`), `reset_window{ENGAGED, claim_id}`. Actuation authorization = held lease + gate RESET; the SDK pump drives `send`; caller ticks get `NoopMarker{RESET_ACTIVE}` | `remote_pre_reset_claim_engage_complete`, `remote_reset_caller_tick_noop` |
 | E21 | RESETTING or POST_RESET | `reset_window_complete{claim, result}` | claim active per C6 | (deferred) | `reset_window{COMPLETED, result}`; cancel timer; lease handback (L6); AFTER handback applies: gate→PASSTHROUGH, `claim{RELEASED}` (C7), then the result applies as if from the pipeline (E2–E5 in RESETTING; E15/E16 in POST_RESET) | `remote_pre_reset_claim_engage_complete` |
 | E22 | RESETTING or POST_RESET | `timer{reset_window_timeout}` | window not COMPLETED | pre: TERMINAL{ABORT} (E5); post: TERMINAL{pinned} + `set_flag{post_reset_failed}` (E16) | `reset_window{TIMED_OUT}`; claim released; lease handback | `remote_post_reset_timeout` |
 | E19b | RESETTING or POST_RESET | `reset_result` (pre) / `post_reset_result` (post) | a reset window is open (E19) | unchanged (rejected) | none — an open window owns this reset exclusively; the pipeline-hook completion path (E2–E5 / E15–E16) is illegal until the window closes (E21/E22). Not reachable through a config-correct runtime (a reset phase's config declares either a hook pipeline or a remote window, never both, and the runtime never injects a hook result while a remote window is declared) — guarded here anyway per the hollow-frontend rule (waddle-fsm is the sole enforcer; a future caller/runtime bug must not silently abandon the window/claim/lease) | `remote_window_owns_pipeline_result` |
@@ -136,6 +136,78 @@ discarded: the lease does not move, a `lease{DENIED}` records the stale
 mint, and the still-open window remains serviceable by a fresh claim (C6).
 This pins the atomicity of E20's engage; it adds no new states or rows.
 
+### 1.5 Agent-invited episodes (flag `waddle.v0.agent`)
+
+Preface (normative): rows E23–E26/E26b and C8 exist only when
+`waddle.v0.agent` is negotiated **and** the episode was opened agent-invited
+(the customer asked Waddle to drive; the open carries
+`agent_invite{prompt, timeout_ns}`). An agent-invited episode is otherwise a
+NORMAL episode: E7 engage, intervention chunks, E10 termination, and the
+reset phases all apply verbatim. The two terminating triggers this section
+adds — E25's invite timeout and E26's pre-engage DENIED — are **members of
+E10's trigger set** with a fixed outcome (ABORT); with `post_reset`
+declared, E14 therefore governs them from RUNNING exactly as it governs
+every other E10 trigger, so they terminate through the episode's normal
+termination routing (TERMINAL{ABORT} per E10, POST_RESET{ABORT pinned} per
+E14), never around it. The invited agent claims with the same
+`Claim`/`Lease` machinery as every other actor — C8 restricts admission,
+nothing else. Exactly two things differ: the caller's own `gate()` ticks
+never dispatch while no claim is engaged (E24), and only `ACTOR_KIND_AGENT`
+claims are admitted (C8). C8 constrains only the grants C1 governs: a claim
+landing in RESETTING or POST_RESET with a window OPEN is a **reset** claim
+and stays C6's business, so an agent-invited episode with a declared
+TELEOPERATOR reset window admits its teleoperator exactly as any other
+episode does (`agent_invite_denied_in_post_reset` pins this).
+
+The **invite is open** from E23 until the first of: an agent claim ENGAGEs
+(E7 on this episode), or the episode leaves {RESETTING, READY, RUNNING} by
+any row (E5, E10, E11, E14, E25, E26; transitions within that set — E2–E4,
+E6 — do not close it). On an agent-invited episode, every row that closes
+the invite carries `cancel_timer{agent_invite_timeout}` (if still armed) as
+an additional effect: E7 as below, and E5/E10/E11/E14/E25/E26 alike. A
+`timer{agent_invite_timeout}` delivered after the invite has closed (an
+implementation's expiry racing the cancellation) is **discarded** — no
+transition, no event; a stale expiry can never abort a pinned outcome.
+
+E7 on an agent-invited episode additionally emits
+`cancel_timer{agent_invite_timeout}` and latches `episode.agent_engaged`
+(true from the first agent ENGAGE onward; it never resets within the
+episode — a release/re-engage cycle does not re-arm the invite timer).
+
+E25 and E26 — and ONLY those two rows — latch `episode.invite_aborted`
+before routing to termination: it marks a close produced by the invite
+machinery itself (deadline elapsed, or DENIED while open), a legitimate
+agent outcome. Every other close of an agent-invited episode (E5 reset
+failure, E10 triggers, E11 estop, E14) leaves it false, so an embedder's
+blocking ask-an-agent call can distinguish "the ask was declined or went
+unanswered" from "the episode broke for unrelated reasons" without parsing
+termination reasons. Emission-invisible state, like `agent_engaged`.
+
+E24's Noop plan is **derived state scoped to the episode it was derived
+for**: it holds while THAT episode is in {RESETTING, READY, RUNNING,
+INTERVENTION} with no engaged claim, and ends the instant the episode leaves
+that set — including into POST_RESET, where the caller drives the cleanup.
+A successor episode that was not opened agent-invited dispatches its
+caller's ticks normally, and that holds for a born-claimed retake successor
+(C5) too: the surviving claim carries the predecessor's gate arrangement
+across the boundary, never its invite (`agent_invite_retake_successor`).
+An implementation that caches the plan MUST re-derive it whenever the
+episode state behind these conditions moves, not only when the gate mode
+does.
+
+| # | From | Trigger | Guard | To | Effects / emissions | Fixture |
+|---|---|---|---|---|---|---|
+| E23 | (open) | `episode_open{agent_invite}` | E1 guard (no other episode active in session) | RESETTING | E1's effect set, plus emission `agent_invite{prompt, timeout_ns}` and `arm_timer{agent_invite_timeout, deadline = open + timeout_ns}` | `agent_invite_happy` |
+| E24 | RESETTING, READY, RUNNING, or INTERVENTION | `gate_tick` | episode agent-invited ∧ no engaged claim (gate mode PASSTHROUGH; INTERVENTION with the gate still PASSTHROUGH is the *engage window* — the handoff is in flight and nothing is engaged yet) | unchanged | the caller's action NEVER dispatches: the gate plan is Noop with reason `NOOP_REASON_AGENT_EPISODE` (no fault, no state change). With an engaged claim, ordinary intervention semantics apply unchanged — substitution flows through `gate()` as ever. POST_RESET and TERMINAL are outside this row: the run is over, and its cleanup (or the successor) is the caller's to drive | `agent_caller_tick_noop`, `agent_invite_retake_successor` |
+| E25 | RESETTING, READY, or RUNNING | `timer{agent_invite_timeout}` | invite open (no agent claim has ENGAGEd; E7 cancels this timer) | from RESETTING or READY: TERMINAL{ABORT}; from RUNNING: TERMINAL{ABORT} per E10, or POST_RESET{ABORT pinned} per E14 when post-reset declared ∧ not yet entered | termination carries detail "no agent engaged"; the taken route's effect set applies verbatim (E10's, or E14's with the outcome pinned to ABORT) | `agent_invite_timeout`, `agent_invite_timeout_post_reset` |
+| E26 | RESETTING, READY, or RUNNING | `agent_update{DENIED}` | invite open (no agent claim has ENGAGEd) | routes exactly as E25: from RESETTING or READY TERMINAL{ABORT}; from RUNNING per E10, or per E14 when post-reset declared ∧ not yet entered | `cancel_timer{agent_invite_timeout}`; termination carries the update's detail; the taken route's effect set applies verbatim | `agent_invite_denied` |
+| E26b | any non-TERMINAL | `agent_update{DENIED}` | invite not open (an agent claim has ENGAGEd, or the episode already left {RESETTING, READY, RUNNING} — e.g. a plane DENIED racing a pre-engage E14 into POST_RESET) | unchanged (rejected) | none — a late DENIED is recorded as an event only, never a transition; a pinned outcome is untouched | `agent_invite_denied_after_engage`, `agent_invite_denied_in_post_reset` |
+
+QUEUED and COMPLETED updates (`AgentTaskUpdate`, services.proto) are
+informational on every state: recorded, never a transition. The invite
+emission and timer are episode-open effects (E23); nothing else about
+episode open changes.
+
 ---
 
 ## 2. Claim lifecycle
@@ -151,12 +223,33 @@ States (per claim): REQUESTED → GRANTED | DENIED; GRANTED → RELEASED.
 | C5 | GRANTED | `retake` | — | GRANTED (survives) | the claim is NOT released; the successor episode is born claimed under it | `retake_operator_optimistic` |
 | C6 | — | `claim_granted` | episode in RESETTING or POST_RESET ∧ window OPENED ∧ actor matches expected (a TELEOPERATOR window also admits SITE_OPERATOR; an AGENT window admits AGENT only) ∧ no active claim | GRANTED | `claim{GRANTED}` — a real `Claim`; the N18 one-claim rule applies (flag `waddle.v0.reset.remote`; see §1.4) | `remote_pre_reset_claim_engage_complete`, `remote_reset_wrong_actor_denied` |
 | C7 | GRANTED (reset claim) | E21 / E22 / `estop` | — | RELEASED | `claim{RELEASED, "reset window closed"}` (flag `waddle.v0.reset.remote`; see §1.4) | `remote_pre_reset_claim_engage_complete` |
+| C8 | — | `claim_granted` | episode agent-invited ∧ actor matches expected (an agent-invited episode admits `ACTOR_KIND_AGENT` only; any other actor's grant is rejected, `claim{DENIED}`) ∧ C1's episode-state and no-conflicting-claim conditions unchanged | GRANTED | `claim{GRANTED}` — a real `Claim`; the N18 one-claim rule applies (flag `waddle.v0.agent`; see §1.5) | `agent_invite_happy`, `agent_invite_wrong_actor_denied`, `agent_invite_clutch_denied` |
+
+**Every claim event names its claimant.** The `Claim` carried by
+`claim{REQUESTED|GRANTED|DENIED|RELEASED}` MUST carry the claimant's
+`ActorRef` whole — the kind AND the id the granting side stamped, display
+name included when it has one. `Claim.source_name` names the intervention
+*stream* ("teleop", "leader_arm", "waddle-agent"), never the actor, so a
+consumer given only `source_name` cannot attribute the claim to anyone: the
+journal, the sidecar's claim and provenance spans, and every downstream
+judge read the actor off these events. A claim granted LOCALLY (a clutch
+edge, C-section below) has no stamped identity and carries kind only.
+Fixtures: `claim_events_name_the_claimant`,
+`agent_claim_events_name_the_agent`.
 
 **Self-initiated claims** (`Claim.self_initiated`): a local source's clutch
 edge (`clutch{engaged}`) both requests and grants the claim in one step — the
 platform records the intervention rather than fighting it (the engaged clutch
 is the authorization; `ProvenanceTag.bypass_approval` may be set, which
 bypasses approval gates but never the envelope, the lease, or the e-stop).
+Because the edge grants its own claim, **C8 admission applies to it exactly
+as to a plane GRANT**: on an agent-invited episode a clutch whose declared
+actor is not `ACTOR_KIND_AGENT` is refused, and the refusal is recorded as
+`claim{DENIED}` with C8's reason — no `claim{REQUESTED}` precedes it (there
+was never a request pending), no claim becomes active, and the physical edge
+remains the source's to report. A clutch that is not admissible for any other
+reason (a claim is already active, the episode is not RUNNING) stays silent
+as before. Fixture: `agent_invite_clutch_denied`.
 
 ---
 
@@ -203,6 +296,30 @@ Phases within INTERVENTION: **engage → settle → release | retake**
 | I3 | RELEASE | `release` requested | policy re-primed on fresh observations, lease handed back, claim released | mirrors ENGAGE in reverse (§5) |
 | I4 | RETAKE | `retake` requested | episode → TERMINAL{ABORTED_RETAKE}; successor opened born-claimed | claim survives (C5) |
 
+### What an intervention action may carry
+
+`Action.gripper` rides alongside the target in one logical tick
+(control.proto), and `NoopMarker` is a target arm like any other. So:
+
+* **noop + gripper is executable** — "hold the arm, move the gripper". It
+  flattens to no arm width at all: the arm target stays where it was, and
+  only the gripper channel is written, in the declared `GripperSpec`'s own
+  units. This is the shape a sender uses for a gripper-only command, which
+  by construction has no arm target to put beside the gripper.
+* **noop with no gripper commands nothing.** It is skipped and the rest of
+  the chunk still executes — one inert step never costs the sender the
+  waypoints around it — and the skip is recorded as
+  `Fault{FAULT_KIND_VALIDATION_ERROR}`, once per claim window, naming the
+  intake that skipped it.
+
+An action that doesn't fit the declared action space at all — a target arm
+the space doesn't have, a missing field, an opaque space — is a different
+fact: the whole chunk is refused, because a partial trajectory from a sender
+that disagrees about the space is not a degraded-but-safe thing to actuate.
+That refusal is recorded the same way, in its own words. Either way the
+sender learns from the episode's own timeline what did not happen; a
+dropped action is never silent.
+
 ---
 
 ## 5. Handoff sub-protocol (per `HandoffPolicy`)
@@ -229,7 +346,9 @@ action space, the gate holds instead of cross-fading — a dims mismatch is
 never zip-truncated into a shorter, meaningless action. Media intake is the
 primary check (drops the mismatched action before it reaches the gate,
 faulting `FAULT_KIND_VALIDATION_ERROR` once per claim window); the gate's
-own refusal to blend mismatched lengths is defense in depth.
+own refusal to blend mismatched lengths is defense in depth. A gripper-only
+action (§4) carries no arm width by construction and is not a mismatch: it
+cross-fades on the gripper channel alone, with the arm holding.
 
 Fixtures: `handoff_immediate_mid_chunk`, `teleop_dims_mismatch_holds`.
 
@@ -334,7 +453,8 @@ On loss of control-plane connectivity (`partition_start`):
 Fixture: `backend_partition_degradation`.
 
 **Directive acks (flag `waddle.v0.plane.acks`).** A plane directive
-(`ClaimDirective`, `EpisodeDirective`, `ResetWindowDirective`) that carries a
+(`ClaimDirective`, `EpisodeDirective`, `ResetWindowDirective`,
+`AgentTaskUpdate`) that carries a
 `directive_id`, on a connection that negotiated the flag, is answered with
 exactly one `DirectiveAck` (`GateClientMessage` arm 4): `accepted=true` when
 the session FSM applied every event the directive decoded into,
@@ -348,3 +468,12 @@ existed, a NACKed directive changed no state, and acks never appear on the
 `EpisodeEvent` stream or in sidecars. Directives without a `directive_id`
 stay fire-and-forget; a directive too malformed to decode into session
 events at all produces no ack.
+
+`AgentTaskUpdate` (flag `waddle.v0.agent`) is a directive only where it
+decodes into a session event: a **DENIED addressed to the ACTIVE episode**,
+which the FSM judges by E26 (invite open: accepted, the episode aborts) or
+E26b (invite already closed: rejected, "agent task DENIED after the invite
+closed (E26b)"). QUEUED and COMPLETED updates, and a DENIED naming any
+other episode, are informational — recorded, never a transition (§1.5) —
+so they produce no ack whatever their `directive_id` says, on the same rule
+that governs an undecodable directive: no session events, no ack.

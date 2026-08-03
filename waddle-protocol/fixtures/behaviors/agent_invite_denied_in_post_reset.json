@@ -1,0 +1,47 @@
+{
+  "format": "waddle.behavior/v0",
+  "name": "agent_invite_denied_in_post_reset",
+  "description": "Pins FSM.md E26b's post-reset branch plus C8's scope: a pre-engage terminate{SUCCESS} routes through E14 into POST_RESET{SUCCESS pinned}, closing the invite (close_run cancels the still-armed agent_invite_timeout) and opening the declared remote POST reset window (E19); a plane DENIED racing that completion into POST_RESET is rejected outright — no state emission, the pinned outcome untouched (E26b); the window's TELEOPERATOR claim IS then admitted (C6 — C8 constrains only the grants C1 governs, so reset-window claims stay C6's business even on an agent-invited episode), engages, completes (E20/E21), and E15 delivers TERMINAL{SUCCESS, pinned unchanged}.",
+  "target": "fsm",
+  "requires_features": ["waddle.v0.core", "waddle.v0.agent", "waddle.v0.reset.phases", "waddle.v0.reset.remote"],
+  "setup": {
+    "lease_enforcement": "LEASE_ENFORCEMENT_ADVISORY",
+    "handoff": { "immediate": { "blendNs": "0" } },
+    "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING"
+  },
+  "steps": [
+    { "inject": { "kind": "episode_open", "episode_id": "ep-adp-0001", "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING", "post_reset_window": { "expected_actor": "ACTOR_KIND_TELEOPERATOR", "prompt": "clear the scene", "timeout_ns": "10000000000" }, "agent_invite": { "prompt": "assemble the kit", "timeout_ns": "30000000000" } } },
+    { "expect_emission": { "effect": { "arm_timer": { "timer_id": "agent_invite_timeout", "deadline_ns": "30000000000" } }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RESETTING", "episode.agent_invited": true, "episode.post_reset_declared": true } },
+
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "reset_result", "result": { "ok": true, "strategy": "scripted_home", "verification": { "mode": "RESET_VERIFICATION_MODE_BLOCKING", "verified": true, "judgeId": "judge-reset", "judgeVersion": "2.1.0", "score": 0.96, "tNs": "100000000" } } } },
+    { "inject": { "kind": "start" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RUNNING" } },
+
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "terminate", "outcome": "TERMINAL_OUTCOME_SUCCESS", "reason": "task done before any agent engaged" } },
+    { "expect_emission": { "event": { "state": { "to": "EPISODE_STATE_POST_RESET", "outcome": "TERMINAL_OUTCOME_SUCCESS" } }, "within_ns": "0" } },
+    { "expect_emission": { "effect": { "cancel_timer": { "timer_id": "agent_invite_timeout" } }, "within_ns": "0" } },
+    { "expect_emission": { "event": { "resetWindow": { "kind": "RESET_WINDOW_EVENT_KIND_OPENED", "reset": "RESET_KIND_POST", "expectedActor": "ACTOR_KIND_TELEOPERATOR" } }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_POST_RESET", "episode.pinned_outcome": "TERMINAL_OUTCOME_SUCCESS", "episode.agent_engaged": false, "reset_window.open": true } },
+
+    { "inject": { "kind": "agent_task_update", "update": { "episodeId": "ep-adp-0001", "kind": "AGENT_TASK_UPDATE_KIND_DENIED", "detail": "denial raced the completion into post-reset" } } },
+    { "expect_no_emission": { "event": { "state": {} }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_POST_RESET", "episode.pinned_outcome": "TERMINAL_OUTCOME_SUCCESS" } },
+
+    { "inject": { "kind": "claim_granted", "claim": { "claimId": "claim-adp-0001", "episodeId": "ep-adp-0001", "actor": { "kind": "ACTOR_KIND_TELEOPERATOR", "id": "top-7", "displayName": "Teleoperator 7" }, "sourceName": "teleop", "selfInitiated": false } } },
+    { "expect_emission": { "event": { "claim": { "kind": "CLAIM_EVENT_KIND_GRANTED" } }, "within_ns": "0" } },
+    { "expect_state": { "claim.active_claim_id": "claim-adp-0001", "reset_window.claim_id": "claim-adp-0001" } },
+
+    { "inject": { "kind": "reset_window_engage", "claim_id": "claim-adp-0001" } },
+    { "expect_emission": { "event": { "resetWindow": { "kind": "RESET_WINDOW_EVENT_KIND_ENGAGED", "claimId": "claim-adp-0001" } }, "within_ns": "0" } },
+    { "expect_state": { "gate.mode": "GATE_MODE_RESET" } },
+
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "reset_window_complete", "claim_id": "claim-adp-0001", "result": { "ok": true, "detail": "scene cleared" } } },
+    { "expect_emission": { "event": { "resetWindow": { "kind": "RESET_WINDOW_EVENT_KIND_COMPLETED" } }, "within_ns": "0" } },
+    { "expect_emission": { "event": { "state": { "to": "EPISODE_STATE_TERMINAL", "outcome": "TERMINAL_OUTCOME_SUCCESS" } }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_TERMINAL", "episode.outcome": "TERMINAL_OUTCOME_SUCCESS", "episode.post_reset_failed": false, "episode.agent_invited": true, "episode.agent_engaged": false, "reset_window.open": false } }
+  ]
+}

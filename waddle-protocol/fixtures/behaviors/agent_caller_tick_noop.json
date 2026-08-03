@@ -1,0 +1,53 @@
+{
+  "format": "waddle.behavior/v0",
+  "name": "agent_caller_tick_noop",
+  "description": "Pins FSM.md E24: in an agent-invited episode the caller's own gate() ticks NEVER dispatch while no claim is engaged — every tick returns Noop{NOOP_REASON_AGENT_EPISODE} with no fault and no state change (the tick that drives E6 READY→RUNNING is itself noop-marked); once the invited agent's claim engages, ordinary intervention semantics apply unchanged and the agent's stream substitutes through gate() as ever. The caller stays a coherent spectator, exactly like bypass mode's marker contract.",
+  "target": "gate",
+  "requires_features": ["waddle.v0.core", "waddle.v0.agent"],
+  "setup": {
+    "robot_fixture": "../wire/robot_description_bimanual_composite.json",
+    "lease_enforcement": "LEASE_ENFORCEMENT_ADVISORY",
+    "handoff": { "holdFirst": {} },
+    "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING"
+  },
+  "steps": [
+    { "inject": { "kind": "episode_open", "episode_id": "ep-acn-0001", "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING", "agent_invite": { "prompt": "sort the parts bin", "timeout_ns": "10000000000" } } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "reset_result", "result": { "ok": true, "strategy": "scripted_home", "verification": { "mode": "RESET_VERIFICATION_MODE_BLOCKING", "verified": true, "judgeId": "judge-reset", "judgeVersion": "2.1.0", "score": 0.96, "tNs": "100000000" } } } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_READY" } },
+
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "200000000", "action": { "composite": { "parts": [
+      { "name": "left", "action": { "jointPosition": { "values": [0.10, -0.40, 0.30, -1.20, 0.05, 0.90] } } },
+      { "name": "right", "action": { "jointPosition": { "values": [-0.10, -0.40, 0.30, -1.20, -0.05, 0.90] } } }
+    ] }, "tOffsetNs": "0" } } },
+    { "expect_output": { "kind": "noop", "reason": "NOOP_REASON_AGENT_EPISODE" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RUNNING", "gate.mode": "GATE_MODE_PASSTHROUGH", "episode.agent_invited": true, "episode.agent_engaged": false } },
+
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "300000000", "action": { "composite": { "parts": [
+      { "name": "left", "action": { "jointPosition": { "values": [0.11, -0.39, 0.30, -1.19, 0.05, 0.90] } } },
+      { "name": "right", "action": { "jointPosition": { "values": [-0.11, -0.39, 0.30, -1.19, -0.05, 0.90] } } }
+    ] }, "tOffsetNs": "0" } } },
+    { "expect_output": { "kind": "noop", "reason": "NOOP_REASON_AGENT_EPISODE" } },
+    { "expect_no_emission": { "event": { "fault": {} }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RUNNING", "gate.mode": "GATE_MODE_PASSTHROUGH" } },
+
+    { "inject": { "kind": "claim_granted", "claim": { "claimId": "claim-acn-0001", "episodeId": "ep-acn-0001", "actor": { "kind": "ACTOR_KIND_AGENT", "id": "agent-waddle-1", "displayName": "Waddle agent" }, "sourceName": "waddle-agent", "selfInitiated": false, "tGrantedNs": "300000000", "handoff": { "holdFirst": {} }, "spaces": ["SPACE_KIND_EE_POSE_DELTA"] } } },
+    { "inject": { "kind": "engage", "claim_id": "claim-acn-0001", "initiator": "ACTOR_KIND_AGENT" } },
+    { "advance_ns": "50000000" },
+    { "inject": { "kind": "verb_result", "result": { "ok": true, "detail": "hold complete", "tNs": "350000000" } } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_INTERVENTION", "gate.mode": "GATE_MODE_INTERVENTION", "episode.agent_engaged": true } },
+
+    { "advance_ns": "50000000" },
+    { "inject": { "kind": "teleop_action", "packet": { "tClientNs": "42000000000", "seq": "1", "clutchEngaged": true, "targets": [
+      { "part": "left", "twist": { "linear": { "x": 0.004, "y": 0.0, "z": 0.002 }, "angular": { "x": 0.0, "y": 0.0, "z": 0.0 } } },
+      { "part": "right", "twist": { "linear": { "x": 0.0, "y": 0.0, "z": 0.0 }, "angular": { "x": 0.0, "y": 0.0, "z": 0.0 } } }
+    ] } } },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "400000000", "action": { "composite": { "parts": [
+      { "name": "left", "action": { "jointPosition": { "values": [0.12, -0.38, 0.30, -1.18, 0.05, 0.90] } } },
+      { "name": "right", "action": { "jointPosition": { "values": [-0.12, -0.38, 0.30, -1.18, -0.05, 0.90] } } }
+    ] }, "tOffsetNs": "0" } } },
+    { "expect_output": { "kind": "substitute", "provenance": { "kind": "PROVENANCE_KIND_AGENT" } } }
+  ]
+}

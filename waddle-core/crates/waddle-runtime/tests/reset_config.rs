@@ -236,6 +236,11 @@ fn feature_flags_declare_reset_phases_and_remote_from_session_config() {
         "waddle.v0.reset",
         "waddle.v0.reset.phases",
         "waddle.v0.reset.remote",
+        // Unconditional whenever a transport is configured (like the acks
+        // flag, asserted in directive_acks.rs): the plane routes agent
+        // invites only when this was advertised at Register, so dropping it
+        // silently severs real-plane invite routing.
+        "waddle.v0.agent",
     ] {
         assert!(
             req.feature_flags.iter().any(|f| f == flag),
@@ -273,6 +278,9 @@ fn feature_flags_omit_phases_and_remote_when_unconfigured() {
     let req = captured.lock()[0].clone();
     assert!(req.feature_flags.iter().any(|f| f == "waddle.v0.core"));
     assert!(req.feature_flags.iter().any(|f| f == "waddle.v0.reset"));
+    // `waddle.v0.agent` needs no reset config at all — the SDK always
+    // supports being agent-driven, so it rides every Register.
+    assert!(req.feature_flags.iter().any(|f| f == "waddle.v0.agent"));
     assert!(
         !req.feature_flags
             .iter()
@@ -302,7 +310,7 @@ fn episode_options_pre_reset_inner_none_disables_session_hook_for_this_episode()
             "disabled",
             EpisodeOptions {
                 pre_reset: Some(None),
-                post_reset: None,
+                ..EpisodeOptions::default()
             },
         )
         .expect("disabled pre-reset still resolves to the trivial default");
@@ -344,8 +352,8 @@ fn episode_options_post_reset_inner_none_disables_session_post_reset_for_this_ep
         .start_episode_with(
             "disabled-post",
             EpisodeOptions {
-                pre_reset: None,
                 post_reset: Some(None),
+                ..EpisodeOptions::default()
             },
         )
         .unwrap();
@@ -400,7 +408,7 @@ fn remote_pre_reset_blocks_then_window_complete_releases_it_to_ready() {
     session.inject(SessionEvent::ClaimGranted {
         id: ClaimId::new("reset-claim"),
         source: "teleop".to_owned(),
-        actor: ActorKind::Teleoperator,
+        actor: waddle_types::ActorRef::of_kind(ActorKind::Teleoperator),
         self_initiated: false,
         at: waddle_types::MonoNs(1),
     });
@@ -526,8 +534,8 @@ fn predecessor_in_post_reset_is_waited_out_before_next_open() {
             session.start_episode_with(
                 "second",
                 EpisodeOptions {
-                    pre_reset: None,
                     post_reset: Some(None),
+                    ..EpisodeOptions::default()
                 },
             )
         })

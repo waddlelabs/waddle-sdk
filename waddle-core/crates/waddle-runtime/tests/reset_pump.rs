@@ -408,7 +408,7 @@ fn remote_post_reset_window_records_reset_active_noop_markers() {
     session.inject(SessionEvent::ClaimGranted {
         id: ClaimId::new("reset-claim"),
         source: "teleop".to_owned(),
-        actor: ActorKind::Teleoperator,
+        actor: waddle_types::ActorRef::of_kind(ActorKind::Teleoperator),
         self_initiated: false,
         at: waddle_types::MonoNs(2_000_000),
     });
@@ -626,7 +626,7 @@ fn retake_successor_inherits_session_post_reset_remote_window() {
     session.inject(SessionEvent::ClaimGranted {
         id: ClaimId::new("reset-claim"),
         source: "teleop".to_owned(),
-        actor: ActorKind::Teleoperator,
+        actor: waddle_types::ActorRef::of_kind(ActorKind::Teleoperator),
         self_initiated: false,
         at: waddle_types::MonoNs(5_000_000),
     });

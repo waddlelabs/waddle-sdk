@@ -1,0 +1,61 @@
+{
+  "format": "waddle.behavior/v0",
+  "name": "agent_invite_happy",
+  "description": "Pins the full agent-invited happy path FSM.md E23→C8→E7→E10: episode_open carrying agent_invite emits AgentInviteEvent{prompt, timeoutNs} and the arm_timer{agent_invite_timeout} effect (E23); the caller's own gate tick never dispatches while no claim is engaged (Noop{NOOP_REASON_AGENT_EPISODE}, E24) yet still drives E6 READY→RUNNING; an ACTOR_KIND_AGENT claim is admitted (C8) and its engage cancels the invite timer and latches agent_engaged (§1.5's E7 additions); the agent's intervention-stream action substitutes through gate() with PROVENANCE_KIND_AGENT exactly like any other intervention (zero new authority); terminate{SUCCESS} then closes the run through the ordinary E10 path — gate→PASSTHROUGH, state{→TERMINAL, SUCCESS}, claim RELEASED.",
+  "target": "gate",
+  "requires_features": ["waddle.v0.core", "waddle.v0.agent"],
+  "setup": {
+    "robot_fixture": "../wire/robot_description_bimanual_composite.json",
+    "lease_enforcement": "LEASE_ENFORCEMENT_ADVISORY",
+    "handoff": { "holdFirst": {} },
+    "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING"
+  },
+  "steps": [
+    { "inject": { "kind": "episode_open", "episode_id": "ep-aih-0001", "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING", "agent_invite": { "prompt": "clear the table and stack the cups", "timeout_ns": "5000000000" } } },
+    { "expect_emission": { "event": { "agentInvite": { "prompt": "clear the table and stack the cups", "timeoutNs": "5000000000" } }, "within_ns": "0" } },
+    { "expect_emission": { "effect": { "arm_timer": { "timer_id": "agent_invite_timeout", "deadline_ns": "5000000000" } }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RESETTING", "episode.agent_invited": true, "episode.agent_engaged": false } },
+
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "reset_result", "result": { "ok": true, "strategy": "scripted_home", "verification": { "mode": "RESET_VERIFICATION_MODE_BLOCKING", "verified": true, "judgeId": "judge-reset", "judgeVersion": "2.1.0", "score": 0.97, "tNs": "100000000" } } } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_READY" } },
+
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "200000000", "action": { "composite": { "parts": [
+      { "name": "left", "action": { "jointPosition": { "values": [0.10, -0.40, 0.30, -1.20, 0.05, 0.90] } } },
+      { "name": "right", "action": { "jointPosition": { "values": [-0.10, -0.40, 0.30, -1.20, -0.05, 0.90] } } }
+    ] }, "tOffsetNs": "0" } } },
+    { "expect_output": { "kind": "noop", "reason": "NOOP_REASON_AGENT_EPISODE" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RUNNING", "gate.mode": "GATE_MODE_PASSTHROUGH" } },
+
+    { "inject": { "kind": "claim_granted", "claim": { "claimId": "claim-aih-0001", "episodeId": "ep-aih-0001", "actor": { "kind": "ACTOR_KIND_AGENT", "id": "agent-waddle-1", "displayName": "Waddle agent" }, "sourceName": "waddle-agent", "selfInitiated": false, "tGrantedNs": "200000000", "handoff": { "holdFirst": {} }, "spaces": ["SPACE_KIND_EE_POSE_DELTA"] } } },
+    { "expect_emission": { "event": { "claim": { "kind": "CLAIM_EVENT_KIND_GRANTED" } }, "within_ns": "0" } },
+    { "inject": { "kind": "engage", "claim_id": "claim-aih-0001", "initiator": "ACTOR_KIND_AGENT" } },
+    { "expect_emission": { "event": { "intervention": { "phase": "INTERVENTION_PHASE_ENGAGE", "claimId": "claim-aih-0001" } }, "within_ns": "0" } },
+    { "expect_emission": { "effect": { "cancel_timer": { "timer_id": "agent_invite_timeout" } }, "within_ns": "0" } },
+    { "expect_state": { "episode.agent_engaged": true } },
+
+    { "advance_ns": "50000000" },
+    { "inject": { "kind": "verb_result", "result": { "ok": true, "detail": "hold complete, arms at rest", "tNs": "250000000" } } },
+    { "expect_emission": { "event": { "lease": { "kind": "LEASE_EVENT_KIND_HANDED_OFF" } }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_INTERVENTION", "gate.mode": "GATE_MODE_INTERVENTION" } },
+
+    { "advance_ns": "50000000" },
+    { "inject": { "kind": "teleop_action", "packet": { "tClientNs": "42000000000", "seq": "1", "clutchEngaged": true, "targets": [
+      { "part": "left", "twist": { "linear": { "x": 0.004, "y": 0.0, "z": 0.002 }, "angular": { "x": 0.0, "y": 0.0, "z": 0.0 } } },
+      { "part": "right", "twist": { "linear": { "x": 0.0, "y": 0.0, "z": 0.0 }, "angular": { "x": 0.0, "y": 0.0, "z": 0.0 } } }
+    ] } } },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "300000000", "action": { "composite": { "parts": [
+      { "name": "left", "action": { "jointPosition": { "values": [0.11, -0.39, 0.30, -1.19, 0.05, 0.90] } } },
+      { "name": "right", "action": { "jointPosition": { "values": [-0.11, -0.39, 0.30, -1.19, -0.05, 0.90] } } }
+    ] }, "tOffsetNs": "0" } } },
+    { "expect_output": { "kind": "substitute", "provenance": { "kind": "PROVENANCE_KIND_AGENT" } } },
+
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "terminate", "outcome": "TERMINAL_OUTCOME_SUCCESS", "reason": "agent task complete" } },
+    { "expect_emission": { "event": { "gate": { "from": "GATE_MODE_INTERVENTION", "to": "GATE_MODE_PASSTHROUGH" } }, "within_ns": "0" } },
+    { "expect_emission": { "event": { "state": { "to": "EPISODE_STATE_TERMINAL", "outcome": "TERMINAL_OUTCOME_SUCCESS" } }, "within_ns": "0" } },
+    { "expect_emission": { "event": { "claim": { "kind": "CLAIM_EVENT_KIND_RELEASED" } }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_TERMINAL", "episode.outcome": "TERMINAL_OUTCOME_SUCCESS", "episode.agent_engaged": true, "claim.active_claim_id": "" } }
+  ]
+}

@@ -84,11 +84,10 @@ fn report_proprio_merges_into_recorded_observations() {
         ee_pose: Some(EePose::new([1.0, 2.0, 3.0], [1.0, 0.0, 0.0, 0.0], "ee").unwrap()),
         gripper: Some(0.5),
     });
-    // The report crosses a side channel the reducer drains once per wake
-    // (<=20ms cadence); settle well past that before the first gate tick so
-    // every recorded tick below sees the merge, not just a later one.
-    std::thread::sleep(Duration::from_millis(60));
-
+    // No settling wait: whichever wake drains this report, the LAST
+    // observation in the file carries the merge either way — it is either a
+    // gate tick recorded after the merge landed, or the report's own row
+    // (which carries the latest known `joint_pos`, i.e. this same obs).
     let obs = [0.9f64, 0.8, 0.7];
     for _ in 0..10 {
         let _ = ep.gate(&[0.1, 0.2, 0.3], None, Some(&obs));
@@ -156,14 +155,15 @@ fn report_proprio_patches_only_the_fields_it_carries() {
         ee_pose: None,
         gripper: Some(0.1),
     });
-    std::thread::sleep(Duration::from_millis(60));
-    // A second report patches only `gripper`; `joint_vel` must survive.
+    // A second report patches only `gripper`; `joint_vel` must survive. The
+    // channel is FIFO, so the merge order is fixed regardless of which wake
+    // drains them, and every observation written after both — the report's
+    // own row or the gate tick's — carries the patched state.
     session.report_proprio(ProprioReport {
         joint_vel: None,
         ee_pose: None,
         gripper: Some(0.9),
     });
-    std::thread::sleep(Duration::from_millis(60));
 
     let _ = ep.gate(&[0.0; 3], None, Some(&[0.0; 3]));
     ep.terminate(TerminalOutcome::Success, "done");
@@ -247,4 +247,63 @@ fn stream_observations_uplinks_periodically_with_merged_fields() {
     };
     assert_eq!(sample.joint_vel, vec![1.0, 2.0, 3.0]);
     assert_eq!(sample.gripper, Some(0.75));
+}
+
+/// A caller that reports proprioception and never hands `gate()` an `obs`
+/// still gets its proprioception recorded. Before this, observations were
+/// written ONLY on the gate-tick path, so `report_proprio` was invisible to
+/// the recording unless a later `gate(obs=...)` happened to carry it —
+/// which is how an agent-invited episode (whose caller never ticks at all,
+/// FSM.md E24) came out with a recording containing zero observations.
+#[test]
+fn report_proprio_records_observations_without_any_gate_obs() {
+    let dir = tempfile::tempdir().unwrap();
+    let session = Session::builder("proprio-no-gate-obs")
+        .robot(robot())
+        .control(registry())
+        .recording_dir(dir.path())
+        .build()
+        .unwrap();
+
+    let ep = session.start_episode("task").unwrap();
+    let id = ep.id().clone();
+
+    // This episode is never ticked at all — the agent-invited shape (FSM.md
+    // E24), and the one that made the miss total. Every observation in the
+    // file therefore came from `report_proprio`.
+    //
+    // Fired back to back, with no settling wait: which wake drains them
+    // cannot change how many are recorded, since finalize drains this
+    // channel too (`Reducer`'s `finalize_writes_reports_still_queued_at_the_episode_tail`
+    // pins that tail deterministically, where no wake can hide it).
+    for i in 0..5 {
+        session.report_proprio(ProprioReport {
+            joint_vel: Some(vec![f64::from(i), 0.0, 0.0]),
+            ee_pose: None,
+            gripper: Some(0.5),
+        });
+    }
+    ep.terminate(TerminalOutcome::Success, "done");
+    session.shutdown();
+
+    let buf = std::fs::read(dir.path().join(format!("{id}.mcap"))).unwrap();
+    let mut samples = Vec::new();
+    for message in mcap::MessageStream::new(&buf).unwrap() {
+        let message = message.unwrap();
+        if message.channel.topic == waddle_sidecar::mcaprec::OBSERVATIONS_TOPIC {
+            let update = pb::ObservationUpdate::decode(message.data.as_ref()).unwrap();
+            if let Some(pb::observation_update::Payload::Proprio(p)) = update.payload {
+                samples.push(p);
+            }
+        }
+    }
+    assert_eq!(
+        samples.len(),
+        5,
+        "one recorded observation per reported sample, got {}",
+        samples.len()
+    );
+    let reported: Vec<f64> = samples.iter().map(|s| s.joint_vel[0]).collect();
+    assert_eq!(reported, vec![0.0, 1.0, 2.0, 3.0, 4.0]);
+    assert!(samples.iter().all(|s| s.gripper == Some(0.5)));
 }

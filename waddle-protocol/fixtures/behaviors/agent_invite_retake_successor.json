@@ -1,0 +1,69 @@
+{
+  "format": "waddle.behavior/v0",
+  "name": "agent_invite_retake_successor",
+  "description": "Pins the E24 scope end-to-end across a retake (FSM.md §1.5, E9/C5): the caller's own gate() ticks return Noop{NOOP_REASON_AGENT_EPISODE} everywhere inside the agent-invited episode — in RESETTING before the reset lands, in READY/RUNNING, and throughout the engage window (INTERVENTION with the gate still PASSTHROUGH, the agent's chunk-boundary handoff still in flight) — and STOP being noop the moment the episode ends. The invited agent's engage stalls (chunkBoundary, no chunk ever closes) until the engage timeout, its claim retakes into a successor that is NOT agent-invited, and the successor's caller ticks pass through normally under the surviving claim. The E24 plan is derived state: nothing but the episode it was derived for may keep it alive.",
+  "target": "gate",
+  "requires_features": ["waddle.v0.core", "waddle.v0.agent"],
+  "setup": {
+    "robot_fixture": "../wire/robot_description_bimanual_composite.json",
+    "lease_enforcement": "LEASE_ENFORCEMENT_ADVISORY",
+    "handoff": { "chunkBoundary": { "maxWaitNs": "0" } },
+    "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING"
+  },
+  "steps": [
+    { "inject": { "kind": "episode_open", "episode_id": "ep-air-0001", "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING", "agent_invite": { "prompt": "clear the tote", "timeout_ns": "10000000000" } } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RESETTING", "gate.mode": "GATE_MODE_PASSTHROUGH", "episode.agent_invited": true } },
+
+    { "advance_ns": "50000000" },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "50000000", "action": { "composite": { "parts": [
+      { "name": "left", "action": { "jointPosition": { "values": [0.10, -0.40, 0.30, -1.20, 0.05, 0.90] } } },
+      { "name": "right", "action": { "jointPosition": { "values": [-0.10, -0.40, 0.30, -1.20, -0.05, 0.90] } } }
+    ] }, "tOffsetNs": "0" } } },
+    { "expect_output": { "kind": "noop", "reason": "NOOP_REASON_AGENT_EPISODE" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RESETTING" } },
+
+    { "advance_ns": "50000000" },
+    { "inject": { "kind": "reset_result", "result": { "ok": true, "strategy": "scripted_home", "verification": { "mode": "RESET_VERIFICATION_MODE_BLOCKING", "verified": true, "judgeId": "judge-reset", "judgeVersion": "2.1.0", "score": 0.95, "tNs": "100000000" } } } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_READY" } },
+
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "200000000", "action": { "composite": { "parts": [
+      { "name": "left", "action": { "jointPosition": { "values": [0.11, -0.39, 0.30, -1.19, 0.05, 0.90] } } },
+      { "name": "right", "action": { "jointPosition": { "values": [-0.11, -0.39, 0.30, -1.19, -0.05, 0.90] } } }
+    ] }, "tOffsetNs": "0" } } },
+    { "expect_output": { "kind": "noop", "reason": "NOOP_REASON_AGENT_EPISODE" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RUNNING", "gate.mode": "GATE_MODE_PASSTHROUGH" } },
+
+    { "inject": { "kind": "claim_granted", "claim": { "claimId": "claim-air-0001", "episodeId": "ep-air-0001", "actor": { "kind": "ACTOR_KIND_AGENT", "id": "agent-waddle-1", "displayName": "Waddle agent" }, "sourceName": "waddle-agent", "selfInitiated": false, "tGrantedNs": "200000000", "handoff": { "chunkBoundary": { "maxWaitNs": "0" } }, "spaces": ["SPACE_KIND_EE_POSE_DELTA"] } } },
+    { "inject": { "kind": "engage", "claim_id": "claim-air-0001", "initiator": "ACTOR_KIND_AGENT" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_INTERVENTION", "episode.intervention_phase": "INTERVENTION_PHASE_ENGAGE", "gate.mode": "GATE_MODE_PASSTHROUGH", "episode.agent_engaged": true } },
+
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "300000000", "action": { "composite": { "parts": [
+      { "name": "left", "action": { "jointPosition": { "values": [0.12, -0.38, 0.30, -1.18, 0.05, 0.90] } } },
+      { "name": "right", "action": { "jointPosition": { "values": [-0.12, -0.38, 0.30, -1.18, -0.05, 0.90] } } }
+    ] }, "tOffsetNs": "0" } } },
+    { "expect_output": { "kind": "noop", "reason": "NOOP_REASON_AGENT_EPISODE" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_INTERVENTION", "gate.mode": "GATE_MODE_PASSTHROUGH" } },
+
+    { "advance_ns": "11000000000" },
+    { "inject": { "kind": "retake", "claim_id": "claim-air-0001", "initiator": "ACTOR_KIND_AGENT", "successor_episode_id": "ep-air-0002" } },
+    { "expect_emission": { "event": { "state": { "to": "EPISODE_STATE_TERMINAL", "outcome": "TERMINAL_OUTCOME_ABORTED_RETAKE" } }, "within_ns": "0" } },
+    { "expect_emission": { "effect": { "open_successor": { "predecessor_episode_id": "ep-air-0001", "claim_id": "claim-air-0001", "born_claimed": true, "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING" } }, "within_ns": "0" } },
+
+    { "inject": { "kind": "episode_open", "episode_id": "ep-air-0002", "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING", "born_claimed": true, "parent_episode_id": "ep-air-0001" } },
+    { "expect_state": { "episode.id": "ep-air-0002", "episode.state": "EPISODE_STATE_RESETTING", "episode.agent_invited": false, "episode.born_claimed": true, "gate.mode": "GATE_MODE_PASSTHROUGH", "claim.active_claim_id": "claim-air-0001" } },
+
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "reset_result", "result": { "ok": true, "strategy": "scripted_home", "verification": { "mode": "RESET_VERIFICATION_MODE_BLOCKING", "verified": true, "judgeId": "judge-reset", "judgeVersion": "2.1.0", "score": 0.94, "tNs": "11500000000" } } } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_READY", "gate.mode": "GATE_MODE_PASSTHROUGH" } },
+
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "11600000000", "action": { "composite": { "parts": [
+      { "name": "left", "action": { "jointPosition": { "values": [0.13, -0.37, 0.30, -1.17, 0.05, 0.90] } } },
+      { "name": "right", "action": { "jointPosition": { "values": [-0.13, -0.37, 0.30, -1.17, -0.05, 0.90] } } }
+    ] }, "tOffsetNs": "0" } } },
+    { "expect_output": { "kind": "pass" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RUNNING", "gate.mode": "GATE_MODE_PASSTHROUGH" } }
+  ]
+}

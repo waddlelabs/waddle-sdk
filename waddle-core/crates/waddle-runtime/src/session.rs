@@ -13,7 +13,7 @@ use std::sync::mpsc::Sender;
 use std::thread::JoinHandle;
 
 use waddle_controlplane::{ClientConfig, ControlPlaneClient, ControlTransport};
-use waddle_fsm::{Phase, SessionConfig, SessionEvent, WindowSpec};
+use waddle_fsm::{AgentInvite, Phase, SessionConfig, SessionEvent, WindowSpec};
 use waddle_gate::gate::{Gate, GateOutput, GateShared};
 use waddle_gate::jitter::TimedAction;
 use waddle_gate::plan::GatePlan;
@@ -37,6 +37,12 @@ use crate::mirror::Mirror;
 use crate::pumps;
 use crate::reducer::Reducer;
 use crate::verbs::{ControlRegistry, VerbDispatch, VerbOutcome};
+
+/// Flag `waddle.v0.agent` (VERSIONING.md registry): declared at Register
+/// unconditionally, like `crate::ack::ACKS_FLAG` — the SDK always supports
+/// being agent-driven; the plane routes invites only when it accepted the
+/// flag.
+pub(crate) const AGENT_FLAG: &str = "waddle.v0.agent";
 
 /// How resets run until the closed reset planner is wired: a callable
 /// returning (ok, verified). The default reports ok+verified — honest only
@@ -127,6 +133,42 @@ impl std::fmt::Debug for ResetSpec {
 pub struct EpisodeOptions {
     pub pre_reset: Option<Option<ResetSpec>>,
     pub post_reset: Option<Option<ResetSpec>>,
+    /// Open this episode agent-invited (flag `waddle.v0.agent`, FSM.md E23):
+    /// the invite is emitted to the plane at open — like any other emission
+    /// — and the invite deadline (`AgentInviteTimeout`, E25) is armed. The
+    /// invited agent then drives through the EXISTING claim machinery (C8
+    /// restricts admission to `ACTOR_KIND_AGENT`, nothing else changes);
+    /// the caller's own `gate()` ticks never dispatch while no claim is
+    /// engaged (E24, `NOOP_REASON_AGENT_EPISODE`).
+    ///
+    /// [`Session::run_agent`] is the blocking convenience that sets this;
+    /// setting it directly opens the episode WITHOUT blocking — the caller
+    /// keeps the [`Episode`] handle and watches `done()`/`outcome()` (or the
+    /// mirror's `agent_invited`/`agent_engaged`) themselves.
+    pub agent_invite: Option<AgentInvite>,
+}
+
+/// The result of one agent-driven episode ([`Session::run_agent`], flag
+/// `waddle.v0.agent`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentOutcome {
+    /// The episode's terminal outcome — the FSM's word, not the plane's:
+    /// SUCCESS/FAILURE per the plane's `MARK_DONE`, ABORT for an invite
+    /// timeout (FSM.md E25) or a pre-engage DENIED (E26),
+    /// ABORTED_RETAKE when a retake successor replaced the episode.
+    pub outcome: TerminalOutcome,
+    pub episode_id: EpisodeId,
+    /// The opaque Waddle-side recording reference from an
+    /// `AgentTaskUpdate{COMPLETED}` addressed to this episode. Retention is
+    /// best-effort by design: the plane pump processes updates and
+    /// directives in arrival order, so a plane that sends COMPLETED before
+    /// `MARK_DONE` (the expected ordering) always lands it here; a
+    /// COMPLETED arriving only after TERMINAL was observed is not waited
+    /// for.
+    pub recording_ref: Option<String>,
+    /// The last `AgentTaskUpdate.detail` addressed to this episode (a
+    /// DENIED's reason, or COMPLETED's summary). Empty when none arrived.
+    pub detail: String,
 }
 
 /// Hand-off slot for the gate-record consumer: born on the caller thread
@@ -438,22 +480,33 @@ impl SessionBuilder {
         let robot = RobotDescription::try_from(&robot_pb)?;
 
         // Cameras: `declared_cameras` backs `publish_frame`'s
-        // unknown-camera + declared-resolution checks regardless of whether
-        // a media plane is wired at all; `camera_uplinks` (one per declared
-        // camera, only when a media plane IS wired) is what actually
-        // publishes — an unwired declaration is a cheap no-op, never an
-        // error. Resolving each camera's uplink policy here (not lazily on
-        // first frame) means an unsupported encoding fails loudly at build
-        // time instead of silently dropping every frame later.
+        // unknown-camera + declared-resolution checks regardless of what is
+        // wired; `camera_uplinks` (built only for cameras a published frame
+        // can actually go SOMEWHERE from) is what actually publishes — a
+        // declaration with nowhere to go is a cheap no-op, never an error.
+        // A frame has two possible destinations, independently:
+        //   - the media plane (video track), when one is wired at all;
+        //   - the control plane (bounded-rate `FrameStill`, flag
+        //     `waddle.v0.obs.stills`), when the camera declared
+        //     `StreamPolicy.still_fps > 0` AND a transport exists to carry
+        //     it.
+        // Resolving each camera's uplink policy here (not lazily on first
+        // frame) means an unsupported encoding fails loudly at build time
+        // instead of silently dropping every frame later.
         let mut declared_cameras: HashMap<String, (u32, u32)> = HashMap::new();
         for cam in &robot_pb.cameras {
             declared_cameras.insert(cam.name.clone(), (cam.width, cam.height));
         }
         let media_for_cameras = self.media.clone();
+        let media_wired = media_for_cameras.is_some();
+        let stills_wired = self.transport.is_some();
         let mut camera_uplinks: HashMap<String, Arc<CameraUplink>> = HashMap::new();
-        if media_for_cameras.is_some() {
-            for cam in &robot_pb.cameras {
-                let uplink = media_uplink::build_camera_uplink(cam)?;
+        let mut declares_stills = false;
+        for cam in &robot_pb.cameras {
+            let stills = media_uplink::declares_stills(cam);
+            declares_stills |= stills;
+            if media_wired || (stills && stills_wired) {
+                let uplink = media_uplink::build_camera_uplink(cam, media_wired)?;
                 camera_uplinks.insert(cam.name.clone(), Arc::new(uplink));
             }
         }
@@ -466,32 +519,34 @@ impl SessionBuilder {
         // note on `grant_and_engage`).
         let intervention_wired =
             self.media.is_some() || self.control.hold.is_some() || self.control.send.is_some();
+        // The one shared engage-path verb check (see `missing_engage_verb`
+        // for the effective-handoff degrade it encodes); the error prose
+        // stays call-site so a build failure names the wiring that made the
+        // path live.
+        let engage_verb_gap = missing_engage_verb(
+            self.handoff,
+            robot.action_space.contains_delta(),
+            self.control.hold.is_some(),
+            self.control.send.is_some(),
+        );
         if intervention_wired {
-            // Same degrade `begin_engage` applies at engage time (FSM.md
-            // §5): under a delta action space, a declared IMMEDIATE becomes
-            // HOLD_FIRST for the first engage. Gate the `hold` requirement on
-            // that effective policy, not the raw declared enum variant.
-            let effective_handoff = match self.handoff {
-                HandoffPolicy::Immediate { .. } if robot.action_space.contains_delta() => {
-                    HandoffPolicy::HoldFirst
+            match engage_verb_gap {
+                Some("hold") => {
+                    return Err(RuntimeError::MissingVerb {
+                        verb: "hold",
+                        required_by: "handoff HOLD_FIRST",
+                        remedy: "choose a different handoff policy",
+                    });
                 }
-                other => other,
-            };
-            if matches!(effective_handoff, HandoffPolicy::HoldFirst) && self.control.hold.is_none()
-            {
-                return Err(RuntimeError::MissingVerb {
-                    verb: "hold",
-                    required_by: "handoff HOLD_FIRST",
-                    remedy: "choose a different handoff policy",
-                });
-            }
-            if self.control.send.is_none() {
-                return Err(RuntimeError::MissingVerb {
-                    verb: "send",
-                    required_by: "a wired media plane or a registered `hold` verb \
-                                  (bypass/intervention dispatch)",
-                    remedy: "remove that wiring",
-                });
+                Some(_) => {
+                    return Err(RuntimeError::MissingVerb {
+                        verb: "send",
+                        required_by: "a wired media plane or a registered `hold` verb \
+                                      (bypass/intervention dispatch)",
+                        remedy: "remove that wiring",
+                    });
+                }
+                None => {}
             }
         }
         let estop_unregistered = self.control.estop.is_none();
@@ -545,10 +600,16 @@ impl SessionBuilder {
         // transport is configured — safe unconditionally, since emission
         // additionally requires the plane to accept the flag AND the
         // directive to carry a `directive_id` (see `crate::ack`).
+        // `waddle.v0.agent` rides the same rule: the SDK always supports
+        // being agent-driven (the invite machinery is config-free — an
+        // `EpisodeOptions.agent_invite` needs nothing declared at build
+        // time), and the plane routes invites only when it accepted the
+        // flag at Register.
         let mut feature_flags = vec![
             "waddle.v0.core".to_owned(),
             "waddle.v0.reset".to_owned(),
             ACKS_FLAG.to_owned(),
+            AGENT_FLAG.to_owned(),
         ];
         if self.post_reset.is_some() {
             feature_flags.push("waddle.v0.reset.phases".to_owned());
@@ -557,6 +618,15 @@ impl SessionBuilder {
             || matches!(self.post_reset, Some(ResetSpec::Remote { .. }))
         {
             feature_flags.push("waddle.v0.reset.remote".to_owned());
+        }
+        // Control-plane stills (`waddle.v0.obs.stills`) are declared from the
+        // ROBOT's declaration, not from session config: a camera's
+        // `StreamPolicy.still_fps` is the only thing that asks for them, and
+        // the declaration is fixed for the session (it rides the same
+        // `RegisterRequest`). Declaring the flag with no camera asking would
+        // claim a behavior this session can never produce.
+        if declares_stills {
+            feature_flags.push(media_uplink::STILLS_FLAG.to_owned());
         }
 
         let plane = self.transport.map(|t| {
@@ -589,6 +659,10 @@ impl SessionBuilder {
         // (this carries no FSM guard, so it never touches `step()`; see
         // `Reducer::drain_proprio_reports`).
         let (proprio_tx, proprio_rx) = std::sync::mpsc::channel::<ProprioReport>();
+        // The bypass pump's dispatch side channel: an action it drove
+        // straight to `send` is recorded by the reducer, which owns the
+        // episode's MCAP writer (the pump owns no episode state at all).
+        let (dispatch_tx, dispatch_rx) = std::sync::mpsc::channel::<pumps::DispatchedAction>();
         let record_slot: RecordSlot = Arc::new(parking_lot::Mutex::new(None));
         let task_slot: TaskSlot = Arc::new(parking_lot::Mutex::new(String::new()));
         // Tripwire ObsSource wiring: published by the reducer from
@@ -614,6 +688,7 @@ impl SessionBuilder {
             self.post_reset.clone(),
             obs_slot.clone(),
             proprio_rx,
+            dispatch_rx,
         );
         let reducer_tx = inject_tx.clone();
         let reducer_thread = std::thread::Builder::new()
@@ -639,6 +714,7 @@ impl SessionBuilder {
             inject_tx.clone(),
             clock.clone(),
             dims.unwrap_or(0),
+            dispatch_tx,
         ));
 
         // Reset pump: the single scripted-hook invocation site (mirror-watch,
@@ -671,15 +747,15 @@ impl SessionBuilder {
             )?);
         }
 
-        // Camera uplink: one dedicated pump servicing every
-        // declared camera that has a media plane to publish into;
-        // `Session::publish_frame` feeds it through the per-camera bounded
-        // queues built above.
+        // Camera uplink: one dedicated pump servicing every declared camera
+        // that has somewhere to publish — a media plane (video track), a
+        // control plane (bounded-rate stills), or both;
+        // `Session::publish_frame` feeds it through the per-camera queues
+        // built above.
         if !camera_uplinks.is_empty() {
-            let media = media_for_cameras
-                .expect("camera_uplinks is only ever populated when media is wired");
             threads.push(media_uplink::spawn_media_uplink(
-                media,
+                media_for_cameras,
+                plane.clone(),
                 camera_uplinks.values().cloned().collect(),
                 mirror.clone(),
             ));
@@ -758,6 +834,7 @@ impl SessionBuilder {
                 task_slot,
                 pre_reset: self.pre_reset,
                 post_reset: self.post_reset,
+                agent_verb_gap: engage_verb_gap,
                 inline_reset_owner,
                 episode_reset_specs,
                 verification_mode: self.verification_mode,
@@ -770,6 +847,62 @@ impl SessionBuilder {
             }),
         })
     }
+}
+
+/// Assemble a [`AgentOutcome`] from the terminal mirror snapshot: the
+/// retained `AgentTaskUpdate` contributes `recording_ref`/`detail` only
+/// when it addresses THIS episode (`agent_task` is never cleared at close —
+/// a stale predecessor's COMPLETED must not leak into a later episode's
+/// result).
+fn assemble_agent_outcome(
+    outcome: TerminalOutcome,
+    id: EpisodeId,
+    status: &crate::mirror::Status,
+) -> AgentOutcome {
+    let (recording_ref, detail) = match &status.agent_task {
+        Some(task) if task.episode_id == id.as_str() => (
+            (!task.recording_ref.is_empty()).then(|| task.recording_ref.clone()),
+            task.detail.clone(),
+        ),
+        _ => (None, String::new()),
+    };
+    AgentOutcome {
+        outcome,
+        episode_id: id,
+        recording_ref,
+        detail,
+    }
+}
+
+/// Which engage-path verb is missing (if any): the ONE validation behind
+/// both `SessionBuilder::build`'s build-time check (applied when an engage
+/// path is visibly wired — see the `build` rustdoc) and
+/// [`Session::run_agent`]'s call-time precondition (an accepted agent invite
+/// IS a live engage path, whether or not one was visible at build time).
+///
+/// Encodes the same degrade `waddle_fsm::begin_engage` applies at engage
+/// time (FSM.md §5): under a delta action space, a declared IMMEDIATE
+/// becomes HOLD_FIRST for the first engage, so the `hold` requirement keys
+/// on that effective policy, not the raw declared enum variant. `send` is
+/// required regardless of handoff policy — the bypass pump drives it
+/// directly once a claimed loop stalls.
+fn missing_engage_verb(
+    declared: HandoffPolicy,
+    space_contains_delta: bool,
+    hold_registered: bool,
+    send_registered: bool,
+) -> Option<&'static str> {
+    let effective = match declared {
+        HandoffPolicy::Immediate { .. } if space_contains_delta => HandoffPolicy::HoldFirst,
+        other => other,
+    };
+    if matches!(effective, HandoffPolicy::HoldFirst) && !hold_registered {
+        return Some("hold");
+    }
+    if !send_registered {
+        return Some("send");
+    }
+    None
 }
 
 fn robot_digest(robot: &pb::RobotDescription) -> String {
@@ -795,6 +928,14 @@ struct SessionInner {
     task_slot: TaskSlot,
     pre_reset: Option<ResetSpec>,
     post_reset: Option<ResetSpec>,
+    /// [`Session::run_agent`]'s call-time precondition, computed once at
+    /// build time by the same `missing_engage_verb` check `build` applies
+    /// when an engage path is visibly wired. `Some` only for the
+    /// fully-unwired shape build deliberately lets through (no media plane,
+    /// neither `hold` nor `send` registered — the descriptors-only case):
+    /// inviting an agent on such a session must fail loudly here instead of
+    /// stalling undiagnosably at the agent's first engage.
+    agent_verb_gap: Option<&'static str>,
     /// See [`ResetOwnerSlot`]; shared with the reset pump.
     inline_reset_owner: ResetOwnerSlot,
     /// See [`ResetSpecSlot`]; shared with the reset pump.
@@ -806,9 +947,11 @@ struct SessionInner {
     /// of whether a media plane is wired — backs `publish_frame`'s
     /// unknown-camera and declared-resolution checks.
     declared_cameras: HashMap<String, (u32, u32)>,
-    /// One entry per declared camera, present only when a media plane is
-    /// wired: `publish_frame` enqueues into these; absent means "declared,
-    /// but nothing to publish into" (a cheap no-op, never an error).
+    /// One entry per declared camera a published frame can actually go
+    /// somewhere from — a wired media plane (video track) and/or declared
+    /// control-plane stills (`StreamPolicy.still_fps` with a transport
+    /// configured). `publish_frame` feeds these; absent means "declared, but
+    /// nothing to publish into" (a cheap no-op, never an error).
     camera_uplinks: HashMap<String, Arc<CameraUplink>>,
     _verbs: Arc<VerbDispatch>,
     _plane: Option<Arc<ControlPlaneClient>>,
@@ -945,6 +1088,10 @@ impl Session {
             post_reset: post_reset_declared,
             pre_window,
             post_window,
+            // E23 (flag `waddle.v0.agent`): the FSM emits the invite and
+            // arms its deadline; everything else about the open is
+            // unchanged (see `EpisodeOptions::agent_invite`).
+            agent_invite: opts.agent_invite,
             at: now,
         });
 
@@ -1012,6 +1159,112 @@ impl Session {
         })
     }
 
+    /// Ask Waddle to drive one episode (flag `waddle.v0.agent`): opens an
+    /// agent-invited episode through the normal start path (`prompt` is both
+    /// the invite prompt and the episode task), then BLOCKS — mirror-watch,
+    /// like the reset waits — until the episode reaches TERMINAL (through
+    /// `Phase::PostReset` when a post-reset is declared: the outcome is
+    /// pinned at entry, but "returns" here means the whole pipeline is
+    /// done). Zero new authority: the invited agent claims with the
+    /// EXISTING intervention machinery (C8 restricts admission to
+    /// `ACTOR_KIND_AGENT`), its chunks ride the EXISTING
+    /// `intervention_chunk` intake, and the plane finishes with the
+    /// EXISTING `MARK_DONE`/`RELEASE` directives.
+    ///
+    /// The caller's blocked thread + the session's pumps are the actuation
+    /// carrier — the same doctrine as a remote (teleop) reset window: this
+    /// thread never ticks, so once the agent's claim engages, the
+    /// claimed-while-stalled BYPASS pump drives the registered `send`
+    /// directly. That is why the same verb preconditions the
+    /// supervised/bypass path requires apply here (a registered `send`, and
+    /// `hold` under the effective HOLD_FIRST handoff — the shared
+    /// `missing_engage_verb` check): a session without them would accept
+    /// the invite and then stall undiagnosably at the agent's first engage.
+    ///
+    /// `timeout_ns` is the invite deadline (FSM.md E25): if no agent claim
+    /// engages in time, the episode aborts and this returns
+    /// `AgentOutcome { outcome: ABORT, .. }`. A plane
+    /// `AgentTaskUpdate{DENIED}` before engage aborts the same way, with
+    /// the plane's detail (E26); QUEUED/COMPLETED updates are informational
+    /// (COMPLETED's `recording_ref`/`detail` come back on the
+    /// [`AgentOutcome`]). `opts.agent_invite` is overwritten by this call;
+    /// the reset overrides pass through unchanged.
+    pub fn run_agent(
+        &self,
+        prompt: &str,
+        timeout_ns: i64,
+        opts: EpisodeOptions,
+    ) -> Result<AgentOutcome, RuntimeError> {
+        if let Some(verb) = self.inner.agent_verb_gap {
+            return Err(RuntimeError::MissingVerb {
+                verb,
+                required_by: "run_agent (an agent invite is a live engage path)",
+                remedy: "wire the robot's control before inviting an agent",
+            });
+        }
+        let opts = EpisodeOptions {
+            agent_invite: Some(AgentInvite {
+                prompt: prompt.to_owned(),
+                timeout_ns,
+            }),
+            ..opts
+        };
+        let episode = match self.start_episode_with(prompt, opts) {
+            Ok(episode) => episode,
+            // The invite deadline (or a plane DENIED) can close the episode
+            // while `start_episode_with` is still blocked in RESETTING —
+            // e.g. under a pre-reset hook slower than the invite timeout.
+            // E25/E26 are E10-trigger members, so that is a legitimate agent
+            // outcome (ABORT), not a reset failure: recover it from the
+            // mirror instead of surfacing an error for a state this call's
+            // contract covers. The `agent_invite_aborted` latch is set by
+            // E25/E26 and nothing else (FSM.md §1.5), so ONLY those two
+            // closes recover — a genuine pre-reset failure (E5) on an
+            // agent-invited episode surfaces the same `ResetFailed` the
+            // non-agent start path surfaces, never a normal-looking ABORT.
+            Err(RuntimeError::ResetFailed(detail)) => {
+                let s = self.status();
+                if let (Some(id), Some(Phase::Terminal(outcome)), true) = (
+                    s.episode_id.clone(),
+                    s.episode_state,
+                    s.agent_invite_aborted,
+                ) {
+                    return Ok(assemble_agent_outcome(outcome, id, &s));
+                }
+                return Err(RuntimeError::ResetFailed(detail));
+            }
+            Err(err) => return Err(err),
+        };
+        let id = episode.id().clone();
+        // READY → RUNNING without the caller modeling gate ticks: E7 admits
+        // the agent's engage from RUNNING only, and this thread is about to
+        // block instead of ticking E6's "first gated action" — `Start` is
+        // the FSM's own seam for exactly this shape.
+        self.inject(SessionEvent::Start {
+            at: self.inner.clock.stamp_now().mono_ns(),
+        });
+        // `episode` (and with it the gate-record ring) stays alive across
+        // the whole wait; unblock on TERMINAL for this id, or on the episode
+        // being replaced (a retake successor — the predecessor's Terminal
+        // snapshot can be transient).
+        let status = self.inner.mirror.wait_until(|s| {
+            s.episode_id.as_ref() != Some(&id)
+                || matches!(s.episode_state, Some(Phase::Terminal(_)))
+        });
+        drop(episode);
+        if status.shutdown {
+            return Err(RuntimeError::ShuttingDown);
+        }
+        let outcome = match (&status.episode_id, status.episode_state) {
+            (Some(current), Some(Phase::Terminal(outcome))) if current == &id => outcome,
+            // Replaced by a successor: the predecessor closed
+            // ABORTED_RETAKE (C5) even when its transient terminal snapshot
+            // was missed between mirror reads.
+            _ => TerminalOutcome::AbortedRetake,
+        };
+        Ok(assemble_agent_outcome(outcome, id, &status))
+    }
+
     /// True once `id` is no longer the live, still-rolling episode — because
     /// it terminated, entered `Phase::PostReset`, a successor replaced it,
     /// or the session shut down.
@@ -1073,12 +1326,20 @@ impl Session {
     /// actual encode/`push_frame` run off this thread, on the dedicated
     /// `waddle-media-uplink` pump.
     ///
+    /// A camera declaring `StreamPolicy.still_fps > 0` (flag
+    /// `waddle.v0.obs.stills`) additionally has this same frame teed into a
+    /// latest-wins slot the same pump samples at that declared rate,
+    /// JPEG-encodes, and sends as a bounded-rate `FrameStill` observation on
+    /// the CONTROL plane — for agent perception, never a video path, and
+    /// independent of whether a media plane exists at all.
+    ///
     /// - Unknown camera name (not in `RobotDescription.cameras`):
     ///   [`RuntimeError::UnknownCamera`].
     /// - `frame`'s (width, height) doesn't match the camera's declaration:
     ///   [`RuntimeError::Media`] (`MediaError::BadFrame`).
-    /// - Declared camera, but no media plane wired at all: `Ok(())`,
-    ///   nothing published — Local mode records no video in v0.
+    /// - Declared camera with nowhere to publish (no media plane wired, and
+    ///   no `still_fps`/transport for stills): `Ok(())`, nothing published —
+    ///   Local mode records no video in v0.
     ///
     /// The camera's declared `StreamPolicy.uplink.encoding` is
     /// bandwidth-intent for the video track, not a literal wire format:
@@ -1095,7 +1356,8 @@ impl Session {
             return Err(RuntimeError::UnknownCamera(camera.to_owned()));
         };
         let Some(uplink) = self.inner.camera_uplinks.get(camera) else {
-            // Declared, but no media plane wired: nothing to publish into.
+            // Declared, but neither leg has anywhere to go (no media plane
+            // wired, no declared stills with a transport to carry them).
             return Ok(());
         };
         let expected_len = (width as usize) * (height as usize) * 3;
@@ -1112,19 +1374,23 @@ impl Session {
     }
 
     /// Report a richer proprioceptive sample than the bare `joint_pos`
-    /// every `gate(obs=...)` call already records: the reducer
-    /// merges `report` with its latest known `joint_pos` into every
-    /// subsequent gate-tick's recorded `/waddle/observations` `ProprioSample`
-    /// (Local mode — see [`ProprioReport`]'s rustdoc for the patch
-    /// semantics) and into the periodic `StreamObservations` uplink,
-    /// whenever a transport is configured. Cheap on the caller's thread: an
-    /// unbounded fire-and-forget enqueue (occasional-call traffic, not the
-    /// gate fast path — unlike `publish_frame`'s per-frame throttle, there
-    /// is no declared rate to enforce here). Merged fields are stamped with
-    /// whichever event actually lands them (the owning gate tick, or the
-    /// uplink pump's own `SessionClock` read) — v0 accepts no
-    /// caller-supplied timestamp on the report itself (the two-clock
-    /// discipline).
+    /// every `gate(obs=...)` call already records. A report is an
+    /// observation in its own right: it lands on `/waddle/observations`
+    /// (Local mode) when the reducer drains it, AND is merged into every
+    /// subsequent gate-tick's recorded `ProprioSample` and into the periodic
+    /// `StreamObservations` uplink whenever a transport is configured (see
+    /// [`ProprioReport`]'s rustdoc for the patch semantics). Recording it
+    /// does NOT depend on the caller also passing `obs` to `gate()` — a
+    /// caller who reports proprioception and never does would otherwise lose
+    /// it entirely, which is exactly what happened to agent-invited
+    /// episodes, whose caller never ticks the gate at all. Cheap on the
+    /// caller's thread: an unbounded fire-and-forget enqueue
+    /// (occasional-call traffic, not the gate fast path — unlike
+    /// `publish_frame`'s per-frame throttle, there is no declared rate to
+    /// enforce here). Every landing is stamped by the reducer's own
+    /// `SessionClock` read (or the owning gate tick's stamp, for the merged
+    /// copy) — v0 accepts no caller-supplied timestamp on the report itself
+    /// (the two-clock discipline).
     pub fn report_proprio(&self, report: ProprioReport) {
         let _ = self.inner.proprio_tx.send(report);
     }
@@ -1134,7 +1400,9 @@ impl Session {
     /// discarded to admit the newest) — or because `publish_track`/encode/
     /// `push_frame` itself failed. `0` for an unknown camera or one with no
     /// media plane wired. Never counts fps-throttled frames: those are the
-    /// declared policy working as intended, not data loss.
+    /// declared policy working as intended, not data loss. Control-plane
+    /// stills stay out of this counter entirely — they are droppable by
+    /// design (latest-wins), so it keeps meaning exactly media-uplink loss.
     #[must_use]
     pub fn camera_frames_dropped(&self, camera: &str) -> u64 {
         self.inner
@@ -1254,12 +1522,15 @@ impl Episode {
 /// a wired media plane — must register `hold` (and, for the same reason,
 /// `send`) themselves; the build-time check cannot see through this call
 /// site to know it will be used.
+/// The claim is granted by kind alone: a LOCAL grant has no
+/// server-stamped actor identity to carry (`ActorRef::of_kind`), unlike a
+/// plane directive's, which arrives whole and is carried whole.
 pub fn grant_and_engage(session: &Session, claim_id: &str, source: &str, actor: ActorKind) {
     let clock_now = |s: &Session| s.inner.clock.stamp_now().mono_ns();
     session.inject(SessionEvent::ClaimGranted {
         id: waddle_types::ClaimId::new(claim_id),
         source: source.to_owned(),
-        actor,
+        actor: waddle_types::ActorRef::of_kind(actor),
         self_initiated: false,
         at: clock_now(session),
     });
@@ -1292,7 +1563,7 @@ pub fn reset_window_engage(session: &Session, claim_id: &str, source: &str, acto
     session.inject(SessionEvent::ClaimGranted {
         id: claim.clone(),
         source: source.to_owned(),
-        actor,
+        actor: waddle_types::ActorRef::of_kind(actor),
         self_initiated: false,
         at: clock_now(session),
     });

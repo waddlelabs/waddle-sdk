@@ -11,6 +11,34 @@ requires-python = ">=3.10"
 dependencies = ["numpy>=1.24"]
 dynamic = ["version"]
 
+[project.optional-dependencies]
+# The teleop companion distribution (`sdk/teleop/pyproject.toml`): the SAME
+# shim built with the LiveKit media plane on top of this build's control
+# transport, shipped as its own wheel because libwebrtc is ~690 MB of build
+# that has no business in an install which only supervises a policy. The pin
+# is EXACT: the two wheels are one build of one Cargo.toml, and
+# `waddle._native` refuses a mismatched pair at import rather than loading a
+# core built from other sources.
+#
+# This literal is the ONE version in this project that maturin does not
+# derive from `rust/Cargo.toml` (PEP 621 has no dynamic
+# optional-dependencies), so a version bump must edit it too — otherwise the
+# extra resolves to the previous release, `_native` sees the mismatch, and
+# `pip install 'waddle-sdk[teleop]'` silently yields no LiveKit.
+# `tests/test_features.py::test_the_teleop_extra_pins_this_builds_version`
+# fails until the two agree.
+teleop = ["waddle-sdk-teleop==0.1.0"]
+
+[tool.uv.sources]
+# Dev-loop only (uv reads this; published wheel metadata never carries it):
+# point the `teleop` extra at the companion project in this repo, since it
+# is not on any index. uv's lock is universal — it resolves every extra —
+# so without this `uv sync` cannot resolve at all. Resolution only reads
+# the companion's metadata (maturin answers that from Cargo.toml, no
+# compile); the ~690 MB libwebrtc build happens only if someone actually
+# installs the extra, so the dev loop stays fast.
+waddle-sdk-teleop = { path = "teleop" }
+
 [dependency-groups]
 # mcap: the e2e test reads /waddle/actions back from the episode MCAP.
 # mcap-protobuf-support (pulls in `protobuf`): decodes recorded messages via
@@ -18,11 +46,31 @@ dynamic = ["version"]
 # mcaprec.rs doc: "any MCAP reader can decode the messages without this repo
 # checked out") — used by the report_proprio read-back test to assert actual
 # merged field values, not just topic/message counts.
-dev = ["pytest>=8", "mcap>=1.1", "mcap-protobuf-support>=0.5", "maturin>=1.14,<2"]
+# tomli: `tests/test_features.py` reads THIS file (and the companion's) to
+# hold the exact teleop pin to the version both wheels build from; stdlib
+# tomllib covers 3.11+, this backfills 3.10.
+dev = [
+    "pytest>=8",
+    "mcap>=1.1",
+    "mcap-protobuf-support>=0.5",
+    "maturin>=1.14,<2",
+    "tomli>=2; python_version < '3.11'",
+]
 
 [tool.maturin]
 manifest-path = "rust/Cargo.toml"
 python-source = "python"
 module-name = "waddle._core"
 # Keep extension-module OUT of Cargo.toml so plain cargo clippy/check work.
-features = ["pyo3/extension-module"]
+# `grpc` is in the DEFAULT build: a supervision layer whose default install
+# cannot reach the supervision plane would be a strange thing to ship, and
+# the tonic stack is ordinary crates.io deps. `livekit` is deliberately NOT
+# here — it lives in the `teleop` extra above.
+features = ["pyo3/extension-module", "grpc"]
+# `python-source` is the working tree, so anything a dev run left in it gets
+# swept into the wheel. Bytecode is the one thing that actually does: without
+# this, a build after `uv run pytest` ships `__pycache__/*.cpython-3XX.pyc`
+# for whichever interpreter ran the tests and a build on a clean checkout
+# does not — the same commit, two different wheels. pip compiles bytecode at
+# install time for the interpreter that will actually import it.
+exclude = ["python/**/__pycache__/**"]

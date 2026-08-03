@@ -1,0 +1,32 @@
+{
+  "format": "waddle.behavior/v0",
+  "name": "agent_invite_timeout_post_reset",
+  "description": "Pins FSM.md E25's composition with E14: on an agent-invited episode that also declared a post-reset hook, the invite timeout firing in RUNNING is a member of E10's trigger set — so it routes through E14 exactly like any other E10 trigger, entering POST_RESET with the outcome pinned to ABORT (detail 'no agent engaged'), never TERMINAL directly and never around the declared cleanup; the post-reset pipeline then completes and E15 delivers TERMINAL{ABORT, pinned unchanged}.",
+  "target": "fsm",
+  "requires_features": ["waddle.v0.core", "waddle.v0.agent", "waddle.v0.reset.phases"],
+  "setup": {
+    "lease_enforcement": "LEASE_ENFORCEMENT_ENFORCED",
+    "handoff": { "immediate": { "blendNs": "0" } },
+    "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING"
+  },
+  "steps": [
+    { "inject": { "kind": "episode_open", "episode_id": "ep-atp-0001", "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING", "post_reset": true, "agent_invite": { "prompt": "water the plants", "timeout_ns": "5000000000" } } },
+    { "expect_emission": { "effect": { "arm_timer": { "timer_id": "agent_invite_timeout", "deadline_ns": "5000000000" } }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RESETTING", "episode.agent_invited": true, "episode.post_reset_declared": true } },
+
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "reset_result", "result": { "ok": true, "strategy": "scripted_home", "verification": { "mode": "RESET_VERIFICATION_MODE_BLOCKING", "verified": true, "judgeId": "judge-reset", "judgeVersion": "2.1.0", "score": 0.95, "tNs": "100000000" } } } },
+    { "inject": { "kind": "start" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RUNNING" } },
+
+    { "advance_ns": "4900000000" },
+    { "expect_emission": { "event": { "state": { "to": "EPISODE_STATE_POST_RESET", "outcome": "TERMINAL_OUTCOME_ABORT", "reason": "no agent engaged" } }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_POST_RESET", "episode.pinned_outcome": "TERMINAL_OUTCOME_ABORT", "episode.outcome": "TERMINAL_OUTCOME_UNSPECIFIED", "episode.agent_engaged": false } },
+
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "post_reset_result", "result": { "ok": true, "detail": "scene cleared" } } },
+    { "expect_emission": { "event": { "postReset": { "result": { "ok": true }, "pinnedOutcome": "TERMINAL_OUTCOME_ABORT" } }, "within_ns": "0" } },
+    { "expect_emission": { "event": { "state": { "to": "EPISODE_STATE_TERMINAL", "outcome": "TERMINAL_OUTCOME_ABORT" } }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_TERMINAL", "episode.outcome": "TERMINAL_OUTCOME_ABORT", "episode.post_reset_failed": false } }
+  ]
+}

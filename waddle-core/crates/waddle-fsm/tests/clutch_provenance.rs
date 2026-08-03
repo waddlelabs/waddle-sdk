@@ -30,6 +30,7 @@ fn running_fsm(cfg: &SessionConfig) -> SessionFsm {
             post_reset: false,
             pre_window: None,
             post_window: None,
+            agent_invite: None,
             at: MonoNs(0),
         },
     )
@@ -84,7 +85,9 @@ fn clutch_engage_uses_the_configured_actor_and_source() {
     cfg.clutch_source = "teleop-clutch".to_owned();
 
     let claim = clutch_engaged_claim(&cfg);
-    assert_eq!(claim.actor, ActorKind::Teleoperator);
+    assert_eq!(claim.actor.kind, ActorKind::Teleoperator);
+    // A clutch is LOCAL: nothing upstream stamped an identity for it.
+    assert!(claim.actor.id.is_empty());
     assert_eq!(claim.source, "teleop-clutch");
     assert!(claim.self_initiated);
 }
@@ -100,7 +103,7 @@ fn clutch_engage_with_default_config_keeps_legacy_actor_and_source() {
     );
 
     let claim = clutch_engaged_claim(&cfg);
-    assert_eq!(claim.actor, ActorKind::SiteOperator);
+    assert_eq!(claim.actor.kind, ActorKind::SiteOperator);
     assert_eq!(claim.source, "custom");
     assert!(claim.self_initiated);
 }

@@ -131,14 +131,3 @@ def test_media_and_testing_are_mutually_exclusive():
             media=waddle.LiveKit(url="wss://example.invalid", token="tok"),
             _testing=True,
         )
-
-
-def test_media_livekit_raises_a_clean_not_compiled_error():
-    camera = waddle.Camera(width=4, height=4, fps=30)
-    with pytest.raises(RuntimeError, match="not compiled"):
-        waddle.init(
-            "py-media-livekit",
-            _robot(camera),
-            _control(),
-            media=waddle.LiveKit(url="wss://example.invalid", token="tok"),
-        )

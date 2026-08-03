@@ -17,12 +17,13 @@ use waddle_sidecar::{ManifestWriter, McapEpisodeWriter, SidecarBuilder, write_si
 use waddle_types::pb::v0 as pb;
 use waddle_types::time::Clock;
 use waddle_types::{
-    ActionSpace, EpisodeId, GateMode, HandoffPolicy, LeaseId, MonoNs, Provenance, ProvenanceTag,
-    VerbRequest, unflatten_action,
+    ActionSpace, EpisodeId, GateMode, HandoffPolicy, LeaseId, MonoNs, ProvenanceTag, VerbRequest,
+    unflatten_action,
 };
 
 use crate::ack::Injected;
 use crate::mirror::Mirror;
+use crate::pumps::{BYPASS_PUMP_SOURCE, DispatchedAction};
 use crate::session::{ObsSlot, ProprioReport, RecordSlot, ResetSpec, TaskSlot};
 use crate::verbs::VerbDispatch;
 
@@ -103,6 +104,10 @@ pub(crate) struct Reducer {
     /// `Session::report_proprio`'s side channel — drained every
     /// wake, same discipline as `record_slot`/`records_rx`.
     proprio_rx: Receiver<ProprioReport>,
+    /// The bypass pump's dispatch side channel: what it drove straight to
+    /// `send` without passing through the caller's gate, drained every wake
+    /// onto the episode recording (`write_dispatched`).
+    dispatch_rx: Receiver<DispatchedAction>,
     /// The latest joint_pos from a ring-drained gate record (what reported
     /// proprio extras merge with), independent of `write_record`'s own
     /// per-tick `obs` — this is what the periodic `StreamObservations`
@@ -139,6 +144,7 @@ impl Reducer {
         post_reset: Option<ResetSpec>,
         obs_slot: ObsSlot,
         proprio_rx: Receiver<ProprioReport>,
+        dispatch_rx: Receiver<DispatchedAction>,
     ) -> Self {
         let fsm = SessionFsm::new(&cfg);
         let manifest = recording_dir
@@ -162,6 +168,7 @@ impl Reducer {
             records_rx: None,
             obs_slot,
             proprio_rx,
+            dispatch_rx,
             latest_joint_pos: Vec::new(),
             latest_extras: ProprioExtras::default(),
             last_obs_uplink_ns: None,
@@ -179,6 +186,7 @@ impl Reducer {
             // the episode recording, and any queued `report_proprio` calls
             // onto the reducer's own latest-known state.
             self.drain_gate_records();
+            self.drain_dispatched_actions();
             self.drain_proprio_reports();
             if self.mirror.read().shutdown {
                 self.finalize_episode_if_terminal(true);
@@ -271,6 +279,11 @@ impl Reducer {
     fn apply_effect(&mut self, effect: Effect, self_tx: &Sender<Injected>) {
         match effect {
             Effect::SetGateMode(mode) => {
+                // Not always a mode CHANGE: the FSM also emits this
+                // mode-unchanged to re-project a plan whose non-mode inputs
+                // moved (E24's agent-episode Noop plan — an invite opening,
+                // an agent-invited run closing). The plan is derived from
+                // the post-step FSM either way.
                 let plan = self.plan_for(mode);
                 self.gate_shared.store_plan(plan);
                 // The transition back to PASSTHROUGH is the one point every
@@ -285,7 +298,12 @@ impl Reducer {
                 // ended; left alone it would sit there until some LATER,
                 // unrelated claim/window starts polling the ring and pop it
                 // under THAT claimant's mirror provenance (see
-                // `jitter.rs`'s module doc and `StreamIntake::clear`).
+                // `jitter.rs`'s module doc and `StreamIntake::clear`). The
+                // re-projections above land here too, and the same reasoning
+                // holds: an invite opening has an empty ring, and a run
+                // closing (retake included — its claim survives, but into a
+                // successor that resets the scene first) leaves nothing an
+                // intervenor could still legitimately want dispatched.
                 if mode == GateMode::Passthrough {
                     self.gate_shared.stream.lock().clear();
                 }
@@ -349,6 +367,7 @@ impl Reducer {
                         post_reset: post_reset_declared,
                         pre_window: None,
                         post_window,
+                        agent_invite: None,
                         at: self.clock.stamp_now().mono_ns(),
                     }
                     .into(),
@@ -400,6 +419,15 @@ impl Reducer {
         let now = self.clock.stamp_now().mono_ns();
         let provenance = self.claim_provenance();
         let mode = match mode {
+            // E24 (flag `waddle.v0.agent`): an agent-invited episode's
+            // PASSTHROUGH projects to Noop{AGENT_EPISODE} while no claim is
+            // engaged — the caller's own ticks never dispatch; the invited
+            // agent drives via the ordinary claim machinery. The predicate
+            // lives on the FSM (hollow-frontend rule); this is projection,
+            // not policy.
+            GateMode::Passthrough if self.fsm.agent_episode_noop() => {
+                PlanMode::AgentEpisode { provenance }
+            }
             GateMode::Passthrough => PlanMode::Passthrough,
             GateMode::Bypass => PlanMode::Bypass { provenance },
             GateMode::Intervention => PlanMode::Claimed {
@@ -421,20 +449,14 @@ impl Reducer {
         GatePlan { mode, since: now }
     }
 
+    /// The provenance of every action driven under the active claim — the
+    /// claim's own ([`waddle_fsm::ActiveClaim::provenance`]), never
+    /// re-derived here. No claim means the policy is driving.
     fn claim_provenance(&self) -> ProvenanceTag {
-        match &self.fsm.claim {
-            None => ProvenanceTag::policy(),
-            Some(claim) => ProvenanceTag {
-                provenance: match claim.actor {
-                    waddle_types::ActorKind::Teleoperator => Provenance::Teleop,
-                    waddle_types::ActorKind::Agent => Provenance::Agent,
-                    waddle_types::ActorKind::Policy => Provenance::Policy,
-                    _ => Provenance::Custom(claim.source.clone()),
-                },
-                actor: None,
-                bypass_approval: claim.self_initiated,
-            },
-        }
+        self.fsm
+            .claim
+            .as_ref()
+            .map_or_else(ProvenanceTag::policy, waddle_fsm::ActiveClaim::provenance)
     }
 
     fn open_episode_records(
@@ -505,6 +527,15 @@ impl Reducer {
         }
     }
 
+    /// Drain the bypass pump's dispatches onto the episode recording. Same
+    /// discipline as the gate-record ring: a dispatch arriving after
+    /// finalize, with no episode open, hits `mcap == None` and is discarded.
+    fn drain_dispatched_actions(&mut self) {
+        while let Ok(dispatched) = self.dispatch_rx.try_recv() {
+            self.write_dispatched(&dispatched);
+        }
+    }
+
     /// Drain `Session::report_proprio` calls onto the reducer's
     /// own latest-known proprio state — merged into every subsequent
     /// gate-tick's recorded `ProprioSample` (`write_record`) and into the
@@ -513,9 +544,84 @@ impl Reducer {
     /// report carries no FSM guard, so it never touches `step()` — the
     /// hollow-frontend rule is about claim/lease/handoff/timeline logic,
     /// none of which this is.
+    ///
+    /// Called every wake AND from `finalize_episode_if_terminal`: a report
+    /// still queued when the episode goes terminal is part of that episode,
+    /// so it must be written before the MCAP closes rather than surfacing on
+    /// a later wake with nowhere to go.
     fn drain_proprio_reports(&mut self) {
         while let Ok(report) = self.proprio_rx.try_recv() {
             self.latest_extras.merge(&report);
+            // A reported sample IS an observation, so it lands on
+            // `/waddle/observations` in its own right — stamped here, by the
+            // session clock, at the moment the reducer learned it. Whether
+            // the caller ALSO passes obs to `gate()` cannot decide whether
+            // an observation is recorded: an agent-invited episode has a
+            // caller that never ticks at all (FSM.md E24), and its
+            // recording was coming out with zero observations. `joint_pos`
+            // rides the latest known one (the same field the periodic
+            // uplink carries), since `report_proprio` has no joint_pos of
+            // its own.
+            let stamp = self.clock.stamp_now();
+            let sample = self.latest_proprio_sample(self.latest_joint_pos.clone());
+            if let Some(mcap) = &mut self.mcap {
+                let _ = mcap.write_observation(&pb::ObservationUpdate {
+                    t_ns: stamp.mono_ns().0,
+                    payload: Some(pb::observation_update::Payload::Proprio(sample)),
+                });
+            }
+        }
+    }
+
+    /// The reducer's latest known proprioceptive state, over the caller's
+    /// `joint_pos` of the moment. THE `ProprioSample` builder: the periodic
+    /// uplink, a gate tick's recorded observation, and a `report_proprio`
+    /// call's own recorded observation all differ only in which `joint_pos`
+    /// they hand it and where the result goes.
+    fn latest_proprio_sample(&self, joint_pos: Vec<f64>) -> pb::ProprioSample {
+        pb::ProprioSample {
+            joint_pos,
+            joint_vel: self.latest_extras.joint_vel.clone(),
+            ee_pose: self.latest_extras.ee_pose.clone(),
+            gripper: self.latest_extras.gripper,
+            part: String::new(),
+        }
+    }
+
+    /// One bypass-pump dispatch → an `/waddle/actions` row. The pump is the
+    /// point where an intervenor's action actually reaches the robot without
+    /// passing through the caller's `gate()`, so without this an
+    /// agent-driven episode — whose caller never ticks — recorded no actions
+    /// at all, leaving a recording that cannot be judged or trained on. Its
+    /// own `source_id`/seq space (`BYPASS_PUMP_SOURCE`), because
+    /// `ActionChunk.seq` is monotone per stream and the caller's gate is a
+    /// different stream into the same episode.
+    fn write_dispatched(&mut self, dispatched: &DispatchedAction) {
+        let action = match unflatten_action(
+            &dispatched.action.values,
+            dispatched.action.gripper,
+            &self.space,
+        ) {
+            Ok(action) => vec![action],
+            // Same contract as a gate tick's: an action that does not fit
+            // the declared space (a raw teleop stream ahead of closed-side
+            // retargeting) still gets its row, with no decodable action,
+            // rather than vanishing from the trace.
+            Err(_) => Vec::new(),
+        };
+        let t_ns = dispatched.stamp.mono_ns().0;
+        if let Some(mcap) = &mut self.mcap {
+            let _ = mcap.write_action(&pb::ActionChunk {
+                actions: action,
+                horizon_ns: 0,
+                t_emitted_ns: t_ns,
+                // The pump dispatches from the intervention ring, not from
+                // an observation the caller handed it.
+                t_obs_ns: 0,
+                seq: dispatched.seq,
+                source_id: BYPASS_PUMP_SOURCE.into(),
+                provenance: Some(dispatched.provenance.to_pb()),
+            });
         }
     }
 
@@ -525,7 +631,9 @@ impl Reducer {
     /// existing `ClientMsg::buffer_when_offline` classification (unchanged
     /// by this task) — this only decides WHEN to send.
     fn maybe_uplink_observation(&mut self, now: MonoNs) {
-        let Some(plane) = &self.plane else { return };
+        if self.plane.is_none() {
+            return;
+        }
         if self.latest_joint_pos.is_empty() && self.latest_extras.is_empty() {
             return; // nothing observed yet
         }
@@ -535,17 +643,11 @@ impl Reducer {
             return;
         }
         self.last_obs_uplink_ns = Some(now.0);
+        let sample = self.latest_proprio_sample(self.latest_joint_pos.clone());
+        let Some(plane) = &self.plane else { return };
         plane.send(ClientMsg::Observation(pb::ObservationUpdate {
             t_ns: now.0,
-            payload: Some(pb::observation_update::Payload::Proprio(
-                pb::ProprioSample {
-                    joint_pos: self.latest_joint_pos.clone(),
-                    joint_vel: self.latest_extras.joint_vel.clone(),
-                    ee_pose: self.latest_extras.ee_pose.clone(),
-                    gripper: self.latest_extras.gripper,
-                    part: String::new(),
-                },
-            )),
+            payload: Some(pb::observation_update::Payload::Proprio(sample)),
         }));
     }
 
@@ -575,24 +677,17 @@ impl Reducer {
     /// complete per-tick trace (provenance spans, bypass windows, holds).
     ///
     /// The `ProprioSample` carries `joint_pos` from this tick's own `obs`
-    /// merged with the latest `Session::report_proprio` extras —
-    /// exactly the same per-tick cadence `joint_pos` alone used before this
-    /// task; a `report_proprio` call with no further gate tick afterward
-    /// still reaches the periodic `StreamObservations` uplink
-    /// (`maybe_uplink_observation`), just never gains its own MCAP row (a
-    /// tick with no `obs` at all was never recorded either).
+    /// merged with the latest `Session::report_proprio` extras. A
+    /// `report_proprio` call gets its OWN row too
+    /// (`drain_proprio_reports`), so a caller who reports proprio and never
+    /// passes `obs` to `gate()` still has its proprioception recorded; a
+    /// caller who does both records both, each stamped when it happened.
     fn write_record(&mut self, rec: &GateRecord) {
         let t_ns = rec.stamp.mono_ns().0;
         let observation = rec.obs.as_ref().map(|obs| pb::ObservationUpdate {
             t_ns,
             payload: Some(pb::observation_update::Payload::Proprio(
-                pb::ProprioSample {
-                    joint_pos: obs.to_vec(),
-                    joint_vel: self.latest_extras.joint_vel.clone(),
-                    ee_pose: self.latest_extras.ee_pose.clone(),
-                    gripper: self.latest_extras.gripper,
-                    part: String::new(),
-                },
+                self.latest_proprio_sample(obs.to_vec()),
             )),
         });
 
@@ -623,6 +718,7 @@ impl Reducer {
             (GateDecision::Noop, _) => vec![noop(pb::NoopReason::BypassActive)],
             (GateDecision::Hold, _) => vec![noop(pb::NoopReason::HoldActive)],
             (GateDecision::ResetActive, _) => vec![noop(pb::NoopReason::ResetActive)],
+            (GateDecision::AgentEpisode, _) => vec![noop(pb::NoopReason::AgentEpisode)],
             // Pass/Substitute/Blend always carry an action.
             (_, None) => return,
         };
@@ -643,8 +739,14 @@ impl Reducer {
             _ if force => None,
             _ => return,
         };
-        // The episode tail must land in the file before finish().
+        // The episode tail must land in the file before finish(). EVERY
+        // side channel that writes into the episode, in the same order the
+        // reducer loop drains them: whatever a caller handed us before the
+        // episode went terminal belongs in that episode's file, and after
+        // `self.mcap` is taken below there is nowhere left to put it.
         self.drain_gate_records();
+        self.drain_dispatched_actions();
+        self.drain_proprio_reports();
         let Some(mut builder) = self.sidecar.take() else {
             return;
         };
@@ -679,6 +781,12 @@ impl Reducer {
             .episode
             .as_ref()
             .is_some_and(|e| e.post_reset_failed);
+        // Agent-invited progress (flag `waddle.v0.agent`): published so a
+        // caller blocked in `Session::run_agent` (mirror-watch, like the
+        // reset waits) can observe invited → engaged → terminal.
+        let agent_invited = self.fsm.episode.as_ref().is_some_and(|e| e.agent_invited);
+        let agent_engaged = self.fsm.episode.as_ref().is_some_and(|e| e.agent_engaged);
+        let agent_invite_aborted = self.fsm.episode.as_ref().is_some_and(|e| e.invite_aborted);
         let gate_mode = Some(self.fsm.gate_mode);
         let claim_active = self.fsm.claim.is_some();
         let provenance = claim_active.then(|| self.claim_provenance());
@@ -692,7 +800,123 @@ impl Reducer {
             s.outcome = outcome;
             s.pinned_outcome = pinned_outcome;
             s.post_reset_failed = post_reset_failed;
+            s.agent_invited = agent_invited;
+            s.agent_engaged = agent_engaged;
+            s.agent_invite_aborted = agent_invite_aborted;
             s.plane_connected = plane_connected;
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::mirror::Mirror;
+    use crate::verbs::{ControlRegistry, VerbDispatch};
+    use prost::Message as _;
+    use waddle_types::{LeaseEnforcement, ReplanPolicy, RobotDescription};
+
+    /// The episode TAIL, pinned where it is deterministic: `finalize` is
+    /// called directly, so no reducer wake can drain the channel first and
+    /// hide the miss (in a live session the ≤20 ms wake cadence usually
+    /// drains it, which is exactly what makes an integration test of this
+    /// unable to fail reliably — and what let the hole ship).
+    ///
+    /// A `report_proprio` still queued when the episode goes terminal is
+    /// part of THAT episode: gate records and bypass-pump dispatches are
+    /// tail-drained for the same reason, and a report is an observation
+    /// like any other. Without the drain, it surfaces on a later wake with
+    /// `mcap == None` and is discarded — or, worse, lands in whatever
+    /// episode opened next.
+    #[test]
+    fn finalize_writes_reports_still_queued_at_the_episode_tail() {
+        let dir = tempfile::tempdir().unwrap();
+        let clock = SessionClock::capture();
+        let robot = RobotDescription::try_from(&pb::RobotDescription {
+            name: "tail-bot".into(),
+            robot_id: "tail-01".into(),
+            cell_id: "cell-tail".into(),
+            action_space: Some(pb::ActionSpace {
+                space: Some(pb::action_space::Space::JointPosition(pb::JointPosition {
+                    joints: (0..3)
+                        .map(|i| pb::JointDescriptor {
+                            name: format!("j{i}"),
+                            ..Default::default()
+                        })
+                        .collect(),
+                })),
+                rate_hz: 50.0,
+                chunking: None,
+                gripper: None,
+            }),
+            ..Default::default()
+        })
+        .unwrap();
+
+        let (gate_shared, _stream_tx) = GateShared::new(
+            GatePlan::passthrough(MonoNs(0)),
+            8,
+            0,
+            ReplanPolicy::Immediate,
+        );
+        let (outcome_tx, _outcome_rx) = std::sync::mpsc::channel();
+        let verbs = Arc::new(VerbDispatch::spawn(
+            ControlRegistry::default(),
+            clock.clone(),
+            outcome_tx,
+        ));
+        let (proprio_tx, proprio_rx) = std::sync::mpsc::channel();
+        let (_dispatch_tx, dispatch_rx) = std::sync::mpsc::channel();
+
+        let mut reducer = Reducer::new(
+            SessionConfig::minimal("loop", HandoffPolicy::HoldFirst, LeaseEnforcement::Advisory),
+            clock,
+            gate_shared,
+            verbs,
+            Mirror::new(),
+            None,
+            Some(dir.path().to_path_buf()),
+            "tail-project".to_owned(),
+            "digest".to_owned(),
+            robot.action_space,
+            Arc::new(parking_lot::Mutex::new(None)),
+            Arc::new(parking_lot::Mutex::new("task".to_owned())),
+            None,
+            Arc::new(waddle_ingest::LatestSlot::new()),
+            proprio_rx,
+            dispatch_rx,
+        );
+
+        let id = EpisodeId::new("ep-tail");
+        reducer.open_episode_records(&id, false, None, false);
+        // Queued, never drained by a wake: this IS the tail.
+        proprio_tx
+            .send(ProprioReport {
+                joint_vel: Some(vec![7.0, 8.0, 9.0]),
+                ee_pose: None,
+                gripper: Some(0.25),
+            })
+            .unwrap();
+        reducer.finalize_episode_if_terminal(true);
+
+        let buf = std::fs::read(dir.path().join(format!("{id}.mcap"))).unwrap();
+        let mut samples = Vec::new();
+        for message in mcap::MessageStream::new(&buf).unwrap() {
+            let message = message.unwrap();
+            if message.channel.topic == waddle_sidecar::mcaprec::OBSERVATIONS_TOPIC {
+                let update = pb::ObservationUpdate::decode(message.data.as_ref()).unwrap();
+                if let Some(pb::observation_update::Payload::Proprio(p)) = update.payload {
+                    samples.push(p);
+                }
+            }
+        }
+        assert_eq!(
+            samples.len(),
+            1,
+            "a report queued when the episode ended must be in that episode's recording"
+        );
+        assert_eq!(samples[0].joint_vel, vec![7.0, 8.0, 9.0]);
+        assert_eq!(samples[0].gripper, Some(0.25));
     }
 }

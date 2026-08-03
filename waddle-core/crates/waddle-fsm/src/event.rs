@@ -3,8 +3,8 @@
 //! completions the runtime feeds back for effects.
 
 use waddle_types::{
-    ActorKind, ClaimId, EpisodeId, LeaseId, MonoNs, ResetVerificationMode, TerminalOutcome, Verb,
-    pb::v0 as pb,
+    ActorKind, ActorRef, ClaimId, EpisodeId, LeaseId, MonoNs, ResetVerificationMode,
+    TerminalOutcome, Verb, pb::v0 as pb,
 };
 
 /// Deterministic timer identities (armed/cancelled via effects).
@@ -17,6 +17,10 @@ pub enum TimerId {
     /// A remote reset window's deadline (flag `waddle.v0.reset.remote`, E19);
     /// firing drives E22 (window not completed in time).
     ResetWindowTimeout,
+    /// An agent invite's deadline (flag `waddle.v0.agent`, E23); firing
+    /// drives E25 (no agent claim engaged in time). A stale expiry racing
+    /// the cancellation is discarded (FSM.md §1.5).
+    AgentInviteTimeout,
 }
 
 /// A declared remote reset window (flag `waddle.v0.reset.remote`). Carried on
@@ -28,6 +32,19 @@ pub struct WindowSpec {
     pub expected: ActorKind,
     pub prompt: String,
     /// Deadline offset from window open; arms `ResetWindowTimeout`.
+    pub timeout_ns: i64,
+}
+
+/// A declared agent invite (flag `waddle.v0.agent`), carried on
+/// `EpisodeOpen` (E23): the customer asked Waddle to drive this episode. The
+/// invite is emitted to the plane and arms `AgentInviteTimeout`; the invited
+/// agent then claims with the ordinary `Claim`/`Lease` machinery (C8
+/// restricts admission, nothing else — FSM.md §1.5).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct AgentInvite {
+    /// The natural-language task for the invited agent.
+    pub prompt: String,
+    /// Deadline offset from episode open; arms `AgentInviteTimeout` (E25).
     pub timeout_ns: i64,
 }
 
@@ -72,6 +89,27 @@ pub struct ProxySample {
     pub host_load_1m: f64,
 }
 
+/// Why an intake producer could not actuate what an intervention stream
+/// sent (see [`SessionEvent::InterventionRejected`]). Each reason is a
+/// different fact about the sender, and each gets its own fault text — a
+/// refusal reported in the wrong shape is worse than a silent one, because
+/// it sends the reader looking at the wrong thing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RejectReason {
+    /// The dims-validation contract: a flattened width that isn't the
+    /// declared action space's. The action never reaches the ring.
+    Dims { got: usize, want: usize },
+    /// The action doesn't fit the declared space at all (a target arm the
+    /// space doesn't have, a missing field, an opaque space): the whole
+    /// chunk is refused, since a partial trajectory from a sender that
+    /// disagrees about the space is not a safe thing to actuate.
+    NotExecutable(String),
+    /// Steps carrying nothing to dispatch (a `NoopMarker` with no gripper
+    /// command riding along) were skipped; the chunk's remaining steps
+    /// executed normally.
+    InertStepsSkipped { skipped: usize, of: usize },
+}
+
 /// A server-directed grant change (rides `HeartbeatAck.grant_changes`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct GrantChangeDirective {
@@ -96,6 +134,9 @@ pub enum SessionEvent {
         pre_window: Option<WindowSpec>,
         /// A remote POST reset window, stashed for E14 to open.
         post_window: Option<WindowSpec>,
+        /// An agent invite (flag `waddle.v0.agent`, E23): emitted at open,
+        /// arming `AgentInviteTimeout`.
+        agent_invite: Option<AgentInvite>,
         at: MonoNs,
     },
     /// The reset pipeline reported. `verified` carries an inline
@@ -122,14 +163,18 @@ pub enum SessionEvent {
     ClaimRequested {
         id: ClaimId,
         source: String,
-        actor: ActorKind,
+        /// The claimant, whole (kind AND the granting side's stamped
+        /// identity) — carried onto the claim emission verbatim. Use
+        /// [`ActorRef::of_kind`] when the grant is local and has no identity.
+        actor: ActorRef,
         self_initiated: bool,
         at: MonoNs,
     },
     ClaimGranted {
         id: ClaimId,
         source: String,
-        actor: ActorKind,
+        /// The claimant, whole — see [`Self::ClaimRequested`].
+        actor: ActorRef,
         self_initiated: bool,
         at: MonoNs,
     },
@@ -228,19 +273,19 @@ pub enum SessionEvent {
         trace_ref: String,
         at: MonoNs,
     },
-    /// An intake producer dropped an action whose flattened width didn't
-    /// match the declared action space (the dims-validation contract,
-    /// shared by the media-intake teleop path and the plane pump's
-    /// `InterventionChunk` agent-chunk path). A
-    /// diagnostic emission — records `Fault{VALIDATION_ERROR}` — never a
-    /// state transition; the intake thread already deduplicates this to
-    /// once per claim window before injecting it. `source` names the
+    /// An intake producer could not actuate what an intervention stream
+    /// sent it (the media-intake teleop path and the plane pump's
+    /// `InterventionChunk` agent-chunk path both raise this). A diagnostic
+    /// emission — records `Fault{VALIDATION_ERROR}` — never a state
+    /// transition; the intake thread already deduplicates it, per reason,
+    /// to once per claim window before injecting. `source` names the
     /// producer (e.g. "media-intake", "agent-chunk") so the emitted fault
-    /// never misattributes which producer/space actually mismatched.
+    /// never misattributes which producer/space it was, and [`RejectReason`]
+    /// names what actually happened rather than fitting every refusal into
+    /// a dims-shaped report.
     InterventionRejected {
-        dims_got: usize,
-        dims_want: usize,
         source: &'static str,
+        reason: RejectReason,
         at: MonoNs,
     },
     /// The post-reset pipeline reported (flag `waddle.v0.reset.phases`, rows
@@ -264,6 +309,14 @@ pub enum SessionEvent {
         claim: ClaimId,
         ok: bool,
         verified: Option<bool>,
+        at: MonoNs,
+    },
+    /// The plane denied the agent task (flag `waddle.v0.agent`, E26/E26b) —
+    /// injected by the runtime when `AgentTaskUpdate{DENIED}` arrives.
+    /// QUEUED/COMPLETED updates are runtime-side information, never FSM
+    /// events (FSM.md §1.5).
+    AgentTaskDenied {
+        detail: String,
         at: MonoNs,
     },
 }
@@ -303,7 +356,8 @@ impl SessionEvent {
             | Self::InterventionRejected { at, .. }
             | Self::PostResetResult { at, .. }
             | Self::ResetWindowEngage { at, .. }
-            | Self::ResetWindowComplete { at, .. } => *at,
+            | Self::ResetWindowComplete { at, .. }
+            | Self::AgentTaskDenied { at, .. } => *at,
         }
     }
 }

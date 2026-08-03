@@ -1,0 +1,41 @@
+{
+  "format": "waddle.behavior/v0",
+  "name": "remote_reset_caller_tick_noop",
+  "description": "Pins FSM.md E20's caller-tick marker (the stale-handle contract): while a remote reset window is ENGAGED (gate mode RESET), the caller's own gate() ticks dispatch nothing and return Noop{NOOP_REASON_RESET_ACTIVE} with no fault and no episode transition — a stale handle must never double-drive a reset a remote actor owns. After reset_window_complete hands the lease back and the gate returns to PASSTHROUGH, the very next caller tick passes through normally and drives E6 READY→RUNNING, showing the marker is window-scoped rather than sticky.",
+  "target": "gate",
+  "requires_features": ["waddle.v0.core", "waddle.v0.reset.remote"],
+  "setup": {
+    "robot_fixture": "../wire/robot_description_bimanual_composite.json",
+    "lease_enforcement": "LEASE_ENFORCEMENT_ADVISORY",
+    "handoff": { "immediate": { "blendNs": "0" } },
+    "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING"
+  },
+  "steps": [
+    { "inject": { "kind": "episode_open", "episode_id": "ep-rcn-0001", "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING", "pre_reset_window": { "expected_actor": "ACTOR_KIND_TELEOPERATOR", "prompt": "please reset the scene", "timeout_ns": "5000000000" } } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RESETTING", "reset_window.open": true, "reset_window.kind": "RESET_KIND_PRE", "reset_window.expected_actor": "ACTOR_KIND_TELEOPERATOR" } },
+
+    { "inject": { "kind": "claim_granted", "claim": { "claimId": "claim-rcn-0001", "episodeId": "ep-rcn-0001", "actor": { "kind": "ACTOR_KIND_TELEOPERATOR", "id": "top-7", "displayName": "Teleoperator 7" }, "sourceName": "teleop", "selfInitiated": false } } },
+    { "inject": { "kind": "reset_window_engage", "claim_id": "claim-rcn-0001" } },
+    { "expect_state": { "gate.mode": "GATE_MODE_RESET", "reset_window.open": true, "claim.active_claim_id": "claim-rcn-0001" } },
+
+    { "advance_ns": "50000000" },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "50000000", "action": { "composite": { "parts": [
+      { "name": "left", "action": { "jointPosition": { "values": [0.10, -0.40, 0.30, -1.20, 0.05, 0.90] } } },
+      { "name": "right", "action": { "jointPosition": { "values": [-0.10, -0.40, 0.30, -1.20, -0.05, 0.90] } } }
+    ] }, "tOffsetNs": "0" } } },
+    { "expect_output": { "kind": "noop", "reason": "NOOP_REASON_RESET_ACTIVE" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RESETTING", "gate.mode": "GATE_MODE_RESET", "reset_window.open": true } },
+
+    { "advance_ns": "50000000" },
+    { "inject": { "kind": "reset_window_complete", "claim_id": "claim-rcn-0001", "result": { "ok": true, "verification": { "mode": "RESET_VERIFICATION_MODE_BLOCKING", "verified": true, "judgeId": "judge-reset", "judgeVersion": "2.1.0", "tNs": "100000000" } } } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_READY", "gate.mode": "GATE_MODE_PASSTHROUGH", "claim.active_claim_id": "", "reset_window.open": false } },
+
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "200000000", "action": { "composite": { "parts": [
+      { "name": "left", "action": { "jointPosition": { "values": [0.11, -0.39, 0.30, -1.19, 0.05, 0.90] } } },
+      { "name": "right", "action": { "jointPosition": { "values": [-0.11, -0.39, 0.30, -1.19, -0.05, 0.90] } } }
+    ] }, "tOffsetNs": "0" } } },
+    { "expect_output": { "kind": "pass" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RUNNING", "gate.mode": "GATE_MODE_PASSTHROUGH" } }
+  ]
+}

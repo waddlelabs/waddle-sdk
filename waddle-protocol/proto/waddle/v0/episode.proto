@@ -423,6 +423,17 @@ message JudgmentAttached {
   Judgment judgment = 1;
 }
 
+// Emitted once at episode open when the episode is agent-invited — the
+// customer asked Waddle to drive (flag waddle.v0.agent). The prompt is the
+// task; timeout_ns bounds how long the invite stays open before the episode
+// aborts unengaged (docs/FSM.md §1.5). The invited agent then claims and
+// drives the episode through the existing intervention machinery; this event
+// carries the ask, never authority.
+message AgentInviteEvent {
+  string prompt = 1;
+  int64 timeout_ns = 2;
+}
+
 // ---------------------------------------------------------------------------
 // The event stream
 // ---------------------------------------------------------------------------
@@ -449,5 +460,6 @@ message EpisodeEvent {
     MarkEvent mark = 15;
     PostResetResult post_reset = 16;    // flag waddle.v0.reset.phases
     ResetWindowEvent reset_window = 17; // flag waddle.v0.reset.remote
+    AgentInviteEvent agent_invite = 18; // flag waddle.v0.agent
   }
 }

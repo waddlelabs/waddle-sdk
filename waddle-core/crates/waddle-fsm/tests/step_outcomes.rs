@@ -12,10 +12,11 @@
 //! protocol-adjacent decision, not a refactor detail.
 
 use waddle_fsm::{
-    Effect, MarkKind, Phase, SessionConfig, SessionEvent, SessionFsm, WindowSpec, step,
+    Effect, MarkKind, Phase, RejectReason, SessionConfig, SessionEvent, SessionFsm, WindowSpec,
+    step,
 };
 use waddle_types::{
-    ActorKind, ClaimId, EpisodeId, HandoffPolicy, LeaseEnforcement, LeaseId, MonoNs,
+    ActorKind, ActorRef, ClaimId, EpisodeId, HandoffPolicy, LeaseEnforcement, LeaseId, MonoNs,
     ResetVerificationMode, TerminalOutcome, Verb,
 };
 
@@ -99,6 +100,7 @@ impl Driver {
             post_reset,
             pre_window,
             post_window,
+            agent_invite: None,
             at,
         });
     }
@@ -122,7 +124,7 @@ impl Driver {
         self.try_apply(SessionEvent::ClaimGranted {
             id: ClaimId::new(id),
             source: "plane".to_owned(),
-            actor,
+            actor: ActorRef::of_kind(actor),
             self_initiated: false,
             at,
         })
@@ -207,6 +209,7 @@ fn episode_open_while_active_is_rejected_n18() {
             post_reset: false,
             pre_window: None,
             post_window: None,
+            agent_invite: None,
             at,
         },
         "one active episode per session (N18)",
@@ -226,6 +229,7 @@ fn born_claimed_open_without_a_held_claim_is_rejected() {
             post_reset: false,
             pre_window: None,
             post_window: None,
+            agent_invite: None,
             at,
         },
         "a born-claimed successor requires a held claim",
@@ -293,7 +297,7 @@ fn claim_request_without_an_active_episode_is_rejected() {
         SessionEvent::ClaimRequested {
             id: ClaimId::new("c1"),
             source: "plane".to_owned(),
-            actor: ActorKind::Teleoperator,
+            actor: ActorRef::of_kind(ActorKind::Teleoperator),
             self_initiated: false,
             at,
         },
@@ -544,9 +548,8 @@ fn intervention_rejected_without_an_active_episode_is_rejected() {
     let at = d.at();
     d.rejected(
         SessionEvent::InterventionRejected {
-            dims_got: 9,
-            dims_want: 6,
             source: "media-intake",
+            reason: RejectReason::Dims { got: 9, want: 6 },
             at,
         },
         "intervention_rejected without an active episode",

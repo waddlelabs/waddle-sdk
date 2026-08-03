@@ -55,6 +55,7 @@ use ::livekit::webrtc::video_source::native::NativeVideoSource;
 use bytes::Bytes;
 use parking_lot::Mutex;
 use tokio::sync::mpsc as tokio_mpsc;
+use waddle_types::pb::v0 as pb;
 
 use crate::{
     DataRx, DataTopic, DataTx, EncodedFrame, MediaError, MediaPlane, TrackHandle, rgb8_to_i420,
@@ -94,6 +95,30 @@ impl LiveKitConfig {
         self.track_resolutions
             .insert(camera.to_owned(), (width, height));
         self
+    }
+
+    /// Declare every camera in `robot` at the dimensions the robot itself
+    /// declared — the whole `RobotDescription.cameras` list at once.
+    ///
+    /// This is how an integration that HAS a robot declaration must build
+    /// its config, and why it lives here rather than in each binding: a
+    /// track publishes at ONE resolution and [`MediaPlane::push_frame`]
+    /// rejects every frame that disagrees with it, so a camera left to
+    /// [`DEFAULT_TRACK_RESOLUTION`] drops 100% of its frames unless it
+    /// happens to be exactly VGA. Nothing raises when that happens — the
+    /// uplink pump warns and counts the drop — so the failure presents as
+    /// "the teleoperator sees nothing" with a session that reports success.
+    ///
+    /// The map mirrors the declaration the rest of the pipeline already
+    /// validates frames against (`Session::publish_frame` rejects any frame
+    /// whose dimensions disagree with the same `cameras` entry), so a
+    /// camera declared with no dimensions can never produce a frame here
+    /// either, and needs no special case.
+    #[must_use]
+    pub fn with_robot_cameras(self, robot: &pb::RobotDescription) -> Self {
+        robot.cameras.iter().fold(self, |config, cam| {
+            config.with_track_resolution(&cam.name, cam.width, cam.height)
+        })
     }
 }
 
@@ -425,4 +450,62 @@ fn worker(
         }
         let _ = room.close().await;
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn camera(name: &str, width: u32, height: u32) -> pb::CameraDescription {
+        pb::CameraDescription {
+            name: name.to_owned(),
+            width,
+            height,
+            ..Default::default()
+        }
+    }
+
+    /// Every declared camera publishes at ITS declared resolution, not the
+    /// VGA default: a track carries one resolution and `push_frame` rejects
+    /// every frame that disagrees, so a camera missing from this map is a
+    /// camera whose frames are all dropped — with nothing raising, and only
+    /// a warn plus the uplink's drop counter to show for it.
+    #[test]
+    fn robot_cameras_are_declared_at_their_own_resolutions() {
+        let robot = pb::RobotDescription {
+            cameras: vec![camera("overhead", 1280, 720), camera("wrist", 320, 240)],
+            ..Default::default()
+        };
+
+        let config = LiveKitConfig::new("ws://plane.invalid".to_owned(), "token".to_owned())
+            .with_robot_cameras(&robot);
+
+        assert_eq!(
+            config.track_resolutions.get("overhead").copied(),
+            Some((1280, 720)),
+            "a declared camera must publish at its declared resolution"
+        );
+        assert_eq!(
+            config.track_resolutions.get("wrist").copied(),
+            Some((320, 240)),
+            "EVERY declared camera, not just the first"
+        );
+        assert_eq!(config.track_resolutions.len(), robot.cameras.len());
+        assert!(
+            !config
+                .track_resolutions
+                .values()
+                .any(|&res| res == DEFAULT_TRACK_RESOLUTION),
+            "no declared camera may silently inherit the VGA default"
+        );
+    }
+
+    /// A robot that declares no cameras declares no resolutions — the
+    /// default stands, and nothing is invented on the robot's behalf.
+    #[test]
+    fn a_robot_without_cameras_declares_no_resolutions() {
+        let config = LiveKitConfig::new("ws://plane.invalid".to_owned(), "token".to_owned())
+            .with_robot_cameras(&pb::RobotDescription::default());
+        assert!(config.track_resolutions.is_empty());
+    }
 }

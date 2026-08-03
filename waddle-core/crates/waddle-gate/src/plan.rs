@@ -46,6 +46,13 @@ pub enum PlanMode {
     /// reducer can render `NoopReason::RESET_ACTIVE` instead of
     /// `BYPASS_ACTIVE`.
     Reset { provenance: ProvenanceTag },
+    /// The episode is agent-invited (flag `waddle.v0.agent`) and no claim is
+    /// engaged: the caller's own ticks NEVER dispatch (FSM.md §1.5, E24) —
+    /// the SDK opened this episode for a Waddle-hosted agent to drive. Same
+    /// shape as `Bypass`/`Reset`, distinct so the reducer can render
+    /// `NoopReason::AGENT_EPISODE`. With an engaged claim the ordinary
+    /// `Claimed`/`Bypass` plans apply unchanged.
+    AgentEpisode { provenance: ProvenanceTag },
     /// A hold is active (HOLD_FIRST engage, tripwire hold).
     Held,
 }

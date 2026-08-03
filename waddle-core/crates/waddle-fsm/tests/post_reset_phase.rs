@@ -5,7 +5,7 @@
 
 use waddle_fsm::{Effect, LeaseState, Phase, SessionConfig, SessionEvent, SessionFsm, step};
 use waddle_types::{
-    ActorKind, ClaimId, EpisodeId, HandoffPolicy, LeaseEnforcement, LeaseId, MonoNs,
+    ActorKind, ActorRef, ClaimId, EpisodeId, HandoffPolicy, LeaseEnforcement, LeaseId, MonoNs,
     ResetVerificationMode, TerminalOutcome, Verb, pb::v0 as pb,
 };
 
@@ -145,6 +145,7 @@ fn open_declared(d: &mut Driver) {
         post_reset: true,
         pre_window: None,
         post_window: None,
+        agent_invite: None,
         at,
     });
     let at = d.tick();
@@ -162,7 +163,7 @@ fn engage(d: &mut Driver) {
     d.ok(SessionEvent::ClaimGranted {
         id: ClaimId::new("claim-pr"),
         source: "teleop".to_owned(),
-        actor: ActorKind::Teleoperator,
+        actor: ActorRef::of_kind(ActorKind::Teleoperator),
         self_initiated: false,
         at,
     });

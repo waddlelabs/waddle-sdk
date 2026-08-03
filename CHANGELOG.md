@@ -12,6 +12,277 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 ## [Unreleased]
 
 ### Added
+- **waddle-protocol/waddle-core (agent-invited episodes, new feature flag
+  `waddle.v0.agent`)**: a customer can now ask Waddle to drive an episode
+  rather than driving it themselves — `Session::run_agent(prompt, timeout_ns,
+  opts)` opens an *agent-invited* episode and blocks until it terminates,
+  returning `AgentOutcome { outcome, episode_id, recording_ref, detail }`.
+  **The invite adds no authority concepts.** It is one `EpisodeEvent`
+  (`AgentInviteEvent { prompt, timeout_ns }`, arm 18) forwarded to the plane
+  like any other emission; the hosted agent then claims the episode with the
+  EXISTING intervention machinery (`ClaimDirective{GRANT, ACTOR_KIND_AGENT}`
+  → engage), streams chunks on the EXISTING `intervention_chunk` arm, and
+  finishes with the EXISTING `EpisodeDirective{MARK_DONE}` +
+  `ClaimDirective{RELEASE}`. Everything else about the episode — E7 engage,
+  chunk handoff, E10 termination, both reset phases — applies verbatim.
+  - **Protocol**: `AgentInviteEvent` (episode.proto);
+    `AgentTaskUpdate { episode_id, kind, detail, recording_ref,
+    directive_id? }` with `AgentTaskUpdateKind`
+    (UNSPECIFIED/QUEUED/DENIED/COMPLETED) as `GateServerMessage` arm 7 — the
+    plane's status channel for the ask itself, distinct from the episode's
+    own timeline; `NOOP_REASON_AGENT_EPISODE = 4` (control.proto). All
+    append-only; registry row in VERSIONING.md.
+  - **FSM.md §1.5** (guard rows E23–E26/E26b, C8): E23 opens the episode,
+    emits the invite, and arms `agent_invite_timeout`; **E24** — the caller's
+    own `gate()` ticks NEVER dispatch while no claim is engaged (plan Noop,
+    reason `NOOP_REASON_AGENT_EPISODE`; no fault, no state change), which is
+    what makes "you asked, Waddle drives" honest rather than a race between
+    two writers; **E25/E26** (deadline elapsed, or a plane `DENIED` while the
+    invite is open) are declared **members of E10's trigger set** with the
+    outcome fixed to ABORT, so E14 routes them through the episode's normal
+    termination (TERMINAL{ABORT}, or POST_RESET{ABORT pinned} when
+    post-reset is declared) instead of around it; **E26b** records a late
+    `DENIED` as an event only, so it can never disturb a pinned outcome.
+    **C8** admits `ACTOR_KIND_AGENT` claims only, and records the refusal of
+    any other actor as `claim{DENIED}` — a declared reset window on an
+    agent-invited episode still admits its teleoperator under C6, which
+    C8 does not touch. Two latches are emission-invisible state:
+    `agent_engaged` (set by the first agent ENGAGE; never re-arms the invite
+    timer on a release/re-engage) and `invite_aborted` (set by E25/E26 and
+    nothing else, so an embedder can tell "the ask went unanswered" from
+    "the episode broke for unrelated reasons" without parsing reasons).
+    The invite closes on the first of an agent ENGAGE or any exit from
+    {RESETTING, READY, RUNNING}; every closing row cancels the timer, and a
+    stale expiry after close is discarded.
+  - **Conformance**: eight new scenarios in `fixtures/behaviors/`
+    (`agent_invite_happy`, `agent_caller_tick_noop`, `agent_invite_timeout`,
+    `agent_invite_timeout_post_reset`, `agent_invite_denied`,
+    `agent_invite_denied_after_engage`, `agent_invite_wrong_actor_denied`,
+    `agent_invite_denied_in_post_reset`), all listing `waddle.v0.agent` in
+    `requires_features`; a ninth, `agent_invite_retake_successor`, arrives
+    with the E24 re-projection fix below, and a tenth,
+    `agent_invite_clutch_denied`, with the C8 clutch fix under Fixed.
+    `scenario-format.md` gains the `episode_open`
+    `agent_invite` key, the `agent_task_update` inject kind (the update
+    nests as a canonical `waddle.v0.AgentTaskUpdate` under `update`, the
+    shape `reset_result` already uses — the message's own `kind` field
+    cannot ride flat beside the inject dispatcher's `kind`), the
+    `episode.agent_invited` / `episode.agent_engaged` snapshot paths, and
+    the `agent_invite_timeout` timer id. The runner now captures a Noop's
+    reason from the plan mode that produced the tick instead of hardcoding
+    `BYPASS_ACTIVE`, which also fixed a latent runner-vs-E20 drift.
+  - **Runtime**: `EpisodeOptions.agent_invite` (waddle-fsm's own
+    `AgentInvite`, re-exported — the frontend stays hollow) opens without
+    blocking; `run_agent` is the blocking convenience and fails loudly up
+    front when the engage-path verbs the invite needs are unwired. The plane
+    pump retains every `AgentTaskUpdate` on the mirror
+    (`Status.agent_task`); only a DENIED addressed to the ACTIVE episode is
+    dispatched to the FSM, which alone picks E26 vs E26b — QUEUED/COMPLETED
+    never touch it, and COMPLETED's `recording_ref`/`detail` feed the
+    outcome. The mirror publishes `agent_invited` / `agent_engaged` /
+    `agent_invite_aborted`. The flag is declared at Register
+    unconditionally whenever a transport is configured: the SDK always
+    supports being agent-driven, and a plane that did not accept it simply
+    never routes an invite (the deadline then closes the episode via E25).
+  - **Gate**: `waddle-gate` gains `PlanMode::AgentEpisode { provenance }`
+    (mirroring `Bypass` and `Reset`): `Gate::gate()` returns `Noop` and
+    records the new `GateDecision::AgentEpisode`, same cost class as the
+    existing NOOP paths (no locks/syscalls/allocations); the runtime
+    reducer derives that plan for an agent-invited episode with no engaged
+    claim (E24) and renders `NoopReason::AGENT_EPISODE` distinctly from
+    `BYPASS_ACTIVE` and `RESET_ACTIVE`, so a recording says *why* a tick
+    dispatched nothing. Both variants are **source-breaking for an
+    exhaustive match** on `PlanMode` or `GateDecision` (pre-1.0 / API
+    unstable per N5).
+- **waddle-protocol/waddle-runtime (control-plane stills, new feature flag
+  `waddle.v0.obs.stills`)**: a hosted agent needs to SEE the scene, and until
+  now `publish_frame` fed only the media plane — an agent-only session with no
+  LiveKit anywhere had no frame path to the control plane at all. A camera
+  declaring `StreamPolicy.still_fps > 0` (descriptors.proto field 3; 0/absent
+  means no stills) now has each published frame teed into a latest-wins
+  per-camera slot, which the existing `waddle-media-uplink` pump samples at
+  the declared rate, JPEG-encodes (never on the customer's thread, never on
+  the gate path), and sends as `ObservationUpdate{ still: FrameStill }`
+  (`FrameStill { camera, frame_seq, encoding, width, height, data }`,
+  services.proto payload arm 5). **Bounded by declaration — never a video
+  path; LiveKit media remains the only video transport**, and the file-header
+  and StreamPolicy comments asserting that nothing high-bandwidth rides these
+  RPCs now name this bounded exception explicitly.
+  - The intake grew a second, independent leg rather than a branch: the media
+    leg keeps its own fps throttle and bounded drop-oldest queue, the stills
+    leg its own frame-timeline throttle and capacity-one slot; neither
+    rate-limits the other. `CameraUplink` is built whenever EITHER leg has
+    somewhere to go, so a stills-only camera works with no media plane, while
+    a session with neither keeps `publish_frame`'s cheap no-op early return
+    and declared-uplink validation stays scoped to cameras that would
+    actually be wired.
+  - The throttle reads the frame's own `SessionClock` stamp, never a
+    pump-side clock, so the sampled rate is a property of the frames and the
+    sampling is deterministic under test; a not-yet-due frame is kept rather
+    than discarded, so a publisher slower than its declared rate still gets
+    every frame sampled. `frame_seq` is minted once per validated
+    `publish_frame`, before either throttle — it numbers the camera's frames,
+    not the subset a policy admitted, and is THE per-camera `FrameNotice`
+    counter for whatever emits `FrameNotice` later. Stills stay out of
+    `camera_frames_dropped`, which keeps meaning exactly media-uplink loss.
+  - The flag is declared at Register iff some camera asks for stills
+    (declaring it otherwise would claim a behavior the session cannot
+    produce), and stills are emitted only while the CURRENT connection
+    accepted it (VERSIONING §3), refreshed on every registration by the plane
+    pump — the emitting thread is not the one that sees the response.
+    Control-plane stills are also the first *droppable* history-free message
+    class: see the `waddle-controlplane` entry under Fixed for how they are
+    shed rather than buffered while a plane is unreachable or stalled.
+- **sdk (Python: `init(transport=…, media=…)`, `waddle.agent()`, and the
+  `[teleop]` companion distribution)**: the connected surface, in the two
+  places a user actually touches it.
+  - **`waddle.init(transport=waddle.Grpc(url, token=None))`** connects the
+    supervision plane, and **`waddle.init(media=waddle.LiveKit(url, token))`**
+    the teleop media plane — both small frozen config dataclasses handed
+    straight to core constructors; nothing in Python inspects a connection.
+    The two are mutually exclusive with `_testing=True` (which wires the
+    in-process loopback), and `media` requires its token, because the plane
+    mints room tokens and this SDK never does.
+  - **`waddle.agent(prompt, *, timeout_s=600.0, pre_reset=…, post_reset=…)
+    -> AgentResult`**: hand a
+    whole episode to Waddle instead of driving it. It blocks until the
+    episode reaches an outcome and returns a frozen
+    `AgentResult { outcome, episode_id, recording_ref, detail }`, each field
+    the core's word verbatim. An ask nobody answers comes back
+    `outcome == "abort"` at the invite deadline — a result, not an
+    exception. `pre_reset`/`post_reset` override this one episode's reset
+    phases exactly as they do on `rollout()` (an agent run is an episode
+    like any other, and the reset kwargs `_core`'s `Session.agent` takes
+    were unreachable from Python without them). It refuses up front only
+    when there is nobody to ask (neither a `transport` nor the `_testing`
+    loopback that stands in for one) or when the verbs an invited claimant
+    would need are
+    unwired; everything else — who may claim the episode, what the caller's
+    own ticks do meanwhile — is an FSM row, not a Python branch.
+  - **Two distributions from one source tree** (the psycopg / psycopg-binary
+    shape): `pip install waddle-sdk` carries the gRPC control transport, and
+    `pip install 'waddle-sdk[teleop]'` adds the exact-pinned
+    **`waddle-sdk-teleop`** companion — the SAME shim, same
+    `rust/Cargo.toml`, built with `livekit` as well. Splitting them keeps
+    libwebrtc's ~690 MB of build out of installs that only supervise a
+    policy; measured, the companion is ~4.5x the default wheel. Either way
+    you `import waddle`: **`waddle._native`** is the one module that picks a
+    core, preferring the companion when a version-matched one is installed,
+    warning and falling back to the bundled core when the two versions
+    disagree (a half-upgraded environment must not load a core built from
+    other sources), and honouring `WADDLE_NO_TELEOP=1`. The extra's exact
+    pin is the one version maturin cannot derive from the manifest, so a
+    test holds it to `waddle.__version__` rather than to memory.
+  - `waddle.__version__` re-exports `_core.__version__`, so the Python
+    surface and the compiled core can always be reported as one thing.
+- **sdk (connected shim: transport features, `_core.FEATURES`,
+  `Session.agent`)**: the PyO3 shim can now be BUILT with the transports the
+  core has always been able to drive. Two cargo features — `grpc` (the tonic
+  `ControlTransport`) and `livekit` (the media plane) — plus four
+  `create_session` kwargs (`transport_url`/`transport_token`,
+  `media_url`/`media_token`). A build without the matching feature REFUSES
+  the kwarg with an actionable error instead of degrading to a silent
+  offline session: quietly losing supervision is the one failure mode this
+  layer exists to prevent (the LiveKit refusal names the `[teleop]` extra,
+  since "not compiled" alone is not something a caller can act on). Each
+  core states its own `FEATURES` (a frozenset of the built feature names)
+  and `__version__`; the frozenset the Python layer actually probes is
+  `waddle._native.FEATURES`, re-exported from whichever core `_native`
+  selected — reading `waddle._core.FEATURES` would describe the bundled
+  core even in a process running the teleop one. It is the only feature
+  detection the Python layer may do. The shim gains
+  kwargs, never logic. Neither feature is a cargo default (the featureless
+  build stays the tokio- and libwebrtc-free clippy baseline), but no shipped
+  distribution is featureless — see the two-distribution entry above.
+  - `Session.agent(prompt, timeout_ns, **reset overrides)` binds
+    `Session::run_agent` (flag `waddle.v0.agent`) and returns
+    `AgentResult { outcome, episode_id, recording_ref, detail }`, each field
+    core's word verbatim. It blocks for a whole episode, so the core call
+    runs on a dedicated `waddle-py-agent` thread while the calling thread
+    waits in 50 ms GIL-released slices and runs Python's signal handlers
+    between them. A Ctrl-C is therefore heard within a slice instead of at
+    the invite deadline; it asks the core to abort the live agent-invited
+    episode (the same abort `Episode.terminate()` requests — the shim
+    decides nothing about the timeline, and the core no-ops when that
+    episode is no longer live) and keeps asking on every later slice until
+    the run reports finished, since the first ask can land in a window with
+    no live agent-invited episode to abort (the run thread has not opened
+    one yet, or is still waiting out a predecessor's POST_RESET) and a
+    one-shot ask would then leave the caller blocked to the deadline with
+    the interrupt already latched. `KeyboardInterrupt` is raised only once
+    the core reports the run finished, so no agent is left driving a robot
+    whose caller has walked away, and no thread is orphaned.
+  - `sdk/rust/Cargo.lock` pins the livekit crates to the set
+    `waddle-core/Cargo.lock` already resolves (livekit 0.7.52, -api 0.5.5,
+    -protocol 0.7.10, -common 0.1.0, -data-stream 0.1.0, -datatrack
+    0.1.11): the newest published set does not compile (livekit-api 0.5.6
+    is missing a field livekit-protocol 0.7.12 added). Keeping two
+    lockfiles honest is the standing cost of the shim's separate workspace.
+  - New pytest module `tests/test_agent.py` covers the probe's shape, the
+    refusals, an invite-timeout `agent()` returning `outcome == "abort"`,
+    and the interrupt path (a real `SIGINT` mid-run, asserting both that
+    `KeyboardInterrupt` arrives promptly and that the session can open a
+    fresh episode afterwards — i.e. the run really ended).
+- **sdk (`examples/toy_robot.py`: a whole robot integration in one file)**:
+  the program a customer would actually run, and the first artifact in this
+  repo that exercises the declaration surface, the loop, the media/stills
+  legs and `waddle.agent()` together rather than one at a time. A 6-dof arm
+  with per-joint limits, a parallel gripper declared in **metres** (`0.0`
+  open / `0.04` closed — deliberately not 0/1, so the normalized-to-declared
+  mapping a claimant's gripper command goes through is actually exercised), a
+  generated 6-joint URDF, and one 320x240 camera declaring both an `uplink`
+  (media plane) and `still_fps=2` (control plane). The robot is a small
+  kinematic simulator in the same file, so the example runs with no hardware,
+  no network and no plane — offline it still gates every action and lands a
+  sidecar + MCAP per episode, which is what makes it usable as a first
+  five-minute experience. One environment variable
+  (`WADDLE_TOY_TRANSPORT`) turns the same program into a supervised session;
+  `WADDLE_TOY_MODE=agent` makes it hand a whole episode to Waddle and report
+  the `AgentResult`. Status lines are prefixed `[toy] ` and flushed, so a
+  harness can drive it. `examples/README.md` documents the three
+  configurations and what the `[teleop]` extra adds on top.
+  Three details the reference integration is deliberate about, because a
+  customer copies this file:
+  - **The claimant's gripper is sent, not the policy's.** A grasp does not
+    ride `gate()`'s return value — it arrives on `ep.last_gate.gripper`,
+    already converted out of the normalized 0..1 wire into the metres this
+    robot declared — so the loop sends that whenever it is present and its
+    own value only on a passthrough tick. Sending the scripted value beside
+    substituted joints would move the arm where the teleoperator asked while
+    silently dropping the grasp.
+  - **A latched e-stop survives the scene reset.** `ToyArm.home()` refuses
+    (returns `False`, moving nothing) while stopped, and `pre_reset` returns
+    `False` rather than vouching for a scene it did not reset; only
+    `clear_estop()` — standing in for the human at the machine — releases
+    it. The envelope is the owner's, so no supervision flow may clear it.
+  - **An empty environment variable means unset**, at both layers
+    (`WADDLE_TOY_TOKEN=` is "no credential", `--token ""` likewise), because
+    `VAR=${MAYBE_UNSET}` is how a harness parameterizes a child; previously
+    those died in `int("")` or in credential validation before the first
+    status line.
+- **sdk (`waddle.StreamPolicy(still_fps=…)`)**: the Python declaration for
+  control-plane stills (flag `waddle.v0.obs.stills`), which core has
+  honoured since the entry above but no Python program could ask for. `None`
+  (the default) and `0` both mean no stills, matching the wire; a negative
+  rate is rejected as a shape error. It compiles to the `stillFps` key, held
+  to that by reading the value back out of core rather than by a
+  hand-written expectation: the new `_core.robot_json_roundtrip(json)`
+  decodes a compiled robot exactly as core does and returns core's own
+  canonical JSON of what it *understood*. Validation alone could not have
+  said — decoding tolerates unknown fields by design (append-only
+  evolution), so a misspelled key validates perfectly and is dropped in
+  silence, and the first symptom would have been a customer's connected
+  session sending no stills.
+- **waddle-protocol (fixture `remote_reset_caller_tick_noop`)**: pins FSM.md
+  E20's caller-tick marker, previously asserted by no golden — a `gate_tick`
+  during an ENGAGED remote reset window returns
+  `Noop{NOOP_REASON_RESET_ACTIVE}` and causes no episode transition (the
+  stale-handle contract), and the first tick after `reset_window_complete`
+  passes through and drives E6 READY→RUNNING, pinning the marker as
+  window-scoped rather than sticky. Before this fixture the conformance
+  runner's `(Noop, PlanMode::Reset)` marker-translation arm could be
+  reverted to `BYPASS_ACTIVE` with the whole suite staying green; the E20
+  row's Fixture column now lists it.
 - **waddle-runtime (`ServerMsg::ResetProgress` handling)**: the
   plane-executed reset completion path (`RequestReset`/`ResetProgress`,
   `waddle.v0.reset`) is no longer dropped — every message updates a new
@@ -78,6 +349,14 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   at Register when a transport is configured (safe — emission still requires
   the id). Registry row in VERSIONING.md; normative ack paragraph in FSM.md
   §8.
+  - `AgentTaskUpdate` (flag `waddle.v0.agent`) carries a `directive_id`
+    (field 5) and is acked on the same rule, now stated in both normative
+    enumerations rather than only in the code: an update is a directive
+    exactly where it decodes into a session event — a DENIED addressed to
+    the ACTIVE episode, accepted under E26 and rejected under E26b.
+    QUEUED, COMPLETED, and a DENIED naming any other episode are recorded
+    without an FSM step, so they never ack whatever their id says. Pinned
+    by a new case in `waddle-runtime/tests/directive_acks.rs`.
 - **waddle-gate/waddle-runtime (Claimed-mode agent-chunk intake + jitter
   horizon + `ReplanPolicy`)**: cloud-agent interventions are now real
   outside a reset window too. `forward_server_msg`'s `InterventionChunk` arm
@@ -204,13 +483,16 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     wrong dtype/rank/shape (or a non-contiguous array) raises `TypeError`;
     an unknown camera or a resolution mismatch raises `RuntimeError` (from
     the core). `waddle.init(..., media=waddle.LiveKit(url, token))`
-    exposes the config shape for a real WebRTC-backed media plane, but
-    this SDK build does not compile the heavy `livekit` Cargo feature
-    (~700 MB webrtc-sys download, tokio) in by default — passing it raises
-    a clean, actionable `RuntimeError` naming the gap, exactly like the
-    deferred `grpc` transport; `_testing=True` (the in-process loopback)
-    is unaffected and is how `publish_frame` is exercised end-to-end today
-    (`waddle._testing.frames(session, camera)` observes the far end).
+    declares a real WebRTC-backed media plane. The heavy `livekit` Cargo
+    feature (~690 MB webrtc-sys download, tokio) rides the `[teleop]`
+    companion wheel rather than the default one, so a core built without
+    it refuses `media=` with a clean `RuntimeError` naming the extra
+    instead of degrading to a silent offline session (the `grpc` control
+    transport, by contrast, IS in the default wheel — see the
+    two-distribution entry above); `_testing=True` (the in-process
+    loopback) is unaffected and is how `publish_frame` is exercised
+    end-to-end in tests (`waddle._testing.frames(session, camera)`
+    observes the far end).
 - **waddle-media (real LiveKit `MediaPlane` behind the `livekit` feature)**:
   `livekit::LiveKitMedia` is the first real transport.
   `LiveKitMedia::connect(LiveKitConfig { url, token, track_resolutions })`
@@ -248,10 +530,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   `waddle.TeleopReset(prompt, *, timeout_s=600.0)` and
   `waddle.AgentReset(prompt, *, timeout_s=600.0)` are small frozen,
   repr-friendly dataclasses declaring a remote reset window for a
-  teleoperator/agent respectively (their docstrings name the production
-  caveat: this open-source runtime has no supervision-plane transport
-  wired yet, so today a window can only be driven end-to-end via the
-  private `waddle._testing` reset-window hooks). `waddle.init` gains
+  teleoperator/agent respectively (their docstrings name what a window
+  needs to run: a connected supervision plane to grant and complete it —
+  `waddle.init(transport=waddle.Grpc(url, token))` — since with no plane
+  declared a window can only run out its timeout, and only the private
+  `waddle._testing` reset-window hooks drive one without a plane).
+  `waddle.init` gains
   `pre_reset=None`, `post_reset=None` (`None` | callable | `TeleopReset` |
   `AgentReset`) and `reset_verification="blocking"` (`"blocking"` |
   `"optimistic"`); `waddle.rollout(task, *, pre_reset=_UNSET,
@@ -650,6 +934,17 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   dict as before.
 
 ### Changed
+- **Public types (pre-1.0 / API unstable per N5) — a claim's actor and a
+  custom provenance are now SHARED, not owned**: `ActiveClaim.actor` is an
+  `Arc<ActorRef>` where it was a bare `ActorKind` (a claim now carries who
+  holds it whole — kind and the identity the granting side stamped),
+  `ProvenanceTag.actor` is `Option<Arc<ActorRef>>`, and
+  `Provenance::Custom` carries an `Arc<str>` where it carried a `String`.
+  Source-breaking for anything that constructs or destructures them. The
+  `Arc`s are not decoration: the gate clones the active tag twice per tick
+  on the customer's real-time thread, so nothing owned may live on it —
+  the identity is minted once per claim, off that thread (see the
+  per-tick-allocation regression under Fixed for the measurement).
 - **`Session::episode_done` / `Episode::done` flip at `Phase::PostReset`**,
   not only at Terminal: the terminal outcome is pinned at POST_RESET entry
   (E14), so the rollout is over from the caller's view while only the scene
@@ -721,6 +1016,307 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   in the episode MCAP; callers no longer see the ring.
 
 ### Fixed
+- **A gripper-only intervention step is an action, not a drop**
+  (`waddle-types`/`waddle-gate`/`waddle-runtime`): control.proto has
+  `Action.gripper` "ride alongside the target in one logical tick", and
+  `NoopMarker` is a target arm like any other — so `Action{noop, gripper}`
+  says *hold the arm, move the gripper*, and is the only shape available to
+  a sender whose gripper command has no arm target beside it. `flatten_action`
+  called it non-executable, and the `intervention_chunk` intake then dropped
+  the WHOLE chunk with nothing but a `tracing::warn!`: observed live, a
+  four-step stream (three joint waypoints, then a gripper close) actuated
+  three times and the grip vanished with no recorded fault, no ack-visible
+  refusal, nothing the sender could see. Now:
+  - **noop + gripper flattens to a gripper-only `Step`** — no arm values at
+    all (`Step::is_gripper_only`), the gripper in the declared
+    `GripperSpec`'s own units, unmapped (an `ActionChunk`'s
+    `GripperCommand.position` is already in those units, unlike a raw teleop
+    packet's normalized trigger). It dispatches through the same paths every
+    other step does, and `unflatten_action` rebuilds the wire shape it came
+    from, so the grip lands on `/waddle/actions` instead of vanishing from
+    the recording. `blend_step` treats it as an action rather than a dims
+    mismatch: the gripper channel cross-fades and the arm holds.
+  - **An inert step (noop, no gripper) is skipped, not fatal to its chunk.**
+    `ActionChunk::from_pb` returns a `FlattenedChunk { chunk, inert }`: the
+    steps around an inert one still execute — one step with nothing in it
+    must never cost the sender the waypoints around it — and the skip is
+    REPORTED. Anything that doesn't fit the declared space at all (wrong
+    target arm, missing field, opaque space) still refuses the whole chunk,
+    since a partial trajectory from a sender that disagrees about the space
+    is not a degraded-but-safe thing to actuate.
+  - **Every intake refusal is now observable.** `SessionEvent::InterventionRejected`
+    carries a `RejectReason` (`Dims` / `NotExecutable` / `InertStepsSkipped`)
+    instead of a dims-shaped pair, and each reason emits its own
+    `Fault{FAULT_KIND_VALIDATION_ERROR}` text, deduped per reason to once per
+    claim window. The non-dims refusals used to be trace warnings only,
+    because they could not be told truthfully in the dims-shaped event.
+  - FSM.md §4 states the rule ("What an intervention action may carry") and
+    §5's dims-mismatch sentence names the gripper-only exception. No guard
+    row, no state transition, and no golden fixture changes: this is intake
+    and gate behavior, covered by `waddle-runtime`'s end-to-end intake suite.
+    Customer-visible: a `send`/`gate()` step may now carry an EMPTY action
+    array with its `gripper` set — command the gripper, leave the arm target
+    where it was (`Control.send` docs; `toy_robot.py` shows it).
+- **A clutch refused by C8 now says so** (`waddle-fsm`): on an agent-invited
+  episode, a clutch edge whose declared actor is not `ACTOR_KIND_AGENT` was
+  dropped in silence — no claim, no emission, nothing on the timeline. But a
+  clutch grants its own claim in one step, so C8 governs it exactly as it
+  governs a plane GRANT, and FSM.md's C8 row says a refused grant is
+  recorded as `claim{DENIED}`. The .md wins: the refusal now emits the same
+  `claim{DENIED}` shape the wrong-actor grant path emits, naming the
+  refused actor, with no `claim{REQUESTED}` before it (a clutch has no
+  request pending) and no state change. A site operator squeezing the
+  clutch on an episode Waddle is driving is exactly the moment a recording
+  must be able to explain why nothing happened. FSM.md §2's
+  self-initiated-claims paragraph states the rule; new fixture
+  `agent_invite_clutch_denied` pins it, and is the first scenario to
+  exercise the `clutch` inject kind at all. Clutches refused for any other
+  reason (a claim is already active, the episode is not RUNNING) stay
+  silent, unchanged.
+- **The gate stopped allocating on every claimed tick** (regression, caught
+  in review before release): carrying the claimant's `ActorRef` onto the
+  provenance tag (the fix below) put two owned `String`s on the tag that
+  `Gate::gate()` clones TWICE per tick — once into the record ring, once
+  into the returned `GateOutput`. Measured: **four mallocs per `gate()`
+  call**, on the customer's real-time thread, on every CLAIMED / BYPASS /
+  RESET / agent-episode tick of every claim the plane granted (i.e. every
+  production teleop session and every agent intervention; only local clutch
+  grants, whose actor has no stamped identity, were spared). The tag's two
+  variable-length fields are now shared rather than owned —
+  `Provenance::Custom(Arc<str>)` and `Option<Arc<ActorRef>>`, minted once per
+  claim by `ActiveClaim::provenance` off the caller's thread — so cloning a
+  tag is a refcount bump. `Custom`'s name was already an owned clone before
+  the actor work, so a SITE_OPERATOR claim had been allocating twice per tick
+  for as long as that path has existed; that is fixed by the same change.
+  Measured after: 0 allocations per tick on every arm, and the BYPASS arm
+  under a plane-granted claim benches at the same ~75 ns as passthrough.
+  `waddle-gate`'s `alloc_free` proof now covers **every plan arm** with a
+  plane-shaped claim (it was passthrough-only, which is why nothing caught
+  this; its counter is also per-thread now, so concurrently-running tests
+  cannot pollute a measurement), and `cargo bench -p waddle-gate` gained the
+  claimed-arm case.
+- **A `report_proprio` call still queued when an episode ends is recorded in
+  that episode**: `finalize` tail-drained the gate-record ring and the
+  bypass-pump dispatches before closing the MCAP but not the proprio-report
+  channel, so anything reported in the last reducer wake before TERMINAL was
+  drained later with no episode open and discarded — or, worse, written into
+  whichever episode opened next. A caller reporting at 100 Hz lost the tail
+  of every episode. All three side channels are now drained together, in the
+  same order the reducer loop drains them.
+- **An agent-driven episode's recording contains its actions and its
+  observations**: actions and observations were written only on the
+  gate-tick record path, and the caller of an agent-invited episode never
+  ticks `gate()` (FSM.md E24) — so a warm-up episode recorded 40 actions and
+  40 observations while the agent episode that followed it recorded 0 and 0.
+  An episode with neither is not a data product: it cannot be judged, scored
+  or trained on. Two independent paths were missing:
+  - The **bypass pump's dispatch** — the moment an intervenor's action
+    actually reaches the robot without passing through the caller's gate —
+    now produces an `/waddle/actions` row like any gate tick's, stamped by
+    the `SessionClock` at dispatch and carrying the claim's provenance
+    (which, per the two fixes above, now names the agent). Its rows are
+    tagged `source_id: "waddle.bypass-pump"` with their own `seq` space,
+    since `ActionChunk.seq` is monotone *per stream* and the caller's gate
+    (`waddle.gate`) is a different stream into the same episode. The row is
+    written before the `send` request, so a dispatch that fails is still on
+    the record. This covers remote reset-window actuation too — the same
+    pump drives it.
+  - **`Session::report_proprio` now records an observation of its own**, for
+    every episode, rather than only surviving as a merge into a subsequent
+    gate tick's `ProprioSample`. This gap predates agent episodes: any
+    caller that reported proprioception and passed no `obs` to `gate()` lost
+    it from the recording entirely; agent episodes, whose caller ticks
+    nothing at all, just made it total. `joint_pos` rides the latest known
+    one (as the periodic `StreamObservations` uplink already did). A caller
+    doing both now records both, each stamped when it happened — which other
+    call a caller happens to make cannot decide whether an observation is
+    recorded.
+  Neither of these two writes touches the gate fast path: both happen on the
+  reducer thread, fed by side channels, exactly like `report_proprio`'s
+  existing merge. (The actor work below did briefly regress that path — see
+  the allocation entry at the top of this section.)
+- **A sidecar's claimed provenance spans now say who actually drove**: the
+  span opened by `GateModeChange{→INTERVENTION|→BYPASS}` was minted
+  `PROVENANCE_KIND_TELEOP` unconditionally, so an agent-driven episode's
+  spans read POLICY/TELEOP/TELEOP/POLICY — the recording asserted a
+  teleoperator drove an episode no teleoperator touched. The span's kind now
+  comes from the open claim's actor through `Provenance::for_claim` (the
+  same mapping the per-action tags use, so spans and `/waddle/actions` rows
+  can never disagree), and it carries that actor. A teleoperator's span is
+  unchanged (TELEOP, naming the teleoperator); an AGENT claim's says AGENT;
+  a SITE_OPERATOR's is `custom:<source_name>` rather than being folded into
+  TELEOP, because N17 makes a customer-side human at the cell a different
+  actor from a Waddle work-plane teleoperator and the corpus has to be able
+  to tell them apart. A claimed span also carries the claim's
+  `bypass_approval` stamp now, as the per-action tags already did. No proto
+  change: `PROVENANCE_KIND_AGENT` has been in the vocabulary since v0.
+- **Claim events now name their claimant (`Claim.actor` was being dropped)**:
+  the plane grants a claim with a full `ActorRef` — kind, the id it stamped,
+  a display name — and the SDK carried only the *kind* into its FSM, so
+  every `claim{REQUESTED|GRANTED|DENIED|RELEASED}` it emitted, and therefore
+  every journal, sidecar claim span and judge downstream, saw an empty
+  `actor`. The recording of an agent-driven episode could name the
+  intervention *stream* ("agent") and nothing about who drove it. The FSM's
+  `ActiveClaim` now holds the `ActorRef` whole and every claim emission
+  carries it; a LOCAL grant with no stamped identity (a clutch edge,
+  `grant_and_engage`) carries kind only, via the new
+  `ActorRef::of_kind`. `Provenance::for_claim` (new, waddle-types) is now
+  the ONE mapping from an actor's kind to the provenance vocabulary — the
+  reducer's gate plan and the conformance target both call
+  `ActiveClaim::provenance` rather than each re-deriving it, and the tag
+  they mint now carries the actor too. No proto change: `Claim.actor` has
+  been a declared field since v0 and was simply never populated. FSM.md §2
+  states the requirement; new fixtures `claim_events_name_the_claimant` and
+  `agent_claim_events_name_the_agent` pin it for a teleoperator and an
+  agent. `SessionEvent::ClaimRequested`/`ClaimGranted` take an `ActorRef`
+  where they took an `ActorKind` (source-breaking for direct FSM drivers;
+  `grant_and_engage`/`reset_window_engage` keep their `ActorKind`
+  signatures).
+- **`waddle-controlplane` — the offline-classification tests no longer race
+  the reconnect clock**: both tests that assert what a message does while
+  the plane is unreachable held the window open with a 300 ms backoff step
+  and then sent into it, so a test thread stalled past that step (a loaded
+  CI runner, or the run right after a heavy build) sent AFTER the client had
+  reconnected. The messages were then forwarded live and legitimately, but
+  the assertions scan everything the plane ever received and cannot tell a
+  live forward from a replay — a real failure of a gate this repo requires
+  clean before every commit, and a false one. `InMemoryTransport` gained
+  `refuse_connections`/`allow_connections`, so the offline window lasts as
+  long as the test needs rather than as long as a step happens to take, and
+  the tests wait for a full drain cycle (two refused dials, a happens-before
+  they can observe) before healing the partition. No production behavior
+  changed; the suite is also ~60x faster for dropping the long sleeps.
+- **Every declared camera's resolution is now declared to the media
+  plane**: a LiveKit track publishes at ONE declared resolution and drops
+  every frame that disagrees, so a session that inherited the 640x480
+  default dropped **100% of the frames of every camera that was not exactly
+  640x480** — with nothing raising (the uplink pump warns and counts the
+  drop; `publish_frame` still returns Ok), so it presents as "the
+  teleoperator sees nothing" on a session that reports success.
+  `LiveKitConfig::with_robot_cameras(&RobotDescription)` (new, in
+  waddle-media) declares a track resolution for every `cameras` entry, from
+  the same declaration `Session::publish_frame` validates frames against;
+  the Python `create_session` calls it, and any other binding with a robot
+  declaration must. The mapping lives in core — with the test that a
+  two-camera robot yields both resolutions and no camera inherits the
+  default — rather than in each binding, where nothing would have caught it
+  going missing again. Unreachable until this branch wired the media plane
+  through the Python surface at all.
+- **sdk — a wheel no longer ships whatever bytecode the build machine left
+  behind**: `[tool.maturin].python-source` is the working tree, so both
+  `pyproject.toml`s now carry `exclude = ["python/**/__pycache__/**"]`.
+  Without it a build run after `uv run pytest` swept
+  `__pycache__/*.cpython-3XX.pyc` for whichever interpreter ran the tests
+  into the wheel while a build on a clean checkout did not — the same
+  commit producing two different wheels, with stale bytecode for one
+  interpreter riding along to every other. pip compiles bytecode at
+  install time for the interpreter that will actually import it.
+- **sdk — `_core.pyi` no longer under-describes the extension**: the type
+  stub had drifted behind the shim (`publish_frame`, `report_proprio`,
+  `records_dropped`, the `_testing_*` hooks and the new connected seam were
+  all missing), so type checkers reported errors on correct calls and, worse,
+  silently accepted wrong ones. It is now cross-checked method by method
+  against `sdk/rust/src/*.rs`. One stub types BOTH cores, because both are
+  the same shim built with different features.
+- **`waddle-fsm` — the E24 agent-episode gate plan is now re-projected
+  whenever its inputs move, not only when the gate MODE does**: the gate plan
+  is derived state, and plan derivers (the runtime reducer, the conformance
+  target) re-derive it only when they see `Effect::SetGateMode`. E24's Noop
+  plan also depends on the EPISODE (agent-invited, phase), so any row that
+  moved that without touching the mode left every deriver holding a stale
+  plan. **The reachable failure**: an agent-invited episode closed by a
+  **retake** (C5 — the claim survives, so the shared run-closing block skips
+  the re-projection it does on a claim-releasing close) handed its
+  born-claimed successor, a NORMAL episode, the predecessor's Noop plan; the
+  customer's own `gate()` ticks then returned
+  `Noop{NOOP_REASON_AGENT_EPISODE}` forever, with no fault — a control loop
+  that silently stops actuating. Retake is plane-reachable from the engage
+  timeout, and no fixture covered retake on an agent-invited episode, so
+  every gate stayed green. The mode-unchanged re-projection now happens
+  centrally, in the one place every row funnels through (`Ctx::finish`,
+  keyed on the FSM-owned plan inputs `(gate_mode, agent_episode_noop())`),
+  replacing the two per-row pushes that covered only episode open and
+  claim-releasing closes; new session invariant **I20** asserts it for every
+  step of the random walk, and the new fixture
+  `agent_invite_retake_successor` pins the retake path end to end. E24's
+  scope also gained INTERVENTION — the *engage window*, where the handoff is
+  in flight, the gate is still PASSTHROUGH and nothing is engaged yet, so
+  E24's own guard ("no engaged claim") holds: the predicate said otherwise
+  while the installed plan noop'd, and the plan was right. **FSM.md**'s E24
+  row stated `RUNNING` alone in its From column while the implementation (and
+  the fixtures) also noop'd in RESETTING and READY; it now states the full
+  set, and §1.5 says outright that the plan is scoped to the episode it was
+  derived for and must be re-derived when the episode state behind it moves
+  — a second implementation can no longer dispatch the caller's actions
+  inside an agent-invited episode's reset, or keep noop'ing after it, and
+  still pass the suite.
+- **The bypass pump exempted a never-ticked gate from stall detection, so an
+  engaged claim in a session whose gate never ticks would have gone undriven
+  forever**: `spawn_bypass_pump` only reported a stall when a previous
+  `gate_tick` existed and was older than the threshold, so a `None` last tick
+  was silently exempt. FSM.md §6's condition is "no `gate_tick` within the
+  stall threshold", which holds *vacuously* when there has never been one —
+  and that is exactly the shape of an agent-invited episode driven through
+  `Session::run_agent`, which reaches RUNNING with the caller's thread
+  blocked and therefore never ticks at all. A `None` last tick now counts as
+  stalled (the `Some` threshold contract is unchanged); the FSM's own
+  `StallDetected` guard still decides whether anything follows, so no guard
+  row changed — the pump only reports.
+- **`waddle-controlplane` — droppable messages can no longer queue without
+  bound while the plane is unreachable or stalled**: `ClientMsg` now answers
+  "is this perception/liveness, or history?" in exactly one place
+  (`is_droppable`; `buffer_when_offline` is its negation), and BOTH moments a
+  message can be shed honour it. (1) While connect attempts fail, the client
+  thread now drains its command channel into the bounded offline buffer on
+  every backoff slice (`backoff_draining`) instead of only before and after
+  the sleep: an unreachable plane used to let the unbounded command channel
+  grow for a whole backoff plateau (16 s in production) with the drop-oldest
+  bound and its loud `BufferOverflowed` never applying, and every message
+  parked there — including droppable ones — was handed to the plane the
+  moment it came up, so a partition's worth of stale pictures replayed as if
+  fresh. (2) The gRPC transport meters every outbound stream with its own
+  `InflightLimit` (new `inflight` module; cap 4 per stream, shed count on
+  `GrpcTransport::droppable_dropped`): a plane that accepts
+  `StreamObservations` and then stops reading it never errors, so no
+  `Disconnected` is ever raised and the offline classification never runs —
+  the stills piled up in the transport's internal channels behind a stream
+  h2 had stopped polling, unbounded, until OOM. History is never shed by
+  either mechanism; only heartbeats and control-plane stills are droppable.
+  The `ControlTransport` trait now states the contract: a transport that
+  buffers internally must bound what it holds for droppable messages.
+- **`Session::run_agent` no longer masks a genuine pre-reset failure (E5)
+  as a normal-looking agent ABORT**: the recovery arm that turns a
+  `ResetFailed` from the start path into an `AgentOutcome` exists for
+  closes the invite machinery itself produces while the caller is still
+  blocked in RESETTING (E25's deadline expiry, E26's pre-engage DENIED),
+  but it keyed on `agent_invited` alone — the mirror carried no "why", so
+  a failing pre-reset hook on an agent-invited episode returned
+  `Ok(AgentOutcome{ABORT, detail: ""})` (indistinguishable from "no agent
+  engaged") instead of the `RuntimeError::ResetFailed` every other start
+  path surfaces, and retry loops would grind against broken reset hardware
+  with no error ever raised. The FSM now latches `episode.invite_aborted`
+  on exactly E25/E26 (documented in FSM.md §1.5 alongside the
+  `agent_engaged` latch; pinned by session-invariant I19), the mirror
+  publishes it as `Status.agent_invite_aborted`, and the recovery arm keys
+  on that: E25/E26-during-RESETTING still return the ABORT outcome (new
+  test drives a real invite timeout under a slow pre-reset hook), while an
+  E5 reset failure surfaces as `ResetFailed` (new test). Also pinned by
+  test: the unconditional `waddle.v0.agent` Register advertisement
+  (deleting it previously kept the whole suite green while silently
+  severing real-plane invite routing).
+- **`waddle-fsm` — a wrong-actor grant on an agent-invited episode now
+  records `claim{DENIED}` (FSM.md C8) instead of being silently dropped**:
+  C8 specifies "any other actor's grant is rejected, `claim{DENIED}`" — the
+  plane already sent GRANT, so the SDK's refusal must go on the timeline —
+  but the reference FSM returned a bare rejection and emitted nothing, and
+  the `agent_invite_wrong_actor_denied` fixture asserted only the absence of
+  a GRANTED emission, so a spec-following implementation (emitting DENIED)
+  and a silently-dropping one both passed conformance. The refusal now
+  emits `ClaimEvent{DENIED, detail}` with no state change (same shape as the
+  stale reset-engage mint's `lease{DENIED}`; the first production emitter of
+  `CLAIM_EVENT_KIND_DENIED`), the fixture asserts the emission, and the FSM
+  lifecycle smoke test walks it. C6's wrong-actor rejection stays silent —
+  its row never specified a DENIED record and its released golden pins that.
 - **`waddle-fsm` — a `reset_window_complete` racing an in-flight engage
   lease mint panicked the reducer thread and hung every blocked caller**:
   E20's lease routing is asynchronous (the runtime answers

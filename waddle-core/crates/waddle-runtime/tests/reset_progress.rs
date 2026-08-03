@@ -182,7 +182,7 @@ fn reset_progress_done_completes_retake_successor_with_no_window() {
             "first",
             EpisodeOptions {
                 pre_reset: Some(None),
-                post_reset: None,
+                ..EpisodeOptions::default()
             },
         )
         .unwrap();

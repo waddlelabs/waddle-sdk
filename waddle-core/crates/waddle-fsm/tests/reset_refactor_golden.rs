@@ -9,13 +9,14 @@
 //! any emission or effect ordering, one of these assertions fails.
 //!
 //! Note: the run-closing cancel list later gained `ResetWindowTimeout` (timer
-//! hygiene rule). That is an emission-invisible, no-op `CancelTimer`
-//! effect for undeclared episodes (no such timer is ever armed) — the
-//! observable emission subsequence is unchanged.
+//! hygiene rule) and `AgentInviteTimeout` (FSM.md §1.5: every invite-closing
+//! row cancels it). Both are emission-invisible, no-op `CancelTimer`
+//! effects for episodes that never armed them (undeclared / not
+//! agent-invited) — the observable emission subsequence is unchanged.
 
 use waddle_fsm::{Effect, SessionConfig, SessionEvent, SessionFsm, step};
 use waddle_types::{
-    ActorKind, ClaimId, EpisodeId, HandoffPolicy, LeaseEnforcement, LeaseId, MonoNs,
+    ActorKind, ActorRef, ClaimId, EpisodeId, HandoffPolicy, LeaseEnforcement, LeaseId, MonoNs,
     ResetVerificationMode, TerminalOutcome, pb::v0 as pb,
 };
 
@@ -116,6 +117,7 @@ fn open_reset_run(d: &mut Driver) {
         post_reset: false,
         pre_window: None,
         post_window: None,
+        agent_invite: None,
         at,
     });
     let at = d.tick();
@@ -133,7 +135,7 @@ fn grant_and_engage(d: &mut Driver) {
     d.apply(SessionEvent::ClaimGranted {
         id: ClaimId::new("claim-g"),
         source: "teleop".to_owned(),
-        actor: ActorKind::Teleoperator,
+        actor: ActorRef::of_kind(ActorKind::Teleoperator),
         self_initiated: false,
         at,
     });
@@ -174,6 +176,7 @@ fn undeclared_terminate_trace_is_stable() {
             "cancel EngageTimeout",
             "cancel ChunkBoundaryCap",
             "cancel ResetWindowTimeout",
+            "cancel AgentInviteTimeout",
         ]
     );
 }
@@ -215,6 +218,7 @@ fn undeclared_estop_while_claimed_trace_is_stable() {
             "cancel EngageTimeout",
             "cancel ChunkBoundaryCap",
             "cancel ResetWindowTimeout",
+            "cancel AgentInviteTimeout",
         ]
     );
 }
@@ -256,6 +260,7 @@ fn undeclared_retake_trace_is_stable() {
             "cancel EngageTimeout",
             "cancel ChunkBoundaryCap",
             "cancel ResetWindowTimeout",
+            "cancel AgentInviteTimeout",
             "open_successor",
         ]
     );

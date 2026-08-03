@@ -72,6 +72,11 @@ pub fn claim_event(
         claim: Some(pb::Claim {
             claim_id: claim.id.as_str().to_owned(),
             episode_id: episode.as_str().to_owned(),
+            // WHO is the point of a claim event. Dropping the actor here
+            // left every downstream consumer — journal, sidecar spans,
+            // judges — with a claim it could not attribute (a claim
+            // "source_name" names the STREAM, not the actor).
+            actor: Some(claim.actor.to_pb()),
             source_name: claim.source.clone(),
             self_initiated: claim.self_initiated,
             ..Default::default()
@@ -306,6 +311,25 @@ pub fn reset_window(
             expected_actor: expected.to_pb() as i32,
             claim_id: claim_id.to_owned(),
             result,
+        },
+    ));
+    ev
+}
+
+/// The agent-invite emission (flag `waddle.v0.agent`, E23): the open asked a
+/// Waddle-hosted agent to drive this episode. Carries the ask, never
+/// authority — the agent claims via the ordinary machinery (C8).
+pub fn agent_invite(
+    at: MonoNs,
+    episode: &EpisodeId,
+    prompt: &str,
+    timeout_ns: i64,
+) -> pb::EpisodeEvent {
+    let mut ev = base(at, Some(episode));
+    ev.event = Some(pb::episode_event::Event::AgentInvite(
+        pb::AgentInviteEvent {
+            prompt: prompt.to_owned(),
+            timeout_ns,
         },
     ));
     ev
