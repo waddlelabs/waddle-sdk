@@ -17,9 +17,7 @@ use std::time::{Duration, Instant};
 use parking_lot::Mutex;
 use waddle_controlplane::{ClientMsg, InMemoryTransport, ServerMsg};
 use waddle_fsm::Phase;
-use waddle_runtime::{
-    AgentInvite, ControlRegistry, EpisodeOptions, ResetSpec, Session, VerbError,
-};
+use waddle_runtime::{AgentInvite, ControlRegistry, EpisodeOptions, ResetSpec, Session, VerbError};
 use waddle_types::pb::v0 as pb;
 use waddle_types::{ActorKind, GateMode};
 
@@ -459,7 +457,10 @@ fn agent_task_denied_acks_e26_and_nacks_e26b_while_queued_never_acks() {
     let got = wait_for_acks(&acks, 1, "accepted DENIED ack");
     assert_eq!(got.len(), 1, "QUEUED is not a directive: {got:?}");
     assert_eq!(got[0].directive_id, "d-denied");
-    assert!(got[0].accepted, "DENIED with the invite open (E26): {got:?}");
+    assert!(
+        got[0].accepted,
+        "DENIED with the invite open (E26): {got:?}"
+    );
     assert_eq!(got[0].reason, "");
     wait_for(&session, "terminal", |s| {
         matches!(s.episode_state, Some(Phase::Terminal(_)))
