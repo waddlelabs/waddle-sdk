@@ -182,7 +182,10 @@ Concretely, in this package:
 `reset_window_complete`/`mark_done`/`frames`) requires
 `waddle.init(_testing=True)`, which wires an in-process loopback media
 plane. Private and unstable — it exists so the intervention, remote-reset-
-window and agent-invited paths are testable with no plane at all. Each hook
-stands in for one thing a plane would send: `mark_done`, for instance, is
-an `EpisodeDirective{MARK_DONE}` — the only way to end a `waddle.agent()`
-run in a test, since its caller is blocked and holds no episode handle.
+window and agent-invited paths are testable with no real plane at all. Each
+hook stands in for one thing a plane would send: `mark_done`, for instance,
+is an `EpisodeDirective{MARK_DONE}` — the only way to end a
+`waddle.agent()` run in a test, since its caller is blocked and holds no
+episode handle. Because it stands in for a plane, `_testing=True` counts as
+a plane declaration for `waddle.agent()`'s "nobody to ask" refusal, exactly
+as a `transport` does.

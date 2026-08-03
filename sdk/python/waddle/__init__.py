@@ -694,7 +694,8 @@ def agent(prompt: str, *, timeout_s: float = 600.0) -> AgentResult:
     walked away.
 
     Raises ``RuntimeError`` if no session is open, if the session declared
-    no supervision plane (there would be nobody to ask), or — surfaced
+    neither a ``transport`` nor the private ``_testing`` loopback that
+    stands in for one (there would be nobody to ask), or — surfaced
     verbatim from core — if this session registered no way for the agent to
     actuate (a ``send`` verb, and ``hold`` under the default HOLD_FIRST
     handoff): an invite that no engage could ever carry would otherwise
@@ -716,7 +717,8 @@ def agent(prompt: str, *, timeout_s: float = 600.0) -> AgentResult:
     if not _session_has_plane:
         raise RuntimeError(
             "waddle.agent() asks the supervision plane to drive the episode, and "
-            "this session declared no plane — pass "
+            "this session declared no transport (nor the private _testing "
+            "loopback that stands in for one) — pass "
             "transport=waddle.Grpc(url, token) to waddle.init()"
         )
     result = session.agent(prompt, int(timeout_s * 1_000_000_000))

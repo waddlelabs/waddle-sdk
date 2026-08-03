@@ -574,8 +574,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
     if args.mode == "agent" and not args.transport:
-        # Being blunt beats running a warm-up rollout and then discovering
-        # there is nobody to ask.
+        # `waddle.agent()` refuses a session that declared no transport
+        # anyway (there would be nobody to ask) — this only moves that same
+        # refusal to before the warm-up rollout, so the program does not do
+        # a minute of work and then discover it. The rule itself lives in
+        # `waddle.agent`; this example does not restate it.
         status("agent mode needs a supervision plane: set WADDLE_TOY_TRANSPORT=<grpc url>")
         return 2
 
