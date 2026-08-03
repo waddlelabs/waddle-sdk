@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import json
 import signal
-import threading
 import time
 
 import pytest
@@ -119,16 +118,36 @@ def test_agent_is_interruptible_and_ends_the_run():
     deadline, AND must leave nothing driving the robot: the shim asks the
     core to abort the live agent-invited episode, then raises.
 
+    The signal is raised from the episode's own pre-reset hook, which is
+    the earliest point of the run this SDK can reach from Python and
+    involves no clock at all. Two happens-befores make it deterministic:
+    core calls that hook from the run thread, so it cannot run before
+    `agent()` is executing; and from the moment the main thread enters
+    `Session.agent` it runs no Python bytecode until the call returns, so a
+    pending SIGINT's handler cannot fire anywhere except the
+    `check_signals()` in `agent()`'s own wait loop. That is a much harsher
+    test than a sleep: the episode has only just opened, nothing has
+    engaged, and the 60 s invite deadline is entirely ahead.
+
     Runs on the main thread on purpose — CPython only runs signal handlers
     there, which is exactly the thread `agent()` keeps reattaching to.
     """
     session = _session()
+
+    def interrupt_during_the_reset(task):
+        signal.raise_signal(signal.SIGINT)
+        return True
+
     try:
-        threading.Timer(0.2, lambda: signal.raise_signal(signal.SIGINT)).start()
         started = time.monotonic()
         # A 60 s invite deadline: only the interrupt can end this quickly.
         with pytest.raises(KeyboardInterrupt):
-            session.agent("wait for a Ctrl-C", 60_000_000_000)
+            session.agent(
+                "wait for a Ctrl-C",
+                60_000_000_000,
+                pre_reset_kind="hook",
+                pre_reset_hook=interrupt_during_the_reset,
+            )
         elapsed = time.monotonic() - started
         assert elapsed < 10.0, "the interrupt was not heard promptly"
         # The run really ended (aborted), rather than being abandoned mid-flight.

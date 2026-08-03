@@ -271,10 +271,16 @@ impl PySession {
     /// deadline: it asks the core to end the live agent-invited episode
     /// (the same abort `Episode.terminate()` requests — the shim decides
     /// nothing about the timeline, and the core no-ops if that episode is
-    /// no longer live), and re-requests it on every later signal. The call
-    /// still returns only once the core reports the run finished, so the
-    /// robot is never left driven by an agent whose caller has walked away,
-    /// and the thread is never orphaned; `KeyboardInterrupt` is raised then.
+    /// no longer live), and keeps asking on every later slice until the run
+    /// reports finished. Re-asking is what makes the promise hold at the
+    /// edges: a signal consumed before the run thread has published its
+    /// episode — or while a predecessor's POST_RESET still owns the mirror —
+    /// would otherwise abort nothing at all and never be reconsidered,
+    /// leaving the caller blocked to the invite deadline with the interrupt
+    /// already latched. The call still returns only once the core reports
+    /// the run finished, so the robot is never left driven by an agent whose
+    /// caller has walked away, and the thread is never orphaned;
+    /// `KeyboardInterrupt` is raised then.
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
         prompt,
@@ -343,8 +349,20 @@ impl PySession {
                 }
                 Err(RecvTimeoutError::Timeout) => {
                     if let Err(err) = py.check_signals() {
-                        self.abort_live_agent_episode(py);
                         interrupt.get_or_insert(err);
+                    }
+                    // Ask on the slice that consumed the signal AND on every
+                    // slice after it: the first ask can land in a window
+                    // where there is no live agent-invited episode yet (the
+                    // run thread has not opened one, or is still waiting out
+                    // a predecessor's POST_RESET), and a one-shot ask would
+                    // then abort nothing while the caller stays blocked to
+                    // the invite deadline. `terminate_episode` is idempotent
+                    // — it returns immediately for an episode already done —
+                    // so re-asking costs a mirror read per slice and the ask
+                    // that finds the episode blocks until it is terminal.
+                    if interrupt.is_some() {
+                        self.abort_live_agent_episode(py);
                     }
                 }
                 // The run thread died without reporting (a panic): there is
