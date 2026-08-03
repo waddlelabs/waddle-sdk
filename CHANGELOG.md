@@ -1077,8 +1077,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   the tests wait for a full drain cycle (two refused dials, a happens-before
   they can observe) before healing the partition. No production behavior
   changed; the suite is also ~60x faster for dropping the long sleeps.
-- **Every declared camera's resolution is now declared to the media plane
-  (Gap J)**: a LiveKit track publishes at ONE declared resolution and drops
+- **Every declared camera's resolution is now declared to the media
+  plane**: a LiveKit track publishes at ONE declared resolution and drops
   every frame that disagrees, so a session that inherited the 640x480
   default dropped **100% of the frames of every camera that was not exactly
   640x480** — with nothing raising (the uplink pump warns and counts the

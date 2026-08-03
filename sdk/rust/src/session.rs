@@ -733,7 +733,7 @@ pub(crate) fn create_session(
              plane, and the loopback one replaces the real transport",
         ));
     }
-    // Gap J: a LiveKit track publishes at ONE declared resolution and every
+    // A LiveKit track publishes at ONE declared resolution and every
     // frame disagreeing with it is dropped, so every declared camera must
     // reach the media plane at the resolution the robot declared. The
     // mapping is core's (`with_robot_cameras`, tested there); this is the
