@@ -964,6 +964,28 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   in the episode MCAP; callers no longer see the ring.
 
 ### Fixed
+- **Claim events now name their claimant (`Claim.actor` was being dropped)**:
+  the plane grants a claim with a full `ActorRef` — kind, the id it stamped,
+  a display name — and the SDK carried only the *kind* into its FSM, so
+  every `claim{REQUESTED|GRANTED|DENIED|RELEASED}` it emitted, and therefore
+  every journal, sidecar claim span and judge downstream, saw an empty
+  `actor`. The recording of an agent-driven episode could name the
+  intervention *stream* ("agent") and nothing about who drove it. The FSM's
+  `ActiveClaim` now holds the `ActorRef` whole and every claim emission
+  carries it; a LOCAL grant with no stamped identity (a clutch edge,
+  `grant_and_engage`) carries kind only, via the new
+  `ActorRef::of_kind`. `Provenance::for_claim` (new, waddle-types) is now
+  the ONE mapping from an actor's kind to the provenance vocabulary — the
+  reducer's gate plan and the conformance target both call
+  `ActiveClaim::provenance` rather than each re-deriving it, and the tag
+  they mint now carries the actor too. No proto change: `Claim.actor` has
+  been a declared field since v0 and was simply never populated. FSM.md §2
+  states the requirement; new fixtures `claim_events_name_the_claimant` and
+  `agent_claim_events_name_the_agent` pin it for a teleoperator and an
+  agent. `SessionEvent::ClaimRequested`/`ClaimGranted` take an `ActorRef`
+  where they took an `ActorKind` (source-breaking for direct FSM drivers;
+  `grant_and_engage`/`reset_window_engage` keep their `ActorKind`
+  signatures).
 - **`waddle-controlplane` — the offline-classification tests no longer race
   the reconnect clock**: both tests that assert what a message does while
   the plane is unreachable held the window open with a 300 ms backoff step

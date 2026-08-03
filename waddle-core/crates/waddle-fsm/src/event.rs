@@ -3,8 +3,8 @@
 //! completions the runtime feeds back for effects.
 
 use waddle_types::{
-    ActorKind, ClaimId, EpisodeId, LeaseId, MonoNs, ResetVerificationMode, TerminalOutcome, Verb,
-    pb::v0 as pb,
+    ActorKind, ActorRef, ClaimId, EpisodeId, LeaseId, MonoNs, ResetVerificationMode,
+    TerminalOutcome, Verb, pb::v0 as pb,
 };
 
 /// Deterministic timer identities (armed/cancelled via effects).
@@ -142,14 +142,18 @@ pub enum SessionEvent {
     ClaimRequested {
         id: ClaimId,
         source: String,
-        actor: ActorKind,
+        /// The claimant, whole (kind AND the granting side's stamped
+        /// identity) — carried onto the claim emission verbatim. Use
+        /// [`ActorRef::of_kind`] when the grant is local and has no identity.
+        actor: ActorRef,
         self_initiated: bool,
         at: MonoNs,
     },
     ClaimGranted {
         id: ClaimId,
         source: String,
-        actor: ActorKind,
+        /// The claimant, whole — see [`Self::ClaimRequested`].
+        actor: ActorRef,
         self_initiated: bool,
         at: MonoNs,
     },

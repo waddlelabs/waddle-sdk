@@ -225,6 +225,18 @@ States (per claim): REQUESTED → GRANTED | DENIED; GRANTED → RELEASED.
 | C7 | GRANTED (reset claim) | E21 / E22 / `estop` | — | RELEASED | `claim{RELEASED, "reset window closed"}` (flag `waddle.v0.reset.remote`; see §1.4) | `remote_pre_reset_claim_engage_complete` |
 | C8 | — | `claim_granted` | episode agent-invited ∧ actor matches expected (an agent-invited episode admits `ACTOR_KIND_AGENT` only; any other actor's grant is rejected, `claim{DENIED}`) ∧ C1's episode-state and no-conflicting-claim conditions unchanged | GRANTED | `claim{GRANTED}` — a real `Claim`; the N18 one-claim rule applies (flag `waddle.v0.agent`; see §1.5) | `agent_invite_happy`, `agent_invite_wrong_actor_denied` |
 
+**Every claim event names its claimant.** The `Claim` carried by
+`claim{REQUESTED|GRANTED|DENIED|RELEASED}` MUST carry the claimant's
+`ActorRef` whole — the kind AND the id the granting side stamped, display
+name included when it has one. `Claim.source_name` names the intervention
+*stream* ("teleop", "leader_arm", "waddle-agent"), never the actor, so a
+consumer given only `source_name` cannot attribute the claim to anyone: the
+journal, the sidecar's claim and provenance spans, and every downstream
+judge read the actor off these events. A claim granted LOCALLY (a clutch
+edge, C-section below) has no stamped identity and carries kind only.
+Fixtures: `claim_events_name_the_claimant`,
+`agent_claim_events_name_the_agent`.
+
 **Self-initiated claims** (`Claim.self_initiated`): a local source's clutch
 edge (`clutch{engaged}`) both requests and grants the claim in one step — the
 platform records the intervention rather than fighting it (the engaged clutch

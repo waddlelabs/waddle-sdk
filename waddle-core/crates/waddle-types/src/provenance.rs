@@ -57,6 +57,20 @@ pub struct ActorRef {
 }
 
 impl ActorRef {
+    /// An actor known only by kind: no server-stamped id, no display name.
+    /// The shape a LOCAL actor has — a leader-arm clutch, a test's direct
+    /// grant — where nothing upstream minted an identity. Remote actors
+    /// always arrive as a full `pb::ActorRef` and must be carried whole
+    /// (`TryFrom<&pb::ActorRef>`); this is not a substitute for that.
+    #[must_use]
+    pub fn of_kind(kind: ActorKind) -> Self {
+        Self {
+            kind,
+            id: String::new(),
+            display_name: String::new(),
+        }
+    }
+
     #[must_use]
     pub fn to_pb(&self) -> pb::ActorRef {
         pb::ActorRef {
@@ -87,6 +101,31 @@ pub enum Provenance {
     Teleop,
     Agent,
     Custom(String),
+}
+
+impl Provenance {
+    /// The provenance of an action driven by a claim held by `actor`. THE
+    /// mapping — every producer of a claimed/bypass-window provenance tag
+    /// (the gate plan the reducer projects, the sidecar's provenance spans,
+    /// the conformance target) derives it here, so a recording's spans and
+    /// its per-action tags can never disagree about who was driving.
+    /// `source` is the claim's registered intervention-source name, used
+    /// only for the actor kinds this vocabulary has no dedicated value for.
+    #[must_use]
+    pub fn for_claim(actor: ActorKind, source: &str) -> Self {
+        match actor {
+            ActorKind::Teleoperator => Self::Teleop,
+            ActorKind::Agent => Self::Agent,
+            ActorKind::Policy => Self::Policy,
+            // SITE_OPERATOR is deliberately NOT teleop: a customer-side
+            // human at the cell is a different actor from a Waddle
+            // work-plane teleoperator (N17), and the corpus must be able to
+            // tell them apart.
+            ActorKind::SiteOperator | ActorKind::System | ActorKind::Custom => {
+                Self::Custom(source.to_owned())
+            }
+        }
+    }
 }
 
 impl std::fmt::Display for Provenance {

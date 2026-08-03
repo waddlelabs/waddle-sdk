@@ -72,6 +72,11 @@ pub fn claim_event(
         claim: Some(pb::Claim {
             claim_id: claim.id.as_str().to_owned(),
             episode_id: episode.as_str().to_owned(),
+            // WHO is the point of a claim event. Dropping the actor here
+            // left every downstream consumer — journal, sidecar spans,
+            // judges — with a claim it could not attribute (a claim
+            // "source_name" names the STREAM, not the actor).
+            actor: Some(claim.actor.to_pb()),
             source_name: claim.source.clone(),
             self_initiated: claim.self_initiated,
             ..Default::default()

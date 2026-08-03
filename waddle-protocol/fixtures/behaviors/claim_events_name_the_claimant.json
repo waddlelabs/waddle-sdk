@@ -1,0 +1,32 @@
+{
+  "format": "waddle.behavior/v0",
+  "name": "claim_events_name_the_claimant",
+  "description": "Pins FSM.md §2: every ClaimEvent carries the claimant's ActorRef WHOLE — kind, the granting side's stamped id, and the display name — on REQUESTED, GRANTED and RELEASED alike. A claim's sourceName names the intervention STREAM, never the actor, so a consumer that only sees source_name cannot attribute the claim to anyone; the journal, the sidecar's claim/provenance spans and every judge downstream read the actor off these events.",
+  "target": "fsm",
+  "requires_features": ["waddle.v0.core"],
+  "setup": {
+    "lease_enforcement": "LEASE_ENFORCEMENT_ENFORCED",
+    "handoff": { "immediate": { "blendNs": "0" } },
+    "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING"
+  },
+  "steps": [
+    { "inject": { "kind": "episode_open", "episode_id": "ep-cnc-0001", "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING" } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "reset_result", "result": { "ok": true, "strategy": "scripted_home", "verification": { "mode": "RESET_VERIFICATION_MODE_BLOCKING", "verified": true, "judgeId": "judge-reset", "judgeVersion": "2.1.0", "score": 0.95, "tNs": "100000000" } } } },
+    { "inject": { "kind": "start" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RUNNING" } },
+
+    { "inject": { "kind": "claim_request", "claim_id": "claim-cnc-0001", "source_name": "teleop", "self_initiated": false, "actor": { "kind": "ACTOR_KIND_TELEOPERATOR", "id": "top-347", "displayName": "Waddle teleoperator 347" } } },
+    { "expect_emission": { "event": { "claim": { "kind": "CLAIM_EVENT_KIND_REQUESTED", "claim": { "claimId": "claim-cnc-0001", "sourceName": "teleop", "actor": { "kind": "ACTOR_KIND_TELEOPERATOR", "id": "top-347", "displayName": "Waddle teleoperator 347" } } } }, "within_ns": "0" } },
+
+    { "advance_ns": "20000000" },
+    { "inject": { "kind": "claim_granted", "claim": { "claimId": "claim-cnc-0001", "episodeId": "ep-cnc-0001", "actor": { "kind": "ACTOR_KIND_TELEOPERATOR", "id": "top-347", "displayName": "Waddle teleoperator 347" }, "sourceName": "teleop", "selfInitiated": false } } },
+    { "expect_emission": { "event": { "claim": { "kind": "CLAIM_EVENT_KIND_GRANTED", "claim": { "claimId": "claim-cnc-0001", "sourceName": "teleop", "actor": { "kind": "ACTOR_KIND_TELEOPERATOR", "id": "top-347", "displayName": "Waddle teleoperator 347" } } } }, "within_ns": "0" } },
+    { "expect_state": { "claim.active_claim_id": "claim-cnc-0001" } },
+
+    { "advance_ns": "20000000" },
+    { "inject": { "kind": "claim_released", "claim_id": "claim-cnc-0001" } },
+    { "expect_emission": { "event": { "claim": { "kind": "CLAIM_EVENT_KIND_RELEASED", "claim": { "claimId": "claim-cnc-0001", "actor": { "kind": "ACTOR_KIND_TELEOPERATOR", "id": "top-347" } } } }, "within_ns": "0" } },
+    { "expect_state": { "claim.active_claim_id": "" } }
+  ]
+}

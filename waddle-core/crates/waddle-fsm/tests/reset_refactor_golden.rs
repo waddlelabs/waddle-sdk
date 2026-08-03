@@ -16,7 +16,7 @@
 
 use waddle_fsm::{Effect, SessionConfig, SessionEvent, SessionFsm, step};
 use waddle_types::{
-    ActorKind, ClaimId, EpisodeId, HandoffPolicy, LeaseEnforcement, LeaseId, MonoNs,
+    ActorKind, ActorRef, ClaimId, EpisodeId, HandoffPolicy, LeaseEnforcement, LeaseId, MonoNs,
     ResetVerificationMode, TerminalOutcome, pb::v0 as pb,
 };
 
@@ -135,7 +135,7 @@ fn grant_and_engage(d: &mut Driver) {
     d.apply(SessionEvent::ClaimGranted {
         id: ClaimId::new("claim-g"),
         source: "teleop".to_owned(),
-        actor: ActorKind::Teleoperator,
+        actor: ActorRef::of_kind(ActorKind::Teleoperator),
         self_initiated: false,
         at,
     });

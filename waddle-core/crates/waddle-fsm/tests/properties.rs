@@ -46,7 +46,7 @@ use waddle_fsm::{
     SessionConfig, SessionEvent, SessionFsm, TimerId, WindowSpec, step,
 };
 use waddle_types::{
-    ActorKind, ClaimId, EpisodeId, GateMode, Grant, HandoffPolicy, InterventionPhase,
+    ActorKind, ActorRef, ClaimId, EpisodeId, GateMode, Grant, HandoffPolicy, InterventionPhase,
     LeaseEnforcement, LeaseId, MonoNs, ResetVerificationMode, TerminalOutcome, Verb, pb::v0 as pb,
 };
 
@@ -687,7 +687,7 @@ impl Driver {
                 assert!(
                     s.claim
                         .as_ref()
-                        .is_some_and(|c| c.actor == ActorKind::Agent),
+                        .is_some_and(|c| c.actor.kind == ActorKind::Agent),
                     "I16: engaged claim in an agent-invited episode must be ACTOR_KIND_AGENT"
                 );
             }
@@ -842,11 +842,11 @@ impl Driver {
                 SessionEvent::ClaimGranted {
                     id: ClaimId::new(format!("claim-{}", self.claim_seq)),
                     source: if *agent { "agent" } else { "teleop" }.to_owned(),
-                    actor: if *agent {
+                    actor: ActorRef::of_kind(if *agent {
                         ActorKind::Agent
                     } else {
                         ActorKind::Teleoperator
-                    },
+                    }),
                     self_initiated: false,
                     at,
                 }

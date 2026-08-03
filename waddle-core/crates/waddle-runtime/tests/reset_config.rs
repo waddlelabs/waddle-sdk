@@ -408,7 +408,7 @@ fn remote_pre_reset_blocks_then_window_complete_releases_it_to_ready() {
     session.inject(SessionEvent::ClaimGranted {
         id: ClaimId::new("reset-claim"),
         source: "teleop".to_owned(),
-        actor: ActorKind::Teleoperator,
+        actor: waddle_types::ActorRef::of_kind(ActorKind::Teleoperator),
         self_initiated: false,
         at: waddle_types::MonoNs(1),
     });

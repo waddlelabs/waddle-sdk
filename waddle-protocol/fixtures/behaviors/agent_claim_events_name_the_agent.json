@@ -1,0 +1,34 @@
+{
+  "format": "waddle.behavior/v0",
+  "name": "agent_claim_events_name_the_agent",
+  "description": "Pins FSM.md §2 + C8 for the agent case: the ActorRef the plane grants an agent-invited episode with reaches the claim emissions intact — GRANTED names the agent by id, and so does the DENIED that C8 records for the wrong actor. An agent-driven recording that cannot name which agent drove it cannot be judged or attributed, so this is a protocol-level guarantee, not an implementation detail.",
+  "target": "fsm",
+  "requires_features": ["waddle.v0.core", "waddle.v0.agent"],
+  "setup": {
+    "lease_enforcement": "LEASE_ENFORCEMENT_ENFORCED",
+    "handoff": { "immediate": { "blendNs": "0" } },
+    "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING"
+  },
+  "steps": [
+    { "inject": { "kind": "episode_open", "episode_id": "ep-acn2-0001", "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING", "agent_invite": { "prompt": "stack the cups", "timeout_ns": "10000000000" } } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "reset_result", "result": { "ok": true, "strategy": "scripted_home", "verification": { "mode": "RESET_VERIFICATION_MODE_BLOCKING", "verified": true, "judgeId": "judge-reset", "judgeVersion": "2.1.0", "score": 0.95, "tNs": "100000000" } } } },
+    { "inject": { "kind": "start" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RUNNING", "episode.agent_invited": true } },
+
+    { "inject": { "kind": "claim_granted", "claim": { "claimId": "claim-acn2-wrong", "episodeId": "ep-acn2-0001", "actor": { "kind": "ACTOR_KIND_TELEOPERATOR", "id": "top-7", "displayName": "Teleoperator 7" }, "sourceName": "teleop", "selfInitiated": false } } },
+    { "expect_emission": { "event": { "claim": { "kind": "CLAIM_EVENT_KIND_DENIED", "claim": { "claimId": "claim-acn2-wrong", "actor": { "kind": "ACTOR_KIND_TELEOPERATOR", "id": "top-7" } } } }, "within_ns": "0" } },
+
+    { "advance_ns": "20000000" },
+    { "inject": { "kind": "claim_granted", "claim": { "claimId": "claim-acn2-right", "episodeId": "ep-acn2-0001", "actor": { "kind": "ACTOR_KIND_AGENT", "id": "agent-waddle-1", "displayName": "Waddle agent" }, "sourceName": "waddle-agent", "selfInitiated": false } } },
+    { "expect_emission": { "event": { "claim": { "kind": "CLAIM_EVENT_KIND_GRANTED", "claim": { "claimId": "claim-acn2-right", "sourceName": "waddle-agent", "actor": { "kind": "ACTOR_KIND_AGENT", "id": "agent-waddle-1", "displayName": "Waddle agent" } } } }, "within_ns": "0" } },
+    { "expect_state": { "claim.active_claim_id": "claim-acn2-right" } },
+
+    { "inject": { "kind": "engage", "claim_id": "claim-acn2-right", "initiator": "ACTOR_KIND_AGENT" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_INTERVENTION", "episode.agent_engaged": true } },
+
+    { "advance_ns": "20000000" },
+    { "inject": { "kind": "terminate", "outcome": "TERMINAL_OUTCOME_SUCCESS", "reason": "agent task complete" } },
+    { "expect_emission": { "event": { "claim": { "kind": "CLAIM_EVENT_KIND_RELEASED", "claim": { "claimId": "claim-acn2-right", "actor": { "kind": "ACTOR_KIND_AGENT", "id": "agent-waddle-1" } } } }, "within_ns": "0" } }
+  ]
+}

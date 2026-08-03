@@ -1512,12 +1512,15 @@ impl Episode {
 /// a wired media plane — must register `hold` (and, for the same reason,
 /// `send`) themselves; the build-time check cannot see through this call
 /// site to know it will be used.
+/// The claim is granted by kind alone: a LOCAL grant has no
+/// server-stamped actor identity to carry (`ActorRef::of_kind`), unlike a
+/// plane directive's, which arrives whole and is carried whole.
 pub fn grant_and_engage(session: &Session, claim_id: &str, source: &str, actor: ActorKind) {
     let clock_now = |s: &Session| s.inner.clock.stamp_now().mono_ns();
     session.inject(SessionEvent::ClaimGranted {
         id: waddle_types::ClaimId::new(claim_id),
         source: source.to_owned(),
-        actor,
+        actor: waddle_types::ActorRef::of_kind(actor),
         self_initiated: false,
         at: clock_now(session),
     });
@@ -1550,7 +1553,7 @@ pub fn reset_window_engage(session: &Session, claim_id: &str, source: &str, acto
     session.inject(SessionEvent::ClaimGranted {
         id: claim.clone(),
         source: source.to_owned(),
-        actor,
+        actor: waddle_types::ActorRef::of_kind(actor),
         self_initiated: false,
         at: clock_now(session),
     });

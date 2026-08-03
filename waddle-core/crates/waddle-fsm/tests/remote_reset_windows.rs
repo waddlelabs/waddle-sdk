@@ -8,8 +8,8 @@ use waddle_fsm::{
     Effect, LeaseState, Phase, SessionConfig, SessionEvent, SessionFsm, TimerId, WindowSpec, step,
 };
 use waddle_types::{
-    ActorKind, ClaimId, EpisodeId, GateMode, HandoffPolicy, LeaseEnforcement, LeaseId, MonoNs,
-    ResetVerificationMode, TerminalOutcome, Verb, pb::v0 as pb,
+    ActorKind, ActorRef, ClaimId, EpisodeId, GateMode, HandoffPolicy, LeaseEnforcement, LeaseId,
+    MonoNs, ResetVerificationMode, TerminalOutcome, Verb, pb::v0 as pb,
 };
 
 struct Driver {
@@ -179,7 +179,7 @@ fn grant(d: &mut Driver, id: &str, actor: ActorKind) -> Result<(), String> {
     d.try_apply(SessionEvent::ClaimGranted {
         id: ClaimId::new(id),
         source: "teleop".to_owned(),
-        actor,
+        actor: ActorRef::of_kind(actor),
         self_initiated: false,
         at,
     })

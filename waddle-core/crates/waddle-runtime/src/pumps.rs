@@ -15,8 +15,8 @@ use waddle_media::{DataTopic, MediaPlane};
 use waddle_types::pb::v0 as pb;
 use waddle_types::time::Clock;
 use waddle_types::{
-    ActionChunk, ActionSpace, ActorKind, ClaimId, EpisodeId, GateMode, GrantStatus, MonoNs, Step,
-    TypesError, VerbRequest,
+    ActionChunk, ActionSpace, ActorKind, ActorRef, ClaimId, EpisodeId, GateMode, GrantStatus,
+    MonoNs, Step, TypesError, VerbRequest,
 };
 
 use crate::RuntimeError;
@@ -561,6 +561,20 @@ pub(crate) fn spawn_plane_pump(
         .expect("spawn plane pump")
 }
 
+/// The claimant a `ClaimDirective`/`ResetWindowDirective` names, decoded
+/// WHOLE: the kind the FSM's admission guards read (C6/C8) plus the identity
+/// the plane stamped, which is what every claim emission and provenance tag
+/// under this claim then carries. A directive with no actor at all, or one
+/// naming an actor kind this protocol version does not know, keeps the
+/// long-standing default (an anonymous teleoperator) rather than dropping the
+/// directive — the FSM's guards still decide whether such a claim is
+/// admissible at all.
+fn directive_actor(actor: Option<&pb::ActorRef>) -> ActorRef {
+    actor
+        .and_then(|a| ActorRef::try_from(a).ok())
+        .unwrap_or_else(|| ActorRef::of_kind(ActorKind::Teleoperator))
+}
+
 /// The ack correlation for one directive, when there is one: `Some` only
 /// when the connection negotiated `waddle.v0.plane.acks` AND the directive
 /// carried a `directive_id`; `None` keeps the pre-flag fire-and-forget path
@@ -598,11 +612,7 @@ fn forward_server_msg(
                 // DirectiveAck doc pins this).
                 let Some(claim) = directive.claim else { return };
                 let claim_id = ClaimId::new(&claim.claim_id);
-                let actor = claim
-                    .actor
-                    .as_ref()
-                    .and_then(|a| ActorKind::from_pb(a.kind).ok())
-                    .unwrap_or(ActorKind::Teleoperator);
+                let actor = directive_actor(claim.actor.as_ref());
                 match pb::ClaimDirectiveKind::try_from(directive.kind) {
                     Ok(pb::ClaimDirectiveKind::Grant) => {
                         // TWO events, ONE ack: accepted iff both accepted,
@@ -612,7 +622,7 @@ fn forward_server_msg(
                             event: SessionEvent::ClaimGranted {
                                 id: claim_id.clone(),
                                 source: claim.source_name.clone(),
-                                actor,
+                                actor: actor.clone(),
                                 self_initiated: claim.self_initiated,
                                 at,
                             },
@@ -643,7 +653,7 @@ fn forward_server_msg(
                         let _ = inject.send(Injected {
                             event: SessionEvent::Retake {
                                 claim: claim_id,
-                                initiator: actor,
+                                initiator: actor.kind,
                                 successor,
                                 at,
                             },
@@ -682,11 +692,7 @@ fn forward_server_msg(
                         // produce (`ClaimGranted` then
                         // `ResetWindowEngage`, in that order). TWO events,
                         // ONE ack, same as a claim GRANT.
-                        let actor = claim
-                            .actor
-                            .as_ref()
-                            .and_then(|a| ActorKind::from_pb(a.kind).ok())
-                            .unwrap_or(ActorKind::Teleoperator);
+                        let actor = directive_actor(claim.actor.as_ref());
                         let ack = ack_group(acks_negotiated, directive.directive_id.as_ref(), 2);
                         let _ = inject.send(Injected {
                             event: SessionEvent::ClaimGranted {

@@ -17,8 +17,8 @@ use waddle_sidecar::{ManifestWriter, McapEpisodeWriter, SidecarBuilder, write_si
 use waddle_types::pb::v0 as pb;
 use waddle_types::time::Clock;
 use waddle_types::{
-    ActionSpace, EpisodeId, GateMode, HandoffPolicy, LeaseId, MonoNs, Provenance, ProvenanceTag,
-    VerbRequest, unflatten_action,
+    ActionSpace, EpisodeId, GateMode, HandoffPolicy, LeaseId, MonoNs, ProvenanceTag, VerbRequest,
+    unflatten_action,
 };
 
 use crate::ack::Injected;
@@ -441,20 +441,14 @@ impl Reducer {
         GatePlan { mode, since: now }
     }
 
+    /// The provenance of every action driven under the active claim — the
+    /// claim's own ([`waddle_fsm::ActiveClaim::provenance`]), never
+    /// re-derived here. No claim means the policy is driving.
     fn claim_provenance(&self) -> ProvenanceTag {
-        match &self.fsm.claim {
-            None => ProvenanceTag::policy(),
-            Some(claim) => ProvenanceTag {
-                provenance: match claim.actor {
-                    waddle_types::ActorKind::Teleoperator => Provenance::Teleop,
-                    waddle_types::ActorKind::Agent => Provenance::Agent,
-                    waddle_types::ActorKind::Policy => Provenance::Policy,
-                    _ => Provenance::Custom(claim.source.clone()),
-                },
-                actor: None,
-                bypass_approval: claim.self_initiated,
-            },
-        }
+        self.fsm
+            .claim
+            .as_ref()
+            .map_or_else(ProvenanceTag::policy, waddle_fsm::ActiveClaim::provenance)
     }
 
     fn open_episode_records(

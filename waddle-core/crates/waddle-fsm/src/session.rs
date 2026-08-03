@@ -4,8 +4,8 @@
 //! comments.
 
 use waddle_types::{
-    ActorKind, ClaimId, EpisodeStateKind, GateMode, GrantStatus, InterventionPhase, MonoNs,
-    ResetVerificationMode, TerminalOutcome, Verb, pb::v0 as pb,
+    ActorKind, ActorRef, ClaimId, EpisodeStateKind, GateMode, GrantStatus, InterventionPhase,
+    MonoNs, ResetVerificationMode, TerminalOutcome, Verb, pb::v0 as pb,
 };
 
 use crate::claim::ActiveClaim;
@@ -872,7 +872,7 @@ pub fn step(
             let claim = ActiveClaim {
                 id: id.clone(),
                 source: source.clone(),
-                actor: *actor,
+                actor: actor.clone(),
                 self_initiated: *self_initiated,
             };
             let ep = ctx.episode().id.clone();
@@ -906,12 +906,12 @@ pub fn step(
                 && let Some(window) = &ctx.episode().reset_window
                 && !window.engaged
             {
-                if !window_admits(window.expected, *actor) {
+                if !window_admits(window.expected, actor.kind) {
                     return Err(rejected(
                         "reset claim actor does not match the window's expected actor (C6)",
                     ));
                 }
-            } else if ctx.episode().agent_invited && *actor != ActorKind::Agent {
+            } else if ctx.episode().agent_invited && actor.kind != ActorKind::Agent {
                 // C8 (§1.5): an agent-invited episode admits ACTOR_KIND_AGENT
                 // only; any other actor's grant is refused. Unlike most guard
                 // failures the refusal is RECORDED, not silently dropped —
@@ -925,7 +925,7 @@ pub fn step(
                 let refused = ActiveClaim {
                     id: id.clone(),
                     source: source.clone(),
-                    actor: *actor,
+                    actor: actor.clone(),
                     self_initiated: *self_initiated,
                 };
                 let ep = ctx.episode().id.clone();
@@ -941,7 +941,7 @@ pub fn step(
             let claim = ActiveClaim {
                 id: id.clone(),
                 source: source.clone(),
-                actor: *actor,
+                actor: actor.clone(),
                 self_initiated: *self_initiated,
             };
             let ep = ctx.episode().id.clone();
@@ -1069,7 +1069,7 @@ pub fn step(
                     let claim = ActiveClaim {
                         id: ClaimId::new(format!("clutch-{}", ctx.s.clutch_seq)),
                         source: cfg.clutch_source.clone(),
-                        actor: cfg.clutch_actor,
+                        actor: ActorRef::of_kind(cfg.clutch_actor),
                         self_initiated: true,
                     };
                     let ep = ctx.episode().id.clone();

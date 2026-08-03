@@ -15,7 +15,7 @@ use waddle_fsm::{
     Effect, MarkKind, Phase, SessionConfig, SessionEvent, SessionFsm, WindowSpec, step,
 };
 use waddle_types::{
-    ActorKind, ClaimId, EpisodeId, HandoffPolicy, LeaseEnforcement, LeaseId, MonoNs,
+    ActorKind, ActorRef, ClaimId, EpisodeId, HandoffPolicy, LeaseEnforcement, LeaseId, MonoNs,
     ResetVerificationMode, TerminalOutcome, Verb,
 };
 
@@ -123,7 +123,7 @@ impl Driver {
         self.try_apply(SessionEvent::ClaimGranted {
             id: ClaimId::new(id),
             source: "plane".to_owned(),
-            actor,
+            actor: ActorRef::of_kind(actor),
             self_initiated: false,
             at,
         })
@@ -296,7 +296,7 @@ fn claim_request_without_an_active_episode_is_rejected() {
         SessionEvent::ClaimRequested {
             id: ClaimId::new("c1"),
             source: "plane".to_owned(),
-            actor: ActorKind::Teleoperator,
+            actor: ActorRef::of_kind(ActorKind::Teleoperator),
             self_initiated: false,
             at,
         },

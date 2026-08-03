@@ -25,8 +25,9 @@ use waddle_gate::{
 use waddle_ingest::FakeClock;
 use waddle_types::action::ActionValues;
 use waddle_types::{
-    ActionSpace, ActorKind, ClaimId, EpisodeId, GateMode, GrantStatus, Interp, LeaseEnforcement,
-    LeaseId, MonoNs, Provenance, ProvenanceTag, ReplanPolicy, TerminalOutcome, Verb, pb::v0 as pb,
+    ActionSpace, ActorKind, ActorRef, ClaimId, EpisodeId, GateMode, GrantStatus, Interp,
+    LeaseEnforcement, LeaseId, MonoNs, ProvenanceTag, ReplanPolicy, TerminalOutcome, Verb,
+    pb::v0 as pb,
 };
 
 use crate::emissions::{
@@ -339,26 +340,13 @@ impl Target {
         }
     }
 
-    /// Provenance carried by intervention actions under the active claim.
+    /// Provenance carried by intervention actions under the active claim —
+    /// the claim's own (`ActiveClaim::provenance`), never re-derived here.
     fn claim_provenance(&self) -> ProvenanceTag {
-        match &self.fsm.claim {
-            None => ProvenanceTag::policy(),
-            Some(claim) => {
-                let provenance = match claim.actor {
-                    ActorKind::Teleoperator => Provenance::Teleop,
-                    ActorKind::Agent => Provenance::Agent,
-                    ActorKind::Policy => Provenance::Policy,
-                    ActorKind::SiteOperator | ActorKind::System | ActorKind::Custom => {
-                        Provenance::Custom(claim.source.clone())
-                    }
-                };
-                ProvenanceTag {
-                    provenance,
-                    actor: None,
-                    bypass_approval: claim.self_initiated,
-                }
-            }
-        }
+        self.fsm
+            .claim
+            .as_ref()
+            .map_or_else(ProvenanceTag::policy, waddle_fsm::ActiveClaim::provenance)
     }
 
     // -- Virtual time -------------------------------------------------------
@@ -568,13 +556,23 @@ impl Target {
                     .and_then(Value::as_str)
                     .unwrap_or("")
                     .to_owned();
-                let actor = match payload
-                    .get("actor")
-                    .and_then(|a| a.get("kind"))
-                    .and_then(Value::as_str)
-                {
-                    Some(s) => parse_actor_kind(s)?,
-                    None => ActorKind::Custom,
+                // `claim_request` carries a `waddle.v0.ClaimEpisodeRequest`,
+                // whose `actor` is a full `ActorRef` — decoded whole, since
+                // the claim emission this produces carries it whole.
+                let actor = match payload.get("actor") {
+                    Some(a) => ActorRef {
+                        kind: match a.get("kind").and_then(Value::as_str) {
+                            Some(k) => parse_actor_kind(k)?,
+                            None => ActorKind::Custom,
+                        },
+                        id: a.get("id").and_then(Value::as_str).unwrap_or("").to_owned(),
+                        display_name: a
+                            .get("displayName")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_owned(),
+                    },
+                    None => ActorRef::of_kind(ActorKind::Custom),
                 };
                 let self_initiated = payload
                     .get("self_initiated")
@@ -595,12 +593,15 @@ impl Target {
             }
             "claim_granted" => {
                 let claim: pb::Claim = self.parse_payload(payload, "claim", "waddle.v0.Claim")?;
+                // The scenario's `waddle.v0.Claim` carries the actor WHOLE
+                // (kind, id, display name) — dispatched whole, so the claim
+                // emissions the scenario then asserts against carry it too.
                 let actor = claim
                     .actor
                     .as_ref()
-                    .map(|a| ActorKind::from_pb(a.kind))
+                    .map(ActorRef::try_from)
                     .transpose()?
-                    .unwrap_or(ActorKind::Custom);
+                    .unwrap_or_else(|| ActorRef::of_kind(ActorKind::Custom));
                 self.dispatch(SessionEvent::ClaimGranted {
                     id: ClaimId::new(&claim.claim_id),
                     source: claim.source_name.clone(),
