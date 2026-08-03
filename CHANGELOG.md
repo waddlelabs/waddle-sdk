@@ -177,9 +177,14 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   `media_url`/`media_token`). A build without the matching feature REFUSES
   the kwarg with an actionable error instead of degrading to a silent
   offline session: quietly losing supervision is the one failure mode this
-  layer exists to prevent. `_core.FEATURES` (a frozenset of the built
-  feature names) is the only feature detection the Python layer may do, and
-  `_core.__version__` reports the extension's own version. The shim gains
+  layer exists to prevent (the LiveKit refusal names the `[teleop]` extra,
+  since "not compiled" alone is not something a caller can act on). Each
+  core states its own `FEATURES` (a frozenset of the built feature names)
+  and `__version__`; the frozenset the Python layer actually probes is
+  `waddle._native.FEATURES`, re-exported from whichever core `_native`
+  selected — reading `waddle._core.FEATURES` would describe the bundled
+  core even in a process running the teleop one. It is the only feature
+  detection the Python layer may do. The shim gains
   kwargs, never logic. Neither feature is a cargo default (the featureless
   build stays the tokio- and libwebrtc-free clippy baseline), but no shipped
   distribution is featureless — see the two-distribution entry above.

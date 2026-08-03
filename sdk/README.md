@@ -105,9 +105,13 @@ cargo clippy --manifest-path rust/Cargo.toml --features grpc,livekit --all-targe
 Clippy must be clean featureless, `--features grpc`, and
 `--features grpc,livekit`. A build that lacks a feature refuses the
 matching kwarg rather than running offline in silence.
-`waddle._core.FEATURES` reports which are present — it is the only feature
-detection the Python layer does, and `waddle._native` is the only place
-that reads it to decide anything.
+**`waddle._native.FEATURES` is the probe**, not `waddle._core.FEATURES`:
+`_native` selects which core this process runs on and re-exports that
+core's features, so on a `[teleop]` install `waddle._core.FEATURES` still
+reports the bundled core's grpc-only set while the process is running the
+teleop core. It is the only feature detection the Python layer does, and
+two places read it — `_native` itself, to pick a core, and `init()`, to
+refuse a `transport=`/`media=` this build cannot honour.
 
 The companion wheel is `sdk/teleop/pyproject.toml`: same
 `manifest-path = "../rust/Cargo.toml"` (hence the same version by
@@ -154,7 +158,7 @@ Concretely, in this package:
   once at import, and the only state `init` records about a session is
   *whether a plane was declared at all* (a declaration fact, not plane
   state).
-- **Feature raises key off `_core.FEATURES`, never a try-import.** A
+- **Feature raises key off `_native.FEATURES`, never a try-import.** A
   `try: ... except (ImportError, AttributeError)` reads as "can this build
   do it?" and answers "did this particular call happen to fail?", so a
   genuine runtime error becomes a not-compiled message and the user chases

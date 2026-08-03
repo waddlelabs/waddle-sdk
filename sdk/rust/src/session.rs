@@ -701,14 +701,15 @@ pub(crate) fn create_session(
     if transport_url.is_some() {
         return Err(PyRuntimeError::new_err(
             "transport_url requires a waddle-sdk built with the `grpc` feature; this build has \
-             none (see waddle._core.FEATURES)",
+             none (see waddle._native.FEATURES)",
         ));
     }
     #[cfg(not(feature = "livekit"))]
     if media_url.is_some() {
         return Err(PyRuntimeError::new_err(
             "media_url requires a waddle-sdk built with the `livekit` feature; this build has \
-             none (see waddle._core.FEATURES)",
+             none — install the teleop extra: pip install 'waddle-sdk[teleop]' (see \
+             waddle._native.FEATURES)",
         ));
     }
     if transport_token.is_some() && transport_url.is_none() {

@@ -76,9 +76,13 @@ def test_transport_url_without_the_feature_refuses_loudly():
 @pytest.mark.skipif(
     "livekit" in _core.FEATURES, reason="this build carries the livekit media plane"
 )
-def test_media_url_without_the_feature_refuses_loudly():
-    with pytest.raises(RuntimeError, match="livekit"):
+def test_media_url_without_the_feature_names_the_teleop_extra():
+    """"Not compiled" alone is not actionable — the whole point of the
+    two-wheel split is that the fix is one `pip install`, so the refusal
+    has to name the extra (sdk/README.md's feature-raise rule)."""
+    with pytest.raises(RuntimeError, match="livekit") as excinfo:
         _session(media_url="wss://example.invalid", media_token="tok")
+    assert "waddle-sdk[teleop]" in str(excinfo.value)
 
 
 def test_tokens_without_their_url_are_rejected():

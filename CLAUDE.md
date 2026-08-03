@@ -134,8 +134,10 @@ top-level dirs; they are not built yet.
     - `python/waddle/_native.py` is the ONE place that picks a core: the
       bundled one unless a version-matched `waddle_teleop._core` is installed
       and `WADDLE_NO_TELEOP != "1"` (a mismatch warns and falls back).
-      `_core.FEATURES` (a frozenset) is the only feature detection the Python
-      layer may do — never a try-import.
+      `_native.FEATURES` (a frozenset re-exported from the SELECTED core) is
+      the only feature detection the Python layer may do — never a
+      try-import, and never `_core.FEATURES`, which on a `[teleop]` install
+      describes the bundled core the process is not using.
     - **Release checklist**: `teleop = ["waddle-sdk-teleop==X"]` in
       `sdk/pyproject.toml` is the ONE version maturin cannot derive from the
       manifest (PEP 621 has no dynamic optional-dependencies), so a version
