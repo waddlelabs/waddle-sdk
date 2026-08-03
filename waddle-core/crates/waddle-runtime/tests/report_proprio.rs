@@ -84,11 +84,10 @@ fn report_proprio_merges_into_recorded_observations() {
         ee_pose: Some(EePose::new([1.0, 2.0, 3.0], [1.0, 0.0, 0.0, 0.0], "ee").unwrap()),
         gripper: Some(0.5),
     });
-    // The report crosses a side channel the reducer drains once per wake
-    // (<=20ms cadence); settle well past that before the first gate tick so
-    // every recorded tick below sees the merge, not just a later one.
-    std::thread::sleep(Duration::from_millis(60));
-
+    // No settling wait: whichever wake drains this report, the LAST
+    // observation in the file carries the merge either way — it is either a
+    // gate tick recorded after the merge landed, or the report's own row
+    // (which carries the latest known `joint_pos`, i.e. this same obs).
     let obs = [0.9f64, 0.8, 0.7];
     for _ in 0..10 {
         let _ = ep.gate(&[0.1, 0.2, 0.3], None, Some(&obs));
@@ -156,14 +155,15 @@ fn report_proprio_patches_only_the_fields_it_carries() {
         ee_pose: None,
         gripper: Some(0.1),
     });
-    std::thread::sleep(Duration::from_millis(60));
-    // A second report patches only `gripper`; `joint_vel` must survive.
+    // A second report patches only `gripper`; `joint_vel` must survive. The
+    // channel is FIFO, so the merge order is fixed regardless of which wake
+    // drains them, and every observation written after both — the report's
+    // own row or the gate tick's — carries the patched state.
     session.report_proprio(ProprioReport {
         joint_vel: None,
         ee_pose: None,
         gripper: Some(0.9),
     });
-    std::thread::sleep(Duration::from_millis(60));
 
     let _ = ep.gate(&[0.0; 3], None, Some(&[0.0; 3]));
     ep.terminate(TerminalOutcome::Success, "done");
@@ -265,22 +265,24 @@ fn report_proprio_records_observations_without_any_gate_obs() {
         .build()
         .unwrap();
 
-    let mut ep = session.start_episode("task").unwrap();
+    let ep = session.start_episode("task").unwrap();
     let id = ep.id().clone();
 
+    // This episode is never ticked at all — the agent-invited shape (FSM.md
+    // E24), and the one that made the miss total. Every observation in the
+    // file therefore came from `report_proprio`.
+    //
+    // Fired back to back, with no settling wait: which wake drains them
+    // cannot change how many are recorded, since finalize drains this
+    // channel too (`Reducer`'s `finalize_writes_reports_still_queued_at_the_episode_tail`
+    // pins that tail deterministically, where no wake can hide it).
     for i in 0..5 {
         session.report_proprio(ProprioReport {
             joint_vel: Some(vec![f64::from(i), 0.0, 0.0]),
             ee_pose: None,
             gripper: Some(0.5),
         });
-        // The report crosses a side channel the reducer drains once per
-        // wake (<=20ms cadence).
-        std::thread::sleep(Duration::from_millis(40));
     }
-    // Ticks that carry no obs at all — the recording's observations can
-    // only have come from `report_proprio`.
-    let _ = ep.gate(&[0.0; 3], None, None);
     ep.terminate(TerminalOutcome::Success, "done");
     session.shutdown();
 

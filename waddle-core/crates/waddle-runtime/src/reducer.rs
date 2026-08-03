@@ -544,6 +544,11 @@ impl Reducer {
     /// report carries no FSM guard, so it never touches `step()` — the
     /// hollow-frontend rule is about claim/lease/handoff/timeline logic,
     /// none of which this is.
+    ///
+    /// Called every wake AND from `finalize_episode_if_terminal`: a report
+    /// still queued when the episode goes terminal is part of that episode,
+    /// so it must be written before the MCAP closes rather than surfacing on
+    /// a later wake with nowhere to go.
     fn drain_proprio_reports(&mut self) {
         while let Ok(report) = self.proprio_rx.try_recv() {
             self.latest_extras.merge(&report);
@@ -734,9 +739,14 @@ impl Reducer {
             _ if force => None,
             _ => return,
         };
-        // The episode tail must land in the file before finish().
+        // The episode tail must land in the file before finish(). EVERY
+        // side channel that writes into the episode, in the same order the
+        // reducer loop drains them: whatever a caller handed us before the
+        // episode went terminal belongs in that episode's file, and after
+        // `self.mcap` is taken below there is nowhere left to put it.
         self.drain_gate_records();
         self.drain_dispatched_actions();
+        self.drain_proprio_reports();
         let Some(mut builder) = self.sidecar.take() else {
             return;
         };
@@ -795,5 +805,118 @@ impl Reducer {
             s.agent_invite_aborted = agent_invite_aborted;
             s.plane_connected = plane_connected;
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::mirror::Mirror;
+    use crate::verbs::{ControlRegistry, VerbDispatch};
+    use prost::Message as _;
+    use waddle_types::{LeaseEnforcement, ReplanPolicy, RobotDescription};
+
+    /// The episode TAIL, pinned where it is deterministic: `finalize` is
+    /// called directly, so no reducer wake can drain the channel first and
+    /// hide the miss (in a live session the ≤20 ms wake cadence usually
+    /// drains it, which is exactly what makes an integration test of this
+    /// unable to fail reliably — and what let the hole ship).
+    ///
+    /// A `report_proprio` still queued when the episode goes terminal is
+    /// part of THAT episode: gate records and bypass-pump dispatches are
+    /// tail-drained for the same reason, and a report is an observation
+    /// like any other. Without the drain, it surfaces on a later wake with
+    /// `mcap == None` and is discarded — or, worse, lands in whatever
+    /// episode opened next.
+    #[test]
+    fn finalize_writes_reports_still_queued_at_the_episode_tail() {
+        let dir = tempfile::tempdir().unwrap();
+        let clock = SessionClock::capture();
+        let robot = RobotDescription::try_from(&pb::RobotDescription {
+            name: "tail-bot".into(),
+            robot_id: "tail-01".into(),
+            cell_id: "cell-tail".into(),
+            action_space: Some(pb::ActionSpace {
+                space: Some(pb::action_space::Space::JointPosition(pb::JointPosition {
+                    joints: (0..3)
+                        .map(|i| pb::JointDescriptor {
+                            name: format!("j{i}"),
+                            ..Default::default()
+                        })
+                        .collect(),
+                })),
+                rate_hz: 50.0,
+                chunking: None,
+                gripper: None,
+            }),
+            ..Default::default()
+        })
+        .unwrap();
+
+        let (gate_shared, _stream_tx) = GateShared::new(
+            GatePlan::passthrough(MonoNs(0)),
+            8,
+            0,
+            ReplanPolicy::Immediate,
+        );
+        let (outcome_tx, _outcome_rx) = std::sync::mpsc::channel();
+        let verbs = Arc::new(VerbDispatch::spawn(
+            ControlRegistry::default(),
+            clock.clone(),
+            outcome_tx,
+        ));
+        let (proprio_tx, proprio_rx) = std::sync::mpsc::channel();
+        let (_dispatch_tx, dispatch_rx) = std::sync::mpsc::channel();
+
+        let mut reducer = Reducer::new(
+            SessionConfig::minimal("loop", HandoffPolicy::HoldFirst, LeaseEnforcement::Advisory),
+            clock,
+            gate_shared,
+            verbs,
+            Mirror::new(),
+            None,
+            Some(dir.path().to_path_buf()),
+            "tail-project".to_owned(),
+            "digest".to_owned(),
+            robot.action_space,
+            Arc::new(parking_lot::Mutex::new(None)),
+            Arc::new(parking_lot::Mutex::new("task".to_owned())),
+            None,
+            Arc::new(waddle_ingest::LatestSlot::new()),
+            proprio_rx,
+            dispatch_rx,
+        );
+
+        let id = EpisodeId::new("ep-tail");
+        reducer.open_episode_records(&id, false, None, false);
+        // Queued, never drained by a wake: this IS the tail.
+        proprio_tx
+            .send(ProprioReport {
+                joint_vel: Some(vec![7.0, 8.0, 9.0]),
+                ee_pose: None,
+                gripper: Some(0.25),
+            })
+            .unwrap();
+        reducer.finalize_episode_if_terminal(true);
+
+        let buf = std::fs::read(dir.path().join(format!("{id}.mcap"))).unwrap();
+        let mut samples = Vec::new();
+        for message in mcap::MessageStream::new(&buf).unwrap() {
+            let message = message.unwrap();
+            if message.channel.topic == waddle_sidecar::mcaprec::OBSERVATIONS_TOPIC {
+                let update = pb::ObservationUpdate::decode(message.data.as_ref()).unwrap();
+                if let Some(pb::observation_update::Payload::Proprio(p)) = update.payload {
+                    samples.push(p);
+                }
+            }
+        }
+        assert_eq!(
+            samples.len(),
+            1,
+            "a report queued when the episode ended must be in that episode's recording"
+        );
+        assert_eq!(samples[0].joint_vel, vec![7.0, 8.0, 9.0]);
+        assert_eq!(samples[0].gripper, Some(0.25));
     }
 }
