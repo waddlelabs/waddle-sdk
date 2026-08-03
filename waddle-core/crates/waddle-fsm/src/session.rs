@@ -3,6 +3,8 @@
 //! `waddle-protocol/docs/FSM.md` is implemented here; row ids appear as
 //! comments.
 
+use std::sync::Arc;
+
 use waddle_types::{
     ActorKind, ActorRef, ClaimId, EpisodeStateKind, GateMode, GrantStatus, InterventionPhase,
     MonoNs, ResetVerificationMode, TerminalOutcome, Verb, pb::v0 as pb,
@@ -872,7 +874,7 @@ pub fn step(
             let claim = ActiveClaim {
                 id: id.clone(),
                 source: source.clone(),
-                actor: actor.clone(),
+                actor: Arc::new(actor.clone()),
                 self_initiated: *self_initiated,
             };
             let ep = ctx.episode().id.clone();
@@ -925,7 +927,7 @@ pub fn step(
                 let refused = ActiveClaim {
                     id: id.clone(),
                     source: source.clone(),
-                    actor: actor.clone(),
+                    actor: Arc::new(actor.clone()),
                     self_initiated: *self_initiated,
                 };
                 let ep = ctx.episode().id.clone();
@@ -941,7 +943,7 @@ pub fn step(
             let claim = ActiveClaim {
                 id: id.clone(),
                 source: source.clone(),
-                actor: actor.clone(),
+                actor: Arc::new(actor.clone()),
                 self_initiated: *self_initiated,
             };
             let ep = ctx.episode().id.clone();
@@ -1069,7 +1071,7 @@ pub fn step(
                     let claim = ActiveClaim {
                         id: ClaimId::new(format!("clutch-{}", ctx.s.clutch_seq)),
                         source: cfg.clutch_source.clone(),
-                        actor: ActorRef::of_kind(cfg.clutch_actor),
+                        actor: Arc::new(ActorRef::of_kind(cfg.clutch_actor)),
                         self_initiated: true,
                     };
                     let ep = ctx.episode().id.clone();

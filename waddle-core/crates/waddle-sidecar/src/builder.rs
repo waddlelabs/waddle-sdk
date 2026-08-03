@@ -523,7 +523,7 @@ fn claim_tag(claim: &pb::Claim) -> pb::ProvenanceTag {
         // know) is attributed to its source name rather than silently
         // relabeled as one of the kinds this build does know.
         .map_or_else(
-            || Provenance::Custom(claim.source_name.clone()),
+            || Provenance::Custom(claim.source_name.as_str().into()),
             |kind| Provenance::for_claim(kind, &claim.source_name),
         );
     let mut tag = ProvenanceTag {
