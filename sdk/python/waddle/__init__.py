@@ -667,7 +667,13 @@ class AgentResult:
     detail: str
 
 
-def agent(prompt: str, *, timeout_s: float = 600.0) -> AgentResult:
+def agent(
+    prompt: str,
+    *,
+    timeout_s: float = 600.0,
+    pre_reset: Callable | TeleopReset | AgentReset | None | _UnsetType = _UNSET,
+    post_reset: Callable | TeleopReset | AgentReset | None | _UnsetType = _UNSET,
+) -> AgentResult:
     """Ask Waddle to drive one episode (protocol flag ``waddle.v0.agent``).
 
     Opens an *agent-invited* episode on the module session and blocks until
@@ -680,7 +686,10 @@ def agent(prompt: str, *, timeout_s: float = 600.0) -> AgentResult:
     ``prompt`` is both the invite and the episode's task. ``timeout_s`` is
     the invite deadline: if no agent claims the episode in that time the
     episode aborts and this returns ``outcome == "abort"`` — a normal
-    result, not an exception. The same goes for a plane that declines the
+    result, not an exception. ``pre_reset``/``post_reset`` override this
+    one episode's reset phases exactly as they do on :func:`rollout` (the
+    default inherits whatever :func:`init` declared; ``None`` disables a
+    phase for this episode only). The same goes for a plane that declines the
     task; ``result.detail`` carries its reason.
 
     While this blocks, this thread is not the one driving the robot: the
@@ -721,7 +730,11 @@ def agent(prompt: str, *, timeout_s: float = 600.0) -> AgentResult:
             "loopback that stands in for one) — pass "
             "transport=waddle.Grpc(url, token) to waddle.init()"
         )
-    result = session.agent(prompt, int(timeout_s * 1_000_000_000))
+    kwargs = {
+        **_reset_override_kwargs("pre_reset", pre_reset),
+        **_reset_override_kwargs("post_reset", post_reset),
+    }
+    result = session.agent(prompt, int(timeout_s * 1_000_000_000), **kwargs)
     return AgentResult(
         outcome=result.outcome,
         episode_id=result.episode_id,

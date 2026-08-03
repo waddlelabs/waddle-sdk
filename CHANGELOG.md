@@ -143,14 +143,20 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     The two are mutually exclusive with `_testing=True` (which wires the
     in-process loopback), and `media` requires its token, because the plane
     mints room tokens and this SDK never does.
-  - **`waddle.agent(prompt, *, timeout_s=600.0) -> AgentResult`**: hand a
+  - **`waddle.agent(prompt, *, timeout_s=600.0, pre_reset=…, post_reset=…)
+    -> AgentResult`**: hand a
     whole episode to Waddle instead of driving it. It blocks until the
     episode reaches an outcome and returns a frozen
     `AgentResult { outcome, episode_id, recording_ref, detail }`, each field
     the core's word verbatim. An ask nobody answers comes back
     `outcome == "abort"` at the invite deadline — a result, not an
-    exception. It refuses up front only when there is nobody to ask (no
-    plane declared) or when the verbs an invited claimant would need are
+    exception. `pre_reset`/`post_reset` override this one episode's reset
+    phases exactly as they do on `rollout()` (an agent run is an episode
+    like any other, and the reset kwargs `_core`'s `Session.agent` takes
+    were unreachable from Python without them). It refuses up front only
+    when there is nobody to ask (neither a `transport` nor the `_testing`
+    loopback that stands in for one) or when the verbs an invited claimant
+    would need are
     unwired; everything else — who may claim the episode, what the caller's
     own ticks do meanwhile — is an FSM row, not a Python branch.
   - **Two distributions from one source tree** (the psycopg / psycopg-binary
@@ -198,8 +204,13 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     the invite deadline; it asks the core to abort the live agent-invited
     episode (the same abort `Episode.terminate()` requests — the shim
     decides nothing about the timeline, and the core no-ops when that
-    episode is no longer live) and raises `KeyboardInterrupt` only once the
-    core reports the run finished, so no agent is left driving a robot
+    episode is no longer live) and keeps asking on every later slice until
+    the run reports finished, since the first ask can land in a window with
+    no live agent-invited episode to abort (the run thread has not opened
+    one yet, or is still waiting out a predecessor's POST_RESET) and a
+    one-shot ask would then leave the caller blocked to the deadline with
+    the interrupt already latched. `KeyboardInterrupt` is raised only once
+    the core reports the run finished, so no agent is left driving a robot
     whose caller has walked away, and no thread is orphaned.
   - `sdk/rust/Cargo.lock` pins the livekit crates to the set
     `waddle-core/Cargo.lock` already resolves (livekit 0.7.52, -api 0.5.5,

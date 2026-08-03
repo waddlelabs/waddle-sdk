@@ -207,6 +207,32 @@ def test_agent_drives_a_whole_episode_over_the_loopback(tmp_path):
     )
 
 
+def test_agent_runs_the_reset_phase_it_was_given():
+    """An agent run is an episode like any other, so it takes `rollout()`'s
+    per-episode reset overrides: the eight reset kwargs `_core`'s
+    `Session.agent` has always accepted are reachable from Python.
+
+    The invite goes unanswered on purpose — what is under test is that the
+    scene was reset before Waddle was asked to drive it, not the run."""
+    ran: list[str] = []
+
+    def scripted_pre_reset(task: str) -> bool:
+        ran.append(task)
+        return True
+
+    waddle.init(
+        "py-agent-api-reset",
+        _robot(),
+        waddle.Control(send=lambda chunk: None, hold=lambda: None),
+        _testing=True,
+    )
+    result = waddle.agent("stack the cups", timeout_s=0.15, pre_reset=scripted_pre_reset)
+
+    # The prompt is the episode's task, so that is what the hook is handed.
+    assert ran == ["stack the cups"], "the episode ran the pre_reset it was given"
+    assert result.outcome == "abort"
+
+
 def test_agent_invite_deadline_comes_back_as_an_outcome():
     """Nobody can ever engage over a loopback with no script, so the invite
     deadline (FSM.md E25) closes the episode — and that is a RESULT, not an
