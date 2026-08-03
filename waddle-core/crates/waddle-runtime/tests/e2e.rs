@@ -369,6 +369,26 @@ fn engage_substitutes_teleop_actions_then_release_restores_passthrough() {
         sidecar.leases.len()
     );
     assert!(!sidecar.interventions.is_empty());
+
+    // The claim names its claimant, and the claimed span is TELEOP — the
+    // flow that always worked, pinned so deriving provenance from the actor
+    // can never regress it. (A local grant has no plane-stamped id, so the
+    // kind is all there is to carry.)
+    let claim = sidecar.claims[0].claim.as_ref().expect("claim recorded");
+    assert_eq!(
+        claim.actor.as_ref().map(|a| a.kind),
+        Some(pb::ActorKind::Teleoperator as i32)
+    );
+    let claimed: Vec<&pb::ProvenanceTag> = sidecar
+        .provenance
+        .iter()
+        .filter_map(|p| p.tag.as_ref())
+        .filter(|t| t.kind != pb::ProvenanceKind::Policy as i32)
+        .collect();
+    assert!(!claimed.is_empty(), "an engaged claim opens a claimed span");
+    for tag in claimed {
+        assert_eq!(tag.kind, pb::ProvenanceKind::Teleop as i32);
+    }
 }
 
 #[test]
@@ -484,6 +504,11 @@ fn clutch_engage_is_recorded_with_teleoperator_provenance_by_default() {
         .expect("claim span recorded");
     assert!(claim.self_initiated, "clutch claims are self-initiated");
     assert_eq!(claim.source_name, "teleop-clutch");
+    // …and the actor kind the runtime declared for the clutch, carried onto
+    // the claim event. A clutch is local: there is no stamped id to carry.
+    let actor = claim.actor.as_ref().expect("the claim names its claimant");
+    assert_eq!(actor.kind, pb::ActorKind::Teleoperator as i32);
+    assert!(actor.id.is_empty());
 }
 
 #[test]
