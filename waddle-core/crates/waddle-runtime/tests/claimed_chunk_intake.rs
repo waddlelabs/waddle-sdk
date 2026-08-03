@@ -101,6 +101,33 @@ fn joint_robot() -> pb::RobotDescription {
     }
 }
 
+/// The declared gripper's own units — METRES of finger separation, and
+/// deliberately not 0..1: a value that survives to `send` unchanged is
+/// proof nothing re-mapped it on the way (an `ActionChunk`'s
+/// `GripperCommand.position` is already in the declared spec's units, per
+/// control.proto, unlike a raw teleop packet's normalized trigger).
+const GRIPPER_OPEN_M: f64 = 0.04;
+
+/// A 3-joint robot that also declares a parallel gripper, so a
+/// gripper-only chunk step has a declared channel to land on.
+fn gripper_robot() -> pb::RobotDescription {
+    let mut robot = joint_robot();
+    robot.name = "claimed-chunk-gripper-bot".into();
+    robot.robot_id = "claimed-chunk-03".into();
+    if let Some(space) = robot.action_space.as_mut() {
+        space.gripper = Some(pb::GripperSpec {
+            kind: Some(pb::gripper_spec::Kind::Parallel(
+                pb::gripper_spec::Parallel {
+                    open_value: GRIPPER_OPEN_M,
+                    closed_value: 0.0,
+                    action_dim: -1,
+                },
+            )),
+        });
+    }
+    robot
+}
+
 type SendLog = Arc<Mutex<Vec<(Provenance, Vec<f64>)>>>;
 
 fn registry(send_log: &SendLog) -> ControlRegistry {
@@ -181,6 +208,28 @@ fn joint_action(values: Vec<f64>) -> pb::Action {
         })),
         gripper: None,
         t_offset_ns: 0,
+        part: String::new(),
+    }
+}
+
+fn joint_step(v: f64, offset_ns: i64) -> pb::Action {
+    pb::Action {
+        t_offset_ns: offset_ns,
+        ..joint_action(vec![v; 3])
+    }
+}
+
+/// The wire shape a supervision plane sends for a gripper-only command: its
+/// own command carries no arm target to put beside the gripper, so the
+/// gripper rides a `NoopMarker` — "hold the arm, move the gripper".
+fn gripper_step(position: Option<f64>, offset_ns: i64) -> pb::Action {
+    pb::Action {
+        target: Some(pb::action::Target::Noop(pb::NoopMarker::default())),
+        gripper: position.map(|position| pb::GripperCommand {
+            position,
+            effort: None,
+        }),
+        t_offset_ns: offset_ns,
         part: String::new(),
     }
 }
@@ -463,5 +512,209 @@ fn claimed_mode_dims_mismatch_chunk_is_dropped_with_one_fault_per_claim() {
     assert_eq!(
         validation_faults, 1,
         "expected exactly one validation fault for the claim window, got {validation_faults}"
+    );
+}
+
+// --- Gripper-only steps ---------------------------------------------------
+
+/// Every `Fault{VALIDATION_ERROR}` on the episode's sidecar timeline.
+fn validation_faults(dir: &std::path::Path, episode_id: &str) -> Vec<pb::Fault> {
+    let path = dir.join(format!("{episode_id}.sidecar.json"));
+    let sidecar =
+        waddle_sidecar::sidecar_from_json(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    sidecar
+        .events
+        .iter()
+        .filter_map(|e| match &e.event {
+            Some(pb::episode_event::Event::Fault(f))
+                if f.kind == pb::FaultKind::ValidationError as i32 =>
+            {
+                Some(f.clone())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// The live shape that found this defect: three joint waypoints followed by
+/// a gripper close. The plane sends the grip as `Action{noop, gripper}` —
+/// the gripper "rides alongside the target" (control.proto) and its own
+/// command has no arm target to put there — and the intake used to refuse
+/// that step as non-executable and drop the WHOLE chunk, so a four-step
+/// stream actuated three times and the grip vanished with only a log line.
+/// All four steps must reach the caller, the last one commanding the
+/// gripper alone with the arm holding.
+#[test]
+fn claimed_mode_gripper_only_step_actuates_with_the_arm_holding() {
+    let dir = tempfile::tempdir().unwrap();
+    let send_log: SendLog = Arc::new(Mutex::new(Vec::new()));
+    let (transport, tx_cell) = tx_transport();
+    let session = Session::builder("e2e-claimed-chunk-gripper")
+        .robot(gripper_robot())
+        .control(registry(&send_log))
+        .recording_dir(dir.path())
+        .transport(transport)
+        .build()
+        .unwrap();
+
+    let mut ep = session.start_episode("claimed-chunk-gripper").unwrap();
+    let id = ep.id().clone();
+    let _ = ep.gate(&[0.0; 3], None, None);
+    wait_for(&session, |s| {
+        matches!(s.episode_state, Some(Phase::Running))
+    });
+
+    grant_and_engage(&session, "claim-gripper", "agent-plane", ActorKind::Agent);
+    wait_for(&session, |s| s.gate_mode == Some(GateMode::Intervention));
+    let tx = wait_for_tx(&tx_cell);
+
+    // 3 waypoints 40ms apart, then the gripper close at 120ms.
+    send_chunk(
+        &tx,
+        vec![
+            joint_step(1.0, 0),
+            joint_step(2.0, 40_000_000),
+            joint_step(3.0, 80_000_000),
+            gripper_step(Some(GRIPPER_OPEN_M), 120_000_000),
+        ],
+        1,
+        0,
+    );
+
+    let mut seen: Vec<(Vec<f64>, Option<f64>)> = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while seen.len() < 4 && Instant::now() < deadline {
+        if let GateOutput::Substitute { action, .. } = ep.gate(&[0.0; 3], None, None) {
+            seen.push((action.values.to_vec(), action.gripper));
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(
+        seen.len(),
+        4,
+        "all four steps must actuate — the gripper step is an action, not a drop: {seen:?}"
+    );
+    assert_eq!(seen[0], (vec![1.0; 3], None));
+    assert_eq!(seen[1], (vec![2.0; 3], None));
+    assert_eq!(seen[2], (vec![3.0; 3], None));
+    assert_eq!(
+        seen[3],
+        (Vec::new(), Some(GRIPPER_OPEN_M)),
+        "the gripper step commands no arm values (the arm holds) and carries \
+         the gripper in the units the robot declared, unmapped"
+    );
+
+    release_claim(&session, "claim-gripper");
+    wait_for(&session, |s| s.gate_mode == Some(GateMode::Passthrough));
+    ep.terminate(TerminalOutcome::Success, "done");
+    session.shutdown();
+
+    assert!(
+        validation_faults(dir.path(), id.as_str()).is_empty(),
+        "a gripper-only step is a legal action, not a validation failure"
+    );
+
+    // The dispatched grip is on `/waddle/actions` in its own wire shape —
+    // a NOOP target with the gripper alongside — so the recording says the
+    // gripper was commanded and a judge/trainer can see it.
+    let buf = std::fs::read(dir.path().join(format!("{id}.mcap"))).unwrap();
+    let mut gripper_rows = 0;
+    for message in mcap::MessageStream::new(&buf).unwrap() {
+        let message = message.unwrap();
+        if message.channel.topic != waddle_sidecar::mcaprec::ACTIONS_TOPIC {
+            continue;
+        }
+        let chunk = <pb::ActionChunk as prost::Message>::decode(message.data.as_ref()).unwrap();
+        for action in &chunk.actions {
+            if matches!(action.target, Some(pb::action::Target::Noop(_)))
+                && action
+                    .gripper
+                    .as_ref()
+                    .is_some_and(|g| (g.position - GRIPPER_OPEN_M).abs() < 1e-12)
+            {
+                gripper_rows += 1;
+            }
+        }
+    }
+    assert!(
+        gripper_rows >= 1,
+        "the gripper-only dispatch must be recorded on /waddle/actions"
+    );
+}
+
+/// A noop with NO gripper commands nothing at all. It is skipped — the
+/// waypoints around it still actuate, because one inert step must never
+/// cost the sender the rest of its chunk — and the skip is recorded as a
+/// fault, deduped to once per claim window, rather than left in a log line
+/// the sender can never see.
+#[test]
+fn claimed_mode_inert_step_is_skipped_and_the_chunk_survives() {
+    let dir = tempfile::tempdir().unwrap();
+    let send_log: SendLog = Arc::new(Mutex::new(Vec::new()));
+    let (transport, tx_cell) = tx_transport();
+    let session = Session::builder("e2e-claimed-chunk-inert")
+        .robot(gripper_robot())
+        .control(registry(&send_log))
+        .recording_dir(dir.path())
+        .transport(transport)
+        .build()
+        .unwrap();
+
+    let mut ep = session.start_episode("claimed-chunk-inert").unwrap();
+    let id = ep.id().clone();
+    let _ = ep.gate(&[0.0; 3], None, None);
+    wait_for(&session, |s| {
+        matches!(s.episode_state, Some(Phase::Running))
+    });
+
+    grant_and_engage(&session, "claim-inert", "agent-plane", ActorKind::Agent);
+    wait_for(&session, |s| s.gate_mode == Some(GateMode::Intervention));
+    let tx = wait_for_tx(&tx_cell);
+
+    // Sent twice (fresh seq) to prove the fault dedupes per claim window.
+    for seq in 1..=2u64 {
+        send_chunk(
+            &tx,
+            vec![
+                joint_step(1.0, 0),
+                gripper_step(None, 40_000_000),
+                joint_step(3.0, 80_000_000),
+            ],
+            seq,
+            0,
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+
+    let mut seen: Vec<Vec<f64>> = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while seen.len() < 2 && Instant::now() < deadline {
+        if let GateOutput::Substitute { action, .. } = ep.gate(&[0.0; 3], None, None) {
+            seen.push(action.values.to_vec());
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(
+        seen,
+        vec![vec![1.0; 3], vec![3.0; 3]],
+        "the steps around the inert one must still actuate, in order"
+    );
+
+    release_claim(&session, "claim-inert");
+    wait_for(&session, |s| s.gate_mode == Some(GateMode::Passthrough));
+    ep.terminate(TerminalOutcome::Success, "done");
+    session.shutdown();
+
+    let faults = validation_faults(dir.path(), id.as_str());
+    assert_eq!(
+        faults.len(),
+        1,
+        "the skip is reported once per claim window, got {faults:?}"
+    );
+    assert_eq!(faults[0].source, "agent-chunk");
+    assert!(
+        faults[0].detail.contains("skipped 1 of 3"),
+        "the fault must say what was skipped: {:?}",
+        faults[0].detail
     );
 }

@@ -28,7 +28,8 @@ pub use config::SessionConfig;
 pub use effect::{AfterLease, Effect, HandbackThen, PendingLeaseOp};
 pub use episode::{EpisodeState, Phase, ResetWindowState};
 pub use event::{
-    AgentInvite, GrantChangeDirective, MarkKind, ProxySample, SessionEvent, TimerId, WindowSpec,
+    AgentInvite, GrantChangeDirective, MarkKind, ProxySample, RejectReason, SessionEvent, TimerId,
+    WindowSpec,
 };
 pub use granthealth::GrantHealthEntry;
 pub use lease::{LeaseCmd, LeaseOutcome, LeaseState};

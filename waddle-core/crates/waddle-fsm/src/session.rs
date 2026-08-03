@@ -15,7 +15,7 @@ use crate::config::SessionConfig;
 use crate::effect::{AfterLease, Effect, LeaseOpKind, PendingLeaseOp};
 use crate::emit;
 use crate::episode::{EpisodeState, Phase};
-use crate::event::{MarkKind, SessionEvent, TimerId};
+use crate::event::{MarkKind, RejectReason, SessionEvent, TimerId};
 use crate::granthealth::{GrantHealthEntry, HealthEvent};
 use crate::lease::{LeaseCmd, LeaseOutcome, LeaseState};
 
@@ -1628,23 +1628,30 @@ pub fn step(
             ctx.effects.push(Effect::RequestVerb(Verb::Hold));
         }
 
-        // Dims validation (intake diagnostic) -----------------------------
-        SessionEvent::InterventionRejected {
-            dims_got,
-            dims_want,
-            source,
-            at,
-        } => {
+        // Intake validation (diagnostic) ----------------------------------
+        SessionEvent::InterventionRejected { source, reason, at } => {
             if !active {
                 return Err(rejected("intervention_rejected without an active episode"));
             }
             let ep = ctx.episode().id.clone();
+            let detail = match reason {
+                RejectReason::Dims { got, want } => {
+                    format!("action carried {got} dims; declared action space wants {want}")
+                }
+                RejectReason::NotExecutable(why) => {
+                    format!("chunk refused: {why}")
+                }
+                RejectReason::InertStepsSkipped { skipped, of } => format!(
+                    "skipped {skipped} of {of} steps carrying nothing to dispatch \
+                     (NOOP marker with no gripper command); the rest executed"
+                ),
+            };
             ctx.emit(emit::fault(
                 *at,
                 Some(&ep),
                 pb::FaultKind::ValidationError,
                 source,
-                &format!("action carried {dims_got} dims; declared action space wants {dims_want}"),
+                &detail,
             ));
         }
 

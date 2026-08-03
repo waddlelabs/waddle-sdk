@@ -12,7 +12,8 @@
 //! protocol-adjacent decision, not a refactor detail.
 
 use waddle_fsm::{
-    Effect, MarkKind, Phase, SessionConfig, SessionEvent, SessionFsm, WindowSpec, step,
+    Effect, MarkKind, Phase, RejectReason, SessionConfig, SessionEvent, SessionFsm, WindowSpec,
+    step,
 };
 use waddle_types::{
     ActorKind, ActorRef, ClaimId, EpisodeId, HandoffPolicy, LeaseEnforcement, LeaseId, MonoNs,
@@ -547,9 +548,8 @@ fn intervention_rejected_without_an_active_episode_is_rejected() {
     let at = d.at();
     d.rejected(
         SessionEvent::InterventionRejected {
-            dims_got: 9,
-            dims_want: 6,
             source: "media-intake",
+            reason: RejectReason::Dims { got: 9, want: 6 },
             at,
         },
         "intervention_rejected without an active episode",

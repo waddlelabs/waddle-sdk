@@ -28,9 +28,22 @@ pub struct Step {
     pub offset_ns: i64,
     /// Flattened values, laid out per the declared space (composite parts in
     /// declaration order; poses as `[x, y, z, qw, qx, qy, qz]`).
+    ///
+    /// EMPTY means a gripper-only step — "hold the arm, move the gripper"
+    /// (see [`flatten_action`]). The arm keeps whatever it was commanded
+    /// last; only the gripper channel is written. Every other step carries
+    /// exactly the declared space's width.
     pub values: ActionValues,
     /// Gripper command in declared units, when present.
     pub gripper: Option<f64>,
+}
+
+impl Step {
+    /// A step that commands the gripper alone, leaving the arm to hold.
+    #[must_use]
+    pub fn is_gripper_only(&self) -> bool {
+        self.values.is_empty() && self.gripper.is_some()
+    }
 }
 
 /// A validated, flattened action chunk.
@@ -50,9 +63,38 @@ pub struct ActionChunk {
     pub provenance: ProvenanceTag,
 }
 
+/// What one wire chunk flattened into: the executable steps, plus the
+/// steps that carried nothing to execute and were left out. See
+/// [`ActionChunk::from_pb`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct FlattenedChunk {
+    pub chunk: ActionChunk,
+    /// Indices into `pb::ActionChunk.actions` of the INERT steps — a
+    /// `NoopMarker` target with no gripper command riding along, i.e. "this
+    /// tick commands nothing". Legal wire with nothing to dispatch. They are
+    /// reported rather than silently swallowed so the intake can say so on
+    /// the episode's own timeline.
+    pub inert: Vec<usize>,
+}
+
 impl ActionChunk {
     /// Validate and flatten a wire chunk against the declared space.
-    pub fn from_pb(chunk: &pb::ActionChunk, space: &ActionSpace) -> Result<Self, TypesError> {
+    ///
+    /// Two failure shapes, deliberately different:
+    ///
+    /// * An INERT step (a `NoopMarker` carrying no gripper command) is
+    ///   skipped and reported in [`FlattenedChunk::inert`]; the rest of the
+    ///   chunk still executes. One step with nothing in it must never cost
+    ///   the sender the waypoints around it.
+    /// * Anything else — a target arm the declared space doesn't have, a
+    ///   missing field, a width that doesn't match — means this chunk isn't
+    ///   speaking the declared space, and the WHOLE chunk is refused
+    ///   (`Err`). A partial trajectory from a sender that disagrees about
+    ///   the space is not a degraded-but-safe thing to actuate.
+    pub fn from_pb(
+        chunk: &pb::ActionChunk,
+        space: &ActionSpace,
+    ) -> Result<FlattenedChunk, TypesError> {
         let dims = space.dims().ok_or(TypesError::OpaqueNotExecutable)?;
         let provenance = chunk
             .provenance
@@ -62,29 +104,57 @@ impl ActionChunk {
             .unwrap_or_else(ProvenanceTag::policy);
 
         let mut steps = Vec::with_capacity(chunk.actions.len());
-        for action in &chunk.actions {
-            steps.push(flatten_action(action, space)?);
+        let mut inert = Vec::new();
+        for (index, action) in chunk.actions.iter().enumerate() {
+            match flatten_action(action, space) {
+                Ok(step) => steps.push(step),
+                Err(TypesError::NoopNotExecutable) => inert.push(index),
+                Err(err) => return Err(err),
+            }
         }
 
-        Ok(Self {
-            steps,
-            dims,
-            horizon_ns: chunk.horizon_ns,
-            t_emitted_ns: chunk.t_emitted_ns,
-            t_obs_ns: chunk.t_obs_ns,
-            seq: chunk.seq,
-            source: SourceId::new(&chunk.source_id),
-            provenance,
+        Ok(FlattenedChunk {
+            chunk: Self {
+                steps,
+                dims,
+                horizon_ns: chunk.horizon_ns,
+                t_emitted_ns: chunk.t_emitted_ns,
+                t_obs_ns: chunk.t_obs_ns,
+                seq: chunk.seq,
+                source: SourceId::new(&chunk.source_id),
+                provenance,
+            },
+            inert,
         })
     }
 }
 
 /// Flatten one wire action against the declared space.
+///
+/// A `NoopMarker` target carrying a gripper command is EXECUTABLE: control.proto
+/// has the gripper "ride alongside the target in one logical tick", and noop is
+/// a target arm like any other, so the pair says "hold the arm, move the
+/// gripper". It flattens to a step with no values (see [`Step::values`]).
+/// A noop with no gripper carries nothing to dispatch and stays
+/// [`TypesError::NoopNotExecutable`].
 pub fn flatten_action(action: &pb::Action, space: &ActionSpace) -> Result<Step, TypesError> {
+    let expected = space.dims().ok_or(TypesError::OpaqueNotExecutable)?;
+    let gripper = action.gripper.as_ref().map(|g| g.position);
+
+    if matches!(&action.target, Some(pb::action::Target::Noop(_))) {
+        return match gripper {
+            Some(_) => Ok(Step {
+                offset_ns: action.t_offset_ns,
+                values: ActionValues::new(),
+                gripper,
+            }),
+            None => Err(TypesError::NoopNotExecutable),
+        };
+    }
+
     let mut values = ActionValues::new();
     flatten_target(action, space, &mut values)?;
 
-    let expected = space.dims().ok_or(TypesError::OpaqueNotExecutable)?;
     if values.len() != expected {
         return Err(TypesError::DimensionMismatch {
             expected,
@@ -95,7 +165,7 @@ pub fn flatten_action(action: &pb::Action, space: &ActionSpace) -> Result<Step, 
     Ok(Step {
         offset_ns: action.t_offset_ns,
         values,
-        gripper: action.gripper.as_ref().map(|g| g.position),
+        gripper,
     })
 }
 
@@ -188,12 +258,27 @@ fn flatten_target(
 /// flat row against the declared space. This is the ONE place flat rows
 /// become wire shapes (composite parts in declaration order; poses as
 /// `[x, y, z, qw, qx, qy, qz]`, wxyz on the wire).
+///
+/// An empty row with a gripper is the gripper-only step [`flatten_action`]
+/// produces, and rebuilds the wire shape it came from: a `NoopMarker` with
+/// the gripper riding alongside. Without this a dispatched gripper-only
+/// action would have no wire form and would vanish from the recording.
 pub fn unflatten_action(
     values: &[f64],
     gripper: Option<f64>,
     space: &ActionSpace,
 ) -> Result<pb::Action, TypesError> {
     let expected = space.dims().ok_or(TypesError::OpaqueNotExecutable)?;
+    if values.is_empty() && gripper.is_some() {
+        return Ok(pb::Action {
+            target: Some(pb::action::Target::Noop(pb::NoopMarker::default())),
+            gripper: gripper.map(|position| pb::GripperCommand {
+                position,
+                effort: None,
+            }),
+            ..Default::default()
+        });
+    }
     if values.len() != expected {
         return Err(TypesError::DimensionMismatch {
             expected,
@@ -515,7 +600,7 @@ mod tests {
     }
 
     #[test]
-    fn noop_is_not_executable() {
+    fn noop_without_a_gripper_is_not_executable() {
         let space = ActionSpace::from_pb(&joint_space(3)).unwrap();
         let action = pb::Action {
             target: Some(pb::action::Target::Noop(pb::NoopMarker {
@@ -526,6 +611,85 @@ mod tests {
         assert!(matches!(
             flatten_action(&action, &space),
             Err(TypesError::NoopNotExecutable)
+        ));
+    }
+
+    /// "Hold the arm, move the gripper": the gripper rides ALONGSIDE the
+    /// target (control.proto), so a noop target with a gripper command is a
+    /// legal executable action — the shape a supervision plane sends for a
+    /// gripper-only command, since its own command carries no arm target to
+    /// put beside it.
+    #[test]
+    fn noop_carrying_a_gripper_is_a_gripper_only_step() {
+        let space = ActionSpace::from_pb(&joint_space(3)).unwrap();
+        let action = pb::Action {
+            target: Some(pb::action::Target::Noop(pb::NoopMarker::default())),
+            gripper: Some(pb::GripperCommand {
+                position: 0.04,
+                effort: None,
+            }),
+            t_offset_ns: 120_000_000,
+            ..Default::default()
+        };
+        let step = flatten_action(&action, &space).unwrap();
+        assert!(step.is_gripper_only());
+        assert!(step.values.is_empty(), "the arm holds: no values to write");
+        assert_eq!(step.gripper, Some(0.04), "declared units, unmapped");
+        assert_eq!(step.offset_ns, 120_000_000);
+
+        // Round-trips through the wire shape it came from.
+        assert_eq!(
+            unflatten_action(step.values.as_slice(), step.gripper, &space).unwrap(),
+            action_without_offset(&action)
+        );
+    }
+
+    fn action_without_offset(action: &pb::Action) -> pb::Action {
+        pb::Action {
+            t_offset_ns: 0,
+            ..action.clone()
+        }
+    }
+
+    /// One inert step must never cost the sender the waypoints around it:
+    /// it is skipped and reported, the rest of the chunk still executes.
+    #[test]
+    fn from_pb_skips_the_inert_step_and_keeps_the_rest() {
+        let space = ActionSpace::from_pb(&joint_space(3)).unwrap();
+        let chunk = pb::ActionChunk {
+            actions: vec![
+                part_action(vec![1.0; 3]),
+                pb::Action {
+                    target: Some(pb::action::Target::Noop(pb::NoopMarker::default())),
+                    ..Default::default()
+                },
+                part_action(vec![3.0; 3]),
+            ],
+            seq: 7,
+            ..Default::default()
+        };
+        let flattened = ActionChunk::from_pb(&chunk, &space).unwrap();
+        assert_eq!(flattened.inert, vec![1]);
+        assert_eq!(flattened.chunk.steps.len(), 2);
+        assert_eq!(flattened.chunk.steps[0].values.as_slice(), &[1.0; 3]);
+        assert_eq!(flattened.chunk.steps[1].values.as_slice(), &[3.0; 3]);
+    }
+
+    /// A step that isn't speaking the declared space at all is a different
+    /// fact: the whole chunk is refused, never partially actuated.
+    #[test]
+    fn from_pb_refuses_the_whole_chunk_on_a_space_mismatch() {
+        let space = ActionSpace::from_pb(&joint_space(3)).unwrap();
+        let chunk = pb::ActionChunk {
+            actions: vec![part_action(vec![1.0; 3]), part_action(vec![0.0; 2])],
+            ..Default::default()
+        };
+        assert!(matches!(
+            ActionChunk::from_pb(&chunk, &space),
+            Err(TypesError::DimensionMismatch {
+                expected: 3,
+                got: 2
+            })
         ));
     }
 }

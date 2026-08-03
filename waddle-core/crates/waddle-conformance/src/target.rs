@@ -945,11 +945,10 @@ impl Target {
         // never dispatched — nothing goes to the ring, and the claim
         // window gets exactly one Fault{VALIDATION_ERROR} (waddle-fsm's
         // `InterventionRejected` handling), not one per mismatched packet.
-        if let Some((dims_got, dims_want)) = rejected {
+        if let Some((got, want)) = rejected {
             self.dispatch(SessionEvent::InterventionRejected {
-                dims_got,
-                dims_want,
                 source: "media-intake",
+                reason: waddle_fsm::RejectReason::Dims { got, want },
                 at,
             })?;
         }

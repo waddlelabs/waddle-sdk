@@ -7,7 +7,7 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use waddle_controlplane::{ControlPlaneClient, PlaneEvent, ServerMsg};
-use waddle_fsm::{GrantChangeDirective, Phase, SessionEvent};
+use waddle_fsm::{GrantChangeDirective, Phase, RejectReason, SessionEvent};
 use waddle_gate::gate::{GateShared, OwnedAction};
 use waddle_gate::jitter::{ChunkMeta, StreamChannel, TimedAction};
 use waddle_ingest::SessionClock;
@@ -466,9 +466,11 @@ pub(crate) fn spawn_media_intake(
                             validation_fault_sent = true;
                             let _ = inject.send(
                                 SessionEvent::InterventionRejected {
-                                    dims_got: action.values.len(),
-                                    dims_want: expected_dims.unwrap_or(0),
                                     source: "media-intake",
+                                    reason: RejectReason::Dims {
+                                        got: action.values.len(),
+                                        want: expected_dims.unwrap_or(0),
+                                    },
                                     at: now,
                                 }
                                 .into(),
@@ -558,17 +560,16 @@ pub(crate) fn spawn_plane_pump(
             // `InterventionChunk` arm below — see that arm's doc comment for
             // why this can't just reuse `chunk.seq`.
             let mut next_chunk_seq: u64 = 0;
-            // Dims-validation guard for the agent-chunk
-            // path, mirroring `spawn_media_intake`'s `validation_fault_sent`:
-            // a dims-mismatched chunk faults at most once per claim window.
-            let mut chunk_dims_fault_sent = false;
+            // Validation guards for the agent-chunk path, mirroring
+            // `spawn_media_intake`'s `validation_fault_sent`.
+            let mut chunk_faults = ChunkIntakeFaults::default();
             loop {
                 let status = mirror.read();
                 if status.shutdown {
                     return;
                 }
                 if !status.claim_active {
-                    chunk_dims_fault_sent = false;
+                    chunk_faults = ChunkIntakeFaults::default();
                 }
                 let Some(event) = plane.recv_event_timeout(Duration::from_millis(20)) else {
                     continue;
@@ -609,7 +610,7 @@ pub(crate) fn spawn_plane_pump(
                         &stream,
                         &action_space,
                         &mut next_chunk_seq,
-                        &mut chunk_dims_fault_sent,
+                        &mut chunk_faults,
                         acks_negotiated,
                     ),
                 }
@@ -648,6 +649,24 @@ fn ack_group(
     directive_id.map(|id| AckGroup::new(id.clone(), events))
 }
 
+/// The `source` every agent-chunk intake fault is attributed to — a WIRE
+/// value a reader of the recording keys on, so it is named once here.
+const AGENT_CHUNK_SOURCE: &str = "agent-chunk";
+
+/// "Already faulted about this" guards for the agent-chunk intake, one per
+/// [`RejectReason`] and all reset when the claim window ends. A chunk
+/// stream that keeps making the same mistake must not fill the episode
+/// timeline with the same fault, and the reasons are independent: a
+/// dims-mismatched chunk, a chunk that doesn't fit the declared space, and
+/// a chunk with inert steps each say something different, and the sender
+/// deserves to hear each of them once.
+#[derive(Default)]
+pub(crate) struct ChunkIntakeFaults {
+    dims_sent: bool,
+    not_executable_sent: bool,
+    inert_sent: bool,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn forward_server_msg(
     msg: ServerMsg,
@@ -657,7 +676,7 @@ fn forward_server_msg(
     stream: &StreamProducer,
     space: &ActionSpace,
     next_chunk_seq: &mut u64,
-    chunk_dims_fault_sent: &mut bool,
+    faults: &mut ChunkIntakeFaults,
     acks_negotiated: bool,
 ) {
     match msg {
@@ -849,55 +868,85 @@ fn forward_server_msg(
                 if !mirror.read().claim_active {
                     return;
                 }
+                let total = chunk.actions.len();
                 match ActionChunk::from_pb(&chunk, space) {
-                    Ok(action_chunk) => {
+                    Ok(flattened) => {
+                        let action_chunk = flattened.chunk;
                         let meta = ChunkMeta {
                             chunk_seq: action_chunk.seq,
                             t_emitted_ns: action_chunk.t_emitted_ns,
                         };
-                        let mut producer = stream.lock();
-                        for step in &action_chunk.steps {
-                            *next_chunk_seq += 1;
-                            let _ = producer.push(TimedAction {
-                                channel: StreamChannel::AgentChunk,
-                                seq: *next_chunk_seq,
-                                received: MonoNs(at.0.saturating_add(step.offset_ns)),
-                                action: OwnedAction {
-                                    values: step.values.clone(),
-                                    gripper: step.gripper,
-                                },
-                                chunk: Some(meta),
-                            });
+                        {
+                            let mut producer = stream.lock();
+                            for step in &action_chunk.steps {
+                                *next_chunk_seq += 1;
+                                let _ = producer.push(TimedAction {
+                                    channel: StreamChannel::AgentChunk,
+                                    seq: *next_chunk_seq,
+                                    received: MonoNs(at.0.saturating_add(step.offset_ns)),
+                                    action: OwnedAction {
+                                        values: step.values.clone(),
+                                        gripper: step.gripper,
+                                    },
+                                    chunk: Some(meta),
+                                });
+                            }
                         }
-                    }
-                    // Dims-validation contract, mirroring
-                    // `spawn_media_intake`'s teleop path: a genuine dims
-                    // mismatch faults once per claim window, chunk dropped.
-                    Err(TypesError::DimensionMismatch { expected, got }) => {
-                        if !*chunk_dims_fault_sent {
-                            *chunk_dims_fault_sent = true;
+                        // The steps that carried nothing to dispatch were
+                        // skipped, not dropped in silence: the sender asked
+                        // for something this session could not perform, and
+                        // an episode recording has to be able to say so.
+                        if !flattened.inert.is_empty() && !faults.inert_sent {
+                            faults.inert_sent = true;
                             let _ = inject.send(
                                 SessionEvent::InterventionRejected {
-                                    dims_got: got,
-                                    dims_want: expected,
-                                    source: "agent-chunk",
+                                    source: AGENT_CHUNK_SOURCE,
+                                    reason: RejectReason::InertStepsSkipped {
+                                        skipped: flattened.inert.len(),
+                                        of: total,
+                                    },
                                     at,
                                 }
                                 .into(),
                             );
                         }
                     }
+                    // Dims-validation contract, mirroring
+                    // `spawn_media_intake`'s teleop path: a genuine dims
+                    // mismatch faults once per claim window, chunk dropped.
+                    Err(TypesError::DimensionMismatch { expected, got }) => {
+                        if !faults.dims_sent {
+                            faults.dims_sent = true;
+                            let _ = inject.send(
+                                SessionEvent::InterventionRejected {
+                                    source: AGENT_CHUNK_SOURCE,
+                                    reason: RejectReason::Dims {
+                                        got,
+                                        want: expected,
+                                    },
+                                    at,
+                                }
+                                .into(),
+                            );
+                        }
+                    }
+                    // Every other `TypesError` (missing field, wrong target
+                    // arm, an opaque space) means this chunk isn't speaking
+                    // the declared space: the whole chunk is refused, and
+                    // the refusal is reported in its own words rather than
+                    // forced into the dims-shaped report.
                     Err(err) => {
-                        // Every other `TypesError` variant (missing field,
-                        // wrong target arm, Opaque space, …) doesn't fit the
-                        // dims-shaped `InterventionRejected` event without
-                        // misreporting what actually went wrong — surfaced
-                        // as a trace warning instead of a fabricated fault.
-                        tracing::warn!(
-                            error = %err,
-                            "intervention_chunk rejected: incompatible with the \
-                             declared action space"
-                        );
+                        if !faults.not_executable_sent {
+                            faults.not_executable_sent = true;
+                            let _ = inject.send(
+                                SessionEvent::InterventionRejected {
+                                    source: AGENT_CHUNK_SOURCE,
+                                    reason: RejectReason::NotExecutable(err.to_string()),
+                                    at,
+                                }
+                                .into(),
+                            );
+                        }
                     }
                 }
             }

@@ -89,6 +89,27 @@ pub struct ProxySample {
     pub host_load_1m: f64,
 }
 
+/// Why an intake producer could not actuate what an intervention stream
+/// sent (see [`SessionEvent::InterventionRejected`]). Each reason is a
+/// different fact about the sender, and each gets its own fault text — a
+/// refusal reported in the wrong shape is worse than a silent one, because
+/// it sends the reader looking at the wrong thing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RejectReason {
+    /// The dims-validation contract: a flattened width that isn't the
+    /// declared action space's. The action never reaches the ring.
+    Dims { got: usize, want: usize },
+    /// The action doesn't fit the declared space at all (a target arm the
+    /// space doesn't have, a missing field, an opaque space): the whole
+    /// chunk is refused, since a partial trajectory from a sender that
+    /// disagrees about the space is not a safe thing to actuate.
+    NotExecutable(String),
+    /// Steps carrying nothing to dispatch (a `NoopMarker` with no gripper
+    /// command riding along) were skipped; the chunk's remaining steps
+    /// executed normally.
+    InertStepsSkipped { skipped: usize, of: usize },
+}
+
 /// A server-directed grant change (rides `HeartbeatAck.grant_changes`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct GrantChangeDirective {
@@ -252,19 +273,19 @@ pub enum SessionEvent {
         trace_ref: String,
         at: MonoNs,
     },
-    /// An intake producer dropped an action whose flattened width didn't
-    /// match the declared action space (the dims-validation contract,
-    /// shared by the media-intake teleop path and the plane pump's
-    /// `InterventionChunk` agent-chunk path). A
-    /// diagnostic emission — records `Fault{VALIDATION_ERROR}` — never a
-    /// state transition; the intake thread already deduplicates this to
-    /// once per claim window before injecting it. `source` names the
+    /// An intake producer could not actuate what an intervention stream
+    /// sent it (the media-intake teleop path and the plane pump's
+    /// `InterventionChunk` agent-chunk path both raise this). A diagnostic
+    /// emission — records `Fault{VALIDATION_ERROR}` — never a state
+    /// transition; the intake thread already deduplicates it, per reason,
+    /// to once per claim window before injecting. `source` names the
     /// producer (e.g. "media-intake", "agent-chunk") so the emitted fault
-    /// never misattributes which producer/space actually mismatched.
+    /// never misattributes which producer/space it was, and [`RejectReason`]
+    /// names what actually happened rather than fitting every refusal into
+    /// a dims-shaped report.
     InterventionRejected {
-        dims_got: usize,
-        dims_want: usize,
         source: &'static str,
+        reason: RejectReason,
         at: MonoNs,
     },
     /// The post-reset pipeline reported (flag `waddle.v0.reset.phases`, rows
