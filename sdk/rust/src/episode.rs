@@ -78,6 +78,11 @@ impl PyEpisode {
     /// Substitute/Blend, or `None` when you must not send (Noop/Hold).
     /// Synchronous and fast; keeps the GIL (it never blocks).
     ///
+    /// A Substitute/Blend array is the declared action space's width,
+    /// except for a gripper-only action — "hold the arm, move the gripper"
+    /// — which is an EMPTY array with `info.gripper` set: command the
+    /// gripper and leave the arm target where it was.
+    ///
     /// The record captures the values at call time; mutating the array
     /// afterwards (before your `send`) makes the dispatched action diverge
     /// from the recorded one.

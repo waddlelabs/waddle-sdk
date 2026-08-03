@@ -244,12 +244,19 @@ class ToyArm:
 
     def command(self, joints, gripper: float | None = None) -> None:
         """Set the joint-position target (radians) and, optionally, the
-        gripper (METRES — the units this robot declared)."""
+        gripper (METRES — the units this robot declared).
+
+        An EMPTY `joints` is a gripper-only command — "hold the arm, move
+        the gripper" — so the joint target is left exactly where it was.
+        Waddle sends that shape whenever a claimant commands the gripper
+        with no arm motion beside it; a driver that wrote it into the arm
+        target anyway would jump the arm on every grip."""
         values = np.asarray(joints, dtype=np.float64)
         with self._lock:
             if self._estopped:
                 return
-            self._target = np.clip(values, _LOWER, _UPPER)
+            if values.size:
+                self._target = np.clip(values, _LOWER, _UPPER)
             if gripper is not None:
                 self._gripper = float(gripper)
 

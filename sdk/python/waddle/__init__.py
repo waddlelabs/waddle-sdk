@@ -130,9 +130,12 @@ class Control:
 
     ``send`` receives a chunk with ``steps`` (a list of
     ``(ndarray, gripper, offset_ns)`` tuples), ``provenance`` and ``seq``.
-    The unit verbs take no arguments. All verbs are invoked from a single
-    core-owned dispatch thread, never concurrently; a raised exception is a
-    failed verb, never a crashed session.
+    A step's array is the declared action space's width, except for a
+    gripper-only step — "hold the arm, move the gripper" — whose array is
+    EMPTY and whose ``gripper`` is set: command the gripper and leave the
+    arm target where it was. The unit verbs take no arguments. All verbs are
+    invoked from a single core-owned dispatch thread, never concurrently; a
+    raised exception is a failed verb, never a crashed session.
     """
 
     send: Callable | None = None
