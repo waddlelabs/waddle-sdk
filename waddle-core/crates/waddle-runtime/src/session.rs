@@ -659,6 +659,10 @@ impl SessionBuilder {
         // (this carries no FSM guard, so it never touches `step()`; see
         // `Reducer::drain_proprio_reports`).
         let (proprio_tx, proprio_rx) = std::sync::mpsc::channel::<ProprioReport>();
+        // The bypass pump's dispatch side channel: an action it drove
+        // straight to `send` is recorded by the reducer, which owns the
+        // episode's MCAP writer (the pump owns no episode state at all).
+        let (dispatch_tx, dispatch_rx) = std::sync::mpsc::channel::<pumps::DispatchedAction>();
         let record_slot: RecordSlot = Arc::new(parking_lot::Mutex::new(None));
         let task_slot: TaskSlot = Arc::new(parking_lot::Mutex::new(String::new()));
         // Tripwire ObsSource wiring: published by the reducer from
@@ -684,6 +688,7 @@ impl SessionBuilder {
             self.post_reset.clone(),
             obs_slot.clone(),
             proprio_rx,
+            dispatch_rx,
         );
         let reducer_tx = inject_tx.clone();
         let reducer_thread = std::thread::Builder::new()
@@ -709,6 +714,7 @@ impl SessionBuilder {
             inject_tx.clone(),
             clock.clone(),
             dims.unwrap_or(0),
+            dispatch_tx,
         ));
 
         // Reset pump: the single scripted-hook invocation site (mirror-watch,
@@ -1368,19 +1374,23 @@ impl Session {
     }
 
     /// Report a richer proprioceptive sample than the bare `joint_pos`
-    /// every `gate(obs=...)` call already records: the reducer
-    /// merges `report` with its latest known `joint_pos` into every
-    /// subsequent gate-tick's recorded `/waddle/observations` `ProprioSample`
-    /// (Local mode — see [`ProprioReport`]'s rustdoc for the patch
-    /// semantics) and into the periodic `StreamObservations` uplink,
-    /// whenever a transport is configured. Cheap on the caller's thread: an
-    /// unbounded fire-and-forget enqueue (occasional-call traffic, not the
-    /// gate fast path — unlike `publish_frame`'s per-frame throttle, there
-    /// is no declared rate to enforce here). Merged fields are stamped with
-    /// whichever event actually lands them (the owning gate tick, or the
-    /// uplink pump's own `SessionClock` read) — v0 accepts no
-    /// caller-supplied timestamp on the report itself (the two-clock
-    /// discipline).
+    /// every `gate(obs=...)` call already records. A report is an
+    /// observation in its own right: it lands on `/waddle/observations`
+    /// (Local mode) when the reducer drains it, AND is merged into every
+    /// subsequent gate-tick's recorded `ProprioSample` and into the periodic
+    /// `StreamObservations` uplink whenever a transport is configured (see
+    /// [`ProprioReport`]'s rustdoc for the patch semantics). Recording it
+    /// does NOT depend on the caller also passing `obs` to `gate()` — a
+    /// caller who reports proprioception and never does would otherwise lose
+    /// it entirely, which is exactly what happened to agent-invited
+    /// episodes, whose caller never ticks the gate at all. Cheap on the
+    /// caller's thread: an unbounded fire-and-forget enqueue
+    /// (occasional-call traffic, not the gate fast path — unlike
+    /// `publish_frame`'s per-frame throttle, there is no declared rate to
+    /// enforce here). Every landing is stamped by the reducer's own
+    /// `SessionClock` read (or the owning gate tick's stamp, for the merged
+    /// copy) — v0 accepts no caller-supplied timestamp on the report itself
+    /// (the two-clock discipline).
     pub fn report_proprio(&self, report: ProprioReport) {
         let _ = self.inner.proprio_tx.send(report);
     }

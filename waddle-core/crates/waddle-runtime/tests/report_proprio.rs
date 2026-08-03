@@ -248,3 +248,60 @@ fn stream_observations_uplinks_periodically_with_merged_fields() {
     assert_eq!(sample.joint_vel, vec![1.0, 2.0, 3.0]);
     assert_eq!(sample.gripper, Some(0.75));
 }
+
+/// A caller that reports proprioception and never hands `gate()` an `obs`
+/// still gets its proprioception recorded. Before this, observations were
+/// written ONLY on the gate-tick path, so `report_proprio` was invisible to
+/// the recording unless a later `gate(obs=...)` happened to carry it —
+/// which is how an agent-invited episode (whose caller never ticks at all,
+/// FSM.md E24) came out with a recording containing zero observations.
+#[test]
+fn report_proprio_records_observations_without_any_gate_obs() {
+    let dir = tempfile::tempdir().unwrap();
+    let session = Session::builder("proprio-no-gate-obs")
+        .robot(robot())
+        .control(registry())
+        .recording_dir(dir.path())
+        .build()
+        .unwrap();
+
+    let mut ep = session.start_episode("task").unwrap();
+    let id = ep.id().clone();
+
+    for i in 0..5 {
+        session.report_proprio(ProprioReport {
+            joint_vel: Some(vec![f64::from(i), 0.0, 0.0]),
+            ee_pose: None,
+            gripper: Some(0.5),
+        });
+        // The report crosses a side channel the reducer drains once per
+        // wake (<=20ms cadence).
+        std::thread::sleep(Duration::from_millis(40));
+    }
+    // Ticks that carry no obs at all — the recording's observations can
+    // only have come from `report_proprio`.
+    let _ = ep.gate(&[0.0; 3], None, None);
+    ep.terminate(TerminalOutcome::Success, "done");
+    session.shutdown();
+
+    let buf = std::fs::read(dir.path().join(format!("{id}.mcap"))).unwrap();
+    let mut samples = Vec::new();
+    for message in mcap::MessageStream::new(&buf).unwrap() {
+        let message = message.unwrap();
+        if message.channel.topic == waddle_sidecar::mcaprec::OBSERVATIONS_TOPIC {
+            let update = pb::ObservationUpdate::decode(message.data.as_ref()).unwrap();
+            if let Some(pb::observation_update::Payload::Proprio(p)) = update.payload {
+                samples.push(p);
+            }
+        }
+    }
+    assert_eq!(
+        samples.len(),
+        5,
+        "one recorded observation per reported sample, got {}",
+        samples.len()
+    );
+    let reported: Vec<f64> = samples.iter().map(|s| s.joint_vel[0]).collect();
+    assert_eq!(reported, vec![0.0, 1.0, 2.0, 3.0, 4.0]);
+    assert!(samples.iter().all(|s| s.gripper == Some(0.5)));
+}

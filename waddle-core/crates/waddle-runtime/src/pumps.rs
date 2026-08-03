@@ -62,26 +62,62 @@ pub(crate) fn spawn_outcome_pump(
         .expect("spawn verb-outcome pump")
 }
 
-/// Pop one due intervention action off the gate's stream ring (if any) and
-/// dispatch it straight to `send`, tagged with the mirror's claim
-/// provenance — the shared mechanics behind both the BYPASS arm
-/// (claimed-while-stalled) and the RESET arm (remote reset-window
-/// actuation) of [`spawn_bypass_pump`]: same chunk shape, same source id.
-/// Neither caller re-derives legality here — that's the FSM's job, encoded
-/// entirely in which `GateMode` the mirror shows.
+/// The wire `source_id` the bypass pump's own dispatches are recorded
+/// under. `ActionChunk.seq` is "monotone per stream" and the pump is a
+/// SECOND stream into the same episode alongside the caller's gate
+/// (`waddle.gate`), so it gets its own name and its own seq space.
+pub(crate) const BYPASS_PUMP_SOURCE: &str = "waddle.bypass-pump";
+
+/// One action the bypass pump drove straight to the declared `send` verb —
+/// the moment an intervenor's action actually reaches the robot WITHOUT
+/// passing through the caller's `gate()`. Handed to the reducer so it
+/// becomes an `/waddle/actions` row like any gate tick's: an episode driven
+/// entirely this way (an agent-invited one, where the caller never ticks)
+/// would otherwise record no actions at all.
+pub(crate) struct DispatchedAction {
+    /// Stamped by the session clock at dispatch, both twins — never a
+    /// remote actor's clock and never derived later (two-clock discipline).
+    pub stamp: waddle_types::time::Stamp,
+    pub seq: u64,
+    pub provenance: waddle_types::ProvenanceTag,
+    pub action: OwnedAction,
+}
+
+/// Pop one due intervention action off the gate's stream ring (if any),
+/// dispatch it straight to `send` tagged with the mirror's claim
+/// provenance, and hand the reducer the same action to record — the shared
+/// mechanics behind both the BYPASS arm (claimed-while-stalled) and the
+/// RESET arm (remote reset-window actuation) of [`spawn_bypass_pump`]: same
+/// chunk shape, same source id. Neither caller re-derives legality here —
+/// that's the FSM's job, encoded entirely in which `GateMode` the mirror
+/// shows.
 fn dispatch_due_intervention(
     gate_shared: &GateShared,
     status: &crate::mirror::Status,
     verbs: &VerbDispatch,
     dims: usize,
-    now: MonoNs,
+    stamp: waddle_types::time::Stamp,
+    seq: &mut u64,
+    recorder: &Sender<DispatchedAction>,
 ) {
+    let now = stamp.mono_ns();
     let due: Option<OwnedAction> = gate_shared.stream.lock().pop_due(now);
     if let Some(action) = due {
         let provenance = status
             .provenance
             .clone()
             .unwrap_or_else(waddle_types::ProvenanceTag::policy);
+        *seq += 1;
+        // Recorded BEFORE the send request, so a `send` that blocks or
+        // fails cannot cost the recording its row: the row says what the
+        // platform asked the robot to do, which is exactly what an audit
+        // of a failed dispatch needs to see.
+        let _ = recorder.send(DispatchedAction {
+            stamp,
+            seq: *seq,
+            provenance: provenance.clone(),
+            action: action.clone(),
+        });
         let chunk = ActionChunk {
             steps: vec![Step {
                 offset_ns: 0,
@@ -92,8 +128,8 @@ fn dispatch_due_intervention(
             horizon_ns: 0,
             t_emitted_ns: now.0,
             t_obs_ns: now.0,
-            seq: 0,
-            source: waddle_types::SourceId::new("bypass-pump"),
+            seq: *seq,
+            source: waddle_types::SourceId::new(BYPASS_PUMP_SOURCE),
             provenance,
         };
         verbs.request(VerbRequest::Send {
@@ -121,16 +157,21 @@ pub(crate) fn spawn_bypass_pump(
     inject: Sender<Injected>,
     clock: SessionClock,
     dims: usize,
+    recorder: Sender<DispatchedAction>,
 ) -> JoinHandle<()> {
     std::thread::Builder::new()
         .name("waddle-bypass-pump".into())
         .spawn(move || {
+            // This pump's own `ActionChunk.seq` space (see
+            // `BYPASS_PUMP_SOURCE`), session-lifetime like the gate's.
+            let mut seq: u64 = 0;
             loop {
                 let status = mirror.read();
                 if status.shutdown {
                     return;
                 }
-                let now = clock.stamp_now().mono_ns();
+                let stamp = clock.stamp_now();
+                let now = stamp.mono_ns();
                 let last_tick = gate_shared.stats.last_tick();
 
                 match status.gate_mode {
@@ -159,11 +200,27 @@ pub(crate) fn spawn_bypass_pump(
                         {
                             let _ = inject.send(SessionEvent::TicksResumed { at: now }.into());
                         } else {
-                            dispatch_due_intervention(&gate_shared, &status, &verbs, dims, now);
+                            dispatch_due_intervention(
+                                &gate_shared,
+                                &status,
+                                &verbs,
+                                dims,
+                                stamp,
+                                &mut seq,
+                                &recorder,
+                            );
                         }
                     }
                     Some(GateMode::Reset) if status.claim_active => {
-                        dispatch_due_intervention(&gate_shared, &status, &verbs, dims, now);
+                        dispatch_due_intervention(
+                            &gate_shared,
+                            &status,
+                            &verbs,
+                            dims,
+                            stamp,
+                            &mut seq,
+                            &recorder,
+                        );
                     }
                     _ => {}
                 }

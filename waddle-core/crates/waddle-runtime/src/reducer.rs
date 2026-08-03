@@ -23,6 +23,7 @@ use waddle_types::{
 
 use crate::ack::Injected;
 use crate::mirror::Mirror;
+use crate::pumps::{BYPASS_PUMP_SOURCE, DispatchedAction};
 use crate::session::{ObsSlot, ProprioReport, RecordSlot, ResetSpec, TaskSlot};
 use crate::verbs::VerbDispatch;
 
@@ -103,6 +104,10 @@ pub(crate) struct Reducer {
     /// `Session::report_proprio`'s side channel — drained every
     /// wake, same discipline as `record_slot`/`records_rx`.
     proprio_rx: Receiver<ProprioReport>,
+    /// The bypass pump's dispatch side channel: what it drove straight to
+    /// `send` without passing through the caller's gate, drained every wake
+    /// onto the episode recording (`write_dispatched`).
+    dispatch_rx: Receiver<DispatchedAction>,
     /// The latest joint_pos from a ring-drained gate record (what reported
     /// proprio extras merge with), independent of `write_record`'s own
     /// per-tick `obs` — this is what the periodic `StreamObservations`
@@ -139,6 +144,7 @@ impl Reducer {
         post_reset: Option<ResetSpec>,
         obs_slot: ObsSlot,
         proprio_rx: Receiver<ProprioReport>,
+        dispatch_rx: Receiver<DispatchedAction>,
     ) -> Self {
         let fsm = SessionFsm::new(&cfg);
         let manifest = recording_dir
@@ -162,6 +168,7 @@ impl Reducer {
             records_rx: None,
             obs_slot,
             proprio_rx,
+            dispatch_rx,
             latest_joint_pos: Vec::new(),
             latest_extras: ProprioExtras::default(),
             last_obs_uplink_ns: None,
@@ -179,6 +186,7 @@ impl Reducer {
             // the episode recording, and any queued `report_proprio` calls
             // onto the reducer's own latest-known state.
             self.drain_gate_records();
+            self.drain_dispatched_actions();
             self.drain_proprio_reports();
             if self.mirror.read().shutdown {
                 self.finalize_episode_if_terminal(true);
@@ -519,6 +527,15 @@ impl Reducer {
         }
     }
 
+    /// Drain the bypass pump's dispatches onto the episode recording. Same
+    /// discipline as the gate-record ring: a dispatch arriving after
+    /// finalize, with no episode open, hits `mcap == None` and is discarded.
+    fn drain_dispatched_actions(&mut self) {
+        while let Ok(dispatched) = self.dispatch_rx.try_recv() {
+            self.write_dispatched(&dispatched);
+        }
+    }
+
     /// Drain `Session::report_proprio` calls onto the reducer's
     /// own latest-known proprio state — merged into every subsequent
     /// gate-tick's recorded `ProprioSample` (`write_record`) and into the
@@ -530,6 +547,76 @@ impl Reducer {
     fn drain_proprio_reports(&mut self) {
         while let Ok(report) = self.proprio_rx.try_recv() {
             self.latest_extras.merge(&report);
+            // A reported sample IS an observation, so it lands on
+            // `/waddle/observations` in its own right — stamped here, by the
+            // session clock, at the moment the reducer learned it. Whether
+            // the caller ALSO passes obs to `gate()` cannot decide whether
+            // an observation is recorded: an agent-invited episode has a
+            // caller that never ticks at all (FSM.md E24), and its
+            // recording was coming out with zero observations. `joint_pos`
+            // rides the latest known one (the same field the periodic
+            // uplink carries), since `report_proprio` has no joint_pos of
+            // its own.
+            let stamp = self.clock.stamp_now();
+            let sample = self.latest_proprio_sample(self.latest_joint_pos.clone());
+            if let Some(mcap) = &mut self.mcap {
+                let _ = mcap.write_observation(&pb::ObservationUpdate {
+                    t_ns: stamp.mono_ns().0,
+                    payload: Some(pb::observation_update::Payload::Proprio(sample)),
+                });
+            }
+        }
+    }
+
+    /// The reducer's latest known proprioceptive state, over the caller's
+    /// `joint_pos` of the moment. THE `ProprioSample` builder: the periodic
+    /// uplink, a gate tick's recorded observation, and a `report_proprio`
+    /// call's own recorded observation all differ only in which `joint_pos`
+    /// they hand it and where the result goes.
+    fn latest_proprio_sample(&self, joint_pos: Vec<f64>) -> pb::ProprioSample {
+        pb::ProprioSample {
+            joint_pos,
+            joint_vel: self.latest_extras.joint_vel.clone(),
+            ee_pose: self.latest_extras.ee_pose.clone(),
+            gripper: self.latest_extras.gripper,
+            part: String::new(),
+        }
+    }
+
+    /// One bypass-pump dispatch → an `/waddle/actions` row. The pump is the
+    /// point where an intervenor's action actually reaches the robot without
+    /// passing through the caller's `gate()`, so without this an
+    /// agent-driven episode — whose caller never ticks — recorded no actions
+    /// at all, leaving a recording that cannot be judged or trained on. Its
+    /// own `source_id`/seq space (`BYPASS_PUMP_SOURCE`), because
+    /// `ActionChunk.seq` is monotone per stream and the caller's gate is a
+    /// different stream into the same episode.
+    fn write_dispatched(&mut self, dispatched: &DispatchedAction) {
+        let action = match unflatten_action(
+            &dispatched.action.values,
+            dispatched.action.gripper,
+            &self.space,
+        ) {
+            Ok(action) => vec![action],
+            // Same contract as a gate tick's: an action that does not fit
+            // the declared space (a raw teleop stream ahead of closed-side
+            // retargeting) still gets its row, with no decodable action,
+            // rather than vanishing from the trace.
+            Err(_) => Vec::new(),
+        };
+        let t_ns = dispatched.stamp.mono_ns().0;
+        if let Some(mcap) = &mut self.mcap {
+            let _ = mcap.write_action(&pb::ActionChunk {
+                actions: action,
+                horizon_ns: 0,
+                t_emitted_ns: t_ns,
+                // The pump dispatches from the intervention ring, not from
+                // an observation the caller handed it.
+                t_obs_ns: 0,
+                seq: dispatched.seq,
+                source_id: BYPASS_PUMP_SOURCE.into(),
+                provenance: Some(dispatched.provenance.to_pb()),
+            });
         }
     }
 
@@ -539,7 +626,9 @@ impl Reducer {
     /// existing `ClientMsg::buffer_when_offline` classification (unchanged
     /// by this task) — this only decides WHEN to send.
     fn maybe_uplink_observation(&mut self, now: MonoNs) {
-        let Some(plane) = &self.plane else { return };
+        if self.plane.is_none() {
+            return;
+        }
         if self.latest_joint_pos.is_empty() && self.latest_extras.is_empty() {
             return; // nothing observed yet
         }
@@ -549,17 +638,11 @@ impl Reducer {
             return;
         }
         self.last_obs_uplink_ns = Some(now.0);
+        let sample = self.latest_proprio_sample(self.latest_joint_pos.clone());
+        let Some(plane) = &self.plane else { return };
         plane.send(ClientMsg::Observation(pb::ObservationUpdate {
             t_ns: now.0,
-            payload: Some(pb::observation_update::Payload::Proprio(
-                pb::ProprioSample {
-                    joint_pos: self.latest_joint_pos.clone(),
-                    joint_vel: self.latest_extras.joint_vel.clone(),
-                    ee_pose: self.latest_extras.ee_pose.clone(),
-                    gripper: self.latest_extras.gripper,
-                    part: String::new(),
-                },
-            )),
+            payload: Some(pb::observation_update::Payload::Proprio(sample)),
         }));
     }
 
@@ -589,24 +672,17 @@ impl Reducer {
     /// complete per-tick trace (provenance spans, bypass windows, holds).
     ///
     /// The `ProprioSample` carries `joint_pos` from this tick's own `obs`
-    /// merged with the latest `Session::report_proprio` extras —
-    /// exactly the same per-tick cadence `joint_pos` alone used before this
-    /// task; a `report_proprio` call with no further gate tick afterward
-    /// still reaches the periodic `StreamObservations` uplink
-    /// (`maybe_uplink_observation`), just never gains its own MCAP row (a
-    /// tick with no `obs` at all was never recorded either).
+    /// merged with the latest `Session::report_proprio` extras. A
+    /// `report_proprio` call gets its OWN row too
+    /// (`drain_proprio_reports`), so a caller who reports proprio and never
+    /// passes `obs` to `gate()` still has its proprioception recorded; a
+    /// caller who does both records both, each stamped when it happened.
     fn write_record(&mut self, rec: &GateRecord) {
         let t_ns = rec.stamp.mono_ns().0;
         let observation = rec.obs.as_ref().map(|obs| pb::ObservationUpdate {
             t_ns,
             payload: Some(pb::observation_update::Payload::Proprio(
-                pb::ProprioSample {
-                    joint_pos: obs.to_vec(),
-                    joint_vel: self.latest_extras.joint_vel.clone(),
-                    ee_pose: self.latest_extras.ee_pose.clone(),
-                    gripper: self.latest_extras.gripper,
-                    part: String::new(),
-                },
+                self.latest_proprio_sample(obs.to_vec()),
             )),
         });
 
@@ -660,6 +736,7 @@ impl Reducer {
         };
         // The episode tail must land in the file before finish().
         self.drain_gate_records();
+        self.drain_dispatched_actions();
         let Some(mut builder) = self.sidecar.take() else {
             return;
         };

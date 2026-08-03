@@ -25,11 +25,21 @@ use waddle_fsm::Phase;
 use waddle_gate::gate::GateOutput;
 use waddle_media::{DataTopic, LoopbackMedia};
 use waddle_runtime::{
-    AgentInvite, AgentTaskKind, ControlRegistry, EpisodeOptions, ResetSpec, RuntimeError, Session,
-    VerbError, grant_and_engage,
+    AgentInvite, AgentTaskKind, ControlRegistry, EpisodeOptions, ProprioReport, ResetSpec,
+    RuntimeError, Session, VerbError, grant_and_engage,
 };
 use waddle_types::pb::v0 as pb;
 use waddle_types::{ActorKind, GateMode, Provenance, TerminalOutcome};
+
+/// The forward speeds the scripted agent commands, one chunk each. Three,
+/// not one, so "every dispatch produced exactly one recorded action" is a
+/// claim about a count and not about a boolean.
+const AGENT_CHUNK_XS: [f64; 3] = [0.5, 0.6, 0.7];
+
+/// The `source_id` the bypass pump's recorded dispatches carry. Spelled out
+/// here rather than imported: it is a WIRE value consumers key on, so the
+/// test pins the string, not the constant.
+const BYPASS_PUMP_SOURCE: &str = "waddle.bypass-pump";
 
 /// A 6-dim `BaseTwist` robot (mirrors `reset_window_actuation.rs`): agent
 /// `BaseTwist` chunk steps and teleop `Twist` packets both flatten to
@@ -268,19 +278,35 @@ fn run_agent_returns_success_with_recording_ref_from_completed_update() {
             if !script_wait(&session, |s| s.claim_active) {
                 return;
             }
-            let _ = tx.send(base_twist_chunk(0.5, 1));
-            // Wait until the chunk actually reached `send` before finishing
-            // the task — a real agent works, then reports.
-            loop {
-                if session.status().shutdown {
-                    return;
+            // The robot keeps reporting its own state while the agent
+            // drives — the toy example's `RobotPump` shape, and the only
+            // proprioception an agent-invited episode can have (its caller
+            // is blocked inside `run_agent` and never ticks `gate`).
+            session.report_proprio(ProprioReport {
+                joint_vel: Some(vec![0.01, 0.02, 0.03, 0.04, 0.05, 0.06]),
+                ee_pose: None,
+                gripper: Some(0.25),
+            });
+            // One chunk at a time, each awaited before the next is sent.
+            // Under the declared IMMEDIATE replan a chunk arriving while
+            // another is still pending SUPERSEDES it (by design), so a burst
+            // would prove nothing about how many dispatches get recorded —
+            // and a real agent streams this way anyway: it acts, observes,
+            // acts again.
+            for (i, x) in AGENT_CHUNK_XS.iter().enumerate() {
+                let _ = tx.send(base_twist_chunk(*x, i as u64 + 1));
+                loop {
+                    if session.status().shutdown {
+                        return;
+                    }
+                    let arrived = log.lock().iter().any(|(p, v)| {
+                        *p == Provenance::Agent && v.first().is_some_and(|v| (*v - *x).abs() < 1e-9)
+                    });
+                    if arrived {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(2));
                 }
-                if log.lock().iter().any(|(p, v)| {
-                    *p == Provenance::Agent && v.first().is_some_and(|x| (*x - 0.5).abs() < 1e-9)
-                }) {
-                    break;
-                }
-                std::thread::sleep(Duration::from_millis(2));
             }
             // COMPLETED before MARK_DONE (the expected plane ordering — the
             // pump processes them in arrival order, so the recording_ref is
@@ -336,16 +362,15 @@ fn run_agent_returns_success_with_recording_ref_from_completed_update() {
     assert_eq!(invite.prompt, "clear the table and stack the cups");
     assert_eq!(invite.timeout_ns, 30_000_000_000);
 
-    // The agent's chunk was dispatched by the BYPASS pump with agent
+    // The agent's chunks were dispatched by the BYPASS pump with agent
     // provenance (the mirror's claim provenance at pop time).
-    assert!(
-        send_log
-            .lock()
-            .iter()
-            .any(|(p, v)| *p == Provenance::Agent
-                && v.first().is_some_and(|x| (*x - 0.5).abs() < 1e-9)),
-        "the agent chunk never reached the registered `send`"
-    );
+    for x in AGENT_CHUNK_XS {
+        assert!(
+            send_log.lock().iter().any(|(p, v)| *p == Provenance::Agent
+                && v.first().is_some_and(|v| (*v - x).abs() < 1e-9)),
+            "the agent chunk {x} never reached the registered `send`"
+        );
+    }
 
     // The mirror observed (and latched) the engage; the retained update is
     // the COMPLETED one.
@@ -425,6 +450,101 @@ fn run_agent_returns_success_with_recording_ref_from_completed_update() {
             Some(AGENT_ACTOR_ID)
         );
     }
+    // --- What the recording CONTAINS -------------------------------------
+    //
+    // The caller of an agent-invited episode never ticks `gate()` (E24), and
+    // actions/observations used to be written only on the gate-tick path —
+    // so the recording of the run above came out with zero actions and zero
+    // observations. An episode with neither cannot be judged or trained on;
+    // it is not a data product at all.
+    let (actions, observations) = read_mcap(dir.path(), result.episode_id.as_str());
+
+    let dispatched = send_log.lock().len();
+    assert_eq!(
+        dispatched,
+        AGENT_CHUNK_XS.len(),
+        "the script drives exactly one send per chunk"
+    );
+    let pump_rows: Vec<&pb::ActionChunk> = actions
+        .iter()
+        .filter(|c| c.source_id == BYPASS_PUMP_SOURCE)
+        .collect();
+    assert_eq!(
+        pump_rows.len(),
+        dispatched,
+        "every bypass dispatch must produce exactly one recorded action"
+    );
+    // `seq` is monotone per stream, and the pump is its own stream.
+    let seqs: Vec<u64> = pump_rows.iter().map(|c| c.seq).collect();
+    let mut sorted = seqs.clone();
+    sorted.sort_unstable();
+    sorted.dedup();
+    assert_eq!(seqs, sorted, "the pump's recorded seq must be monotone");
+
+    for (row, x) in pump_rows.iter().zip(AGENT_CHUNK_XS) {
+        let tag = row
+            .provenance
+            .as_ref()
+            .expect("a recorded action with no provenance names no driver");
+        assert_eq!(tag.kind, pb::ProvenanceKind::Agent as i32);
+        assert_eq!(
+            tag.actor.as_ref().map(|a| a.id.as_str()),
+            Some(AGENT_ACTOR_ID)
+        );
+        // The action the robot was actually asked to perform, decoded into
+        // the declared space.
+        let Some(pb::action::Target::BaseTwist(twist)) = &row.actions[0].target else {
+            panic!(
+                "expected the declared BaseTwist space, got {:?}",
+                row.actions[0].target
+            );
+        };
+        assert!((twist.linear.as_ref().unwrap().x - x).abs() < 1e-9);
+    }
+
+    // Proprioception reported while the agent drove is recorded, even though
+    // no gate tick ever carried an obs.
+    let reported: Vec<&pb::ProprioSample> = observations
+        .iter()
+        .filter_map(|o| match &o.payload {
+            Some(pb::observation_update::Payload::Proprio(p)) => Some(p),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        !reported.is_empty(),
+        "an agent-driven episode recorded no observations"
+    );
+    assert!(
+        reported
+            .iter()
+            .any(|p| p.gripper == Some(0.25)
+                && p.joint_vel == vec![0.01, 0.02, 0.03, 0.04, 0.05, 0.06]),
+        "the reported proprio sample never reached /waddle/observations"
+    );
+}
+
+/// The episode's recorded actions and observations, in file order.
+fn read_mcap(
+    dir: &std::path::Path,
+    episode_id: &str,
+) -> (Vec<pb::ActionChunk>, Vec<pb::ObservationUpdate>) {
+    let buf = std::fs::read(dir.join(format!("{episode_id}.mcap"))).expect("mcap must exist");
+    let mut actions = Vec::new();
+    let mut observations = Vec::new();
+    for message in mcap::MessageStream::new(&buf).unwrap() {
+        let message = message.unwrap();
+        match message.channel.topic.as_str() {
+            t if t == waddle_sidecar::mcaprec::ACTIONS_TOPIC => {
+                actions.push(pb::ActionChunk::decode(message.data.as_ref()).unwrap());
+            }
+            t if t == waddle_sidecar::mcaprec::OBSERVATIONS_TOPIC => {
+                observations.push(pb::ObservationUpdate::decode(message.data.as_ref()).unwrap());
+            }
+            _ => {}
+        }
+    }
+    (actions, observations)
 }
 
 /// The episode's sidecar, read back from the recording directory.

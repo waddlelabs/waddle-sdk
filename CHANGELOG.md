@@ -964,6 +964,36 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   in the episode MCAP; callers no longer see the ring.
 
 ### Fixed
+- **An agent-driven episode's recording contains its actions and its
+  observations**: actions and observations were written only on the
+  gate-tick record path, and the caller of an agent-invited episode never
+  ticks `gate()` (FSM.md E24) — so a warm-up episode recorded 40 actions and
+  40 observations while the agent episode that followed it recorded 0 and 0.
+  An episode with neither is not a data product: it cannot be judged, scored
+  or trained on. Two independent paths were missing:
+  - The **bypass pump's dispatch** — the moment an intervenor's action
+    actually reaches the robot without passing through the caller's gate —
+    now produces an `/waddle/actions` row like any gate tick's, stamped by
+    the `SessionClock` at dispatch and carrying the claim's provenance
+    (which, per the two fixes above, now names the agent). Its rows are
+    tagged `source_id: "waddle.bypass-pump"` with their own `seq` space,
+    since `ActionChunk.seq` is monotone *per stream* and the caller's gate
+    (`waddle.gate`) is a different stream into the same episode. The row is
+    written before the `send` request, so a dispatch that fails is still on
+    the record. This covers remote reset-window actuation too — the same
+    pump drives it.
+  - **`Session::report_proprio` now records an observation of its own**, for
+    every episode, rather than only surviving as a merge into a subsequent
+    gate tick's `ProprioSample`. This gap predates agent episodes: any
+    caller that reported proprioception and passed no `obs` to `gate()` lost
+    it from the recording entirely; agent episodes, whose caller ticks
+    nothing at all, just made it total. `joint_pos` rides the latest known
+    one (as the periodic `StreamObservations` uplink already did). A caller
+    doing both now records both, each stamped when it happened — which other
+    call a caller happens to make cannot decide whether an observation is
+    recorded.
+  The gate fast path is untouched: both writes happen on the reducer thread,
+  fed by side channels, exactly like `report_proprio`'s existing merge.
 - **A sidecar's claimed provenance spans now say who actually drove**: the
   span opened by `GateModeChange{→INTERVENTION|→BYPASS}` was minted
   `PROVENANCE_KIND_TELEOP` unconditionally, so an agent-driven episode's
