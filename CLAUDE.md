@@ -222,7 +222,14 @@ top-level dirs; they are not built yet.
   in passthrough, and allocation-free up to 16 action dims and 32 obs dims (wider
   observations spill to the heap — a documented degradation, never truncation).
   Benchmarks in `waddle-gate` track this; don't add locks, syscalls, or allocations
-  to that path.
+  to that path. This holds on **every plan arm**, not just PASSTHROUGH — a
+  supervised session spends whole windows CLAIMED/BYPASS on the same real-time
+  thread, and `tests/alloc_free.rs` proves all of them. In particular the gate
+  clones the active `ProvenanceTag` twice per tick, so **nothing owned may live on
+  that tag**: its variable-length fields (`Provenance::Custom`'s name, the
+  `ActorRef`) are `Arc`-shared and minted once per claim, off that thread. Adding an
+  owned `String` to it costs a malloc pair per field per tick and the featureless
+  `alloc_free` proof is what catches it.
 - **The control plane carries no bandwidth.** Media rides the media plane; the local
   recorder keeps the full-rate archive. There is exactly ONE declared exception —
   `FrameStill` observations behind `waddle.v0.obs.stills`, bounded by the camera's

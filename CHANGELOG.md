@@ -964,6 +964,36 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   in the episode MCAP; callers no longer see the ring.
 
 ### Fixed
+- **The gate stopped allocating on every claimed tick** (regression, caught
+  in review before release): carrying the claimant's `ActorRef` onto the
+  provenance tag (the fix below) put two owned `String`s on the tag that
+  `Gate::gate()` clones TWICE per tick — once into the record ring, once
+  into the returned `GateOutput`. Measured: **four mallocs per `gate()`
+  call**, on the customer's real-time thread, on every CLAIMED / BYPASS /
+  RESET / agent-episode tick of every claim the plane granted (i.e. every
+  production teleop session and every agent intervention; only local clutch
+  grants, whose actor has no stamped identity, were spared). The tag's two
+  variable-length fields are now shared rather than owned —
+  `Provenance::Custom(Arc<str>)` and `Option<Arc<ActorRef>>`, minted once per
+  claim by `ActiveClaim::provenance` off the caller's thread — so cloning a
+  tag is a refcount bump. `Custom`'s name was already an owned clone before
+  the actor work, so a SITE_OPERATOR claim had been allocating twice per tick
+  for as long as that path has existed; that is fixed by the same change.
+  Measured after: 0 allocations per tick on every arm, and the BYPASS arm
+  under a plane-granted claim benches at the same ~75 ns as passthrough.
+  `waddle-gate`'s `alloc_free` proof now covers **every plan arm** with a
+  plane-shaped claim (it was passthrough-only, which is why nothing caught
+  this; its counter is also per-thread now, so concurrently-running tests
+  cannot pollute a measurement), and `cargo bench -p waddle-gate` gained the
+  claimed-arm case.
+- **A `report_proprio` call still queued when an episode ends is recorded in
+  that episode**: `finalize` tail-drained the gate-record ring and the
+  bypass-pump dispatches before closing the MCAP but not the proprio-report
+  channel, so anything reported in the last reducer wake before TERMINAL was
+  drained later with no episode open and discarded — or, worse, written into
+  whichever episode opened next. A caller reporting at 100 Hz lost the tail
+  of every episode. All three side channels are now drained together, in the
+  same order the reducer loop drains them.
 - **An agent-driven episode's recording contains its actions and its
   observations**: actions and observations were written only on the
   gate-tick record path, and the caller of an agent-invited episode never
@@ -992,8 +1022,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     doing both now records both, each stamped when it happened — which other
     call a caller happens to make cannot decide whether an observation is
     recorded.
-  The gate fast path is untouched: both writes happen on the reducer thread,
-  fed by side channels, exactly like `report_proprio`'s existing merge.
+  Neither of these two writes touches the gate fast path: both happen on the
+  reducer thread, fed by side channels, exactly like `report_proprio`'s
+  existing merge. (The actor work below did briefly regress that path — see
+  the allocation entry at the top of this section.)
 - **A sidecar's claimed provenance spans now say who actually drove**: the
   span opened by `GateModeChange{→INTERVENTION|→BYPASS}` was minted
   `PROVENANCE_KIND_TELEOP` unconditionally, so an agent-driven episode's
