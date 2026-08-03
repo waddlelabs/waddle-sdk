@@ -17,7 +17,9 @@ use std::time::{Duration, Instant};
 use parking_lot::Mutex;
 use waddle_controlplane::{ClientMsg, InMemoryTransport, ServerMsg};
 use waddle_fsm::Phase;
-use waddle_runtime::{ControlRegistry, ResetSpec, Session, VerbError};
+use waddle_runtime::{
+    AgentInvite, ControlRegistry, EpisodeOptions, ResetSpec, Session, VerbError,
+};
 use waddle_types::pb::v0 as pb;
 use waddle_types::{ActorKind, GateMode};
 
@@ -216,6 +218,26 @@ fn send_window_complete(tx: &Sender<ServerMsg>, claim_id: &str, directive_id: Op
     }));
 }
 
+fn send_agent_update(
+    tx: &Sender<ServerMsg>,
+    episode_id: &str,
+    kind: pb::AgentTaskUpdateKind,
+    detail: &str,
+    directive_id: Option<&str>,
+) {
+    let _ = tx.send(ServerMsg::Gate(pb::GateServerMessage {
+        msg: Some(pb::gate_server_message::Msg::AgentUpdate(
+            pb::AgentTaskUpdate {
+                episode_id: episode_id.to_owned(),
+                kind: kind as i32,
+                detail: detail.to_owned(),
+                recording_ref: String::new(),
+                directive_id: directive_id.map(str::to_owned),
+            },
+        )),
+    }));
+}
+
 // --- Accepted GRANT, then a NACKed TERMINATE (E12) ---------------------------
 
 #[test]
@@ -377,6 +399,89 @@ fn window_engage_with_wrong_actor_nacks_c6_and_idless_directives_get_no_ack() {
         1,
         "id-less directives are fire-and-forget: {got:?}"
     );
+    session.shutdown();
+}
+
+// --- An agent task update is a directive too: E26 accepted, E26b rejected ----
+
+#[test]
+fn agent_task_denied_acks_e26_and_nacks_e26b_while_queued_never_acks() {
+    let (transport, acks, tx_slot) = ack_plane(true);
+    let session = Session::builder("e2e-acks-agent")
+        .robot(robot())
+        .control(registry())
+        .transport(transport)
+        .build()
+        .unwrap();
+    let tx = server_tx(&tx_slot);
+
+    // Opened agent-invited directly (not through `run_agent`), so the test
+    // keeps the handle and can drive READY → RUNNING itself.
+    let mut ep = session
+        .start_episode_with(
+            "the agent will drive",
+            EpisodeOptions {
+                agent_invite: Some(AgentInvite {
+                    prompt: "wipe down the counter".into(),
+                    timeout_ns: 60_000_000_000,
+                }),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let episode_id = ep.id().as_str().to_owned();
+    let _ = ep.gate(&[0.0; 3], None, None);
+    wait_for(&session, "RUNNING", |s| {
+        matches!(s.episode_state, Some(Phase::Running))
+    });
+
+    // QUEUED is informational on every state (§1.5): it decodes into no
+    // session event, so its id buys it no ack — same rule as an
+    // undecodable directive. Sent first on the SAME channel the DENIED
+    // rides, so the ack count below observes it, not a race.
+    send_agent_update(
+        &tx,
+        &episode_id,
+        pb::AgentTaskUpdateKind::Queued,
+        "picked up",
+        Some("d-queued"),
+    );
+
+    // DENIED while the invite is open (E26): the episode aborts, and the
+    // update is acked accepted like any other applied directive.
+    send_agent_update(
+        &tx,
+        &episode_id,
+        pb::AgentTaskUpdateKind::Denied,
+        "the cell is busy",
+        Some("d-denied"),
+    );
+    let got = wait_for_acks(&acks, 1, "accepted DENIED ack");
+    assert_eq!(got.len(), 1, "QUEUED is not a directive: {got:?}");
+    assert_eq!(got[0].directive_id, "d-denied");
+    assert!(got[0].accepted, "DENIED with the invite open (E26): {got:?}");
+    assert_eq!(got[0].reason, "");
+    wait_for(&session, "terminal", |s| {
+        matches!(s.episode_state, Some(Phase::Terminal(_)))
+    });
+
+    // A second DENIED once the invite has closed: E26b records it without a
+    // transition, so the ack carries that guard row's reason.
+    send_agent_update(
+        &tx,
+        &episode_id,
+        pb::AgentTaskUpdateKind::Denied,
+        "still busy",
+        Some("d-denied-late"),
+    );
+    let got = wait_for_acks(&acks, 2, "E26b nack");
+    assert_eq!(got[1].directive_id, "d-denied-late");
+    assert!(!got[1].accepted, "a late DENIED changes nothing (E26b)");
+    assert_eq!(
+        got[1].reason,
+        "agent task DENIED after the invite closed (E26b)"
+    );
+
     session.shutdown();
 }
 

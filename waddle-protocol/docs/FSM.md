@@ -419,7 +419,8 @@ On loss of control-plane connectivity (`partition_start`):
 Fixture: `backend_partition_degradation`.
 
 **Directive acks (flag `waddle.v0.plane.acks`).** A plane directive
-(`ClaimDirective`, `EpisodeDirective`, `ResetWindowDirective`) that carries a
+(`ClaimDirective`, `EpisodeDirective`, `ResetWindowDirective`,
+`AgentTaskUpdate`) that carries a
 `directive_id`, on a connection that negotiated the flag, is answered with
 exactly one `DirectiveAck` (`GateClientMessage` arm 4): `accepted=true` when
 the session FSM applied every event the directive decoded into,
@@ -433,3 +434,12 @@ existed, a NACKed directive changed no state, and acks never appear on the
 `EpisodeEvent` stream or in sidecars. Directives without a `directive_id`
 stay fire-and-forget; a directive too malformed to decode into session
 events at all produces no ack.
+
+`AgentTaskUpdate` (flag `waddle.v0.agent`) is a directive only where it
+decodes into a session event: a **DENIED addressed to the ACTIVE episode**,
+which the FSM judges by E26 (invite open: accepted, the episode aborts) or
+E26b (invite already closed: rejected, "agent task DENIED after the invite
+closed (E26b)"). QUEUED and COMPLETED updates, and a DENIED naming any
+other episode, are informational — recorded, never a transition (§1.5) —
+so they produce no ack whatever their `directive_id` says, on the same rule
+that governs an undecodable directive: no session events, no ack.

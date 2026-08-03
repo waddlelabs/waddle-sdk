@@ -331,6 +331,14 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   at Register when a transport is configured (safe — emission still requires
   the id). Registry row in VERSIONING.md; normative ack paragraph in FSM.md
   §8.
+  - `AgentTaskUpdate` (flag `waddle.v0.agent`) carries a `directive_id`
+    (field 5) and is acked on the same rule, now stated in both normative
+    enumerations rather than only in the code: an update is a directive
+    exactly where it decodes into a session event — a DENIED addressed to
+    the ACTIVE episode, accepted under E26 and rejected under E26b.
+    QUEUED, COMPLETED, and a DENIED naming any other episode are recorded
+    without an FSM step, so they never ack whatever their id says. Pinned
+    by a new case in `waddle-runtime/tests/directive_acks.rs`.
 - **waddle-gate/waddle-runtime (Claimed-mode agent-chunk intake + jitter
   horizon + `ReplanPolicy`)**: cloud-agent interventions are now real
   outside a reset window too. `forward_server_msg`'s `InterventionChunk` arm
