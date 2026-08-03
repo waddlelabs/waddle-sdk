@@ -575,3 +575,112 @@ fn canonical_json_golden_snapshot() {
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
     insta::assert_json_snapshot!(value);
 }
+
+// --- Provenance spans follow the claim's ACTOR, not an assumption ---------
+
+/// One claimed span, derived from a claim held by `actor`. Returns the
+/// INTERVENTION span's tag (index 1: policy → claimed → …).
+fn claimed_span_tag(
+    ep: &str,
+    actor: Option<pb::ActorRef>,
+    source_name: &str,
+    self_initiated: bool,
+) -> pb::ProvenanceTag {
+    let mut b = builder(ep);
+    b.open_bounds(stamp(4_300_000_000_000));
+    b.push_event(event(
+        4_301_000_000_000,
+        ep,
+        pb::episode_event::Event::Claim(pb::ClaimEvent {
+            kind: pb::ClaimEventKind::Granted as i32,
+            claim: Some(pb::Claim {
+                claim_id: "claim-prov".into(),
+                episode_id: ep.into(),
+                actor,
+                source_name: source_name.into(),
+                self_initiated,
+                ..Default::default()
+            }),
+            detail: String::new(),
+        }),
+    ));
+    b.push_event(event(
+        4_302_000_000_000,
+        ep,
+        gate(
+            pb::GateMode::Passthrough,
+            pb::GateMode::Intervention,
+            "engage complete",
+        ),
+    ));
+    b.close_bounds(stamp(4_310_000_000_000));
+    let s = b.finish("sha256:digest").unwrap();
+    assert_eq!(s.provenance.len(), 2, "policy then claimed");
+    s.provenance[1].tag.clone().unwrap()
+}
+
+fn actor(kind: pb::ActorKind, id: &str) -> Option<pb::ActorRef> {
+    Some(pb::ActorRef {
+        kind: kind as i32,
+        id: id.into(),
+        display_name: String::new(),
+    })
+}
+
+/// The bug this pins: a claimed span was minted as TELEOP unconditionally,
+/// so every span of every agent-driven episode claimed a teleoperator drove
+/// it. The claim's actor decides — and the span names them.
+#[test]
+fn an_agent_claim_makes_an_agent_span() {
+    let tag = claimed_span_tag(
+        "int-prov-agent",
+        actor(pb::ActorKind::Agent, "agent:ws-1@plane"),
+        "waddle-agent",
+        false,
+    );
+    assert_eq!(tag.kind, pb::ProvenanceKind::Agent as i32);
+    assert_eq!(tag.actor.as_ref().unwrap().id, "agent:ws-1@plane");
+}
+
+/// The flow that already worked must keep working byte for byte: a
+/// teleoperator's claim is still TELEOP, still carrying the teleoperator.
+#[test]
+fn a_teleoperator_claim_still_makes_a_teleop_span() {
+    let tag = claimed_span_tag(
+        "int-prov-teleop",
+        actor(pb::ActorKind::Teleoperator, "top-347"),
+        "teleop",
+        false,
+    );
+    assert_eq!(tag.kind, pb::ProvenanceKind::Teleop as i32);
+    assert_eq!(tag.actor.as_ref().unwrap().id, "top-347");
+}
+
+/// A customer-side human at the cell is NOT a Waddle work-plane
+/// teleoperator (N17): the corpus must be able to tell them apart, so the
+/// span is CUSTOM named for the claim's source rather than folded into
+/// TELEOP. A clutch claim also carries its `bypass_approval` stamp, the
+/// same one the per-action tags carry.
+#[test]
+fn a_site_operator_clutch_claim_is_custom_and_keeps_its_bypass_stamp() {
+    let tag = claimed_span_tag(
+        "int-prov-site",
+        actor(pb::ActorKind::SiteOperator, ""),
+        "leader_arm",
+        true,
+    );
+    assert_eq!(tag.kind, pb::ProvenanceKind::Custom as i32);
+    assert_eq!(tag.custom_name, "leader_arm");
+    assert!(tag.bypass_approval);
+}
+
+/// A claim event that reached the sidecar with no actor at all (a peer that
+/// predates the actor being carried) is attributed to its source name — the
+/// builder never invents an actor kind it was not told.
+#[test]
+fn a_claim_with_no_actor_is_attributed_to_its_source() {
+    let tag = claimed_span_tag("int-prov-none", None, "leader_arm", false);
+    assert_eq!(tag.kind, pb::ProvenanceKind::Custom as i32);
+    assert_eq!(tag.custom_name, "leader_arm");
+    assert!(tag.actor.is_none());
+}

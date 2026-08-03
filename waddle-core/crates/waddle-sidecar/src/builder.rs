@@ -14,9 +14,11 @@
 //!   and opens the next; the `StateTransition` OUT of
 //!   `EPISODE_STATE_INTERVENTION` closes the open phase and the span.
 //! - `GateModeChange` drives [`pb::ProvenanceSpan`]s: PASSTHROUGH means the
-//!   policy is writing, INTERVENTION and BYPASS mean the claim-holding human
-//!   is (during bypass the SDK's thread writes on the intervenor's behalf).
-//!   Teleop spans carry the open claim's actor when one exists.
+//!   policy is writing, INTERVENTION and BYPASS mean the claim holder is
+//!   (during bypass the SDK's thread writes on the intervenor's behalf).
+//!   A claimed span's provenance KIND comes from the open claim's actor —
+//!   `Provenance::for_claim`, the same mapping the per-action tags use — and
+//!   carries that actor, so the span names who drove.
 //!
 //! Two-clock discipline: `open_bounds`/`close_bounds` take [`Stamp`]s and
 //! copy BOTH twins from them. The epoch twin is never derived from the
@@ -26,7 +28,9 @@
 
 use waddle_types::pb::v0 as pb;
 use waddle_types::time::{ClockAnchor, Stamp};
-use waddle_types::{CellId, EpisodeId, RobotId, SessionId, TerminalOutcome};
+use waddle_types::{
+    ActorKind, CellId, EpisodeId, Provenance, ProvenanceTag, RobotId, SessionId, TerminalOutcome,
+};
 
 use crate::error::SidecarError;
 
@@ -281,13 +285,18 @@ impl SidecarBuilder {
             Ok(pb::GateMode::Passthrough) => policy_tag(),
             // During BYPASS the SDK's thread writes on the claim-holding
             // intervenor's behalf; provenance is theirs, same as INTERVENTION.
+            // WHOSE it is comes from the open claim's actor — a teleoperator's
+            // span says TELEOP, an agent's says AGENT. Assuming teleoperation
+            // here mislabeled every agent-driven span in the corpus.
             Ok(pb::GateMode::Intervention | pb::GateMode::Bypass) => {
-                let actor = self.open_claims.last().and_then(|(_, c)| c.actor.clone());
-                pb::ProvenanceTag {
-                    kind: pb::ProvenanceKind::Teleop as i32,
-                    custom_name: String::new(),
-                    actor,
-                    bypass_approval: false,
+                match self.open_claims.last() {
+                    Some((_, claim)) => claim_tag(claim),
+                    // No claim on the timeline to attribute the span to.
+                    // TELEOP is the honest floor: these two gate modes exist
+                    // only under a claim, and a human intervenor is the case
+                    // whose claim event can plausibly have been lost (an
+                    // agent's arrives on the same connection as its chunks).
+                    None => teleop_tag(),
                 }
             }
             _ => return,
@@ -489,4 +498,43 @@ fn policy_tag() -> pb::ProvenanceTag {
         actor: None,
         bypass_approval: false,
     }
+}
+
+fn teleop_tag() -> pb::ProvenanceTag {
+    pb::ProvenanceTag {
+        kind: pb::ProvenanceKind::Teleop as i32,
+        custom_name: String::new(),
+        actor: None,
+        bypass_approval: false,
+    }
+}
+
+/// The provenance tag for a span driven by `claim`. The vocabulary comes
+/// from [`Provenance::for_claim`] — the SAME mapping the gate plan's
+/// per-action tags use, so a recording's spans and its `/waddle/actions`
+/// rows can never disagree about who was driving — and the claim's actor
+/// rides along so the span names them, not just their kind.
+fn claim_tag(claim: &pb::Claim) -> pb::ProvenanceTag {
+    let provenance = claim
+        .actor
+        .as_ref()
+        .and_then(|a| ActorKind::from_pb(a.kind).ok())
+        // A claim with no actor at all (or one whose kind this build does not
+        // know) is attributed to its source name rather than silently
+        // relabeled as one of the kinds this build does know.
+        .map_or_else(
+            || Provenance::Custom(claim.source_name.clone()),
+            |kind| Provenance::for_claim(kind, &claim.source_name),
+        );
+    let mut tag = ProvenanceTag {
+        provenance,
+        actor: None,
+        bypass_approval: claim.self_initiated,
+    }
+    .to_pb();
+    // The actor rides along VERBATIM: round-tripping it through the domain
+    // type would drop an actor whose kind this build cannot name, and the
+    // whole point of the field is naming who drove.
+    tag.actor = claim.actor.clone();
+    tag
 }

@@ -964,6 +964,21 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   in the episode MCAP; callers no longer see the ring.
 
 ### Fixed
+- **A sidecar's claimed provenance spans now say who actually drove**: the
+  span opened by `GateModeChange{→INTERVENTION|→BYPASS}` was minted
+  `PROVENANCE_KIND_TELEOP` unconditionally, so an agent-driven episode's
+  spans read POLICY/TELEOP/TELEOP/POLICY — the recording asserted a
+  teleoperator drove an episode no teleoperator touched. The span's kind now
+  comes from the open claim's actor through `Provenance::for_claim` (the
+  same mapping the per-action tags use, so spans and `/waddle/actions` rows
+  can never disagree), and it carries that actor. A teleoperator's span is
+  unchanged (TELEOP, naming the teleoperator); an AGENT claim's says AGENT;
+  a SITE_OPERATOR's is `custom:<source_name>` rather than being folded into
+  TELEOP, because N17 makes a customer-side human at the cell a different
+  actor from a Waddle work-plane teleoperator and the corpus has to be able
+  to tell them apart. A claimed span also carries the claim's
+  `bypass_approval` stamp now, as the per-action tags already did. No proto
+  change: `PROVENANCE_KIND_AGENT` has been in the vocabulary since v0.
 - **Claim events now name their claimant (`Claim.actor` was being dropped)**:
   the plane grants a claim with a full `ActorRef` — kind, the id it stamped,
   a display name — and the SDK carried only the *kind* into its FSM, so

@@ -138,6 +138,10 @@ fn scripted_transport(
     })
 }
 
+/// The id a real plane stamps on the agent it hosts. Fixed here so the
+/// recording assertions can name it.
+const AGENT_ACTOR_ID: &str = "agent:ws-1@plane";
+
 fn grant_directive(
     claim_id: &str,
     kind: pb::ClaimDirectiveKind,
@@ -148,9 +152,12 @@ fn grant_directive(
             kind: kind as i32,
             claim: Some(pb::Claim {
                 claim_id: claim_id.to_owned(),
+                // A plane grants with a FULL ActorRef; the SDK must carry it
+                // whole onto the claim events it journals.
                 actor: Some(pb::ActorRef {
                     kind: actor as i32,
-                    ..Default::default()
+                    id: AGENT_ACTOR_ID.to_owned(),
+                    display_name: "Waddle agent".to_owned(),
                 }),
                 source_name: "waddle-agent".into(),
                 self_initiated: false,
@@ -300,10 +307,12 @@ fn run_agent_returns_success_with_recording_ref_from_completed_update() {
         });
     });
 
+    let dir = tempfile::tempdir().unwrap();
     let session = Session::builder("agent-happy")
         .robot(twist_robot())
         .control(registry(&send_log))
         .transport(transport)
+        .recording_dir(dir.path())
         .build()
         .unwrap();
     *session_cell.lock() = Some(session.clone());
@@ -348,6 +357,82 @@ fn run_agent_returns_success_with_recording_ref_from_completed_update() {
         Some(AgentTaskKind::Completed)
     );
     session.shutdown();
+
+    // --- What the recording says happened, and who did it ----------------
+    //
+    // The exit criterion for an agent-driven episode is a recording with
+    // correct PROVENANCE: it must name the agent that drove, not merely note
+    // that "something intervened".
+    let sidecar = read_sidecar(dir.path(), result.episode_id.as_str());
+
+    // The claim span carries the plane's ActorRef whole — kind AND the id it
+    // stamped. `sourceName` names the stream, never the actor.
+    let claim = sidecar
+        .claims
+        .iter()
+        .find_map(|c| c.claim.as_ref())
+        .expect("the agent's claim must appear as a claim span");
+    let claim_actor = claim
+        .actor
+        .as_ref()
+        .expect("a claim span with no actor cannot be attributed to anyone");
+    assert_eq!(claim_actor.kind, pb::ActorKind::Agent as i32);
+    assert_eq!(claim_actor.id, AGENT_ACTOR_ID);
+    assert_eq!(claim.source_name, "waddle-agent");
+
+    // Same for the journaled claim EVENT the plane and any judge replay.
+    let journaled = sidecar
+        .events
+        .iter()
+        .filter_map(|e| match &e.event {
+            Some(pb::episode_event::Event::Claim(c)) => c.claim.as_ref(),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        !journaled.is_empty(),
+        "the episode journal must carry claim events"
+    );
+    for claim in journaled {
+        let actor = claim
+            .actor
+            .as_ref()
+            .expect("every journaled claim event names its claimant");
+        assert_eq!(actor.kind, pb::ActorKind::Agent as i32);
+        assert_eq!(actor.id, AGENT_ACTOR_ID);
+    }
+
+    // The provenance spans say AGENT — they used to say TELEOP for every
+    // claimed span, whoever was actually driving.
+    let claimed_spans: Vec<&pb::ProvenanceTag> = sidecar
+        .provenance
+        .iter()
+        .filter_map(|p| p.tag.as_ref())
+        .filter(|t| t.kind != pb::ProvenanceKind::Policy as i32)
+        .collect();
+    assert!(
+        !claimed_spans.is_empty(),
+        "an engaged agent claim must open a non-policy provenance span"
+    );
+    for tag in claimed_spans {
+        assert_eq!(
+            tag.kind,
+            pb::ProvenanceKind::Agent as i32,
+            "an agent-driven span must not be labeled teleop"
+        );
+        assert_eq!(
+            tag.actor.as_ref().map(|a| a.id.as_str()),
+            Some(AGENT_ACTOR_ID)
+        );
+    }
+}
+
+/// The episode's sidecar, read back from the recording directory.
+fn read_sidecar(dir: &std::path::Path, episode_id: &str) -> pb::Sidecar {
+    let path = dir.join(format!("{episode_id}.sidecar.json"));
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("sidecar {} must exist: {e}", path.display()));
+    waddle_sidecar::sidecar_from_json(&text).expect("sidecar must parse")
 }
 
 // --- Invite timeout: nobody engages; the FSM's timer aborts ---------------
