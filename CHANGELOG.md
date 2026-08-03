@@ -82,6 +82,16 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     unconditionally whenever a transport is configured: the SDK always
     supports being agent-driven, and a plane that did not accept it simply
     never routes an invite (the deadline then closes the episode via E25).
+  - **Gate**: `waddle-gate` gains `PlanMode::AgentEpisode { provenance }`
+    (mirroring `Bypass` and `Reset`): `Gate::gate()` returns `Noop` and
+    records the new `GateDecision::AgentEpisode`, same cost class as the
+    existing NOOP paths (no locks/syscalls/allocations); the runtime
+    reducer derives that plan for an agent-invited episode with no engaged
+    claim (E24) and renders `NoopReason::AGENT_EPISODE` distinctly from
+    `BYPASS_ACTIVE` and `RESET_ACTIVE`, so a recording says *why* a tick
+    dispatched nothing. Both variants are **source-breaking for an
+    exhaustive match** on `PlanMode` or `GateDecision` (pre-1.0 / API
+    unstable per N5).
 - **waddle-protocol/waddle-runtime (control-plane stills, new feature flag
   `waddle.v0.obs.stills`)**: a hosted agent needs to SEE the scene, and until
   now `publish_frame` fed only the media plane — an agent-only session with no
@@ -170,7 +180,7 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   `_core.__version__` reports the extension's own version. The shim gains
   kwargs, never logic. Neither feature is a cargo default (the featureless
   build stays the tokio- and libwebrtc-free clippy baseline), but no shipped
-  distribution is featureless — see the two-distribution entry below.
+  distribution is featureless — see the two-distribution entry above.
   - `Session.agent(prompt, timeout_ns, **reset overrides)` binds
     `Session::run_agent` (flag `waddle.v0.agent`) and returns
     `AgentResult { outcome, episode_id, recording_ref, detail }`, each field
@@ -447,13 +457,16 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     wrong dtype/rank/shape (or a non-contiguous array) raises `TypeError`;
     an unknown camera or a resolution mismatch raises `RuntimeError` (from
     the core). `waddle.init(..., media=waddle.LiveKit(url, token))`
-    exposes the config shape for a real WebRTC-backed media plane, but
-    this SDK build does not compile the heavy `livekit` Cargo feature
-    (~700 MB webrtc-sys download, tokio) in by default — passing it raises
-    a clean, actionable `RuntimeError` naming the gap, exactly like the
-    deferred `grpc` transport; `_testing=True` (the in-process loopback)
-    is unaffected and is how `publish_frame` is exercised end-to-end today
-    (`waddle._testing.frames(session, camera)` observes the far end).
+    declares a real WebRTC-backed media plane. The heavy `livekit` Cargo
+    feature (~690 MB webrtc-sys download, tokio) rides the `[teleop]`
+    companion wheel rather than the default one, so a core built without
+    it refuses `media=` with a clean `RuntimeError` naming the extra
+    instead of degrading to a silent offline session (the `grpc` control
+    transport, by contrast, IS in the default wheel — see the
+    two-distribution entry above); `_testing=True` (the in-process
+    loopback) is unaffected and is how `publish_frame` is exercised
+    end-to-end in tests (`waddle._testing.frames(session, camera)`
+    observes the far end).
 - **waddle-media (real LiveKit `MediaPlane` behind the `livekit` feature)**:
   `livekit::LiveKitMedia` is the first real transport.
   `LiveKitMedia::connect(LiveKitConfig { url, token, track_resolutions })`
@@ -491,10 +504,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   `waddle.TeleopReset(prompt, *, timeout_s=600.0)` and
   `waddle.AgentReset(prompt, *, timeout_s=600.0)` are small frozen,
   repr-friendly dataclasses declaring a remote reset window for a
-  teleoperator/agent respectively (their docstrings name the production
-  caveat: this open-source runtime has no supervision-plane transport
-  wired yet, so today a window can only be driven end-to-end via the
-  private `waddle._testing` reset-window hooks). `waddle.init` gains
+  teleoperator/agent respectively (their docstrings name what a window
+  needs to run: a connected supervision plane to grant and complete it —
+  `waddle.init(transport=waddle.Grpc(url, token))` — since with no plane
+  declared a window can only run out its timeout, and only the private
+  `waddle._testing` reset-window hooks drive one without a plane).
+  `waddle.init` gains
   `pre_reset=None`, `post_reset=None` (`None` | callable | `TeleopReset` |
   `AgentReset`) and `reset_verification="blocking"` (`"blocking"` |
   `"optimistic"`); `waddle.rollout(task, *, pre_reset=_UNSET,
@@ -893,6 +908,17 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   dict as before.
 
 ### Changed
+- **Public types (pre-1.0 / API unstable per N5) — a claim's actor and a
+  custom provenance are now SHARED, not owned**: `ActiveClaim.actor` is an
+  `Arc<ActorRef>` where it was a bare `ActorKind` (a claim now carries who
+  holds it whole — kind and the identity the granting side stamped),
+  `ProvenanceTag.actor` is `Option<Arc<ActorRef>>`, and
+  `Provenance::Custom` carries an `Arc<str>` where it carried a `String`.
+  Source-breaking for anything that constructs or destructures them. The
+  `Arc`s are not decoration: the gate clones the active tag twice per tick
+  on the customer's real-time thread, so nothing owned may live on it —
+  the identity is minted once per claim, off that thread (see the
+  per-tick-allocation regression under Fixed for the measurement).
 - **`Session::episode_done` / `Episode::done` flip at `Phase::PostReset`**,
   not only at Terminal: the terminal outcome is pinned at POST_RESET entry
   (E14), so the rollout is over from the caller's view while only the scene
@@ -1093,6 +1119,15 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   default — rather than in each binding, where nothing would have caught it
   going missing again. Unreachable until this branch wired the media plane
   through the Python surface at all.
+- **sdk — a wheel no longer ships whatever bytecode the build machine left
+  behind**: `[tool.maturin].python-source` is the working tree, so both
+  `pyproject.toml`s now carry `exclude = ["python/**/__pycache__/**"]`.
+  Without it a build run after `uv run pytest` swept
+  `__pycache__/*.cpython-3XX.pyc` for whichever interpreter ran the tests
+  into the wheel while a build on a clean checkout did not — the same
+  commit producing two different wheels, with stale bytecode for one
+  interpreter riding along to every other. pip compiles bytecode at
+  install time for the interpreter that will actually import it.
 - **sdk — `_core.pyi` no longer under-describes the extension**: the type
   stub had drifted behind the shim (`publish_frame`, `report_proprio`,
   `records_dropped`, the `_testing_*` hooks and the new connected seam were

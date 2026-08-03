@@ -14,8 +14,9 @@ It shows, in one place:
   limits, a parallel gripper declared in **metres** (`0.0` open, `0.04`
   closed, deliberately not 0/1), a generated 6-joint URDF, and a camera
   with a `StreamPolicy`;
-- the five-verb `Control` contract — `send`, `hold`, `estop` — which is how
-  anything Waddle grants a lease to actually moves the robot;
+- the five-verb `Control` contract, three of whose verbs this robot
+  declares — `send`, `hold`, `estop` — which is how anything Waddle grants
+  a lease to actually moves the robot;
 - the six-line loop: `ep.gate(action, obs)` returns your action, a
   different action, or `None` — and, when something intervened,
   `ep.last_gate.gripper` carries the claimant's grasp already converted
