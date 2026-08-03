@@ -1016,6 +1016,47 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   in the episode MCAP; callers no longer see the ring.
 
 ### Fixed
+- **A gripper-only intervention step is an action, not a drop**
+  (`waddle-types`/`waddle-gate`/`waddle-runtime`): control.proto has
+  `Action.gripper` "ride alongside the target in one logical tick", and
+  `NoopMarker` is a target arm like any other — so `Action{noop, gripper}`
+  says *hold the arm, move the gripper*, and is the only shape available to
+  a sender whose gripper command has no arm target beside it. `flatten_action`
+  called it non-executable, and the `intervention_chunk` intake then dropped
+  the WHOLE chunk with nothing but a `tracing::warn!`: observed live, a
+  four-step stream (three joint waypoints, then a gripper close) actuated
+  three times and the grip vanished with no recorded fault, no ack-visible
+  refusal, nothing the sender could see. Now:
+  - **noop + gripper flattens to a gripper-only `Step`** — no arm values at
+    all (`Step::is_gripper_only`), the gripper in the declared
+    `GripperSpec`'s own units, unmapped (an `ActionChunk`'s
+    `GripperCommand.position` is already in those units, unlike a raw teleop
+    packet's normalized trigger). It dispatches through the same paths every
+    other step does, and `unflatten_action` rebuilds the wire shape it came
+    from, so the grip lands on `/waddle/actions` instead of vanishing from
+    the recording. `blend_step` treats it as an action rather than a dims
+    mismatch: the gripper channel cross-fades and the arm holds.
+  - **An inert step (noop, no gripper) is skipped, not fatal to its chunk.**
+    `ActionChunk::from_pb` returns a `FlattenedChunk { chunk, inert }`: the
+    steps around an inert one still execute — one step with nothing in it
+    must never cost the sender the waypoints around it — and the skip is
+    REPORTED. Anything that doesn't fit the declared space at all (wrong
+    target arm, missing field, opaque space) still refuses the whole chunk,
+    since a partial trajectory from a sender that disagrees about the space
+    is not a degraded-but-safe thing to actuate.
+  - **Every intake refusal is now observable.** `SessionEvent::InterventionRejected`
+    carries a `RejectReason` (`Dims` / `NotExecutable` / `InertStepsSkipped`)
+    instead of a dims-shaped pair, and each reason emits its own
+    `Fault{FAULT_KIND_VALIDATION_ERROR}` text, deduped per reason to once per
+    claim window. The non-dims refusals used to be trace warnings only,
+    because they could not be told truthfully in the dims-shaped event.
+  - FSM.md §4 states the rule ("What an intervention action may carry") and
+    §5's dims-mismatch sentence names the gripper-only exception. No guard
+    row, no state transition, and no golden fixture changes: this is intake
+    and gate behavior, covered by `waddle-runtime`'s end-to-end intake suite.
+    Customer-visible: a `send`/`gate()` step may now carry an EMPTY action
+    array with its `gripper` set — command the gripper, leave the arm target
+    where it was (`Control.send` docs; `toy_robot.py` shows it).
 - **A clutch refused by C8 now says so** (`waddle-fsm`): on an agent-invited
   episode, a clutch edge whose declared actor is not `ACTOR_KIND_AGENT` was
   dropped in silence — no claim, no emission, nothing on the timeline. But a

@@ -296,6 +296,30 @@ Phases within INTERVENTION: **engage → settle → release | retake**
 | I3 | RELEASE | `release` requested | policy re-primed on fresh observations, lease handed back, claim released | mirrors ENGAGE in reverse (§5) |
 | I4 | RETAKE | `retake` requested | episode → TERMINAL{ABORTED_RETAKE}; successor opened born-claimed | claim survives (C5) |
 
+### What an intervention action may carry
+
+`Action.gripper` rides alongside the target in one logical tick
+(control.proto), and `NoopMarker` is a target arm like any other. So:
+
+* **noop + gripper is executable** — "hold the arm, move the gripper". It
+  flattens to no arm width at all: the arm target stays where it was, and
+  only the gripper channel is written, in the declared `GripperSpec`'s own
+  units. This is the shape a sender uses for a gripper-only command, which
+  by construction has no arm target to put beside the gripper.
+* **noop with no gripper commands nothing.** It is skipped and the rest of
+  the chunk still executes — one inert step never costs the sender the
+  waypoints around it — and the skip is recorded as
+  `Fault{FAULT_KIND_VALIDATION_ERROR}`, once per claim window, naming the
+  intake that skipped it.
+
+An action that doesn't fit the declared action space at all — a target arm
+the space doesn't have, a missing field, an opaque space — is a different
+fact: the whole chunk is refused, because a partial trajectory from a sender
+that disagrees about the space is not a degraded-but-safe thing to actuate.
+That refusal is recorded the same way, in its own words. Either way the
+sender learns from the episode's own timeline what did not happen; a
+dropped action is never silent.
+
 ---
 
 ## 5. Handoff sub-protocol (per `HandoffPolicy`)
@@ -322,7 +346,9 @@ action space, the gate holds instead of cross-fading — a dims mismatch is
 never zip-truncated into a shorter, meaningless action. Media intake is the
 primary check (drops the mismatched action before it reaches the gate,
 faulting `FAULT_KIND_VALIDATION_ERROR` once per claim window); the gate's
-own refusal to blend mismatched lengths is defense in depth.
+own refusal to blend mismatched lengths is defense in depth. A gripper-only
+action (§4) carries no arm width by construction and is not a mismatch: it
+cross-fades on the gripper channel alone, with the arm holding.
 
 Fixtures: `handoff_immediate_mid_chunk`, `teleop_dims_mismatch_holds`.
 
