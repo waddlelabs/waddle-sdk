@@ -31,6 +31,12 @@ fn weight(interp: Interp, t: f32) -> f32 {
 /// Returns `None` on a mismatch rather than zip-truncating (a truncated
 /// action is a meaningless one, never a degraded-but-safe one); callers
 /// fall back to `Hold`.
+///
+/// One `to` shape is legitimately shorter and must not read as a mismatch:
+/// a gripper-only action ("hold the arm, move the gripper" —
+/// `waddle_types::Step`) carries no arm row at all. It stays gripper-only
+/// through the window, with the gripper channel cross-faded; holding
+/// instead would silently drop a commanded grip.
 #[must_use]
 pub fn blend_step(
     from: &OwnedAction,
@@ -38,7 +44,8 @@ pub fn blend_step(
     t: f32,
     interp: Interp,
 ) -> Option<OwnedAction> {
-    if from.values.len() != to.values.len() {
+    let gripper_only = to.values.is_empty() && to.gripper.is_some();
+    if !gripper_only && from.values.len() != to.values.len() {
         return None;
     }
     let w = f64::from(weight(interp, t));
@@ -136,5 +143,28 @@ mod tests {
         let from = action(&[0.0, 0.0, 0.0]);
         let to = action(&[1.0, 1.0]); // shorter: would silently truncate today
         assert!(blend_step(&from, &to, 0.5, Interp::Linear).is_none());
+    }
+
+    /// A gripper-only action has no arm row by construction, not by
+    /// truncation: it must survive the cross-fade window as itself rather
+    /// than being refused as a dims mismatch, which would hold the gate and
+    /// silently drop the commanded grip.
+    #[test]
+    fn a_gripper_only_action_survives_the_blend_window() {
+        let from = OwnedAction {
+            values: SmallVec::from_slice(&[0.0, 0.0, 0.0]),
+            gripper: Some(0.0),
+        };
+        let to = OwnedAction {
+            values: SmallVec::new(),
+            gripper: Some(0.04),
+        };
+        let mid = blend_step(&from, &to, 0.5, Interp::Linear)
+            .expect("gripper-only is not a dims mismatch");
+        assert!(mid.values.is_empty(), "the arm holds: no values to write");
+        assert!((mid.gripper.unwrap() - 0.02).abs() < 1e-12);
+
+        let end = blend_step(&from, &to, 1.0, Interp::Linear).unwrap();
+        assert_eq!(end.gripper, Some(0.04));
     }
 }
