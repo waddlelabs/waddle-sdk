@@ -1,7 +1,7 @@
 {
   "format": "waddle.behavior/v0",
   "name": "agent_invite_denied_in_post_reset",
-  "description": "Pins FSM.md E26b's post-reset branch plus C8's scope: a pre-engage terminate{SUCCESS} routes through E14 into POST_RESET{SUCCESS pinned}, closing the invite (close_run cancels the still-armed agent_invite_timeout) and opening the declared remote POST reset window (E19); a plane DENIED racing that completion into POST_RESET is rejected outright — no state emission, the pinned outcome untouched (E26b); the window's TELEOPERATOR claim IS then admitted (C6 — C8 constrains RUNNING-phase claims only, reset-window claims stay C6's business even on an agent-invited episode), engages, completes (E20/E21), and E15 delivers TERMINAL{SUCCESS, pinned unchanged}.",
+  "description": "Pins FSM.md E26b's post-reset branch plus C8's scope: a pre-engage terminate{SUCCESS} routes through E14 into POST_RESET{SUCCESS pinned}, closing the invite (close_run cancels the still-armed agent_invite_timeout) and opening the declared remote POST reset window (E19); a plane DENIED racing that completion into POST_RESET is rejected outright — no state emission, the pinned outcome untouched (E26b); the window's TELEOPERATOR claim IS then admitted (C6 — C8 constrains only the grants C1 governs, so reset-window claims stay C6's business even on an agent-invited episode), engages, completes (E20/E21), and E15 delivers TERMINAL{SUCCESS, pinned unchanged}.",
   "target": "fsm",
   "requires_features": ["waddle.v0.core", "waddle.v0.agent", "waddle.v0.reset.phases", "waddle.v0.reset.remote"],
   "setup": {

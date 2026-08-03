@@ -1055,18 +1055,15 @@ pub fn step(
         // C-section: engagement-initiated claims ------------------------------
         SessionEvent::Clutch { engaged, at } => {
             if *engaged {
+                // Already claimed, or not in a claimable phase: the physical
+                // edge is the source's to record, never a transition here.
+                let claimable = state.claim.is_none() && matches!(phase, Some(Phase::Running));
                 // C8 (§1.5): a clutch both requests and grants its claim in
                 // one step, so admission applies to it like any other grant —
-                // an agent-invited episode admits AGENT claims only. The
-                // physical edge is still recorded by the source; it just
-                // never becomes a claim here.
+                // an agent-invited episode admits AGENT claims only.
                 let agent_admits = !state.episode.as_ref().is_some_and(|e| e.agent_invited)
                     || cfg.clutch_actor == ActorKind::Agent;
-                if state.claim.is_some() || !matches!(phase, Some(Phase::Running)) || !agent_admits
-                {
-                    // Already claimed, not in a claimable phase, or C8: the
-                    // edge is recorded by the source, not a transition.
-                } else {
+                if claimable {
                     ctx.s.clutch_seq += 1;
                     let claim = ActiveClaim {
                         id: ClaimId::new(format!("clutch-{}", ctx.s.clutch_seq)),
@@ -1075,24 +1072,43 @@ pub fn step(
                         self_initiated: true,
                     };
                     let ep = ctx.episode().id.clone();
-                    // Requested and granted in one step: the engaged clutch
-                    // IS the authorization (never the envelope).
-                    ctx.emit(emit::claim_event(
-                        *at,
-                        &ep,
-                        pb::ClaimEventKind::Requested,
-                        &claim,
-                        "self-initiated (clutch)",
-                    ));
-                    ctx.emit(emit::claim_event(
-                        *at,
-                        &ep,
-                        pb::ClaimEventKind::Granted,
-                        &claim,
-                        "self-initiated (clutch)",
-                    ));
-                    ctx.s.claim = Some(claim);
-                    ctx.begin_engage(*at);
+                    if agent_admits {
+                        // Requested and granted in one step: the engaged clutch
+                        // IS the authorization (never the envelope).
+                        ctx.emit(emit::claim_event(
+                            *at,
+                            &ep,
+                            pb::ClaimEventKind::Requested,
+                            &claim,
+                            "self-initiated (clutch)",
+                        ));
+                        ctx.emit(emit::claim_event(
+                            *at,
+                            &ep,
+                            pb::ClaimEventKind::Granted,
+                            &claim,
+                            "self-initiated (clutch)",
+                        ));
+                        ctx.s.claim = Some(claim);
+                        ctx.begin_engage(*at);
+                    } else {
+                        // C8 refuses it. Like the plane's wrong-actor GRANT,
+                        // the refusal is RECORDED rather than silently
+                        // dropped: the edge really happened and really
+                        // produced no intervention, and a timeline that
+                        // shows neither cannot explain the gap. No
+                        // `claim{REQUESTED}` precedes it — a clutch grants
+                        // its own claim, so there was never a request
+                        // pending — and no state changes: the claim never
+                        // becomes active.
+                        ctx.emit(emit::claim_event(
+                            *at,
+                            &ep,
+                            pb::ClaimEventKind::Denied,
+                            &claim,
+                            "agent-invited episode admits ACTOR_KIND_AGENT only (C8)",
+                        ));
+                    }
                 }
             } else if matches!(phase, Some(Phase::Intervention(InterventionPhase::Settle)))
                 && state.claim.as_ref().is_some_and(|c| c.self_initiated)

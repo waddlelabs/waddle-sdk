@@ -223,7 +223,7 @@ States (per claim): REQUESTED → GRANTED | DENIED; GRANTED → RELEASED.
 | C5 | GRANTED | `retake` | — | GRANTED (survives) | the claim is NOT released; the successor episode is born claimed under it | `retake_operator_optimistic` |
 | C6 | — | `claim_granted` | episode in RESETTING or POST_RESET ∧ window OPENED ∧ actor matches expected (a TELEOPERATOR window also admits SITE_OPERATOR; an AGENT window admits AGENT only) ∧ no active claim | GRANTED | `claim{GRANTED}` — a real `Claim`; the N18 one-claim rule applies (flag `waddle.v0.reset.remote`; see §1.4) | `remote_pre_reset_claim_engage_complete`, `remote_reset_wrong_actor_denied` |
 | C7 | GRANTED (reset claim) | E21 / E22 / `estop` | — | RELEASED | `claim{RELEASED, "reset window closed"}` (flag `waddle.v0.reset.remote`; see §1.4) | `remote_pre_reset_claim_engage_complete` |
-| C8 | — | `claim_granted` | episode agent-invited ∧ actor matches expected (an agent-invited episode admits `ACTOR_KIND_AGENT` only; any other actor's grant is rejected, `claim{DENIED}`) ∧ C1's episode-state and no-conflicting-claim conditions unchanged | GRANTED | `claim{GRANTED}` — a real `Claim`; the N18 one-claim rule applies (flag `waddle.v0.agent`; see §1.5) | `agent_invite_happy`, `agent_invite_wrong_actor_denied` |
+| C8 | — | `claim_granted` | episode agent-invited ∧ actor matches expected (an agent-invited episode admits `ACTOR_KIND_AGENT` only; any other actor's grant is rejected, `claim{DENIED}`) ∧ C1's episode-state and no-conflicting-claim conditions unchanged | GRANTED | `claim{GRANTED}` — a real `Claim`; the N18 one-claim rule applies (flag `waddle.v0.agent`; see §1.5) | `agent_invite_happy`, `agent_invite_wrong_actor_denied`, `agent_invite_clutch_denied` |
 
 **Every claim event names its claimant.** The `Claim` carried by
 `claim{REQUESTED|GRANTED|DENIED|RELEASED}` MUST carry the claimant's
@@ -242,6 +242,14 @@ edge (`clutch{engaged}`) both requests and grants the claim in one step — the
 platform records the intervention rather than fighting it (the engaged clutch
 is the authorization; `ProvenanceTag.bypass_approval` may be set, which
 bypasses approval gates but never the envelope, the lease, or the e-stop).
+Because the edge grants its own claim, **C8 admission applies to it exactly
+as to a plane GRANT**: on an agent-invited episode a clutch whose declared
+actor is not `ACTOR_KIND_AGENT` is refused, and the refusal is recorded as
+`claim{DENIED}` with C8's reason — no `claim{REQUESTED}` precedes it (there
+was never a request pending), no claim becomes active, and the physical edge
+remains the source's to report. A clutch that is not admissible for any other
+reason (a claim is already active, the episode is not RUNNING) stays silent
+as before. Fixture: `agent_invite_clutch_denied`.
 
 ---
 

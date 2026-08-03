@@ -1,0 +1,30 @@
+{
+  "format": "waddle.behavior/v0",
+  "name": "agent_invite_clutch_denied",
+  "description": "Pins FSM.md C8 + §2's self-initiated-claims rule for the local path: a clutch edge grants its OWN claim in one step, so C8 admission applies to it exactly as to a plane GRANT — on an agent-invited episode a clutch whose declared actor is not ACTOR_KIND_AGENT is refused, and the refusal is RECORDED as claim{DENIED} naming that actor, not silently dropped (the edge really happened and really produced no intervention; a timeline showing neither cannot explain the gap). No claim{REQUESTED} precedes it — a clutch has no request pending — no claim{GRANTED}, no active claim, no engage, and the episode and its still-open invite are untouched. The invited AGENT is then admitted normally, showing the guard is actor-specific rather than a blanket refusal of the clutch path.",
+  "target": "fsm",
+  "requires_features": ["waddle.v0.core", "waddle.v0.agent"],
+  "setup": {
+    "lease_enforcement": "LEASE_ENFORCEMENT_ENFORCED",
+    "handoff": { "immediate": { "blendNs": "0" } },
+    "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING"
+  },
+  "steps": [
+    { "inject": { "kind": "episode_open", "episode_id": "ep-aicd-0001", "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING", "agent_invite": { "prompt": "clear the bench", "timeout_ns": "10000000000" } } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "reset_result", "result": { "ok": true, "strategy": "scripted_home", "verification": { "mode": "RESET_VERIFICATION_MODE_BLOCKING", "verified": true, "judgeId": "judge-reset", "judgeVersion": "2.1.0", "score": 0.95, "tNs": "100000000" } } } },
+    { "inject": { "kind": "start" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RUNNING", "episode.agent_invited": true } },
+
+    { "inject": { "kind": "clutch", "engaged": true } },
+    { "expect_no_emission": { "event": { "claim": { "kind": "CLAIM_EVENT_KIND_REQUESTED" } }, "within_ns": "0" } },
+    { "expect_no_emission": { "event": { "claim": { "kind": "CLAIM_EVENT_KIND_GRANTED" } }, "within_ns": "0" } },
+    { "expect_emission": { "event": { "claim": { "kind": "CLAIM_EVENT_KIND_DENIED", "claim": { "selfInitiated": true, "actor": { "kind": "ACTOR_KIND_SITE_OPERATOR" } } } }, "within_ns": "0" } },
+    { "expect_state": { "claim.active_claim_id": "", "episode.state": "EPISODE_STATE_RUNNING", "episode.agent_invited": true, "episode.agent_engaged": false } },
+
+    { "advance_ns": "20000000" },
+    { "inject": { "kind": "claim_granted", "claim": { "claimId": "claim-aicd-agent", "episodeId": "ep-aicd-0001", "actor": { "kind": "ACTOR_KIND_AGENT", "id": "agent-waddle-1", "displayName": "Waddle agent" }, "sourceName": "waddle-agent", "selfInitiated": false } } },
+    { "expect_emission": { "event": { "claim": { "kind": "CLAIM_EVENT_KIND_GRANTED", "claim": { "claimId": "claim-aicd-agent" } } }, "within_ns": "0" } },
+    { "expect_state": { "claim.active_claim_id": "claim-aicd-agent" } }
+  ]
+}

@@ -60,7 +60,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     `agent_invite_denied_after_engage`, `agent_invite_wrong_actor_denied`,
     `agent_invite_denied_in_post_reset`), all listing `waddle.v0.agent` in
     `requires_features`; a ninth, `agent_invite_retake_successor`, arrives
-    with the E24 re-projection fix below. `scenario-format.md` gains the `episode_open`
+    with the E24 re-projection fix below, and a tenth,
+    `agent_invite_clutch_denied`, with the C8 clutch fix under Fixed.
+    `scenario-format.md` gains the `episode_open`
     `agent_invite` key, the `agent_task_update` inject kind (the update
     nests as a canonical `waddle.v0.AgentTaskUpdate` under `update`, the
     shape `reset_result` already uses — the message's own `kind` field
@@ -998,6 +1000,22 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   in the episode MCAP; callers no longer see the ring.
 
 ### Fixed
+- **A clutch refused by C8 now says so** (`waddle-fsm`): on an agent-invited
+  episode, a clutch edge whose declared actor is not `ACTOR_KIND_AGENT` was
+  dropped in silence — no claim, no emission, nothing on the timeline. But a
+  clutch grants its own claim in one step, so C8 governs it exactly as it
+  governs a plane GRANT, and FSM.md's C8 row says a refused grant is
+  recorded as `claim{DENIED}`. The .md wins: the refusal now emits the same
+  `claim{DENIED}` shape the wrong-actor grant path emits, naming the
+  refused actor, with no `claim{REQUESTED}` before it (a clutch has no
+  request pending) and no state change. A site operator squeezing the
+  clutch on an episode Waddle is driving is exactly the moment a recording
+  must be able to explain why nothing happened. FSM.md §2's
+  self-initiated-claims paragraph states the rule; new fixture
+  `agent_invite_clutch_denied` pins it, and is the first scenario to
+  exercise the `clutch` inject kind at all. Clutches refused for any other
+  reason (a claim is already active, the episode is not RUNNING) stay
+  silent, unchanged.
 - **The gate stopped allocating on every claimed tick** (regression, caught
   in review before release): carrying the claimant's `ActorRef` onto the
   provenance tag (the fix below) put two owned `String`s on the tag that
