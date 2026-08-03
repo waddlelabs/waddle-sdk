@@ -273,7 +273,8 @@ def _read_exactly(conn: socket.socket, count: int, timeout_s: float) -> bytes:
 
 
 @pytest.mark.skipif(
-    "grpc" not in _core.FEATURES, reason="this build has no control transport"
+    "grpc" not in _native.FEATURES,
+    reason="the selected core has no control transport",
 )
 def test_grpc_session_dials_the_plane_and_then_survives_losing_it(tmp_path):
     """The one test that proves `init(transport=...)` reaches the real

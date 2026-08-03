@@ -143,17 +143,18 @@ def test_the_examples_declared_camera_matches_the_frames_it_renders():
         _testing=True,
     )
 
-    frame = arm.render()
-    assert frame.dtype == np.uint8
-    assert frame.shape == (example.CAMERA_H, example.CAMERA_W, 3)
-    session.publish_frame(example.CAMERA_NAME, frame)
-    # The 7-value (xyz + wxyz) pose the example reports every tick.
-    session.report_proprio(
-        joint_vel=arm.joint_velocities(),
-        ee_pose=arm.ee_pose(),
-        ee_pose_frame=example._TOOL_FRAME,
-        gripper=arm.gripper(),
-    )
+    # `render` is deterministic in (pose, gripper, frame index), so a
+    # pristine twin renders exactly what `arm` is about to publish — and
+    # rendering it here does not advance `arm`'s own frame index.
+    expected = example.ToyArm().render()
+    assert expected.dtype == np.uint8
+    assert expected.shape == (example.CAMERA_H, example.CAMERA_W, 3)
+
+    # The example's OWN housekeeping tick, not a re-typed copy of it: this
+    # test is worth nothing if it keeps passing while `robot_tick` grows a
+    # different notion of what to publish. Nothing has commanded the arm, so
+    # the step moves it nowhere.
+    example.robot_tick(session, arm, 1.0 / example.CONTROL_HZ)
 
     deadline = time.monotonic() + 5.0
     got: list[bytes] = []
@@ -163,7 +164,7 @@ def test_the_examples_declared_camera_matches_the_frames_it_renders():
             break
         time.sleep(0.005)
     assert got, "the declared camera never accepted the example's own frame"
-    assert got[-1] == frame.tobytes()
+    assert got[-1] == expected.tobytes()
 
 
 def test_the_examples_loop_publishes_frames_and_reports_proprio(tmp_path):

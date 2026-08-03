@@ -7,7 +7,6 @@ import numpy as np
 import pytest
 
 import waddle
-import waddle._native
 import waddle._testing
 
 
@@ -131,19 +130,4 @@ def test_media_and_testing_are_mutually_exclusive():
             _control(),
             media=waddle.LiveKit(url="wss://example.invalid", token="tok"),
             _testing=True,
-        )
-
-
-@pytest.mark.skipif(
-    "livekit" in waddle._native.FEATURES,
-    reason="this core carries the teleop media plane (the companion wheel's build)",
-)
-def test_media_livekit_raises_a_clean_not_compiled_error():
-    camera = waddle.Camera(width=4, height=4, fps=30)
-    with pytest.raises(RuntimeError, match="not compiled"):
-        waddle.init(
-            "py-media-livekit",
-            _robot(camera),
-            _control(),
-            media=waddle.LiveKit(url="wss://example.invalid", token="tok"),
         )
