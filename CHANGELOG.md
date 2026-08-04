@@ -45,7 +45,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     modules that do declare one (wxyz pinned, all four conversion branches
     tested).
   - **The e-stop latch and the one human path out of it**: `estop_all` (every
-    part gets the call even if an earlier one raised), `latched_parts`,
+    part gets the call even if an earlier one raised), `close_all` (the same
+    doctrine for dropping connections, with the opposite ending: a close that
+    fails is REPORTED, never raised, because closing runs while something else
+    is already unwinding and an exception here would replace the reason it is),
+    `latched_parts`,
     `ParkGate`, `apply_console_gesture` / `start_console_recovery` — a `resume`
     typed at a foreground TTY, never the wire (`VERB_RESUME` releases a *hold*)
     and never the next episode's reset. `scene_reset` is the default pre-reset
@@ -157,7 +161,20 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     the only exit restores the gains snapshotted at connect — or refuses,
     because a made-up kp is how an arm slams. The gripper range is passed on
     every connect rather than discovered: building without it runs an
-    auto-calibration that physically drives the jaws.
+    auto-calibration that physically drives the jaws. It reads defensively in
+    one direction only: an absent velocity is reported as zero because the wire
+    has no "unknown" for one, and an absent POSITION is a fault — the hand
+    included, since this module declares it as a joint row rather than a
+    sidechannel. A fabricated 0.0 there would be recorded as a measured closed
+    hand, and it is the number the envelope measures the next command's
+    per-step cap against, so guessing it would let a large uncommanded jaw
+    motion through the check that exists to refuse one.
+  - **A refusal never leaves an arm open.** The bus is already up by the time
+    anything can refuse (an arm that reports a different DOF than this module
+    declares), and a constructor that raises hands its caller an exception
+    rather than a driver — so the handle it opened is closed before the refusal
+    propagates, or the vendor's own ~1 kHz server thread keeps re-sending the
+    last setpoint to an arm nothing can reach.
   - **The vendor package is a documented command, not a dependency.** It is
     imported lazily inside `__init__`, so importing `waddle.robots.yam` on a
     machine that has never seen a YAM is an ordinary import; asking for a live
@@ -182,7 +199,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     speeds, part and frame names, twin homes) are named as choices where they
     are written down. The per-step cap the envelope enforces is DERIVED from
     the declared speed and rate, so the number a teleoperator reads off the
-    declaration and the number that refuses a jump cannot disagree.
+    declaration and the number that refuses a jump cannot disagree. Arms open
+    one at a time, so `arms()` can fail with some of them already connected —
+    and it closes those before it re-raises: half a rig is not a rig, the
+    caller is holding no handle to close them with, and on metal they would
+    otherwise stay energized under the vendor's own re-send. The exception that
+    started the unwind is still the one the caller sees.
   - **Two things are opt-in, and both say what opting out costs.** Forward
     kinematics: `fk=None` is a legal rig that reports joint positions only,
     and a workspace box — a statement about a TCP — is then refused rather
