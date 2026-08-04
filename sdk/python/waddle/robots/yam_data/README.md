@@ -63,7 +63,17 @@ wheel's.
      strict parsers — Python's stdlib `xml.etree` among them, which is what
      the fact gate reads it with, and what a customer handed this as
      `kinematics_urdf` is likely to reach for. Lenient parsers accepted it,
-     which is why it survived.
+     which is why it survived;
+   - two pointers that resolved only in that repo are gone from the patch-2
+     comments: a task-tracker label on the correction, and the path of the
+     FK-agreement check that caught it. *What* the correction was is still
+     stated, in the header and again at `grasp_joint`; only the places a
+     reader of this wheel could not open have been dropped.
+
+Everything in this directory ships to everyone who installs the SDK, comments
+included, so the rule behind that last item is the general one:
+`sdk/tests/test_yam_facts.py` refuses an internal task label or an
+unreachable source path anywhere in these files. Re-vendoring re-applies it.
 
 ## Re-vendoring
 

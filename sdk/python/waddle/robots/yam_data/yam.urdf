@@ -11,9 +11,9 @@
     2. Appended a fixed TCP frame: link "grasp_link" plus a fixed joint
        "grasp_joint" (parent link_6, origin xyz="0 0 0.1347" rpy="0 0 -1.5708"),
        mirroring the MuJoCo Menagerie grasp_site (pos "0 0 0.1347",
-       quat "1 0 0 -1" in link_6). (Task B3: corrected from an initial
+       quat "1 0 0 -1" in link_6). Corrected from an initial
        rpy="-1.5708 0 0" — a rotation about the wrong axis; see the inline
-       comment at grasp_joint below.)
+       comment at grasp_joint below.
     3. link_6 visual/collision meshes backfilled from upstream commit
        d4efb66d81bd8bde42909880b16591d4af82e8c0 (absent at pinned HEAD
        commit); shape may lag a hardware redesign - re-vendor when upstream
@@ -251,12 +251,11 @@
        (pos "0 0 0.1347", quat "1 0 0 -1" in link_6). quat "1 0 0 -1" is
        MuJoCo wxyz -> a -90deg rotation about link_6's Z axis; rpy="0 0
        -1.5708" (yaw only) reproduces it (URDF rpy = Rz(yaw)*Ry(pitch)*Rx(roll)).
-       PATCH 2 FIX (Task B3): originally "rpy=\"-1.5708 0 0\"" (roll, i.e. a
+       PATCH 2 FIX: originally "rpy=\"-1.5708 0 0\"" (roll, i.e. a
        rotation about X): a mismatched axis that left grasp_link's ORIENTATION
        120deg off Menagerie's grasp_site despite an exactly-matching origin
-       (translation doesn't depend on rpy, so this was invisible until the
-       Pinocchio-vs-MuJoCo FK-agreement conformance check compared rotations:
-       conformance/test_sim_kinematic_consistency.py). -->
+       (translation doesn't depend on rpy, so this was invisible until an
+       FK-agreement check compared rotations rather than positions). -->
   <link name="grasp_link"/>
   <joint name="grasp_joint" type="fixed">
     <parent link="link_6"/>

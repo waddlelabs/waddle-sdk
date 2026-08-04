@@ -31,12 +31,14 @@ the intersection cannot silently become "whatever the URDF says".
 
 from __future__ import annotations
 
+import re
 import xml.etree.ElementTree as ET
 from importlib.resources import files
 
 import numpy as np
 import pytest
 
+from waddle import descriptors
 from waddle.robots import base, yam
 
 # A nanometre / nanoradian. The CAD export leaves dust as large as 1.2e-13 in
@@ -46,6 +48,18 @@ from waddle.robots import base, yam
 EXACT = 1e-9
 
 DATA = files("waddle.robots") / "yam_data"
+
+#: Pointers that resolve only inside the repository this snapshot was patched
+#: in. `test_the_shipped_data_points_only_at_what_a_wheel_holder_can_open`
+#: refuses both classes; the data README's "patch 4" is the same rule applied
+#: by hand, and this is what keeps the next re-vendor to it.
+INTERNAL_POINTERS = (
+    # a label from a task tracker nobody outside that repo can read
+    re.compile(r"\bTask [A-Z]\d\b"),
+    # a source path under it — the wheel ships no `conformance/` tree, and
+    # neither does the repository this wheel is built from
+    re.compile(r"\bconformance/\S+\.py\b"),
+)
 
 
 def _urdf_joints() -> dict[str, ET.Element]:
@@ -129,6 +143,27 @@ def test_the_model_ships_as_text_with_no_meshes():
         "the data README must say the meshes are absent — an unresolved "
         "mesh reference is otherwise read as a broken file"
     )
+
+
+def test_the_shipped_data_points_only_at_what_a_wheel_holder_can_open():
+    """Everything in this directory ships, comments included.
+
+    A vendored file is read by somebody who has the wheel and the public
+    repo and nothing else: the vendor's repository, the pinned commit, the
+    files beside it and this SDK's own modules all resolve for them. A task
+    label or a source path from the repository the snapshot was patched in
+    resolves for nobody, and comments in vendored data are exactly where
+    such a pointer survives, because nothing else ever reads them.
+    """
+    for path in DATA.iterdir():
+        text = path.read_text(encoding="utf-8")
+        for pattern in INTERNAL_POINTERS:
+            found = pattern.search(text)
+            assert found is None, (
+                f"{path.name} names {found.group(0)!r}, which resolves only "
+                f"inside the repository this snapshot was patched in — say "
+                f"WHAT the patch was, never where its ticket or its test lives"
+            )
 
 
 # ---------------------------------------------------------------------------
