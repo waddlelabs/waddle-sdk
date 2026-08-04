@@ -45,6 +45,9 @@ pub const WADDLE_STATUS_UTF8: i32 = -6;
 /// Maximum action width crossing the ABI per tick.
 pub const WADDLE_MAX_ACTION_DIMS: usize = 32;
 
+/// Buffer size for a part name crossing the ABI, NUL included.
+pub const WADDLE_MAX_PART_NAME: usize = 64;
+
 thread_local! {
     static LAST_ERROR: RefCell<String> = const { RefCell::new(String::new()) };
 }
@@ -92,8 +95,19 @@ pub struct WaddleEpisode {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct WaddleControl {
-    /// send(user_data, values, len, gripper_or_null)
-    pub send: Option<unsafe extern "C" fn(*mut c_void, *const f64, usize, *const f64) -> i32>,
+    /// send(user_data, values, len, gripper_or_null, part_or_null)
+    ///
+    /// `part` is the declared part this step addresses (`Action.part`, flag
+    /// `waddle.v0.parts`) as a NUL-terminated string, or NULL for the whole
+    /// declared space — which is every step on a declaration without parts.
+    /// When it is set, `values`/`len` are THAT part's rows in that part's
+    /// order, and the parts it does not name are commanded nothing this
+    /// step ("move this part, hold the rest"): a consumer that writes a
+    /// part-scoped row as the whole robot writes one arm's setpoint into
+    /// another's. The pointer is valid only for the duration of the call.
+    pub send: Option<
+        unsafe extern "C" fn(*mut c_void, *const f64, usize, *const f64, *const c_char) -> i32,
+    >,
     pub hold: Option<unsafe extern "C" fn(*mut c_void) -> i32>,
     pub resume: Option<unsafe extern "C" fn(*mut c_void) -> i32>,
     pub home: Option<unsafe extern "C" fn(*mut c_void) -> i32>,
@@ -130,6 +144,21 @@ pub struct WaddleGateResult {
     pub progress: f32,
     /// Provenance: 0 policy, 1 teleop, 2 agent, 3 custom.
     pub provenance: i32,
+    /// The declared part a Substitute/Blend addressed (`Action.part`, flag
+    /// `waddle.v0.parts`), NUL-terminated. EMPTY means the whole declared
+    /// space — every action on a declaration without parts, and every
+    /// whole-robot action on one with them. When it is set, `values` are
+    /// THAT part's rows: a consumer that dispatches them as the whole robot
+    /// writes one arm's setpoint into another's.
+    ///
+    /// Copied inline rather than pointed at: the name is owned by the
+    /// decision, which this call returns by value and then drops.
+    pub part: [c_char; WADDLE_MAX_PART_NAME],
+    /// The part name's true length in bytes, which is 0 for the whole robot.
+    /// `>= WADDLE_MAX_PART_NAME` means the name did not fit and `part` holds
+    /// a PREFIX: never match a prefix against your declaration (two parts
+    /// can share one) and never dispatch that tick as whole-robot — hold.
+    pub part_len: usize,
 }
 
 struct UserData(*mut c_void);
@@ -161,10 +190,34 @@ fn registry_from(control: &WaddleControl) -> ControlRegistry {
                     let g_ptr = gripper
                         .as_ref()
                         .map_or(std::ptr::null(), std::ptr::from_ref);
+                    // One allocation per part-scoped step, on the verb
+                    // dispatch thread — never the gate's. A name that cannot
+                    // cross as a C string fails the verb rather than crossing
+                    // as NULL, which would report one part's rows as the
+                    // whole robot's.
+                    let part = step
+                        .part
+                        .as_deref()
+                        .map(std::ffi::CString::new)
+                        .transpose()
+                        .map_err(|_| {
+                            VerbError::Failed(
+                                "part name contains an interior NUL and cannot cross the C ABI"
+                                    .to_owned(),
+                            )
+                        })?;
+                    let part_ptr = part.as_ref().map_or(std::ptr::null(), |c| c.as_ptr());
                     // SAFETY: pointers are valid for the duration of the call;
                     // the callback contract is documented on WaddleControl.
-                    let rc =
-                        unsafe { send(user.get(), step.values.as_ptr(), step.values.len(), g_ptr) };
+                    let rc = unsafe {
+                        send(
+                            user.get(),
+                            step.values.as_ptr(),
+                            step.values.len(),
+                            g_ptr,
+                            part_ptr,
+                        )
+                    };
                     if rc != 0 {
                         return Err(VerbError::Failed(format!("send callback returned {rc}")));
                     }
@@ -369,6 +422,8 @@ pub unsafe extern "C" fn waddle_gate(
         result.gripper = 0.0;
         result.progress = 1.0;
         result.provenance = 0;
+        result.part = [0; WADDLE_MAX_PART_NAME];
+        result.part_len = 0;
 
         use waddle_gate::gate::GateOutput;
         let mut fill = |action: &waddle_gate::gate::OwnedAction| {
@@ -378,6 +433,17 @@ pub unsafe extern "C" fn waddle_gate(
             if let Some(g) = action.gripper {
                 result.has_gripper = true;
                 result.gripper = g;
+            }
+            // The part tag rides the decision the same way: copied in, with
+            // the true length reported so a truncation is detectable rather
+            // than silently answering to another part's name.
+            if let Some(part) = action.part.as_deref() {
+                let bytes = part.as_bytes();
+                result.part_len = bytes.len();
+                let n = bytes.len().min(WADDLE_MAX_PART_NAME - 1);
+                for (slot, byte) in result.part[..n].iter_mut().zip(bytes) {
+                    *slot = *byte as c_char;
+                }
             }
         };
         match output {

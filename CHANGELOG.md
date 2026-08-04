@@ -277,6 +277,16 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     running the core's own intake. A whole-robot push on a `Composite`
     declaration is marshalled into the `CompositeAction` the wire requires,
     split by the same declared layout the returns are keyed by.
+  - **waddle-core (`waddle-ffi`), the C ABI names the part too** (ABI
+    UNSTABLE, N5): `WaddleGateResult` gains `part` (an inline NUL-terminated
+    buffer, `WADDLE_MAX_PART_NAME`) and `part_len`, and the `send` callback
+    takes a fifth argument, `part_or_null`. Both are source-breaking for C
+    consumers, deliberately: without them a part-scoped substitute crossed as
+    a bare 7-wide vector that a 14-row cell can only read as the whole robot,
+    which is one arm's setpoint written into the other's. `part_len` reports
+    the name's true length so a truncated name is detectable rather than
+    silently answering to another part's; a name that cannot cross as a C
+    string fails the verb rather than crossing as NULL.
 - **waddle-protocol/waddle-core (agent-invited episodes, new feature flag
   `waddle.v0.agent`)**: a customer can now ask Waddle to drive an episode
   rather than driving it themselves — `Session::run_agent(prompt, timeout_ns,
