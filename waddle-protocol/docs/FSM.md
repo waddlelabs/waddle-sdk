@@ -256,7 +256,7 @@ as before. Fixture: `agent_invite_clutch_denied`.
 ## 3. Lease machine
 
 States: `Vacant` | `Held{lease_id, holder_client_id}`. Adopted from the
-production single-writer broker; enforcement point per N7
+production single-writer arbiter; enforcement point per N7
 (`LeaseEnforcement`).
 
 | # | From | Event | Guard | To | Result | Fixture |
@@ -281,6 +281,24 @@ HOLD_FIRST handoffs and the implementation runs dual-write detection during
 bypass: sustained divergence between commanded trajectory and proprioception
 ⇒ `request_verb{HOLD}` + `DualWriteDetected` event with a persisted trace
 (`dual_write_detection`).
+
+**Detection is per stream of content, and a part is a stream** (flag
+`waddle.v0.parts`). Once a command can address one part (§4), "what the robot
+was last told" is one command PER PART, and the two sides of the comparison
+must describe the same scope before they are compared at all. A
+`ProprioSample` naming a part answers to that part's own last command, or —
+for a part no part-scoped command has addressed — to the last whole-robot
+command's slice for it, which the declared part order defines. A whole-robot
+sample answers to the last whole-robot command, and answers to NOTHING while a
+part-scoped command supersedes part of it: an observation's layout is the
+customer's own, described by no declaration, so an implementation must never
+re-lay one out by declared action parts to make the comparison go through.
+Saying nothing is the correct outcome there; the flagged session reports
+proprioception per part, which is the comparable case
+(`bimanual_part_scoped_proprio_scoped_to_its_part`). Each part's divergence run
+also stands on its own, so a part arriving exactly where it was told can never
+reset — and so mask — the run of a part someone else is driving
+(`bimanual_part_scoped_dual_write_detected`).
 
 ---
 
@@ -319,6 +337,58 @@ that disagrees about the space is not a degraded-but-safe thing to actuate.
 That refusal is recorded the same way, in its own words. Either way the
 sender learns from the episode's own timeline what did not happen; a
 dropped action is never silent.
+
+### The intervention-chunk intake (flag `waddle.v0.agent`)
+
+An intervention chunk (`GateServerMessage.intervention_chunk`) is a whole
+trajectory the plane hands the session at once, rather than the one action per
+message a teleoperator's stream carries. Everything above applies to its steps
+unchanged; this subsection pins the four things that are the *intake's* and not
+the action's.
+
+**Admission is an active claim, and only that.** A chunk is buffered whenever a
+claim is active — not when the gate has reached INTERVENTION, and not on any
+`GateMode` match at all, which is the same gate the teleoperator stream is
+admitted on. So a chunk arriving during the ENGAGE handoff (claim granted, lease
+not yet moved, gate still PASSTHROUGH) buffers and is ready the instant the
+handoff completes; nothing actuates early, because the buffer decides playout and
+the gate is not yet consuming it. Anything stricter would make a well-behaved
+sender's opening chunk depend on winning a race against the hold verb
+(`agent_chunk_buffers_during_engage_handoff`).
+
+**With no claim there is nobody to buffer for.** The chunk is dropped outright,
+and dropped SILENTLY — no `Fault`, nothing on the episode's timeline. This is the
+one drop §4 does not report, and the distinction is deliberate: the refusals
+above are told to a sender that disagrees about the declared space, and an
+unclaimed sender has made no such mistake. The drop is also real rather than
+deferred — an unclaimed chunk never survives into the next claim window, where it
+would actuate a stale command under a claimant who never sent it
+(`agent_chunk_dropped_without_a_claim`).
+
+**The playout anchor is receive time.** Each step is due at the time the chunk
+ARRIVED plus that step's own `t_offset_ns`; the chunk is a trajectory over time,
+never a burst to be drained on the next tick. The sender's own `t_emitted_ns` is
+explicitly NOT the anchor: it is session-timeline by `VERSIONING.md` §7 rather
+than an operator clock, but nothing makes a remote sender's stamp usable as an
+absolute anchor on this side, and a chunk delayed in transit would otherwise
+arrive with its whole horizon already overdue. `t_emitted_ns` and `seq` ride
+along for one purpose only — letting the buffer see a chunk boundary and apply
+the declared `ChunkingSemantics.replan` (`agent_chunk_step_offsets_play_out`).
+
+**A refusal is owed once per reason per claim window, and the window is an
+identity.** The refusal shapes above ("this chunk does not fit the declared
+space", "this width is wrong", "these steps carry nothing to dispatch") are
+independent facts, and a sender is owed each of them once — a sender making one
+mistake usually makes it repeatedly, and one fault per packet at stream rate
+would bury the timeline. What "once per window" is keyed to is the WINDOW'S
+IDENTITY, never a holder noticing a window shut: a retake hands the window over
+with no gap at all, and two windows that meet inside a gap nobody polls must not
+share one refusal. So after a claim releases and a successor engages, the same
+mistake is reported again — the successor never sent the first chunk, and a
+refusal it is never told about is one it cannot act on
+(`agent_chunk_refusals_latch_per_reason_and_window`). The rule is the intake's,
+not this arm's: the teleoperator stream's own dims refusal is keyed the same way
+(`teleop_dims_refusal_is_per_claim_window`).
 
 ### Part-scoped actions (flag `waddle.v0.parts`)
 
@@ -363,7 +433,8 @@ part-scoped action keeps its pre-flag meaning: flattened against the whole
 declared space, hence refused on any real multi-part robot (VERSIONING.md §3).
 
 Fixtures: `bimanual_part_scoped_substitute`, `bimanual_part_dims_mismatch_faults`,
-`bimanual_unknown_part_refused`.
+`bimanual_unknown_part_refused`,
+`bimanual_part_scoped_refused_without_the_flag` (the pre-flag reading above).
 
 ---
 
@@ -501,6 +572,15 @@ late caller ticks so the loop stays coherent as a spectator. The caller MUST
 NOT dispatch NOOP-marked actions. `GateModeChange{→BYPASS}` is emitted on
 entry and `{→INTERVENTION}` on exit when caller ticks resume. Fixture:
 `claimed_while_stalled`.
+
+This is the one path on which an intervention action reaches the robot without
+passing through `gate()`, so everything the gate's return would have carried
+about the action must ride the direct dispatch too. In particular a part-scoped
+action (§4, flag `waddle.v0.parts`) is dispatched carrying the part it
+addresses, exactly as a substitute would be tagged: without that, a stalled
+bimanual session's recording could not say which arm moved, and "the caller
+stalled" would silently cost the episode its part attribution
+(`bimanual_part_scoped_bypass_send`).
 
 ### Delta-space restriction
 
