@@ -23,11 +23,21 @@ brings their own send callable keeps it.
 from __future__ import annotations
 
 import threading
+import time
 
 import numpy as np
 import pytest
+from mcap.reader import make_reader
+from mcap_protobuf.decoder import DecoderFactory
 
+import waddle
 from waddle.robots import base
+
+
+@pytest.fixture(autouse=True)
+def _clean_session():
+    yield
+    waddle.shutdown()
 
 # How long a poll for another thread's work may run before the test gives up.
 # Never a deadline an assertion depends on: every wait below ends on an
@@ -602,3 +612,245 @@ def test_quaternion_wxyz_is_w_first_on_every_branch(rpy, expected):
     the conversion are pinned, not just the one a small rotation takes."""
     got = base.quaternion_wxyz(base.rpy_matrix(*rpy))
     assert list(got) == pytest.approx(list(expected), abs=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# Posture, and the rig that composes it
+# ---------------------------------------------------------------------------
+
+
+def test_a_posture_decides_which_verbs_are_registered_and_nothing_else():
+    """Grants are DERIVED from which verbs a session registers, so a monitor
+    posture says on the wire that nothing may command this robot — instead of
+    accepting motion it intends to drop. It adds no authority logic: who may
+    command a robot, when, and under what claim is unchanged either way."""
+    arms = {"toy": _arm()}
+
+    supervised = base.control(arms)
+    assert supervised.send is not None
+    assert supervised.hold is not None
+    assert supervised.estop is not None
+
+    monitor = base.control(arms, posture="monitor")
+    assert monitor.send is None
+    assert monitor.hold is None, "no send verb, nothing to stop sending"
+    assert monitor.estop is not None, "the owner's stop is registered either way"
+
+
+def test_a_monitor_posture_refuses_a_send_callable_instead_of_dropping_it():
+    with pytest.raises(ValueError, match="monitor"):
+        base.control({"toy": _arm()}, posture="monitor", send=lambda chunk: None)
+
+
+def test_the_registered_verbs_reach_every_arm():
+    arms = {"left": _arm(_CountingDriver(), part="left"),
+            "right": _arm(_CountingDriver(), part="right")}
+    verbs = base.control(arms, report=lambda line: None)
+
+    verbs.hold()
+    assert [arm.driver.holds for arm in arms.values()] == [1, 1]
+    verbs.estop()
+    assert base.latched_parts(arms) == ["left", "right"]
+
+
+def test_the_envelope_is_a_replaceable_default():
+    """Owner-side doctrine: what this layer ships is a default built out of
+    the owner's own numbers, never a wall. A customer's own send callable is
+    the whole envelope, and everything else here still applies."""
+    seen: list = []
+
+    def my_send(chunk) -> None:
+        seen.append(chunk)
+
+    arms = {"toy": _arm(_CountingDriver())}
+    verbs = base.control(arms, send=my_send)
+    assert verbs.send is my_send
+
+    class _Chunk:
+        # A target the shipped envelope would refuse outright.
+        steps = [(np.array([9.0, 9.0, 9.0]), None, 0)]
+
+    verbs.send(_Chunk())
+    assert len(seen) == 1
+    assert arms["toy"].rejected == 0, (
+        "the customer's callable IS the envelope — the default is replaced, not "
+        "consulted alongside it"
+    )
+
+
+def test_an_unknown_posture_is_refused_by_name():
+    with pytest.raises(ValueError, match="posture"):
+        base.control({"toy": _arm()}, posture="observe")
+
+
+# ---------------------------------------------------------------------------
+# The second-vendor bar: a toy vendor module, through the same base layer
+# ---------------------------------------------------------------------------
+#
+# Everything below the line is what a NEW vendor module contains: a facts
+# table, a driver (the shipped twin here — a real one wraps a vendor SDK), and
+# a factory. It is the template a customer copies, and it is a test rather
+# than a docs snippet because the claim it makes — "the base layer carries all
+# of the behaviour" — is only true while it keeps passing.
+
+TOY_FACTS = {
+    # The vendor's own numbers, with their provenance in the comment beside
+    # them in a real module. A toy crane: two arm joints and a hand.
+    "joints": ("boom", "stick", "grip"),
+    "limits": ((-1.0, 1.0), (-1.5, 1.5), (0.0, 1.0)),
+    "step_caps": (0.10, 0.10, 0.25),
+    "max_effort_nm": 4.0,
+    "rate_hz": 20.0,
+    "home": (0.0, 0.0, 1.0),
+}
+
+
+def toy_driver() -> base.SimDriver:
+    return base.SimDriver(
+        TOY_FACTS["home"],
+        lower=[lo for lo, _ in TOY_FACTS["limits"]],
+        upper=[hi for _, hi in TOY_FACTS["limits"]],
+        step_caps=TOY_FACTS["step_caps"],
+        rate_hz=TOY_FACTS["rate_hz"],
+    )
+
+
+def toy_crane(*, posture: str = "supervised") -> base.Rig:
+    """The whole of a second vendor module: declare the robot, say how to open
+    it, hand back a rig."""
+    space = waddle.JointSpace(
+        joints=[
+            waddle.Joint(name=name, min_position=lo, max_position=hi,
+                         max_effort=TOY_FACTS["max_effort_nm"])
+            for name, (lo, hi) in zip(TOY_FACTS["joints"], TOY_FACTS["limits"])
+        ],
+        rate_hz=TOY_FACTS["rate_hz"],
+        chunking=waddle.Chunking(horizon=1, replan="immediate", interp="hold"),
+    )
+
+    def build_arms() -> dict[str, base.Arm]:
+        return {
+            "": base.Arm(
+                part="",
+                driver=toy_driver(),
+                joint_names=TOY_FACTS["joints"],
+                joint_limits=TOY_FACTS["limits"],
+                step_caps=TOY_FACTS["step_caps"],
+                rate_hz=TOY_FACTS["rate_hz"],
+                home_values=TOY_FACTS["home"],
+            )
+        }
+
+    return base.Rig(
+        declaration=waddle.Robot(
+            name="toy-crane", robot_id="toy-crane-01", action_space=space
+        ),
+        build_arms=build_arms,
+        rate_hz=TOY_FACTS["rate_hz"],
+        posture=posture,
+    )
+
+
+# --------------------------- end of the toy vendor -------------------------
+
+
+def _observations(mcap_path):
+    """Every decoded `/waddle/observations` message, via the channel's own
+    embedded schema — the same read any external MCAP consumer would do."""
+    with open(mcap_path, "rb") as f:
+        reader = make_reader(f, decoder_factories=[DecoderFactory()])
+        return [
+            msg
+            for _, channel, _, msg in reader.iter_decoded_messages()
+            if channel.topic == "/waddle/observations"
+        ]
+
+
+def test_a_rig_is_a_declaration_until_it_is_asked_for_arms():
+    """A factory call opens no bus and starts no thread, so it is cheap,
+    testable, and safe to make in a program that then decides not to run."""
+    opened: list[int] = []
+
+    def build_arms() -> dict[str, base.Arm]:
+        opened.append(1)
+        return {"toy": _arm()}
+
+    rig = base.Rig(
+        declaration=toy_crane().robot(), build_arms=build_arms, rate_hz=RATE_HZ
+    )
+    assert opened == []
+    assert rig.arms().keys() == {"toy"}
+    assert opened == [1]
+
+
+def test_a_monitor_rig_declares_no_way_to_command_it():
+    rig = toy_crane(posture="monitor")
+    assert rig.control(rig.arms()).send is None
+
+
+def test_a_second_vendor_rides_the_base_layer_end_to_end(tmp_path):
+    """The bar every robot module has to clear: a facts table, a driver and a
+    factory, composed by hand out of the pieces above — declaration, arms,
+    verbs, scene reset, loop — and driven through a real session with no
+    vendor-specific code in `base` to help it.
+
+    What it proves, in one run: the declaration registers; the pump reports
+    the sole part into the episode's own recording; the envelope admits the
+    policy's commands and counts them; and a part with no forward kinematics
+    lands as joint positions with no TCP rather than a pose nobody declared."""
+    rig = toy_crane()
+    arms = rig.arms()
+    session = waddle.init(
+        "toy-vendor-smoke",
+        rig.robot(),
+        rig.control(arms),
+        recording_dir=tmp_path,
+        pre_reset=rig.pre_reset(arms),
+    )
+
+    # The pump is usable alone: it runs the tick it is handed, and this one
+    # counts the reports that landed while an episode was open. `inside` is
+    # read BEFORE the report, so a tick it counts is one that was recorded —
+    # the wait below then ends on that happens-before rather than on a clock.
+    inner = base.proprio_tick(session, arms)
+    in_episode = threading.Event()
+    reported_in_episode = threading.Event()
+
+    def tick(dt: float) -> None:
+        inside = in_episode.is_set()
+        inner(dt)
+        if inside:
+            reported_in_episode.set()
+
+    pump = base.RobotPump(tick, rig.rate_hz)
+    pump.start()
+    try:
+        with waddle.rollout(task="raise the boom") as ep:
+            episode_id = ep.id
+            in_episode.set()
+            for _ in range(10):
+                position = arms[""].state()[0]
+                action = position + np.array([0.05, 0.0, 0.0])
+                decided = ep.gate(action, position)
+                if decided is not None:
+                    base.apply_decision(arms, decided)
+                time.sleep(0.005)
+            assert reported_in_episode.wait(PATIENCE_S), "the pump never reported"
+            ep.terminate("success")
+    finally:
+        pump.stop()
+        waddle.shutdown()
+        for arm in arms.values():
+            arm.close()
+
+    assert arms[""].accepted == 10, "every command was inside the declared envelope"
+    assert arms[""].rejected == 0
+
+    samples = [o.proprio for o in _observations(tmp_path / f"{episode_id}.mcap")]
+    assert {s.part for s in samples} == {""}, "a sole-part robot reports under ''"
+    from_the_pump = [s for s in samples if len(s.joint_vel) == len(TOY_FACTS["joints"])]
+    assert from_the_pump, "no per-part sample carried the pump's velocities"
+    assert not any(s.HasField("ee_pose") for s in samples), (
+        "this rig declared no forward kinematics, so it reports joint positions "
+        "and no TCP — the degradation is named, never filled in"
+    )

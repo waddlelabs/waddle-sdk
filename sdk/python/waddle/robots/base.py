@@ -47,14 +47,19 @@ from typing import Protocol, runtime_checkable
 
 import numpy as np
 
+from .. import Control
+from ..descriptors import Robot
+
 __all__ = [
     "Arm",
     "Driver",
     "PARK_WORD",
     "PARK_WORDS",
+    "POSTURES",
     "ParkGate",
     "RESUME_WORDS",
     "RejectLog",
+    "Rig",
     "RobotPump",
     "SimDriver",
     "apply_console_gesture",
@@ -63,6 +68,7 @@ __all__ = [
     "chunk_sender",
     "closing_drops_torque",
     "console_is_at_the_machine",
+    "control",
     "estop_all",
     "hold_all",
     "latched_parts",
@@ -1036,3 +1042,146 @@ class RobotPump(threading.Thread):
     def stop(self, timeout: float = 5.0) -> None:
         self._stopping.set()
         self.join(timeout=timeout)
+
+
+# ---------------------------------------------------------------------------
+# Composition: what a vendor's factory hands back
+# ---------------------------------------------------------------------------
+
+#: How a session is POSTURED, and the only thing the choice touches: which
+#: control verbs the session registers, and therefore which grants Waddle
+#: plans against.
+#:
+#: ``"monitor"``
+#:     Nothing may command this robot. One verb — the owner's stop — is
+#:     registered, so the session says on the wire that it accepts no motion
+#:     rather than accepting motion it intends to drop. This is bring-up stage
+#:     one, and it is a property of the declaration rather than of a flag
+#:     somebody remembered to check. (No ``hold`` either: "stop sending" is
+#:     meaningless to a session nobody may send to.)
+#: ``"supervised"``
+#:     ``send``, ``hold`` and ``estop``: the ordinary posture, in which a
+#:     teleoperator, a reset agent or a Waddle-hosted agent can drive this
+#:     robot through the owner's envelope.
+#:
+#: A posture is NOT an authority decision and adds none: who may command a
+#: robot, when, and under what claim is waddle-core's, unchanged either way.
+#: Whether a rollout is agent-driven or windowed stays a call-site choice —
+#: `waddle.agent()` versus `waddle.rollout()` — never a construction one.
+POSTURES = ("monitor", "supervised")
+
+
+def control(
+    arms: Mapping[str, Arm],
+    *,
+    posture: str = "supervised",
+    send: Callable[[object], None] | None = None,
+    estop_hardware: bool = False,
+    estop_latency_bound_ms: float | None = None,
+    report: Callable[[str], None] = status,
+) -> Control:
+    """Build the `waddle.Control` over these arms for one posture.
+
+    ``send`` REPLACES the default envelope-crossing sender
+    (:func:`chunk_sender`) — the whole envelope, since that callable is where
+    it lives. Waddle never provides the envelope; what this layer ships is a
+    default built from the owner's own numbers, and a customer who wants
+    different arithmetic passes their own callable here and keeps the twin,
+    the latch, the loop and the console recovery."""
+    if posture not in POSTURES:
+        raise ValueError(f"posture={posture!r}: expected one of {', '.join(POSTURES)}")
+
+    def estop() -> None:
+        estop_all(arms, report=report)
+
+    if posture == "monitor":
+        if send is not None:
+            raise ValueError(
+                "posture='monitor' registers no send verb — nothing may command "
+                "this robot — so a send callable here would be declared and never "
+                "used; pass posture='supervised' if this session may be driven"
+            )
+        return Control(
+            estop=estop,
+            estop_hardware=estop_hardware,
+            estop_latency_bound_ms=estop_latency_bound_ms,
+        )
+    return Control(
+        send=send if send is not None else chunk_sender(arms, report=report),
+        hold=lambda: hold_all(arms),
+        estop=estop,
+        estop_hardware=estop_hardware,
+        estop_latency_bound_ms=estop_latency_bound_ms,
+    )
+
+
+@dataclass(frozen=True)
+class Rig:
+    """One robot module's finished product: a declaration, a way to open the
+    arms behind it, and the rate they run at.
+
+    A rig is DECLARATION ONLY until you ask it for arms — constructing one
+    opens no bus and starts no thread, so a factory call is cheap, testable,
+    and safe to make in a program that then decides not to run. `arms()` is
+    where hardware opens, and where a failure to open it lands.
+
+    Every piece is separately usable, which is the point of the layering:
+
+    * ``rig.robot()`` is the `waddle.Robot` — hand it to `waddle.init`
+      yourself and none of the rest of this module is involved;
+    * ``rig.arms()`` builds the arms, each with the owner's envelope on it;
+    * ``rig.control(arms)`` maps the posture onto verbs (and takes your own
+      ``send=`` if the default envelope is not the arithmetic you want);
+    * ``rig.pre_reset(arms)`` is the default scene reset — pass your own
+      callable to `waddle.init` instead if your scene has more to it;
+    * ``rig.pump(session, arms)`` is the reporting loop, and
+      :class:`RobotPump` runs any tick you write instead."""
+
+    declaration: Robot
+    build_arms: Callable[[], dict[str, Arm]]
+    rate_hz: float
+    posture: str = "supervised"
+    estop_hardware: bool = False
+    report: Callable[[str], None] = status
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.declaration, Robot):
+            raise TypeError("Rig.declaration must be a waddle.Robot")
+        if self.posture not in POSTURES:
+            raise ValueError(
+                f"posture={self.posture!r}: expected one of {', '.join(POSTURES)}"
+            )
+        if self.rate_hz <= 0:
+            raise ValueError("Rig.rate_hz must be > 0")
+
+    def robot(self) -> Robot:
+        """The declaration this rig registers — the same object a vendor
+        module's ``declaration()`` hands back for a hand-wired
+        `waddle.init`."""
+        return self.declaration
+
+    def arms(self) -> dict[str, Arm]:
+        """Open the drivers and build one :class:`Arm` per declared part. The
+        hardware opens HERE."""
+        return self.build_arms()
+
+    def control(
+        self, arms: Mapping[str, Arm], *, send: Callable[[object], None] | None = None
+    ) -> Control:
+        """This rig's posture as `waddle.Control` verbs (see :func:`control`)."""
+        return control(
+            arms,
+            posture=self.posture,
+            send=send,
+            estop_hardware=self.estop_hardware,
+            report=self.report,
+        )
+
+    def pre_reset(self, arms: Mapping[str, Arm]) -> Callable[[str], bool]:
+        """The default scene reset over these arms (see :func:`scene_reset`)."""
+        return scene_reset(arms, report=self.report)
+
+    def pump(self, session, arms: Mapping[str, Arm]) -> RobotPump:
+        """A :class:`RobotPump` reporting every part of these arms at this
+        rig's declared rate. Not started."""
+        return RobotPump(proprio_tick(session, arms), self.rate_hz)
