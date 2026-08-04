@@ -27,8 +27,13 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     the pre-flag behavior is defined and legible — a part-scoped action
     flattens against the whole space and the chunk is refused with
     `Fault{FAULT_KIND_VALIDATION_ERROR}` — and §3 forbids a plane planning
-    against behavior a connection did not declare. Local MCAP recording is not
-    connection-scoped and always records `part`; media-plane part routing
+    against behavior a connection did not declare. The row defines the pre-flag
+    behavior in BOTH directions, so neither is left to an implementation: on a
+    connection without the flag, per-part proprio is withheld from the uplink
+    entirely rather than relabeled `""`, which would put one arm's joint vector
+    on the wire as the whole robot's and let parts overwrite each other.
+    Local MCAP recording is not connection-scoped and always records `part`
+    (withholding is an uplink rule, never a recording one); media-plane part routing
     (`PartTarget.part`, `ClutchTransition.part`) is explicitly NOT gated here
     and remains unimplemented in v0.
   - **GLOSSARY.md** gains **part**: a named sub-space of a `Composite`
