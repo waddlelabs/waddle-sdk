@@ -1,0 +1,68 @@
+{
+  "format": "waddle.behavior/v0",
+  "name": "bimanual_part_dims_mismatch_faults",
+  "description": "Pins that a part-scoped action's width is validated against THAT PART's declared space, not the composite's (docs/FSM.md §4, flag waddle.v0.parts): a chunk addressing 'left' with 6 values is a dims mismatch against the part's 7, so the WHOLE chunk is refused — including its first, perfectly well-formed step, which is the point: a partial trajectory from a sender that disagrees about the space is not a degraded-but-safe thing to actuate. Nothing reaches the intervention stream (gate_tick holds), exactly one Fault{FAULT_KIND_VALIDATION_ERROR} naming the intake fires for the whole claim window however many mismatched chunks arrive, and a subsequent dims-correct part-scoped chunk still substitutes, proving validation never wedges the stream. Note the mismatch is only visible as a mismatch BECAUSE the part is honored: 6 values against the composite's 14 would fault too, but 7 — the value this scenario proves executable — would also have faulted before the flag. Judgment calls: HOLD_FIRST handoff so no blend window is open and the hold is the intake's refusal rather than §5's blend defense; ACTOR_KIND_AGENT claim on a non-invited episode (the intervention_chunk arm's v0 producer); the fault source is asserted as the chunk intake's own name, since FSM.md §4 requires the refusal to name the intake that dropped it.",
+  "target": "gate",
+  "requires_features": ["waddle.v0.core", "waddle.v0.agent", "waddle.v0.parts"],
+  "setup": {
+    "robot_fixture": "../wire/robot_description_bimanual_composite.json",
+    "lease_enforcement": "LEASE_ENFORCEMENT_ENFORCED",
+    "handoff": { "holdFirst": {} },
+    "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING"
+  },
+  "steps": [
+    { "inject": { "kind": "episode_open", "episode_id": "ep-bpd-0001", "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING" } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "reset_result", "result": { "ok": true, "strategy": "scripted_home", "verification": { "mode": "RESET_VERIFICATION_MODE_BLOCKING", "verified": true, "judgeId": "judge-reset", "judgeVersion": "2.1.0", "score": 0.96, "tNs": "100000000" } } } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_READY" } },
+
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "200000000", "action": { "composite": { "parts": [
+      { "name": "left", "action": { "jointPosition": { "values": [0.10, -0.40, 0.30, -1.20, 0.05, 0.90, 0.70] } } },
+      { "name": "right", "action": { "jointPosition": { "values": [-0.10, -0.40, 0.30, -1.20, -0.05, 0.90, 0.70] } } }
+    ] }, "tOffsetNs": "0" } } },
+    { "expect_output": { "kind": "pass" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RUNNING", "gate.mode": "GATE_MODE_PASSTHROUGH" } },
+
+    { "inject": { "kind": "claim_granted", "claim": { "claimId": "claim-bpd-0001", "episodeId": "ep-bpd-0001", "actor": { "kind": "ACTOR_KIND_AGENT", "id": "agent-waddle-1", "displayName": "Waddle agent" }, "sourceName": "waddle-agent", "selfInitiated": false, "tGrantedNs": "200000000", "handoff": { "holdFirst": {} }, "spaces": ["SPACE_KIND_JOINT_POSITION"] } } },
+    { "inject": { "kind": "engage", "claim_id": "claim-bpd-0001", "initiator": "ACTOR_KIND_AGENT" } },
+    { "advance_ns": "50000000" },
+    { "inject": { "kind": "verb_result", "result": { "ok": true, "detail": "hold complete, arms at rest", "tNs": "250000000" } } },
+    { "expect_emission": { "event": { "lease": { "kind": "LEASE_EVENT_KIND_HANDED_OFF" } }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_INTERVENTION", "gate.mode": "GATE_MODE_INTERVENTION" } },
+
+    { "advance_ns": "50000000" },
+    { "inject": { "kind": "intervention_chunk", "chunk": { "seq": "1", "sourceId": "agent-waddle-1", "tEmittedNs": "300000000", "tObsNs": "300000000", "horizonNs": "100000000", "provenance": { "kind": "PROVENANCE_KIND_AGENT", "actor": { "kind": "ACTOR_KIND_AGENT", "id": "agent-waddle-1" } }, "actions": [
+      { "tOffsetNs": "0", "part": "left", "jointPosition": { "values": [0.12, -0.38, 0.31, -1.18, 0.06, 0.91, 0.20] } },
+      { "tOffsetNs": "20000000", "part": "left", "jointPosition": { "values": [0.13, -0.37, 0.31, -1.17, 0.06, 0.91] } }
+    ] } } },
+    { "expect_emission": { "event": { "fault": { "kind": "FAULT_KIND_VALIDATION_ERROR", "source": "agent-chunk", "detail": "$nonempty" } }, "within_ns": "0" } },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "300000000", "action": { "composite": { "parts": [
+      { "name": "left", "action": { "jointPosition": { "values": [0.10, -0.40, 0.30, -1.20, 0.05, 0.90, 0.70] } } },
+      { "name": "right", "action": { "jointPosition": { "values": [-0.10, -0.40, 0.30, -1.20, -0.05, 0.90, 0.70] } } }
+    ] }, "tOffsetNs": "0" } } },
+    { "expect_output": { "kind": "hold" } },
+
+    { "advance_ns": "50000000" },
+    { "inject": { "kind": "intervention_chunk", "chunk": { "seq": "2", "sourceId": "agent-waddle-1", "tEmittedNs": "350000000", "tObsNs": "350000000", "horizonNs": "100000000", "provenance": { "kind": "PROVENANCE_KIND_AGENT", "actor": { "kind": "ACTOR_KIND_AGENT", "id": "agent-waddle-1" } }, "actions": [
+      { "tOffsetNs": "0", "part": "left", "jointPosition": { "values": [0.14, -0.36, 0.31, -1.16, 0.06] } }
+    ] } } },
+    { "expect_no_emission": { "event": { "fault": {} }, "within_ns": "0" } },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "350000000", "action": { "composite": { "parts": [
+      { "name": "left", "action": { "jointPosition": { "values": [0.10, -0.40, 0.30, -1.20, 0.05, 0.90, 0.70] } } },
+      { "name": "right", "action": { "jointPosition": { "values": [-0.10, -0.40, 0.30, -1.20, -0.05, 0.90, 0.70] } } }
+    ] }, "tOffsetNs": "0" } } },
+    { "expect_output": { "kind": "hold" } },
+
+    { "advance_ns": "50000000" },
+    { "inject": { "kind": "intervention_chunk", "chunk": { "seq": "3", "sourceId": "agent-waddle-1", "tEmittedNs": "400000000", "tObsNs": "400000000", "horizonNs": "100000000", "provenance": { "kind": "PROVENANCE_KIND_AGENT", "actor": { "kind": "ACTOR_KIND_AGENT", "id": "agent-waddle-1" } }, "actions": [
+      { "tOffsetNs": "0", "part": "left", "jointPosition": { "values": [0.15, -0.35, 0.31, -1.15, 0.06, 0.91, 0.20] } }
+    ] } } },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "400000000", "action": { "composite": { "parts": [
+      { "name": "left", "action": { "jointPosition": { "values": [0.10, -0.40, 0.30, -1.20, 0.05, 0.90, 0.70] } } },
+      { "name": "right", "action": { "jointPosition": { "values": [-0.10, -0.40, 0.30, -1.20, -0.05, 0.90, 0.70] } } }
+    ] }, "tOffsetNs": "0" } } },
+    { "expect_output": { "kind": "substitute", "part": "left", "provenance": { "kind": "PROVENANCE_KIND_AGENT" } } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_INTERVENTION", "gate.mode": "GATE_MODE_INTERVENTION" } }
+  ]
+}

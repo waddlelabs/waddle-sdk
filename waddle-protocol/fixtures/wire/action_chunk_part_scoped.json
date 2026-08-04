@@ -1,0 +1,39 @@
+{
+  "format": "waddle.fixture/v0",
+  "type": "waddle.v0.ActionChunk",
+  "description": "Part-addressed intervention chunk (flag waddle.v0.parts): three joint-position steps that address a single declared part of a Composite space by name — two 'left' waypoints then one 'right' — instead of a CompositeAction naming every part. Pins that Action.part is per step (one chunk may address different parts in different steps), that a part-scoped step's width is the ADDRESSED PART's width (7, against robot_description_bimanual_composite.json's 14-wide composite), and that the parts a step does not address carry no command at all ('move this part, hold the rest', docs/FSM.md §4). No gripper sidechannel rides these steps: the canonical bimanual declaration folds each gripper into its part's joint vector (GripperSpec.actionDim = -1), so the gripper IS the seventh value.",
+  "message": {
+    "actions": [
+      {
+        "jointPosition": {
+          "values": [0.12, -0.44, 0.31, 1.57, -0.2, 0.05, 0.73]
+        },
+        "tOffsetNs": "0",
+        "part": "left"
+      },
+      {
+        "jointPosition": {
+          "values": [0.13, -0.43, 0.3, 1.56, -0.21, 0.06, 0.74]
+        },
+        "tOffsetNs": "20000000",
+        "part": "left"
+      },
+      {
+        "jointPosition": {
+          "values": [-0.12, -0.44, 0.31, 1.57, 0.2, 0.05, 0.73]
+        },
+        "tOffsetNs": "40000000",
+        "part": "right"
+      }
+    ],
+    "horizonNs": "60000000",
+    "tEmittedNs": "3625400000000",
+    "tObsNs": "3625380000000",
+    "seq": "7",
+    "sourceId": "agent-waddle-1",
+    "provenance": {
+      "kind": "PROVENANCE_KIND_AGENT",
+      "actor": {"kind": "ACTOR_KIND_AGENT", "id": "agent-waddle-1"}
+    }
+  }
+}
