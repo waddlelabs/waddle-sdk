@@ -1075,8 +1075,26 @@ class RobotPump(threading.Thread):
 #:     registered, so the session says on the wire that it accepts no motion
 #:     rather than accepting motion it intends to drop. This is bring-up stage
 #:     one, and it is a property of the declaration rather than of a flag
-#:     somebody remembered to check. (No ``hold`` either: "stop sending" is
-#:     meaningless to a session nobody may send to.)
+#:     somebody remembered to check.
+#:
+#:     No ``hold`` either — and NOT because a hold would be meaningless:
+#:     ``VERB_HOLD`` is "freeze safely, hold position", which is exactly what
+#:     a hand-guided arm can honour. It is that waddle-core reads a registered
+#:     ``hold`` as a live engage path and refuses to build any session that
+#:     offers one with no ``send`` to follow it. A posture with no ``send``
+#:     therefore has no room for a ``hold``, and the owner's stop is the one
+#:     verb it offers the supervision side.
+#:
+#:     For the same reason a monitor session wires no MEDIA plane. The media
+#:     plane carries the teleoperator's stream as well as the video, so wiring
+#:     one IS an intervention path: `waddle.init(media=...)` — and
+#:     ``_testing=True``, which is that same plane in process — refuses a
+#:     session with no ``send`` verb, naming the verb rather than the posture.
+#:     Watching is undiminished: ``transport=`` uplinks proprioception and each
+#:     camera's declared low-rate stills over the CONTROL plane, and
+#:     ``recording_dir=`` keeps the full-rate archive locally. If a
+#:     teleoperator may take the machine over, that is ``posture="supervised"``
+#:     — choosing between the two is the whole of that decision.
 #: ``"supervised"``
 #:     ``send``, ``hold`` and ``estop``: the ordinary posture, in which a
 #:     teleoperator, a reset agent or a Waddle-hosted agent can drive this
@@ -1099,6 +1117,10 @@ def control(
     report: Callable[[str], None] = status,
 ) -> Control:
     """Build the `waddle.Control` over these arms for one posture.
+
+    ``posture`` is :data:`POSTURES`, which is also where what a ``monitor``
+    session may and may not be wired to is written down — the choice reaches
+    `waddle.init` as which verbs exist, and nothing else here reads it.
 
     ``send`` REPLACES the default envelope-crossing sender
     (:func:`chunk_sender`) — the whole envelope, since that callable is where

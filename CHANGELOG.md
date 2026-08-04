@@ -62,7 +62,13 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     maps to **verb presence only** (`monitor` registers the owner's stop alone,
     so the session declares that nothing may command this robot instead of
     accepting motion it intends to drop); it adds no authority logic, and
-    agent-driven versus windowed stays a call-site choice.
+    agent-driven versus windowed stays a call-site choice. What a `monitor`
+    session may be wired to follows from that and is documented where the
+    posture is: with no `send` verb it may register no `hold` either, and it
+    wires no media plane (the media plane carries the teleoperator's stream,
+    so wiring one is an intervention path waddle-core refuses without a
+    `send`) — watching rides `transport=` (proprioception + each camera's
+    declared low-rate stills) and `recording_dir=`.
   - **The second-vendor bar is a test**: `sdk/tests/test_robots_base.py` builds a
     toy vendor module (facts table + the shipped twin + one factory, ~30 lines),
     composes it by hand out of these pieces, and drives it end to end through a

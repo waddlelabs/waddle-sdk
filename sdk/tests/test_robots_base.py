@@ -849,6 +849,54 @@ def test_a_monitor_rig_declares_no_way_to_command_it():
     assert rig.control(rig.arms()).send is None
 
 
+def test_a_monitor_rig_opens_a_session_that_offers_only_the_owners_stop(tmp_path):
+    """A posture has to survive the thing it is for — a session, not just a
+    `Control`. What the wire is told is derived from which verbs exist, so the
+    whole grant list here is the owner's stop; and the program's own policy
+    still drives the robot through the gate, which is what makes "nothing may
+    command it" a statement about the SUPERVISION side rather than about the
+    machine."""
+    rig = toy_crane(posture="monitor")
+    arms = rig.arms()
+    verbs = rig.control(arms)
+    assert waddle._derive_grants(verbs, rig.robot().action_space) == [
+        {"verb": "VERB_ESTOP"}
+    ]
+
+    waddle.init("monitor-smoke", rig.robot(), verbs, recording_dir=tmp_path)
+    try:
+        with waddle.rollout(task="watch the crane") as ep:
+            position = arms[""].state()[0]
+            decided = ep.gate(position + np.array([0.05, 0.0, 0.0]), position)
+            assert decided is not None, "the program's own action still passes through"
+            base.apply_decision(arms, decided)
+            ep.terminate("success")
+    finally:
+        waddle.shutdown()
+
+    assert arms[""].accepted == 1 and arms[""].rejected == 0
+
+
+def test_a_monitor_session_may_not_wire_a_media_plane():
+    """The one wiring this posture cannot take, pinned so it is a decision
+    rather than a surprise at the rig.
+
+    The media plane carries the teleoperator's stream as well as the video, so
+    wiring one IS an intervention path, and waddle-core refuses a session that
+    would take motion it has no `send` verb to apply — `_testing=True` is that
+    same plane, in process. Watching is undiminished without it: `transport=`
+    uplinks proprioception and each camera's declared low-rate stills over the
+    control plane, and `recording_dir=` keeps the full-rate archive locally.
+    A session a teleoperator may take over is `posture="supervised"`.
+
+    The refusal is the core's and stays the core's: this layer maps a posture
+    to verb presence and to nothing else, so it does not grow a second copy of
+    an engage-path rule to phrase the message more kindly."""
+    rig = toy_crane(posture="monitor")
+    with pytest.raises(RuntimeError, match="hold"):
+        waddle.init("monitor-media", rig.robot(), rig.control(rig.arms()), _testing=True)
+
+
 def test_a_second_vendor_rides_the_base_layer_end_to_end(tmp_path):
     """The bar every robot module has to clear: a facts table, a driver and a
     factory, composed by hand out of the pieces above — declaration, arms,
