@@ -572,6 +572,7 @@ impl SessionBuilder {
         cfg.clutch_source = self.clutch_source.clone();
         let dims = robot.action_space.dims();
         let gripper_spec = robot.action_space.gripper.clone();
+        let part_names = declared_part_names(&robot.action_space);
 
         let (gate_shared, stream_tx) = GateShared::new(
             GatePlan::passthrough(MonoNs(0)),
@@ -627,6 +628,15 @@ impl SessionBuilder {
         // claim a behavior this session can never produce.
         if declares_stills {
             feature_flags.push(media_uplink::STILLS_FLAG.to_owned());
+        }
+        // Part-addressed control (`waddle.v0.parts`) follows the same rule as
+        // stills, for the same reason: it is declared from the ROBOT's own
+        // declaration, and only when the session can actually exhibit the
+        // behavior. A single-part robot has no part to address — `""` is the
+        // sole part and is already core — so declaring the flag would claim
+        // a behavior this session can never perform.
+        if !part_names.is_empty() {
+            feature_flags.push(pumps::PARTS_FLAG.to_owned());
         }
 
         let plane = self.transport.map(|t| {
@@ -903,6 +913,21 @@ fn missing_engage_verb(
         return Some("send");
     }
     None
+}
+
+/// The parts a declaration can address by name, in DECLARATION order (the
+/// normative order — GLOSSARY "part"). Empty for every space that declares
+/// none, which is what makes it the one condition behind both the
+/// `waddle.v0.parts` declaration and [`Session::report_proprio`]'s
+/// validation. `""` is never listed: it is the sole/default part, already
+/// core, and always legal.
+fn declared_part_names(space: &waddle_types::ActionSpace) -> Arc<[String]> {
+    match &space.spec {
+        waddle_types::SpaceSpec::Composite { parts } => {
+            parts.iter().map(|(name, _)| name.clone()).collect()
+        }
+        _ => Arc::from([]),
+    }
 }
 
 fn robot_digest(robot: &pb::RobotDescription) -> String {

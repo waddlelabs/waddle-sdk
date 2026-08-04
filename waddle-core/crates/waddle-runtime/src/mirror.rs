@@ -142,6 +142,17 @@ pub struct Status {
     /// which emits control-plane stills only while it is set — VERSIONING §3:
     /// a behavior the connection did not accept is never emitted.
     pub stills_negotiated: bool,
+    /// The CURRENT connection accepted `waddle.v0.parts` at Register.
+    /// Refreshed on every registration, exactly like `stills_negotiated`
+    /// (flags are (re-)negotiated on each reconnect), and read by two
+    /// threads that never see the `RegisterResponse` themselves: the plane
+    /// pump, which honors `Action.part` at the intervention-chunk intake
+    /// only while it is set, and the reducer, which uplinks a named
+    /// `ProprioSample.part` only while it is set (without it, named-part
+    /// samples are WITHHELD, never relabeled `""` — that would put one
+    /// part's joints on the wire as the whole robot's). Local recording is
+    /// not connection-scoped and always carries the part.
+    pub parts_negotiated: bool,
     pub shutdown: bool,
     /// Set once, at build time, when the session's `ControlRegistry` has no
     /// `estop` callable. Missing `estop` never fails the build (unlike

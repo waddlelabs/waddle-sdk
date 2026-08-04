@@ -118,12 +118,23 @@ fn dispatch_due_intervention(
             provenance: provenance.clone(),
             action: action.clone(),
         });
+        let OwnedAction {
+            values,
+            gripper,
+            part,
+        } = action;
         let chunk = ActionChunk {
             steps: vec![Step {
                 offset_ns: 0,
-                values: action.values,
-                gripper: action.gripper,
-                part: None,
+                values,
+                gripper,
+                // The part the intervenor addressed, carried through to the
+                // declared `send`: this pump is the ONLY path to the robot
+                // for a stalled caller (and for an agent-invited episode,
+                // whose caller never ticks), so dropping the tag here would
+                // hand a one-arm command to an integrator that can only read
+                // it as the whole robot's.
+                part,
             }],
             dims: if dims > 0 { dims } else { 0 },
             horizon_ns: 0,
@@ -597,7 +608,16 @@ pub(crate) fn spawn_plane_pump(
                             // `acks_negotiated` above.
                             let stills =
                                 resp.accepted_feature_flags.iter().any(|f| f == STILLS_FLAG);
-                            mirror.update(|s| s.stills_negotiated = stills);
+                            // Part-addressed control (`waddle.v0.parts`) is
+                            // read HERE (the chunk intake below) and by the
+                            // reducer (the observation uplink), so it too
+                            // crosses on the mirror rather than living in
+                            // this thread's locals.
+                            let parts = resp.accepted_feature_flags.iter().any(|f| f == PARTS_FLAG);
+                            mirror.update(|s| {
+                                s.stills_negotiated = stills;
+                                s.parts_negotiated = parts;
+                            });
                         }
                         if !was_connected {
                             was_connected = true;
@@ -661,6 +681,14 @@ fn ack_group(
 /// The `source` every agent-chunk intake fault is attributed to — a WIRE
 /// value a reader of the recording keys on, so it is named once here.
 const AGENT_CHUNK_SOURCE: &str = "agent-chunk";
+
+/// Part-addressed control (docs/VERSIONING.md registry): the flag under
+/// which `Action.part` is honored at the intervention-chunk intake below,
+/// and a named `ProprioSample.part` is emitted on the observation uplink.
+/// Named here, at the intake that negotiates it; `session.rs` declares it at
+/// Register (iff the declared space is `Composite`) and the reducer reads
+/// the negotiated answer off the mirror.
+pub(crate) const PARTS_FLAG: &str = "waddle.v0.parts";
 
 /// "Already faulted about this" guards for the agent-chunk intake, one per
 /// [`RejectReason`] and all reset when the claim window ends. A chunk
@@ -874,14 +902,24 @@ fn forward_server_msg(
             // side, so it is used only for the chunk-boundary/staleness
             // decision above, never for scheduling.
             Some(pb::gate_server_message::Msg::InterventionChunk(chunk)) => {
-                if !mirror.read().claim_active {
+                let status = mirror.read();
+                if !status.claim_active {
                     return;
                 }
                 let total = chunk.actions.len();
-                // `Action.part` is gated on `waddle.v0.parts`, which this
-                // intake does not negotiate yet, so the field keeps its
-                // pre-flag meaning: read against the whole declared space.
-                match ActionChunk::from_pb(&chunk, space, PartPolicy::Ignore) {
+                // `Action.part` is honored only on a connection that
+                // negotiated `waddle.v0.parts` at Register (VERSIONING §3: a
+                // plane must be able to tell "will execute" from "will
+                // fault" before it sends one). Without it the field keeps
+                // its pre-flag meaning — every action is read against the
+                // WHOLE declared space, so a part-scoped one is refused,
+                // deterministically, once per claim window.
+                let parts = if status.parts_negotiated {
+                    PartPolicy::Honor
+                } else {
+                    PartPolicy::Ignore
+                };
+                match ActionChunk::from_pb(&chunk, space, parts) {
                     Ok(flattened) => {
                         let action_chunk = flattened.chunk;
                         let meta = ChunkMeta {
@@ -899,12 +937,13 @@ fn forward_server_msg(
                                     action: OwnedAction {
                                         values: step.values.clone(),
                                         gripper: step.gripper,
-                                        // Always `None` while this intake
-                                        // reads chunks under
-                                        // `PartPolicy::Ignore` (above): a
-                                        // step is tagged only once the
-                                        // connection negotiates
-                                        // `waddle.v0.parts`.
+                                        // `Some` only under
+                                        // `PartPolicy::Honor` (above), where
+                                        // the tag was minted once, here on
+                                        // the intake thread — every clone
+                                        // from now on, including the ones
+                                        // the gate makes per tick, is an
+                                        // atomic increment.
                                         part: step.part.clone(),
                                     },
                                     chunk: Some(meta),

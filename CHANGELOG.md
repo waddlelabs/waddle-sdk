@@ -127,6 +127,25 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     action now carries its target's part tag, so the one-part `Composite`
     that legitimately cross-fades does not silently widen into a whole-robot
     command. FSM.md §4 and §5 state the scope rule.
+  - **waddle-core (`waddle-runtime`), the connection that negotiates it**: the
+    SDK declares `waddle.v0.parts` at Register **iff** the declared action
+    space is `Composite` (the `waddle.v0.obs.stills` rule — declare from the
+    robot's declaration, never claim a behavior this session cannot exhibit:
+    a single-part robot has no part to address, and `""` is already core).
+    The plane pump refreshes acceptance on every `Registered` (flags are
+    re-negotiated on each reconnect) onto `Status.parts_negotiated`, and the
+    intervention-chunk intake honors `Action.part` only while it is set —
+    without it the chunk is read against the whole declared space and refused
+    exactly as before, once per claim window, which is the behavior a plane
+    that did not negotiate the flag is entitled to plan against.
+  - **waddle-core (`waddle-runtime`), the dispatch and the row**: the part tag
+    rides from the intake through the gate to the declared `send` verb —
+    including the BYPASS/reset path, where the pump, not the caller's gate,
+    is what reaches the robot (and is the ONLY path an agent-invited episode
+    has). The `/waddle/actions` rows behind both name the part: a part-width
+    row is rebuilt against that part's space, where before it did not decode
+    against the whole space at all and the recording said the tick commanded
+    NOTHING when it commanded one arm.
 - **waddle-protocol/waddle-core (agent-invited episodes, new feature flag
   `waddle.v0.agent`)**: a customer can now ask Waddle to drive an episode
   rather than driving it themselves — `Session::run_agent(prompt, timeout_ns,

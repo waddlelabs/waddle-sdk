@@ -600,7 +600,11 @@ impl Reducer {
         let action = match unflatten_action(
             &dispatched.action.values,
             dispatched.action.gripper,
-            None,
+            // The part the dispatched action addressed. Without it a
+            // part-width row cannot decode against the whole declared space
+            // and falls into the `Err` arm below — a row saying this tick
+            // commanded NOTHING, when it commanded one arm.
+            dispatched.action.part.as_deref(),
             &self.space,
         ) {
             Ok(action) => vec![action],
@@ -706,7 +710,17 @@ impl Reducer {
         };
         let actions = match (rec.decision, &rec.action) {
             (GateDecision::Pass | GateDecision::Substitute | GateDecision::Blend, Some(action)) => {
-                match unflatten_action(&action.values, action.gripper, None, &self.space) {
+                // `action.part` names the one part a substituted/blended
+                // action commands (`None` for the caller's own passing
+                // action, which always commands the whole declared space):
+                // the row is rebuilt against THAT part's space and carries
+                // the name, or the recording claims the whole robot moved.
+                match unflatten_action(
+                    &action.values,
+                    action.gripper,
+                    action.part.as_deref(),
+                    &self.space,
+                ) {
                     Ok(action) => vec![action],
                     // An action left the gate but does not fit the declared
                     // space (e.g. a raw teleop stream ahead of closed-side
