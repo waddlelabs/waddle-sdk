@@ -241,6 +241,17 @@ top-level dirs; they are not built yet.
   (the ONE place that classifies), and every point a droppable message can queue —
   offline buffer and in-flight transport alike — must honor it; history is never
   shed.
+- **A negotiated flag belongs to one connection.** Feature flags are re-negotiated
+  at every Register and the client re-registers on every reconnect, so acceptance
+  never outlives the connection that gave it (VERSIONING §3). Two halves, both
+  required: producers read the current answer off `Status.*_negotiated`, which the
+  plane pump clears at every connection boundary; and
+  `ClientMsg::connection_scoped_flag` (waddle-controlplane, the ONE place that
+  classifies this) keeps a flag-scoped message off any connection that did not
+  accept its flag — filtered on the way out, and never buffered offline, since the
+  offline buffer replays onto the NEXT connection before it has said what it
+  accepts. Withholding such a message is not shedding history: the local recorder
+  keeps the full-rate archive.
 
 ## Working conventions
 

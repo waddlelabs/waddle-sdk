@@ -137,7 +137,28 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     intervention-chunk intake honors `Action.part` only while it is set —
     without it the chunk is read against the whole declared space and refused
     exactly as before, once per claim window, which is the behavior a plane
-    that did not negotiate the flag is entitled to plan against.
+    that did not negotiate the flag is entitled to plan against. Acceptance
+    is FORGOTTEN at every connection boundary — a dead connection has
+    accepted nothing, and a fresh one has accepted nothing until its own
+    `Registered` says so — which is what keeps the producers of flag-scoped
+    messages from carrying the last plane's answer across a partition (see
+    the `waddle-controlplane` entry below for the other half).
+  - **waddle-core (`waddle-controlplane`), a message may name the flag it
+    needs**: `ClientMsg::connection_scoped_flag` is the one place that
+    answers "is this message's content legal only under a negotiated flag?"
+    — a named `ProprioSample.part` (`waddle.v0.parts`), a `FrameStill`
+    (`waddle.v0.obs.stills`), a `DirectiveAck` (`waddle.v0.plane.acks`). Like
+    `is_droppable`, it binds at every point the message could escape the
+    connection that accepted it: such a message is filtered on the way out
+    against the CURRENT connection's `RegisterResponse`, and it never enters
+    the offline buffer, because that buffer replays onto the NEXT connection
+    — and replays right after Register, before that connection has said what
+    it accepts. Without this, a partition turned per-part proprioception
+    (non-droppable history, unlike a still) into a queue of one arm's joint
+    vectors that the reconnect handed to a plane which had just refused
+    `waddle.v0.parts`. Withholding is not data loss: the local recorder keeps
+    the full-rate archive, part and all. The flag names themselves now live
+    once, in `waddle_controlplane::flags`.
   - **waddle-core (`waddle-runtime`), the dispatch and the row**: the part tag
     rides from the intake through the gate to the declared `send` verb —
     including the BYPASS/reset path, where the pump, not the caller's gate,
@@ -173,6 +194,32 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     connection to have negotiated with, it honors `Action.part` from the
     same fact Register declares the flag from — whether the declared space
     has parts at all.
+  - **waddle-core (`waddle-runtime`), "once per claim window" means the
+    window**: `Status.claim_generation` is the claim window's identity — it
+    changes whenever the active claim changes, including a retake handing the
+    window to a different claimant with no gap at all — and every
+    once-per-claim-window fault guard is now a `WindowLatch` keyed to it
+    (the chunk intake's three reasons and the media intake's dims check).
+    The guards used to be reset by whoever happened to notice `claim_active`
+    go false, which nobody can promise: the plane pump polls every 20 ms, the
+    media intake polls per packet, and `push_intervention_chunk` has no loop
+    at all — it only ran when someone called it. Two claim windows meeting
+    inside any of those gaps carried the first window's guards into the
+    second, and the second sender's refusal was swallowed: a recording that
+    says a sender was never told, when it was.
+  - **sdk (`waddle-sdk`), `GateInfo.part`**: `episode.gate(...)` returns a
+    part-scoped substitute as that part's rows alone, so the Python surface
+    has to be able to say which part — otherwise one arm's 7 values arrive
+    indistinguishable from a 14-row whole-robot command, on the DEFAULT
+    (gRPC-enabled) wheel, for any customer whose declaration is `Composite`.
+    `last_gate.part` names it (`None` = the whole robot, which is every
+    action on a non-Composite declaration).
+    **Not yet closed, and a release gate:** the `send` path still hands the
+    customer's verb bare `(values, gripper, offset_ns)` step tuples with no
+    part, and the bypass pump — the only path an agent-invited episode takes
+    — dispatches through it. `waddle.v0.parts` must not ship to PyPI ahead of
+    the dict-by-part `Chunk.steps` surface; `sdk/tests/test_parts.py` carries
+    the statement of that gate.
 - **waddle-protocol/waddle-core (agent-invited episodes, new feature flag
   `waddle.v0.agent`)**: a customer can now ask Waddle to drive an episode
   rather than driving it themselves — `Session::run_agent(prompt, timeout_ns,
