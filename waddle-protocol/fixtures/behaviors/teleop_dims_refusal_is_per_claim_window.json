@@ -1,0 +1,61 @@
+{
+  "format": "waddle.behavior/v0",
+  "name": "teleop_dims_refusal_is_per_claim_window",
+  "description": "Extends teleop_dims_mismatch_holds across a claim boundary: 'at most once per claim window' is keyed to WHICH claim window is open, not to a one-shot the session never re-arms. A teleoperator whose packets flatten to the wrong width gets exactly one Fault{FAULT_KIND_VALIDATION_ERROR} inside the first claim's blend window (the second mismatched packet is silent), and after that claim releases and a second teleoperator engages, the same mistake in the new window is reported again — the successor never sent the first packet, and a refusal it is never told about is a refusal it cannot act on. Caller ticks return hold throughout: a mismatched packet is never dispatched. Judgment calls: IMMEDIATE{blendNs:300000000} for both claims so the mismatch lands inside an open blend window, which is the only point this harness can observe the gate's defense-in-depth check (the media intake's own unconditional check is covered by waddle-runtime's end-to-end suite), as in teleop_dims_mismatch_holds; the mismatched packets carry a single 'left' Twist (6 values against the declared 14); Fault.source is implementation-named, so it is asserted as $nonempty; part names come from the bimanual fixture.",
+  "target": "gate",
+  "requires_features": ["waddle.v0.core"],
+  "setup": {
+    "robot_fixture": "../wire/robot_description_bimanual_composite.json",
+    "lease_enforcement": "LEASE_ENFORCEMENT_ENFORCED",
+    "handoff": { "immediate": { "blendNs": "300000000" } },
+    "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING"
+  },
+  "steps": [
+    { "inject": { "kind": "episode_open", "episode_id": "ep-tdw-0001", "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING" } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "reset_result", "result": { "ok": true, "strategy": "scripted_home", "verification": { "mode": "RESET_VERIFICATION_MODE_BLOCKING", "verified": true, "judgeId": "judge-reset", "judgeVersion": "2.1.0", "score": 0.95, "tNs": "100000000" } } } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_READY" } },
+
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "200000000" } },
+    { "expect_output": { "kind": "pass" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RUNNING", "gate.mode": "GATE_MODE_PASSTHROUGH" } },
+
+    { "inject": { "kind": "claim_granted", "claim": { "claimId": "claim-tdw-0001", "episodeId": "ep-tdw-0001", "actor": { "kind": "ACTOR_KIND_TELEOPERATOR", "id": "top-7", "displayName": "Teleoperator 7" }, "sourceName": "teleop", "selfInitiated": false, "tGrantedNs": "200000000", "handoff": { "immediate": { "blendNs": "300000000" } }, "spaces": ["SPACE_KIND_EE_POSE_DELTA"] } } },
+    { "inject": { "kind": "engage", "claim_id": "claim-tdw-0001", "initiator": "ACTOR_KIND_TELEOPERATOR" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_INTERVENTION", "gate.mode": "GATE_MODE_INTERVENTION", "claim.active_claim_id": "claim-tdw-0001" } },
+
+    { "advance_ns": "10000000" },
+    { "inject": { "kind": "teleop_action", "packet": { "tClientNs": "42000000000", "seq": "1", "clutchEngaged": true, "targets": [
+      { "part": "left", "twist": { "linear": { "x": 0.006, "y": 0.0, "z": 0.0 }, "angular": { "x": 0.0, "y": 0.0, "z": 0.0 } } }
+    ] } } },
+    { "expect_emission": { "event": { "fault": { "kind": "FAULT_KIND_VALIDATION_ERROR", "source": "$nonempty" } }, "within_ns": "0" } },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "210000000" } },
+    { "expect_output": { "kind": "hold" } },
+
+    { "advance_ns": "10000000" },
+    { "inject": { "kind": "teleop_action", "packet": { "tClientNs": "42010000000", "seq": "2", "clutchEngaged": true, "targets": [
+      { "part": "left", "twist": { "linear": { "x": 0.006, "y": 0.001, "z": 0.0 }, "angular": { "x": 0.0, "y": 0.0, "z": 0.0 } } }
+    ] } } },
+    { "expect_no_emission": { "event": { "fault": {} }, "within_ns": "0" } },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "220000000" } },
+    { "expect_output": { "kind": "hold" } },
+
+    { "advance_ns": "10000000" },
+    { "inject": { "kind": "release", "claim_id": "claim-tdw-0001", "initiator": "ACTOR_KIND_TELEOPERATOR" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RUNNING", "gate.mode": "GATE_MODE_PASSTHROUGH", "claim.active_claim_id": "" } },
+
+    { "advance_ns": "10000000" },
+    { "inject": { "kind": "claim_granted", "claim": { "claimId": "claim-tdw-0002", "episodeId": "ep-tdw-0001", "actor": { "kind": "ACTOR_KIND_TELEOPERATOR", "id": "top-9", "displayName": "Teleoperator 9" }, "sourceName": "teleop", "selfInitiated": false, "tGrantedNs": "240000000", "handoff": { "immediate": { "blendNs": "300000000" } }, "spaces": ["SPACE_KIND_EE_POSE_DELTA"] } } },
+    { "inject": { "kind": "engage", "claim_id": "claim-tdw-0002", "initiator": "ACTOR_KIND_TELEOPERATOR" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_INTERVENTION", "gate.mode": "GATE_MODE_INTERVENTION", "claim.active_claim_id": "claim-tdw-0002" } },
+
+    { "advance_ns": "10000000" },
+    { "inject": { "kind": "teleop_action", "packet": { "tClientNs": "42050000000", "seq": "3", "clutchEngaged": true, "targets": [
+      { "part": "left", "twist": { "linear": { "x": 0.004, "y": 0.0, "z": 0.0 }, "angular": { "x": 0.0, "y": 0.0, "z": 0.0 } } }
+    ] } } },
+    { "expect_emission": { "event": { "fault": { "kind": "FAULT_KIND_VALIDATION_ERROR", "source": "$nonempty" } }, "within_ns": "0" } },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "250000000" } },
+    { "expect_output": { "kind": "hold" } }
+  ]
+}

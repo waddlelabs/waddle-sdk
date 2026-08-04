@@ -96,6 +96,23 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     whole-robot action). Without it a part-addressed command dispatched
     during a stalled caller loop was a width and nothing more, and the
     reference runner dropped identity the standard's own dispatch preserves.
+  - **Eight behavior scenarios** turning that intake's prose into
+    assertions, since a contract only the commit message states is a
+    contract nothing checks: a chunk buffers mid-ENGAGE and substitutes on
+    the first tick after the handoff (`agent_chunk_buffers_during_engage_handoff`),
+    is dropped without a claim and does not resurface in the next one
+    (`agent_chunk_dropped_without_a_claim`), plays each step out at
+    receive-time plus its own `t_offset_ns`
+    (`agent_chunk_step_offsets_play_out`), and is refused at most once per
+    reason per claim window — with the successor claim owed its own answer
+    (`agent_chunk_refusals_latch_per_reason_and_window`, and
+    `teleop_dims_refusal_is_per_claim_window` for the media intake's guard,
+    now the same latch); a part-scoped action dispatched by the bypass pump
+    names its part (`bimanual_part_scoped_bypass_send`); and per-part
+    proprioception is scored against the part it describes
+    (`bimanual_part_scoped_proprio_scoped_to_its_part`,
+    `bimanual_part_scoped_dual_write_detected`). Each one was measured to
+    fail against a runner mutated to break exactly the sentence it pins.
   - **waddle-core (`waddle-types`)**: the wire↔row seam learns parts.
     `flatten_action` / `ActionChunk::from_pb` take a `PartPolicy`
     (`Honor` | `Ignore`) — the flag decision belongs to whoever negotiated the
