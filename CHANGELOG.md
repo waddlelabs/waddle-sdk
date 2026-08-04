@@ -12,6 +12,53 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 ## [Unreleased]
 
 ### Added
+- **waddle-protocol (part-addressed control, new feature flag
+  `waddle.v0.parts`)**: the normative surface for intervening on ONE declared
+  part of a `Composite` robot — one arm of a bimanual cell — without
+  inventing values for the others. No `.proto` change: `Action.part`,
+  `CompositeAction`, and `ProprioSample.part` have been on the v0 wire since
+  the beginning; what is new is that a connection may negotiate having them
+  honored.
+  - **VERSIONING.md registry row**: the flag gates honoring `Action.part` at
+    the intervention-chunk intake (validate and flatten against *that part's*
+    space, dispatch part-tagged) and emitting a non-empty `ProprioSample.part`
+    on the `StreamObservations` uplink. Declared **iff** the client's declared
+    action space is `Composite`. It is a flag rather than a defect fix because
+    the pre-flag behavior is defined and legible — a part-scoped action
+    flattens against the whole space and the chunk is refused with
+    `Fault{FAULT_KIND_VALIDATION_ERROR}` — and §3 forbids a plane planning
+    against behavior a connection did not declare. Local MCAP recording is not
+    connection-scoped and always records `part`; media-plane part routing
+    (`PartTarget.part`, `ClutchTransition.part`) is explicitly NOT gated here
+    and remains unimplemented in v0.
+  - **GLOSSARY.md** gains **part**: a named sub-space of a `Composite`
+    declaration, normative declaration order, depth pinned to 1, `""` = the
+    sole/default part — and the line that keeps it honest, that a part is an
+    addressing axis on actions and proprioception, never an authority axis
+    (claims, leases, and handoffs stay whole-robot single-writer in v0).
+  - **FSM.md §4/§5 prose, no guard-row changes** (this is intake validation
+    and dispatch shape, not a transition): a part-scoped action validates
+    against the addressed part's dims (wrong width → the ordinary whole-chunk
+    dims refusal; undeclared name or nested composite → not executable, its
+    own words), and executes as **"move this part, hold the rest"** — the
+    generalization of the shipped gripper-only contract, where "hold" means no
+    new command is sent. The two rejected alternatives are written down with
+    their defects: passing the caller's values through for the unaddressed
+    parts resumes the paused policy's actuation under the intervenor's
+    provenance with no transition saying so, and hold-filling from the last
+    commanded point fabricates a full-width command the sender never issued
+    into `/waddle/actions` (with no anchor at all when the caller never
+    ticked). §5: a part-scoped action does **not** cross-fade in v0 — it is
+    not an endpoint for a whole-robot interpolation, so the gate holds,
+    without faulting, until the blend window closes.
+  - **Conformance**: `scenario-format.md` gains the `intervention_chunk`
+    inject kind (the control-plane chunk arm had no scenario surface at all)
+    and the `expect_output.part` matcher; `fixtures/wire/action_chunk_part_scoped.json`
+    pins the wire shape; four scenarios pin the behavior
+    (`bimanual_part_scoped_substitute`, `bimanual_part_dims_mismatch_faults`,
+    `bimanual_unknown_part_refused`, `bimanual_part_scoped_blend_holds`).
+    Runners that do not implement the flag skip them by the `requires_features`
+    rule.
 - **waddle-protocol/waddle-core (agent-invited episodes, new feature flag
   `waddle.v0.agent`)**: a customer can now ask Waddle to drive an episode
   rather than driving it themselves — `Session::run_agent(prompt, timeout_ns,
