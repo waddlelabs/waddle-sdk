@@ -586,6 +586,9 @@ impl SessionBuilder {
         let dims = robot.action_space.dims();
         let gripper_spec = robot.action_space.gripper.clone();
         let part_names = declared_part_names(&robot.action_space);
+        // One `Arc` for both intervention-chunk intakes: the plane pump's
+        // and `push_intervention_chunk`'s.
+        let action_space = Arc::new(robot.action_space.clone());
 
         let (gate_shared, stream_tx) = GateShared::new(
             GatePlan::passthrough(MonoNs(0)),
@@ -793,7 +796,7 @@ impl SessionBuilder {
                 clock.clone(),
                 mirror.clone(),
                 stream_tx.clone(),
-                Arc::new(robot.action_space.clone()),
+                action_space.clone(),
             ));
         }
 
@@ -854,6 +857,9 @@ impl SessionBuilder {
                 inject_tx,
                 proprio_tx,
                 part_names,
+                stream_tx,
+                action_space,
+                chunk_intake: parking_lot::Mutex::new(pumps::ChunkIntakeState::default()),
                 record_slot,
                 task_slot,
                 pre_reset: self.pre_reset,
@@ -968,6 +974,15 @@ struct SessionInner {
     /// caller-supplied part name is checked before it becomes a recorded
     /// row's key.
     part_names: Arc<[String]>,
+    /// The intervention stream's producer end (shared with the media intake
+    /// and the plane pump) and the declared space to validate against: what
+    /// [`push_intervention_chunk`] needs to run the same intake the plane
+    /// pump runs.
+    stream_tx: StreamProducer,
+    action_space: Arc<waddle_types::ActionSpace>,
+    /// [`push_intervention_chunk`]'s own seq counter and fault guards — the
+    /// plane pump keeps its copy in thread locals; this seam has no thread.
+    chunk_intake: parking_lot::Mutex<pumps::ChunkIntakeState>,
     record_slot: RecordSlot,
     task_slot: TaskSlot,
     pre_reset: Option<ResetSpec>,
@@ -1596,6 +1611,52 @@ pub fn grant_and_engage(session: &Session, claim_id: &str, source: &str, actor: 
         claim: waddle_types::ClaimId::new(claim_id),
         at: clock_now(session),
     });
+}
+
+/// Convenience: push one intervention chunk straight into the session's
+/// intervention stream — the local counterpart of a plane
+/// `intervention_chunk` message, exactly as [`grant_and_engage`] is the
+/// local counterpart of a `ClaimDirective`. Used by tests and by the
+/// `waddle-sdk` shim's testing hooks to drive an intervention without a
+/// control-plane transport; production chunks arrive on the plane.
+///
+/// It runs the SAME intake the plane pump runs
+/// (`pumps::intake_intervention_chunk`): same validation, same
+/// once-per-claim-window faults on the episode timeline, same ring-seq
+/// space discipline. Nothing is buffered unless a claim is active, and the
+/// jitter buffer still decides when — and whether — a step plays out.
+///
+/// One thing it cannot take from the plane pump: whether to honor
+/// `Action.part`. There is no connection here to have negotiated
+/// `waddle.v0.parts` with, so this seam falls back to the same fact
+/// `SessionBuilder::build` declares the flag from — whether the declared
+/// space has parts at all. A locally injected chunk is not an emission to a
+/// plane, so VERSIONING §3 has nothing to say about it; what it must not do
+/// is claim a part the declaration does not have, and that is exactly what
+/// the declaration check refuses.
+pub fn push_intervention_chunk(session: &Session, chunk: pb::ActionChunk) {
+    let inner = &session.inner;
+    let at = inner.clock.stamp_now().mono_ns();
+    let claim_active = inner.mirror.read().claim_active;
+    let mut intake = inner.chunk_intake.lock();
+    if !claim_active {
+        // The pump resets its guards the moment the claim window closes
+        // (it re-reads the mirror every 20 ms); this seam has no loop, so
+        // it resets on the first call that observes the window shut.
+        intake.faults = Default::default();
+        return;
+    }
+    let pumps::ChunkIntakeState { next_seq, faults } = &mut *intake;
+    pumps::intake_intervention_chunk(
+        &chunk,
+        &inner.inject_tx,
+        at,
+        &inner.stream_tx,
+        &inner.action_space,
+        pumps::part_policy(!inner.part_names.is_empty()),
+        next_seq,
+        faults,
+    );
 }
 
 /// Convenience: release a local claim (the counterpart of

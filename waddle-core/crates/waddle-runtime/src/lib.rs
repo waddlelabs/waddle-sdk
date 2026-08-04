@@ -21,7 +21,8 @@ pub use mirror::{AgentTaskKind, AgentTaskStatus, ResetProgressPhase, ResetProgre
 pub use pumps::STALL_THRESHOLD_NS;
 pub use session::{
     AgentOutcome, EePose, Episode, EpisodeOptions, ProprioReport, ResetHook, ResetSpec, Session,
-    SessionBuilder, grant_and_engage, release_claim, reset_window_complete, reset_window_engage,
+    SessionBuilder, grant_and_engage, push_intervention_chunk, release_claim,
+    reset_window_complete, reset_window_engage,
 };
 // The invite payload `EpisodeOptions::agent_invite` carries is waddle-fsm's
 // own type (the FSM is the authority on what an invite is — hollow

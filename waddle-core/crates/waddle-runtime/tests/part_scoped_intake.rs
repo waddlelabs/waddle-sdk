@@ -497,6 +497,63 @@ fn part_scoped_chunk_is_refused_when_the_flag_was_not_negotiated() {
     );
 }
 
+/// The local injection seam (`push_intervention_chunk`, the
+/// `grant_and_engage` precedent): a session with NO control-plane transport
+/// still takes an intervention chunk, through the same intake the plane pump
+/// runs. It is what lets a test — and the shim's testing hooks — drive a
+/// part-scoped intervention without standing up a plane. With no connection
+/// to have negotiated the flag with, the declaration decides: this robot
+/// declares parts, so `Action.part` is honored; the refusal for a part the
+/// declaration does NOT have is the same one either intake gives.
+#[test]
+fn a_locally_pushed_chunk_addresses_a_part_without_any_plane() {
+    let send_log: SendLog = Arc::new(Mutex::new(Vec::new()));
+    let session = Session::builder("parts-local-push")
+        .robot(bimanual_robot())
+        .control(registry(&send_log))
+        .build()
+        .unwrap();
+
+    let mut ep = session.start_episode("local-push").unwrap();
+    let _ = ep.gate(&[0.0; 2 * ARM_DIMS], None, None);
+    wait_for(&session, |s| {
+        matches!(s.episode_state, Some(Phase::Running))
+    });
+    assert!(
+        !session.status().parts_negotiated,
+        "there is no connection here to negotiate anything with"
+    );
+
+    grant_and_engage(&session, "claim-local", "agent-plane", ActorKind::Agent);
+    wait_for(&session, |s| s.gate_mode == Some(GateMode::Intervention));
+
+    waddle_runtime::push_intervention_chunk(
+        &session,
+        pb::ActionChunk {
+            actions: vec![part_action("right", vec![0.75; ARM_DIMS], 0)],
+            seq: 1,
+            source_id: "local".into(),
+            ..Default::default()
+        },
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut substituted = None;
+    while Instant::now() < deadline && substituted.is_none() {
+        if let GateOutput::Substitute { action, .. } = ep.gate(&[0.0; 2 * ARM_DIMS], None, None) {
+            substituted = Some(action);
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let action = substituted.expect("a locally pushed chunk must substitute");
+    assert_eq!(action.part.as_deref(), Some("right"));
+    assert_eq!(action.values.as_slice(), &[0.75; ARM_DIMS]);
+
+    release_claim(&session, "claim-local");
+    ep.terminate(TerminalOutcome::Success, "done");
+    session.shutdown();
+}
+
 /// The BYPASS path — a claimed session whose caller loop has stalled, and the
 /// only path an agent-invited episode ever takes (its caller never ticks at
 /// all). The pump dispatches straight to `send`, so the part tag has to

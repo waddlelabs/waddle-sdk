@@ -704,6 +704,174 @@ pub(crate) struct ChunkIntakeFaults {
     inert_sent: bool,
 }
 
+/// The per-intake bookkeeping [`intake_intervention_chunk`] threads through:
+/// the ring-seq counter and the once-per-claim-window fault guards. The
+/// plane pump owns one in its thread's locals; the local
+/// [`crate::session::push_intervention_chunk`] seam owns one behind a mutex
+/// on the session, since it has no thread of its own.
+#[derive(Default)]
+pub(crate) struct ChunkIntakeState {
+    pub next_seq: u64,
+    pub faults: ChunkIntakeFaults,
+}
+
+/// Agent-chunk intake (Reset-mode window actuation and the general
+/// Claimed-mode intake): validate one wire `intervention_chunk` against the
+/// declared space and buffer its steps on the intervention stream. THE
+/// intake — `spawn_plane_pump` runs it for a plane chunk and
+/// [`crate::session::push_intervention_chunk`] for a locally injected one,
+/// so the two can never drift on validation, faults, or seq space.
+///
+/// Callers admit the chunk on `claim_active` ALONE — the same gate
+/// `spawn_media_intake`'s teleop path uses, no `GateMode` match — so a
+/// chunk arriving during the ENGAGE handoff sub-phase (claim granted, lease
+/// not yet handed over, gate mode not yet `Intervention`/`Reset`) still
+/// buffers correctly and is ready the instant the handoff completes,
+/// exactly like a teleop packet would. Legality (which claim, which mode)
+/// is never re-derived here — a plain mirror read is all it takes
+/// (hollow-frontend); the jitter buffer is what actually plays these out,
+/// and only while `Claimed`/`Reset`/`Bypass` is polling it.
+///
+/// Ring seq: `next_chunk_seq` is a fresh per-pump counter, not
+/// `chunk.seq` — the jitter buffer's per-item reorder map is
+/// keyed by seq *per step*, and a chunk's own `seq` is one value
+/// for the whole chunk (every step in it would collide on the
+/// same key). Tagged `StreamChannel::AgentChunk` so this
+/// counter's seq space never shares a reorder/late-drop cursor
+/// with the media intake's teleop-packet seq space, even though
+/// both producers push into the same physical ring (`JitterBuffer`
+/// keeps one cursor per channel — see `jitter.rs`'s module doc).
+///
+/// `chunk.seq`/`chunk.t_emitted_ns` (the WIRE chunk's own
+/// identity, distinct from `next_chunk_seq` above) ride along on
+/// every step as a `ChunkMeta` so the jitter buffer can detect a
+/// chunk boundary and apply the declared `ReplanPolicy`
+/// (`jitter.rs`'s module doc) — a newer chunk arriving mid-horizon
+/// supersedes the executing one's still-pending steps (IMMEDIATE/
+/// BLEND) or queues behind them (CHUNK_BOUNDARY).
+///
+/// Playout scheduling stays session-receive-time (`at`) + each
+/// step's declared `t_offset_ns` — NOT `chunk.t_emitted_ns` +
+/// offset — matching the Reset-mode arm's convention: `ActionChunk`'s
+/// `_ns` fields are session-timeline per `VERSIONING.md` §7 (not
+/// `_client_ns`, so no cross-clock offset-estimator mapping
+/// applies), but nothing guarantees a remote agent's own
+/// `t_emitted_ns` is usable as an absolute playout anchor on this
+/// side, so it is used only for the chunk-boundary/staleness
+/// decision above, never for scheduling.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn intake_intervention_chunk(
+    chunk: &pb::ActionChunk,
+    inject: &Sender<Injected>,
+    at: MonoNs,
+    stream: &StreamProducer,
+    space: &ActionSpace,
+    parts: PartPolicy,
+    next_chunk_seq: &mut u64,
+    faults: &mut ChunkIntakeFaults,
+) {
+    let total = chunk.actions.len();
+    match ActionChunk::from_pb(chunk, space, parts) {
+        Ok(flattened) => {
+            let action_chunk = flattened.chunk;
+            let meta = ChunkMeta {
+                chunk_seq: action_chunk.seq,
+                t_emitted_ns: action_chunk.t_emitted_ns,
+            };
+            {
+                let mut producer = stream.lock();
+                for step in &action_chunk.steps {
+                    *next_chunk_seq += 1;
+                    let _ = producer.push(TimedAction {
+                        channel: StreamChannel::AgentChunk,
+                        seq: *next_chunk_seq,
+                        received: MonoNs(at.0.saturating_add(step.offset_ns)),
+                        action: OwnedAction {
+                            values: step.values.clone(),
+                            gripper: step.gripper,
+                            // `Some` only under
+                            // `PartPolicy::Honor` (above), where
+                            // the tag was minted once, here on
+                            // the intake thread — every clone
+                            // from now on, including the ones
+                            // the gate makes per tick, is an
+                            // atomic increment.
+                            part: step.part.clone(),
+                        },
+                        chunk: Some(meta),
+                    });
+                }
+            }
+            // The steps that carried nothing to dispatch were
+            // skipped, not dropped in silence: the sender asked
+            // for something this session could not perform, and
+            // an episode recording has to be able to say so.
+            if !flattened.inert.is_empty() && !faults.inert_sent {
+                faults.inert_sent = true;
+                let _ = inject.send(
+                    SessionEvent::InterventionRejected {
+                        source: AGENT_CHUNK_SOURCE,
+                        reason: RejectReason::InertStepsSkipped {
+                            skipped: flattened.inert.len(),
+                            of: total,
+                        },
+                        at,
+                    }
+                    .into(),
+                );
+            }
+        }
+        // Dims-validation contract, mirroring
+        // `spawn_media_intake`'s teleop path: a genuine dims
+        // mismatch faults once per claim window, chunk dropped.
+        Err(TypesError::DimensionMismatch { expected, got }) => {
+            if !faults.dims_sent {
+                faults.dims_sent = true;
+                let _ = inject.send(
+                    SessionEvent::InterventionRejected {
+                        source: AGENT_CHUNK_SOURCE,
+                        reason: RejectReason::Dims {
+                            got,
+                            want: expected,
+                        },
+                        at,
+                    }
+                    .into(),
+                );
+            }
+        }
+        // Every other `TypesError` (missing field, wrong target
+        // arm, an opaque space) means this chunk isn't speaking
+        // the declared space: the whole chunk is refused, and
+        // the refusal is reported in its own words rather than
+        // forced into the dims-shaped report.
+        Err(err) => {
+            if !faults.not_executable_sent {
+                faults.not_executable_sent = true;
+                let _ = inject.send(
+                    SessionEvent::InterventionRejected {
+                        source: AGENT_CHUNK_SOURCE,
+                        reason: RejectReason::NotExecutable(err.to_string()),
+                        at,
+                    }
+                    .into(),
+                );
+            }
+        }
+    }
+}
+
+/// Whether an intervention intake honors `Action.part`, from whatever
+/// fact the caller has: the plane pump has a negotiated connection, the
+/// local `push_intervention_chunk` seam has only the declaration.
+pub(crate) fn part_policy(honor: bool) -> PartPolicy {
+    if honor {
+        PartPolicy::Honor
+    } else {
+        PartPolicy::Ignore
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn forward_server_msg(
     msg: ServerMsg,
@@ -861,152 +1029,32 @@ fn forward_server_msg(
                 }
             }
             // Agent-chunk intake (Reset-mode window actuation and the
-            // general Claimed-mode intake): an `intervention_chunk`
-            // is accepted whenever a claim is active — the SAME gate
-            // `spawn_media_intake`'s teleop path already uses (`claim_active`
-            // alone, no `GateMode` match), so a chunk arriving during the
-            // ENGAGE handoff sub-phase (claim granted, lease not yet handed
-            // over — gate mode hasn't flipped to `Intervention`/`Reset` yet)
-            // still buffers correctly and is ready the instant the handoff
-            // completes, exactly like a teleop packet would. Legality
-            // (which claim, which mode) is never re-derived here — only a
-            // plain mirror read (hollow-frontend); the jitter buffer is what
-            // actually plays these out only while `Claimed`/`Reset`/`Bypass`
-            // is polling it.
-            //
-            // Ring seq: `next_chunk_seq` is a fresh per-pump counter, not
-            // `chunk.seq` — the jitter buffer's per-item reorder map is
-            // keyed by seq *per step*, and a chunk's own `seq` is one value
-            // for the whole chunk (every step in it would collide on the
-            // same key). Tagged `StreamChannel::AgentChunk` so this
-            // counter's seq space never shares a reorder/late-drop cursor
-            // with the media intake's teleop-packet seq space, even though
-            // both producers push into the same physical ring (`JitterBuffer`
-            // keeps one cursor per channel — see `jitter.rs`'s module doc).
-            //
-            // `chunk.seq`/`chunk.t_emitted_ns` (the WIRE chunk's own
-            // identity, distinct from `next_chunk_seq` above) ride along on
-            // every step as a `ChunkMeta` so the jitter buffer can detect a
-            // chunk boundary and apply the declared `ReplanPolicy`
-            // (`jitter.rs`'s module doc) — a newer chunk arriving mid-horizon
-            // supersedes the executing one's still-pending steps (IMMEDIATE/
-            // BLEND) or queues behind them (CHUNK_BOUNDARY).
-            //
-            // Playout scheduling stays session-receive-time (`at`) + each
-            // step's declared `t_offset_ns` — NOT `chunk.t_emitted_ns` +
-            // offset — matching the Reset-mode arm's convention: `ActionChunk`'s
-            // `_ns` fields are session-timeline per `VERSIONING.md` §7 (not
-            // `_client_ns`, so no cross-clock offset-estimator mapping
-            // applies), but nothing guarantees a remote agent's own
-            // `t_emitted_ns` is usable as an absolute playout anchor on this
-            // side, so it is used only for the chunk-boundary/staleness
-            // decision above, never for scheduling.
+            // general Claimed-mode intake) — see
+            // [`intake_intervention_chunk`], which the local
+            // `push_intervention_chunk` seam shares.
             Some(pb::gate_server_message::Msg::InterventionChunk(chunk)) => {
                 let status = mirror.read();
                 if !status.claim_active {
                     return;
                 }
-                let total = chunk.actions.len();
-                // `Action.part` is honored only on a connection that
-                // negotiated `waddle.v0.parts` at Register (VERSIONING §3: a
-                // plane must be able to tell "will execute" from "will
-                // fault" before it sends one). Without it the field keeps
-                // its pre-flag meaning — every action is read against the
-                // WHOLE declared space, so a part-scoped one is refused,
-                // deterministically, once per claim window.
-                let parts = if status.parts_negotiated {
-                    PartPolicy::Honor
-                } else {
-                    PartPolicy::Ignore
-                };
-                match ActionChunk::from_pb(&chunk, space, parts) {
-                    Ok(flattened) => {
-                        let action_chunk = flattened.chunk;
-                        let meta = ChunkMeta {
-                            chunk_seq: action_chunk.seq,
-                            t_emitted_ns: action_chunk.t_emitted_ns,
-                        };
-                        {
-                            let mut producer = stream.lock();
-                            for step in &action_chunk.steps {
-                                *next_chunk_seq += 1;
-                                let _ = producer.push(TimedAction {
-                                    channel: StreamChannel::AgentChunk,
-                                    seq: *next_chunk_seq,
-                                    received: MonoNs(at.0.saturating_add(step.offset_ns)),
-                                    action: OwnedAction {
-                                        values: step.values.clone(),
-                                        gripper: step.gripper,
-                                        // `Some` only under
-                                        // `PartPolicy::Honor` (above), where
-                                        // the tag was minted once, here on
-                                        // the intake thread — every clone
-                                        // from now on, including the ones
-                                        // the gate makes per tick, is an
-                                        // atomic increment.
-                                        part: step.part.clone(),
-                                    },
-                                    chunk: Some(meta),
-                                });
-                            }
-                        }
-                        // The steps that carried nothing to dispatch were
-                        // skipped, not dropped in silence: the sender asked
-                        // for something this session could not perform, and
-                        // an episode recording has to be able to say so.
-                        if !flattened.inert.is_empty() && !faults.inert_sent {
-                            faults.inert_sent = true;
-                            let _ = inject.send(
-                                SessionEvent::InterventionRejected {
-                                    source: AGENT_CHUNK_SOURCE,
-                                    reason: RejectReason::InertStepsSkipped {
-                                        skipped: flattened.inert.len(),
-                                        of: total,
-                                    },
-                                    at,
-                                }
-                                .into(),
-                            );
-                        }
-                    }
-                    // Dims-validation contract, mirroring
-                    // `spawn_media_intake`'s teleop path: a genuine dims
-                    // mismatch faults once per claim window, chunk dropped.
-                    Err(TypesError::DimensionMismatch { expected, got }) => {
-                        if !faults.dims_sent {
-                            faults.dims_sent = true;
-                            let _ = inject.send(
-                                SessionEvent::InterventionRejected {
-                                    source: AGENT_CHUNK_SOURCE,
-                                    reason: RejectReason::Dims {
-                                        got,
-                                        want: expected,
-                                    },
-                                    at,
-                                }
-                                .into(),
-                            );
-                        }
-                    }
-                    // Every other `TypesError` (missing field, wrong target
-                    // arm, an opaque space) means this chunk isn't speaking
-                    // the declared space: the whole chunk is refused, and
-                    // the refusal is reported in its own words rather than
-                    // forced into the dims-shaped report.
-                    Err(err) => {
-                        if !faults.not_executable_sent {
-                            faults.not_executable_sent = true;
-                            let _ = inject.send(
-                                SessionEvent::InterventionRejected {
-                                    source: AGENT_CHUNK_SOURCE,
-                                    reason: RejectReason::NotExecutable(err.to_string()),
-                                    at,
-                                }
-                                .into(),
-                            );
-                        }
-                    }
-                }
+                intake_intervention_chunk(
+                    &chunk,
+                    inject,
+                    at,
+                    stream,
+                    space,
+                    // `Action.part` is honored only on a connection that
+                    // negotiated `waddle.v0.parts` at Register (VERSIONING
+                    // §3: a plane must be able to tell "will execute" from
+                    // "will fault" before it sends one). Without it the
+                    // field keeps its pre-flag meaning — every action is
+                    // read against the WHOLE declared space, so a
+                    // part-scoped one is refused, deterministically, once
+                    // per claim window.
+                    part_policy(status.parts_negotiated),
+                    next_chunk_seq,
+                    faults,
+                );
             }
             // Agent task updates (flag `waddle.v0.agent`): every update is
             // retained on the mirror — QUEUED/COMPLETED are runtime-side

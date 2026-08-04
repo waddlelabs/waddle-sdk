@@ -162,6 +162,17 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     `still_fps` precedent), and one shared slot would deliver each of N parts
     at ~10/N Hz and could starve one entirely while the plane's freshness
     checks key on exactly the part they ask about.
+  - **waddle-core (`waddle-runtime`), `push_intervention_chunk`**: the local
+    counterpart of a plane `intervention_chunk`, exactly as
+    `grant_and_engage` is the local counterpart of a `ClaimDirective` — a
+    test, or the SDK's testing hooks, can now drive an intervention without
+    standing up a control-plane transport. It is the SAME intake the plane
+    pump runs, extracted rather than reimplemented, so the two cannot drift
+    on validation, on the once-per-claim-window faults, or on the ring-seq
+    discipline. The one thing it cannot inherit is the negotiation: with no
+    connection to have negotiated with, it honors `Action.part` from the
+    same fact Register declares the flag from — whether the declared space
+    has parts at all.
 - **waddle-protocol/waddle-core (agent-invited episodes, new feature flag
   `waddle.v0.agent`)**: a customer can now ask Waddle to drive an episode
   rather than driving it themselves — `Session::run_agent(prompt, timeout_ns,
