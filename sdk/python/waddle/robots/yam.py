@@ -812,7 +812,10 @@ def _checked_workspace(
             "caps still bound every command, and the TCP is unbounded"
         )
         return None
-    corners = tuple(tuple(float(v) for v in corner) for corner in box)
+    try:
+        corners = tuple(tuple(float(v) for v in corner) for corner in box)
+    except TypeError:
+        corners = ()
     if len(corners) != 2 or any(len(corner) != 3 for corner in corners):
         raise ValueError(
             f"workspace={box!r}: expected ((min_x, min_y, min_z), (max_x, max_y, "
@@ -868,7 +871,8 @@ def _resolved_site(
         if site.gripper_limits is not None
         else gripper_limits
     )
-    home = tuple(float(v) for v in (site.sim_home if site.sim_home is not None else sim_home))
+    rows = site.sim_home if site.sim_home is not None else sim_home
+    home = tuple(float(v) for v in rows)
     if len(home) != JOINT_COUNT:
         raise ValueError(
             f"{where}: sim_home has {len(home)} values, a YAM part declares "

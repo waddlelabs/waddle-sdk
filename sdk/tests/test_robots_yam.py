@@ -286,7 +286,7 @@ def test_a_single_live_arm_without_a_channel_is_refused_by_argument_name():
 
 @pytest.mark.parametrize(
     "limits",
-    [(1.7, 0.1), (0.5, 0.5), (0.1,), (0.1, 1.7, 2.0), (0.1, float("nan"))],
+    [(1.7, 0.1), (0.5, 0.5), (0.1,), (0.1, 1.7, 2.0), (0.1, float("nan")), 0.5],
 )
 def test_a_malformed_gripper_limit_pair_is_refused_even_in_sim(limits):
     """Required in sim too, so the program text is identical across the
@@ -296,9 +296,17 @@ def test_a_malformed_gripper_limit_pair_is_refused_even_in_sim(limits):
         _bimanual(gripper_limits=limits)
 
 
-def test_a_malformed_workspace_box_is_refused():
+@pytest.mark.parametrize(
+    "box",
+    [
+        ((0.6, -0.45, 0.05), (0.05, 0.45, 0.70)),  # a minimum above its maximum
+        ((0.05, -0.45), (0.60, 0.45)),  # a corner that is not a point
+        (0.05, 0.60),  # not corners at all
+    ],
+)
+def test_a_malformed_workspace_box_is_refused(box):
     with pytest.raises(ValueError, match="workspace"):
-        _bimanual(workspace=((0.6, -0.45, 0.05), (0.05, 0.45, 0.70)))
+        _bimanual(workspace=box)
 
 
 def test_an_unknown_posture_is_refused_by_name():
@@ -358,7 +366,9 @@ def test_the_sim_factory_drives_its_twins_through_the_envelope(tmp_path):
 
     waddle.init("yam-sim-smoke", rig.robot(), rig.control(arms), recording_dir=tmp_path)
     with waddle.rollout(task="nudge both arms") as ep:
-        position = np.concatenate([arms[p].state()[0] for p in ("left_arm", "right_arm")])
+        position = np.concatenate(
+            [arms[p].state()[0] for p in ("left_arm", "right_arm")]
+        )
         action = position + 0.01
         decided = ep.gate(action, position)
         assert decided is not None
@@ -537,7 +547,9 @@ def vendor(monkeypatch) -> _FakeVendor:
 
 def _live(vendor: _FakeVendor, **overrides) -> yam.LiveDriver:
     kwargs: dict = dict(
-        channel="can_left", gripper_limits=GRIPPER_LIMITS_MOTOR_RAD, report=lambda _: None
+        channel="can_left",
+        gripper_limits=GRIPPER_LIMITS_MOTOR_RAD,
+        report=lambda _: None,
     )
     kwargs.update(overrides)
     return yam.LiveDriver(**kwargs)
