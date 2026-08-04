@@ -732,33 +732,30 @@ pub(crate) struct ChunkIntakeState {
 /// (hollow-frontend); the jitter buffer is what actually plays these out,
 /// and only while `Claimed`/`Reset`/`Bypass` is polling it.
 ///
-/// Ring seq: `next_chunk_seq` is a fresh per-pump counter, not
-/// `chunk.seq` — the jitter buffer's per-item reorder map is
-/// keyed by seq *per step*, and a chunk's own `seq` is one value
-/// for the whole chunk (every step in it would collide on the
-/// same key). Tagged `StreamChannel::AgentChunk` so this
-/// counter's seq space never shares a reorder/late-drop cursor
-/// with the media intake's teleop-packet seq space, even though
-/// both producers push into the same physical ring (`JitterBuffer`
-/// keeps one cursor per channel — see `jitter.rs`'s module doc).
+/// Ring seq: `next_chunk_seq` is the caller's own counter, not `chunk.seq` —
+/// the jitter buffer's per-item reorder map is keyed by seq *per step*, and a
+/// chunk's own `seq` is one value for the whole chunk (every step in it would
+/// collide on the same key). Tagged `StreamChannel::AgentChunk` so this
+/// counter's seq space never shares a reorder/late-drop cursor with the media
+/// intake's teleop-packet seq space, even though both producers push into the
+/// same physical ring (`JitterBuffer` keeps one cursor per channel — see
+/// `jitter.rs`'s module doc).
 ///
-/// `chunk.seq`/`chunk.t_emitted_ns` (the WIRE chunk's own
-/// identity, distinct from `next_chunk_seq` above) ride along on
-/// every step as a `ChunkMeta` so the jitter buffer can detect a
-/// chunk boundary and apply the declared `ReplanPolicy`
-/// (`jitter.rs`'s module doc) — a newer chunk arriving mid-horizon
-/// supersedes the executing one's still-pending steps (IMMEDIATE/
-/// BLEND) or queues behind them (CHUNK_BOUNDARY).
+/// `chunk.seq`/`chunk.t_emitted_ns` (the WIRE chunk's own identity, distinct
+/// from `next_chunk_seq` above) ride along on every step as a `ChunkMeta` so
+/// the jitter buffer can detect a chunk boundary and apply the declared
+/// `ReplanPolicy` (`jitter.rs`'s module doc) — a newer chunk arriving
+/// mid-horizon supersedes the executing one's still-pending steps
+/// (IMMEDIATE/BLEND) or queues behind them (CHUNK_BOUNDARY).
 ///
-/// Playout scheduling stays session-receive-time (`at`) + each
-/// step's declared `t_offset_ns` — NOT `chunk.t_emitted_ns` +
-/// offset — matching the Reset-mode arm's convention: `ActionChunk`'s
-/// `_ns` fields are session-timeline per `VERSIONING.md` §7 (not
-/// `_client_ns`, so no cross-clock offset-estimator mapping
-/// applies), but nothing guarantees a remote agent's own
-/// `t_emitted_ns` is usable as an absolute playout anchor on this
-/// side, so it is used only for the chunk-boundary/staleness
-/// decision above, never for scheduling.
+/// Playout scheduling stays session-receive-time (`at`) + each step's declared
+/// `t_offset_ns` — NOT `chunk.t_emitted_ns` + offset — matching the Reset-mode
+/// arm's convention: `ActionChunk`'s `_ns` fields are session-timeline per
+/// `VERSIONING.md` §7 (not `_client_ns`, so no cross-clock offset-estimator
+/// mapping applies), but nothing guarantees a remote agent's own
+/// `t_emitted_ns` is usable as an absolute playout anchor on this side, so it
+/// is used only for the chunk-boundary/staleness decision above, never for
+/// scheduling.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn intake_intervention_chunk(
     chunk: &pb::ActionChunk,
@@ -789,23 +786,22 @@ pub(crate) fn intake_intervention_chunk(
                         action: OwnedAction {
                             values: step.values.clone(),
                             gripper: step.gripper,
-                            // `Some` only under
-                            // `PartPolicy::Honor` (above), where
-                            // the tag was minted once, here on
-                            // the intake thread — every clone
-                            // from now on, including the ones
-                            // the gate makes per tick, is an
-                            // atomic increment.
+                            // `Some` only under `PartPolicy::Honor`,
+                            // where `flatten_action` minted the tag
+                            // once, on this intake thread — every
+                            // clone from here on, including the two
+                            // the gate makes per tick, is an atomic
+                            // increment.
                             part: step.part.clone(),
                         },
                         chunk: Some(meta),
                     });
                 }
             }
-            // The steps that carried nothing to dispatch were
-            // skipped, not dropped in silence: the sender asked
-            // for something this session could not perform, and
-            // an episode recording has to be able to say so.
+            // The steps that carried nothing to dispatch were skipped, not
+            // dropped in silence: the sender asked for something this session
+            // could not perform, and an episode recording has to be able to
+            // say so.
             if !flattened.inert.is_empty() && !faults.inert_sent {
                 faults.inert_sent = true;
                 let _ = inject.send(
@@ -821,9 +817,9 @@ pub(crate) fn intake_intervention_chunk(
                 );
             }
         }
-        // Dims-validation contract, mirroring
-        // `spawn_media_intake`'s teleop path: a genuine dims
-        // mismatch faults once per claim window, chunk dropped.
+        // Dims-validation contract, mirroring `spawn_media_intake`'s teleop
+        // path: a genuine dims mismatch faults once per claim window, chunk
+        // dropped.
         Err(TypesError::DimensionMismatch { expected, got }) => {
             if !faults.dims_sent {
                 faults.dims_sent = true;
@@ -840,11 +836,10 @@ pub(crate) fn intake_intervention_chunk(
                 );
             }
         }
-        // Every other `TypesError` (missing field, wrong target
-        // arm, an opaque space) means this chunk isn't speaking
-        // the declared space: the whole chunk is refused, and
-        // the refusal is reported in its own words rather than
-        // forced into the dims-shaped report.
+        // Every other `TypesError` (missing field, wrong target arm, an
+        // opaque space) means this chunk isn't speaking the declared space:
+        // the whole chunk is refused, and the refusal is reported in its own
+        // words rather than forced into the dims-shaped report.
         Err(err) => {
             if !faults.not_executable_sent {
                 faults.not_executable_sent = true;
