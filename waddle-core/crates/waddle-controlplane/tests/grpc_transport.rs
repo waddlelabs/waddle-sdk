@@ -64,6 +64,12 @@ impl ControlPlane for TestPlane {
         );
         Ok(Response::new(pb::RegisterResponse {
             session_id: "s-grpc".into(),
+            // A plane that means to receive stills has to say so: the client
+            // never puts a flag-scoped message on a connection that did not
+            // accept its flag (`ClientMsg::connection_scoped_flag`), so
+            // without this the shedding test below would have nothing to
+            // shed.
+            accepted_feature_flags: vec![waddle_controlplane::flags::STILLS.to_owned()],
             ..Default::default()
         }))
     }

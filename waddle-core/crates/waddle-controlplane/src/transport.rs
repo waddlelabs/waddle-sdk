@@ -43,7 +43,9 @@ impl ClientMsg {
     /// magnitude larger than any other message here, and a late one is a
     /// picture of a world that has moved on. Everything else — including a
     /// `ProprioSample` observation, small and historical — is never dropped
-    /// by Waddle.
+    /// by Waddle for being late. (Whether it may be sent AT ALL on a given
+    /// connection is the separate question
+    /// [`Self::connection_scoped_flag`] answers.)
     ///
     /// A new droppable variant must also be routed through a metered sender
     /// in every transport, or only half of this contract holds for it.
@@ -59,14 +61,65 @@ impl ClientMsg {
         }
     }
 
+    /// The feature flag ([`crate::flags`]) whose acceptance this message's
+    /// CONTENT depends on, or `None` for the core surface every connection
+    /// has. THE classification for VERSIONING §3 ("the control plane MUST
+    /// NOT plan against or emit any message, field, or behavior a connection
+    /// did not declare"), and the only place this question is answered.
+    ///
+    /// Acceptance is a property of ONE connection: flags are re-negotiated
+    /// at every Register, and the client re-registers on every reconnect. So
+    /// this is also the answer to "may this message cross a connection
+    /// boundary?" — it may not, and [`Self::buffer_when_offline`] enforces
+    /// that.
+    ///
+    /// The producer withholds these at generation time too (the runtime
+    /// reads the negotiated answer off its status mirror). That guard and
+    /// this one are not redundant: the producer decides against the answer
+    /// it can see, on another thread, and a connection can die between the
+    /// decision and the send — this is the only point that sees which
+    /// connection a message actually leaves on.
+    #[must_use]
+    pub fn connection_scoped_flag(&self) -> Option<&'static str> {
+        match self {
+            Self::Observation(update) => match &update.payload {
+                // A named `ProprioSample.part` is one part's joint vector.
+                // On a connection that never accepted `waddle.v0.parts`
+                // there is no field to read it as, and relabeling it `""`
+                // would put one arm's joints on the wire as the whole
+                // robot's — so it is withheld. Not history lost: the local
+                // recorder keeps the full-rate archive, part and all.
+                Some(pb::observation_update::Payload::Proprio(sample)) => {
+                    (!sample.part.is_empty()).then_some(crate::flags::PARTS)
+                }
+                Some(pb::observation_update::Payload::Still(_)) => Some(crate::flags::STILLS),
+                _ => None,
+            },
+            // An ack answers ONE directive, on the connection that sent it
+            // and asked to be answered. A replayed one is both un-negotiated
+            // on the new connection and stale on the old correlation.
+            Self::Gate(msg) => matches!(msg.msg, Some(pb::gate_client_message::Msg::Ack(_)))
+                .then_some(crate::flags::ACKS),
+            _ => None,
+        }
+    }
+
     /// Whether this message survives a partition in the client's bounded
-    /// offline buffer and replays in order on reconnect. Droppable messages
-    /// do not: replaying a partition's worth of them would both evict real
-    /// episode history from that bounded buffer and hand the plane a stale
-    /// world.
+    /// offline buffer and replays in order on reconnect.
+    ///
+    /// Two classes do not. Droppable messages
+    /// ([`Self::is_droppable`]): replaying a partition's worth of them would
+    /// both evict real episode history from that bounded buffer and hand the
+    /// plane a stale world. Connection-scoped messages
+    /// ([`Self::connection_scoped_flag`]): the buffer replays onto the NEXT
+    /// connection, which negotiates its own flags — and replays before that
+    /// connection's `RegisterResponse` has even arrived, so there is no
+    /// moment at which the question could be re-asked. Holding them back
+    /// until it arrives is not open either: history replays in order, and a
+    /// partial hold would reorder the stream it belongs to.
     #[must_use]
     pub fn buffer_when_offline(&self) -> bool {
-        !self.is_droppable()
+        !self.is_droppable() && self.connection_scoped_flag().is_none()
     }
 }
 
@@ -256,10 +309,13 @@ mod tests {
     /// or replay stale pictures — on its behalf. A `ProprioSample` on the
     /// same message type still buffers.
     ///
-    /// The two halves of the contract are ONE classification: whatever is
-    /// dropped while offline is also the only thing a transport may shed
-    /// while connected-but-stalled (`crate::inflight`), and nothing else is
-    /// ever droppable.
+    /// The two halves of the droppability contract are ONE classification:
+    /// whatever is dropped while offline is also the only thing a transport
+    /// may shed while connected-but-stalled (`crate::inflight`), and nothing
+    /// else is ever droppable. (A connection-scoped message is withheld from
+    /// the buffer for the OTHER reason — see
+    /// [`super::ClientMsg::connection_scoped_flag`] — so this equivalence is
+    /// asserted only where no flag is in play.)
     #[test]
     fn stills_are_dropped_while_disconnected_but_proprio_still_buffers() {
         let still = observation(pb::observation_update::Payload::Still(pb::FrameStill {
@@ -281,11 +337,66 @@ mod tests {
         assert!(!proprio.is_droppable(), "history, not perception");
         assert!(!gate.is_droppable());
         for msg in [&still, &proprio, &heartbeat, &gate] {
+            if msg.connection_scoped_flag().is_some() && !msg.is_droppable() {
+                continue;
+            }
             assert_eq!(
                 msg.buffer_when_offline(),
                 !msg.is_droppable(),
                 "one classification governs both halves: {msg:?}"
             );
+        }
+    }
+
+    /// A message whose content is legal only under a negotiated flag belongs
+    /// to the connection that accepted it, and the offline buffer is exactly
+    /// the place it could outlive one: the buffer replays onto the NEXT
+    /// connection, before that connection's `RegisterResponse` has even
+    /// arrived. A named-part `ProprioSample` replayed that way lands on a
+    /// plane that may have refused `waddle.v0.parts` — VERSIONING §3 — so it
+    /// does not enter the buffer at all. The same sample under the sole part
+    /// (`""`, core surface) is ordinary history and does.
+    #[test]
+    fn a_flag_scoped_message_never_survives_a_partition() {
+        let named = observation(pb::observation_update::Payload::Proprio(
+            pb::ProprioSample {
+                part: "left".into(),
+                joint_pos: vec![0.1; 7],
+                ..Default::default()
+            },
+        ));
+        let sole = observation(pb::observation_update::Payload::Proprio(
+            pb::ProprioSample {
+                joint_pos: vec![0.1; 14],
+                ..Default::default()
+            },
+        ));
+        let ack = ClientMsg::Gate(pb::GateClientMessage {
+            msg: Some(pb::gate_client_message::Msg::Ack(pb::DirectiveAck {
+                directive_id: "d1".into(),
+                accepted: true,
+                ..Default::default()
+            })),
+        });
+        let event = ClientMsg::Gate(pb::GateClientMessage {
+            msg: Some(pb::gate_client_message::Msg::Event(
+                pb::EpisodeEvent::default(),
+            )),
+        });
+
+        assert_eq!(named.connection_scoped_flag(), Some(crate::flags::PARTS));
+        assert_eq!(ack.connection_scoped_flag(), Some(crate::flags::ACKS));
+        assert_eq!(sole.connection_scoped_flag(), None);
+        assert_eq!(event.connection_scoped_flag(), None);
+
+        assert!(!named.buffer_when_offline(), "cannot cross a connection");
+        assert!(!ack.buffer_when_offline(), "cannot cross a connection");
+        assert!(sole.buffer_when_offline(), "history, and core surface");
+        assert!(event.buffer_when_offline(), "history, and core surface");
+        // Withheld is not shed: none of this is droppable, so nothing here
+        // may be discarded by a transport that is merely slow.
+        for msg in [&named, &sole, &ack, &event] {
+            assert!(!msg.is_droppable(), "{msg:?}");
         }
     }
 }

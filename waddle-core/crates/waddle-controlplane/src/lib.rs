@@ -8,6 +8,10 @@
 //! shed, and it binds twice: while the plane is offline nothing droppable
 //! enters the [`buffer`], and while the plane is connected but not draining
 //! nothing droppable queues without bound inside a transport ([`inflight`]).
+//! Its sibling — [`ClientMsg::connection_scoped_flag`] — decides what may
+//! cross a connection boundary: a message whose content is legal only under
+//! a negotiated feature flag ([`flags`]) belongs to the connection that
+//! accepted it and never survives a partition.
 //!
 //! The transport is a trait; the tested default is the in-memory
 //! [`transport::InMemoryTransport`] with a scriptable server. The real tonic
@@ -18,6 +22,7 @@
 pub mod backoff;
 pub mod buffer;
 pub mod client;
+pub mod flags;
 pub mod heartbeat;
 pub mod inflight;
 pub mod negotiate;

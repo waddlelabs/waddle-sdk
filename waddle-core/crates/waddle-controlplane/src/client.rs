@@ -5,6 +5,13 @@
 //! drains the (unbounded) command channel into the bounded offline buffer
 //! continuously while backing off, so nothing queues behind a sleeping
 //! reconnect. See [`backoff_draining`].
+//!
+//! And it is the only place that knows WHICH connection a message leaves on,
+//! which is what per-connection feature negotiation needs: a flag-scoped
+//! message ([`ClientMsg::connection_scoped_flag`]) is filtered on the way out
+//! against this connection's `RegisterResponse`, and never enters the offline
+//! buffer, so it cannot reach a plane that did not accept its flag by either
+//! route.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -136,6 +143,11 @@ fn run(
             }
         };
         attempt = 0;
+        // What THIS connection accepted, from its own `RegisterResponse`.
+        // Empty until it answers — and a connection that has not answered has
+        // accepted nothing, so a flag-scoped message offered in that window
+        // waits for no one (see the outbound filter below).
+        let mut accepted: Vec<String> = Vec::new();
         let _ = events_tx.send(PlaneEvent::Connected);
 
         // Register first, then replay the offline buffer strictly in order.
@@ -163,6 +175,20 @@ fn run(
             loop {
                 match cmd_rx.try_recv() {
                     Ok(msg) => {
+                        // VERSIONING §3, enforced where the connection is
+                        // actually known: a message whose content is legal
+                        // only under a negotiated flag
+                        // ([`ClientMsg::connection_scoped_flag`]) goes out
+                        // only on a connection that accepted that flag. The
+                        // producer withholds these too, but it decides on
+                        // another thread against a mirror of the last
+                        // answer — this is the point that sees which
+                        // connection the message would leave on.
+                        if let Some(flag) = msg.connection_scoped_flag()
+                            && !accepted.iter().any(|f| f == flag)
+                        {
+                            continue;
+                        }
                         if let Err(failed) = conn.tx.send(msg) {
                             // The connection died mid-send: re-buffer the
                             // message so it replays in order, never lost.
@@ -180,6 +206,7 @@ fn run(
             // Inbound.
             match conn.try_recv() {
                 Ok(Some(ServerMsg::Registered(r))) => {
+                    accepted.clone_from(&r.accepted_feature_flags);
                     let _ = events_tx.send(PlaneEvent::Registered(r));
                 }
                 Ok(Some(msg)) => {
@@ -388,6 +415,77 @@ mod tests {
                             )
                     )),
                     "a still offered while the plane was unreachable must never reach it"
+                );
+                break;
+            }
+            drop(msgs);
+            assert!(
+                std::time::Instant::now() < deadline,
+                "history never replayed"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        client.shutdown();
+    }
+
+    /// The offline buffer is where a per-connection answer could outlive the
+    /// connection that gave it: it replays onto the NEXT connection, and it
+    /// replays right after Register, before that connection has said which
+    /// flags it accepts. So a named-part `ProprioSample` (flag
+    /// `waddle.v0.parts`) offered while the plane is unreachable never
+    /// reaches it — VERSIONING §3 — while the same sample under the sole
+    /// part is ordinary history and replays in full.
+    #[test]
+    fn named_part_observations_offered_while_offline_are_never_replayed() {
+        let seen: Arc<Mutex<Vec<ClientMsg>>> = Arc::new(Mutex::new(Vec::new()));
+        let seen2 = seen.clone();
+        let transport = InMemoryTransport::new(move |msg, _tx| {
+            seen2.lock().push(msg);
+        });
+        transport.refuse_connections();
+        let client = ControlPlaneClient::spawn(transport.clone(), test_config());
+
+        let named = ClientMsg::Observation(pb::ObservationUpdate {
+            t_ns: 9,
+            payload: Some(pb::observation_update::Payload::Proprio(
+                pb::ProprioSample {
+                    part: "left".into(),
+                    joint_pos: vec![0.5; 7],
+                    ..Default::default()
+                },
+            )),
+        });
+        let sole = ClientMsg::Observation(pb::ObservationUpdate {
+            t_ns: 10,
+            payload: Some(pb::observation_update::Payload::Proprio(
+                pb::ProprioSample {
+                    joint_pos: vec![0.5; 14],
+                    ..Default::default()
+                },
+            )),
+        });
+        client.send(named);
+        client.send(sole.clone());
+        // Both are classified offline before the plane can come back, so
+        // anything below is a replay, never a live forward.
+        wait_offline_drain(&transport);
+        transport.allow_connections();
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let msgs = seen.lock();
+            if msgs.contains(&sole) {
+                assert!(
+                    !msgs.iter().any(|m| matches!(
+                        m,
+                        ClientMsg::Observation(o)
+                            if matches!(
+                                &o.payload,
+                                Some(pb::observation_update::Payload::Proprio(p))
+                                    if !p.part.is_empty()
+                            )
+                    )),
+                    "a named part must never ride a connection that did not accept the flag"
                 );
                 break;
             }
