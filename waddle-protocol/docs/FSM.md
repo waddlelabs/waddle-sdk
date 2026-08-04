@@ -395,7 +395,7 @@ own refusal to blend mismatched lengths is defense in depth. A gripper-only
 action (§4) carries no arm width by construction and is not a mismatch: it
 cross-fades on the gripper channel alone, with the arm holding. That exempts
 it from the *width* rule only — it still fades from the last commanded grip,
-so the scope rule below binds it exactly as it binds an arm row.
+so the scope rule below binds it on the same terms as an arm row.
 
 A **part-scoped action (§4) does not cross-fade into a whole-robot point**.
 The cross-fade interpolates from the last commanded point into the incoming
@@ -426,6 +426,20 @@ target itself would fade it in as if it commanded the whole robot. Where the
 anchor DOES command the same scope, the action cross-fades like any other:
 the sole part of a one-part `Composite`, or the same part again once an
 earlier part-scoped action has become the anchor.
+
+Scope and width are two rules, and neither is a stand-in for the other. What
+holds a part-scoped action out of a *whole-robot* point's cross-fade is the
+width rule — the gate carries no part layout and cannot slice that point down
+to the addressed part's rows — while what holds two different parts apart is
+scope. So a part-scoped **gripper-only** action (exempt from width, above)
+does cross-fade out of a whole-robot point of any width: that point commands
+every part's grip, the gripper is one channel per action rather than one per
+part in v0, and a grip has no rows to slice, so nothing is fabricated and
+holding would only drop a commanded grip for the length of the window. It
+still holds against a *differently* part-tagged anchor, which does not
+command its grip. (A per-part gripper sidechannel would retire that
+reasoning; v0 has none, and the canonical bimanual declaration folds grippers
+into each part's joint vector, where they are ordinary rows.)
 
 Nothing is faulted: the action fit the declared space, and §4's refusals are
 for actions that do not. What the timeline carries is the hold itself — every

@@ -51,10 +51,17 @@ fn weight(interp: Interp, t: f32) -> f32 {
 ///   check cannot see this pair, and blending it would interpolate one arm's
 ///   last setpoint into the other arm's target: a trajectory no sender
 ///   issued, dispatched and recorded under the sender's provenance. An
-///   UNTAGGED action commands the whole declared space, which is the same
-///   scope as the sole part of a one-part `Composite` (the degenerate case
-///   FSM.md §5 says does cross-fade) and is caught by the width check on any
-///   wider one — so only two distinct names disqualify a pair.
+///   UNTAGGED action commands the whole declared space, hence whatever part
+///   the other side names, so only two distinct names disqualify a pair on
+///   scope.
+///
+/// The two rules are independent, and neither stands in for the other. What
+/// holds a whole-robot anchor out of a PROPER part's cross-fade is the width
+/// rule, not the scope one: the gate carries no part layout and cannot slice
+/// a 14-wide anchor down to the left arm's rows, so the pair refuses on
+/// width. They agree only where the part's width IS the full width — the
+/// sole part of a one-part `Composite`, the degenerate case FSM.md §5 says
+/// does cross-fade.
 ///
 /// One `to` shape is legitimately shorter and must not read as a mismatch:
 /// a gripper-only action ("hold the arm, move the gripper" —
@@ -62,7 +69,21 @@ fn weight(interp: Interp, t: f32) -> f32 {
 /// through the window, with the gripper channel cross-faded; holding
 /// instead would silently drop a commanded grip. That exempts it from the
 /// WIDTH check only — it still takes the anchor's gripper as its starting
-/// point, so the scope rule binds it exactly as it binds an arm row.
+/// point, so the scope rule binds it on the same terms as an arm row: two
+/// distinct names refuse here too.
+///
+/// What does not carry over is the width rule's incidental reach. A
+/// part-tagged gripper-only action DOES fade out of an untagged anchor of
+/// any width, where a part-tagged arm row would have been refused on width.
+/// That is the rule landing where it should, not a hole in it: the anchor
+/// commands every part's grip, an `OwnedAction` carries ONE gripper scalar
+/// (v0's sidechannel is per action, never per part — `flatten_action` reads
+/// `Action.gripper` before it even resolves the part), and there are no rows
+/// to slice, so nothing is fabricated. Refusing would drop a commanded grip
+/// for the length of the window, which is what the exemption exists to
+/// prevent. Should the sidechannel ever become per-part (the deferred
+/// media-plane part-routing work), that premise dies and this pair becomes a
+/// scope question again.
 ///
 /// `from` is only the anchor: what leaves the gate commands what `to`
 /// commands, so the blended action carries `to`'s part tag.
@@ -309,6 +330,38 @@ mod tests {
 
         let end = blend_step(Some(&from), &to, 1.0, Interp::Linear).unwrap();
         assert_eq!(end.gripper, Some(0.04));
+    }
+
+    /// The pair the width rule does NOT backstop, decided rather than
+    /// stumbled into: an UNTAGGED anchor of any width against a part-tagged
+    /// gripper-only target. The anchor commands every part (FSM.md §4),
+    /// including the ONE gripper channel an `OwnedAction` carries, so it
+    /// does command the target's scope; and with no arm rows to line up
+    /// there is nothing for the width rule to refuse. The same-width arm-row
+    /// pair below IS refused — on width, because the gate holds no part
+    /// layout and cannot slice a whole-robot anchor down to one part's rows.
+    #[test]
+    fn a_part_tagged_gripper_only_action_fades_out_of_the_whole_robots_grip() {
+        let from = OwnedAction {
+            gripper: Some(0.0),
+            ..action(&[0.0; 14])
+        };
+        let to = OwnedAction {
+            values: SmallVec::new(),
+            gripper: Some(0.04),
+            part: Some(std::sync::Arc::from("left")),
+        };
+        let mid = blend_step(Some(&from), &to, 0.5, Interp::Linear)
+            .expect("a whole-robot point commands the part's grip too");
+        assert!(mid.values.is_empty(), "the arm holds: no values to write");
+        assert!((mid.gripper.unwrap() - 0.02).abs() < 1e-12);
+        assert_eq!(mid.part.as_deref(), Some("left"));
+
+        let arm_row = part_action("left", &[1.0; 7]);
+        assert!(
+            blend_step(Some(&from), &arm_row, 0.5, Interp::Linear).is_none(),
+            "the same anchor cannot be sliced down to the left arm's rows"
+        );
     }
 
     /// Surviving the window does not exempt a gripper-only action from the

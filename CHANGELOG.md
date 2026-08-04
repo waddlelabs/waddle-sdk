@@ -118,7 +118,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     The scope rule binds a gripper-only action too: it is exempt from the
     width check (it has no arm row by construction) but not from the scope
     one, since it still fades from the last commanded grip — the shape
-    `flatten_action` builds from a part-scoped noop plus a gripper. A blended
+    `flatten_action` builds from a part-scoped noop plus a gripper. Scope and
+    width stay two rules rather than one: a whole-robot point is held out of a
+    proper part's cross-fade by *width* (the gate has no part layout to slice
+    it with), so a part-tagged gripper-only action, which has no rows to
+    slice, does fade out of that point — it commands every part's grip, and v0
+    carries one gripper channel per action, never one per part. A blended
     action now carries its target's part tag, so the one-part `Composite`
     that legitimately cross-fades does not silently widen into a whole-robot
     command. FSM.md §4 and §5 state the scope rule.
