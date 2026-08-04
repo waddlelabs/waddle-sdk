@@ -53,9 +53,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     provenance with no transition saying so, and hold-filling from the last
     commanded point fabricates a full-width command the sender never issued
     into `/waddle/actions` (with no anchor at all when the caller never
-    ticked). §5: a part-scoped action does **not** cross-fade in v0 — it is
-    not an endpoint for a whole-robot interpolation, so the gate holds, without
-    faulting, until the blend window closes. That hold **discards** what comes
+    ticked). §5: a part-scoped action does **not** cross-fade into a
+    whole-robot point — a cross-fade needs two endpoints of the same scope, so
+    the gate holds, without faulting, until the blend window closes. That hold
+    **discards** what comes
     due rather than deferring it: an action whose playout time falls inside the
     window is consumed and dropped, so a streaming sender pays `blend_ns` of
     hold and nothing else, while a sender that issues one part-scoped chunk
@@ -102,6 +103,25 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     proof — the first to drive that arm with an action actually pending —
     measured differentially against the identical untagged loop, and the gate
     benchmarks are unchanged.
+  - **waddle-core (`waddle-gate`), cross-fade endpoints**: `blend_step` takes
+    the anchor as an `Option` and refuses any pair that is not two endpoints
+    of the **same scope** — each refusal is the hold FSM.md §5 specifies.
+    Beyond the shipped width defense (a part-width action against a
+    whole-robot point), two refusals are new: a pair naming two DIFFERENT
+    parts, whose widths match whenever the parts are symmetric, so no width
+    check can see it and blending would fade one arm's last commanded point
+    into the other arm's target — a trajectory no sender issued, dispatched
+    and recorded under that sender's provenance; and a part-scoped action with
+    no anchor at all (an episode whose caller never ticked, FSM.md E24), where
+    the gate used to manufacture an anchor out of the target itself and so
+    would have faded a one-arm command in as if it commanded the whole robot.
+    The scope rule binds a gripper-only action too: it is exempt from the
+    width check (it has no arm row by construction) but not from the scope
+    one, since it still fades from the last commanded grip — the shape
+    `flatten_action` builds from a part-scoped noop plus a gripper. A blended
+    action now carries its target's part tag, so the one-part `Composite`
+    that legitimately cross-fades does not silently widen into a whole-robot
+    command. FSM.md §4 and §5 state the scope rule.
 - **waddle-protocol/waddle-core (agent-invited episodes, new feature flag
   `waddle.v0.agent`)**: a customer can now ask Waddle to drive an episode
   rather than driving it themselves — `Session::run_agent(prompt, timeout_ns,

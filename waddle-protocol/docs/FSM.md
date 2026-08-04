@@ -351,9 +351,10 @@ action rows, and there is no such anchor at all for an episode whose caller
 never ticked (E24).
 
 One window is the exception to "executes": while an `IMMEDIATE{blend_ns}`
-cross-fade is open, a part-scoped action is not an endpoint for it and is
-dropped rather than executed or deferred — §5 states that contract and what
-a sender does about it.
+cross-fade is open, a part-scoped action is not an endpoint for it unless the
+point it fades from commands that same part, and is otherwise dropped rather
+than executed or deferred — §5 states that contract and what a sender does
+about it.
 
 The lease is untouched: it stays whole-robot single-writer. Addressing a part
 is an addressing axis, never an authority axis — v0 has no per-part claim,
@@ -392,10 +393,12 @@ primary check (drops the mismatched action before it reaches the gate,
 faulting `FAULT_KIND_VALIDATION_ERROR` once per claim window); the gate's
 own refusal to blend mismatched lengths is defense in depth. A gripper-only
 action (§4) carries no arm width by construction and is not a mismatch: it
-cross-fades on the gripper channel alone, with the arm holding.
+cross-fades on the gripper channel alone, with the arm holding. That exempts
+it from the *width* rule only — it still fades from the last commanded grip,
+so the scope rule below binds it exactly as it binds an arm row.
 
-A **part-scoped action (§4) does not cross-fade in v0**. The cross-fade
-interpolates from the last commanded whole-robot point into the incoming
+A **part-scoped action (§4) does not cross-fade into a whole-robot point**.
+The cross-fade interpolates from the last commanded point into the incoming
 action, and a part-width action is not an endpoint for the parts it does not
 address: splicing one in would either truncate the target or fabricate values
 for those parts, and §4 bans both. So the gate holds for the rest of the
@@ -408,6 +411,21 @@ one, and the stream's next action is already better than its last. When the
 window closes, the next part-scoped action to come due substitutes normally,
 part-tagged (§4) — so a **streaming** sender pays `blend_ns` of hold and
 nothing else.
+
+The rule underneath is that a cross-fade needs two endpoints of the **same
+scope**, and it settles the remaining cases the same way. Two DIFFERENT parts
+are never endpoints for each other, even though their widths match whenever
+the parts are symmetric — two 7-dof arms — so nothing about the widths says
+so: fading one arm's last commanded point into the other arm's target would
+fabricate a trajectory no sender issued and record it under that sender's
+provenance, so the window holds there too. And an episode whose caller has
+never ticked (E24) has no commanded point at all: a whole-robot action is
+then its own endpoint and crosses the window unchanged, while a part-scoped
+one has nothing to fade from and holds — manufacturing an endpoint out of the
+target itself would fade it in as if it commanded the whole robot. Where the
+anchor DOES command the same scope, the action cross-fades like any other:
+the sole part of a one-part `Composite`, or the same part again once an
+earlier part-scoped action has become the anchor.
 
 Nothing is faulted: the action fit the declared space, and §4's refusals are
 for actions that do not. What the timeline carries is the hold itself — every
@@ -422,8 +440,9 @@ So a sender that needs instant part-scoped takeover declares HOLD_FIRST or
 `IMMEDIATE{blend_ns: 0}` — and a sender that issues **one** part-scoped chunk
 rather than a stream MUST, since with nothing behind it there is nothing left
 to substitute when the window closes and the whole command is lost. (A
-one-part `Composite` is the degenerate case: the part's width *is* the full
-width, and it cross-fades like any other action.)
+one-part `Composite` is the degenerate case named above: the part's width *is*
+the full width and the whole-robot anchor is that same scope, so it
+cross-fades like any other action.)
 
 Fixtures: `handoff_immediate_mid_chunk`, `teleop_dims_mismatch_holds`,
 `bimanual_part_scoped_blend_holds`.

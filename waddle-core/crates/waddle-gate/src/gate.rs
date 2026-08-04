@@ -153,7 +153,9 @@ pub struct Gate<C: Clock> {
     clock: C,
     records_tx: rtrb::Producer<GateRecord>,
     seq: u64,
-    /// Blend anchor: the last action that left the gate.
+    /// Blend anchor: the last action that left the gate, part tag included —
+    /// an anchor for one part is not an anchor for another (see
+    /// [`blend_step`]). `None` until one has left it.
     last_action: Option<OwnedAction>,
     records_dropped: u64,
 }
@@ -301,8 +303,12 @@ impl<C: Clock> Gate<C> {
                         let progress = blend.as_ref().map_or(1.0, |b| b.progress(now));
                         if progress < 1.0 {
                             let schedule = blend.as_ref().expect("progress < 1 implies schedule");
-                            let from = self.last_action.clone().unwrap_or_else(|| target.clone());
-                            match blend_step(&from, &target, progress, schedule.interp) {
+                            match blend_step(
+                                self.last_action.as_ref(),
+                                &target,
+                                progress,
+                                schedule.interp,
+                            ) {
                                 Some(blended) => {
                                     self.last_action = Some(blended.clone());
                                     self.record(
@@ -319,13 +325,16 @@ impl<C: Clock> Gate<C> {
                                     }
                                 }
                                 None => {
-                                    // A part-scoped action is not an endpoint
-                                    // for a whole-robot cross-fade (FSM.md
-                                    // §5), and a dims mismatch here means
-                                    // intake validation was bypassed. Never
-                                    // truncate — hold instead. The action has
-                                    // already been popped: it is dropped, not
-                                    // deferred.
+                                    // Not an endpoint for this cross-fade: a
+                                    // dims mismatch (which means intake
+                                    // validation was bypassed), or an anchor
+                                    // that does not command what the target
+                                    // commands (FSM.md §5's scope rule).
+                                    // Never truncate the target and never
+                                    // fabricate the parts it does not
+                                    // address — hold instead. The action has
+                                    // already been popped: it is dropped,
+                                    // not deferred.
                                     self.record(
                                         stamp,
                                         GateDecision::Hold,
@@ -619,6 +628,81 @@ mod tests {
                 assert!((action.values[0] - 9.5).abs() < 1e-12);
             }
             other => panic!("expected substitute once the window closed, got {other:?}"),
+        }
+    }
+
+    /// The same contract with NO anchor at all: an agent-invited episode
+    /// (FSM.md E24) whose caller only ever got `Noop`s has no last commanded
+    /// point, and the gate must not manufacture one out of the target itself
+    /// — that would cross-fade a part-scoped action in as if it were a
+    /// whole-robot one, and leave the OTHER part's next action blending out
+    /// of this part's setpoint.
+    #[test]
+    fn part_scoped_target_holds_when_nothing_has_been_commanded_yet() {
+        let (mut gate, shared, mut tx, _records, clock) = setup();
+        shared.store_plan(GatePlan {
+            mode: PlanMode::Claimed {
+                provenance: teleop_tag(),
+                blend: Some(BlendSchedule {
+                    start: MonoNs(0),
+                    blend_ns: 1_000,
+                    interp: Interp::Linear,
+                }),
+            },
+            since: MonoNs(0),
+        });
+        tx.push(part_scoped(1, MonoNs(0), "left", 9.0)).unwrap();
+        clock.set(MonoNs(500)); // halfway through the window
+        assert!(
+            matches!(gate.gate(&[0.0; 14], None, None), GateOutput::Hold),
+            "with nothing commanded yet there is no endpoint to fade from"
+        );
+    }
+
+    /// A part-scoped substitute becomes the blend anchor, and the anchor is
+    /// scoped: when a successor's window opens, the OTHER arm's action must
+    /// not fade out of this arm's setpoint just because the two widths agree.
+    #[test]
+    fn a_second_parts_action_never_blends_out_of_the_first_parts_anchor() {
+        let (mut gate, shared, mut tx, _records, clock) = setup();
+        shared.store_plan(GatePlan {
+            mode: PlanMode::Claimed {
+                provenance: teleop_tag(),
+                blend: None,
+            },
+            since: MonoNs(0),
+        });
+        tx.push(part_scoped(1, MonoNs(1_000), "left", 9.0)).unwrap();
+        clock.advance(1_000);
+        assert!(matches!(
+            gate.gate(&[0.0; 14], None, None),
+            GateOutput::Substitute { .. }
+        ));
+
+        // A successor engages IMMEDIATE: a fresh cross-fade window opens
+        // while the anchor is still the left arm's setpoint.
+        shared.store_plan(GatePlan {
+            mode: PlanMode::Claimed {
+                provenance: teleop_tag(),
+                blend: Some(BlendSchedule {
+                    start: MonoNs(1_000),
+                    blend_ns: 1_000,
+                    interp: Interp::Linear,
+                }),
+            },
+            since: MonoNs(1_000),
+        });
+        tx.push(part_scoped(2, MonoNs(1_000), "right", 1.0))
+            .unwrap();
+        clock.set(MonoNs(1_500));
+        match gate.gate(&[0.0; 14], None, None) {
+            GateOutput::Hold => {}
+            GateOutput::Blend { action, .. } => panic!(
+                "the right arm was commanded {:?}, a trajectory blended out of the LEFT arm's \
+                 setpoint that no sender ever issued",
+                action.values.as_slice()
+            ),
+            other => panic!("expected hold, got {other:?}"),
         }
     }
 
