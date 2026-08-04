@@ -142,7 +142,7 @@ fn registry(send_log: &SendLog) -> ControlRegistry {
 }
 
 fn wait_for(session: &Session, pred: impl Fn(&waddle_runtime::Status) -> bool) {
-    wait_for_within(session, Duration::from_secs(5), pred);
+    wait_for_within(session, "status", Duration::from_secs(5), pred);
 }
 
 /// [`wait_for`] with the deadline spelled out, for a wait whose duration is
@@ -151,6 +151,7 @@ fn wait_for(session: &Session, pred: impl Fn(&waddle_runtime::Status) -> bool) {
 /// synchronisation device: the condition is reached or the test fails.
 fn wait_for_within(
     session: &Session,
+    what: &str,
     within: Duration,
     pred: impl Fn(&waddle_runtime::Status) -> bool,
 ) {
@@ -159,7 +160,7 @@ fn wait_for_within(
         if pred(&session.status()) {
             return;
         }
-        assert!(Instant::now() < deadline, "timed out waiting on status");
+        assert!(Instant::now() < deadline, "timed out waiting for {what}");
         std::thread::sleep(Duration::from_millis(5));
     }
 }
@@ -966,14 +967,26 @@ fn named_part_samples_never_survive_a_partition() {
 
     let ep = session.start_episode("part-partition").unwrap();
     let id = ep.id().clone();
-    wait_for(&session, |s| s.parts_negotiated);
+    wait_for_within(&session, "the flag", Duration::from_secs(5), |s| {
+        s.parts_negotiated
+    });
 
     // Partition, held open by the transport until this test heals it (never
     // by a sleep): refuse redials first, so the drop below cannot be
     // repaired behind the assertions.
+    //
+    // Release the plane's stashed `Sender<ServerMsg>` first. The rig keeps
+    // one so a test can push wire messages whenever it likes, and that clone
+    // is the client's receive channel: while it lives, severing the
+    // connection leaves the client's `try_recv` merely EMPTY, and the
+    // partition surfaces only when the client next happens to have something
+    // to send. Dropping it makes the sever observable the moment it happens.
+    *rig.tx.lock() = None;
     rig.transport.refuse_connections();
     rig.transport.drop_connections();
-    wait_for(&session, |s| !s.plane_connected);
+    wait_for_within(&session, "the partition", Duration::from_secs(5), |s| {
+        !s.plane_connected
+    });
     assert!(
         !session.status().parts_negotiated,
         "a dead connection has accepted nothing"
@@ -995,7 +1008,9 @@ fn named_part_samples_never_survive_a_partition() {
     rig.transport.allow_connections();
     // Reconnect is on the client's own backoff (seconds), not this session's
     // cadence — hence the wider bound.
-    wait_for_within(&session, Duration::from_secs(30), |s| s.plane_connected);
+    wait_for_within(&session, "the reconnect", Duration::from_secs(30), |s| {
+        s.plane_connected
+    });
 
     // The reconnected plane refused the flag, so the sole part is the only
     // thing that may reach it. Waiting for a `""` sample sent AFTER the
