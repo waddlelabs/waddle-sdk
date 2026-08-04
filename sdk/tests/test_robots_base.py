@@ -22,6 +22,8 @@ brings their own send callable keeps it.
 
 from __future__ import annotations
 
+import io
+import sys
 import threading
 import time
 
@@ -497,12 +499,51 @@ def test_a_park_gesture_is_honoured_only_while_something_is_holding():
     assert park.confirm() is False
 
 
-def test_console_recovery_says_when_it_has_no_terminal_to_be_told_at():
+def test_a_pipe_is_not_a_person(monkeypatch):
+    """The predicate itself, asked of a stdin this test owns. Everything below
+    controls the ANSWER instead of the environment, so this is the one place
+    the real function is exercised — and it is exercised against input, not
+    against however the suite happened to be invoked."""
+    monkeypatch.setattr(sys, "stdin", io.StringIO("resume\n"))
+    assert base.console_is_at_the_machine() is False
+
+
+def test_console_recovery_says_when_it_has_no_terminal_to_be_told_at(monkeypatch):
     """Under a harness there is no gesture at all, and the honest fallback is
-    said once rather than discovered when someone types into a pipe."""
+    said once rather than discovered when someone types into a pipe.
+
+    The condition is set here rather than inherited: run under `pytest -s`
+    from a terminal, a test that asserted on the ambient stdin would fail AND
+    leave a reader thread eating the developer's keystrokes for the rest of
+    the run."""
+    monkeypatch.setattr(base, "console_is_at_the_machine", lambda: False)
     lines: list[str] = []
     assert base.start_console_recovery({}, report=lines.append) is None
     assert len(lines) == 1 and "console: none" in lines[0]
+
+
+def test_console_recovery_reads_the_gestures_typed_at_a_terminal(monkeypatch):
+    """The other branch — the one that matters at the rig, and the one no
+    ambient environment should decide: with a terminal there is a reader, the
+    banner is said once, and a word typed at it reaches the arms.
+
+    The reader is handed a stdin of this test's own. A thread reading the real
+    one would compete with the harness and the shell for every keystroke."""
+    monkeypatch.setattr(base, "console_is_at_the_machine", lambda: True)
+    monkeypatch.setattr(sys, "stdin", io.StringIO("resume\n"))
+    lines: list[str] = []
+    arms = {"left": _arm(part="left")}
+    arms["left"].estop()
+
+    thread = base.start_console_recovery(arms, park=base.ParkGate(), report=lines.append)
+    assert thread is not None
+    # The reader ends when its input does — an observable end, not a deadline.
+    thread.join(PATIENCE_S)
+    assert not thread.is_alive(), "the reader ends with the input it was given"
+
+    assert base.latched_parts(arms) == [], "the gesture reached the arms"
+    assert sum("type `resume`" in line for line in lines) == 1, "the banner is said once"
+    assert any("resume part=left" in line for line in lines)
 
 
 # ---------------------------------------------------------------------------
