@@ -129,6 +129,13 @@ paths. Present keys must match; absent keys are unconstrained.
   advances virtual time by `within_ns` and fails if a matching emission
   occurred in the window.
 
+Scenarios pin the SHAPE of an emission, never an implementation's wording.
+`Fault.source` is implementation-named (control.proto: "who raised it") and
+`Fault.detail` is an implementation's to phrase, so a scenario asserting that
+a fault names its producer writes `"source": "$nonempty"` — never a literal
+like the reference runner's own intake names, which no normative document
+defines and which a conforming frontend is free to spell differently.
+
 ### `expect_output` (gate target only)
 
 ```json

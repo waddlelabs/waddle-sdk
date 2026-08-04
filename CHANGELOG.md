@@ -68,7 +68,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     (`bimanual_part_scoped_substitute`, `bimanual_part_dims_mismatch_faults`,
     `bimanual_unknown_part_refused`, `bimanual_part_scoped_blend_holds`).
     Runners that do not implement the flag skip them by the `requires_features`
-    rule.
+    rule. `scenario-format.md` also states, once and for all, that scenarios
+    pin the SHAPE of an emission and never an implementation's wording:
+    `Fault.source` is implementation-named, so a scenario asserts
+    `"source": "$nonempty"` — that a producer is named — rather than freezing
+    one runner's spelling into an append-only golden.
 - **waddle-protocol/waddle-core (agent-invited episodes, new feature flag
   `waddle.v0.agent`)**: a customer can now ask Waddle to drive an episode
   rather than driving it themselves — `Session::run_agent(prompt, timeout_ns,

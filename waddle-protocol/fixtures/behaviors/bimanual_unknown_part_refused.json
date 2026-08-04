@@ -1,7 +1,7 @@
 {
   "format": "waddle.behavior/v0",
   "name": "bimanual_unknown_part_refused",
-  "description": "Pins the second half of docs/FSM.md §4's part-scoped validation (flag waddle.v0.parts): a chunk addressing a part the declaration does not have ('waist' on a left/right bimanual composite) does not fit the declared space AT ALL, so the whole chunk is refused, nothing is dispatched (gate_tick holds), and the refusal is recorded as Fault{FAULT_KIND_VALIDATION_ERROR} naming the intake — once per claim window, not once per chunk. The last two steps pin that this refusal is a DIFFERENT FACT from a dims mismatch rather than the same report reused: after the unknown-part refusal has already fired for this claim window, a dims-mismatched part-scoped chunk in the SAME window still faults, because 'the sender disagrees about which parts exist' and 'the sender disagrees about how wide this part is' are tracked and reported separately (FSM.md §4's 'recorded the same way, in its own words'). The runner asserts fault SHAPE — kind, source, non-empty detail — never the wording of the detail, which is an implementation's to phrase. Judgment calls: HOLD_FIRST handoff so the holds are the intake's refusal and not §5's blend defense; ACTOR_KIND_AGENT claim on a non-invited episode.",
+  "description": "Pins the second half of docs/FSM.md §4's part-scoped validation (flag waddle.v0.parts): a chunk addressing a part the declaration does not have ('waist' on a left/right bimanual composite) does not fit the declared space AT ALL, so the whole chunk is refused, nothing is dispatched (gate_tick holds), and the refusal is recorded as Fault{FAULT_KIND_VALIDATION_ERROR} naming the intake — once per claim window, not once per chunk. The last two steps pin that this refusal is a DIFFERENT FACT from a dims mismatch rather than the same report reused: after the unknown-part refusal has already fired for this claim window, a dims-mismatched part-scoped chunk in the SAME window still faults, because 'the sender disagrees about which parts exist' and 'the sender disagrees about how wide this part is' are tracked and reported separately (FSM.md §4's 'recorded the same way, in its own words'). The runner asserts fault SHAPE — the kind, that a source is named at all, and a non-empty detail — never the spelling of either string: Fault.source is implementation-named (control.proto: 'who raised it') and the detail's wording is an implementation's to phrase, so both are matched as $nonempty and a conforming frontend may name its own intakes. Judgment calls: HOLD_FIRST handoff so the holds are the intake's refusal and not §5's blend defense; ACTOR_KIND_AGENT claim on a non-invited episode.",
   "target": "gate",
   "requires_features": ["waddle.v0.core", "waddle.v0.agent", "waddle.v0.parts"],
   "setup": {
@@ -35,7 +35,7 @@
     { "inject": { "kind": "intervention_chunk", "chunk": { "seq": "1", "sourceId": "agent-waddle-1", "tEmittedNs": "300000000", "tObsNs": "300000000", "horizonNs": "100000000", "provenance": { "kind": "PROVENANCE_KIND_AGENT", "actor": { "kind": "ACTOR_KIND_AGENT", "id": "agent-waddle-1" } }, "actions": [
       { "tOffsetNs": "0", "part": "waist", "jointPosition": { "values": [0.12, -0.38, 0.31, -1.18, 0.06, 0.91, 0.20] } }
     ] } } },
-    { "expect_emission": { "event": { "fault": { "kind": "FAULT_KIND_VALIDATION_ERROR", "source": "agent-chunk", "detail": "$nonempty" } }, "within_ns": "0" } },
+    { "expect_emission": { "event": { "fault": { "kind": "FAULT_KIND_VALIDATION_ERROR", "source": "$nonempty", "detail": "$nonempty" } }, "within_ns": "0" } },
     { "inject": { "kind": "gate_tick", "obs_t_ns": "300000000", "action": { "composite": { "parts": [
       { "name": "left", "action": { "jointPosition": { "values": [0.10, -0.40, 0.30, -1.20, 0.05, 0.90, 0.70] } } },
       { "name": "right", "action": { "jointPosition": { "values": [-0.10, -0.40, 0.30, -1.20, -0.05, 0.90, 0.70] } } }
@@ -57,7 +57,7 @@
     { "inject": { "kind": "intervention_chunk", "chunk": { "seq": "3", "sourceId": "agent-waddle-1", "tEmittedNs": "400000000", "tObsNs": "400000000", "horizonNs": "100000000", "provenance": { "kind": "PROVENANCE_KIND_AGENT", "actor": { "kind": "ACTOR_KIND_AGENT", "id": "agent-waddle-1" } }, "actions": [
       { "tOffsetNs": "0", "part": "left", "jointPosition": { "values": [0.14, -0.36, 0.31, -1.16, 0.06, 0.91] } }
     ] } } },
-    { "expect_emission": { "event": { "fault": { "kind": "FAULT_KIND_VALIDATION_ERROR", "source": "agent-chunk", "detail": "$nonempty" } }, "within_ns": "0" } },
+    { "expect_emission": { "event": { "fault": { "kind": "FAULT_KIND_VALIDATION_ERROR", "source": "$nonempty", "detail": "$nonempty" } }, "within_ns": "0" } },
     { "inject": { "kind": "gate_tick", "obs_t_ns": "400000000", "action": { "composite": { "parts": [
       { "name": "left", "action": { "jointPosition": { "values": [0.10, -0.40, 0.30, -1.20, 0.05, 0.90, 0.70] } } },
       { "name": "right", "action": { "jointPosition": { "values": [-0.10, -0.40, 0.30, -1.20, -0.05, 0.90, 0.70] } } }
