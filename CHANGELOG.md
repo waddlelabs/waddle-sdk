@@ -88,6 +88,14 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     identity, as the runtime's are, and its three refusal reasons latch
     independently — "which parts exist" and "how wide this part is" are
     different disagreements and a sender is owed each of them once.
+  - **`expect_send` names the part too** (`scenario-format.md`,
+    `waddle-conformance`): the bypass pump is the one path an intervention
+    action takes to the robot without passing through `gate()`, so the
+    dispatched action's part rides its send log, spelled exactly as
+    `expect_output` spells it (the addressed part's name, `""` for a
+    whole-robot action). Without it a part-addressed command dispatched
+    during a stalled caller loop was a width and nothing more, and the
+    reference runner dropped identity the standard's own dispatch preserves.
   - **waddle-core (`waddle-types`)**: the wire↔row seam learns parts.
     `flatten_action` / `ActionChunk::from_pb` take a `PartPolicy`
     (`Honor` | `Ignore`) — the flag decision belongs to whoever negotiated the

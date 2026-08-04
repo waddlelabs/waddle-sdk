@@ -601,6 +601,14 @@ impl Target {
                 value: json!({
                     "provenance": provenance_json,
                     "at": self.now.to_string(),
+                    // The part this send addresses (flag `waddle.v0.parts`),
+                    // reported as `expect_output` reports it: the addressed
+                    // part's name, or `""` for a whole-robot action. The
+                    // bypass pump is the one path an intervention action
+                    // reaches the robot without passing through `gate()`, so
+                    // without this a stalled bimanual session's send log
+                    // could not say which arm moved.
+                    "part": action.part.as_deref().unwrap_or(""),
                     "dims": action.values.len(),
                 }),
             });

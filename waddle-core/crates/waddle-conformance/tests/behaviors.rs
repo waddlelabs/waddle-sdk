@@ -30,8 +30,8 @@ fn all_behavior_scenarios_pass() {
 
     assert_eq!(
         reports.len(),
-        42,
-        "expected the 42 pinned behavioral scenarios, found {}",
+        43,
+        "expected the 43 pinned behavioral scenarios, found {}",
         reports.len()
     );
 

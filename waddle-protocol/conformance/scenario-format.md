@@ -174,6 +174,14 @@ action at all. As everywhere else, an absent key is unconstrained.
 Asserts the implementation invoked the integrator's `send` verb directly
 (bypass mode pump), with a partial match on the dispatched chunk's provenance.
 
+`part` (needs `waddle.v0.parts`) asserts which declared `Composite` part the
+dispatched action addresses, reported exactly as `expect_output` reports it:
+the addressed part's name, or `""` for an action that commands the whole
+declared space. The bypass pump is the one path on which an intervention
+action reaches the robot without passing through `gate()`, so without this a
+part-addressed command dispatched during a stalled caller loop would be
+unassertable. As everywhere else, an absent key is unconstrained.
+
 ## Match values
 
 Strings beginning with `$` are matchers, not literals:

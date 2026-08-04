@@ -245,7 +245,7 @@ fn parse_step(raw: &Map<String, Value>) -> Result<Step, ConformanceError> {
         }
         "expect_output" => Ok(Step::ExpectOutput(value.clone())),
         "expect_send" => {
-            let (expected, within_ns) = split_expectation(value, &["provenance"])?;
+            let (expected, within_ns) = split_expectation(value, &["provenance", "part"])?;
             Ok(Step::ExpectSend {
                 expected,
                 within_ns,
