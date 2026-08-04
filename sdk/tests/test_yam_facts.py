@@ -252,7 +252,24 @@ def test_the_declared_effort_ceiling_never_exceeds_the_models():
 
 
 def test_the_gripper_row_is_the_vendors_normalized_range():
-    assert yam.GRIPPER_JOINT_LIMITS == (0.0, 1.0)
+    """0..1 is the VENDOR's convention, and the wire has none of its own.
+
+    This is one of the facts the shipped model cannot state — the URDF carries
+    no finger geometry — so its source is the vendor's Python package at
+    `I2RT_PIN`, whose `command_joint_pos` takes this as its seventh element.
+    And `GripperCommand.position` is "in the declared `GripperSpec`'s
+    open/closed units": what makes a teleoperator's 1.0 mean OPEN on a YAM is
+    a declaration that says so, never the protocol. So the value is pinned
+    here beside the declaration that has to carry it — a rig that declares
+    anything else has moved the units out from under the motor.
+    """
+    closed, opened = yam.GRIPPER_JOINT_LIMITS
+    assert (closed, opened) == (0.0, 1.0)
+    parallel = descriptors.Gripper.parallel(open=opened, closed=closed)
+    spec = parallel._compile()["parallel"]
+    assert spec["openValue"] == opened
+    # proto3 omits a default-valued scalar; 0.0 closed IS the default.
+    assert spec.get("closedValue", 0.0) == closed
 
 
 # ---------------------------------------------------------------------------

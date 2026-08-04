@@ -6,20 +6,25 @@ arm joints, their limits, the kinematic chain, the tool frame, the hand's
 stroke — and the forward kinematics those facts describe. Nothing here opens
 a socket, holds a lease or decides who may command anything.
 
-**Every number below has a second source, and a test compares them.** The
-model the vendor publishes ships beside this file (``yam_data/yam.urdf``,
-pinned at :data:`I2RT_PIN`) and ``tests/test_yam_facts.py`` reads it: a
-declared position limit must sit INSIDE the model's, an effort ceiling must
-be ``<=`` it, and every other fact — chain origins, rpys, axes, the tool
-frame — must match to a nanometre. Two independent statements of the same
-fact, one numeric gate. A number edited here without editing its source is a
-number nothing checked, and the gate is what says so.
+**No number below stands on its own word.** The model the vendor publishes
+ships beside this file (``yam_data/yam.urdf``, pinned at :data:`I2RT_PIN`)
+and ``tests/test_yam_facts.py`` reads it: a declared position limit must sit
+INSIDE the model's, an effort ceiling must be ``<=`` it, and every other fact
+the model states — chain origins, rpys, axes, the tool frame — must match to
+a nanometre. Two independent statements of the same fact, one numeric gate. A
+number edited here without editing its source is a number nothing checked,
+and the gate is what says so.
 
-Where a fact cannot be checked from the shipped model, its comment says
-which model it came from instead of implying the URDF. The arm limits are the
-URDF ∧ MJCF intersection: MuJoCo Menagerie's ``i2rt_yam`` is tighter on
-``joint1`` and is not shipped here, so that tightening is named in the
-comment (and asserted, since the URDF's own looser number is visible).
+The facts the shipped model cannot state carry their source in the comment
+instead, which is the other half of the same rule. There are three. The arm
+limits are the URDF ∧ MJCF intersection: MuJoCo Menagerie's ``i2rt_yam`` is
+tighter on ``joint1`` and is not shipped here, so that tightening is named in
+the comment (and asserted, since the URDF's own looser number is visible).
+Both hand facts — the normalized gripper row and the jaw stroke — come from
+the pinned vendor tree, because the URDF carries no finger geometry at all;
+their tests pin the value and the arithmetic, which catches an edit made here
+but cannot catch one made upstream. Re-vendoring against :data:`I2RT_PIN` is
+what catches that, and is why the pin is a fact too.
 
 Conventions, stated once:
 
@@ -127,10 +132,18 @@ ARM_JOINT_LIMITS_RAD = (
     (-2.0944, 2.0944),
 )
 
-#: The gripper joint's range, in the vendor's normalized units: 0 = closed,
-#: 1 = open. Waddle's own convention is identical (``GripperCmd.position`` is
-#: documented "0..1, closed..open"), so no conversion happens anywhere: the
-#: number a teleoperator's command carries is the number the motor takes.
+#: The gripper joint's range, in the VENDOR's normalized units: 0 = closed,
+#: 1 = open. That is what the seventh element of ``command_joint_pos`` takes,
+#: so its source is the vendor's Python package at :data:`I2RT_PIN` and not
+#: the shipped model, which carries no finger geometry to gate it against.
+#:
+#: Waddle mandates no units here: ``GripperCommand.position`` is "in the
+#: declared ``GripperSpec``'s open/closed units", which is why
+#: :meth:`waddle.descriptors.Gripper.parallel` takes ``open`` and ``closed``
+#: at all. So a YAM declaration must state ``open=1.0, closed=0.0`` — do that
+#: and no conversion happens anywhere: the number a teleoperator's command
+#: carries is the number the motor takes. Move these units and the
+#: declaration moves with them; the wire has no opinion to violate.
 GRIPPER_JOINT_LIMITS = (0.0, 1.0)
 
 #: One part's full limit table, the layout :data:`JOINT_NAMES` declares.
