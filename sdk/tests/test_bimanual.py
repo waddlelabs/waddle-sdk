@@ -22,6 +22,7 @@ The core-side proofs of the same behavior are `waddle-runtime`'s
 
 from __future__ import annotations
 
+import json
 import time
 
 import numpy as np
@@ -143,6 +144,22 @@ def _gated_substitute(ep, session, action, values, part=None):
         if out is not None and out is not action:
             return out
         time.sleep(0.005)
+
+
+def _validation_faults(recording_dir, episode_id: str) -> list[dict]:
+    """Every VALIDATION_ERROR fault on the episode's own timeline — what an
+    intervention chunk the intake REFUSED leaves behind (a dims mismatch, an
+    undeclared part). Silence at the gate means one thing when the chunk was
+    admitted and quite another when it was thrown away upstream, and this is
+    the only place a Python caller can tell the two apart."""
+    sidecar = json.loads(
+        (recording_dir / f"{episode_id}.sidecar.json").read_text()
+    )
+    return [
+        e["fault"]
+        for e in sidecar.get("events", [])
+        if "fault" in e and e["fault"].get("kind") == "FAULT_KIND_VALIDATION_ERROR"
+    ]
 
 
 def _observations(mcap_path):
@@ -286,7 +303,7 @@ def test_report_proprio_unknown_part_raises():
         ep.terminate("success")
 
 
-def test_blend_window_holds_part_scoped():
+def test_blend_window_holds_part_scoped(tmp_path):
     """A part-scoped action does not cross-fade in v0: the gate has no part
     layout with which to pair one arm's rows against a whole-robot anchor, so
     it holds (FSM.md §5). The window here is minutes long, so "still holding"
@@ -294,20 +311,29 @@ def test_blend_window_holds_part_scoped():
     fixture `bimanual_part_scoped_blend_holds` is what pins that substitution
     resumes once the window closes.
 
-    A whole-robot chunk pushed into the SAME open window does blend, which is
-    what makes the negative worth asserting: it proves the claim engaged, the
-    intake accepted, and the window was open — so the part-scoped silence is
-    the contract, not a dead rig.
+    A negative ("the gate never handed it over") is also what a dead rig
+    produces, so two things are asserted alongside it, and it takes both:
+
+    * a whole-robot chunk pushed into the SAME open window blends — the claim
+      engaged, the window is open, and steps still play out of the stream;
+    * the episode timeline carries NO validation fault — so the part-scoped
+      chunk was ADMITTED by the intake, not refused before it ever reached
+      the gate. That is the one this test would otherwise be missing: an
+      intake that does not honour `Action.part` reads a 7-row action against
+      a 14-row robot and refuses the chunk, and every assertion about gate
+      silence below would then hold for the wrong reason.
     """
     session = waddle.init(
         "py-parts-blend",
         _bimanual(),
         _control(),
         handoff=waddle.Handoff.IMMEDIATE(blend_ms=600_000),
+        recording_dir=tmp_path,
         _testing=True,
     )
 
     with waddle.rollout(task="cross-fade") as ep:
+        episode_id = ep.id
         whole = np.zeros(2 * ARM_DIMS)
         for _ in range(5):
             assert ep.gate(whole) is whole  # an anchor exists to fade out of
@@ -333,3 +359,10 @@ def test_blend_window_holds_part_scoped():
 
         waddle._testing.release(session, "claim-blend")
         ep.terminate("success")
+    waddle.shutdown()
+
+    assert _validation_faults(tmp_path, episode_id) == [], (
+        "the part-scoped chunk must have been ADMITTED: a validation fault "
+        "here means the intake refused it, so nothing was ever offered to "
+        "the gate and the hold above proved nothing"
+    )
