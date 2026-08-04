@@ -78,6 +78,55 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   - No packaging change: no new dependency (numpy was already required), no
     extras key, no `pyproject.toml` edit — maturin sweeps the subpackage with
     `python-source`.
+- **sdk (`waddle.robots.yam`: what an I2RT YAM is, in numbers that are
+  checked)**: the facts half of the first vendor module — the six arm joints
+  and their limits, the kinematic chain, the tool frame, the hand's stroke —
+  plus the forward kinematics those facts describe. Shipping a customer-side
+  robot module in the open is a deliberate product decision: what somebody
+  needs in order to drive their own arm through their own envelope belongs in
+  their hands, and the supervision side's in-cell material for keeping a fleet
+  alive is a different artifact that stays where it is.
+  - **Every number has a second source in the wheel.** The vendor's own model
+    ships beside the module (`waddle/robots/yam_data/yam.urdf`, pinned at
+    `I2RT_PIN`) and `sdk/tests/test_yam_facts.py` reads it with the stdlib XML
+    parser: a declared position limit must sit INSIDE the model's interval, an
+    effort ceiling must be `<=` it, and every fact that is not an interval —
+    chain origins, rpys, axes, the tool frame — must match to a
+    nanometre/nanoradian. Tightening a limit for your own rig is therefore
+    always allowed; widening one past the hardware is what fails. The gate also
+    walks the model's own chain through `base.chain_fk` and lands where
+    `yam.forward_kinematics` does, so a transposition that survived an
+    element-wise pass still moves the tool and still fails.
+  - **What the gate cannot see, it names.** The arm limits are the URDF ∧ MJCF
+    intersection and the MJCF is not shipped, so those tightenings carry
+    provenance comments; the one that is visible from here — `joint1`'s upper,
+    3.05433 against the URDF's 3.13 — is asserted, so the table cannot be
+    quietly "corrected" to the looser model.
+  - **`GRIPPER_MAX_OPENING_M` is 0.095 m, re-derived, not copied.** The pinned
+    vendor tree models this hand as two equality-coupled slide joints, each
+    ranged `0 0.0475` along exactly opposed axes, so the jaw separation moves
+    `2 × 0.0475` end to end — 1 mm short of the `gripper_stroke: 0.096` the
+    same tree's own config declares, conservative rather than equal by luck.
+    This retires the 0.075 m figure (`2 × 0.037524` from the MuJoCo Menagerie
+    finger range), which was derived from a vendor commit one hardware
+    revision behind the pin. The test pins the ARITHMETIC, so the number
+    cannot be edited without editing its derivation.
+  - **`forward_kinematics` is public and opt-in** (an arm handed none reports
+    joint positions and says so), and takes the six arm joints rather than the
+    seven-row part vector — the seventh row is the gripper, and walking it into
+    the chain would put the tool where nobody commanded. The refusal is
+    structural.
+  - **Third-party content, declared**: `yam_data/` is MIT vendor data inside an
+    Apache-2.0 wheel, shipped with the licence verbatim and a README carrying
+    the provenance, the pin and the patch list. Text only — the STL meshes are
+    not shipped, which the README states so an unresolved `<mesh>` reference is
+    not read as a broken file — and one comment in the copy was repaired:
+    a `--` inside an XML comment is illegal and made the file unparseable by
+    strict parsers, the stdlib's among them. No element of the model differs.
+  - No packaging change here either, and this time it is checked: a built wheel
+    carries `waddle/robots/yam_data/{yam.urdf,LICENSE,README.md}`, no meshes
+    and no bytecode, and the module reads them through `importlib.resources`
+    from the installed package rather than from a path beside its own file.
 - **waddle-protocol (part-addressed control, new feature flag
   `waddle.v0.parts`)**: the normative surface for intervening on ONE declared
   part of a `Composite` robot — one arm of a bimanual cell — without

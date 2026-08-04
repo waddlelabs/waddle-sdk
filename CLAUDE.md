@@ -62,6 +62,15 @@ waddle-sdk/
                              #   envelope seam, console recovery, RobotPump,
                              #   Rig); a vendor module is facts + driver +
                              #   factory on top of it
+        yam.py, yam_data/    # the I2RT YAM: constants-with-provenance, and
+                             #   the vendor's own MIT model (URDF text, no
+                             #   meshes) shipped beside them so
+                             #   tests/test_yam_facts.py can gate every
+                             #   number against it — directional (a declared
+                             #   limit may only be TIGHTER). A vendor fact
+                             #   with no second source in the wheel is a fact
+                             #   nothing checks; that is the convention for
+                             #   the next vendor module too
     teleop/                  # the `waddle-sdk-teleop` companion distribution:
                              #   same rust/Cargo.toml, + the livekit feature
     examples/                # toy_robot.py: the runnable customer program
