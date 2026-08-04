@@ -75,7 +75,19 @@ waddle-sdk/
                              #   came from — an unsourced number is one
                              #   nothing checks. Vendored data ships to every
                              #   installer, comments included: it may name
-                             #   only what a wheel-holder can open (gated)
+                             #   only what a wheel-holder can open (gated).
+                             #   Also the LiveDriver + the bimanual()/arm()
+                             #   factories. GOTCHA: driving metal needs the
+                             #   vendor package, which is NOT a dependency and
+                             #   cannot be an extra (not on PyPI; direct refs
+                             #   are rejected there) — it is the documented
+                             #   `I2RT_INSTALL` command, BUILT from I2RT_PIN
+                             #   so the two cannot drift, imported lazily
+                             #   inside LiveDriver.__init__ so importing the
+                             #   module never needs it. `yam.declaration()` is
+                             #   public and byte-equal to what the factories
+                             #   register (golden test vs the rig's own
+                             #   customer program)
     teleop/                  # the `waddle-sdk-teleop` companion distribution:
                              #   same rust/Cargo.toml, + the livekit feature
     examples/                # toy_robot.py: the runnable customer program
@@ -203,8 +215,12 @@ top-level dirs; they are not built yet.
   rule binds it: it enforces the OWNER's envelope (limits arithmetic on the owner's own
   numbers, refusing whole and never clamping) and asks nothing about who may command
   what. The part an action addresses is the core's answer — indexed, never validated.
-  A posture (`monitor`/`supervised`) maps to which `Control` verbs are registered and
-  to nothing else.
+  A posture (`monitor`/`supervised`) maps to which `Control` verbs are registered, and
+  in a vendor module to how the driver is CONSTRUCTED where the vendor has a compliant
+  mode (`monitor` opens a YAM in zero gravity, and that driver then refuses to write —
+  so "nothing may command it" is a property of the object, not of a flag somebody
+  remembered to check). It maps to no authority decision, ever: who may command a
+  robot, when, and under what claim is waddle-core's and is identical under both.
 - **Vocabulary discipline.** `waddle-protocol/docs/GLOSSARY.md` is normative for every
   word in code, comments, and docs: grant (permission), claim (orchestration), lease
   (actuation single-writer), envelope (owner's hard safety — Waddle never provides

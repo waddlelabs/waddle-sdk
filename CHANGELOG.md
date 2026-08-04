@@ -142,6 +142,69 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     carries `waddle/robots/yam_data/{yam.urdf,LICENSE,README.md}`, no meshes
     and no bytecode, and the module reads them through `importlib.resources`
     from the installed package rather than from a path beside its own file.
+- **sdk (`waddle.robots.yam`: the live driver, and the rigs its factories
+  build)**: the other two thirds of the first vendor module — what moves a
+  real arm, and what assembles one into a session-ready rig out of the site's
+  own numbers.
+  - **`yam.LiveDriver`** is the thin honest layer over four vendor calls, and
+    the LATCH they make necessary. The stop the vendor offers
+    (`zero_torque_mode()`) zeroes the arm's kp/kd along with its setpoint, so
+    after it the vendor's own thread accepts every command and the arm hangs
+    limp under gravity compensation: a driver without a latch reports commands
+    as applied while nothing moves, and every episode after the stop reads
+    SUCCESS. The latch is set BEFORE the vendor call (a stop that
+    half-happened is still a stop), every write is refused while it holds, and
+    the only exit restores the gains snapshotted at connect — or refuses,
+    because a made-up kp is how an arm slams. The gripper range is passed on
+    every connect rather than discovered: building without it runs an
+    auto-calibration that physically drives the jaws.
+  - **The vendor package is a documented command, not a dependency.** It is
+    imported lazily inside `__init__`, so importing `waddle.robots.yam` on a
+    machine that has never seen a YAM is an ordinary import; asking for a live
+    arm without it raises with `I2RT_INSTALL` in the text, which is BUILT from
+    `I2RT_PIN` and so cannot drift from the commit every fact in the module is
+    stated against. It cannot be a `waddle-sdk[yam]` extra: PyPI rejects
+    direct references, and the tree behind it (an exact numpy, a simulator
+    stack) is not something an install that only supervises a policy should
+    resolve.
+  - **`yam.declaration()` is public and stands alone.** A program that wants
+    only the declaration — its own driver, its own loop, a plain
+    `waddle.init` — gets exactly the robot a factory would have registered.
+    That is a test, not a claim: `sdk/tests/test_robots_yam.py` compiles
+    `yam.bimanual(...)` to JSON and compares it field for field against a
+    verbatim replica of the customer program already running at the reference
+    rig, with every number typed out independently.
+  - **`yam.bimanual()` / `yam.arm()`** hand back a `base.Rig`: declaration,
+    drivers, the owner's envelope and the reporting loop, still opening
+    nothing until `rig.arms()` is called. The site facts have no defaults —
+    the workspace box, the bench-measured `[closed, open]` motor radians, the
+    CAN channel, the cross-arm mounting — while the choices that do (rate,
+    speeds, part and frame names, twin homes) are named as choices where they
+    are written down. The per-step cap the envelope enforces is DERIVED from
+    the declared speed and rate, so the number a teleoperator reads off the
+    declaration and the number that refuses a jump cannot disagree.
+  - **Two things are opt-in, and both say what opting out costs.** Forward
+    kinematics: `fk=None` is a legal rig that reports joint positions only,
+    and a workspace box — a statement about a TCP — is then refused rather
+    than silently unenforced. The cross-arm edge: with none declared, a pose
+    expressed in the other arm's frame refuses downstream instead of resolving
+    through an identity nobody measured.
+  - **One chain may carry the shipped model; two may not.** `yam.arm()`
+    declares `kinematics_urdf` from the vendored URDF and `yam.bimanual()`
+    does not — that field describes ONE chain, and naming one arm's would name
+    the other's tool frame as something it is not (asked for explicitly, it is
+    refused rather than dropped). Where the model IS carried, the rename
+    between its own root link and the frame poses are reported in is declared
+    as the identity edge it is, so a consumer is not handed two unrelated
+    trees.
+  - `posture=` is a factory argument, mapping to which `Control` verbs the
+    session registers and — on live hardware — to opening the arms in the
+    vendor's zero-gravity mode under `monitor`, where the driver then refuses
+    to write at all. No authority logic anywhere near it.
+  - `base.CrossArm` (vendor-neutral, re-exported by `yam`) carries a measured
+    xyz + rpy mounting and converts it ONCE to the wire's wxyz quaternion, so
+    no call site is in a position to declare an xyzw one — the classic silent
+    corruption, and one that reads as a plausible pose.
 - **waddle-protocol (part-addressed control, new feature flag
   `waddle.v0.parts`)**: the normative surface for intervening on ONE declared
   part of a `Composite` robot — one arm of a bimanual cell — without
