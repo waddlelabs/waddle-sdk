@@ -19,15 +19,15 @@ use waddle_fsm::{
 };
 use waddle_gate::gate::GateShared;
 use waddle_gate::{
-    BlendSchedule, DivergenceDetector, Gate, GateOutput, GatePlan, GateRecord, OwnedAction,
-    PlanMode, StreamChannel, TimedAction,
+    BlendSchedule, ChunkMeta, DivergenceDetector, Gate, GateOutput, GatePlan, GateRecord,
+    OwnedAction, PlanMode, StreamChannel, TimedAction,
 };
 use waddle_ingest::FakeClock;
 use waddle_types::action::ActionValues;
 use waddle_types::{
-    ActionSpace, ActorKind, ActorRef, ClaimId, EpisodeId, GateMode, GrantStatus, Interp,
-    LeaseEnforcement, LeaseId, MonoNs, PartPolicy, ProvenanceTag, ReplanPolicy, TerminalOutcome,
-    Verb, pb::v0 as pb,
+    ActionChunk, ActionSpace, ActorKind, ActorRef, ClaimId, EpisodeId, GateMode, GrantStatus,
+    Interp, LeaseEnforcement, LeaseId, MonoNs, PartPolicy, ProvenanceTag, ReplanPolicy, SpaceSpec,
+    TerminalOutcome, TypesError, Verb, pb::v0 as pb,
 };
 
 use crate::emissions::{
@@ -52,6 +52,49 @@ const RECORD_CAPACITY: usize = 1024;
 /// Deterministic playout: an intervention action is due the instant it
 /// arrives (virtual time already models network delay).
 const PLAYOUT_DELAY_NS: i64 = 0;
+/// The intake an `intervention_chunk` refusal is attributed to
+/// (`Fault.source`). Scenarios assert it as `$nonempty`, never as this
+/// literal — `Fault.source` is implementation-named (control.proto: "who
+/// raised it"), so this spelling binds nobody but the reference runner.
+const AGENT_CHUNK_SOURCE: &str = "agent-chunk";
+
+/// A once-per-claim-window latch, keyed to the window's IDENTITY rather
+/// than to a holder noticing the window shut: two windows meeting inside a
+/// gap the holder never polls (a retake hands the window over with no gap
+/// at all) must not share one refusal. `raise` answers true the first time
+/// it is asked within one window, false for every later ask in the same
+/// one.
+#[derive(Debug, Default)]
+struct WindowLatch {
+    generation: u64,
+    raised: bool,
+}
+
+impl WindowLatch {
+    fn raise(&mut self, generation: u64) -> bool {
+        if self.generation != generation {
+            self.generation = generation;
+            self.raised = false;
+        }
+        !std::mem::replace(&mut self.raised, true)
+    }
+}
+
+/// The `intervention_chunk` intake's bookkeeping: its own ring-seq counter
+/// and one [`WindowLatch`] per refusal reason. The reasons are independent
+/// — a chunk that doesn't fit the declared space, one whose width disagrees
+/// with it, and one whose steps carry nothing to dispatch each say
+/// something different, and a sender is owed each of them once per window.
+#[derive(Debug, Default)]
+struct ChunkIntake {
+    /// Per-STEP seq for the jitter buffer's reorder map, never the chunk's
+    /// own `seq` (one value for the whole chunk — every step in it would
+    /// collide on the same key).
+    next_seq: u64,
+    dims: WindowLatch,
+    not_executable: WindowLatch,
+    inert: WindowLatch,
+}
 
 #[derive(Debug)]
 struct GateParts {
@@ -73,11 +116,12 @@ struct GateParts {
     /// An intervention stream has produced traffic (stall → bypass only
     /// matters when there is someone to starve).
     traffic: bool,
-    /// Dims-validation contract (mirroring `spawn_media_intake`'s
-    /// `validation_fault_sent`): a dims-mismatched teleop injection faults
-    /// at most once per claim window, not once per packet. Reset the
-    /// instant the claim ends.
-    validation_fault_sent: bool,
+    /// Dims-validation contract (mirroring the media intake's own guard): a
+    /// dims-mismatched teleop injection faults at most once per claim
+    /// window, not once per packet.
+    teleop_dims_fault: WindowLatch,
+    /// The `intervention_chunk` intake's seq counter and refusal latches.
+    chunk_intake: ChunkIntake,
     /// End of the executing policy chunk (chunk-boundary detection).
     chunk_end_ns: Option<i64>,
     detector: DivergenceDetector,
@@ -105,6 +149,16 @@ pub struct Target {
     pub rejections: Vec<String>,
     lease_seq: u32,
     claim_seq: u32,
+    /// The claim the current `claim_generation` describes.
+    claim_window: Option<ClaimId>,
+    /// The claim WINDOW's identity as a counter: it changes whenever the
+    /// active claim changes — one opening, one ending, and a retake handing
+    /// the window to a different claimant all count. Refreshed after every
+    /// accepted FSM step, so no claim change can slip past an intake that
+    /// only runs when something is injected. It is what every
+    /// "at most once per claim window" refusal is keyed to
+    /// ([`WindowLatch`]).
+    claim_generation: u64,
     /// The single in-flight verb request (`verb_result` correlates to it).
     pending_verb: Option<Verb>,
     gate: Option<GateParts>,
@@ -157,7 +211,8 @@ impl Target {
                     last_noop_reason: None,
                     last_tick_ns: None,
                     traffic: false,
-                    validation_fault_sent: false,
+                    teleop_dims_fault: WindowLatch::default(),
+                    chunk_intake: ChunkIntake::default(),
                     chunk_end_ns: None,
                     detector: DivergenceDetector::new(DIVERGENCE_THRESHOLD, DIVERGENCE_WINDOW_NS),
                     last_commanded: None,
@@ -177,6 +232,8 @@ impl Target {
             rejections: Vec::new(),
             lease_seq: 0,
             claim_seq: 0,
+            claim_window: None,
+            claim_generation: 0,
             pending_verb: None,
             gate,
         })
@@ -204,6 +261,7 @@ impl Target {
         match waddle_fsm::step(&self.cfg, &self.fsm, &event) {
             Ok(step) => {
                 self.fsm = step.next;
+                self.refresh_claim_window();
                 self.apply_effects(step.effects)?;
                 Ok(true)
             }
@@ -212,6 +270,18 @@ impl Target {
                     .push(format!("t={}ns {event:?}: {rejected}", self.now));
                 Ok(false)
             }
+        }
+    }
+
+    /// Re-derive [`Self::claim_generation`] from WHICH claim is active, not
+    /// from `claim.is_some()` going false: a retake replaces one claimant
+    /// with another with no gap at all, and the successor deserves to hear
+    /// a refusal its predecessor already heard.
+    fn refresh_claim_window(&mut self) {
+        let claim_id = self.fsm.claim.as_ref().map(|c| &c.id);
+        if self.claim_window.as_ref() != claim_id {
+            self.claim_window = claim_id.cloned();
+            self.claim_generation = self.claim_generation.wrapping_add(1);
         }
     }
 
@@ -550,6 +620,7 @@ impl Target {
                 gp.chunk_end_ns = Some(now.saturating_add(chunk.horizon_ns));
             }
             "teleop_action" => self.inject_teleop_action(payload)?,
+            "intervention_chunk" => self.inject_intervention_chunk(payload)?,
             "claim_request" => {
                 let source = payload
                     .get("source_name")
@@ -889,15 +960,9 @@ impl Target {
         let (values, gripper) = flatten_teleop_targets(&packet);
         let now = self.now;
         let at = self.at();
-        // Dims-validation contract (mirroring `spawn_media_intake`'s
-        // `validation_fault_sent`): the fault guard resets the instant the
-        // claim ends, so the next claim window gets its own chance to
-        // fault.
-        if self.fsm.claim.is_none()
-            && let Some(gp) = self.gate.as_mut()
-        {
-            gp.validation_fault_sent = false;
-        }
+        // The window this packet is admitted into is the window its refusal
+        // is owed to ([`WindowLatch`]).
+        let generation = self.claim_generation;
         let expected_dims = self
             .gate
             .as_ref()
@@ -938,8 +1003,7 @@ impl Target {
                         chunk: None,
                     })
                     .map_err(|_| scenario_err("intervention stream ring full"))?;
-            } else if !gp.validation_fault_sent {
-                gp.validation_fault_sent = true;
+            } else if gp.teleop_dims_fault.raise(generation) {
                 rejected = Some((values.len(), expected_dims.unwrap_or(0)));
             }
             gp.traffic = true;
@@ -952,6 +1016,131 @@ impl Target {
             self.dispatch(SessionEvent::InterventionRejected {
                 source: "media-intake",
                 reason: waddle_fsm::RejectReason::Dims { got, want },
+                at,
+            })?;
+        }
+        // Arrival is an event for stall detection and (in bypass) the pump.
+        self.periodic()
+    }
+
+    /// Agent-chunk intake: validate one wire `intervention_chunk` against
+    /// the declared space and buffer its steps on the intervention stream
+    /// (`GateServerMessage.intervention_chunk`; scenario-format.md's
+    /// `intervention_chunk`, flag `waddle.v0.agent`).
+    ///
+    /// Admitted on an ACTIVE CLAIM alone — no `GateMode` match, the same
+    /// gate the teleop path uses — so a chunk arriving during the ENGAGE
+    /// handoff buffers correctly and is ready the instant the handoff
+    /// completes. With no claim there is nobody to buffer for and the chunk
+    /// is dropped, recorded in the rejection log rather than faulted: an
+    /// unclaimed sender is not a sender making a mistake about the space.
+    ///
+    /// Refusal shape, per FSM.md §4: a step that doesn't fit the declared
+    /// space refuses the WHOLE chunk (a partial trajectory from a sender
+    /// that disagrees about the space is not a degraded-but-safe thing to
+    /// actuate), reported as one `Fault{VALIDATION_ERROR}` per reason per
+    /// claim window; INERT steps are skipped, the rest of the chunk still
+    /// executes, and the skip is reported the same way.
+    ///
+    /// Playout is receive-time + each step's `t_offset_ns`, never the
+    /// chunk's own `t_emitted_ns` (a remote sender's emit clock is not an
+    /// anchor on this side); `t_emitted_ns` and `seq` ride along as
+    /// `ChunkMeta` so the jitter buffer can see a chunk boundary and apply
+    /// the declared `ReplanPolicy`. Steps are tagged
+    /// `StreamChannel::AgentChunk` so this seq space never shares a
+    /// reorder cursor with the teleop packets' (`jitter.rs`).
+    fn inject_intervention_chunk(
+        &mut self,
+        payload: &Map<String, Value>,
+    ) -> Result<(), ConformanceError> {
+        let chunk: pb::ActionChunk =
+            self.parse_payload(payload, "chunk", "waddle.v0.ActionChunk")?;
+        let now = self.now;
+        let at = self.at();
+        let generation = self.claim_generation;
+        // A gate-target kind whether or not a claim is active: a scenario
+        // that injects one at the `fsm` target is a scenario error, not a
+        // quietly dropped chunk.
+        self.gate_mut("intervention_chunk")?;
+        if self.fsm.claim.is_none() {
+            self.rejections.push(format!(
+                "t={now}ns intervention_chunk{{seq {}}}: no active claim, nothing to buffer for",
+                chunk.seq
+            ));
+            return Ok(());
+        }
+        let total = chunk.actions.len();
+        let mut rejected: Option<waddle_fsm::RejectReason> = None;
+        {
+            let gp = self.gate_mut("intervention_chunk")?;
+            let space = gp.space.as_ref().ok_or_else(|| {
+                scenario_err("intervention_chunk requires a declared action space (robot_fixture)")
+            })?;
+            // Whether `Action.part` is honored (flag `waddle.v0.parts`).
+            // A runner has no negotiated connection to read the answer off,
+            // so it falls back to the same fact an SDK declares the flag
+            // from: whether the declared space has parts at all. A scenario
+            // whose steps address parts declares the flag in
+            // `requires_features`, which is what got it run at all.
+            let parts = part_policy(space);
+            match ActionChunk::from_pb(&chunk, space, parts) {
+                Ok(flattened) => {
+                    let meta = ChunkMeta {
+                        chunk_seq: flattened.chunk.seq,
+                        t_emitted_ns: flattened.chunk.t_emitted_ns,
+                    };
+                    for step in &flattened.chunk.steps {
+                        gp.chunk_intake.next_seq += 1;
+                        gp.producer
+                            .push(TimedAction {
+                                channel: StreamChannel::AgentChunk,
+                                seq: gp.chunk_intake.next_seq,
+                                received: MonoNs(now.saturating_add(step.offset_ns)),
+                                action: OwnedAction {
+                                    values: step.values.clone(),
+                                    gripper: step.gripper,
+                                    // `Some` only under `PartPolicy::Honor`,
+                                    // where the flattener minted the tag from
+                                    // the part this step addresses.
+                                    part: step.part.clone(),
+                                },
+                                chunk: Some(meta),
+                            })
+                            .map_err(|_| scenario_err("intervention stream ring full"))?;
+                    }
+                    if !flattened.inert.is_empty() && gp.chunk_intake.inert.raise(generation) {
+                        rejected = Some(waddle_fsm::RejectReason::InertStepsSkipped {
+                            skipped: flattened.inert.len(),
+                            of: total,
+                        });
+                    }
+                }
+                Err(TypesError::DimensionMismatch { expected, got }) => {
+                    if gp.chunk_intake.dims.raise(generation) {
+                        rejected = Some(waddle_fsm::RejectReason::Dims {
+                            got,
+                            want: expected,
+                        });
+                    }
+                }
+                // Every other `TypesError` — a target arm the space doesn't
+                // have, a part it doesn't declare, a missing field — means
+                // this chunk isn't speaking the declared space. Reported in
+                // its own words rather than forced into the dims-shaped
+                // report, and latched separately: "which parts exist" and
+                // "how wide this part is" are different disagreements.
+                Err(err) => {
+                    if gp.chunk_intake.not_executable.raise(generation) {
+                        rejected = Some(waddle_fsm::RejectReason::NotExecutable(err.to_string()));
+                    }
+                }
+            }
+            gp.traffic = true;
+        }
+        if let Some(reason) = rejected {
+            self.dispatch(SessionEvent::InterventionRejected {
+                source: AGENT_CHUNK_SOURCE,
+                reason,
                 at,
             })?;
         }
@@ -1203,16 +1392,23 @@ impl Target {
                 "kind": "pass",
                 "provenance": self.provenance_json(provenance)?,
             }),
-            GateOutput::Substitute { provenance, .. } => json!({
+            // `part` (flag `waddle.v0.parts`) rides the two kinds that
+            // return a Waddle-sourced action, and only those: the addressed
+            // part's name, or `""` for an action that commands the whole
+            // declared space — present either way, so a scenario can pin
+            // "untagged" as a fact rather than by omission.
+            GateOutput::Substitute { action, provenance } => json!({
                 "kind": "substitute",
+                "part": action.part.as_deref().unwrap_or(""),
                 "provenance": self.provenance_json(provenance)?,
             }),
             GateOutput::Blend {
+                action,
                 progress,
                 provenance,
-                ..
             } => json!({
                 "kind": "blend",
+                "part": action.part.as_deref().unwrap_or(""),
                 "progress": progress,
                 "provenance": self.provenance_json(provenance)?,
             }),
@@ -1246,6 +1442,17 @@ fn parse_agent_invite(value: &Value) -> Result<AgentInvite, ConformanceError> {
             .ok_or_else(|| scenario_err("agent_invite missing \"timeout_ns\""))?,
     )?;
     Ok(AgentInvite { prompt, timeout_ns })
+}
+
+/// Whether an intervention intake honors `Action.part` (flag
+/// `waddle.v0.parts`): only a `Composite` declaration has parts to address,
+/// and on every other space `""` — the sole part — is what the pre-flag
+/// reading already meant, so the two policies agree there.
+fn part_policy(space: &ActionSpace) -> PartPolicy {
+    match space.spec {
+        SpaceSpec::Composite { .. } => PartPolicy::Honor,
+        _ => PartPolicy::Ignore,
+    }
 }
 
 fn parse_actor_kind(s: &str) -> Result<ActorKind, ConformanceError> {
