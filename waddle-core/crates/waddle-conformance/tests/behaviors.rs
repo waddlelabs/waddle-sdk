@@ -8,23 +8,20 @@ fn behaviors_dir() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../waddle-protocol/fixtures/behaviors")
 }
 
-/// The scenarios this runner does not run yet, by name: each requires a
+/// The scenarios this runner does not run yet, by name: each would require a
 /// feature flag absent from `waddle_conformance::SUPPORTED_FEATURES`, so the
-/// runner skips it — and a skipped scenario asserts NOTHING. Naming them
+/// runner would skip it — and a skipped scenario asserts NOTHING. Naming them
 /// (rather than only counting the directory) keeps that state honest in both
-/// directions. A scenario that stops running for any other reason — a
-/// `requires_features` typo, a flag renamed in `SUPPORTED_FEATURES` — fails
-/// here instead of quietly going green with its behavior unchecked; and
-/// implementing a flag fails here until its scenarios come off this list,
-/// which is what makes writing them first a commitment rather than a note.
+/// directions. **Empty**: every flag the fixtures use is implemented, so
+/// every scenario in the directory runs, and a scenario that stops running
+/// for any reason — a `requires_features` typo, a flag renamed in
+/// `SUPPORTED_FEATURES`, a new fixture written ahead of its flag — fails here
+/// instead of quietly going green with its behavior unchecked. Writing
+/// scenarios first stays a commitment rather than a note: the list has to
+/// come back to empty before the work is done.
 /// Never add a name here to silence a failure: a scenario that runs and
 /// fails is a defect, not a pending flag.
-const PENDING_FLAG_IMPLEMENTATION: &[&str] = &[
-    "bimanual_part_dims_mismatch_faults",
-    "bimanual_part_scoped_blend_holds",
-    "bimanual_part_scoped_substitute",
-    "bimanual_unknown_part_refused",
-];
+const PENDING_FLAG_IMPLEMENTATION: &[&str] = &[];
 
 #[test]
 fn all_behavior_scenarios_pass() {

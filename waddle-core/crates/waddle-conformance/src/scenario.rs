@@ -18,6 +18,7 @@ pub const SUPPORTED_FEATURES: &[&str] = &[
     "waddle.v0.reset.phases",
     "waddle.v0.reset.remote",
     "waddle.v0.agent",
+    "waddle.v0.parts",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

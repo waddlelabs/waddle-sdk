@@ -74,6 +74,20 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     `Fault.source` is implementation-named, so a scenario asserts
     `"source": "$nonempty"` — that a producer is named — rather than freezing
     one runner's spelling into an append-only golden.
+  - **waddle-core (`waddle-conformance`), the reference runner implements
+    both**: an injected `intervention_chunk` runs the same intake shape the
+    runtime's does — admitted on an active claim alone (so a chunk arriving
+    mid-ENGAGE is ready the instant the handoff completes), validated whole
+    against the declared space, buffered on the intervention stream at
+    receive-time plus each step's own `t_offset_ns`, on its own channel and
+    seq space — and `expect_output` reports the part a substitute or a blend
+    addresses. Every scenario in `fixtures/behaviors/` now RUNS: the suite
+    asserts the skipped set is empty by name, so a fixture written ahead of
+    its flag fails rather than passing with its behavior unchecked. The
+    runner's once-per-claim-window refusals are keyed to the claim window's
+    identity, as the runtime's are, and its three refusal reasons latch
+    independently — "which parts exist" and "how wide this part is" are
+    different disagreements and a sender is owed each of them once.
   - **waddle-core (`waddle-types`)**: the wire↔row seam learns parts.
     `flatten_action` / `ActionChunk::from_pb` take a `PartPolicy`
     (`Honor` | `Ignore`) — the flag decision belongs to whoever negotiated the
