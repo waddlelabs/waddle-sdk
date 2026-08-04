@@ -16,7 +16,7 @@ use waddle_types::pb::v0 as pb;
 use waddle_types::time::Clock;
 use waddle_types::{
     ActionChunk, ActionSpace, ActorKind, ActorRef, ClaimId, EpisodeId, GateMode, GrantStatus,
-    MonoNs, Step, TypesError, VerbRequest,
+    MonoNs, PartPolicy, Step, TypesError, VerbRequest,
 };
 
 use crate::RuntimeError;
@@ -123,6 +123,7 @@ fn dispatch_due_intervention(
                 offset_ns: 0,
                 values: action.values,
                 gripper: action.gripper,
+                part: None,
             }],
             dims: if dims > 0 { dims } else { 0 },
             horizon_ns: 0,
@@ -869,7 +870,10 @@ fn forward_server_msg(
                     return;
                 }
                 let total = chunk.actions.len();
-                match ActionChunk::from_pb(&chunk, space) {
+                // `Action.part` is gated on `waddle.v0.parts`, which this
+                // intake does not negotiate yet, so the field keeps its
+                // pre-flag meaning: read against the whole declared space.
+                match ActionChunk::from_pb(&chunk, space, PartPolicy::Ignore) {
                     Ok(flattened) => {
                         let action_chunk = flattened.chunk;
                         let meta = ChunkMeta {

@@ -73,6 +73,24 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     `Fault.source` is implementation-named, so a scenario asserts
     `"source": "$nonempty"` — that a producer is named — rather than freezing
     one runner's spelling into an append-only golden.
+  - **waddle-core (`waddle-types`)**: the wire↔row seam learns parts.
+    `flatten_action` / `ActionChunk::from_pb` take a `PartPolicy`
+    (`Honor` | `Ignore`) — the flag decision belongs to whoever negotiated the
+    connection, and nothing below that line reads a flag. Under `Honor` an
+    action naming a declared part is flattened and validated against **that
+    part's** own space and dims and comes out as a `Step` tagged with
+    `part: Option<Arc<str>>` (`Arc` because the tag is minted once at the
+    intake and then cloned per tick on the gate's fast path). The part is
+    resolved before anything is decoded, so an undeclared name is refused as
+    an unknown part rather than reported as a width mismatch — the two are
+    different facts and senders fix them differently — and a part-scoped
+    action carrying a `CompositeAction` is refused by name, since v0 pins
+    nesting to depth 1. `unflatten_action` takes the tag and rebuilds the
+    part's wire `Action`, without which a part-scoped dispatch would land in
+    `/waddle/actions` as an empty action list: a recording that says a tick
+    commanded nothing when it commanded one arm. `Ignore` is the pre-flag
+    reading, byte-for-byte, and is what every intake still passes until the
+    plane connection negotiates the flag.
 - **waddle-protocol/waddle-core (agent-invited episodes, new feature flag
   `waddle.v0.agent`)**: a customer can now ask Waddle to drive an episode
   rather than driving it themselves — `Session::run_agent(prompt, timeout_ns,

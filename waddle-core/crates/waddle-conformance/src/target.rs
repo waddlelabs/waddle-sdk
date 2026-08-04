@@ -26,8 +26,8 @@ use waddle_ingest::FakeClock;
 use waddle_types::action::ActionValues;
 use waddle_types::{
     ActionSpace, ActorKind, ActorRef, ClaimId, EpisodeId, GateMode, GrantStatus, Interp,
-    LeaseEnforcement, LeaseId, MonoNs, ProvenanceTag, ReplanPolicy, TerminalOutcome, Verb,
-    pb::v0 as pb,
+    LeaseEnforcement, LeaseId, MonoNs, PartPolicy, ProvenanceTag, ReplanPolicy, TerminalOutcome,
+    Verb, pb::v0 as pb,
 };
 
 use crate::emissions::{
@@ -1052,7 +1052,8 @@ impl Target {
     ) -> Result<(Vec<f64>, Option<f64>), ConformanceError> {
         if let Some(space) = self.gate.as_ref().and_then(|g| g.space.as_ref())
             && let Ok(action) = self.codec.parse::<pb::Action>("waddle.v0.Action", value)
-            && let Ok(step) = waddle_types::action::flatten_action(&action, space)
+            && let Ok(step) =
+                waddle_types::action::flatten_action(&action, space, PartPolicy::Ignore)
         {
             return Ok((step.values.to_vec(), step.gripper));
         }

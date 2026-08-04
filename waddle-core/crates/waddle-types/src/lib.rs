@@ -38,7 +38,8 @@ pub const FILE_DESCRIPTOR_SET: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/descriptor_set.bin"));
 
 pub use action::{
-    ActionChunk, ActionValues, FlattenedChunk, ObsValues, Step, flatten_action, unflatten_action,
+    ActionChunk, ActionValues, FlattenedChunk, ObsValues, PartPolicy, Step, flatten_action,
+    unflatten_action,
 };
 pub use error::TypesError;
 pub use grants::{Grant, GrantStatus, LeaseEnforcement, Verb};
