@@ -516,6 +516,20 @@ pub(crate) fn spawn_media_intake(
 /// Flatten a teleop packet's part targets in order (pose → 7 values wxyz,
 /// twist → 6); the first declared gripper rides along. Retargeting into the
 /// robot's action space is the closed side's job — this is the raw stream.
+///
+/// KNOWN DEFECT (deferred to media-plane part routing). A packet whose
+/// targets each declare a gripper loses every gripper after the first: the
+/// action leaving here carries ONE `Option<f64>`, so a bimanual teleoperator
+/// closing both hands in one packet closes only the first part's. It is
+/// documented rather than fixed because the gripper sidechannel is a single
+/// scalar end to end (`Action.gripper`, `OwnedAction.gripper`,
+/// `GateInfo.gripper`), so no local repair exists that does not either invent
+/// a channel or turn working single-gripper teleop into refusals; the honest
+/// fix is part-scoped targets, which is the same deferred work that leaves
+/// `PartTarget.part` unrouted below. Unreachable for the canonical bimanual
+/// declaration this SDK ships against, which folds each part's gripper into
+/// that part's joint vector (`Gripper.parallel(dim = -1)`) where it is an
+/// ordinary row.
 fn flatten_packet(packet: &pb::TeleopStreamPacket) -> Option<OwnedAction> {
     let mut values = smallvec::SmallVec::new();
     let mut gripper = None;

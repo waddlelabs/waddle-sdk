@@ -1591,6 +1591,12 @@ fn str_field<'m>(
 /// `waddle.v0.TeleopStreamPacket` and does not pin "first target only" — a
 /// runner that only read `targets[0]` was a runner defect (see
 /// `handoff_immediate_mid_chunk`'s amendment).
+///
+/// Production's KNOWN DEFECT (deferred to media-plane part routing) is
+/// mirrored on purpose: grippers after the first are dropped, because v0
+/// carries one gripper scalar per action. A runner that quietly did better
+/// than the implementations it scores would hide the defect from the
+/// fixtures instead of leaving it visible to them.
 fn flatten_teleop_targets(packet: &pb::TeleopStreamPacket) -> (Vec<f64>, Option<f64>) {
     let mut values = Vec::new();
     let mut gripper = None;

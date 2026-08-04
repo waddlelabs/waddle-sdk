@@ -287,6 +287,26 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     the name's true length so a truncated name is detectable rather than
     silently answering to another part's; a name that cannot cross as a C
     string fails the verb rather than crossing as NULL.
+  - **What a part still does NOT address, stated rather than left to be
+    discovered.** Parts are an addressing axis on intervention actions and on
+    proprioception, and nothing else moved: a claim, a lease and a handoff
+    stay whole-robot single-writer, the sidecar and episode schemas keep no
+    part axis, and a `rate_hz` declared below the top level is still parsed
+    and unused. The **teleop media plane is not part-routed** — a
+    `TeleopStreamPacket`'s `PartTarget.part` is ignored and its targets are
+    concatenated in packet order, `ClutchTransition.part` is dropped, and
+    (the one outright defect in that set, now written down in
+    `flatten_packet`'s own doc comment and mirrored in the reference runner's)
+    **only the first target's gripper survives a packet**, so a bimanual
+    teleoperator closing both hands in one packet closes one. It is deferred
+    rather than patched because v0 carries a single gripper scalar per action
+    end to end, so every local repair either invents a channel or turns
+    working single-gripper teleop into refusals; the honest fix is part-scoped
+    targets, which is the same deferred stage that would route
+    `PartTarget.part` at all. None of it is reachable from the canonical
+    bimanual declaration this flag serves, which folds each part's gripper
+    into that part's joint vector (`Gripper.parallel(dim = -1)`), where it is
+    an ordinary row that the part-scoped path above already carries.
 - **waddle-protocol/waddle-core (agent-invited episodes, new feature flag
   `waddle.v0.agent`)**: a customer can now ask Waddle to drive an episode
   rather than driving it themselves — `Session::run_agent(prompt, timeout_ns,
