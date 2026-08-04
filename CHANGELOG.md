@@ -65,9 +65,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   - **Conformance**: `scenario-format.md` gains the `intervention_chunk`
     inject kind (the control-plane chunk arm had no scenario surface at all)
     and the `expect_output.part` matcher; `fixtures/wire/action_chunk_part_scoped.json`
-    pins the wire shape; four scenarios pin the behavior
+    pins the wire shape; five scenarios pin the behavior
     (`bimanual_part_scoped_substitute`, `bimanual_part_dims_mismatch_faults`,
-    `bimanual_unknown_part_refused`, `bimanual_part_scoped_blend_holds`).
+    `bimanual_unknown_part_refused`, `bimanual_part_scoped_blend_holds`,
+    `bimanual_part_scoped_gripper_crosses_anchorless_blend`).
     Runners that do not implement the flag skip them by the `requires_features`
     rule. `scenario-format.md` also states, once and for all, that scenarios
     pin the SHAPE of an emission and never an implementation's wording:
@@ -150,19 +151,26 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     parts, whose widths match whenever the parts are symmetric, so no width
     check can see it and blending would fade one arm's last commanded point
     into the other arm's target — a trajectory no sender issued, dispatched
-    and recorded under that sender's provenance; and a part-scoped action with
-    no anchor at all (an episode whose caller never ticked, FSM.md E24), where
-    the gate used to manufacture an anchor out of the target itself and so
-    would have faded a one-arm command in as if it commanded the whole robot.
-    The scope rule binds a gripper-only action too: it is exempt from the
-    width check (it has no arm row by construction) but not from the scope
+    and recorded under that sender's provenance; and a part-scoped ARM ROW
+    with no anchor at all (an episode whose caller never ticked, FSM.md E24),
+    where the gate used to manufacture an anchor out of the target itself and
+    so would have faded a one-arm command in as if it commanded the whole
+    robot. The scope rule binds a gripper-only action too: it is exempt from
+    the width check (it has no arm row by construction) but not from the scope
     one, since it still fades from the last commanded grip — the shape
     `flatten_action` builds from a part-scoped noop plus a gripper. Scope and
     width stay two rules rather than one: a whole-robot point is held out of a
     proper part's cross-fade by *width* (the gate has no part layout to slice
     it with), so a part-tagged gripper-only action, which has no rows to
     slice, does fade out of that point — it commands every part's grip, and v0
-    carries one gripper channel per action, never one per part. A blended
+    carries one gripper channel per action, never one per part. The same
+    premise decides the anchorless case, where §5 now says so explicitly: a
+    part-scoped gripper-only action crosses that window as itself, part tag
+    and all, because it fabricates nothing for anyone; narrowing the exception
+    to "no anchor and no tag" would drop a commanded grip in exactly the
+    episodes that have no anchor, and
+    `bimanual_part_scoped_gripper_crosses_anchorless_blend` scores the arm row
+    and the grip against each other in one window. A blended
     action now carries its target's part tag, so the one-part `Composite`
     that legitimately cross-fades does not silently widen into a whole-robot
     command. FSM.md §4 and §5 state the scope rule.

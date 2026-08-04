@@ -1,0 +1,65 @@
+{
+  "format": "waddle.behavior/v0",
+  "name": "bimanual_part_scoped_gripper_crosses_anchorless_blend",
+  "description": "Pins docs/FSM.md §5's ONE exception to the anchorless part-scoped hold (flags waddle.v0.agent + waddle.v0.parts). In an agent-invited episode the caller's ticks are Noop{NOOP_REASON_AGENT_EPISODE} (E24), so when the invited agent's claim engages under IMMEDIATE{blendNs:300000000} the gate has NO last commanded point to fade from. The two shapes then part company, and this scenario scores the difference in one window: a part-scoped ARM row has no endpoint at all — anchoring it on itself would fade one arm's command in as if it commanded the whole robot — so it holds, consumed and dropped like every other §5 hold; a part-scoped GRIPPER-ONLY action commands one scalar and fabricates no arm row for anyone, so with nothing to fade from it is its own endpoint whether or not it names a part, and crosses the window unchanged, still tagged 'left'. Narrowing the exception to 'no anchor and no tag' would silently drop a commanded grip in exactly the episodes that have no anchor — an agent-invited one, this one. Neither is faulted: both fit the declared space and were accepted at the intake (contrast bimanual_part_dims_mismatch_faults). The closing step shows the window ending: past blendNs the next part-scoped arm row substitutes normally, part-tagged. Judgment calls: exactly one caller tick before engage, which must NOT establish an anchor (that is the whole premise, and expect_output pins it as a noop); the gripper rides a NoopMarker target, which is how control.proto spells 'hold the arm, move the gripper' and what flatten_action builds from a part-scoped noop plus a gripper; the post-window tick is at t=550ms, comfortably past the 200-500ms window, since the exact boundary tick is deliberately unasserted here as in handoff_immediate_mid_chunk.",
+  "target": "gate",
+  "requires_features": ["waddle.v0.core", "waddle.v0.agent", "waddle.v0.parts"],
+  "setup": {
+    "robot_fixture": "../wire/robot_description_bimanual_composite.json",
+    "lease_enforcement": "LEASE_ENFORCEMENT_ENFORCED",
+    "handoff": { "immediate": { "blendNs": "300000000" } },
+    "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING"
+  },
+  "steps": [
+    { "inject": { "kind": "episode_open", "episode_id": "ep-bpg-0001", "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING", "agent_invite": { "prompt": "close the left gripper on the bin handle", "timeout_ns": "10000000000" } } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "reset_result", "result": { "ok": true, "strategy": "scripted_home", "verification": { "mode": "RESET_VERIFICATION_MODE_BLOCKING", "verified": true, "judgeId": "judge-reset", "judgeVersion": "2.1.0", "score": 0.96, "tNs": "100000000" } } } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_READY" } },
+
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "200000000", "action": { "composite": { "parts": [
+      { "name": "left", "action": { "jointPosition": { "values": [0.10, -0.40, 0.30, -1.20, 0.05, 0.90, 0.70] } } },
+      { "name": "right", "action": { "jointPosition": { "values": [-0.10, -0.40, 0.30, -1.20, -0.05, 0.90, 0.70] } } }
+    ] }, "tOffsetNs": "0" } } },
+    { "expect_output": { "kind": "noop", "reason": "NOOP_REASON_AGENT_EPISODE" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RUNNING", "gate.mode": "GATE_MODE_PASSTHROUGH", "episode.agent_invited": true, "episode.agent_engaged": false } },
+
+    { "inject": { "kind": "claim_granted", "claim": { "claimId": "claim-bpg-0001", "episodeId": "ep-bpg-0001", "actor": { "kind": "ACTOR_KIND_AGENT", "id": "agent-waddle-1", "displayName": "Waddle agent" }, "sourceName": "waddle-agent", "selfInitiated": false, "tGrantedNs": "200000000", "handoff": { "immediate": { "blendNs": "300000000" } }, "spaces": ["SPACE_KIND_JOINT_POSITION"] } } },
+    { "inject": { "kind": "engage", "claim_id": "claim-bpg-0001", "initiator": "ACTOR_KIND_AGENT" } },
+    { "expect_emission": { "event": { "gate": { "from": "GATE_MODE_PASSTHROUGH", "to": "GATE_MODE_INTERVENTION" } }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_INTERVENTION", "gate.mode": "GATE_MODE_INTERVENTION", "episode.agent_engaged": true } },
+
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "intervention_chunk", "chunk": { "seq": "1", "sourceId": "agent-waddle-1", "tEmittedNs": "300000000", "tObsNs": "300000000", "horizonNs": "100000000", "provenance": { "kind": "PROVENANCE_KIND_AGENT", "actor": { "kind": "ACTOR_KIND_AGENT", "id": "agent-waddle-1" } }, "actions": [
+      { "tOffsetNs": "0", "part": "left", "jointPosition": { "values": [0.12, -0.38, 0.31, -1.18, 0.06, 0.91, 0.20] } }
+    ] } } },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "300000000", "action": { "composite": { "parts": [
+      { "name": "left", "action": { "jointPosition": { "values": [0.12, -0.38, 0.30, -1.18, 0.05, 0.90, 0.70] } } },
+      { "name": "right", "action": { "jointPosition": { "values": [-0.12, -0.38, 0.30, -1.18, -0.05, 0.90, 0.70] } } }
+    ] }, "tOffsetNs": "0" } } },
+    { "expect_output": { "kind": "hold" } },
+    { "expect_no_emission": { "event": { "fault": {} }, "within_ns": "0" } },
+
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "intervention_chunk", "chunk": { "seq": "2", "sourceId": "agent-waddle-1", "tEmittedNs": "400000000", "tObsNs": "400000000", "horizonNs": "100000000", "provenance": { "kind": "PROVENANCE_KIND_AGENT", "actor": { "kind": "ACTOR_KIND_AGENT", "id": "agent-waddle-1" } }, "actions": [
+      { "tOffsetNs": "0", "part": "left", "noop": {}, "gripper": { "position": 0.04 } }
+    ] } } },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "400000000", "action": { "composite": { "parts": [
+      { "name": "left", "action": { "jointPosition": { "values": [0.13, -0.37, 0.30, -1.17, 0.05, 0.90, 0.70] } } },
+      { "name": "right", "action": { "jointPosition": { "values": [-0.13, -0.37, 0.30, -1.17, -0.05, 0.90, 0.70] } } }
+    ] }, "tOffsetNs": "0" } } },
+    { "expect_output": { "kind": "blend", "part": "left", "provenance": { "kind": "PROVENANCE_KIND_AGENT" } } },
+    { "expect_no_emission": { "event": { "fault": {} }, "within_ns": "0" } },
+
+    { "advance_ns": "150000000" },
+    { "inject": { "kind": "intervention_chunk", "chunk": { "seq": "3", "sourceId": "agent-waddle-1", "tEmittedNs": "550000000", "tObsNs": "550000000", "horizonNs": "100000000", "provenance": { "kind": "PROVENANCE_KIND_AGENT", "actor": { "kind": "ACTOR_KIND_AGENT", "id": "agent-waddle-1" } }, "actions": [
+      { "tOffsetNs": "0", "part": "left", "jointPosition": { "values": [0.14, -0.36, 0.31, -1.16, 0.06, 0.91, 0.20] } }
+    ] } } },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "550000000", "action": { "composite": { "parts": [
+      { "name": "left", "action": { "jointPosition": { "values": [0.14, -0.36, 0.30, -1.16, 0.05, 0.90, 0.70] } } },
+      { "name": "right", "action": { "jointPosition": { "values": [-0.14, -0.36, 0.30, -1.16, -0.05, 0.90, 0.70] } } }
+    ] }, "tOffsetNs": "0" } } },
+    { "expect_output": { "kind": "substitute", "part": "left", "provenance": { "kind": "PROVENANCE_KIND_AGENT" } } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_INTERVENTION", "gate.mode": "GATE_MODE_INTERVENTION" } }
+  ]
+}

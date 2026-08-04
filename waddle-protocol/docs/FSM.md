@@ -421,11 +421,17 @@ fabricate a trajectory no sender issued and record it under that sender's
 provenance, so the window holds there too. And an episode whose caller has
 never ticked (E24) has no commanded point at all: a whole-robot action is
 then its own endpoint and crosses the window unchanged, while a part-scoped
-one has nothing to fade from and holds — manufacturing an endpoint out of the
-target itself would fade it in as if it commanded the whole robot. Where the
-anchor DOES command the same scope, the action cross-fades like any other:
-the sole part of a one-part `Composite`, or the same part again once an
-earlier part-scoped action has become the anchor.
+*arm row* has nothing to fade from and holds — manufacturing an endpoint out
+of the target itself would fade it in as if it commanded the whole robot. A
+part-scoped **gripper-only** action is the one exception, and it crosses that
+window as itself, still part-tagged: it commands one scalar and fabricates no
+arm row for anyone, so with nothing to fade from it is its own endpoint
+whether or not it names a part. Narrowing the exception to "no anchor and no
+tag" would silently drop a commanded grip in exactly the episodes that have
+no anchor — an agent-invited one, whose caller has only ever been handed
+`Noop`s. Where the anchor DOES command the same scope, the action cross-fades
+like any other: the sole part of a one-part `Composite`, or the same part
+again once an earlier part-scoped action has become the anchor.
 
 Scope and width are two rules, and neither is a stand-in for the other. What
 holds a part-scoped action out of a *whole-robot* point's cross-fade is the
@@ -437,9 +443,12 @@ every part's grip, the gripper is one channel per action rather than one per
 part in v0, and a grip has no rows to slice, so nothing is fabricated and
 holding would only drop a commanded grip for the length of the window. It
 still holds against a *differently* part-tagged anchor, which does not
-command its grip. (A per-part gripper sidechannel would retire that
-reasoning; v0 has none, and the canonical bimanual declaration folds grippers
-into each part's joint vector, where they are ordinary rows.)
+command its grip, and — with no anchor at all — crosses as itself (above):
+one premise, that a grip is a single scalar with no rows to slice, deciding
+every anchor a part-scoped gripper can meet. (A per-part gripper sidechannel
+would retire that reasoning; v0 has none, and the canonical bimanual
+declaration folds grippers into each part's joint vector, where they are
+ordinary rows.)
 
 Nothing is faulted: the action fit the declared space, and §4's refusals are
 for actions that do not. What the timeline carries is the hold itself — every
@@ -459,7 +468,8 @@ the full width and the whole-robot anchor is that same scope, so it
 cross-fades like any other action.)
 
 Fixtures: `handoff_immediate_mid_chunk`, `teleop_dims_mismatch_holds`,
-`bimanual_part_scoped_blend_holds`.
+`bimanual_part_scoped_blend_holds`,
+`bimanual_part_scoped_gripper_crosses_anchorless_blend`.
 
 ### CHUNK_BOUNDARY{max_wait_ns}
 

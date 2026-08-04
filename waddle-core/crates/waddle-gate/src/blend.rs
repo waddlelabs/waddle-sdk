@@ -32,9 +32,14 @@ fn weight(interp: Interp, t: f32) -> f32 {
 /// `from` is the last action that left the gate, or `None` when none has yet
 /// — a caller that never ticked (an agent-invited episode, FSM.md E24) or a
 /// bypass pump. With no point to fade from, a whole-robot action is its own
-/// endpoint and crosses the window unchanged; a part-scoped one has no
+/// endpoint and crosses the window unchanged; a part-scoped ARM ROW has no
 /// endpoint at all, and manufacturing one out of the target itself would
-/// fade it in as if it commanded the whole robot.
+/// fade it in as if it commanded the whole robot. A part-scoped
+/// GRIPPER-ONLY action crosses too, part tag and all: it commands one
+/// scalar and fabricates no arm row for anyone, so nothing is manufactured
+/// (the same premise as the width exemption below). Narrowing that to "no
+/// anchor and no tag" would silently drop a commanded grip in exactly the
+/// episodes that have no anchor.
 ///
 /// Two shapes are not endpoints for each other:
 ///
