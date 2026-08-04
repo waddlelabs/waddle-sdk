@@ -35,9 +35,12 @@ class GateInfo:
 
 class Chunk:
     # A step's values are a float64 ndarray of the declared action space's
-    # width — except on a Composite declaration, where they are that step's
-    # rows keyed by declared part: one key for a part-scoped action, every
-    # declared part for a whole-robot one.
+    # width, with two departures. A gripper-only step ("hold the arm, move
+    # the gripper") carries no arm rows: its array is EMPTY and its gripper
+    # is set. And on a Composite declaration the values are that step's rows
+    # keyed by declared part instead: one key for a part-scoped action, every
+    # declared part for a whole-robot one. The two compose — a gripper-only
+    # step on a Composite declaration maps every part to an empty array.
     @property
     def steps(
         self,

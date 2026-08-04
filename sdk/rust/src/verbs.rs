@@ -108,12 +108,18 @@ impl UnitVerb for PyUnit {
 /// One dispatched chunk crossing into Python: `steps` is a list of
 /// `(values, gripper, offset_ns)` tuples.
 ///
-/// `values` is a float64 ndarray of the declared action space's width — with
-/// one shape change, and only on a `Composite` declaration, where it is
-/// instead a `dict` of that step's rows keyed by declared part (see
-/// [`PartsLayout::by_part`]). A robot with named parts is a robot whose
-/// intervenor may address one of them, and a bare 7-row array out of a
-/// 14-row cell cannot say which arm it commands.
+/// `values` is a float64 ndarray of the declared action space's width, with
+/// two departures from that width, both of them a step saying something the
+/// width cannot:
+///
+/// * a gripper-only step — "hold the arm, move the gripper" — carries no arm
+///   rows at all, so its array is EMPTY and its `gripper` is set;
+/// * on a `Composite` declaration the array is instead a `dict` of that
+///   step's rows keyed by declared part (see [`PartsLayout::by_part`]). A
+///   robot with named parts is a robot whose intervenor may address one of
+///   them, and a bare 7-row array out of a 14-row cell cannot say which arm
+///   it commands. The two compose: a gripper-only step on such a
+///   declaration is a dict whose parts all map to empty arrays.
 #[pyclass(name = "Chunk", frozen)]
 pub(crate) struct PyChunk {
     #[pyo3(get)]

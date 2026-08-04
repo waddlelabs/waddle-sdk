@@ -118,18 +118,33 @@ class _Offer:
             self._next = now + OFFER_INTERVAL_S
 
 
-def _bypass_step(session, chunks: list, values, part=None):
+def _bypass_step(session, chunks: list, values, part=None, gripper=None, accept=None):
     """Drive one step through the BYPASS path — a claimed session whose caller
     loop has stalled, which is the only path that reaches the customer's `send`
     verb (a ticking caller dispatches `gate()`'s own return itself) — and
-    return the first step the verb was handed."""
-    offer = _Offer(session, values, part)
+    return the first dispatched step `accept` recognises (by default, the
+    first step at all).
+
+    `accept` is how a test that drives a SECOND intervention after a first one
+    stays honest. An offer is repeated (see `_Offer`), so when the first
+    dispatch lands there may be one more step already buffered behind it, and
+    clearing the log and reading its next entry would read that leftover as
+    the second intervention's. Selecting the dispatch by what it must CONTAIN
+    is an observable happens-before: a leftover from the previous shape can
+    never satisfy the next shape's predicate, so the wait ends on the arrival
+    it is about and nothing else."""
+    offer = _Offer(session, values, part, gripper)
+    seen = 0
     deadline = time.monotonic() + PATIENCE_S
-    while not chunks:
+    while True:
         assert time.monotonic() < deadline, "the bypass pump never dispatched"
+        while seen < len(chunks):
+            step = chunks[seen].steps[0]
+            seen += 1
+            if accept is None or accept(step[0]):
+                return step
         offer()
         time.sleep(0.02)
-    return chunks[0].steps[0]
 
 
 def _gated_substitute(ep, session, action, values, part=None):
@@ -242,17 +257,65 @@ def test_composite_send_receives_dict_by_part_steps():
         assert list(values) == ["right"]
         assert list(values["right"]) == [1.25] * ARM_DIMS
 
-        chunks.clear()
+        # The whole-robot dispatch is selected by the shape only it can have
+        # (both declared parts), so a part-scoped step still buffered behind
+        # the one above is skipped rather than misread as this one.
         whole = [0.1] * ARM_DIMS + [0.2] * ARM_DIMS
-        values, _, _ = _bypass_step(session, chunks, whole)
+        values, _, _ = _bypass_step(
+            session, chunks, whole, accept=lambda v: list(v) == ["left", "right"]
+        )
         assert isinstance(values, dict)
         # Declaration order is the layout: `left` first, then `right`.
-        assert list(values) == ["left", "right"]
         assert list(values["left"]) == [0.1] * ARM_DIMS
         assert list(values["right"]) == [0.2] * ARM_DIMS
 
         waddle._testing.release(session, "claim-send")
         ep.terminate("success")
+
+
+def test_part_scoped_gripper_only_step_is_an_empty_array_for_that_part(tmp_path):
+    """The two shape rules compose. A gripper-only step — "hold the arm, move
+    the gripper" — carries no arm rows, and a part-scoped one carries only the
+    part it names, so a part-scoped gripper-only step is that part alone
+    mapped to an EMPTY array, with the grip on the step's own `gripper` slot.
+    The key set is what says which arm is being held: an empty dict would say
+    "this session commanded nothing", which is not what happened.
+
+    The empty-values shape is also the one a hand-rolled encoder gets wrong:
+    an empty joint vector is a dims mismatch against a 7-row part, so a step
+    marshalled as one is refused at the intake and never dispatched. The
+    timeline is asserted clean for exactly that reason."""
+    chunks: list = []
+    session = waddle.init(
+        "py-parts-grip",
+        _bimanual(),
+        _control(chunks),
+        recording_dir=tmp_path,
+        _testing=True,
+    )
+
+    with waddle.rollout(task="close the right gripper") as ep:
+        episode_id = ep.id
+        ep.gate(np.zeros(2 * ARM_DIMS))
+        waddle._testing.engage(session, "claim-grip", "agent")
+
+        values, gripper, _ = _bypass_step(
+            session, chunks, [], part="right", gripper=0.03
+        )
+        assert isinstance(values, dict)
+        assert list(values) == ["right"], "the held arm is named, not omitted"
+        assert values["right"].dtype == np.float64
+        assert values["right"].size == 0, "a gripper-only step commands no arm rows"
+        assert gripper == pytest.approx(0.03)
+
+        waddle._testing.release(session, "claim-grip")
+        ep.terminate("success")
+    waddle.shutdown()
+
+    assert _validation_faults(tmp_path, episode_id) == [], (
+        "a part-scoped gripper-only step is a legal action; a validation "
+        "fault here means it was marshalled into a shape the intake refused"
+    )
 
 
 def test_report_proprio_part_round_trips_through_mcap(tmp_path):
@@ -322,6 +385,12 @@ def test_blend_window_holds_part_scoped(tmp_path):
       intake that does not honour `Action.part` reads a 7-row action against
       a 14-row robot and refuses the chunk, and every assertion about gate
       silence below would then hold for the wrong reason.
+
+    "No fault" only means "admitted" once a claim is actually engaged — a
+    chunk pushed with none is dropped silently, by design, and would leave
+    the same empty timeline. So the offers below start only after the gate
+    has observably stopped passing the caller's action through, which is
+    this side's view of the engage completing.
     """
     session = waddle.init(
         "py-parts-blend",
@@ -339,6 +408,14 @@ def test_blend_window_holds_part_scoped(tmp_path):
             assert ep.gate(whole) is whole  # an anchor exists to fade out of
 
         waddle._testing.engage(session, "claim-blend", "agent")
+        # Engage is the core's to complete on its own schedule; under a claim
+        # the gate stops handing the caller's action back, which is the
+        # observable edge every push below depends on.
+        deadline = time.monotonic() + PATIENCE_S
+        while ep.gate(whole) is whole:
+            assert time.monotonic() < deadline, "the claim never engaged"
+            time.sleep(0.005)
+
         offer = _Offer(session, [0.9] * ARM_DIMS, part="right")
         deadline = time.monotonic() + 1.5
         while time.monotonic() < deadline:

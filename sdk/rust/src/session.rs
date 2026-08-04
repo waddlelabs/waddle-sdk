@@ -30,8 +30,8 @@ use waddle_types::pb::v0 as pb;
 use waddle_types::{ActorKind, TerminalOutcome};
 
 use crate::convert::{
-    PartsLayout, extract_f64s, outcome_str, parse_enforcement, parse_handoff, parse_outcome,
-    parse_reset_spec, parse_robot_json, parse_verification_mode, runtime_err,
+    PartsLayout, declared_space, extract_f64s, outcome_str, parse_enforcement, parse_handoff,
+    parse_outcome, parse_reset_spec, parse_robot_json, parse_verification_mode, runtime_err,
 };
 use crate::episode::PyEpisode;
 use crate::verbs::{PySend, PyUnit};
@@ -153,6 +153,10 @@ pub(crate) struct PySession {
     /// episode so a gate return is keyed by part exactly as a dispatched
     /// chunk's steps are.
     parts: Option<Arc<PartsLayout>>,
+    /// The declared action space, which [`PartsLayout`] is derived from and
+    /// [`PySession::_testing_push_chunk`] marshals against. `None` only for
+    /// a declaration `build()` would already have refused.
+    space: Option<Arc<waddle_types::ActionSpace>>,
 }
 
 /// Dropping an un-shutdown session must not run the core's blocking
@@ -514,8 +518,11 @@ impl PySession {
             })
             .transpose()?;
         // The undeclared-part refusal is the core's (it owns the
-        // declaration); this only names it as a caller-facing validation
-        // error, which is what it is.
+        // declaration), and `runtime_err` is the ONE place a core error
+        // becomes a Python one — it already maps a declaration error to
+        // `ValueError`, which is what an undeclared part is. Classifying it
+        // again here would fix this call's answer and get the next variant's
+        // wrong.
         self.inner
             .report_proprio(ProprioReport {
                 part: part.to_owned(),
@@ -524,7 +531,7 @@ impl PySession {
                 ee_pose,
                 gripper,
             })
-            .map_err(|e| PyValueError::new_err(e.to_string()))
+            .map_err(runtime_err)
     }
 
     /// PRIVATE/UNSTABLE: every raw frame payload the loopback media plane's
@@ -612,15 +619,17 @@ impl PySession {
     /// jitter buffer still decides when — and whether — the step plays out.
     ///
     /// `part` addresses one declared part by name (`Action.part`, flag
-    /// `waddle.v0.parts`). `None` is the whole robot, which on a `Composite`
-    /// declaration is marshalled into the `CompositeAction` naming every
-    /// part that the wire requires — the split is the declared layout's own
-    /// arithmetic, the same one a dispatched step comes back keyed by.
+    /// `waddle.v0.parts`); `None` is the whole robot. Empty `values` with a
+    /// `gripper` is the gripper-only shape — "hold the arm, move the
+    /// gripper" — and is legal with or without a part.
     ///
-    /// The target is always the joint-position arm: it is what the
-    /// part-addressed declarations declare, and a space that declares
-    /// another one refuses this at the intake, which is the intake doing its
-    /// job rather than this hook second-guessing it.
+    /// The wire shape is `waddle_types::unflatten_action`'s, the core's own
+    /// inverse of the flattening its intake will apply: whatever target arm
+    /// the space declares (not always joint position), a `CompositeAction`
+    /// naming every part for a whole-robot row on a `Composite` declaration,
+    /// and a `NoopMarker` carrying the gripper for the gripper-only shape.
+    /// This hook marshals nothing itself — a second, hand-rolled encoder
+    /// here could only disagree with the decoder, and did.
     #[pyo3(signature = (values, part=None, gripper=None, offset_ns=0))]
     fn _testing_push_chunk(
         &self,
@@ -630,44 +639,16 @@ impl PySession {
         offset_ns: i64,
     ) -> PyResult<()> {
         self.testing_far()?;
-        let joints = |values: Vec<f64>| {
-            Some(pb::action::Target::JointPosition(pb::JointVector {
-                values,
-            }))
-        };
-        let target = match (part, &self.parts) {
-            // A part-scoped action carries that part's own space directly.
-            (Some(_), _) => joints(values),
-            // A whole-robot action on a robot with declared parts must name
-            // every one of them (`CompositeAction`); nothing is invented,
-            // the row is cut where the declaration says.
-            (None, Some(layout)) => Some(pb::action::Target::Composite(pb::CompositeAction {
-                parts: layout
-                    .split(&values)?
-                    .into_iter()
-                    .map(|(name, rows)| pb::composite_action::PartAction {
-                        name: name.to_owned(),
-                        action: Some(pb::Action {
-                            target: joints(rows.to_vec()),
-                            ..Default::default()
-                        }),
-                    })
-                    .collect(),
-            })),
-            (None, None) => joints(values),
-        };
+        let space = self.space.as_deref().ok_or_else(|| {
+            PyRuntimeError::new_err("the session's robot declares no action space")
+        })?;
+        let mut action = waddle_types::action::unflatten_action(&values, gripper, part, space)
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        action.t_offset_ns = offset_ns;
         waddle_runtime::push_intervention_chunk(
             &self.inner,
             pb::ActionChunk {
-                actions: vec![pb::Action {
-                    target,
-                    gripper: gripper.map(|position| pb::GripperCommand {
-                        position,
-                        effort: None,
-                    }),
-                    t_offset_ns: offset_ns,
-                    part: part.unwrap_or_default().to_owned(),
-                }],
+                actions: vec![action],
                 seq: self.chunk_seq.fetch_add(1, Ordering::SeqCst),
                 source_id: "waddle.testing".to_owned(),
                 ..Default::default()
@@ -880,11 +861,13 @@ pub(crate) fn create_session(
         .with_robot_cameras(&robot)
     });
 
-    // The declared parts layout, computed once here and shared by every
-    // path an intervention payload crosses on (the `send` verb's steps, the
-    // gate's Substitute/Blend returns). Absent for every declaration without
-    // parts, which is what keeps those sessions on the flat ndarray surface.
-    let parts = PartsLayout::of(&robot);
+    // The declared space, parsed once here, and the parts layout derived
+    // from it — shared by every path an intervention payload crosses on (the
+    // `send` verb's steps, the gate's Substitute/Blend returns). The layout
+    // is absent for every declaration without parts, which is what keeps
+    // those sessions on the flat ndarray surface.
+    let space = declared_space(&robot);
+    let parts = space.as_deref().and_then(PartsLayout::of);
 
     let mut registry = ControlRegistry::default();
     if let Some(cb) = send {
@@ -966,5 +949,6 @@ pub(crate) fn create_session(
         teleop_seq: AtomicU64::new(1),
         chunk_seq: AtomicU64::new(1),
         parts,
+        space,
     })
 }

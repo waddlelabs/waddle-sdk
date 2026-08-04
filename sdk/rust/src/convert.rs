@@ -10,7 +10,8 @@ use pyo3::types::PyDict;
 use waddle_runtime::{ResetHook, ResetSpec, RuntimeError};
 use waddle_types::pb::v0 as pb;
 use waddle_types::{
-    ActorKind, HandoffPolicy, LeaseEnforcement, ResetVerificationMode, SpaceSpec, TerminalOutcome,
+    ActionSpace, ActorKind, HandoffPolicy, LeaseEnforcement, ResetVerificationMode, SpaceSpec,
+    TerminalOutcome,
 };
 
 use crate::verbs::PyResetHook;
@@ -66,18 +67,25 @@ pub(crate) struct PartsLayout {
     total: usize,
 }
 
+/// The declared action space, parsed once per session.
+///
+/// `None` when the declaration has none or cannot be parsed — `build()` is
+/// about to refuse it with the real reason, and a second, worse-worded copy
+/// of that refusal here would only get in the way.
+pub(crate) fn declared_space(robot: &pb::RobotDescription) -> Option<Arc<ActionSpace>> {
+    Some(Arc::new(
+        ActionSpace::from_pb(robot.action_space.as_ref()?).ok()?,
+    ))
+}
+
 impl PartsLayout {
-    /// The layout of a declaration, or `None` if it declares no parts.
+    /// The layout of a declared space, or `None` if it declares no parts.
     ///
     /// A `Composite` part with no declared width (an opaque one) yields
     /// `None` too: such a space is not executable at all
     /// (`ActionSpace::dims` is `None`, and the core's own chunk intake
-    /// refuses it), so there is no payload for a layout to key. A
-    /// declaration this cannot parse also yields `None` — `build()` is
-    /// about to refuse it with the real reason, and a second, worse-worded
-    /// copy of that refusal here would only get in the way.
-    pub(crate) fn of(robot: &pb::RobotDescription) -> Option<Arc<Self>> {
-        let space = waddle_types::ActionSpace::from_pb(robot.action_space.as_ref()?).ok()?;
+    /// refuses it), so there is no payload for a layout to key.
+    pub(crate) fn of(space: &ActionSpace) -> Option<Arc<Self>> {
         let SpaceSpec::Composite { parts } = &space.spec else {
             return None;
         };
