@@ -243,6 +243,11 @@ top-level dirs; they are not built yet.
   `FrameStill` observations behind `waddle.v0.obs.stills`, bounded by the camera's
   declared `StreamPolicy.still_fps` — and it is not a precedent: anything else
   high-bandwidth needs its own flag and its own bound, or it doesn't ride these RPCs.
+  A flag that MULTIPLIES an existing low-rate send answers the same rule and must
+  say so in its registry row: `waddle.v0.parts` makes the `StreamObservations`
+  proprio cadence per part, so a flagged connection carries the declared part count
+  (plus the sole part) times the unflagged rate — bounded by the declaration, which
+  is fixed for the session and visible to the plane before it accepts.
   Messages that may be shed answer `ClientMsg::is_droppable` in waddle-controlplane
   (the ONE place that classifies), and every point a droppable message can queue —
   offline buffer and in-flight transport alike — must honor it; history is never
