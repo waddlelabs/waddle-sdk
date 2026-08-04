@@ -181,7 +181,10 @@ class Driver(Protocol):
     ``estopped``
         Whether the owner's stop latch is set on this unit.
     ``read()``
-        ``(position, velocity)`` as arrays of the declared width.
+        ``(position, velocity)`` as arrays of the declared width. A read that
+        disagrees with the declared joint list is a driver/declaration
+        disagreement, and :meth:`Arm.check` names it as one — it is never
+        broadcast into the envelope's arithmetic.
     ``write(target)``
         Latch a joint-position target. Called only for a command the envelope
         already admitted.
@@ -514,12 +517,27 @@ class Arm:
         """``None`` when ``target`` may be applied, else why not.
 
         Order matters only for the message: the first failing check names
-        itself and the command is refused whole either way."""
+        itself and the command is refused whole either way.
+
+        Both sides of the arithmetic are checked, not just the commanded one.
+        ``current`` is whatever this part's driver just measured, and a driver
+        is any object with the right members — so a read that has drifted from
+        the declared joint list is the mistake this seam exists to name, and
+        it is named here rather than surfacing as a broadcast error from
+        somewhere inside the step-cap comparison."""
         width = len(self.joint_names)
         if target.shape != (width,):
             return (
                 f"width {target.shape} — this part declares {width} joints "
                 f"({', '.join(self.joint_names)})"
+            )
+        measured = np.asarray(current, dtype=float).reshape(-1)
+        if measured.size != width:
+            return (
+                f"its driver measured {measured.size} joints where this part "
+                f"declares {width} ({', '.join(self.joint_names)}) — the driver "
+                "and the declaration disagree, so nothing here can say whether "
+                "this target is one step or a jump"
             )
         if not np.all(np.isfinite(target)):
             return f"non-finite values {list(np.round(target, 4))}"
@@ -531,7 +549,7 @@ class Arm:
                     f"{self.joint_names[i]}={value:.4f} outside its declared limits "
                     f"[{lo:.4f}, {hi:.4f}]"
                 )
-        step = np.abs(target - np.asarray(current, dtype=float).reshape(-1))
+        step = np.abs(target - measured)
         for i, (moved, cap) in enumerate(zip(step, self.step_caps, strict=True)):
             if moved > cap:
                 rate = (

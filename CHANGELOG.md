@@ -33,7 +33,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     latched e-stop refuses everything else, so `accepted` keeps meaning what it
     says. Waddle never provides the envelope: this is a parameterized default
     built from the owner's own numbers, and `control(arms, send=...)` replaces
-    it wholesale with the customer's own callable.
+    it wholesale with the customer's own callable. The MEASURED side of the
+    arithmetic is checked like the commanded one: a driver whose `read()` has
+    drifted from the declared joint list is refused by name (and held, and
+    counted) rather than broadcast into the step-cap comparison.
   - **Forward kinematics is opt-in and its absence is named, not filled in**: an
     arm built without `fk` reports joint positions only (`ee_pose()` answers
     `None` rather than inventing a frame), and a workspace box declared without

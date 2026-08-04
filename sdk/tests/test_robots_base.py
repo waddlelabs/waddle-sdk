@@ -284,6 +284,26 @@ def test_a_latched_estop_refuses_every_command_until_it_is_cleared():
     assert arm.command([0.05, 0.0, 1.0]) is True
 
 
+def test_a_driver_whose_reads_disagree_with_the_declaration_is_refused_by_name():
+    """The envelope compares a target against what the driver just MEASURED,
+    so the measurement is part of the arithmetic and gets checked like the
+    rest of it. `Driver` is a shape a customer's own object satisfies on its
+    members alone, which makes a read that has drifted from the declared joint
+    list exactly the mistake this seam exists to name — refused whole, held,
+    counted, and said in one line, like every other refusal here."""
+    lines: list[str] = []
+    driver = _CountingDriver((0.0,) * 5)  # five rows for a three-joint part
+    arm = _arm(driver, lines=lines)
+
+    assert arm.command([0.05, 0.0, 1.0]) is False
+    assert driver.writes == []
+    assert driver.holds == 1, "a refused command holds the arm where it is"
+    assert arm.rejected == 1 and arm.accepted == 0
+    assert len(lines) == 1
+    assert "5" in lines[0] and "3" in lines[0], "the line names both widths"
+    assert "disagree" in lines[0]
+
+
 def test_an_arm_reports_joint_positions_without_forward_kinematics():
     """Forward kinematics is OPT-IN. A rig built without it is legal — it
     reports joint positions and no TCP — and the degradation is named rather
