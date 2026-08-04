@@ -12,6 +12,63 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 ## [Unreleased]
 
 ### Added
+- **sdk (`waddle.robots.base`: the vendor-neutral half of a robot module)**: a
+  new opt-in subpackage — `import waddle` is unchanged and imports none of it —
+  carrying everything a program that drives a real robot writes around its
+  vendor's driver, so a robot module is facts + driver + factory and nothing
+  else.
+  - **`Driver`** is a `typing.Protocol` (ten members: `kind`, `estopped`,
+    `read`, `write`, `hold`, `estop`, `re_enable`, `step`, `home`, `close`), so
+    a driver written by hand is admitted on its members, never its ancestry.
+    **`SimDriver`** is the rate-limited kinematic twin, parameterized by the
+    owner's limits/step caps/rate: it walks at most one accepted command's
+    worth of travel per control period, which is what makes a sim run a
+    rehearsal of the live one rather than an easier version of it.
+  - **`Arm`** is the envelope seam every command crosses — width, finiteness,
+    declared joint limits, per-step travel against where the unit actually is,
+    and (only with forward kinematics) the FK'd TCP inside a declared workspace
+    box. It **rejects, never clamps**: a failing target is refused WHOLE, the
+    unit holds, and one bounded line (`RejectLog`) names the check. An EMPTY
+    value vector is the wire's "hold this part" and is honoured as such; a
+    latched e-stop refuses everything else, so `accepted` keeps meaning what it
+    says. Waddle never provides the envelope: this is a parameterized default
+    built from the owner's own numbers, and `control(arms, send=...)` replaces
+    it wholesale with the customer's own callable.
+  - **Forward kinematics is opt-in and its absence is named, not filled in**: an
+    arm built without `fk` reports joint positions only (`ee_pose()` answers
+    `None` rather than inventing a frame), and a workspace box declared without
+    one is refused at construction instead of silently checking nothing.
+    `chain_fk`/`quaternion_wxyz`/`rpy_matrix` are the generic chain math for
+    modules that do declare one (wxyz pinned, all four conversion branches
+    tested).
+  - **The e-stop latch and the one human path out of it**: `estop_all` (every
+    part gets the call even if an earlier one raised), `latched_parts`,
+    `ParkGate`, `apply_console_gesture` / `start_console_recovery` — a `resume`
+    typed at a foreground TTY, never the wire (`VERB_RESUME` releases a *hold*)
+    and never the next episode's reset. `scene_reset` is the default pre-reset
+    hook: it refuses a latched scene on every backing, homes a twin, and vouches
+    for a live unit without moving it.
+  - **`RobotPump`** runs any tick callable at a declared rate on its own thread
+    (`proprio_tick` is the usual one: step every part, report it per part),
+    because the robot's own housekeeping cannot pause while the caller's thread
+    is blocked inside `waddle.agent()`.
+  - **`Rig`** is composition sugar and nothing more: a declaration, a way to
+    open the arms behind it, and the rate they run at. Constructing one opens no
+    bus and starts no thread — `arms()` is where hardware opens. `posture`
+    (`"monitor"` | `"supervised"`) is the one construction-time choice and it
+    maps to **verb presence only** (`monitor` registers the owner's stop alone,
+    so the session declares that nothing may command this robot instead of
+    accepting motion it intends to drop); it adds no authority logic, and
+    agent-driven versus windowed stays a call-site choice.
+  - **The second-vendor bar is a test**: `sdk/tests/test_robots_base.py` builds a
+    toy vendor module (facts table + the shipped twin + one factory, ~30 lines),
+    composes it by hand out of these pieces, and drives it end to end through a
+    real session — declaration, envelope, gate, pump, MCAP read-back — with
+    nothing vendor-specific in `base` to help it. It doubles as the template a
+    customer copies.
+  - No packaging change: no new dependency (numpy was already required), no
+    extras key, no `pyproject.toml` edit — maturin sweeps the subpackage with
+    `python-source`.
 - **waddle-protocol (part-addressed control, new feature flag
   `waddle.v0.parts`)**: the normative surface for intervening on ONE declared
   part of a `Composite` robot — one arm of a bimanual cell — without

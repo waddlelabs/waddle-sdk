@@ -56,6 +56,12 @@ waddle-sdk/
     rust/                    # the shim: its OWN cargo workspace (see build notes)
     python/waddle/           # pure-Python surface: init/rollout/Control/agent +
                              #   descriptors; _native.py picks the compiled core
+      robots/                # opt-in robot modules (NOT imported by `import
+                             #   waddle`): base.py is the vendor-neutral half
+                             #   (Driver protocol, SimDriver twin, the Arm
+                             #   envelope seam, console recovery, RobotPump,
+                             #   Rig); a vendor module is facts + driver +
+                             #   factory on top of it
     teleop/                  # the `waddle-sdk-teleop` companion distribution:
                              #   same rust/Cargo.toml, + the livekit feature
     examples/                # toy_robot.py: the runnable customer program
@@ -179,6 +185,12 @@ top-level dirs; they are not built yet.
   `waddle-core` exactly once (`waddle-fsm` is the behavioral conformance target). If a
   binding or frontend grows an `if` about claims, leases, handoffs, or timelines, that
   is a defect. The Python-specific review checklist lives in `sdk/README.md`.
+  `python/waddle/robots/` is owner-side code that ships in the frontend, and the same
+  rule binds it: it enforces the OWNER's envelope (limits arithmetic on the owner's own
+  numbers, refusing whole and never clamping) and asks nothing about who may command
+  what. The part an action addresses is the core's answer — indexed, never validated.
+  A posture (`monitor`/`supervised`) maps to which `Control` verbs are registered and
+  to nothing else.
 - **Vocabulary discipline.** `waddle-protocol/docs/GLOSSARY.md` is normative for every
   word in code, comments, and docs: grant (permission), claim (orchestration), lease
   (actuation single-writer), envelope (owner's hard safety — Waddle never provides
