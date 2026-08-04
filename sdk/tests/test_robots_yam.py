@@ -314,18 +314,24 @@ def test_an_unknown_posture_is_refused_by_name():
         _bimanual(posture="observe")
 
 
-def test_a_factory_call_opens_nothing():
+def test_a_factory_call_opens_nothing(vendor):
     """Declaration is cheap: constructing a live rig touches no CAN bus, so a
     program can be built and then decide not to run. `arms()` is where the
-    hardware opens and where a failure to open it lands."""
+    hardware opens and where a failure to open it lands.
+
+    Driven through the stand-in vendor rather than through a machine that
+    happens not to have the real one installed: this is an assertion about what
+    was CALLED, and a test that proved it by reaching an ImportError would open
+    a real bus on the live-YAM machine this module exists for."""
     rig = _bimanual(
         sim=False,
         left=yam.ArmSite(channel="can_left"),
         right=yam.ArmSite(channel="can_right"),
     )
     assert rig.robot().name == "yam-bimanual"
-    with pytest.raises(RuntimeError, match="i2rt"):
-        rig.arms()
+    assert vendor.calls == []
+    rig.arms()
+    assert len(vendor.calls) == 2
 
 
 # --------------------------------------------------------------------------
