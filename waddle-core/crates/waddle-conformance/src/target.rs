@@ -8,6 +8,7 @@
 //! advances in fixed steps so stall detection, chunk boundaries, jitter
 //! playout and the bypass pump behave identically on every run.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use serde_json::{Map, Value, json};
@@ -96,6 +97,69 @@ struct ChunkIntake {
     inert: WindowLatch,
 }
 
+/// The commanded side of dual-write detection (N14), keyed by the SCOPE each
+/// command addressed: `""` for a whole-robot action, the part's name for a
+/// part-addressed one.
+///
+/// One vector stopped being enough when `Action.part` became executable. A
+/// part-scoped command means "move this part, hold the rest" (docs/FSM.md
+/// §4), so what the robot was last told is one command PER PART, and a
+/// part-width vector compared against whatever proprioception arrives next
+/// scores an intervenor against another part's joints. Hence the two rules
+/// here: a whole-robot command commands every part, so it CLEARS the
+/// part-scoped commands it supersedes; a part-scoped one replaces its own
+/// part only, leaving the last whole-robot command standing as the anchor
+/// for the parts it did not address.
+#[derive(Debug, Default)]
+struct Commanded {
+    by_scope: BTreeMap<String, Vec<f64>>,
+}
+
+impl Commanded {
+    /// Record what just went robot-ward. `part` is the action's own tag
+    /// ([`OwnedAction::part`]); `None` is the whole declared space.
+    fn record(&mut self, part: Option<&str>, values: &[f64]) {
+        if part.is_none() {
+            self.by_scope.clear();
+        }
+        self.by_scope
+            .insert(part.unwrap_or_default().to_owned(), values.to_vec());
+    }
+
+    /// What a `ProprioSample` for `part` may be compared against, or `None`
+    /// when the two describe different scopes and nothing honest can be said
+    /// about the pair.
+    ///
+    /// * A per-part sample answers to that part's own command when one
+    ///   stands, and otherwise to the last whole-robot command's slice for
+    ///   it: slicing an ACTION vector by declaration order is what the
+    ///   declared composite layout means, and "hold the rest" leaves that
+    ///   slice as the part's standing command.
+    /// * A whole-robot sample (`part == ""`) answers to the last whole-robot
+    ///   command, but only while nothing narrower supersedes part of it.
+    ///   Past that, the whole-robot expectation is a composition of one
+    ///   command per part, and the sample's layout is the customer's
+    ///   OBSERVATION layout, which no declaration describes — so the runner
+    ///   never re-lays an observation out by action parts, and says nothing
+    ///   instead. A part-addressed session reports proprioception per part
+    ///   (`ProprioSample.part`), which is the case above.
+    fn expected_for<'a>(&'a self, space: Option<&ActionSpace>, part: &str) -> Option<&'a [f64]> {
+        if part.is_empty() {
+            if self.by_scope.keys().any(|scope| !scope.is_empty()) {
+                return None;
+            }
+            return self.by_scope.get("").map(Vec::as_slice);
+        }
+        if let Some(values) = self.by_scope.get(part) {
+            return Some(values);
+        }
+        let whole = self.by_scope.get("")?;
+        let (offset, dims) = part_span(space?, part)?;
+        let end = (offset + dims).min(whole.len());
+        (offset < end).then(|| &whole[offset..end])
+    }
+}
+
 #[derive(Debug)]
 struct GateParts {
     shared: Arc<GateShared>,
@@ -124,10 +188,16 @@ struct GateParts {
     chunk_intake: ChunkIntake,
     /// End of the executing policy chunk (chunk-boundary detection).
     chunk_end_ns: Option<i64>,
-    detector: DivergenceDetector,
-    /// Last action dispatched robot-ward (gate pass/substitute/blend or a
-    /// bypass-pump send) — the "commanded" side of dual-write detection.
-    last_commanded: Option<Vec<f64>>,
+    /// One divergence run per proprioception stream, keyed by
+    /// `ProprioSample.part` (`""` = the whole robot). Parts are independent
+    /// streams of content: a part that arrives where it was told must never
+    /// reset — and so mask — the run of a part that is being driven by
+    /// someone else.
+    detectors: BTreeMap<String, DivergenceDetector>,
+    /// What was last dispatched robot-ward (gate pass/substitute/blend or a
+    /// bypass-pump send), per addressed scope — the "commanded" side of
+    /// dual-write detection.
+    commanded: Commanded,
     incident_seq: u32,
 }
 
@@ -214,8 +284,8 @@ impl Target {
                     teleop_dims_fault: WindowLatch::default(),
                     chunk_intake: ChunkIntake::default(),
                     chunk_end_ns: None,
-                    detector: DivergenceDetector::new(DIVERGENCE_THRESHOLD, DIVERGENCE_WINDOW_NS),
-                    last_commanded: None,
+                    detectors: BTreeMap::new(),
+                    commanded: Commanded::default(),
                     incident_seq: 0,
                 })
             }
@@ -522,7 +592,7 @@ impl Target {
                 sent.push(action);
             }
             if let Some(last) = sent.last() {
-                gp.last_commanded = Some(last.values.to_vec());
+                gp.commanded.record(last.part.as_deref(), &last.values);
             }
         }
         for action in &sent {
@@ -915,9 +985,12 @@ impl Target {
             // adding one is protocol work.
             let output = gp.gate.gate(&values, gripper, None);
             match &output {
-                GateOutput::Pass { .. } => gp.last_commanded = Some(values.clone()),
+                // The caller's own action always commands the whole declared
+                // space; an intervention action carries the part it
+                // addresses, or none for a whole-robot one.
+                GateOutput::Pass { .. } => gp.commanded.record(None, &values),
                 GateOutput::Substitute { action, .. } | GateOutput::Blend { action, .. } => {
-                    gp.last_commanded = Some(action.values.to_vec());
+                    gp.commanded.record(action.part.as_deref(), &action.values);
                 }
                 GateOutput::Noop { .. } | GateOutput::Hold => {}
             }
@@ -1158,12 +1231,19 @@ impl Target {
             Some(v) => parse_ns(v)?,
             None => self.now,
         };
+        // Commanded and observed must describe the same scope before they
+        // are compared at all ([`Commanded::expected_for`]), and each
+        // stream's divergence run stands on its own.
         let verdict = {
             let gp = self.gate_mut("proprio_sample")?;
-            match gp.last_commanded.clone() {
+            match gp.commanded.expected_for(gp.space.as_ref(), &sample.part) {
                 Some(commanded) => gp
-                    .detector
-                    .feed(&commanded, &sample.joint_pos, MonoNs(t_ns)),
+                    .detectors
+                    .entry(sample.part.clone())
+                    .or_insert_with(|| {
+                        DivergenceDetector::new(DIVERGENCE_THRESHOLD, DIVERGENCE_WINDOW_NS)
+                    })
+                    .feed(commanded, &sample.joint_pos, MonoNs(t_ns)),
                 None => None,
             }
         };
@@ -1453,6 +1533,30 @@ fn part_policy(space: &ActionSpace) -> PartPolicy {
         SpaceSpec::Composite { .. } => PartPolicy::Honor,
         _ => PartPolicy::Ignore,
     }
+}
+
+/// Where a declared part's values sit in a WHOLE-ROBOT action vector: a
+/// composite action is its parts' values concatenated in declaration order
+/// (`waddle_types::action`'s flatten), so a part's span is the widths
+/// declared before it, and its own. `None` when the space declares no parts,
+/// or no part by this name.
+///
+/// Layout arithmetic over the DECLARATION, and applied to commands only —
+/// an observation's layout is the customer's own, declared nowhere, so it is
+/// never sliced this way.
+fn part_span(space: &ActionSpace, name: &str) -> Option<(usize, usize)> {
+    let SpaceSpec::Composite { parts } = &space.spec else {
+        return None;
+    };
+    let mut offset = 0;
+    for (part, part_space) in parts {
+        let dims = part_space.dims()?;
+        if part == name {
+            return Some((offset, dims));
+        }
+        offset += dims;
+    }
+    None
 }
 
 fn parse_actor_kind(s: &str) -> Result<ActorKind, ConformanceError> {

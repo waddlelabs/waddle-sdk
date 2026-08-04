@@ -1,0 +1,78 @@
+{
+  "format": "waddle.behavior/v0",
+  "name": "bimanual_part_scoped_dual_write_detected",
+  "description": "The other half of bimanual_part_scoped_proprio_scoped_to_its_part: scoping the N14 comparison to the part must not blind it. A hosted agent alternates part-scoped commands — 'right' asked to hold its pose, 'left' driven to a pose it reaches exactly — while proprioception reports 'right' drifting further from what it was commanded on every sample and 'left' arriving exactly where it was told. The right arm's divergence is sustained across the whole window and must raise DualWriteDetected with action_taken VERB_HOLD and a persisted trace_ref, even though every left sample in between agrees perfectly: divergence is tracked per part, so an obedient part can never mask a disobedient one (the same reason per-part proprioception is rate-limited per part). The episode stays INTERVENTION — the hold is an output condition, not a mode change. Judgment calls: the divergence threshold and window are implementation-declared, so the right arm's drift grows from 0.5 to 1.1 rad — far past any plausible bound — over 240 ms, and the fixture allows 100 ms for detection after the final sample; ADVISORY enforcement and HOLD_FIRST as in dual_write_detection; the claim is ACTOR_KIND_AGENT because GateServerMessage.intervention_chunk is the arm a hosted agent streams on; part names 'left'/'right' and the 7-value part width come from the bimanual fixture.",
+  "target": "gate",
+  "requires_features": ["waddle.v0.core", "waddle.v0.agent", "waddle.v0.parts"],
+  "setup": {
+    "robot_fixture": "../wire/robot_description_bimanual_composite.json",
+    "lease_enforcement": "LEASE_ENFORCEMENT_ADVISORY",
+    "handoff": { "holdFirst": {} },
+    "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING"
+  },
+  "steps": [
+    { "inject": { "kind": "episode_open", "episode_id": "ep-pdw-0001", "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING" } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "reset_result", "result": { "ok": true, "strategy": "scripted_home", "verification": { "mode": "RESET_VERIFICATION_MODE_BLOCKING", "verified": true, "judgeId": "judge-reset", "judgeVersion": "2.1.0", "score": 0.97, "tNs": "100000000" } } } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_READY" } },
+
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "200000000", "action": { "composite": { "parts": [
+      { "name": "left", "action": { "jointPosition": { "values": [0.10, -0.40, 0.30, -1.20, 0.05, 0.90, 0.70] } } },
+      { "name": "right", "action": { "jointPosition": { "values": [-0.10, -0.40, 0.30, -1.20, -0.05, 0.90, 0.70] } } }
+    ] }, "tOffsetNs": "0" } } },
+    { "expect_output": { "kind": "pass" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RUNNING", "gate.mode": "GATE_MODE_PASSTHROUGH" } },
+
+    { "inject": { "kind": "claim_granted", "claim": { "claimId": "claim-pdw-0001", "episodeId": "ep-pdw-0001", "actor": { "kind": "ACTOR_KIND_AGENT", "id": "agent-waddle-1", "displayName": "Waddle agent" }, "sourceName": "waddle-agent", "selfInitiated": false, "tGrantedNs": "200000000", "handoff": { "holdFirst": {} }, "spaces": ["SPACE_KIND_JOINT_POSITION"] } } },
+    { "inject": { "kind": "engage", "claim_id": "claim-pdw-0001", "initiator": "ACTOR_KIND_AGENT" } },
+    { "advance_ns": "50000000" },
+    { "inject": { "kind": "verb_result", "result": { "ok": true, "detail": "hold complete, arms at rest", "tNs": "250000000" } } },
+    { "expect_emission": { "event": { "lease": { "kind": "LEASE_EVENT_KIND_HANDED_OFF", "lease": { "leaseId": "$fresh_lease" } } }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_INTERVENTION", "gate.mode": "GATE_MODE_INTERVENTION" } },
+
+    { "advance_ns": "50000000" },
+    { "inject": { "kind": "intervention_chunk", "chunk": { "seq": "1", "sourceId": "agent-waddle-1", "tEmittedNs": "300000000", "tObsNs": "300000000", "horizonNs": "60000000", "provenance": { "kind": "PROVENANCE_KIND_AGENT", "actor": { "kind": "ACTOR_KIND_AGENT", "id": "agent-waddle-1" } }, "actions": [
+      { "tOffsetNs": "0", "part": "right", "jointPosition": { "values": [-0.10, -0.40, 0.30, -1.20, -0.05, 0.90, 0.70] } }
+    ] } } },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "300000000" } },
+    { "expect_output": { "kind": "substitute", "part": "right", "provenance": { "kind": "PROVENANCE_KIND_AGENT" } } },
+    { "inject": { "kind": "proprio_sample", "t_ns": "300000000", "sample": { "part": "right", "jointPos": [0.30, -0.10, 0.30, -1.20, -0.05, 0.90, 0.70] } } },
+
+    { "advance_ns": "60000000" },
+    { "inject": { "kind": "intervention_chunk", "chunk": { "seq": "2", "sourceId": "agent-waddle-1", "tEmittedNs": "360000000", "tObsNs": "360000000", "horizonNs": "60000000", "provenance": { "kind": "PROVENANCE_KIND_AGENT", "actor": { "kind": "ACTOR_KIND_AGENT", "id": "agent-waddle-1" } }, "actions": [
+      { "tOffsetNs": "0", "part": "left", "jointPosition": { "values": [0.10, -0.40, 0.30, -1.20, 0.05, 0.90, 0.70] } }
+    ] } } },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "360000000" } },
+    { "expect_output": { "kind": "substitute", "part": "left", "provenance": { "kind": "PROVENANCE_KIND_AGENT" } } },
+    { "inject": { "kind": "proprio_sample", "t_ns": "360000000", "sample": { "part": "left", "jointPos": [0.10, -0.40, 0.30, -1.20, 0.05, 0.90, 0.70] } } },
+
+    { "advance_ns": "60000000" },
+    { "inject": { "kind": "intervention_chunk", "chunk": { "seq": "3", "sourceId": "agent-waddle-1", "tEmittedNs": "420000000", "tObsNs": "420000000", "horizonNs": "60000000", "provenance": { "kind": "PROVENANCE_KIND_AGENT", "actor": { "kind": "ACTOR_KIND_AGENT", "id": "agent-waddle-1" } }, "actions": [
+      { "tOffsetNs": "0", "part": "right", "jointPosition": { "values": [-0.10, -0.40, 0.30, -1.20, -0.05, 0.90, 0.70] } }
+    ] } } },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "420000000" } },
+    { "expect_output": { "kind": "substitute", "part": "right", "provenance": { "kind": "PROVENANCE_KIND_AGENT" } } },
+    { "inject": { "kind": "proprio_sample", "t_ns": "420000000", "sample": { "part": "right", "jointPos": [0.55, 0.05, 0.30, -1.20, -0.05, 0.90, 0.70] } } },
+
+    { "advance_ns": "60000000" },
+    { "inject": { "kind": "intervention_chunk", "chunk": { "seq": "4", "sourceId": "agent-waddle-1", "tEmittedNs": "480000000", "tObsNs": "480000000", "horizonNs": "60000000", "provenance": { "kind": "PROVENANCE_KIND_AGENT", "actor": { "kind": "ACTOR_KIND_AGENT", "id": "agent-waddle-1" } }, "actions": [
+      { "tOffsetNs": "0", "part": "left", "jointPosition": { "values": [0.10, -0.40, 0.30, -1.20, 0.05, 0.90, 0.70] } }
+    ] } } },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "480000000" } },
+    { "expect_output": { "kind": "substitute", "part": "left", "provenance": { "kind": "PROVENANCE_KIND_AGENT" } } },
+    { "inject": { "kind": "proprio_sample", "t_ns": "480000000", "sample": { "part": "left", "jointPos": [0.10, -0.40, 0.30, -1.20, 0.05, 0.90, 0.70] } } },
+
+    { "advance_ns": "60000000" },
+    { "inject": { "kind": "intervention_chunk", "chunk": { "seq": "5", "sourceId": "agent-waddle-1", "tEmittedNs": "540000000", "tObsNs": "540000000", "horizonNs": "60000000", "provenance": { "kind": "PROVENANCE_KIND_AGENT", "actor": { "kind": "ACTOR_KIND_AGENT", "id": "agent-waddle-1" } }, "actions": [
+      { "tOffsetNs": "0", "part": "right", "jointPosition": { "values": [-0.10, -0.40, 0.30, -1.20, -0.05, 0.90, 0.70] } }
+    ] } } },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "540000000" } },
+    { "expect_output": { "kind": "substitute", "part": "right", "provenance": { "kind": "PROVENANCE_KIND_AGENT" } } },
+    { "inject": { "kind": "proprio_sample", "t_ns": "540000000", "sample": { "part": "right", "jointPos": [0.80, 0.20, 0.30, -1.20, -0.05, 0.90, 0.70] } } },
+
+    { "expect_emission": { "event": { "dualWrite": { "actionTaken": "VERB_HOLD", "traceRef": "$nonempty" } }, "within_ns": "100000000" } },
+    { "expect_emission": { "effect": { "request_verb": { "verb": "VERB_HOLD" } }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_INTERVENTION", "gate.mode": "GATE_MODE_INTERVENTION" } }
+  ]
+}

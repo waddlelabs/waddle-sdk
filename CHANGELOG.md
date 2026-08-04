@@ -1238,6 +1238,32 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   in the episode MCAP; callers no longer see the ring.
 
 ### Fixed
+- **Dual-write detection compares like with like once a command addresses one
+  part** (`waddle-conformance`): the reference runner kept ONE
+  `last_commanded` vector and fed it into ONE `DivergenceDetector`, which was
+  right while every command was whole-robot and became wrong the moment a
+  part-tagged action could reach it. A part-width command was compared
+  position by position against a whole-robot `ProprioSample.joint_pos`,
+  scoring an intervenor driving the right arm against the LEFT arm's joints:
+  measured on the bimanual fixture, a chunk commanding `right` to a pose the
+  robot then reported reaching exactly still raised
+  `DualWriteDetected{VERB_HOLD, divergence 1.31}` — a fabricated safety
+  escalation against a sender doing precisely what it said it would, where
+  the identical scenario with a whole-robot chunk stayed silent. Two rules
+  now hold, and each is pinned by a scenario: the commanded side is keyed by
+  the SCOPE each command addressed — a whole-robot command commands every
+  part and clears the part-scoped commands it supersedes, a part-scoped one
+  replaces its own part and leaves the whole-robot command standing as the
+  anchor for the parts it did not address — and a sample is compared only
+  against its own scope. A sample for a part with no part-scoped command is
+  compared against the last whole-robot command's slice for it (declaration
+  order defines that slice; "hold the rest" means it still stands), while a
+  whole-robot sample says nothing at all under a standing part-scoped
+  command, because the composition it would need is not what its layout
+  describes — an observation's layout is the customer's own and no
+  declaration describes it, so it is never re-laid-out by action parts. Each
+  part also gets its own divergence run: an arm arriving where it was told
+  must not reset, and so mask, the run of an arm someone else is writing.
 - **A gripper-only intervention step is an action, not a drop**
   (`waddle-types`/`waddle-gate`/`waddle-runtime`): control.proto has
   `Action.gripper` "ride alongside the target in one logical tick", and

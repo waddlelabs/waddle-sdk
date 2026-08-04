@@ -103,6 +103,18 @@ as unknown:
 Runners MUST reject a scenario containing an unknown kind (this set only grows
 by protocol revision).
 
+`ProprioSample.part` selects what the sample is compared against, and the
+comparison never crosses scopes (N14 detection is per stream of content): a
+sample naming a part answers to that part's own last command, or — for a part
+no part-scoped command has addressed — to the last whole-robot command's
+slice for it, which the declared part order defines; a whole-robot sample
+(`part: ""`) answers to the last whole-robot command, and says nothing at all
+while a part-scoped command supersedes part of it, since an observation's
+layout is the customer's own and no declaration describes it. A scenario
+driving a part-addressed intervention therefore reports proprioception per
+part (needs `waddle.v0.parts`), and one that reports it whole-robot asserts
+nothing about divergence.
+
 ### `expect_state`
 
 ```json
