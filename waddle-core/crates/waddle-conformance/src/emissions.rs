@@ -61,6 +61,32 @@ impl Codec {
             .map_err(|e| crate::scenario_err(format!("{full_name} transcode: {e}")))
     }
 
+    /// Parse canonical proto3 JSON against a descriptor named at RUNTIME,
+    /// for a payload whose type is a string rather than a Rust type — a wire
+    /// fixture's `type` envelope field. Strict: an unknown field or a value
+    /// the descriptor cannot take is an error, which is the whole point of
+    /// running a fixture through this.
+    pub fn parse_dynamic(
+        &self,
+        full_name: &str,
+        value: &Value,
+    ) -> Result<DynamicMessage, ConformanceError> {
+        let desc = self.descriptor(full_name)?;
+        DynamicMessage::deserialize(desc, value.clone())
+            .map_err(|e| crate::scenario_err(format!("{full_name}: {e}")))
+    }
+
+    /// Canonical proto3 JSON of an already-parsed dynamic message (the
+    /// serializing half of [`Codec::parse_dynamic`]).
+    pub fn dynamic_to_value(&self, msg: &DynamicMessage) -> Result<Value, ConformanceError> {
+        let opts = SerializeOptions::new().skip_default_fields(false);
+        let mut buf = Vec::new();
+        let mut ser = serde_json::Serializer::new(&mut buf);
+        msg.serialize_with_options(&mut ser, &opts)
+            .map_err(|e| crate::scenario_err(format!("serialize: {e}")))?;
+        Ok(serde_json::from_slice(&buf)?)
+    }
+
     /// Serialize a generated prost type to canonical proto3 JSON
     /// (lowerCamelCase fields, int64 as strings, enums as full names),
     /// with default-valued fields present so partial matches like
