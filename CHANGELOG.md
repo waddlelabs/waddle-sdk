@@ -49,8 +49,13 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     commanded point fabricates a full-width command the sender never issued
     into `/waddle/actions` (with no anchor at all when the caller never
     ticked). §5: a part-scoped action does **not** cross-fade in v0 — it is
-    not an endpoint for a whole-robot interpolation, so the gate holds,
-    without faulting, until the blend window closes.
+    not an endpoint for a whole-robot interpolation, so the gate holds, without
+    faulting, until the blend window closes. That hold **discards** what comes
+    due rather than deferring it: an action whose playout time falls inside the
+    window is consumed and dropped, so a streaming sender pays `blend_ns` of
+    hold and nothing else, while a sender that issues one part-scoped chunk
+    instead of a stream loses it entirely and must declare HOLD_FIRST or
+    `IMMEDIATE{blend_ns: 0}`.
   - **Conformance**: `scenario-format.md` gains the `intervention_chunk`
     inject kind (the control-plane chunk arm had no scenario surface at all)
     and the `expect_output.part` matcher; `fixtures/wire/action_chunk_part_scoped.json`

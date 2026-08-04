@@ -350,6 +350,11 @@ fabricate a full-width command the sender never issued into the episode's
 action rows, and there is no such anchor at all for an episode whose caller
 never ticked (E24).
 
+One window is the exception to "executes": while an `IMMEDIATE{blend_ns}`
+cross-fade is open, a part-scoped action is not an endpoint for it and is
+dropped rather than executed or deferred — §5 states that contract and what
+a sender does about it.
+
 The lease is untouched: it stays whole-robot single-writer. Addressing a part
 is an addressing axis, never an authority axis — v0 has no per-part claim,
 lease, or handoff. On a connection that did not negotiate the flag, a
@@ -394,11 +399,31 @@ interpolates from the last commanded whole-robot point into the incoming
 action, and a part-width action is not an endpoint for the parts it does not
 address: splicing one in would either truncate the target or fabricate values
 for those parts, and §4 bans both. So the gate holds for the rest of the
-window and begins substituting the part-scoped stream when the window closes
-— the action is valid, nothing is faulted, it simply waits. A sender that
-needs instant part-scoped takeover declares HOLD_FIRST or `IMMEDIATE{blend_ns:
-0}`. (A one-part `Composite` is the degenerate case: the part's width *is* the
-full width, and it cross-fades like any other action.)
+window — and it holds by **discarding** what comes due, not by deferring it.
+A part-scoped action whose playout time falls inside the window is consumed
+and dropped, exactly as the dims-mismatch defense above consumes and drops
+one; it is not re-delivered when the window closes. That is the real-time
+reading: a setpoint replayed after a cross-fade it could not join is a stale
+one, and the stream's next action is already better than its last. When the
+window closes, the next part-scoped action to come due substitutes normally,
+part-tagged (§4) — so a **streaming** sender pays `blend_ns` of hold and
+nothing else.
+
+Nothing is faulted: the action fit the declared space, and §4's refusals are
+for actions that do not. What the timeline carries is the hold itself — every
+held tick records `NoopMarker{NOOP_REASON_HOLD_ACTIVE}` in the episode's
+action rows, so the window reads as "the gate commanded nothing", never as a
+substitution that quietly did not happen. The individual discarded setpoints
+are not enumerated, which is the one place this differs from §4's intake
+refusals: there, an action is refused *before* it is accepted, and the
+refusal is named. Here it is accepted, then overtaken.
+
+So a sender that needs instant part-scoped takeover declares HOLD_FIRST or
+`IMMEDIATE{blend_ns: 0}` — and a sender that issues **one** part-scoped chunk
+rather than a stream MUST, since with nothing behind it there is nothing left
+to substitute when the window closes and the whole command is lost. (A
+one-part `Composite` is the degenerate case: the part's width *is* the full
+width, and it cross-fades like any other action.)
 
 Fixtures: `handoff_immediate_mid_chunk`, `teleop_dims_mismatch_holds`,
 `bimanual_part_scoped_blend_holds`.

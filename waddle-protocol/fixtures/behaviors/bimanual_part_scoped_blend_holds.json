@@ -1,7 +1,7 @@
 {
   "format": "waddle.behavior/v0",
   "name": "bimanual_part_scoped_blend_holds",
-  "description": "Pins docs/FSM.md §5's part-scoped blend contract (flag waddle.v0.parts): a part-scoped action does NOT cross-fade in v0. Engaging under IMMEDIATE{blendNs:300000000} opens a cross-fade from the last commanded whole-robot point, and a 7-wide 'left' action is not an endpoint for a 14-wide interpolation — splicing it in would either truncate the target or fabricate values for 'right', both banned by §4 — so the gate holds for the rest of the window. Crucially it holds WITHOUT a fault: the action is valid and accepted at the intake (contrast bimanual_part_dims_mismatch_faults, where the intake refuses and faults); it simply waits. Once the window closes the same part-scoped stream substitutes normally, part-tagged, which is what makes the hold a delay rather than a wedge. A sender needing instant part takeover declares HOLD_FIRST or IMMEDIATE{blendNs:0}. Judgment calls: two PASSTHROUGH ticks before engage establish the last commanded 14-wide point the cross-fade would interpolate from; the post-window tick is at t=550ms, comfortably past the 200-500ms window, since the exact boundary tick is deliberately unasserted here as in handoff_immediate_mid_chunk; ACTOR_KIND_AGENT claim on a non-invited episode (the intervention_chunk arm's v0 producer).",
+  "description": "Pins docs/FSM.md §5's part-scoped blend contract (flag waddle.v0.parts): a part-scoped action does NOT cross-fade in v0, and the gate holds the window by DISCARDING what comes due rather than deferring it. Engaging under IMMEDIATE{blendNs:300000000} opens a cross-fade from the last commanded whole-robot point, and a 7-wide 'left' action is not an endpoint for a 14-wide interpolation — splicing it in would either truncate the target or fabricate values for 'right', both banned by §4 — so the gate holds. It holds WITHOUT a fault: the action fit the declared space and was accepted at the intake (contrast bimanual_part_dims_mismatch_faults, where the intake refuses and faults). The step that makes this a contract rather than a coincidence is the FIRST tick after the window closes, which injects NOTHING: it must still hold, proving the two in-window actions were consumed and dropped and not queued behind the cross-fade — a setpoint replayed after the window it could not join is a stale one. The stream's NEXT action then substitutes normally, part-tagged, so a streaming sender pays blendNs of hold and nothing else; a sender issuing one part-scoped chunk instead of a stream loses it entirely and must declare HOLD_FIRST or IMMEDIATE{blendNs:0}. Judgment calls: two PASSTHROUGH ticks before engage establish the last commanded 14-wide point the cross-fade would interpolate from; the first post-window tick is at t=550ms, comfortably past the 200-500ms window, since the exact boundary tick is deliberately unasserted here as in handoff_immediate_mid_chunk; ACTOR_KIND_AGENT claim on a non-invited episode (the intervention_chunk arm's v0 producer).",
   "target": "gate",
   "requires_features": ["waddle.v0.core", "waddle.v0.agent", "waddle.v0.parts"],
   "setup": {
@@ -59,10 +59,18 @@
     { "expect_no_emission": { "event": { "fault": {} }, "within_ns": "0" } },
 
     { "advance_ns": "150000000" },
-    { "inject": { "kind": "intervention_chunk", "chunk": { "seq": "3", "sourceId": "agent-waddle-1", "tEmittedNs": "550000000", "tObsNs": "550000000", "horizonNs": "100000000", "provenance": { "kind": "PROVENANCE_KIND_AGENT", "actor": { "kind": "ACTOR_KIND_AGENT", "id": "agent-waddle-1" } }, "actions": [
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "550000000", "action": { "composite": { "parts": [
+      { "name": "left", "action": { "jointPosition": { "values": [0.14, -0.36, 0.30, -1.16, 0.05, 0.90, 0.70] } } },
+      { "name": "right", "action": { "jointPosition": { "values": [-0.14, -0.36, 0.30, -1.16, -0.05, 0.90, 0.70] } } }
+    ] }, "tOffsetNs": "0" } } },
+    { "expect_output": { "kind": "hold" } },
+    { "expect_no_emission": { "event": { "fault": {} }, "within_ns": "0" } },
+
+    { "advance_ns": "50000000" },
+    { "inject": { "kind": "intervention_chunk", "chunk": { "seq": "3", "sourceId": "agent-waddle-1", "tEmittedNs": "600000000", "tObsNs": "600000000", "horizonNs": "100000000", "provenance": { "kind": "PROVENANCE_KIND_AGENT", "actor": { "kind": "ACTOR_KIND_AGENT", "id": "agent-waddle-1" } }, "actions": [
       { "tOffsetNs": "0", "part": "left", "jointPosition": { "values": [0.14, -0.36, 0.31, -1.16, 0.06, 0.91, 0.20] } }
     ] } } },
-    { "inject": { "kind": "gate_tick", "obs_t_ns": "550000000", "action": { "composite": { "parts": [
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "600000000", "action": { "composite": { "parts": [
       { "name": "left", "action": { "jointPosition": { "values": [0.14, -0.36, 0.30, -1.16, 0.05, 0.90, 0.70] } } },
       { "name": "right", "action": { "jointPosition": { "values": [-0.14, -0.36, 0.30, -1.16, -0.05, 0.90, 0.70] } } }
     ] }, "tOffsetNs": "0" } } },
