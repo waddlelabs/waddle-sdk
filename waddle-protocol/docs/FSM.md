@@ -320,6 +320,45 @@ That refusal is recorded the same way, in its own words. Either way the
 sender learns from the episode's own timeline what did not happen; a
 dropped action is never silent.
 
+### Part-scoped actions (flag `waddle.v0.parts`)
+
+On a `Composite` declaration an intervention action MAY address **one
+declared part by name** (`Action.part`, control.proto) instead of carrying a
+`CompositeAction` that names every part. This is what lets a sender intervene
+on one arm of a bimanual cell without inventing values for the other — and
+invented values would actuate, and would be recorded under the intervenor's
+provenance, because provenance is per action, not per slice.
+
+Validation is against **that part's** declared space, not the composite's:
+
+* a flattened width that isn't the addressed part's width is the same dims
+  mismatch as any other — the whole chunk is refused, nothing is dispatched,
+  and `Fault{FAULT_KIND_VALIDATION_ERROR}` fires once per claim window;
+* a part name the declaration does not have, or a part-scoped action whose
+  target is itself a `CompositeAction` (nesting is depth 1, descriptors.proto),
+  does not fit the declared space at all: the whole chunk is refused and the
+  refusal is recorded in its own words, per the paragraph above.
+
+Executing one is **"move this part, hold the rest"** — the exact
+generalization of the gripper-only shape above ("hold the arm, move the
+gripper"), and "hold" means the same thing in both: *no new command is sent*
+for what isn't addressed. Waddle does not fill in the unaddressed parts.
+Passing the caller's own values through for them would resume the paused
+policy's actuation mid-intervention, under the intervenor's provenance, with
+no transition saying so; filling from the last commanded point would
+fabricate a full-width command the sender never issued into the episode's
+action rows, and there is no such anchor at all for an episode whose caller
+never ticked (E24).
+
+The lease is untouched: it stays whole-robot single-writer. Addressing a part
+is an addressing axis, never an authority axis — v0 has no per-part claim,
+lease, or handoff. On a connection that did not negotiate the flag, a
+part-scoped action keeps its pre-flag meaning: flattened against the whole
+declared space, hence refused on any real multi-part robot (VERSIONING.md §3).
+
+Fixtures: `bimanual_part_scoped_substitute`, `bimanual_part_dims_mismatch_faults`,
+`bimanual_unknown_part_refused`.
+
 ---
 
 ## 5. Handoff sub-protocol (per `HandoffPolicy`)
@@ -350,7 +389,19 @@ own refusal to blend mismatched lengths is defense in depth. A gripper-only
 action (§4) carries no arm width by construction and is not a mismatch: it
 cross-fades on the gripper channel alone, with the arm holding.
 
-Fixtures: `handoff_immediate_mid_chunk`, `teleop_dims_mismatch_holds`.
+A **part-scoped action (§4) does not cross-fade in v0**. The cross-fade
+interpolates from the last commanded whole-robot point into the incoming
+action, and a part-width action is not an endpoint for the parts it does not
+address: splicing one in would either truncate the target or fabricate values
+for those parts, and §4 bans both. So the gate holds for the rest of the
+window and begins substituting the part-scoped stream when the window closes
+— the action is valid, nothing is faulted, it simply waits. A sender that
+needs instant part-scoped takeover declares HOLD_FIRST or `IMMEDIATE{blend_ns:
+0}`. (A one-part `Composite` is the degenerate case: the part's width *is* the
+full width, and it cross-fades like any other action.)
+
+Fixtures: `handoff_immediate_mid_chunk`, `teleop_dims_mismatch_holds`,
+`bimanual_part_scoped_blend_holds`.
 
 ### CHUNK_BOUNDARY{max_wait_ns}
 
