@@ -149,6 +149,10 @@ pub(crate) struct Reducer {
     /// by the declaration (parts + 1, validated at
     /// `Session::report_proprio`).
     latest: BTreeMap<String, PartProprio>,
+    /// The claim the last published `Status::claim_generation` describes,
+    /// and that counter itself. Only `publish_mirror` touches either.
+    claim_window: Option<waddle_types::ClaimId>,
+    claim_generation: u64,
 
     // Per-episode state.
     sidecar: Option<SidecarBuilder>,
@@ -201,6 +205,8 @@ impl Reducer {
             proprio_rx,
             dispatch_rx,
             latest: BTreeMap::new(),
+            claim_window: None,
+            claim_generation: 0,
             sidecar: None,
             mcap: None,
             manifest,
@@ -871,7 +877,7 @@ impl Reducer {
         }
     }
 
-    fn publish_mirror(&self) {
+    fn publish_mirror(&mut self) {
         let episode_id = self.fsm.episode.as_ref().map(|e| e.id.clone());
         let episode_state = self.fsm.episode.as_ref().map(|e| e.phase);
         let outcome = match episode_state {
@@ -892,6 +898,19 @@ impl Reducer {
         let agent_invite_aborted = self.fsm.episode.as_ref().is_some_and(|e| e.invite_aborted);
         let gate_mode = Some(self.fsm.gate_mode);
         let claim_active = self.fsm.claim.is_some();
+        // The claim WINDOW's identity, published as a counter (see
+        // `Status::claim_generation`). Derived from WHICH claim is active,
+        // not from `claim_active` going false, so a retake — one claimant
+        // replacing another with no gap at all — is a new window here too:
+        // the successor deserves to hear a refusal its predecessor already
+        // heard. This runs after every accepted FSM step, so no claim change
+        // can slip between two publishes.
+        let claim_id = self.fsm.claim.as_ref().map(|c| &c.id);
+        if self.claim_window.as_ref() != claim_id {
+            self.claim_window = claim_id.cloned();
+            self.claim_generation = self.claim_generation.wrapping_add(1);
+        }
+        let claim_generation = self.claim_generation;
         let provenance = claim_active.then(|| self.claim_provenance());
         let plane_connected = self.fsm.plane_connected;
         self.mirror.update(|s| {
@@ -899,6 +918,7 @@ impl Reducer {
             s.episode_state = episode_state;
             s.gate_mode = gate_mode;
             s.claim_active = claim_active;
+            s.claim_generation = claim_generation;
             s.provenance = provenance;
             s.outcome = outcome;
             s.pinned_outcome = pinned_outcome;

@@ -18,8 +18,9 @@ use waddle_fsm::SessionEvent;
 /// The feature flag gating directive acks (`VERSIONING.md` registry).
 /// Declared at Register whenever a transport is configured — always safe:
 /// emission still requires the directive to carry a `directive_id` and the
-/// plane to have accepted the flag.
-pub(crate) const ACKS_FLAG: &str = "waddle.v0.plane.acks";
+/// plane to have accepted the flag. Named once, in the crate that
+/// negotiates it and classifies by it.
+pub(crate) use waddle_controlplane::flags::ACKS as ACKS_FLAG;
 
 /// One event on the reducer's single funnel, optionally carrying the
 /// directive-ack correlation for the plane directive it decoded from.

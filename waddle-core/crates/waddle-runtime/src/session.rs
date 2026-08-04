@@ -1637,16 +1637,15 @@ pub fn grant_and_engage(session: &Session, claim_id: &str, source: &str, actor: 
 pub fn push_intervention_chunk(session: &Session, chunk: pb::ActionChunk) {
     let inner = &session.inner;
     let at = inner.clock.stamp_now().mono_ns();
-    let claim_active = inner.mirror.read().claim_active;
+    // ONE snapshot: the window this chunk is admitted into is the window its
+    // refusals are owed to. This seam has no loop of its own, so it can
+    // never watch a claim window close — the guards ride the claim
+    // generation instead, exactly as the plane pump's do.
+    let status = inner.mirror.read();
     let mut intake = inner.chunk_intake.lock();
-    if !claim_active {
-        // The pump resets its guards the moment the claim window closes
-        // (it re-reads the mirror every 20 ms); this seam has no loop, so
-        // it resets on the first call that observes the window shut.
-        intake.faults = Default::default();
+    if !status.claim_active {
         return;
     }
-    let pumps::ChunkIntakeState { next_seq, faults } = &mut *intake;
     pumps::intake_intervention_chunk(
         &chunk,
         &inner.inject_tx,
@@ -1654,8 +1653,8 @@ pub fn push_intervention_chunk(session: &Session, chunk: pb::ActionChunk) {
         &inner.stream_tx,
         &inner.action_space,
         pumps::part_policy(!inner.part_names.is_empty()),
-        next_seq,
-        faults,
+        status.claim_generation,
+        &mut intake,
     );
 }
 

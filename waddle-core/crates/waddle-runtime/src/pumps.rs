@@ -426,16 +426,15 @@ pub(crate) fn spawn_media_intake(
         .spawn(move || {
             // Dims-validation contract: a fault fires at most once
             // per claim window, not once per mismatched packet at
-            // 60-90 Hz. Reset the guard the instant the claim ends so the
-            // next claim window gets its own chance to fault.
-            let mut validation_fault_sent = false;
+            // 60-90 Hz — and every window gets its own chance to fault,
+            // which is [`WindowLatch`]'s whole job (this loop cannot be the
+            // one to notice a window ended: two windows can meet between two
+            // of its passes).
+            let mut dims_fault = WindowLatch::default();
             loop {
                 let status = mirror.read();
                 if status.shutdown {
                     return;
-                }
-                if !status.claim_active {
-                    validation_fault_sent = false;
                 }
                 let mut idle = true;
                 if let Ok(Some(packet)) = pose_rx.try_recv_pose() {
@@ -474,8 +473,7 @@ pub(crate) fn spawn_media_intake(
                                 action,
                                 chunk: None,
                             });
-                        } else if !validation_fault_sent {
-                            validation_fault_sent = true;
+                        } else if dims_fault.raise(status.claim_generation) {
                             let _ = inject.send(
                                 SessionEvent::InterventionRejected {
                                     source: "media-intake",
@@ -573,23 +571,17 @@ pub(crate) fn spawn_plane_pump(
             // Directive acks: whether the CURRENT connection negotiated
             // `waddle.v0.plane.acks`. Flags are (re-)negotiated at every
             // Register (the client re-registers on each reconnect), so each
-            // `Registered` refreshes this — per VERSIONING §3, a behavior
-            // the connection did not accept is never emitted.
+            // `Registered` refreshes this and every connection boundary
+            // forgets it — per VERSIONING §3, a behavior the connection did
+            // not accept is never emitted.
             let mut acks_negotiated = false;
-            // Monotonic ring-seq counter for agent-chunk steps pushed by the
-            // `InterventionChunk` arm below — see that arm's doc comment for
-            // why this can't just reuse `chunk.seq`.
-            let mut next_chunk_seq: u64 = 0;
-            // Validation guards for the agent-chunk path, mirroring
-            // `spawn_media_intake`'s `validation_fault_sent`.
-            let mut chunk_faults = ChunkIntakeFaults::default();
+            // Ring-seq counter + once-per-claim-window fault guards for the
+            // agent-chunk path; see [`ChunkIntakeState`].
+            let mut chunk_intake = ChunkIntakeState::default();
             loop {
                 let status = mirror.read();
                 if status.shutdown {
                     return;
-                }
-                if !status.claim_active {
-                    chunk_faults = ChunkIntakeFaults::default();
                 }
                 let Some(event) = plane.recv_event_timeout(Duration::from_millis(20)) else {
                     continue;
@@ -597,27 +589,34 @@ pub(crate) fn spawn_plane_pump(
                 let at = clock.stamp_now().mono_ns();
                 match event {
                     PlaneEvent::Connected | PlaneEvent::Registered(_) => {
-                        if let PlaneEvent::Registered(resp) = &event {
-                            acks_negotiated =
-                                resp.accepted_feature_flags.iter().any(|f| f == ACKS_FLAG);
-                            // Control-plane stills (flag
-                            // `waddle.v0.obs.stills`) are emitted by the
-                            // media uplink pump, not this one, so this
-                            // acceptance crosses threads on the mirror —
-                            // same per-connection refresh rule as
-                            // `acks_negotiated` above.
-                            let stills =
-                                resp.accepted_feature_flags.iter().any(|f| f == STILLS_FLAG);
-                            // Part-addressed control (`waddle.v0.parts`) is
-                            // read HERE (the chunk intake below) and by the
-                            // reducer (the observation uplink), so it too
-                            // crosses on the mirror rather than living in
-                            // this thread's locals.
-                            let parts = resp.accepted_feature_flags.iter().any(|f| f == PARTS_FLAG);
-                            mirror.update(|s| {
-                                s.stills_negotiated = stills;
-                                s.parts_negotiated = parts;
-                            });
+                        match &event {
+                            PlaneEvent::Registered(resp) => {
+                                acks_negotiated =
+                                    resp.accepted_feature_flags.iter().any(|f| f == ACKS_FLAG);
+                                // Control-plane stills (flag
+                                // `waddle.v0.obs.stills`) are emitted by the
+                                // media uplink pump, not this one, so this
+                                // acceptance crosses threads on the mirror —
+                                // same per-connection refresh rule as
+                                // `acks_negotiated` above.
+                                let stills =
+                                    resp.accepted_feature_flags.iter().any(|f| f == STILLS_FLAG);
+                                // Part-addressed control (`waddle.v0.parts`)
+                                // is read HERE (the chunk intake below) and
+                                // by the reducer (the observation uplink), so
+                                // it too crosses on the mirror rather than
+                                // living in this thread's locals.
+                                let parts =
+                                    resp.accepted_feature_flags.iter().any(|f| f == PARTS_FLAG);
+                                mirror.update(|s| {
+                                    s.stills_negotiated = stills;
+                                    s.parts_negotiated = parts;
+                                });
+                            }
+                            // A connection exists but has not registered yet:
+                            // it has accepted nothing, and the previous one's
+                            // answers are not its to inherit.
+                            _ => forget_negotiated_flags(&mirror, &mut acks_negotiated),
                         }
                         if !was_connected {
                             was_connected = true;
@@ -625,6 +624,7 @@ pub(crate) fn spawn_plane_pump(
                         }
                     }
                     PlaneEvent::Disconnected => {
+                        forget_negotiated_flags(&mirror, &mut acks_negotiated);
                         if was_connected {
                             was_connected = false;
                             let _ = inject.send(SessionEvent::PartitionStart { at }.into());
@@ -638,14 +638,32 @@ pub(crate) fn spawn_plane_pump(
                         &mirror,
                         &stream,
                         &action_space,
-                        &mut next_chunk_seq,
-                        &mut chunk_faults,
+                        &mut chunk_intake,
                         acks_negotiated,
                     ),
                 }
             }
         })
         .expect("spawn plane pump")
+}
+
+/// Forget what the LAST connection accepted. A feature flag is accepted by
+/// one connection, at its own Register, and the client re-registers on every
+/// reconnect — so the moment a connection ends (or a new one begins, before
+/// it has registered), the standing answers describe a plane this session
+/// can no longer reach. Leaving them standing is how a partition ends up
+/// emitting behavior the CURRENT connection refused: the reducer's
+/// observation uplink reads `parts_negotiated` off this mirror on its own
+/// thread, and what it produces while partitioned is what the next
+/// connection would see. (The offline buffer refuses to carry such messages
+/// across a connection at all — `ClientMsg::connection_scoped_flag` — so
+/// this and that guard bracket the same hole from both ends.)
+fn forget_negotiated_flags(mirror: &Mirror, acks_negotiated: &mut bool) {
+    *acks_negotiated = false;
+    mirror.update(|s| {
+        s.stills_negotiated = false;
+        s.parts_negotiated = false;
+    });
 }
 
 /// The claimant a `ClaimDirective`/`ResetWindowDirective` names, decoded
@@ -685,30 +703,62 @@ const AGENT_CHUNK_SOURCE: &str = "agent-chunk";
 /// Part-addressed control (docs/VERSIONING.md registry): the flag under
 /// which `Action.part` is honored at the intervention-chunk intake below,
 /// and a named `ProprioSample.part` is emitted on the observation uplink.
-/// Named here, at the intake that negotiates it; `session.rs` declares it at
-/// Register (iff the declared space is `Composite`) and the reducer reads
-/// the negotiated answer off the mirror.
-pub(crate) const PARTS_FLAG: &str = "waddle.v0.parts";
+/// Named once, in the crate that negotiates it and classifies by it;
+/// `session.rs` declares it at Register (iff the declared space is
+/// `Composite`) and the reducer reads the negotiated answer off the mirror.
+pub(crate) use waddle_controlplane::flags::PARTS as PARTS_FLAG;
 
-/// "Already faulted about this" guards for the agent-chunk intake, one per
-/// [`RejectReason`] and all reset when the claim window ends. A chunk
-/// stream that keeps making the same mistake must not fill the episode
-/// timeline with the same fault, and the reasons are independent: a
-/// dims-mismatched chunk, a chunk that doesn't fit the declared space, and
-/// a chunk with inert steps each say something different, and the sender
-/// deserves to hear each of them once.
+/// A once-per-claim-window latch. [`Self::raise`] answers true only the
+/// first time it is asked within one window, and a different window
+/// ([`crate::mirror::Status::claim_generation`]) re-arms it.
+///
+/// THE lifecycle for every "fault about this at most once per claim window"
+/// guard in this file — the plane pump's chunk intake, the media intake's
+/// dims check, and the loop-less
+/// [`crate::session::push_intervention_chunk`] seam. Keyed by the window's
+/// identity rather than by a holder noticing the window shut: the pump polls
+/// the mirror every 20 ms, the local seam only when someone calls it, and
+/// two windows meeting inside either gap used to carry the first window's
+/// guards into the second — silently swallowing a refusal the second
+/// sender's recording should have contained.
+#[derive(Default)]
+pub(crate) struct WindowLatch {
+    generation: u64,
+    raised: bool,
+}
+
+impl WindowLatch {
+    /// True the first time this is asked within the claim window
+    /// `generation` names; false for every later ask in the same window.
+    fn raise(&mut self, generation: u64) -> bool {
+        if self.generation != generation {
+            self.generation = generation;
+            self.raised = false;
+        }
+        !std::mem::replace(&mut self.raised, true)
+    }
+}
+
+/// "Already faulted about this" guards for the agent-chunk intake, one
+/// [`WindowLatch`] per [`RejectReason`]. A chunk stream that keeps making
+/// the same mistake must not fill the episode timeline with the same fault,
+/// and the reasons are independent: a dims-mismatched chunk, a chunk that
+/// doesn't fit the declared space, and a chunk with inert steps each say
+/// something different, and the sender deserves to hear each of them once.
 #[derive(Default)]
 pub(crate) struct ChunkIntakeFaults {
-    dims_sent: bool,
-    not_executable_sent: bool,
-    inert_sent: bool,
+    dims: WindowLatch,
+    not_executable: WindowLatch,
+    inert: WindowLatch,
 }
 
 /// The per-intake bookkeeping [`intake_intervention_chunk`] threads through:
 /// the ring-seq counter and the once-per-claim-window fault guards. The
 /// plane pump owns one in its thread's locals; the local
 /// [`crate::session::push_intervention_chunk`] seam owns one behind a mutex
-/// on the session, since it has no thread of its own.
+/// on the session, since it has no thread of its own. Neither owns the
+/// guards' LIFECYCLE — that rides on the claim generation the caller admits
+/// the chunk under, so the two cannot drift on it.
 #[derive(Default)]
 pub(crate) struct ChunkIntakeState {
     pub next_seq: u64,
@@ -723,7 +773,10 @@ pub(crate) struct ChunkIntakeState {
 /// so the two can never drift on validation, faults, or seq space.
 ///
 /// Callers admit the chunk on `claim_active` ALONE — the same gate
-/// `spawn_media_intake`'s teleop path uses, no `GateMode` match — so a
+/// `spawn_media_intake`'s teleop path uses, no `GateMode` match — and pass
+/// `claim_generation` from that SAME `Status` snapshot: it is the window the
+/// chunk is being admitted into, and hence the window its refusals are owed
+/// to (see [`WindowLatch`]). So a
 /// chunk arriving during the ENGAGE handoff sub-phase (claim granted, lease
 /// not yet handed over, gate mode not yet `Intervention`/`Reset`) still
 /// buffers correctly and is ready the instant the handoff completes,
@@ -764,9 +817,13 @@ pub(crate) fn intake_intervention_chunk(
     stream: &StreamProducer,
     space: &ActionSpace,
     parts: PartPolicy,
-    next_chunk_seq: &mut u64,
-    faults: &mut ChunkIntakeFaults,
+    claim_generation: u64,
+    state: &mut ChunkIntakeState,
 ) {
+    let ChunkIntakeState {
+        next_seq: next_chunk_seq,
+        faults,
+    } = state;
     let total = chunk.actions.len();
     match ActionChunk::from_pb(chunk, space, parts) {
         Ok(flattened) => {
@@ -802,8 +859,7 @@ pub(crate) fn intake_intervention_chunk(
             // dropped in silence: the sender asked for something this session
             // could not perform, and an episode recording has to be able to
             // say so.
-            if !flattened.inert.is_empty() && !faults.inert_sent {
-                faults.inert_sent = true;
+            if !flattened.inert.is_empty() && faults.inert.raise(claim_generation) {
                 let _ = inject.send(
                     SessionEvent::InterventionRejected {
                         source: AGENT_CHUNK_SOURCE,
@@ -821,8 +877,7 @@ pub(crate) fn intake_intervention_chunk(
         // path: a genuine dims mismatch faults once per claim window, chunk
         // dropped.
         Err(TypesError::DimensionMismatch { expected, got }) => {
-            if !faults.dims_sent {
-                faults.dims_sent = true;
+            if faults.dims.raise(claim_generation) {
                 let _ = inject.send(
                     SessionEvent::InterventionRejected {
                         source: AGENT_CHUNK_SOURCE,
@@ -841,8 +896,7 @@ pub(crate) fn intake_intervention_chunk(
         // the whole chunk is refused, and the refusal is reported in its own
         // words rather than forced into the dims-shaped report.
         Err(err) => {
-            if !faults.not_executable_sent {
-                faults.not_executable_sent = true;
+            if faults.not_executable.raise(claim_generation) {
                 let _ = inject.send(
                     SessionEvent::InterventionRejected {
                         source: AGENT_CHUNK_SOURCE,
@@ -875,8 +929,7 @@ fn forward_server_msg(
     mirror: &Mirror,
     stream: &StreamProducer,
     space: &ActionSpace,
-    next_chunk_seq: &mut u64,
-    faults: &mut ChunkIntakeFaults,
+    intake: &mut ChunkIntakeState,
     acks_negotiated: bool,
 ) {
     match msg {
@@ -1047,8 +1100,8 @@ fn forward_server_msg(
                     // part-scoped one is refused, deterministically, once
                     // per claim window.
                     part_policy(status.parts_negotiated),
-                    next_chunk_seq,
-                    faults,
+                    status.claim_generation,
+                    intake,
                 );
             }
             // Agent task updates (flag `waddle.v0.agent`): every update is

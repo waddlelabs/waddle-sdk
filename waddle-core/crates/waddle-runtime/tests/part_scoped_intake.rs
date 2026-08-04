@@ -142,7 +142,19 @@ fn registry(send_log: &SendLog) -> ControlRegistry {
 }
 
 fn wait_for(session: &Session, pred: impl Fn(&waddle_runtime::Status) -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    wait_for_within(session, Duration::from_secs(5), pred);
+}
+
+/// [`wait_for`] with the deadline spelled out, for a wait whose duration is
+/// set by the client's reconnect backoff (seconds, by design) rather than by
+/// the session's own cadence. The deadline is a failure bound, never a
+/// synchronisation device: the condition is reached or the test fails.
+fn wait_for_within(
+    session: &Session,
+    within: Duration,
+    pred: impl Fn(&waddle_runtime::Status) -> bool,
+) {
+    let deadline = Instant::now() + within;
     loop {
         if pred(&session.status()) {
             return;
@@ -171,17 +183,32 @@ struct Rig {
 /// `Sender<ServerMsg>` so a test can push wire messages whenever it wants,
 /// and records the observation uplink.
 fn rig(accept_parts: bool) -> Rig {
+    rig_registering(move |_| accept_parts)
+}
+
+/// [`rig`], with the parts answer decided PER REGISTRATION (1-based). Flags
+/// are re-negotiated on every reconnect, so a plane is free to answer a
+/// redial differently — and a session that carried the previous answer
+/// across the partition would emit a behavior this connection refused.
+fn rig_registering(accept_parts: impl Fn(u32) -> bool + Send + Sync + 'static) -> Rig {
     let tx: TxCell = Arc::new(Mutex::new(None));
     let declared: Declared = Arc::new(Mutex::new(Vec::new()));
     let uplinked: Uplinked = Arc::new(Mutex::new(Vec::new()));
     let (tx_in, declared_in, uplinked_in) = (tx.clone(), declared.clone(), uplinked.clone());
+    let registrations = Arc::new(Mutex::new(0u32));
     let transport = InMemoryTransport::new(move |msg, plane_tx: &Sender<ServerMsg>| match msg {
         ClientMsg::Register(req) => {
             *declared_in.lock() = req.feature_flags.clone();
+            let nth = {
+                let mut n = registrations.lock();
+                *n += 1;
+                *n
+            };
+            let parts_ok = accept_parts(nth);
             let accepted = req
                 .feature_flags
                 .iter()
-                .filter(|f| accept_parts || f.as_str() != PARTS_FLAG)
+                .filter(|f| parts_ok || f.as_str() != PARTS_FLAG)
                 .cloned()
                 .collect();
             let _ = plane_tx.send(ServerMsg::Registered(pb::RegisterResponse {
@@ -554,6 +581,65 @@ fn a_locally_pushed_chunk_addresses_a_part_without_any_plane() {
     session.shutdown();
 }
 
+/// "Once per claim window" is per WINDOW, not per observed gap between
+/// windows. Two claims, each handed the same undeclared part, each owed its
+/// own refusal — and the local seam is where this is easiest to get wrong,
+/// because it has no loop with which to notice a window closing: it only
+/// runs when someone calls it, and here nobody calls it between the two
+/// windows. The plane pump has the same hole one poll wide (a window that
+/// opens and closes inside its 20 ms cadence), and a retake — a new claimant
+/// with no gap at all — is a new window for both. The guards ride the claim
+/// generation for exactly this reason.
+///
+/// A recording missing the second window's refusal says that sender was
+/// never told, which is not what happened.
+#[test]
+fn each_claim_window_is_owed_its_own_refusal() {
+    let dir = tempfile::tempdir().unwrap();
+    let send_log: SendLog = Arc::new(Mutex::new(Vec::new()));
+    let session = Session::builder("parts-two-windows")
+        .robot(bimanual_robot())
+        .control(registry(&send_log))
+        .recording_dir(dir.path())
+        .build()
+        .unwrap();
+
+    let mut ep = session.start_episode("two-windows").unwrap();
+    let id = ep.id().clone();
+    let _ = ep.gate(&[0.0; 2 * ARM_DIMS], None, None);
+    wait_for(&session, |s| {
+        matches!(s.episode_state, Some(Phase::Running))
+    });
+
+    // Two windows, one push each, and NOTHING calls the intake in between —
+    // the only thing that can distinguish them is the claim's identity.
+    for (nth, claim) in ["claim-first", "claim-second"].iter().enumerate() {
+        grant_and_engage(&session, claim, "agent-plane", ActorKind::Agent);
+        wait_for(&session, |s| s.gate_mode == Some(GateMode::Intervention));
+        waddle_runtime::push_intervention_chunk(
+            &session,
+            pb::ActionChunk {
+                actions: vec![part_action("waist", vec![0.5; ARM_DIMS], 0)],
+                seq: nth as u64 + 1,
+                source_id: "local".into(),
+                ..Default::default()
+            },
+        );
+        release_claim(&session, claim);
+        wait_for(&session, |s| !s.claim_active);
+    }
+
+    ep.terminate(TerminalOutcome::Success, "done");
+    session.shutdown();
+
+    let faults = validation_faults(dir.path(), id.as_str());
+    assert_eq!(
+        faults.len(),
+        2,
+        "each claim window is owed its own refusal, got {faults:?}"
+    );
+}
+
 /// The BYPASS path — a claimed session whose caller loop has stalled, and the
 /// only path an agent-invited episode ever takes (its caller never ticks at
 /// all). The pump dispatches straight to `send`, so the part tag has to
@@ -844,6 +930,108 @@ fn named_part_samples_are_withheld_from_an_unnegotiated_uplink() {
     assert!(
         recorded.iter().any(|s| s.part == "left"),
         "withholding is an UPLINK rule: the local recording still names every part"
+    );
+}
+
+/// The same withholding rule, across a PARTITION — the direction a mirror
+/// of "what the connection accepted" gets wrong on its own. Flags belong to
+/// one connection and are re-negotiated on every reconnect, so the moment a
+/// connection dies its answers describe a plane this session can no longer
+/// reach. Two things must hold, and this pins both:
+///
+///  1. the standing answer is forgotten at the connection boundary, so the
+///     reducer stops producing named-part samples the instant the plane is
+///     gone (`parts_negotiated` reads false while partitioned); and
+///  2. a named-part sample never enters the offline buffer, so nothing
+///     produced in the gap between the connection dying and that being
+///     observed can be REPLAYED onto the next connection —
+///     `ClientMsg::connection_scoped_flag`.
+///
+/// Without them, a partition turns proprio (non-droppable history, unlike a
+/// still) into a queue of one arm's joint vectors that the reconnect hands
+/// to a plane which just refused `waddle.v0.parts`.
+#[test]
+fn named_part_samples_never_survive_a_partition() {
+    let dir = tempfile::tempdir().unwrap();
+    let send_log: SendLog = Arc::new(Mutex::new(Vec::new()));
+    // The plane accepts the flag once, then refuses it on the redial.
+    let rig = rig_registering(|nth| nth == 1);
+    let session = Session::builder("parts-partition")
+        .robot(bimanual_robot())
+        .control(registry(&send_log))
+        .recording_dir(dir.path())
+        .transport(rig.transport.clone())
+        .build()
+        .unwrap();
+
+    let ep = session.start_episode("part-partition").unwrap();
+    let id = ep.id().clone();
+    wait_for(&session, |s| s.parts_negotiated);
+
+    // Partition, held open by the transport until this test heals it (never
+    // by a sleep): refuse redials first, so the drop below cannot be
+    // repaired behind the assertions.
+    rig.transport.refuse_connections();
+    rig.transport.drop_connections();
+    wait_for(&session, |s| !s.plane_connected);
+    assert!(
+        !session.status().parts_negotiated,
+        "a dead connection has accepted nothing"
+    );
+
+    // Everything reported here is reported while the plane is unreachable.
+    // Ten of them: one alone could not tell "withheld" from "not due yet"
+    // under the uplink's 10 Hz per-part cadence.
+    for _ in 0..10 {
+        session
+            .report_proprio(ProprioReport {
+                part: "left".into(),
+                joint_pos: Some(vec![0.7; ARM_DIMS]),
+                ..Default::default()
+            })
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    rig.transport.allow_connections();
+    // Reconnect is on the client's own backoff (seconds), not this session's
+    // cadence — hence the wider bound.
+    wait_for_within(&session, Duration::from_secs(30), |s| s.plane_connected);
+
+    // The reconnected plane refused the flag, so the sole part is the only
+    // thing that may reach it. Waiting for a `""` sample sent AFTER the
+    // reconnect is the happens-before that makes the assertion meaningful:
+    // the offline buffer replays in order, ahead of anything sent live.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        session
+            .report_proprio(ProprioReport {
+                gripper: Some(0.5),
+                ..Default::default()
+            })
+            .unwrap();
+        let samples = uplinked_samples(&rig.uplinked);
+        assert!(
+            samples.iter().all(|(_, s)| s.part.is_empty()),
+            "a named part must never reach a connection that refused the flag: {samples:?}"
+        );
+        if samples.iter().any(|(_, s)| s.gripper == Some(0.5)) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the sole-part sample must still uplink after the reconnect"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    ep.terminate(TerminalOutcome::Success, "done");
+    session.shutdown();
+
+    assert!(
+        proprio_rows(dir.path(), id.as_str())
+            .iter()
+            .any(|s| s.part == "left" && s.joint_pos == vec![0.7; ARM_DIMS]),
+        "withholding is an uplink rule: the local archive keeps every part"
     );
 }
 
