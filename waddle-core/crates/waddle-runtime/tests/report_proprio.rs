@@ -79,11 +79,14 @@ fn report_proprio_merges_into_recorded_observations() {
     let mut ep = session.start_episode("stack the blocks").unwrap();
     let id = ep.id().clone();
 
-    session.report_proprio(ProprioReport {
-        joint_vel: Some(vec![0.01, 0.02, 0.03]),
-        ee_pose: Some(EePose::new([1.0, 2.0, 3.0], [1.0, 0.0, 0.0, 0.0], "ee").unwrap()),
-        gripper: Some(0.5),
-    });
+    session
+        .report_proprio(ProprioReport {
+            joint_vel: Some(vec![0.01, 0.02, 0.03]),
+            ee_pose: Some(EePose::new([1.0, 2.0, 3.0], [1.0, 0.0, 0.0, 0.0], "ee").unwrap()),
+            gripper: Some(0.5),
+            ..Default::default()
+        })
+        .unwrap();
     // No settling wait: whichever wake drains this report, the LAST
     // observation in the file carries the merge either way — it is either a
     // gate tick recorded after the merge landed, or the report's own row
@@ -150,20 +153,23 @@ fn report_proprio_patches_only_the_fields_it_carries() {
     let mut ep = session.start_episode("task").unwrap();
     let id = ep.id().clone();
 
-    session.report_proprio(ProprioReport {
-        joint_vel: Some(vec![1.0, 1.0, 1.0]),
-        ee_pose: None,
-        gripper: Some(0.1),
-    });
+    session
+        .report_proprio(ProprioReport {
+            joint_vel: Some(vec![1.0, 1.0, 1.0]),
+            gripper: Some(0.1),
+            ..Default::default()
+        })
+        .unwrap();
     // A second report patches only `gripper`; `joint_vel` must survive. The
     // channel is FIFO, so the merge order is fixed regardless of which wake
     // drains them, and every observation written after both — the report's
     // own row or the gate tick's — carries the patched state.
-    session.report_proprio(ProprioReport {
-        joint_vel: None,
-        ee_pose: None,
-        gripper: Some(0.9),
-    });
+    session
+        .report_proprio(ProprioReport {
+            gripper: Some(0.9),
+            ..Default::default()
+        })
+        .unwrap();
 
     let _ = ep.gate(&[0.0; 3], None, Some(&[0.0; 3]));
     ep.terminate(TerminalOutcome::Success, "done");
@@ -213,11 +219,13 @@ fn stream_observations_uplinks_periodically_with_merged_fields() {
         .unwrap();
 
     let mut ep = session.start_episode("task").unwrap();
-    session.report_proprio(ProprioReport {
-        joint_vel: Some(vec![1.0, 2.0, 3.0]),
-        ee_pose: None,
-        gripper: Some(0.75),
-    });
+    session
+        .report_proprio(ProprioReport {
+            joint_vel: Some(vec![1.0, 2.0, 3.0]),
+            gripper: Some(0.75),
+            ..Default::default()
+        })
+        .unwrap();
     let _ = ep.gate(&[0.0; 3], None, Some(&[0.1, 0.2, 0.3]));
 
     // 10 Hz default cadence (100ms period): wait comfortably past two.
@@ -277,11 +285,13 @@ fn report_proprio_records_observations_without_any_gate_obs() {
     // channel too (`Reducer`'s `finalize_writes_reports_still_queued_at_the_episode_tail`
     // pins that tail deterministically, where no wake can hide it).
     for i in 0..5 {
-        session.report_proprio(ProprioReport {
-            joint_vel: Some(vec![f64::from(i), 0.0, 0.0]),
-            ee_pose: None,
-            gripper: Some(0.5),
-        });
+        session
+            .report_proprio(ProprioReport {
+                joint_vel: Some(vec![f64::from(i), 0.0, 0.0]),
+                gripper: Some(0.5),
+                ..Default::default()
+            })
+            .unwrap();
     }
     ep.terminate(TerminalOutcome::Success, "done");
     session.shutdown();

@@ -280,9 +280,22 @@ impl EePose {
 /// reducer's latest known sample — `None` leaves the previously reported
 /// value in place (there is no way to clear a previously-reported field in
 /// v0), so a caller can e.g. report `gripper` on every tick without
-/// re-supplying `ee_pose` each time.
+/// re-supplying `ee_pose` each time. The patch is scoped to [`Self::part`]:
+/// one part's report never touches another's.
 #[derive(Clone, Debug, Default)]
 pub struct ProprioReport {
+    /// Which declared part this sample describes (`ProprioSample.part`).
+    /// `""` — the default — is the sole/default part, i.e. the robot as
+    /// declared, and is always legal; any other value must name a part of a
+    /// `Composite` declaration or [`Session::report_proprio`] refuses it.
+    pub part: String,
+    /// This part's joint positions. Load-bearing for a named part and
+    /// optional for `""`: a per-part sample cannot ride the gate's flat
+    /// `obs` vector, because the observation layout is not the action
+    /// layout and slicing one by the other would invent a mapping the
+    /// customer never declared. For `""` this is most-recent-wins against
+    /// the `gate(obs=...)` stream, which reports the same thing.
+    pub joint_pos: Option<Vec<f64>>,
     pub joint_vel: Option<Vec<f64>>,
     pub ee_pose: Option<EePose>,
     pub gripper: Option<f64>,
@@ -840,6 +853,7 @@ impl SessionBuilder {
                 mirror,
                 inject_tx,
                 proprio_tx,
+                part_names,
                 record_slot,
                 task_slot,
                 pre_reset: self.pre_reset,
@@ -949,6 +963,11 @@ struct SessionInner {
     inject_tx: Sender<Injected>,
     /// See [`Session::report_proprio`].
     proprio_tx: Sender<ProprioReport>,
+    /// The declared parts, in declaration order (see `declared_part_names`).
+    /// [`Session::report_proprio`] validates against this — the ONE place a
+    /// caller-supplied part name is checked before it becomes a recorded
+    /// row's key.
+    part_names: Arc<[String]>,
     record_slot: RecordSlot,
     task_slot: TaskSlot,
     pre_reset: Option<ResetSpec>,
@@ -1416,8 +1435,22 @@ impl Session {
     /// `SessionClock` read (or the owning gate tick's stamp, for the merged
     /// copy) — v0 accepts no caller-supplied timestamp on the report itself
     /// (the two-clock discipline).
-    pub fn report_proprio(&self, report: ProprioReport) {
+    ///
+    /// [`ProprioReport::part`] names which declared part the sample
+    /// describes; `""` (the default) is the robot as declared. A part the
+    /// declaration does not have is refused BY NAME here, at the call,
+    /// rather than landing under a key nothing will ever read — this is
+    /// declaration validation, the same class as `publish_frame`'s
+    /// unknown-camera check, and carries no claim, lease, or timeline
+    /// logic.
+    pub fn report_proprio(&self, report: ProprioReport) -> Result<(), RuntimeError> {
+        if !report.part.is_empty() && !self.inner.part_names.iter().any(|p| p == &report.part) {
+            return Err(RuntimeError::Types(waddle_types::TypesError::UnknownPart(
+                report.part,
+            )));
+        }
         let _ = self.inner.proprio_tx.send(report);
+        Ok(())
     }
 
     /// Frames dropped for `camera` because the uplink pump fell behind (the

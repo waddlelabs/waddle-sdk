@@ -13,6 +13,7 @@
 
 #![allow(clippy::disallowed_methods)] // wall-clock deadlines are test-only
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant};
@@ -21,7 +22,9 @@ use parking_lot::Mutex;
 use waddle_controlplane::{ClientMsg, InMemoryTransport, ServerMsg};
 use waddle_fsm::Phase;
 use waddle_gate::gate::GateOutput;
-use waddle_runtime::{ControlRegistry, Session, VerbError, grant_and_engage, release_claim};
+use waddle_runtime::{
+    ControlRegistry, ProprioReport, Session, VerbError, grant_and_engage, release_claim,
+};
 use waddle_types::pb::v0 as pb;
 use waddle_types::{ActorKind, GateMode, TerminalOutcome};
 
@@ -151,24 +154,29 @@ fn wait_for(session: &Session, pred: impl Fn(&waddle_runtime::Status) -> bool) {
 
 type TxCell = Arc<Mutex<Option<Sender<ServerMsg>>>>;
 type Declared = Arc<Mutex<Vec<String>>>;
+type Uplinked = Arc<Mutex<Vec<pb::ObservationUpdate>>>;
 
 struct Rig {
     transport: Arc<InMemoryTransport>,
     tx: TxCell,
     /// The `feature_flags` the SDK declared on its `RegisterRequest`.
     declared: Declared,
+    /// Every `StreamObservations` uplink the plane received.
+    uplinked: Uplinked,
 }
 
 /// A transport that answers Register by ACCEPTING exactly the flags the SDK
 /// declared (or, with `accept_parts` false, everything except
-/// `waddle.v0.parts` — the pre-flag connection), and stashes the plane's
-/// `Sender<ServerMsg>` so a test can push wire messages whenever it wants.
+/// `waddle.v0.parts` — the pre-flag connection), stashes the plane's
+/// `Sender<ServerMsg>` so a test can push wire messages whenever it wants,
+/// and records the observation uplink.
 fn rig(accept_parts: bool) -> Rig {
     let tx: TxCell = Arc::new(Mutex::new(None));
     let declared: Declared = Arc::new(Mutex::new(Vec::new()));
-    let (tx_in, declared_in) = (tx.clone(), declared.clone());
-    let transport = InMemoryTransport::new(move |msg, plane_tx: &Sender<ServerMsg>| {
-        if let ClientMsg::Register(req) = &msg {
+    let uplinked: Uplinked = Arc::new(Mutex::new(Vec::new()));
+    let (tx_in, declared_in, uplinked_in) = (tx.clone(), declared.clone(), uplinked.clone());
+    let transport = InMemoryTransport::new(move |msg, plane_tx: &Sender<ServerMsg>| match msg {
+        ClientMsg::Register(req) => {
             *declared_in.lock() = req.feature_flags.clone();
             let accepted = req
                 .feature_flags
@@ -182,12 +190,45 @@ fn rig(accept_parts: bool) -> Rig {
             }));
             *tx_in.lock() = Some(plane_tx.clone());
         }
+        ClientMsg::Observation(update) => uplinked_in.lock().push(update),
+        _ => {}
     });
     Rig {
         transport,
         tx,
         declared,
+        uplinked,
     }
+}
+
+/// Every proprio sample the plane received on the observation uplink, with
+/// the session-timeline stamp it was sent under.
+fn uplinked_samples(uplinked: &Uplinked) -> Vec<(i64, pb::ProprioSample)> {
+    uplinked
+        .lock()
+        .iter()
+        .filter_map(|u| match &u.payload {
+            Some(pb::observation_update::Payload::Proprio(p)) => Some((u.t_ns, p.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+fn proprio_rows(dir: &std::path::Path, episode_id: &str) -> Vec<pb::ProprioSample> {
+    let buf = std::fs::read(dir.join(format!("{episode_id}.mcap"))).unwrap();
+    let mut samples = Vec::new();
+    for message in mcap::MessageStream::new(&buf).unwrap() {
+        let message = message.unwrap();
+        if message.channel.topic != waddle_sidecar::mcaprec::OBSERVATIONS_TOPIC {
+            continue;
+        }
+        let update =
+            <pb::ObservationUpdate as prost::Message>::decode(message.data.as_ref()).unwrap();
+        if let Some(pb::observation_update::Payload::Proprio(sample)) = update.payload {
+            samples.push(sample);
+        }
+    }
+    samples
 }
 
 fn wait_for_tx(cell: &TxCell) -> Sender<ServerMsg> {
@@ -528,4 +569,279 @@ fn bypass_dispatch_sends_and_records_a_part_scoped_row() {
         };
         assert_eq!(v.values, vec![1.25; ARM_DIMS]);
     }
+}
+
+// --- Per-part proprioception ---------------------------------------------
+
+/// `report_proprio(part=, joint_pos=)`: a per-part sample keys its own
+/// recording row and its own uplink sample. The part-keyed `joint_pos` is
+/// load-bearing — a per-part sample cannot ride the gate's flat `obs` vector,
+/// since the observation layout is not the action layout and slicing one by
+/// the other would invent a mapping the customer never declared.
+#[test]
+fn report_proprio_part_keys_recording_rows_and_uplink() {
+    let dir = tempfile::tempdir().unwrap();
+    let send_log: SendLog = Arc::new(Mutex::new(Vec::new()));
+    let rig = rig(true);
+    let session = Session::builder("parts-proprio")
+        .robot(bimanual_robot())
+        .control(registry(&send_log))
+        .recording_dir(dir.path())
+        .transport(rig.transport.clone())
+        .build()
+        .unwrap();
+
+    let ep = session.start_episode("part-scoped-proprio").unwrap();
+    let id = ep.id().clone();
+    wait_for(&session, |s| s.parts_negotiated);
+
+    // Never ticks the gate: every observation in the file came from a
+    // report, and each names its own part.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        session
+            .report_proprio(ProprioReport {
+                part: "left".into(),
+                joint_pos: Some(vec![0.1; ARM_DIMS]),
+                gripper: Some(0.25),
+                ..Default::default()
+            })
+            .unwrap();
+        session
+            .report_proprio(ProprioReport {
+                part: "right".into(),
+                joint_pos: Some(vec![0.9; ARM_DIMS]),
+                gripper: Some(0.75),
+                ..Default::default()
+            })
+            .unwrap();
+        let parts: Vec<String> = rig
+            .uplinked
+            .lock()
+            .iter()
+            .filter_map(|u| match &u.payload {
+                Some(pb::observation_update::Payload::Proprio(p)) => Some(p.part.clone()),
+                _ => None,
+            })
+            .collect();
+        if parts.iter().any(|p| p == "left") && parts.iter().any(|p| p == "right") {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "both reported parts must reach the uplink, got {parts:?}"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    ep.terminate(TerminalOutcome::Success, "done");
+    session.shutdown();
+
+    let rows = proprio_rows(dir.path(), id.as_str());
+    let left: Vec<&pb::ProprioSample> = rows.iter().filter(|s| s.part == "left").collect();
+    let right: Vec<&pb::ProprioSample> = rows.iter().filter(|s| s.part == "right").collect();
+    assert!(
+        !left.is_empty() && !right.is_empty(),
+        "each reported part gets its own recorded row: {rows:?}"
+    );
+    assert_eq!(left[0].joint_pos, vec![0.1; ARM_DIMS]);
+    assert_eq!(left[0].gripper, Some(0.25));
+    assert_eq!(
+        right[0].joint_pos,
+        vec![0.9; ARM_DIMS],
+        "one part's report must never overwrite another's"
+    );
+    assert_eq!(right[0].gripper, Some(0.75));
+}
+
+/// The uplink cadence is keyed PER PART, not spent from one shared budget:
+/// the 10 Hz cap bounds each part's own stream (bandwidth stays bounded —
+/// parts+1 tiny samples), and no part's staleness can be masked, or its
+/// samples starved, by another part's chatter. The plane's freshness checks
+/// key on exactly the part they ask about.
+#[test]
+fn uplink_cadence_is_per_part() {
+    let send_log: SendLog = Arc::new(Mutex::new(Vec::new()));
+    let rig = rig(true);
+    let session = Session::builder("parts-cadence")
+        .robot(bimanual_robot())
+        .control(registry(&send_log))
+        .transport(rig.transport.clone())
+        .build()
+        .unwrap();
+
+    let ep = session.start_episode("part-cadence").unwrap();
+    wait_for(&session, |s| s.parts_negotiated);
+
+    // Report both parts continuously. Once both are past their own period,
+    // one reducer wake sends BOTH — the stamp they share is what proves the
+    // cap is per part and not a single slot the parts take turns in.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        for (part, v) in [("left", 0.1), ("right", 0.2)] {
+            session
+                .report_proprio(ProprioReport {
+                    part: part.into(),
+                    joint_pos: Some(vec![v; ARM_DIMS]),
+                    ..Default::default()
+                })
+                .unwrap();
+        }
+        let samples = uplinked_samples(&rig.uplinked);
+        let shared_wake = samples
+            .iter()
+            .filter(|(_, s)| s.part == "left")
+            .any(|(t, _)| samples.iter().any(|(t2, s2)| s2.part == "right" && t2 == t));
+        if shared_wake {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "two parts must be able to uplink on the same wake: {samples:?}"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    ep.terminate(TerminalOutcome::Success, "done");
+    session.shutdown();
+
+    // And the cap itself still holds, per part: 10 Hz each.
+    let mut by_part: BTreeMap<String, Vec<i64>> = BTreeMap::new();
+    for (t, sample) in uplinked_samples(&rig.uplinked) {
+        by_part.entry(sample.part.clone()).or_default().push(t);
+    }
+    assert!(
+        by_part.contains_key("left") && by_part.contains_key("right"),
+        "every reported part must reach the uplink: {:?}",
+        by_part.keys().collect::<Vec<_>>()
+    );
+    for (part, stamps) in &by_part {
+        for pair in stamps.windows(2) {
+            assert!(
+                pair[1] - pair[0] >= 80_000_000,
+                "part {part:?} uplinked faster than the declared 10 Hz: {}ns apart",
+                pair[1] - pair[0]
+            );
+        }
+    }
+}
+
+/// VERSIONING.md's pre-flag rule for the uplink, in the direction that is
+/// easy to get wrong: a connection that did not negotiate the flag gets the
+/// `""` sample and NOTHING else. Named-part samples are WITHHELD, never
+/// relabeled `""` — relabeling would put one arm's joint vector on the wire
+/// as the whole robot's, and let the parts overwrite each other. Local
+/// recording is not connection-scoped and still records every part.
+#[test]
+fn named_part_samples_are_withheld_from_an_unnegotiated_uplink() {
+    let dir = tempfile::tempdir().unwrap();
+    let send_log: SendLog = Arc::new(Mutex::new(Vec::new()));
+    let rig = rig(false);
+    let session = Session::builder("parts-withheld")
+        .robot(bimanual_robot())
+        .control(registry(&send_log))
+        .recording_dir(dir.path())
+        .transport(rig.transport.clone())
+        .build()
+        .unwrap();
+
+    let ep = session.start_episode("part-withheld").unwrap();
+    let id = ep.id().clone();
+    let _ = wait_for_tx(&rig.tx);
+    assert!(!session.status().parts_negotiated);
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        session
+            .report_proprio(ProprioReport {
+                part: "left".into(),
+                joint_pos: Some(vec![0.1; ARM_DIMS]),
+                ..Default::default()
+            })
+            .unwrap();
+        session
+            .report_proprio(ProprioReport {
+                gripper: Some(0.5),
+                ..Default::default()
+            })
+            .unwrap();
+        let samples = uplinked_samples(&rig.uplinked);
+        assert!(
+            samples.iter().all(|(_, s)| s.part.is_empty()),
+            "a connection without the flag must never receive a named part: {samples:?}"
+        );
+        if samples.len() >= 2 {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the sole-part sample must still uplink"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    ep.terminate(TerminalOutcome::Success, "done");
+    session.shutdown();
+
+    let recorded = proprio_rows(dir.path(), id.as_str());
+    assert!(
+        recorded.iter().any(|s| s.part == "left"),
+        "withholding is an UPLINK rule: the local recording still names every part"
+    );
+}
+
+/// A report naming a part the robot never declared is refused BY NAME, at
+/// the call, rather than silently landing under a key nothing will ever read.
+/// This is declaration validation — not claim, lease, or timeline logic — so
+/// it is the session's to answer.
+#[test]
+fn unknown_part_report_is_refused_by_name() {
+    let send_log: SendLog = Arc::new(Mutex::new(Vec::new()));
+    let session = Session::builder("parts-unknown")
+        .robot(bimanual_robot())
+        .control(registry(&send_log))
+        .build()
+        .unwrap();
+
+    let err = session
+        .report_proprio(ProprioReport {
+            part: "waist".into(),
+            joint_pos: Some(vec![0.0; ARM_DIMS]),
+            ..Default::default()
+        })
+        .expect_err("an undeclared part must be refused");
+    assert!(
+        err.to_string().contains("waist"),
+        "the refusal must name the part the caller asked for: {err}"
+    );
+
+    for part in ["", "left", "right"] {
+        session
+            .report_proprio(ProprioReport {
+                part: part.into(),
+                ..Default::default()
+            })
+            .unwrap_or_else(|e| panic!("part {part:?} is declared, but was refused: {e}"));
+    }
+    session.shutdown();
+
+    // A single-part robot declares no part by any name; `""` — the sole
+    // part, and already core — stays legal.
+    let session = Session::builder("parts-unknown-single")
+        .robot(single_part_robot())
+        .control(registry(&send_log))
+        .build()
+        .unwrap();
+    assert!(
+        session
+            .report_proprio(ProprioReport {
+                part: "left".into(),
+                ..Default::default()
+            })
+            .is_err()
+    );
+    session
+        .report_proprio(ProprioReport::default())
+        .expect("the sole part is always legal");
+    session.shutdown();
 }

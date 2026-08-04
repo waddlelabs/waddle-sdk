@@ -146,6 +146,22 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     row is rebuilt against that part's space, where before it did not decode
     against the whole space at all and the recording said the tick commanded
     NOTHING when it commanded one arm.
+  - **waddle-core (`waddle-runtime`), per-part proprioception**:
+    `ProprioReport` gains `part` and `joint_pos`, and
+    `Session::report_proprio` is now fallible — a part the declaration does
+    not have is refused BY NAME at the call, rather than landing under a key
+    nothing will ever read. `joint_pos` is what makes a named part
+    reportable at all: a per-part sample cannot ride the gate's flat `obs`
+    vector, because the observation layout is not the action layout and
+    slicing one by the other would invent a mapping the customer never
+    declared. The reducer keeps its latest known state per part instead of
+    once for the robot, so one arm's report can never be read as the other's
+    (or as the whole robot's), each part gets its own `/waddle/observations`
+    row naming itself, and the 10 Hz `StreamObservations` cap is charged
+    **per part** — parts are independent content streams (the per-camera
+    `still_fps` precedent), and one shared slot would deliver each of N parts
+    at ~10/N Hz and could starve one entirely while the plane's freshness
+    checks key on exactly the part they ask about.
 - **waddle-protocol/waddle-core (agent-invited episodes, new feature flag
   `waddle.v0.agent`)**: a customer can now ask Waddle to drive an episode
   rather than driving it themselves — `Session::run_agent(prompt, timeout_ns,

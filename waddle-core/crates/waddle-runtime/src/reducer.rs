@@ -2,6 +2,7 @@
 //! through a single channel, and interprets effects. Single-writer FSM is
 //! structural — nothing else ever steps the machine.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
@@ -51,6 +52,34 @@ struct ProprioExtras {
     ee_pose: Option<pb::Pose>,
     gripper: Option<f64>,
 }
+
+/// One part's latest known proprioceptive state. Keyed by declared part
+/// name in [`Reducer::latest`]; `""` ([`SOLE_PART`]) is the robot as
+/// declared, which is what the caller's `gate(obs=...)` stream reports and
+/// the only key a non-`Composite` robot ever has.
+#[derive(Clone, Debug, Default)]
+struct PartProprio {
+    joint_pos: Vec<f64>,
+    extras: ProprioExtras,
+    /// Last `StreamObservations` send time for THIS part. Per part, not
+    /// global: parts are independent content streams (the per-camera
+    /// `still_fps` precedent), and one shared slot would deliver each of N
+    /// parts at ~10/N Hz and could starve one entirely — while the plane's
+    /// freshness checks key on exactly the part they ask about, so one
+    /// part's staleness must never be maskable by another's chatter.
+    last_uplink_ns: Option<i64>,
+}
+
+impl PartProprio {
+    fn is_empty(&self) -> bool {
+        self.joint_pos.is_empty() && self.extras.is_empty()
+    }
+}
+
+/// The sole/default part: the robot as declared (`ProprioSample.part == ""`
+/// on the wire). Never a named part, always legal, and the only key a
+/// single-part declaration has.
+const SOLE_PART: &str = "";
 
 impl ProprioExtras {
     fn merge(&mut self, report: &ProprioReport) {
@@ -108,16 +137,18 @@ pub(crate) struct Reducer {
     /// `send` without passing through the caller's gate, drained every wake
     /// onto the episode recording (`write_dispatched`).
     dispatch_rx: Receiver<DispatchedAction>,
-    /// The latest joint_pos from a ring-drained gate record (what reported
-    /// proprio extras merge with), independent of `write_record`'s own
-    /// per-tick `obs` — this is what the periodic `StreamObservations`
-    /// uplink reads between ticks.
-    latest_joint_pos: Vec<f64>,
-    /// The latest reported proprio extras, merged into every
-    /// subsequent gate-tick's `ProprioSample` and the periodic uplink.
-    latest_extras: ProprioExtras,
-    /// Last `StreamObservations` send time, for the cadence check.
-    last_obs_uplink_ns: Option<i64>,
+    /// The latest known proprioceptive state, PER declared part — what the
+    /// periodic `StreamObservations` uplink reads between ticks, and what
+    /// every recorded `ProprioSample` is built from. `SOLE_PART` carries the
+    /// ring-drained gate record's `joint_pos` (independent of
+    /// `write_record`'s own per-tick `obs`) merged with whatever
+    /// `report_proprio` said about the robot as declared; a named key
+    /// carries one part's report and nothing else — one arm's sample must
+    /// never be readable as the other's, or as the whole robot's.
+    /// `BTreeMap` for a deterministic uplink order, bounded in cardinality
+    /// by the declaration (parts + 1, validated at
+    /// `Session::report_proprio`).
+    latest: BTreeMap<String, PartProprio>,
 
     // Per-episode state.
     sidecar: Option<SidecarBuilder>,
@@ -169,9 +200,7 @@ impl Reducer {
             obs_slot,
             proprio_rx,
             dispatch_rx,
-            latest_joint_pos: Vec::new(),
-            latest_extras: ProprioExtras::default(),
-            last_obs_uplink_ns: None,
+            latest: BTreeMap::new(),
             sidecar: None,
             mcap: None,
             manifest,
@@ -521,7 +550,12 @@ impl Reducer {
         while let Some(rec) = self.records_rx.as_mut().and_then(|rx| rx.pop().ok()) {
             if let Some(obs) = &rec.obs {
                 self.publish_obs(rec.stamp.mono_ns(), obs);
-                self.latest_joint_pos = obs.to_vec();
+                // The caller's own obs describes the robot as declared, so
+                // it is the SOLE part's joint_pos — never a named part's
+                // (the observation layout is not the action layout; slicing
+                // one by the other would invent a mapping nobody declared).
+                let joint_pos = obs.to_vec();
+                self.part_mut(SOLE_PART).joint_pos = joint_pos;
             }
             self.write_record(&rec);
         }
@@ -551,19 +585,26 @@ impl Reducer {
     /// a later wake with nowhere to go.
     fn drain_proprio_reports(&mut self) {
         while let Ok(report) = self.proprio_rx.try_recv() {
-            self.latest_extras.merge(&report);
+            // Patched into THIS report's part and no other: the report named
+            // what it describes, and one arm's state is not an update to
+            // the other's (nor to the robot as declared).
+            let state = self.part_mut(&report.part);
+            state.extras.merge(&report);
+            if let Some(joint_pos) = &report.joint_pos {
+                state.joint_pos = joint_pos.clone();
+            }
             // A reported sample IS an observation, so it lands on
             // `/waddle/observations` in its own right — stamped here, by the
             // session clock, at the moment the reducer learned it. Whether
             // the caller ALSO passes obs to `gate()` cannot decide whether
             // an observation is recorded: an agent-invited episode has a
             // caller that never ticks at all (FSM.md E24), and its
-            // recording was coming out with zero observations. `joint_pos`
-            // rides the latest known one (the same field the periodic
-            // uplink carries), since `report_proprio` has no joint_pos of
-            // its own.
+            // recording was coming out with zero observations. Local
+            // recording is not connection-scoped: every part is recorded
+            // whatever the plane negotiated (see `maybe_uplink_observation`,
+            // where the flag DOES bind).
             let stamp = self.clock.stamp_now();
-            let sample = self.latest_proprio_sample(self.latest_joint_pos.clone());
+            let sample = self.proprio_sample_for(&report.part);
             if let Some(mcap) = &mut self.mcap {
                 let _ = mcap.write_observation(&pb::ObservationUpdate {
                     t_ns: stamp.mono_ns().0,
@@ -573,18 +614,35 @@ impl Reducer {
         }
     }
 
-    /// The reducer's latest known proprioceptive state, over the caller's
-    /// `joint_pos` of the moment. THE `ProprioSample` builder: the periodic
-    /// uplink, a gate tick's recorded observation, and a `report_proprio`
-    /// call's own recorded observation all differ only in which `joint_pos`
-    /// they hand it and where the result goes.
-    fn latest_proprio_sample(&self, joint_pos: Vec<f64>) -> pb::ProprioSample {
+    /// One part's mutable state, created empty on first mention. The
+    /// declaration bounds how many keys can ever exist
+    /// (`Session::report_proprio` refuses an undeclared name), so this
+    /// cannot be grown without bound by a caller.
+    fn part_mut(&mut self, part: &str) -> &mut PartProprio {
+        if !self.latest.contains_key(part) {
+            self.latest.insert(part.to_owned(), PartProprio::default());
+        }
+        self.latest
+            .get_mut(part)
+            .expect("just inserted when missing")
+    }
+
+    /// One part's latest known proprioceptive state as a wire sample. THE
+    /// `ProprioSample` builder: the periodic uplink, a gate tick's recorded
+    /// observation, and a `report_proprio` call's own recorded observation
+    /// all differ only in which part they name and where the result goes.
+    /// The `part` field is the key itself — never hardcoded, or a named
+    /// part's sample would go out claiming to be the whole robot's.
+    fn proprio_sample_for(&self, part: &str) -> pb::ProprioSample {
+        let state = self.latest.get(part);
         pb::ProprioSample {
-            joint_pos,
-            joint_vel: self.latest_extras.joint_vel.clone(),
-            ee_pose: self.latest_extras.ee_pose.clone(),
-            gripper: self.latest_extras.gripper,
-            part: String::new(),
+            joint_pos: state.map(|s| s.joint_pos.clone()).unwrap_or_default(),
+            joint_vel: state
+                .map(|s| s.extras.joint_vel.clone())
+                .unwrap_or_default(),
+            ee_pose: state.and_then(|s| s.extras.ee_pose.clone()),
+            gripper: state.and_then(|s| s.extras.gripper),
+            part: part.to_owned(),
         }
     }
 
@@ -639,21 +697,46 @@ impl Reducer {
         if self.plane.is_none() {
             return;
         }
-        if self.latest_joint_pos.is_empty() && self.latest_extras.is_empty() {
-            return; // nothing observed yet
-        }
-        if let Some(last) = self.last_obs_uplink_ns
-            && now.0 - last < OBSERVATION_UPLINK_PERIOD_NS
-        {
+        // Each part answers the cadence for ITSELF (see
+        // `PartProprio::last_uplink_ns`); a part nothing has been observed
+        // about yet has nothing to say.
+        let mut due: Vec<String> = self
+            .latest
+            .iter()
+            .filter(|(_, state)| {
+                !state.is_empty()
+                    && state
+                        .last_uplink_ns
+                        .is_none_or(|last| now.0 - last >= OBSERVATION_UPLINK_PERIOD_NS)
+            })
+            .map(|(part, _)| part.clone())
+            .collect();
+        if due.is_empty() {
             return;
         }
-        self.last_obs_uplink_ns = Some(now.0);
-        let sample = self.latest_proprio_sample(self.latest_joint_pos.clone());
-        let Some(plane) = &self.plane else { return };
-        plane.send(ClientMsg::Observation(pb::ObservationUpdate {
-            t_ns: now.0,
-            payload: Some(pb::observation_update::Payload::Proprio(sample)),
-        }));
+        // A named part rides this uplink only on a connection that accepted
+        // `waddle.v0.parts` (VERSIONING §3). Without it the sample is
+        // WITHHELD — never relabeled `""`, which would put one arm's joint
+        // vector on the wire as the whole robot's and let the parts
+        // overwrite each other. The mirror is read only when a named part
+        // is actually due, so the ordinary single-part session pays nothing.
+        if due.iter().any(|part| part != SOLE_PART) && !self.mirror.read().parts_negotiated {
+            due.retain(|part| part == SOLE_PART);
+            if due.is_empty() {
+                return;
+            }
+        }
+        for part in due {
+            if let Some(state) = self.latest.get_mut(&part) {
+                state.last_uplink_ns = Some(now.0);
+            }
+            let sample = self.proprio_sample_for(&part);
+            let Some(plane) = &self.plane else { return };
+            plane.send(ClientMsg::Observation(pb::ObservationUpdate {
+                t_ns: now.0,
+                payload: Some(pb::observation_update::Payload::Proprio(sample)),
+            }));
+        }
     }
 
     /// Tripwire `ObsSource` wiring: every gate tick's `obs` (the
@@ -689,11 +772,16 @@ impl Reducer {
     /// caller who does both records both, each stamped when it happened.
     fn write_record(&mut self, rec: &GateRecord) {
         let t_ns = rec.stamp.mono_ns().0;
-        let observation = rec.obs.as_ref().map(|obs| pb::ObservationUpdate {
-            t_ns,
-            payload: Some(pb::observation_update::Payload::Proprio(
-                self.latest_proprio_sample(obs.to_vec()),
-            )),
+        let observation = rec.obs.as_ref().map(|obs| {
+            // The SOLE part (the robot as declared) merged with THIS tick's
+            // own obs: the row must say what the caller saw when it computed
+            // this action, not what the reducer has learned since.
+            let mut sample = self.proprio_sample_for(SOLE_PART);
+            sample.joint_pos = obs.to_vec();
+            pb::ObservationUpdate {
+                t_ns,
+                payload: Some(pb::observation_update::Payload::Proprio(sample)),
+            }
         });
 
         let Some(mcap) = &mut self.mcap else { return };
@@ -909,8 +997,8 @@ mod tests {
         proprio_tx
             .send(ProprioReport {
                 joint_vel: Some(vec![7.0, 8.0, 9.0]),
-                ee_pose: None,
                 gripper: Some(0.25),
+                ..Default::default()
             })
             .unwrap();
         reducer.finalize_episode_if_terminal(true);

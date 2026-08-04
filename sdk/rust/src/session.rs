@@ -479,12 +479,19 @@ impl PySession {
                 .map_err(|e| PyValueError::new_err(e.to_string()))
             })
             .transpose()?;
-        self.inner.report_proprio(ProprioReport {
-            joint_vel,
-            ee_pose,
-            gripper,
-        });
-        Ok(())
+        // `part`/`joint_pos` are not kwargs on this surface yet: every
+        // report from here describes the robot as declared (`part: ""`, the
+        // sole/default part), which the core accepts unconditionally. The
+        // refusal is still mapped rather than unwrapped — it is a
+        // caller-facing validation error the moment `part=` is exposed.
+        self.inner
+            .report_proprio(ProprioReport {
+                joint_vel,
+                ee_pose,
+                gripper,
+                ..Default::default()
+            })
+            .map_err(|e| PyValueError::new_err(e.to_string()))
     }
 
     /// PRIVATE/UNSTABLE: every raw frame payload the loopback media plane's
