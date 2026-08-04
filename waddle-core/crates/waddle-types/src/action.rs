@@ -651,6 +651,14 @@ mod tests {
     /// The two ways of addressing parts do not nest: v0 pins Composite depth
     /// to 1, so a part-scoped action carrying a `CompositeAction` is refused
     /// in its own words rather than decoded one level deeper.
+    ///
+    /// The WORDS are the whole point of the guard — without it this action
+    /// still refuses, but as the generic "target arm does not match the
+    /// declared action space" the fall-through arm produces, which tells a
+    /// sender that mixed the two addressing modes nothing about what it
+    /// mixed. The reason string is what reaches that sender (it becomes
+    /// `RejectReason::NotExecutable(err.to_string())` at the intake), so it
+    /// is asserted, not `..`-ignored.
     #[test]
     fn part_scoped_composite_target_is_refused() {
         let space = bimanual_space();
@@ -664,13 +672,16 @@ mod tests {
             })),
             ..Default::default()
         };
-        assert!(matches!(
-            flatten_action(&action, &space, PartPolicy::Honor),
-            Err(TypesError::InvalidValue {
-                field: "Action.target",
-                ..
-            })
-        ));
+        let refused = flatten_action(&action, &space, PartPolicy::Honor);
+        let Err(TypesError::InvalidValue { field, reason }) = refused else {
+            panic!("expected a refusal, got {refused:?}");
+        };
+        assert_eq!(field, "Action.target");
+        assert!(
+            reason.contains("CompositeAction") && reason.contains("depth 1"),
+            "the refusal must name the nesting the sender attempted, not fall \
+             through to the generic arm-mismatch reason: {reason:?}"
+        );
     }
 
     /// "Move this part, hold the rest" generalizes "hold the arm, move the
