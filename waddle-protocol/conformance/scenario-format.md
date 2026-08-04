@@ -78,6 +78,7 @@ as unknown:
 | `gate_tick` | `action?`: `waddle.v0.Action`, `obs_t_ns?` | gate | one caller-loop tick through `gate()` |
 | `chunk_arrival` | `chunk`: `waddle.v0.ActionChunk` | gate | a policy chunk arrives |
 | `teleop_action` | `packet`: `waddle.v0.TeleopStreamPacket` | gate | an intervention-stream action arrives |
+| `intervention_chunk` | `chunk`: `waddle.v0.ActionChunk` | gate | an intervention chunk arrives from the control plane (`GateServerMessage.intervention_chunk`) under an engaged claim; its steps enter the intervention stream at their `tOffsetNs` (needs `waddle.v0.agent` — a Waddle-hosted agent is v0's producer of this arm). A step carrying a non-empty `Action.part` additionally needs `waddle.v0.parts` |
 | `claim_request` | fields of `waddle.v0.ClaimEpisodeRequest` | fsm, gate | an actor asks to claim |
 | `claim_granted` | `claim`: `waddle.v0.Claim` | fsm, gate | the claim was granted |
 | `claim_released` | `claim_id` | fsm, gate | the claim was released |
@@ -137,6 +138,13 @@ paths. Present keys must match; absent keys are unconstrained.
 Asserts on the return of the **most recent** `gate_tick`. `kind` is one of
 `pass | substitute | blend | noop | hold`; `provenance` may be asserted as a
 partial `waddle.v0.ProvenanceTag`.
+
+`part` (needs `waddle.v0.parts`) asserts which declared `Composite` part the
+returned action addresses. Runners report it on the two kinds that return an
+action — `substitute` and `blend` — as the addressed part's name, or `""`
+when the action addresses the whole robot, so a scenario can pin either fact;
+it is absent from `pass`, `noop`, and `hold`, which return no Waddle-sourced
+action at all. As everywhere else, an absent key is unconstrained.
 
 ### `expect_send` (gate target only)
 
