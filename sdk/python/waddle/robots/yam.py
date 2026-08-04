@@ -1,10 +1,16 @@
-"""The I2RT YAM: what one is, in numbers, and the chain that produces a TCP.
+"""The I2RT YAM: what one is, in numbers, and what you can build out of one.
 
 A robot module is facts plus a driver plus a factory, on top of
-:mod:`waddle.robots.base`. This file is the FACTS half for the YAM — the six
-arm joints, their limits, the kinematic chain, the tool frame, the hand's
-stroke — and the forward kinematics those facts describe. Nothing here opens
-a socket, holds a lease or decides who may command anything.
+:mod:`waddle.robots.base`. This file carries the first two for the YAM:
+
+* the FACTS — the six arm joints, their limits, the kinematic chain, the tool
+  frame, the hand's stroke — and the :func:`forward_kinematics` they describe;
+* :class:`LiveDriver`, the thin honest layer over the vendor's own calls, with
+  the e-stop latch the vendor's zero-torque mode makes necessary.
+
+Both stand alone: take the facts and declare the robot yourself, or take the
+driver and put your own envelope in front of it. Nothing here holds a lease
+or decides who may command anything — that is waddle-core's either way.
 
 **No number below stands on its own word.** The model the vendor publishes
 ships beside this file (``yam_data/yam.urdf``, pinned at :data:`I2RT_PIN`)
@@ -35,10 +41,17 @@ Conventions, stated once:
   commanding the hand is an ordinary joint command.
 * Poses are METRES in the arm's own base frame (:data:`URDF_BASE_LINK`), at
   the TCP (:data:`URDF_TCP_FRAME` — the frame every YAM consumer speaks).
-* Nothing here is a site fact. The workspace box, the bench-measured gripper
-  motor limits, the CAN interface and where a second arm stands relative to
-  the first belong to YOUR rig, are arguments to the factories, and have no
-  defaults to inherit by accident.
+* No MEASUREMENT here is a site fact. The workspace box, the bench-measured
+  gripper motor limits and the CAN interface belong to YOUR rig, are
+  arguments, and have no defaults to inherit by accident.
+
+Driving a real arm needs the vendor's own package, which is not a dependency
+of this one and cannot be an extra of it: it is not published on PyPI, and
+the tree behind it is not something an install that only supervises a policy
+should resolve. :data:`I2RT_INSTALL` is the command, built from
+:data:`I2RT_PIN` so it cannot drift from the commit these facts are stated
+against, and :class:`LiveDriver` prints it when the import fails. Importing
+this module needs none of it.
 
 This module is public on purpose. What a customer needs in order to drive
 their own arm through their own envelope belongs in the customer's own hands,
@@ -49,8 +62,9 @@ and is not here.
 
 from __future__ import annotations
 
+import threading
+from collections.abc import Callable, Sequence
 from importlib.resources import files
-from typing import Sequence
 
 import numpy as np
 
@@ -66,7 +80,9 @@ __all__ = [
     "GRIPPER_JOINT_LIMITS",
     "GRIPPER_JOINT_NAME",
     "GRIPPER_MAX_OPENING_M",
+    "I2RT_INSTALL",
     "I2RT_PIN",
+    "I2RT_REPO",
     "JOINT_COUNT",
     "JOINT_LIMITS",
     "JOINT_NAMES",
@@ -75,6 +91,7 @@ __all__ = [
     "TOOL_ORIGIN_XYZ_M",
     "URDF_BASE_LINK",
     "URDF_TCP_FRAME",
+    "LiveDriver",
     "forward_kinematics",
     "urdf_text",
 ]
@@ -84,6 +101,18 @@ __all__ = [
 #: package is installed by the same pin (it is not on PyPI), so a module that
 #: drives an arm and a model that describes one cannot drift apart silently.
 I2RT_PIN = "570ef66681ff12bd8298aba34084307cfecc9f05"
+
+#: Where that commit lives, and the ONE command that installs it.
+#:
+#: The vendor package is not on PyPI and cannot become a
+#: ``waddle-sdk[yam]`` extra: PyPI rejects direct references, and the
+#: dependency tree behind this one (an exact ``numpy``, plus a simulator
+#: stack) is not something an install that only supervises a policy should
+#: resolve. So it is a documented command rather than a dependency — and it
+#: is BUILT from :data:`I2RT_PIN`, so the command a failure prints and the
+#: commit these facts are stated against cannot drift apart.
+I2RT_REPO = "https://github.com/i2rt-robotics/i2rt"
+I2RT_INSTALL = f'pip install "i2rt @ git+{I2RT_REPO}@{I2RT_PIN}"'
 
 # ---------------------------------------------------------------------------
 # Names and arity
@@ -286,3 +315,234 @@ def forward_kinematics(
         TOOL_ORIGIN_RPY_RAD,
         arm_q,
     )
+
+
+# ---------------------------------------------------------------------------
+# The live driver: one real YAM on one CAN bus
+# ---------------------------------------------------------------------------
+
+
+class LiveDriver:
+    """One real YAM on one CAN bus — the thin vendor calls and the latch.
+
+    Deliberately thin. What it reproduces is only what the vendor package
+    requires, and the vendor package is imported LAZILY, inside ``__init__``:
+    importing :mod:`waddle.robots.yam` on a machine that has never seen a YAM
+    is an ordinary import, and only asking for a live arm requires the
+    vendor's code to be there.
+
+    * ``get_yam_robot(channel, gripper_type, zero_gravity_mode,
+      gripper_limits_override)`` — the override is PINNED from the site's own
+      measurement, which is what skips the connect-time auto-calibration that
+      physically drives the jaws (~0.5 N·m, up to 2 s per direction) on every
+      connect. Nothing here auto-ranges a hand.
+    * ``robot.command_joint_pos(vec)`` takes the FULL vector: six arm joints
+      in radians plus the gripper normalized 0..1. It is non-blocking — it
+      latches a setpoint into the vendor's own ~1 kHz server thread, which
+      re-sends it forever — so there is no keepalive to write here.
+    * ``robot.get_observations()`` -> ``joint_pos`` (6, rad), ``joint_vel``
+      (6), ``gripper_pos`` ([1], normalized). Read defensively: an absent
+      velocity is reported as zero because the wire has no "unknown" for one,
+      and an absent position is a fault, not a guess.
+    * ``robot.zero_torque_mode()`` is the stop the vendor offers, and it is
+      HONEST about what it is: the arm goes compliant and FLOATS under the
+      always-on gravity compensation. It does not freeze in place. The site's
+      physical e-stop is the real one. It also zeros the internal **kp/kd**,
+      and no vendor call undoes that on its own — hence the latch.
+    * ``robot.get_robot_info()`` -> a dict carrying those ``kp``/``kd``
+      arrays, and ``robot.update_kp_kd(kp, kd)`` puts them back. They are
+      snapshotted at construction, because by the time you want them the stop
+      has already destroyed them.
+
+    **The latch is the load-bearing part.** After ``zero_torque_mode()`` the
+    vendor's server thread happily accepts every ``command_joint_pos`` and the
+    arm does not move: gains of zero make a setpoint a suggestion. A driver
+    without a latch therefore reports commands as applied while the arm hangs
+    limp, and every episode after the stop reads SUCCESS. So the latch is set
+    with the stop, every write is refused while it holds, and the one way out
+    is :meth:`re_enable` — gains back, measured pose held — driven by a human
+    at the machine (`waddle.robots.base.start_console_recovery`), never by the
+    wire and never by the next episode's reset.
+
+    ``zero_gravity=True`` builds the arm compliant and hand-movable, and this
+    driver then refuses to write at all — so "nothing can command it" is a
+    property of the object rather than of a flag somebody remembered to check.
+    It is what a monitor posture builds.
+
+    What this driver deliberately does NOT do: bring a CAN interface up, patch
+    the vendor's transport, or work around a bus that starves its receiver.
+    Those are fleet-keeping concerns, they are specific to how a site cables
+    and loads its machines, and they belong to whoever runs the fleet — not to
+    a driver whose job is to be the honest thin layer over the vendor's own
+    calls.
+    """
+
+    kind = "live"
+
+    def __init__(
+        self,
+        channel: str,
+        *,
+        gripper_limits: Sequence[float],
+        zero_gravity: bool = False,
+        report: Callable[[str], None] = base.status,
+    ) -> None:
+        try:
+            from i2rt.robots.get_robot import get_yam_robot
+            from i2rt.robots.utils import GripperType
+        except ImportError as e:
+            raise RuntimeError(
+                f"{channel}: driving a real YAM needs the I2RT vendor package, and "
+                f"importing it raised {e!r}.\n\n"
+                f"    {I2RT_INSTALL}\n\n"
+                "It is not a dependency of this package and cannot be an extra of "
+                "one: it is not published on PyPI, and the tree behind it (an "
+                "exact numpy, a simulator stack) is not something an install that "
+                "only supervises a policy should resolve. The commit above is the "
+                "same one every fact in this module is stated against."
+            ) from e
+
+        self.channel = channel
+        self._zero_gravity = bool(zero_gravity)
+        self._report = report
+        self._lock = threading.Lock()
+        self._estopped = False
+        self._robot = get_yam_robot(
+            channel=channel,
+            gripper_type=GripperType.LINEAR_4310,
+            zero_gravity_mode=self._zero_gravity,
+            gripper_limits_override=np.asarray(gripper_limits, dtype=float),
+        )
+        dofs = int(self._robot.num_dofs())
+        if dofs != JOINT_COUNT:
+            raise RuntimeError(
+                f"{channel}: the arm reports {dofs} DOF, this module declares "
+                f"{JOINT_COUNT} ({', '.join(JOINT_NAMES)}) — reject, never adapt "
+                "silently"
+            )
+        self._default_kp, self._default_kd = self._snapshot_gains()
+
+    def _snapshot_gains(self):
+        """The PD gains this arm was built with, read ONCE and kept.
+
+        Read here and nowhere else because the e-stop destroys them: by the
+        time :meth:`re_enable` wants them there is nothing left to ask. An arm
+        built compliant has no stiff gains to snapshot and commands nothing
+        anyway, so it does not pretend to. Failure is loud and non-fatal — the
+        arm still runs, and :meth:`re_enable` refuses rather than guessing."""
+        if self._zero_gravity:
+            return None, None
+        try:
+            info = self._robot.get_robot_info() or {}
+        except Exception as e:  # noqa: BLE001 — best effort; re_enable degrades loudly
+            self._report(
+                f"live {self.channel}: get_robot_info() raised {e!r} — gains not "
+                "snapshotted; re_enable will refuse to guess them"
+            )
+            return None, None
+        kp, kd = info.get("kp"), info.get("kd")
+        if kp is None or kd is None:
+            self._report(
+                f"live {self.channel}: get_robot_info() carried no kp/kd — "
+                "re_enable will refuse to restore gains it never snapshotted"
+            )
+        return kp, kd
+
+    @property
+    def estopped(self) -> bool:
+        return self._estopped
+
+    def read(self) -> tuple[np.ndarray, np.ndarray]:
+        obs = self._robot.get_observations() or {}
+        joint_pos = obs.get("joint_pos")
+        if joint_pos is None:
+            raise RuntimeError(
+                f"{self.channel}: get_observations() carried no joint_pos"
+            )
+        gripper = obs.get("gripper_pos")
+        position = np.zeros(JOINT_COUNT)
+        position[:ARM_JOINT_COUNT] = np.asarray(joint_pos, dtype=float)[
+            :ARM_JOINT_COUNT
+        ]
+        if gripper is not None and len(gripper) > 0:
+            position[ARM_JOINT_COUNT] = float(gripper[0])
+        velocity = np.zeros(JOINT_COUNT)
+        raw_vel = obs.get("joint_vel")
+        if raw_vel is not None and len(raw_vel) > 0:
+            velocity[:ARM_JOINT_COUNT] = np.asarray(raw_vel, dtype=float)[
+                :ARM_JOINT_COUNT
+            ]
+        return position, velocity
+
+    def write(self, target: np.ndarray) -> None:
+        if self._zero_gravity:
+            raise RuntimeError(
+                f"{self.channel}: this arm was opened in zero-gravity mode "
+                "(compliant, hand movable) and this driver commands nothing"
+            )
+        with self._lock:
+            if self._estopped:
+                raise RuntimeError(
+                    f"{self.channel}: e-stopped — zero_torque_mode() left this arm "
+                    "with no gains, so a command here would latch a setpoint that "
+                    "moves nothing. Clear the latch at the machine."
+                )
+            self._robot.command_joint_pos(np.asarray(target, dtype=float))
+
+    def hold(self) -> None:
+        if self._zero_gravity:
+            return
+        position, _ = self.read()
+        with self._lock:
+            if self._estopped:
+                return
+            self._robot.command_joint_pos(np.asarray(position, dtype=float))
+
+    def estop(self) -> None:
+        """Zero torque, and LATCH.
+
+        The latch is set BEFORE the vendor call, so a call that raises still
+        leaves this arm refusing commands: a stop that half-happened is still
+        a stop, and the one thing that must not follow it is a program that
+        believes it can drive again."""
+        with self._lock:
+            self._estopped = True
+            self._robot.zero_torque_mode()
+
+    def re_enable(self) -> None:
+        """Gains back, measured pose held — the only exit from the latch.
+
+        Refuses rather than guesses. Gains this driver never snapshotted are
+        gains nobody knows, and a made-up kp is how an arm slams; a refusal
+        leaves the latch set and the arm floating, which is the state the site
+        operator can already see. Everything runs under this driver's own
+        lock, so nothing observes half a recovery, and the latch clears LAST:
+        a vendor call that raises leaves this arm e-stopped."""
+        with self._lock:
+            if self._zero_gravity:
+                raise RuntimeError(
+                    f"{self.channel}: this arm was opened in zero-gravity mode — it "
+                    "commands nothing, so there is nothing to re-enable"
+                )
+            if self._default_kp is None or self._default_kd is None:
+                raise RuntimeError(
+                    f"{self.channel}: no snapshotted kp/kd (get_robot_info had none "
+                    "at connect) — refusing to guess gains. Support the arm and "
+                    "restart the program."
+                )
+            position, _ = self.read()
+            self._robot.update_kp_kd(self._default_kp, self._default_kd)
+            self._robot.command_joint_pos(np.asarray(position, dtype=float))
+            self._estopped = False
+
+    def step(self, dt: float) -> None:
+        return None  # a real arm integrates itself
+
+    def home(self, values: Sequence[float]) -> bool:
+        """A live arm has no home to snap to. Homing one is a motion, and an
+        unattended motion is exactly what a live rig does not make."""
+        return False
+
+    def close(self) -> None:
+        with self._lock:
+            self._robot.close()
