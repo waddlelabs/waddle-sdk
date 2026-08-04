@@ -612,15 +612,57 @@ def test_the_live_driver_reads_the_hand_as_the_seventh_row(vendor):
 def test_an_absent_velocity_reads_as_zero_and_an_absent_position_is_a_fault(vendor):
     """The wire has no "unknown" for a velocity, so an absent one is reported
     as zero; an absent POSITION is a fault, because guessing one would put a
-    pose nobody measured into the record."""
+    pose nobody measured into the record.
+
+    The HAND is a declared position row here, so it answers the same rule. A
+    fabricated 0.0 there would be indistinguishable from a closed hand in the
+    recording, and — worse — it is the ``current`` the per-step cap is measured
+    against, so an arbitrarily large uncommanded jaw motion would pass a check
+    that exists to refuse exactly that."""
     driver = _live(vendor)
-    vendor.robots[0].observations = {"joint_pos": [0.1] * 6}
+    vendor.robots[0].observations = {
+        "joint_pos": [0.1] * 6,
+        "gripper_pos": [0.5],
+    }
     position, velocity = driver.read()
     assert np.allclose(velocity, 0.0)
-    assert position[yam.ARM_JOINT_COUNT] == 0.0
-    vendor.robots[0].observations = {}
-    with pytest.raises(RuntimeError, match="joint_pos"):
-        driver.read()
+    assert position[yam.ARM_JOINT_COUNT] == 0.5
+    for absent in ({}, {"joint_vel": [0.0] * 6}):
+        vendor.robots[0].observations = absent
+        with pytest.raises(RuntimeError, match="joint_pos"):
+            driver.read()
+    for hand in ({"joint_pos": [0.1] * 6}, {"joint_pos": [0.1] * 6, "gripper_pos": []}):
+        vendor.robots[0].observations = hand
+        with pytest.raises(RuntimeError, match="gripper_pos"):
+            driver.read()
+
+
+def test_a_command_is_never_measured_against_a_hand_position_nobody_read(vendor):
+    """The consequence of the rule above, stated as the thing it prevents.
+
+    With the hand at 1.0 and the vendor omitting it, a fabricated 0.0 would let
+    a 0.8 jump through a 0.25-per-command cap on the one row this module chose
+    to model as a joint. The driver faults instead, and the envelope refuses
+    the command whole rather than admitting it against a guess."""
+    driver = _live(vendor)
+    vendor.robots[0].observations = {"joint_pos": [0.1] * 6, "gripper_pos": [1.0]}
+    arm = base.Arm(
+        part="left_arm",
+        driver=driver,
+        joint_names=yam.JOINT_NAMES,
+        joint_limits=yam.JOINT_LIMITS,
+        step_caps=(0.1,) * yam.ARM_JOINT_COUNT + (0.25,),
+        report=lambda _: None,
+    )
+    target = np.array([0.1] * yam.ARM_JOINT_COUNT + [0.2])
+    assert arm.command(target) is False  # 1.0 -> 0.2 is a jump, and it is refused
+    held = vendor.robots[0].commands
+    assert len(held) == 1 and held[0][yam.ARM_JOINT_COUNT] == 1.0  # the reject held it
+
+    del vendor.robots[0].observations["gripper_pos"]
+    with pytest.raises(RuntimeError, match="gripper_pos"):
+        arm.command(target)
+    assert len(vendor.robots[0].commands) == 1  # and nothing new was written
 
 
 def test_the_estop_latches_before_the_vendor_call(vendor):

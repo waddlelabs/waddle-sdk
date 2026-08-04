@@ -459,7 +459,12 @@ class LiveDriver:
     * ``robot.get_observations()`` -> ``joint_pos`` (6, rad), ``joint_vel``
       (6), ``gripper_pos`` ([1], normalized). Read defensively: an absent
       velocity is reported as zero because the wire has no "unknown" for one,
-      and an absent position is a fault, not a guess.
+      and an absent POSITION is a fault, not a guess — the hand included,
+      since this module declares it as a joint row rather than a sidechannel.
+      A fabricated 0.0 there would be recorded as a measured closed hand, and
+      it is the number the envelope measures the next command's per-step cap
+      against, so guessing it would let a large uncommanded jaw motion through
+      the check that exists to refuse one.
     * ``robot.zero_torque_mode()`` is the stop the vendor offers, and it is
       HONEST about what it is: the arm goes compliant and FLOATS under the
       always-on gravity compensation. It does not freeze in place. The site's
@@ -576,15 +581,23 @@ class LiveDriver:
                 f"{self.channel}: get_observations() carried no joint_pos"
             )
         gripper = obs.get("gripper_pos")
+        if gripper is None or np.size(gripper) == 0:
+            raise RuntimeError(
+                f"{self.channel}: get_observations() carried no gripper_pos — this "
+                "module declares the hand as a JOINT row, so the same rule binds it "
+                "as the other six: a zero here would be recorded as a closed hand, "
+                "and it is the position the envelope measures the next command's "
+                "per-step cap against, so a large uncommanded jaw motion would pass "
+                "the check that exists to refuse one"
+            )
         position = np.zeros(JOINT_COUNT)
         position[:ARM_JOINT_COUNT] = np.asarray(joint_pos, dtype=float)[
             :ARM_JOINT_COUNT
         ]
-        if gripper is not None and len(gripper) > 0:
-            position[ARM_JOINT_COUNT] = float(gripper[0])
+        position[ARM_JOINT_COUNT] = float(np.reshape(gripper, -1)[0])
         velocity = np.zeros(JOINT_COUNT)
         raw_vel = obs.get("joint_vel")
-        if raw_vel is not None and len(raw_vel) > 0:
+        if raw_vel is not None and np.size(raw_vel) > 0:
             velocity[:ARM_JOINT_COUNT] = np.asarray(raw_vel, dtype=float)[
                 :ARM_JOINT_COUNT
             ]
