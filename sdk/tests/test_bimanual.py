@@ -26,6 +26,8 @@ import time
 
 import numpy as np
 import pytest
+from mcap.reader import make_reader
+from mcap_protobuf.decoder import DecoderFactory
 
 import waddle
 import waddle._testing
@@ -143,6 +145,18 @@ def _gated_substitute(ep, session, action, values, part=None):
         time.sleep(0.005)
 
 
+def _observations(mcap_path):
+    """Every decoded `/waddle/observations` message, via the channel's own
+    embedded schema — the same read any external MCAP consumer would do."""
+    with open(mcap_path, "rb") as f:
+        reader = make_reader(f, decoder_factories=[DecoderFactory()])
+        return [
+            msg
+            for _, channel, _, msg in reader.iter_decoded_messages()
+            if channel.topic == "/waddle/observations"
+        ]
+
+
 def test_single_part_surface_is_unchanged():
     """A declaration with no parts hands `send` exactly what it always did:
     `(float64 ndarray, gripper, offset_ns)`. Dict-by-part is what a Composite
@@ -221,6 +235,54 @@ def test_composite_send_receives_dict_by_part_steps():
         assert list(values["right"]) == [0.2] * ARM_DIMS
 
         waddle._testing.release(session, "claim-send")
+        ep.terminate("success")
+
+
+def test_report_proprio_part_round_trips_through_mcap(tmp_path):
+    """A per-part sample keys its own recording row. It cannot ride the gate's
+    flat `obs` vector — the observation layout is the customer's own and no
+    declaration describes it, so slicing it by action parts would invent a
+    mapping nobody declared — which is why `joint_pos` is a kwarg here."""
+    session = waddle.init(
+        "py-parts-proprio", _bimanual(), _control(), recording_dir=tmp_path
+    )
+
+    with waddle.rollout(task="report both arms") as ep:
+        episode_id = ep.id
+        session.report_proprio(part="left", joint_pos=[0.5] * ARM_DIMS, gripper=0.02)
+        session.report_proprio(
+            part="right", joint_pos=np.full(ARM_DIMS, -0.5), gripper=0.04
+        )
+        for _ in range(10):
+            ep.gate(np.zeros(2 * ARM_DIMS), np.zeros(2 * ARM_DIMS))
+            time.sleep(0.01)
+        ep.terminate("success")
+    waddle.shutdown()
+
+    samples = [o.proprio for o in _observations(tmp_path / f"{episode_id}.mcap")]
+    by_part = {s.part: s for s in samples}
+    assert "left" in by_part and "right" in by_part, (
+        f"each reported part must land as its own row, got parts {sorted(by_part)}"
+    )
+    assert list(by_part["left"].joint_pos) == [0.5] * ARM_DIMS
+    assert by_part["left"].gripper == pytest.approx(0.02)
+    assert list(by_part["right"].joint_pos) == [-0.5] * ARM_DIMS
+    assert by_part["right"].gripper == pytest.approx(0.04)
+    # The gate-tick stream still records the robot as declared, under "".
+    assert "" in by_part
+
+
+def test_report_proprio_unknown_part_raises():
+    """Refused by NAME: a typo'd part is a declaration error the caller can
+    fix, and reporting one arm's state under a name the robot does not have
+    would put it in the corpus as fact."""
+    session = waddle.init("py-parts-unknown", _bimanual(), _control())
+
+    with waddle.rollout(task="typo") as ep:
+        with pytest.raises(ValueError, match="waist"):
+            session.report_proprio(part="waist", joint_pos=[0.0] * ARM_DIMS)
+        # "" is the sole/default part and is always legal, on any declaration.
+        session.report_proprio(part="", joint_pos=[0.0] * 2 * ARM_DIMS)
         ep.terminate("success")
 
 

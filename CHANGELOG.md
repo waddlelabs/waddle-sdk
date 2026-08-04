@@ -264,6 +264,13 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     exists to prevent. **This closes the release gate** the `GateInfo.part`
     work left open: `waddle.v0.parts` is now expressible end to end on this
     distribution.
+  - **sdk (`waddle-sdk`), `report_proprio(part=, joint_pos=)`**: report one
+    part's state at a time (`ProprioSample.part`), refused by name with a
+    `ValueError` if the declaration has no such part. `joint_pos` is a kwarg
+    here for the same reason it is a field in core: a per-part sample cannot
+    ride the flat `gate(obs=...)` vector, because the observation layout is
+    the customer's own and no declaration describes it. `part=""` (the
+    default) is the robot as declared and behaves exactly as before.
   - **sdk (`waddle-sdk`), `waddle._testing.push_chunk`**: the private test
     hook for the local intervention seam — one part-addressed (or
     whole-robot) step pushed into a session with no control-plane transport,

@@ -455,15 +455,42 @@ impl PySession {
     /// untagged pose is exactly how misaligned data corrupts a corpus
     /// silently). Raises `ValueError` for a wrong `ee_pose` length or an
     /// empty `ee_pose_frame`.
-    #[pyo3(signature = (joint_vel=None, ee_pose=None, ee_pose_frame="ee", gripper=None))]
+    ///
+    /// `part` says WHICH declared part this sample describes (flag
+    /// `waddle.v0.parts`). The default `""` is the sole/default part — the
+    /// robot as declared — and is always legal; any other value must name a
+    /// part of a `Composite` declaration or this raises `ValueError` by
+    /// name. Each part is patched independently: one arm's sample is not an
+    /// update to the other's, nor to the robot as declared.
+    ///
+    /// `joint_pos` is load-bearing for a named part and optional for `""`. A
+    /// per-part sample cannot ride the flat `gate(obs=...)` vector: the
+    /// observation layout is the customer's own and no declaration describes
+    /// it, so slicing it by action parts would invent a mapping nobody
+    /// declared. For `""` it is most-recent-wins against the gate-tick
+    /// stream, which reports the same thing.
+    #[pyo3(signature = (
+        joint_vel=None,
+        ee_pose=None,
+        ee_pose_frame="ee",
+        gripper=None,
+        part="",
+        joint_pos=None,
+    ))]
     fn report_proprio(
         &self,
         joint_vel: Option<&Bound<'_, PyAny>>,
         ee_pose: Option<&Bound<'_, PyAny>>,
         ee_pose_frame: &str,
         gripper: Option<f64>,
+        part: &str,
+        joint_pos: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<()> {
         let joint_vel = joint_vel
+            .map(extract_f64s)
+            .transpose()?
+            .map(|row| row.as_slice().to_vec());
+        let joint_pos = joint_pos
             .map(extract_f64s)
             .transpose()?
             .map(|row| row.as_slice().to_vec());
@@ -486,17 +513,16 @@ impl PySession {
                 .map_err(|e| PyValueError::new_err(e.to_string()))
             })
             .transpose()?;
-        // `part`/`joint_pos` are not kwargs on this surface yet: every
-        // report from here describes the robot as declared (`part: ""`, the
-        // sole/default part), which the core accepts unconditionally. The
-        // refusal is still mapped rather than unwrapped — it is a
-        // caller-facing validation error the moment `part=` is exposed.
+        // The undeclared-part refusal is the core's (it owns the
+        // declaration); this only names it as a caller-facing validation
+        // error, which is what it is.
         self.inner
             .report_proprio(ProprioReport {
+                part: part.to_owned(),
+                joint_pos,
                 joint_vel,
                 ee_pose,
                 gripper,
-                ..Default::default()
             })
             .map_err(|e| PyValueError::new_err(e.to_string()))
     }
