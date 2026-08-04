@@ -642,6 +642,96 @@ fn claimed_mode_gripper_only_step_actuates_with_the_arm_holding() {
     );
 }
 
+/// ONE stamping authority per stream channel. The plane pump and the local
+/// `push_intervention_chunk` seam both push onto `StreamChannel::AgentChunk`,
+/// and that channel has ONE reorder/late-drop cursor: if each intake kept its
+/// own seq counter, the local seam's first push would carry a seq at or
+/// behind the cursor the plane's chunks had already advanced, and the jitter
+/// buffer would drop it as late — silently, since a late drop is nobody's
+/// refusal. Two plane steps are drained first (an observable happens-before,
+/// not a sleep: the cursor has provably advanced), then a locally injected
+/// chunk must still substitute.
+#[test]
+fn a_local_push_shares_the_planes_agent_chunk_seq_counter() {
+    let dir = tempfile::tempdir().unwrap();
+    let send_log: SendLog = Arc::new(Mutex::new(Vec::new()));
+    let (transport, tx_cell) = tx_transport();
+    let session = Session::builder("e2e-claimed-chunk-seq")
+        .robot(twist_robot(pb::ReplanPolicy::Immediate))
+        .control(registry(&send_log))
+        .recording_dir(dir.path())
+        .transport(transport)
+        .build()
+        .unwrap();
+
+    let mut ep = session.start_episode("claimed-chunk-seq").unwrap();
+    let _ = ep.gate(&[0.0; 6], None, None);
+    wait_for(&session, |s| {
+        matches!(s.episode_state, Some(Phase::Running))
+    });
+
+    grant_and_engage(&session, "claim-seq", "agent-plane", ActorKind::Agent);
+    wait_for(&session, |s| s.gate_mode == Some(GateMode::Intervention));
+    let tx = wait_for_tx(&tx_cell);
+
+    // The plane's chunk advances the AgentChunk cursor past its own steps.
+    send_chunk(
+        &tx,
+        vec![twist_step(1.0, 0), twist_step(2.0, 40_000_000)],
+        1,
+        0,
+    );
+    let mut seen = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while seen.len() < 2 && Instant::now() < deadline {
+        if let GateOutput::Substitute { action, .. } = ep.gate(&[0.0; 6], None, None) {
+            seen.push(action.values[0]);
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(
+        seen,
+        vec![1.0, 2.0],
+        "the plane's own chunk must substitute first"
+    );
+
+    // Now the local seam. A strictly newer chunk seq (the jitter buffer's
+    // staleness rule is about the WIRE chunk, a separate question from the
+    // ring seq this test is about), and a value no plane step used.
+    waddle_runtime::push_intervention_chunk(
+        &session,
+        pb::ActionChunk {
+            actions: vec![twist_step(7.0, 0)],
+            horizon_ns: 0,
+            t_emitted_ns: 0,
+            t_obs_ns: 0,
+            seq: 2,
+            source_id: "local-seam".into(),
+            provenance: None,
+        },
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut substituted = false;
+    while Instant::now() < deadline {
+        if let GateOutput::Substitute { action, .. } = ep.gate(&[0.0; 6], None, None) {
+            assert!((action.values[0] - 7.0).abs() < 1e-9);
+            substituted = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        substituted,
+        "a locally pushed chunk must not be dropped as late against the \
+         plane pump's cursor — both intakes stamp from one counter"
+    );
+
+    release_claim(&session, "claim-seq");
+    wait_for(&session, |s| s.gate_mode == Some(GateMode::Passthrough));
+    ep.terminate(TerminalOutcome::Success, "done");
+    session.shutdown();
+}
+
 /// A noop with NO gripper commands nothing at all. It is skipped — the
 /// waypoints around it still actuate, because one inert step must never
 /// cost the sender the rest of its chunk — and the skip is recorded as a

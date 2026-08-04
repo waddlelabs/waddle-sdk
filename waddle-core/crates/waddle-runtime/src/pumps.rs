@@ -577,6 +577,7 @@ pub(crate) fn spawn_plane_pump(
     mirror: Arc<Mirror>,
     stream: StreamProducer,
     action_space: Arc<ActionSpace>,
+    chunk_intake: SharedChunkIntake,
 ) -> JoinHandle<()> {
     std::thread::Builder::new()
         .name("waddle-plane-pump".into())
@@ -589,9 +590,6 @@ pub(crate) fn spawn_plane_pump(
             // forgets it — per VERSIONING §3, a behavior the connection did
             // not accept is never emitted.
             let mut acks_negotiated = false;
-            // Ring-seq counter + once-per-claim-window fault guards for the
-            // agent-chunk path; see [`ChunkIntakeState`].
-            let mut chunk_intake = ChunkIntakeState::default();
             loop {
                 let status = mirror.read();
                 if status.shutdown {
@@ -652,7 +650,7 @@ pub(crate) fn spawn_plane_pump(
                         &mirror,
                         &stream,
                         &action_space,
-                        &mut chunk_intake,
+                        &chunk_intake,
                         acks_negotiated,
                     ),
                 }
@@ -766,18 +764,31 @@ pub(crate) struct ChunkIntakeFaults {
     inert: WindowLatch,
 }
 
-/// The per-intake bookkeeping [`intake_intervention_chunk`] threads through:
-/// the ring-seq counter and the once-per-claim-window fault guards. The
-/// plane pump owns one in its thread's locals; the local
-/// [`crate::session::push_intervention_chunk`] seam owns one behind a mutex
-/// on the session, since it has no thread of its own. Neither owns the
-/// guards' LIFECYCLE — that rides on the claim generation the caller admits
-/// the chunk under, so the two cannot drift on it.
+/// The bookkeeping [`intake_intervention_chunk`] threads through: the
+/// ring-seq counter and the once-per-claim-window fault guards.
+///
+/// There is exactly ONE per session ([`SharedChunkIntake`]), shared by both
+/// callers of the intake — the plane pump and the local
+/// [`crate::session::push_intervention_chunk`] seam. It has to be one,
+/// because both push onto the SAME `StreamChannel::AgentChunk`, and that
+/// channel has one reorder/late-drop cursor: two counters running
+/// independently would have the second producer's seq 1 land at or behind a
+/// cursor the first had already advanced, and the jitter buffer would drop
+/// it as late — silently, since a late drop is not a refusal anyone is told
+/// about. One stamping authority per channel is the invariant; the mutex is
+/// what enforces it. The faults follow the counter for the same reason: two
+/// intakes for one session owe a sender ONE report per reason per window,
+/// not one each. The guards' LIFECYCLE is owned by neither — it rides on the
+/// claim generation the caller admits the chunk under.
 #[derive(Default)]
 pub(crate) struct ChunkIntakeState {
     pub next_seq: u64,
     pub faults: ChunkIntakeFaults,
 }
+
+/// The session's one agent-chunk intake state (see [`ChunkIntakeState`]),
+/// shared between the plane pump's thread and the local push seam.
+pub(crate) type SharedChunkIntake = Arc<parking_lot::Mutex<ChunkIntakeState>>;
 
 /// Agent-chunk intake (Reset-mode window actuation and the general
 /// Claimed-mode intake): validate one wire `intervention_chunk` against the
@@ -799,12 +810,14 @@ pub(crate) struct ChunkIntakeState {
 /// (hollow-frontend); the jitter buffer is what actually plays these out,
 /// and only while `Claimed`/`Reset`/`Bypass` is polling it.
 ///
-/// Ring seq: `next_chunk_seq` is the caller's own counter, not `chunk.seq` —
+/// Ring seq: `next_chunk_seq` is the SESSION's own counter, not `chunk.seq` —
 /// the jitter buffer's per-item reorder map is keyed by seq *per step*, and a
 /// chunk's own `seq` is one value for the whole chunk (every step in it would
-/// collide on the same key). Tagged `StreamChannel::AgentChunk` so this
-/// counter's seq space never shares a reorder/late-drop cursor with the media
-/// intake's teleop-packet seq space, even though both producers push into the
+/// collide on the same key). It is the session's and not the caller's because
+/// both callers of this intake stamp the same channel; see
+/// [`ChunkIntakeState`]. Tagged `StreamChannel::AgentChunk` so this counter's
+/// seq space never shares a reorder/late-drop cursor with the media intake's
+/// teleop-packet seq space, even though all three producers push into the
 /// same physical ring (`JitterBuffer` keeps one cursor per channel — see
 /// `jitter.rs`'s module doc).
 ///
@@ -943,7 +956,7 @@ fn forward_server_msg(
     mirror: &Mirror,
     stream: &StreamProducer,
     space: &ActionSpace,
-    intake: &mut ChunkIntakeState,
+    intake: &SharedChunkIntake,
     acks_negotiated: bool,
 ) {
     match msg {
@@ -1115,7 +1128,7 @@ fn forward_server_msg(
                     // per claim window.
                     part_policy(status.parts_negotiated),
                     status.claim_generation,
-                    intake,
+                    &mut intake.lock(),
                 );
             }
             // Agent task updates (flag `waddle.v0.agent`): every update is

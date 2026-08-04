@@ -5,18 +5,32 @@
 //! calls [`JitterBuffer::ingest`]; the consumer calls
 //! [`JitterBuffer::pop_due`] each tick.
 //!
-//! Two independent producers write into the ONE ring `waddle-runtime` builds
-//! per session (`StreamProducer`, Mutex-shared): the media-intake thread
-//! (teleop packets, wire-ordered by `TeleopStreamPacket.seq`, genuinely
-//! unordered over the network) and `forward_server_msg`'s `InterventionChunk`
-//! arm (agent chunks — both the Reset-mode window actuation and the
-//! general Claimed-mode intake, seq assigned by a
-//! pump-local counter). Each [`TimedAction`] carries a [`StreamChannel`] tag
-//! so this buffer keeps a SEPARATE reorder/late-drop cursor per producer —
-//! never one shared high-water mark — so one producer's activity (e.g. an
-//! ordinary teleop claim earlier in the session) can never starve or
-//! permanently drop the other's arrivals (e.g. the first agent chunk of a
-//! later claim). See waddle-runtime's `pumps.rs` for the producer side.
+//! Three producers write into the ONE ring `waddle-runtime` builds per
+//! session (`StreamProducer`, Mutex-shared):
+//!
+//! * the media-intake thread — teleop packets, wire-ordered by
+//!   `TeleopStreamPacket.seq`, genuinely unordered over the network;
+//! * `forward_server_msg`'s `InterventionChunk` arm — agent chunks off the
+//!   plane, both the Reset-mode window actuation and the general Claimed-mode
+//!   intake;
+//! * `session::push_intervention_chunk` — the local seam that injects a chunk
+//!   with no plane behind it (the SDK's testing hooks, and any embedder
+//!   driving an intervention directly).
+//!
+//! Each [`TimedAction`] carries a [`StreamChannel`] tag, and this buffer
+//! keeps a SEPARATE reorder/late-drop cursor per CHANNEL — never one shared
+//! high-water mark — so the teleop stream's activity (e.g. an ordinary teleop
+//! claim earlier in the session) can never starve or permanently drop an
+//! agent chunk's arrivals (e.g. the first chunk of a later claim).
+//!
+//! Note what that does and does not buy: the cursor is per channel, not per
+//! producer, and the last two producers above share `AgentChunk`. So they
+//! must also share ONE seq counter, which is why `waddle-runtime` keeps a
+//! single `ChunkIntakeState` per session rather than one per intake — two
+//! counters would have the second producer's seq 1 land at or behind a cursor
+//! the first had already advanced, and the arrival would be dropped as late
+//! and in silence. One stamping authority per channel; see waddle-runtime's
+//! `pumps.rs` for the producer side.
 //!
 //! Per-channel cursors alone are not enough: an arrival that is pushed but
 //! never popped before its claim/window ends (still within its own playout
@@ -69,15 +83,17 @@ use waddle_types::{MonoNs, ReplanPolicy};
 
 use crate::gate::OwnedAction;
 
-/// Which producer supplied an arrival — see the module doc for why this
-/// can't be inferred from `seq` alone (the two producers' seq spaces are
-/// independent and may overlap).
+/// Which stream supplied an arrival — see the module doc for why this can't
+/// be inferred from `seq` alone (the two channels' seq spaces are independent
+/// and may overlap).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum StreamChannel {
     /// `spawn_media_intake`'s teleop pose stream.
     Teleop,
-    /// `forward_server_msg`'s `InterventionChunk` arm (Reset-mode window
-    /// actuation or general Claimed-mode intake).
+    /// Intervention chunks: `forward_server_msg`'s `InterventionChunk` arm
+    /// (Reset-mode window actuation or general Claimed-mode intake) and the
+    /// local `push_intervention_chunk` seam, which share one seq counter
+    /// because they share this cursor.
     AgentChunk,
 }
 
@@ -396,13 +412,13 @@ mod tests {
         assert_eq!(jb.dropped_late(), 1);
     }
 
-    /// The critical regression this module exists to prevent: two producers
-    /// share one buffer, but NOT one cursor. A teleop claimant's activity
-    /// (advancing `Teleop`'s cursor arbitrarily high) must never cause the
-    /// FIRST agent-chunk arrival of a later reset window — whose own counter
-    /// starts fresh and independent (see `pumps.rs`'s `next_chunk_seq` doc
-    /// comment) — to collide with that high-water mark and be dropped as
-    /// late.
+    /// The critical regression this module exists to prevent: every producer
+    /// shares one buffer, but the CHANNELS do not share a cursor. A teleop
+    /// claimant's activity (advancing `Teleop`'s cursor arbitrarily high)
+    /// must never cause the FIRST agent-chunk arrival — whose counter starts
+    /// at 1, independent of the teleop wire's (see `pumps.rs`'s
+    /// `next_chunk_seq` doc comment) — to collide with that high-water mark
+    /// and be dropped as late.
     #[test]
     fn channels_have_independent_reorder_cursors() {
         let mut jb = jb(0, ReplanPolicy::Immediate);

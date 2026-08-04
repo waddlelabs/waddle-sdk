@@ -599,6 +599,10 @@ impl SessionBuilder {
         // Shared (see `StreamProducer`): media intake and the plane pump's
         // reset-window agent-chunk arm both write into it.
         let stream_tx: StreamProducer = Arc::new(parking_lot::Mutex::new(stream_tx));
+        // ONE agent-chunk intake per session, shared by the plane pump and
+        // [`push_intervention_chunk`] — see [`pumps::ChunkIntakeState`] for
+        // why the seq counter cannot be per-producer.
+        let chunk_intake: pumps::SharedChunkIntake = Arc::default();
 
         let (outcome_tx, outcome_rx) = std::sync::mpsc::channel::<VerbOutcome>();
         let verbs = Arc::new(VerbDispatch::spawn(self.control, clock.clone(), outcome_tx));
@@ -797,6 +801,7 @@ impl SessionBuilder {
                 mirror.clone(),
                 stream_tx.clone(),
                 action_space.clone(),
+                chunk_intake.clone(),
             ));
         }
 
@@ -859,7 +864,7 @@ impl SessionBuilder {
                 part_names,
                 stream_tx,
                 action_space,
-                chunk_intake: parking_lot::Mutex::new(pumps::ChunkIntakeState::default()),
+                chunk_intake,
                 record_slot,
                 task_slot,
                 pre_reset: self.pre_reset,
@@ -980,9 +985,10 @@ struct SessionInner {
     /// pump runs.
     stream_tx: StreamProducer,
     action_space: Arc<waddle_types::ActionSpace>,
-    /// [`push_intervention_chunk`]'s own seq counter and fault guards — the
-    /// plane pump keeps its copy in thread locals; this seam has no thread.
-    chunk_intake: parking_lot::Mutex<pumps::ChunkIntakeState>,
+    /// The session's ONE agent-chunk seq counter and fault guards, shared
+    /// with the plane pump: both stamp the same `StreamChannel::AgentChunk`,
+    /// which has one reorder cursor (see [`pumps::ChunkIntakeState`]).
+    chunk_intake: pumps::SharedChunkIntake,
     record_slot: RecordSlot,
     task_slot: TaskSlot,
     pre_reset: Option<ResetSpec>,
