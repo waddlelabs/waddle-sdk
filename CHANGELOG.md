@@ -185,27 +185,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     without it the chunk is read against the whole declared space and refused
     exactly as before, once per claim window, which is the behavior a plane
     that did not negotiate the flag is entitled to plan against. Acceptance
-    is FORGOTTEN at every connection boundary — a dead connection has
-    accepted nothing, and a fresh one has accepted nothing until its own
-    `Registered` says so — which is what keeps the producers of flag-scoped
-    messages from carrying the last plane's answer across a partition (see
-    the `waddle-controlplane` entry below for the other half).
-  - **waddle-core (`waddle-controlplane`), a message may name the flag it
-    needs**: `ClientMsg::connection_scoped_flag` is the one place that
-    answers "is this message's content legal only under a negotiated flag?"
-    — a named `ProprioSample.part` (`waddle.v0.parts`), a `FrameStill`
-    (`waddle.v0.obs.stills`), a `DirectiveAck` (`waddle.v0.plane.acks`). Like
-    `is_droppable`, it binds at every point the message could escape the
-    connection that accepted it: such a message is filtered on the way out
-    against the CURRENT connection's `RegisterResponse`, and it never enters
-    the offline buffer, because that buffer replays onto the NEXT connection
-    — and replays right after Register, before that connection has said what
-    it accepts. Without this, a partition turned per-part proprioception
-    (non-droppable history, unlike a still) into a queue of one arm's joint
-    vectors that the reconnect handed to a plane which had just refused
-    `waddle.v0.parts`. Withholding is not data loss: the local recorder keeps
-    the full-rate archive, part and all. The flag names themselves now live
-    once, in `waddle_controlplane::flags`.
+    belongs to the connection that gave it, in both directions — see the two
+    lifecycle entries under **Fixed**, which this flag's uplink is the first
+    non-droppable producer to depend on.
   - **waddle-core (`waddle-runtime`), the dispatch and the row**: the part tag
     rides from the intake through the gate to the declared `send` verb —
     including the BYPASS/reset path, where the pump, not the caller's gate,
@@ -241,19 +223,6 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     connection to have negotiated with, it honors `Action.part` from the
     same fact Register declares the flag from — whether the declared space
     has parts at all.
-  - **waddle-core (`waddle-runtime`), "once per claim window" means the
-    window**: `Status.claim_generation` is the claim window's identity — it
-    changes whenever the active claim changes, including a retake handing the
-    window to a different claimant with no gap at all — and every
-    once-per-claim-window fault guard is now a `WindowLatch` keyed to it
-    (the chunk intake's three reasons and the media intake's dims check).
-    The guards used to be reset by whoever happened to notice `claim_active`
-    go false, which nobody can promise: the plane pump polls every 20 ms, the
-    media intake polls per packet, and `push_intervention_chunk` has no loop
-    at all — it only ran when someone called it. Two claim windows meeting
-    inside any of those gaps carried the first window's guards into the
-    second, and the second sender's refusal was swallowed: a recording that
-    says a sender was never told, when it was.
   - **sdk (`waddle-sdk`), one rule for every payload that names a part**: on a
     `Composite` declaration, an intervention payload crossing into Python is
     **keyed by part**. `episode.gate(...)` returns `{"right": ndarray}` for an
@@ -1237,6 +1206,17 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   dict as before.
 
 ### Changed
+- **An anchorless cross-fade now emits the commanded setpoint exactly**
+  (`waddle-gate`): with nothing yet commanded (an episode whose caller has
+  never ticked — every agent-invited one), a whole-robot action is its own
+  endpoint and crosses the blend window unchanged. It always crossed, but the
+  previous code got there by anchoring the missing `from` ON the target and
+  interpolating, and `x * (1 - w) + x * w` is `x` only up to rounding: over
+  uniformly sampled joint values and weights, ~1.5% of pairs came out one ULP
+  off the value the sender asked for. The anchorless arm now returns the
+  target itself, so the first commanded setpoint of such an episode is the
+  one that reaches the robot, bit for bit, rather than one that merely looks
+  like it in a printout.
 - **sdk (`waddle-sdk`) — a `Composite` session's intervention payloads are
   dict-by-part**: `episode.gate(...)`'s Substitute/Blend return and a
   dispatched `Chunk`'s step values are a `dict[str, ndarray]` keyed by
@@ -1330,6 +1310,51 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   in the episode MCAP; callers no longer see the ring.
 
 ### Fixed
+- **A negotiated flag no longer outlives the connection that gave it**
+  (`waddle-runtime`): `Status.parts_negotiated` and `Status.stills_negotiated`
+  (and the plane pump's own `acks_negotiated`) say what the CURRENT connection
+  accepted, but were only ever WRITTEN, at `Registered` — never cleared. So
+  across a partition the reducer kept minting named-part `ProprioSample`s
+  under a dead connection's answer, the uplink kept sending control-plane
+  stills to nobody, and the chunk intake kept an `Action.part` policy the next
+  plane had not agreed to. A connection that has ended has accepted nothing,
+  and one that has not registered yet has accepted nothing either: all three
+  are now forgotten at every connection boundary. Pinned by
+  `named_part_samples_never_survive_a_partition`, which fails without it.
+- **A flag-scoped message never crosses a connection that did not accept its
+  flag** (`waddle-controlplane`): the other half of the same hole, and the
+  half that survives a reconnect. `ClientMsg::connection_scoped_flag` is now
+  the one place that answers "is this message's content legal only under a
+  negotiated flag?" — a named `ProprioSample.part` (`waddle.v0.parts`), a
+  `FrameStill` (`waddle.v0.obs.stills`), a `DirectiveAck`
+  (`waddle.v0.plane.acks`) — and, like `is_droppable`, it binds at every point
+  the message could escape: filtered on the way out against the current
+  `RegisterResponse`, and kept out of the offline buffer entirely, because
+  that buffer replays onto the NEXT connection and replays right after
+  Register, before that connection has said what it accepts. A `DirectiveAck`
+  produced during a partition was therefore replayed at a plane that had never
+  asked for acks, and per-part proprioception — non-droppable history, unlike
+  a still, so it BUFFERS — became a queue of one arm's joint vectors handed to
+  a plane that had just refused `waddle.v0.parts`. Holding them until the new
+  answer arrives is not an option either: history replays in order, and a
+  partial hold reorders the stream it belongs to. Withholding is not data
+  loss — the local recorder keeps the full-rate archive, part and all. The
+  flag names now live once, in `waddle_controlplane::flags`.
+- **A claim window is owed its own refusal** (`waddle-runtime`,
+  `waddle-conformance`): every "at most once per claim window" fault guard was
+  reset by whoever happened to notice `claim_active` go false, which nobody
+  can promise — the plane pump polls every 20 ms, the media intake polls per
+  packet, and `push_intervention_chunk` has no loop at all, running only when
+  someone calls it. Two claim windows meeting inside any of those gaps shared
+  one set of guards and the SECOND window's refusal was swallowed; a retake,
+  where the claim changes with no gap at all, does the same to all of them.
+  The guards are now `WindowLatch`es keyed to `Status.claim_generation`, the
+  claim window's identity, published whenever the active claim changes — so
+  the lifecycle rides the window rather than an observer's cadence. A
+  recording missing a refusal says the sender was never told, when it was.
+  Pinned by `each_claim_window_is_owed_its_own_refusal` and the scenarios
+  `agent_chunk_refusals_latch_per_reason_and_window` and
+  `teleop_dims_refusal_is_per_claim_window`.
 - **Dual-write detection compares like with like once a command addresses one
   part** (`waddle-conformance`): the reference runner kept ONE
   `last_commanded` vector and fed it into ONE `DivergenceDetector`, which was
