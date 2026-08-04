@@ -48,10 +48,11 @@ from typing import Protocol, runtime_checkable
 import numpy as np
 
 from .. import Control
-from ..descriptors import Robot
+from ..descriptors import FrameTransform, Robot
 
 __all__ = [
     "Arm",
+    "CrossArm",
     "Driver",
     "PARK_WORD",
     "PARK_WORDS",
@@ -161,6 +162,44 @@ def quaternion_wxyz(r: np.ndarray) -> tuple[float, float, float, float]:
     s = math.sqrt(1.0 + r[2, 2] - r[0, 0] - r[1, 1]) * 2.0
     return ((r[1, 0] - r[0, 1]) / s, (r[0, 2] + r[2, 0]) / s,
             (r[1, 2] + r[2, 1]) / s, 0.25 * s)
+
+
+@dataclass(frozen=True)
+class CrossArm:
+    """Where a SECOND unit's base stands in the FIRST unit's base frame:
+    ``xyz`` in metres, ``rpy`` in radians.
+
+    A rig-level fact, and the only thing that makes a cross-arm pose mean
+    anything — everything downstream composes through it. It is measured at
+    YOUR rig and written down; nothing infers it at run time, and a rig that
+    declares none is a rig where a pose expressed in the other arm's frame
+    refuses loudly rather than resolving through an identity nobody wrote.
+
+    It is stated as rpy because that is how a bench measurement is taken and
+    how a URDF states one, and converted here — once — to the **wxyz**
+    quaternion this protocol pins. Handing a declaration an xyzw quaternion is
+    the classic silent-corruption bug, so no caller does that conversion."""
+
+    xyz: tuple[float, float, float]
+    rpy: tuple[float, float, float]
+
+    def __post_init__(self) -> None:
+        for field_name in ("xyz", "rpy"):
+            values = getattr(self, field_name)
+            if len(values) != 3 or not all(math.isfinite(float(v)) for v in values):
+                raise ValueError(
+                    f"CrossArm.{field_name} must be three finite numbers, got "
+                    f"{values!r}"
+                )
+
+    def transform(self, parent: str, child: str) -> FrameTransform:
+        """This pair as the one declared edge between two named base frames."""
+        return FrameTransform(
+            parent=parent,
+            child=child,
+            position=tuple(float(v) for v in self.xyz),
+            quaternion=quaternion_wxyz(rpy_matrix(*(float(v) for v in self.rpy))),
+        )
 
 
 # ---------------------------------------------------------------------------

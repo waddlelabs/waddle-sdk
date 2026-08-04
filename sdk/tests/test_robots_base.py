@@ -675,6 +675,28 @@ def test_quaternion_wxyz_is_w_first_on_every_branch(rpy, expected):
     assert list(got) == pytest.approx(list(expected), abs=1e-9)
 
 
+def test_a_cross_arm_mounting_becomes_one_declared_edge():
+    """A pair fact is measured as xyz + rpy and declared as xyz + a **wxyz**
+    quaternion. The conversion happens here, once, so no caller is in a
+    position to hand a declaration an xyzw quaternion — the classic silent
+    corruption, and one that reads as a plausible pose."""
+    edge = base.CrossArm(xyz=(0.0, -0.60, 0.0), rpy=(0.0, 0.0, -0.15)).transform(
+        "left_base", "right_base"
+    )
+    assert (edge.parent, edge.child) == ("left_base", "right_base")
+    assert list(edge.position) == pytest.approx([0.0, -0.60, 0.0])
+    assert list(edge.quaternion) == pytest.approx(
+        [np.cos(-0.075), 0.0, 0.0, np.sin(-0.075)], abs=1e-9
+    )
+
+
+def test_a_cross_arm_mounting_of_the_wrong_shape_is_refused():
+    with pytest.raises(ValueError, match="CrossArm.rpy"):
+        base.CrossArm(xyz=(0.0, 0.0, 0.0), rpy=(0.0, 0.0))
+    with pytest.raises(ValueError, match="CrossArm.xyz"):
+        base.CrossArm(xyz=(0.0, float("nan"), 0.0), rpy=(0.0, 0.0, 0.0))
+
+
 # ---------------------------------------------------------------------------
 # Posture, and the rig that composes it
 # ---------------------------------------------------------------------------
