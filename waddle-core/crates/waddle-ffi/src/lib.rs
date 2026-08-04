@@ -34,6 +34,12 @@ use waddle_runtime::{ControlRegistry, Episode, Session, VerbError};
 use waddle_types::pb::v0 as pb;
 use waddle_types::{ActionChunk, TerminalOutcome};
 
+// In-crate because driving an intervention needs the runtime session behind
+// the opaque handle; everything it asserts on crossed `extern "C"`. See the
+// module's own docs.
+#[cfg(test)]
+mod part_abi_tests;
+
 pub const WADDLE_STATUS_OK: i32 = 0;
 pub const WADDLE_STATUS_NULL_ARGUMENT: i32 = -1;
 pub const WADDLE_STATUS_DECODE: i32 = -2;
