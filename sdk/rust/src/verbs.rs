@@ -6,11 +6,15 @@
 //! interpreter-finalization window: after Python begins shutdown, verbs
 //! fail cleanly instead of aborting.
 
+use std::sync::Arc;
+
 use numpy::PyArray1;
 use pyo3::prelude::*;
 use pyo3::types::PyList;
 use waddle_runtime::{SendVerb, UnitVerb, VerbError};
 use waddle_types::ActionChunk;
+
+use crate::convert::PartsLayout;
 
 fn py_err_repr(py: Python<'_>, err: &PyErr) -> String {
     let value = err.value(py);
@@ -102,7 +106,14 @@ impl UnitVerb for PyUnit {
 }
 
 /// One dispatched chunk crossing into Python: `steps` is a list of
-/// `(float64 ndarray, gripper, offset_ns)` tuples.
+/// `(values, gripper, offset_ns)` tuples.
+///
+/// `values` is a float64 ndarray of the declared action space's width — with
+/// one shape change, and only on a `Composite` declaration, where it is
+/// instead a `dict` of that step's rows keyed by declared part (see
+/// [`PartsLayout::by_part`]). A robot with named parts is a robot whose
+/// intervenor may address one of them, and a bare 7-row array out of a
+/// 14-row cell cannot say which arm it commands.
 #[pyclass(name = "Chunk", frozen)]
 pub(crate) struct PyChunk {
     #[pyo3(get)]
@@ -116,6 +127,11 @@ pub(crate) struct PyChunk {
 /// The `send` verb callable: receives a [`PyChunk`].
 pub(crate) struct PySend {
     pub cb: Py<PyAny>,
+    /// The declared parts layout, `Some` iff this session declared a
+    /// `Composite` space — the ONE thing that decides a step's values shape.
+    /// Computed once at `create_session` from the declaration itself, never
+    /// per step and never per tick.
+    pub parts: Option<Arc<PartsLayout>>,
 }
 
 impl SendVerb for PySend {
@@ -124,7 +140,12 @@ impl SendVerb for PySend {
             let build_and_call = || -> PyResult<()> {
                 let steps = PyList::empty(py);
                 for step in &chunk.steps {
-                    let values = PyArray1::from_slice(py, &step.values);
+                    let values: Bound<'_, PyAny> = match &self.parts {
+                        Some(layout) => layout
+                            .by_part(py, &step.values, step.part.as_deref())?
+                            .into_any(),
+                        None => PyArray1::from_slice(py, &step.values).into_any(),
+                    };
                     steps.append((values, step.gripper, step.offset_ns))?;
                 }
                 let pychunk = Bound::new(

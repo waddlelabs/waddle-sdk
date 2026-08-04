@@ -14,6 +14,16 @@ The six-line tutorial loop::
 not send": Pass returns your exact object, Substitute/Blend a fresh float64
 ndarray, Noop and Hold return ``None``.
 
+A robot that declares named parts (:class:`Composite` — a bimanual cell,
+say) can be intervened on ONE part at a time, so on such a declaration every
+intervention payload is keyed by part instead: ``ep.gate()`` returns
+``{"right": ndarray}`` for an action addressing the right arm and a dict of
+every declared part for a whole-robot one, and a dispatched chunk's step
+values follow the same rule. ``ep.last_gate.part`` names the addressed part
+(``None`` = the whole robot). Nothing changes for a robot without parts.
+``session.report_proprio(part=..., joint_pos=...)`` reports back the same
+way, one part at a time.
+
 Cameras declared on the :class:`Robot` become live once a media plane is
 wired (``media=`` on :func:`init`, or ``_testing=True``): call
 ``session.publish_frame(name, frame)`` with a numpy ``uint8`` array shaped
@@ -129,13 +139,21 @@ class Control:
     the grants Waddle plans against are derived from which verbs are set.
 
     ``send`` receives a chunk with ``steps`` (a list of
-    ``(ndarray, gripper, offset_ns)`` tuples), ``provenance`` and ``seq``.
-    A step's array is the declared action space's width, except for a
-    gripper-only step — "hold the arm, move the gripper" — whose array is
-    EMPTY and whose ``gripper`` is set: command the gripper and leave the
-    arm target where it was. The unit verbs take no arguments. All verbs are
-    invoked from a single core-owned dispatch thread, never concurrently; a
-    raised exception is a failed verb, never a crashed session.
+    ``(values, gripper, offset_ns)`` tuples), ``provenance`` and ``seq``.
+    A step's ``values`` is an ndarray of the declared action space's width,
+    except for a gripper-only step — "hold the arm, move the gripper" —
+    whose array is EMPTY and whose ``gripper`` is set: command the gripper
+    and leave the arm target where it was. The unit verbs take no arguments.
+    All verbs are invoked from a single core-owned dispatch thread, never
+    concurrently; a raised exception is a failed verb, never a crashed
+    session.
+
+    On a :class:`Composite` declaration ``values`` is instead a ``dict``
+    keyed by declared part — ``{"right": ndarray}`` for a step addressing
+    one part ("move this part, hold the rest": the parts absent from the
+    dict are commanded nothing), every declared part for a whole-robot step,
+    sliced by the declared layout. A gripper-only step maps its parts to
+    empty arrays, the same "hold the arm" as above.
     """
 
     send: Callable | None = None

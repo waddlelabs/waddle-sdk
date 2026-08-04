@@ -30,8 +30,8 @@ use waddle_types::pb::v0 as pb;
 use waddle_types::{ActorKind, TerminalOutcome};
 
 use crate::convert::{
-    extract_f64s, outcome_str, parse_enforcement, parse_handoff, parse_outcome, parse_reset_spec,
-    parse_robot_json, parse_verification_mode, runtime_err,
+    PartsLayout, extract_f64s, outcome_str, parse_enforcement, parse_handoff, parse_outcome,
+    parse_reset_spec, parse_robot_json, parse_verification_mode, runtime_err,
 };
 use crate::episode::PyEpisode;
 use crate::verbs::{PySend, PyUnit};
@@ -146,6 +146,13 @@ pub(crate) struct PySession {
     /// `waddle._testing` surface drives it).
     testing_far: Option<Mutex<LoopbackFarEnd>>,
     teleop_seq: AtomicU64,
+    /// [`PySession::_testing_push_chunk`]'s own stream sequence — monotone
+    /// per stream, and a different stream from the teleop packets above.
+    chunk_seq: AtomicU64,
+    /// The declared parts layout (`Some` iff `Composite`), handed to every
+    /// episode so a gate return is keyed by part exactly as a dispatched
+    /// chunk's steps are.
+    parts: Option<Arc<PartsLayout>>,
 }
 
 /// Dropping an un-shutdown session must not run the core's blocking
@@ -245,7 +252,7 @@ impl PySession {
         let episode = py
             .detach(move || session.start_episode_with(&task, opts))
             .map_err(runtime_err)?;
-        Ok(PyEpisode::new(episode))
+        Ok(PyEpisode::new(episode, self.parts.clone()))
     }
 
     /// Ask Waddle to drive one episode (flag `waddle.v0.agent`): opens an
@@ -570,6 +577,79 @@ impl PySession {
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 
+    /// PRIVATE/UNSTABLE: push ONE intervention step into the session's
+    /// intervention stream — the local counterpart of a plane
+    /// `intervention_chunk`, exactly as `_testing_engage` is the local
+    /// counterpart of a claim directive. It runs the core's own intake
+    /// (`waddle_runtime::push_intervention_chunk`): same validation, same
+    /// once-per-claim-window refusals on the episode timeline, and the
+    /// jitter buffer still decides when — and whether — the step plays out.
+    ///
+    /// `part` addresses one declared part by name (`Action.part`, flag
+    /// `waddle.v0.parts`). `None` is the whole robot, which on a `Composite`
+    /// declaration is marshalled into the `CompositeAction` naming every
+    /// part that the wire requires — the split is the declared layout's own
+    /// arithmetic, the same one a dispatched step comes back keyed by.
+    ///
+    /// The target is always the joint-position arm: it is what the
+    /// part-addressed declarations declare, and a space that declares
+    /// another one refuses this at the intake, which is the intake doing its
+    /// job rather than this hook second-guessing it.
+    #[pyo3(signature = (values, part=None, gripper=None, offset_ns=0))]
+    fn _testing_push_chunk(
+        &self,
+        values: Vec<f64>,
+        part: Option<&str>,
+        gripper: Option<f64>,
+        offset_ns: i64,
+    ) -> PyResult<()> {
+        self.testing_far()?;
+        let joints = |values: Vec<f64>| {
+            Some(pb::action::Target::JointPosition(pb::JointVector {
+                values,
+            }))
+        };
+        let target = match (part, &self.parts) {
+            // A part-scoped action carries that part's own space directly.
+            (Some(_), _) => joints(values),
+            // A whole-robot action on a robot with declared parts must name
+            // every one of them (`CompositeAction`); nothing is invented,
+            // the row is cut where the declaration says.
+            (None, Some(layout)) => Some(pb::action::Target::Composite(pb::CompositeAction {
+                parts: layout
+                    .split(&values)?
+                    .into_iter()
+                    .map(|(name, rows)| pb::composite_action::PartAction {
+                        name: name.to_owned(),
+                        action: Some(pb::Action {
+                            target: joints(rows.to_vec()),
+                            ..Default::default()
+                        }),
+                    })
+                    .collect(),
+            })),
+            (None, None) => joints(values),
+        };
+        waddle_runtime::push_intervention_chunk(
+            &self.inner,
+            pb::ActionChunk {
+                actions: vec![pb::Action {
+                    target,
+                    gripper: gripper.map(|position| pb::GripperCommand {
+                        position,
+                        effort: None,
+                    }),
+                    t_offset_ns: offset_ns,
+                    part: part.unwrap_or_default().to_owned(),
+                }],
+                seq: self.chunk_seq.fetch_add(1, Ordering::SeqCst),
+                source_id: "waddle.testing".to_owned(),
+                ..Default::default()
+            },
+        );
+        Ok(())
+    }
+
     /// PRIVATE/UNSTABLE: engage an already-open reset window — injects
     /// `ClaimGranted` then `ResetWindowEngage` (the same sequence a plane
     /// ENGAGE directive produces), so pytest can drive a remote reset
@@ -774,9 +854,18 @@ pub(crate) fn create_session(
         .with_robot_cameras(&robot)
     });
 
+    // The declared parts layout, computed once here and shared by every
+    // path an intervention payload crosses on (the `send` verb's steps, the
+    // gate's Substitute/Blend returns). Absent for every declaration without
+    // parts, which is what keeps those sessions on the flat ndarray surface.
+    let parts = PartsLayout::of(&robot);
+
     let mut registry = ControlRegistry::default();
     if let Some(cb) = send {
-        registry.send = Some(Arc::new(PySend { cb }));
+        registry.send = Some(Arc::new(PySend {
+            cb,
+            parts: parts.clone(),
+        }));
     }
     if let Some(cb) = hold {
         registry.hold = Some(Arc::new(PyUnit { cb }));
@@ -849,5 +938,7 @@ pub(crate) fn create_session(
         closed: AtomicBool::new(false),
         testing_far,
         teleop_seq: AtomicU64::new(1),
+        chunk_seq: AtomicU64::new(1),
+        parts,
     })
 }

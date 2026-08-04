@@ -34,8 +34,16 @@ class GateInfo:
     def __repr__(self) -> str: ...
 
 class Chunk:
+    # A step's values are a float64 ndarray of the declared action space's
+    # width — except on a Composite declaration, where they are that step's
+    # rows keyed by declared part: one key for a part-scoped action, every
+    # declared part for a whole-robot one.
     @property
-    def steps(self) -> list[tuple[npt.NDArray[np.float64], float | None, int]]: ...
+    def steps(
+        self,
+    ) -> list[
+        tuple[npt.NDArray[np.float64] | dict[str, npt.NDArray[np.float64]], float | None, int]
+    ]: ...
     @property
     def provenance(self) -> str: ...
     @property
@@ -54,6 +62,10 @@ class Episode:
     def records_dropped(self) -> int: ...
     @property
     def last_gate(self) -> GateInfo | None: ...
+    # Returns the caller's own `action` object on Pass, `None` on Noop/Hold,
+    # and on Substitute/Blend a fresh float64 ndarray — or, on a Composite
+    # declaration, those rows keyed by declared part (`GateInfo.part` names
+    # the addressed one either way).
     def gate(
         self,
         action: npt.NDArray[np.float64] | Sequence[float],
@@ -113,6 +125,13 @@ class Session:
     def _testing_release(self, claim_id: str) -> None: ...
     def _testing_push_teleop(
         self, values: Sequence[float], gripper: float | None = None
+    ) -> None: ...
+    def _testing_push_chunk(
+        self,
+        values: Sequence[float],
+        part: str | None = None,
+        gripper: float | None = None,
+        offset_ns: int = 0,
     ) -> None: ...
     def _testing_reset_window_engage(self, claim_id: str, actor: str) -> None: ...
     def _testing_reset_window_complete(

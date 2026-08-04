@@ -246,19 +246,30 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     inside any of those gaps carried the first window's guards into the
     second, and the second sender's refusal was swallowed: a recording that
     says a sender was never told, when it was.
-  - **sdk (`waddle-sdk`), `GateInfo.part`**: `episode.gate(...)` returns a
-    part-scoped substitute as that part's rows alone, so the Python surface
-    has to be able to say which part — otherwise one arm's 7 values arrive
-    indistinguishable from a 14-row whole-robot command, on the DEFAULT
-    (gRPC-enabled) wheel, for any customer whose declaration is `Composite`.
-    `last_gate.part` names it (`None` = the whole robot, which is every
-    action on a non-Composite declaration).
-    **Not yet closed, and a release gate:** the `send` path still hands the
-    customer's verb bare `(values, gripper, offset_ns)` step tuples with no
-    part, and the bypass pump — the only path an agent-invited episode takes
-    — dispatches through it. `waddle.v0.parts` must not ship to PyPI ahead of
-    the dict-by-part `Chunk.steps` surface; `sdk/tests/test_parts.py` carries
-    the statement of that gate.
+  - **sdk (`waddle-sdk`), one rule for every payload that names a part**: on a
+    `Composite` declaration, an intervention payload crossing into Python is
+    **keyed by part**. `episode.gate(...)` returns `{"right": ndarray}` for an
+    action addressing one arm and every declared part, sliced by the declared
+    layout, for a whole-robot one; a dispatched `Chunk`'s step values follow
+    the same rule; `GateInfo.part` names the addressed part on both
+    (`None` = the whole robot). The parts absent from the dict are commanded
+    nothing — "move this part, hold the rest" said in the shape of the
+    payload — and a gripper-only step maps its parts to empty arrays, the
+    same "hold the arm, move the gripper" an empty array has always meant.
+    The slicing is arithmetic over the customer's own declaration (declaration
+    order IS the concatenated layout), never invention. Without this, one
+    arm's 7 values arrive indistinguishable from a 14-row whole-robot
+    command, on the DEFAULT (gRPC-enabled) wheel, for any customer whose
+    declaration is `Composite` — which is exactly the confusion the flag
+    exists to prevent. **This closes the release gate** the `GateInfo.part`
+    work left open: `waddle.v0.parts` is now expressible end to end on this
+    distribution.
+  - **sdk (`waddle-sdk`), `waddle._testing.push_chunk`**: the private test
+    hook for the local intervention seam — one part-addressed (or
+    whole-robot) step pushed into a session with no control-plane transport,
+    running the core's own intake. A whole-robot push on a `Composite`
+    declaration is marshalled into the `CompositeAction` the wire requires,
+    split by the same declared layout the returns are keyed by.
 - **waddle-protocol/waddle-core (agent-invited episodes, new feature flag
   `waddle.v0.agent`)**: a customer can now ask Waddle to drive an episode
   rather than driving it themselves — `Session::run_agent(prompt, timeout_ns,
@@ -1181,6 +1192,17 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   dict as before.
 
 ### Changed
+- **sdk (`waddle-sdk`) — a `Composite` session's intervention payloads are
+  dict-by-part**: `episode.gate(...)`'s Substitute/Blend return and a
+  dispatched `Chunk`'s step values are a `dict[str, ndarray]` keyed by
+  declared part where they were a flat float64 ndarray. Source-breaking for a
+  customer whose declaration is `Composite` and who receives interventions;
+  **every other declaration is untouched**, and Pass (your own object) and
+  Noop/Hold (`None`) are unchanged everywhere. The old shape could not
+  express what the wire had already been able to say since v0 — an action
+  addressing one arm — so a bimanual customer's only alternative was to read
+  a 7-row command as a 14-row one. `sdk/tests/test_bimanual.py` pins both
+  halves, the changed one and the unchanged one.
 - **Public types (pre-1.0 / API unstable per N5) — a claim's actor and a
   custom provenance are now SHARED, not owned**: `ActiveClaim.actor` is an
   `Arc<ActorRef>` where it was a bare `ActorKind` (a claim now carries who

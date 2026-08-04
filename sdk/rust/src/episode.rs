@@ -6,12 +6,14 @@
 //! ~20 ns against the ~1 µs Python-call floor; the sacred core `Gate::gate`
 //! fast path is untouched.
 
+use std::sync::Arc;
+
 use numpy::PyArray1;
 use parking_lot::Mutex;
 use pyo3::prelude::*;
 use waddle_gate::gate::GateOutput;
 
-use crate::convert::{extract_f64s, outcome_str, parse_outcome};
+use crate::convert::{PartsLayout, extract_f64s, outcome_str, parse_outcome};
 
 /// What the last `gate()` call decided (marshalled from the core decision —
 /// Python never computes any of this).
@@ -65,16 +67,37 @@ pub(crate) struct PyEpisode {
     session: waddle_runtime::Session,
     id: waddle_types::EpisodeId,
     last: Mutex<Option<GateInfo>>,
+    /// The session's declared parts layout (`Some` iff `Composite`), shared
+    /// with the `send` verb so both payload paths key by part identically.
+    parts: Option<Arc<PartsLayout>>,
 }
 
 impl PyEpisode {
-    pub(crate) fn new(episode: waddle_runtime::Episode) -> Self {
+    pub(crate) fn new(episode: waddle_runtime::Episode, parts: Option<Arc<PartsLayout>>) -> Self {
         Self {
             session: episode.session().clone(),
             id: episode.id().clone(),
             inner: Mutex::new(episode),
             last: Mutex::new(None),
+            parts,
         }
+    }
+
+    /// One Substitute/Blend action as Python sees it: a flat float64 ndarray,
+    /// or — on a `Composite` declaration — the same rows keyed by the part
+    /// they command.
+    fn payload(
+        &self,
+        py: Python<'_>,
+        action: &waddle_gate::gate::OwnedAction,
+    ) -> PyResult<Py<PyAny>> {
+        Ok(match &self.parts {
+            Some(layout) => layout
+                .by_part(py, &action.values, action.part.as_deref())?
+                .into_any()
+                .unbind(),
+            None => PyArray1::from_slice(py, &action.values).into_any().unbind(),
+        })
     }
 }
 
@@ -91,13 +114,17 @@ impl PyEpisode {
     /// Synchronous and fast; keeps the GIL (it never blocks).
     ///
     /// A Substitute/Blend array is the declared action space's width, with
-    /// two exceptions, each named by `last_gate`: a gripper-only action —
-    /// "hold the arm, move the gripper" — is an EMPTY array with
-    /// `info.gripper` set (command the gripper, leave the arm target where
-    /// it was); and a PART-scoped action — "move this part, hold the rest" —
-    /// is that part's rows alone, with `info.part` naming it. Never read a
-    /// Composite session's array as whole-robot without checking
-    /// `info.part`.
+    /// one exception named by `last_gate`: a gripper-only action — "hold the
+    /// arm, move the gripper" — is an EMPTY array with `info.gripper` set
+    /// (command the gripper, leave the arm target where it was).
+    ///
+    /// On a `Composite` declaration a Substitute/Blend is instead a **dict
+    /// keyed by declared part** — `{"right": ndarray}` for an action
+    /// addressing one arm ("move this part, hold the rest": the parts absent
+    /// from the dict are commanded nothing), every declared part for a
+    /// whole-robot one. `info.part` names the addressed part either way
+    /// (`None` = the whole robot). Pass returns your own object and
+    /// Noop/Hold return `None` on every declaration, unchanged.
     ///
     /// The record captures the values at call time; mutating the array
     /// afterwards (before your `send`) makes the dispatched action diverge
@@ -130,7 +157,7 @@ impl PyEpisode {
                 },
             ),
             GateOutput::Substitute { action, provenance } => (
-                PyArray1::from_slice(py, &action.values).into_any().unbind(),
+                self.payload(py, &action)?,
                 GateInfo {
                     kind: "substitute".into(),
                     provenance: Some(provenance.provenance.to_string()),
@@ -144,7 +171,7 @@ impl PyEpisode {
                 progress,
                 provenance,
             } => (
-                PyArray1::from_slice(py, &action.values).into_any().unbind(),
+                self.payload(py, &action)?,
                 GateInfo {
                     kind: "blend".into(),
                     provenance: Some(provenance.provenance.to_string()),

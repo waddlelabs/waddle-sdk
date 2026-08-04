@@ -35,6 +35,27 @@ def push_teleop(
     session._testing_push_teleop([float(v) for v in values], gripper)
 
 
+def push_chunk(
+    session: _core.Session,
+    values: Sequence[float],
+    part: str | None = None,
+    gripper: float | None = None,
+    offset_ns: int = 0,
+) -> None:
+    """Push one intervention step into the session's intervention stream (the
+    same message a supervision plane sends), so a test can drive an
+    intervention with no control-plane transport.
+
+    ``part`` addresses one declared part by name (``Action.part``, flag
+    ``waddle.v0.parts``); ``None`` is the whole robot. A claim must be active
+    — nothing is buffered without one — and the core's own intake decides
+    everything after that: validation, refusals, and whether the jitter
+    buffer ever plays the step out."""
+    session._testing_push_chunk(
+        [float(v) for v in values], part, gripper, int(offset_ns)
+    )
+
+
 def reset_window_engage(session: _core.Session, claim_id: str, actor: str = "teleop") -> None:
     """Engage an already-open reset window (what a plane ENGAGE directive
     would do): grants the claim, hands the lease to it, and turns the gate
