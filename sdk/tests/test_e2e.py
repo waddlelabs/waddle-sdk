@@ -165,6 +165,9 @@ def test_intervention(tmp_path):
         assert substituted.shape == (6,)
         assert ep.last_gate.kind in ("substitute", "blend")
         assert ep.last_gate.provenance == "teleop"
+        # A whole-robot command names no part: `part` is how a caller tells
+        # this array apart from one addressing a single declared part.
+        assert ep.last_gate.part is None
 
         waddle._testing.release(session, "claim-1")
         deadline = time.monotonic() + 5.0

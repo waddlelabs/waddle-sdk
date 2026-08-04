@@ -31,14 +31,26 @@ pub(crate) struct GateInfo {
     /// The substitute/blend action's gripper command, when one rode along.
     #[pyo3(get)]
     gripper: Option<f64>,
+    /// The declared PART a substitute/blend action addressed, when it
+    /// addressed one (`Action.part`, flag `waddle.v0.parts`): the returned
+    /// array is that part's rows, in that part's order — not the whole
+    /// declared space. `None` means the whole robot, which is every action
+    /// on a non-Composite declaration.
+    ///
+    /// Without this, a 7-row command for one arm of a 14-row bimanual cell
+    /// arrives indistinguishable from a whole-robot command — and the core
+    /// declares `waddle.v0.parts` for every Composite declaration, so a
+    /// plane may send one.
+    #[pyo3(get)]
+    part: Option<String>,
 }
 
 #[pymethods]
 impl GateInfo {
     fn __repr__(&self) -> String {
         format!(
-            "GateInfo(kind={:?}, provenance={:?}, progress={:?}, gripper={:?})",
-            self.kind, self.provenance, self.progress, self.gripper
+            "GateInfo(kind={:?}, provenance={:?}, progress={:?}, gripper={:?}, part={:?})",
+            self.kind, self.provenance, self.progress, self.gripper, self.part
         )
     }
 }
@@ -78,10 +90,14 @@ impl PyEpisode {
     /// Substitute/Blend, or `None` when you must not send (Noop/Hold).
     /// Synchronous and fast; keeps the GIL (it never blocks).
     ///
-    /// A Substitute/Blend array is the declared action space's width,
-    /// except for a gripper-only action — "hold the arm, move the gripper"
-    /// — which is an EMPTY array with `info.gripper` set: command the
-    /// gripper and leave the arm target where it was.
+    /// A Substitute/Blend array is the declared action space's width, with
+    /// two exceptions, each named by `last_gate`: a gripper-only action —
+    /// "hold the arm, move the gripper" — is an EMPTY array with
+    /// `info.gripper` set (command the gripper, leave the arm target where
+    /// it was); and a PART-scoped action — "move this part, hold the rest" —
+    /// is that part's rows alone, with `info.part` naming it. Never read a
+    /// Composite session's array as whole-robot without checking
+    /// `info.part`.
     ///
     /// The record captures the values at call time; mutating the array
     /// afterwards (before your `send`) makes the dispatched action diverge
@@ -110,6 +126,7 @@ impl PyEpisode {
                     provenance: Some(provenance.provenance.to_string()),
                     progress: None,
                     gripper: None,
+                    part: None,
                 },
             ),
             GateOutput::Substitute { action, provenance } => (
@@ -119,6 +136,7 @@ impl PyEpisode {
                     provenance: Some(provenance.provenance.to_string()),
                     progress: None,
                     gripper: action.gripper,
+                    part: action.part.as_ref().map(ToString::to_string),
                 },
             ),
             GateOutput::Blend {
@@ -132,6 +150,7 @@ impl PyEpisode {
                     provenance: Some(provenance.provenance.to_string()),
                     progress: Some(progress),
                     gripper: action.gripper,
+                    part: action.part.as_ref().map(ToString::to_string),
                 },
             ),
             GateOutput::Noop { provenance } => (
@@ -141,6 +160,7 @@ impl PyEpisode {
                     provenance: Some(provenance.provenance.to_string()),
                     progress: None,
                     gripper: None,
+                    part: None,
                 },
             ),
             GateOutput::Hold => (
@@ -150,6 +170,7 @@ impl PyEpisode {
                     provenance: None,
                     progress: None,
                     gripper: None,
+                    part: None,
                 },
             ),
         };
