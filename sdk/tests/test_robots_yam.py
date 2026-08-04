@@ -515,10 +515,15 @@ class _FakeVendor:
         self.calls: list[dict] = []
         self.robots: list[_FakeYamRobot] = []
         self.next_kwargs: dict = {}
+        #: How the Nth arm this vendor hands back differs from the one before
+        #: it, when it does. A rig opens its arms one at a time, so "the second
+        #: one is the bad one" is a shape only a per-call plan can state.
+        self.per_call: list[dict] = []
 
     def get_yam_robot(self, **kwargs) -> _FakeYamRobot:
         self.calls.append(kwargs)
-        robot = _FakeYamRobot(**self.next_kwargs)
+        spec = self.per_call.pop(0) if self.per_call else self.next_kwargs
+        robot = _FakeYamRobot(**spec)
         self.robots.append(robot)
         return robot
 
@@ -596,9 +601,14 @@ def test_the_live_driver_pins_the_gripper_range_instead_of_calibrating(vendor):
 
 
 def test_an_arm_that_reports_other_joints_is_refused_not_adapted_to(vendor):
+    """And the refusal CLOSES the arm it opened. By the time the DOF is read
+    the vendor's own ~1 kHz server thread is already running against that
+    handle, and the caller gets an exception rather than a driver — so a raise
+    that left it open would leave an energized arm nothing can reach."""
     vendor.next_kwargs = {"dofs": 6}
     with pytest.raises(RuntimeError, match="6 DOF"):
         _live(vendor)
+    assert vendor.robots[0].closed == 1
 
 
 def test_the_live_driver_reads_the_hand_as_the_seventh_row(vendor):
@@ -738,6 +748,72 @@ def test_a_monitor_posture_opens_the_arms_compliant(vendor):
     )
     rig.arms()
     assert [call["zero_gravity_mode"] for call in vendor.calls] == [True, True]
+
+
+def test_a_rig_that_fails_part_way_closes_the_arms_that_did_open(vendor):
+    """`arms()` opens one arm at a time, so it can fail with some of them
+    already connected — and the caller is handed an exception, not a handle.
+
+    An arm left open there is not a leak that a garbage collector eventually
+    tidies: the vendor's own ~1 kHz server thread holds a reference to it and
+    keeps re-sending the last setpoint forever. So a rig that cannot finish
+    opening closes what it opened, and the failure is still the news."""
+    vendor.per_call = [{}, {"dofs": 6}]
+    rig = _bimanual(
+        sim=False,
+        left=yam.ArmSite(channel="can_left"),
+        right=yam.ArmSite(channel="can_right"),
+    )
+    with pytest.raises(RuntimeError, match="6 DOF"):
+        rig.arms()
+    assert [robot.closed for robot in vendor.robots] == [1, 1]
+
+
+def test_a_rig_refused_after_a_bus_opened_still_closes_it(vendor):
+    """The same, for a failure that is not the driver's: a workspace box with
+    no forward kinematics is refused by `base.Arm` — an ordinary argument
+    mistake — and by then this rig has a live arm on `can_left`."""
+    rig = _bimanual(
+        sim=False,
+        fk=None,
+        left=yam.ArmSite(channel="can_left"),
+        right=yam.ArmSite(channel="can_right"),
+    )
+    with pytest.raises(ValueError, match="workspace"):
+        rig.arms()
+    assert [robot.closed for robot in vendor.robots] == [1]
+
+
+def test_a_close_that_fails_while_backing_out_does_not_hide_the_reason(vendor):
+    """One arm that cannot be closed is not a reason to leave another one open,
+    and it is never the exception the caller sees: a bus that did not answer on
+    the way out would otherwise replace the refusal that started the unwind."""
+
+    vendor.per_call = [{}, {"dofs": 6}]
+    opened = vendor.get_yam_robot
+
+    def stuck(**kwargs):
+        robot = opened(**kwargs)
+
+        def close() -> None:
+            robot.closed += 1
+            raise RuntimeError("the bus write timed out")
+
+        robot.close = close
+        return robot
+
+    sys.modules["i2rt.robots.get_robot"].get_yam_robot = stuck
+    lines: list[str] = []
+    rig = _bimanual(
+        sim=False,
+        left=yam.ArmSite(channel="can_left"),
+        right=yam.ArmSite(channel="can_right"),
+        report=lines.append,
+    )
+    with pytest.raises(RuntimeError, match="6 DOF"):
+        rig.arms()
+    assert [robot.closed for robot in vendor.robots] == [1, 1]
+    assert any("left_arm" in line and "raised" in line for line in lines)
 
 
 def test_a_site_may_measure_one_hand_differently_from_the_other(vendor):

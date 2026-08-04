@@ -534,14 +534,32 @@ class LiveDriver:
             zero_gravity_mode=self._zero_gravity,
             gripper_limits_override=np.asarray(gripper_limits, dtype=float),
         )
-        dofs = int(self._robot.num_dofs())
-        if dofs != JOINT_COUNT:
-            raise RuntimeError(
-                f"{channel}: the arm reports {dofs} DOF, this module declares "
-                f"{JOINT_COUNT} ({', '.join(JOINT_NAMES)}) — reject, never adapt "
-                "silently"
+        try:
+            dofs = int(self._robot.num_dofs())
+            if dofs != JOINT_COUNT:
+                raise RuntimeError(
+                    f"{channel}: the arm reports {dofs} DOF, this module declares "
+                    f"{JOINT_COUNT} ({', '.join(JOINT_NAMES)}) — reject, never adapt "
+                    "silently"
+                )
+            self._default_kp, self._default_kd = self._snapshot_gains()
+        except BaseException:
+            # The bus is already open by the time anything here can refuse, and
+            # a constructor that raises hands its caller an exception instead of
+            # a driver — so nothing will ever hold this handle again, while the
+            # vendor's own ~1 kHz server thread is already running against it.
+            # Close it here or the arm stays energized and unreachable.
+            self._report(
+                f"live {self.channel}: refused after the bus opened — closing it"
             )
-        self._default_kp, self._default_kd = self._snapshot_gains()
+            try:
+                self.close()
+            except Exception as e:  # noqa: BLE001 — the refusal is the news, not this
+                self._report(
+                    f"live {self.channel}: close() raised {e!r} while backing out of "
+                    "a failed open — this arm may still be connected and energized"
+                )
+            raise
 
     def _snapshot_gains(self):
         """The PD gains this arm was built with, read ONCE and kept.
@@ -911,40 +929,61 @@ def _build_arms(
     report: Callable[[str], None],
 ) -> Callable[[], dict[str, base.Arm]]:
     """How to open these arms. Called by `Rig.arms()`, never by the factory:
-    the hardware opens there, and a failure to open it lands there."""
+    the hardware opens there, and a failure to open it lands there.
+
+    Arms open ONE AT A TIME, so this can fail with some of them already
+    connected — a second arm that reports the wrong DOF, an argument mistake
+    the first arm's `Arm` construction did not reach. The caller is then handed
+    an exception rather than a rig, which on live hardware would leave every
+    arm that did open energized, still being re-sent its last setpoint by the
+    vendor's own server thread, and unreachable by the program that opened it.
+    So a failure closes what it opened before it re-raises: half a rig is not a
+    rig, and the exception is still the news."""
 
     def build() -> dict[str, base.Arm]:
         arms: dict[str, base.Arm] = {}
-        for part, site in sites.items():
-            if sim:
-                driver: base.Driver = base.SimDriver(
-                    site.sim_home,
-                    lower=[lo for lo, _ in JOINT_LIMITS],
-                    upper=[hi for _, hi in JOINT_LIMITS],
+        opened: dict[str, base.Driver] = {}
+        try:
+            for part, site in sites.items():
+                if sim:
+                    driver: base.Driver = base.SimDriver(
+                        site.sim_home,
+                        lower=[lo for lo, _ in JOINT_LIMITS],
+                        upper=[hi for _, hi in JOINT_LIMITS],
+                        step_caps=step_caps,
+                        rate_hz=rate_hz,
+                    )
+                else:
+                    driver = LiveDriver(
+                        site.channel,
+                        gripper_limits=site.gripper_limits,
+                        zero_gravity=zero_gravity,
+                        report=report,
+                    )
+                opened[part] = driver
+                arms[part] = base.Arm(
+                    part=part,
+                    driver=driver,
+                    joint_names=JOINT_NAMES,
+                    joint_limits=JOINT_LIMITS,
                     step_caps=step_caps,
+                    base_frame=site.base_frame,
+                    workspace=workspace,
+                    fk=fk,
+                    arm_dof=ARM_JOINT_COUNT,
+                    home_values=site.sim_home if sim else None,
                     rate_hz=rate_hz,
-                )
-            else:
-                driver = LiveDriver(
-                    site.channel,
-                    gripper_limits=site.gripper_limits,
-                    zero_gravity=zero_gravity,
                     report=report,
                 )
-            arms[part] = base.Arm(
-                part=part,
-                driver=driver,
-                joint_names=JOINT_NAMES,
-                joint_limits=JOINT_LIMITS,
-                step_caps=step_caps,
-                base_frame=site.base_frame,
-                workspace=workspace,
-                fk=fk,
-                arm_dof=ARM_JOINT_COUNT,
-                home_values=site.sim_home if sim else None,
-                rate_hz=rate_hz,
-                report=report,
-            )
+        except BaseException:
+            if opened:
+                report(
+                    f"opening this rig failed with parts={','.join(opened)} already "
+                    "open — closing them, since nothing is being handed a driver for "
+                    "them"
+                )
+                base.close_all(opened, report=report)
+            raise
         return arms
 
     return build

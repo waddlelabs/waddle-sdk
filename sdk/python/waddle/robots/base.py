@@ -67,6 +67,7 @@ __all__ = [
     "apply_decision",
     "chain_fk",
     "chunk_sender",
+    "close_all",
     "closing_drops_torque",
     "console_is_at_the_machine",
     "control",
@@ -822,6 +823,31 @@ def estop_all(
     )
     if failures:
         raise RuntimeError("e-stop raised on " + "; ".join(failures))
+
+
+def close_all(
+    units: Mapping[str, Arm | Driver], *, report: Callable[[str], None] = status
+) -> None:
+    """Drop every one of these connections, even if an earlier one raised.
+
+    The same doctrine as :func:`estop_all` — one unit that will not answer is
+    never a reason to leave the next one open — with the opposite ending: a
+    close that fails is REPORTED, never raised. Closing is what a program does
+    on its way out of something that has already gone wrong (a rig that failed
+    part-way through opening its arms, a session unwinding), and an exception
+    from here would replace the reason it is unwinding with a footnote about a
+    bus that did not answer.
+
+    What closing COSTS is the unit's own answer, not this function's: see
+    :func:`closing_drops_torque`."""
+    for part, unit in units.items():
+        try:
+            unit.close()
+        except Exception as e:  # noqa: BLE001 — a vendor call can throw anything
+            report(
+                f"close part={part} raised {e!r} — this unit may still be connected "
+                "and energized"
+            )
 
 
 def console_is_at_the_machine() -> bool:
