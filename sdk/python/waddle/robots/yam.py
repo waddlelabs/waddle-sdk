@@ -1,16 +1,20 @@
 """The I2RT YAM: what one is, in numbers, and what you can build out of one.
 
 A robot module is facts plus a driver plus a factory, on top of
-:mod:`waddle.robots.base`. This file carries the first two for the YAM:
+:mod:`waddle.robots.base`, and this file is all three for the YAM:
 
 * the FACTS — the six arm joints, their limits, the kinematic chain, the tool
   frame, the hand's stroke — and the :func:`forward_kinematics` they describe;
 * :class:`LiveDriver`, the thin honest layer over the vendor's own calls, with
-  the e-stop latch the vendor's zero-torque mode makes necessary.
+  the e-stop latch the vendor's zero-torque mode makes necessary;
+* :func:`declaration`, :func:`bimanual` and :func:`arm` — the declaration a
+  hand-wired program can take on its own, and the rigs that pair it with
+  drivers, the owner's envelope and a reporting loop.
 
-Both stand alone: take the facts and declare the robot yourself, or take the
-driver and put your own envelope in front of it. Nothing here holds a lease
-or decides who may command anything — that is waddle-core's either way.
+Every one of those stands alone: take the declaration and wire `waddle.init`
+yourself, take the driver and put your own envelope in front of it, or take a
+rig and get all of it. Nothing here holds a lease or decides who may command
+anything — that is waddle-core's, whichever piece you take.
 
 **No number below stands on its own word.** The model the vendor publishes
 ships beside this file (``yam_data/yam.urdf``, pinned at :data:`I2RT_PIN`)
@@ -42,8 +46,12 @@ Conventions, stated once:
 * Poses are METRES in the arm's own base frame (:data:`URDF_BASE_LINK`), at
   the TCP (:data:`URDF_TCP_FRAME` — the frame every YAM consumer speaks).
 * No MEASUREMENT here is a site fact. The workspace box, the bench-measured
-  gripper motor limits and the CAN interface belong to YOUR rig, are
-  arguments, and have no defaults to inherit by accident.
+  gripper motor limits, the CAN interface and where a second arm stands
+  relative to the first belong to YOUR rig, are arguments to the factories,
+  and have no defaults to inherit by accident. What the factories DO default
+  — a rate, a speed, part and frame names, where a twin starts — are choices
+  rather than facts, are marked as such where they are written down, and are
+  arguments too.
 
 Driving a real arm needs the vendor's own package, which is not a dependency
 of this one and cannot be an extra of it: it is not published on PyPI, and
@@ -62,21 +70,38 @@ and is not here.
 
 from __future__ import annotations
 
+import math
 import threading
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from importlib.resources import files
 
 import numpy as np
 
+from ..descriptors import (
+    Camera,
+    Chunking,
+    Composite,
+    FrameTransform,
+    Joint,
+    JointSpace,
+    Robot,
+)
 from . import base
+from .base import CrossArm
 
 __all__ = [
     "ARM_JOINT_COUNT",
     "ARM_JOINT_LIMITS_RAD",
     "ARM_JOINT_NAMES",
+    "BASE_FRAME",
     "CHAIN_AXIS",
     "CHAIN_ORIGIN_RPY_RAD",
     "CHAIN_ORIGIN_XYZ_M",
+    "DEFAULT_MAX_GRIPPER_SPEED_PER_S",
+    "DEFAULT_MAX_JOINT_SPEED_RAD_S",
+    "DEFAULT_RATE_HZ",
+    "DEFAULT_SIM_HOME",
     "GRIPPER_JOINT_LIMITS",
     "GRIPPER_JOINT_NAME",
     "GRIPPER_MAX_OPENING_M",
@@ -86,12 +111,21 @@ __all__ = [
     "JOINT_COUNT",
     "JOINT_LIMITS",
     "JOINT_NAMES",
+    "LEFT_BASE_FRAME",
+    "LEFT_PART",
     "MAX_JOINT_EFFORT_NM",
+    "RIGHT_BASE_FRAME",
+    "RIGHT_PART",
     "TOOL_ORIGIN_RPY_RAD",
     "TOOL_ORIGIN_XYZ_M",
     "URDF_BASE_LINK",
     "URDF_TCP_FRAME",
+    "ArmSite",
+    "CrossArm",
     "LiveDriver",
+    "arm",
+    "bimanual",
+    "declaration",
     "forward_kinematics",
     "urdf_text",
 ]
@@ -318,6 +352,88 @@ def forward_kinematics(
 
 
 # ---------------------------------------------------------------------------
+# Defaults a rig may take, and none of them a fact
+# ---------------------------------------------------------------------------
+#
+# Everything above this line is what a YAM IS, gated against the vendor's own
+# model. Everything below is what a rig built out of one may DO, and those are
+# choices — conservative ones, made here so a first program has somewhere to
+# start, and every one of them a factory argument. Nothing below is gated
+# against anything, because there is nothing to gate a choice against.
+
+#: The declared control rate of one part, Hz. Deliberately far below the
+#: vendor's ~1 kHz servo: a rig that goes wrong at 10 Hz goes wrong ten times
+#: more slowly than one at 100.
+DEFAULT_RATE_HZ = 10.0
+
+#: The joint speed a rig declares and holds itself to, rad/s. Well under the
+#: arm's own ceiling — the per-step cap the envelope enforces is DERIVED from
+#: this and the rate (``speed / rate_hz``), so raising one raises the other
+#: and there is no pair of numbers here that can disagree with itself.
+DEFAULT_MAX_JOINT_SPEED_RAD_S = 1.0
+
+#: The same rule for the hand, in its normalized units per second. At the
+#: default rate that is a quarter of full travel per accepted command: a full
+#: open or close takes four commands, fast enough to be useful and slow enough
+#: to stop.
+DEFAULT_MAX_GRIPPER_SPEED_PER_S = 2.5
+
+#: Where a TWIN starts, per arm, in that arm's own seven-row joint vector.
+#: Two distinct rows on purpose: two twins that started identical would be
+#: told apart only by their names, and which arm is which is the whole
+#: index-map question a bimanual rig has to be able to answer. Live arms have
+#: no home — they start wherever the site operator left them, and nothing here
+#: drives one to a pose it did not receive.
+DEFAULT_SIM_HOME = (
+    (0.20, 1.00, 1.00, 0.10, -0.50, 0.05, 0.00),
+    (-0.20, 1.10, 0.90, -0.10, -0.40, -0.05, 0.20),
+)
+
+#: The part names a bimanual rig declares. Declaration order IS the layout of
+#: the concatenated action vector, so ``left_arm`` occupies rows 0..6 and
+#: ``right_arm`` rows 7..13 — everywhere, for everyone, including whatever
+#: maps a teleoperator's station onto an arm.
+LEFT_PART = "left_arm"
+RIGHT_PART = "right_arm"
+
+#: Default frame names, one per arm's base. Deliberately not "base": a frame
+#: name is spoken, and "base" means *whose* base. A site with its own naming
+#: passes its own through :class:`ArmSite`.
+LEFT_BASE_FRAME = "yam_left_base"
+RIGHT_BASE_FRAME = "yam_right_base"
+BASE_FRAME = "yam_base"
+
+
+@dataclass(frozen=True)
+class ArmSite:
+    """One arm's SITE facts — the things that are true of YOUR unit on YOUR
+    bench, and of no other.
+
+    Every field defaults to "the rig-level answer", never to a number: an arm
+    that needs its own says so.
+
+    ``channel``
+        The SocketCAN interface this arm is on (``can_left``, ``can0``, ...).
+        Required when the rig is live; ignored, and permitted, in sim — so one
+        call site can carry both configurations and the program text does not
+        change across the flip.
+    ``base_frame``
+        What this arm's base is called in the frames the rig declares.
+    ``gripper_limits``
+        This unit's own bench-measured ``[closed, open]`` in MOTOR RADIANS,
+        when it differs from the rig's. Hands vary between units; that is the
+        whole reason this is a measurement and not a constant.
+    ``sim_home``
+        Where this arm's twin starts. Live arms have no home.
+    """
+
+    channel: str | None = None
+    base_frame: str | None = None
+    gripper_limits: Sequence[float] | None = None
+    sim_home: Sequence[float] | None = None
+
+
+# ---------------------------------------------------------------------------
 # The live driver: one real YAM on one CAN bus
 # ---------------------------------------------------------------------------
 
@@ -367,7 +483,7 @@ class LiveDriver:
     ``zero_gravity=True`` builds the arm compliant and hand-movable, and this
     driver then refuses to write at all — so "nothing can command it" is a
     property of the object rather than of a flag somebody remembered to check.
-    It is what a monitor posture builds.
+    It is what ``posture="monitor"`` builds.
 
     What this driver deliberately does NOT do: bring a CAN interface up, patch
     the vendor's transport, or work around a bus that starves its receiver.
@@ -546,3 +662,446 @@ class LiveDriver:
     def close(self) -> None:
         with self._lock:
             self._robot.close()
+
+
+# ---------------------------------------------------------------------------
+# The declaration
+# ---------------------------------------------------------------------------
+
+
+def _part_space(rate_hz: float, max_joint_speed_rad_s: float) -> JointSpace:
+    """One arm: six joints plus the gripper row, at the declared rate."""
+    return JointSpace(
+        joints=[
+            Joint(
+                name=name,
+                min_position=lo,
+                max_position=hi,
+                max_velocity=max_joint_speed_rad_s,
+                max_effort=MAX_JOINT_EFFORT_NM,
+            )
+            for name, (lo, hi) in zip(JOINT_NAMES, JOINT_LIMITS, strict=True)
+        ],
+        rate_hz=rate_hz,
+        # One action per tick, replaced as soon as the next arrives.
+        chunking=Chunking(horizon=1, replan="immediate", interp="hold"),
+    )
+
+
+def declaration(
+    *,
+    parts: Sequence[str] | None = None,
+    name: str = "yam",
+    robot_id: str = "",
+    cell_id: str = "",
+    rate_hz: float = DEFAULT_RATE_HZ,
+    max_joint_speed_rad_s: float = DEFAULT_MAX_JOINT_SPEED_RAD_S,
+    base_frame: str = BASE_FRAME,
+    declare_urdf: bool | None = None,
+    frames: Sequence[FrameTransform] = (),
+    cameras: Mapping[str, Camera] | None = None,
+) -> Robot:
+    """Everything Waddle needs to know about a rig of YAMs — and nothing else.
+
+    Public and standing alone on purpose. The factories below build one of
+    these, but a program that wants none of the rest of this module — its own
+    driver, its own loop, a plain ``waddle.init`` — should not have to reach
+    into a rig to get the declaration, and should get exactly the one a
+    factory would have registered.
+
+    ``parts``
+        The part names, in DECLARATION ORDER, which is the layout of the
+        concatenated action vector. ``None`` (the default) declares a bare
+        joint space with no named parts — one arm, addressed as the whole
+        robot.
+    ``declare_urdf``
+        Whether to carry the shipped model as ``kinematics_urdf``. Defaults to
+        "yes if this declaration describes ONE chain". A URDF field describes
+        one chain and a multi-part rig has several, so declaring one there
+        would name a second arm's tool frame as something it is not — asked
+        for explicitly, that is refused rather than silently dropped.
+    ``base_frame``
+        What this arm's base is called. It reaches the declaration only when
+        the model is carried: the model's own root link is
+        ``base_link``, and a consumer handed both a model and poses in another
+        frame name has two unrelated trees unless something says they are the
+        same frame. So the rename is declared as the identity edge it is.
+    """
+    part_names = tuple(parts) if parts is not None else ()
+    if part_names:
+        action_space = Composite(
+            rate_hz=rate_hz,
+            chunking=Chunking(horizon=1, replan="immediate", interp="hold"),
+            **{
+                part: _part_space(rate_hz, max_joint_speed_rad_s)
+                for part in part_names
+            },
+        )
+    else:
+        action_space = _part_space(rate_hz, max_joint_speed_rad_s)
+
+    one_chain = len(part_names) <= 1
+    if declare_urdf is None:
+        declare_urdf = one_chain
+    elif declare_urdf and not one_chain:
+        raise ValueError(
+            f"declare_urdf=True with {len(part_names)} parts: a kinematics_urdf "
+            "field describes one chain, and naming this one would name every "
+            "other part's tool frame as something it is not — declare each part's "
+            "own frames instead (each arm reports its own ee_pose in its own base "
+            "frame)"
+        )
+
+    declared_frames = tuple(frames)
+    if declare_urdf and base_frame != URDF_BASE_LINK:
+        # Not an identity nobody wrote: the arm's base IS the model's root
+        # link, and this states that rename so a consumer can compose the two.
+        declared_frames += (
+            FrameTransform(parent=base_frame, child=URDF_BASE_LINK),
+        )
+
+    return Robot(
+        name=name,
+        robot_id=robot_id,
+        cell_id=cell_id,
+        action_space=action_space,
+        cameras=dict(cameras or {}),
+        kinematics_urdf=urdf_text().encode("utf-8") if declare_urdf else None,
+        frames=declared_frames,
+    )
+
+
+# ---------------------------------------------------------------------------
+# The factories
+# ---------------------------------------------------------------------------
+
+
+def _checked_gripper_limits(pair: Sequence[float], where: str) -> tuple[float, float]:
+    """The bench-measured ``[closed, open]`` pair, validated for SHAPE.
+
+    Required even in sim, and validated the same way there, so the program
+    text is identical across the sim->live flip; only the live driver reads
+    the values."""
+    try:
+        values = tuple(float(v) for v in pair)
+    except TypeError:
+        values = ()
+    if len(values) != 2 or not all(math.isfinite(v) for v in values):
+        raise ValueError(
+            f"{where} gripper_limits={pair!r}: expected a finite (closed, open) "
+            "pair in MOTOR RADIANS, measured at YOUR bench — the reference rig's "
+            "pair is not yours, and pinning it is what skips the connect-time "
+            "auto-calibration that drives the jaws"
+        )
+    if not values[0] < values[1]:
+        raise ValueError(
+            f"{where} gripper_limits={pair!r}: closed ({values[0]}) must be below "
+            f"open ({values[1]})"
+        )
+    return values
+
+
+def _checked_workspace(
+    box: Sequence[Sequence[float]] | None,
+    *,
+    report: Callable[[str], None],
+) -> tuple[tuple[float, float, float], tuple[float, float, float]] | None:
+    if box is None:
+        report(
+            "no workspace box declared — the declared joint limits and per-step "
+            "caps still bound every command, and the TCP is unbounded"
+        )
+        return None
+    corners = tuple(tuple(float(v) for v in corner) for corner in box)
+    if len(corners) != 2 or any(len(corner) != 3 for corner in corners):
+        raise ValueError(
+            f"workspace={box!r}: expected ((min_x, min_y, min_z), (max_x, max_y, "
+            "max_z)) in metres, in the arm's own base frame"
+        )
+    if any(lo > hi for lo, hi in zip(*corners, strict=True)):
+        raise ValueError(
+            f"workspace={box!r}: every minimum must be at or below its maximum"
+        )
+    return corners  # type: ignore[return-value]
+
+
+def _step_caps(
+    rate_hz: float, max_joint_speed_rad_s: float, max_gripper_speed_per_s: float
+) -> tuple[float, ...]:
+    """The largest jump a SINGLE accepted command may make, per row.
+
+    DERIVED from the declared speeds and rate rather than stated beside them:
+    one number cannot then disagree with the other, and the declaration a
+    teleoperator reads (``Joint.max_velocity``) is the same statement the
+    envelope enforces."""
+    if rate_hz <= 0:
+        raise ValueError("rate_hz must be > 0")
+    if max_joint_speed_rad_s <= 0 or max_gripper_speed_per_s <= 0:
+        raise ValueError("the declared speeds must be > 0")
+    return (max_joint_speed_rad_s / rate_hz,) * ARM_JOINT_COUNT + (
+        max_gripper_speed_per_s / rate_hz,
+    )
+
+
+def _resolved_site(
+    site: ArmSite | None,
+    *,
+    where: str,
+    sim: bool,
+    base_frame: str,
+    gripper_limits: tuple[float, float],
+    sim_home: Sequence[float],
+) -> ArmSite:
+    """One arm's site facts with every rig-level default filled in, and the
+    one thing a live arm cannot do without refused here — at the factory call,
+    where the program can still be fixed, rather than at the bus."""
+    site = site if site is not None else ArmSite()
+    channel = site.channel
+    if not sim and not channel:
+        raise ValueError(
+            f"{where}: a live rig needs a channel (the SocketCAN interface this "
+            "arm is on) — pass it, or pass sim=True. Nothing here reaches for a "
+            "bus because an argument was missing"
+        )
+    limits = (
+        _checked_gripper_limits(site.gripper_limits, where)
+        if site.gripper_limits is not None
+        else gripper_limits
+    )
+    home = tuple(float(v) for v in (site.sim_home if site.sim_home is not None else sim_home))
+    if len(home) != JOINT_COUNT:
+        raise ValueError(
+            f"{where}: sim_home has {len(home)} values, a YAM part declares "
+            f"{JOINT_COUNT} ({', '.join(JOINT_NAMES)})"
+        )
+    return ArmSite(
+        channel=channel,
+        base_frame=site.base_frame or base_frame,
+        gripper_limits=limits,
+        sim_home=home,
+    )
+
+
+def _build_arms(
+    sites: Mapping[str, ArmSite],
+    *,
+    sim: bool,
+    zero_gravity: bool,
+    workspace,
+    fk,
+    step_caps: Sequence[float],
+    rate_hz: float,
+    report: Callable[[str], None],
+) -> Callable[[], dict[str, base.Arm]]:
+    """How to open these arms. Called by `Rig.arms()`, never by the factory:
+    the hardware opens there, and a failure to open it lands there."""
+
+    def build() -> dict[str, base.Arm]:
+        arms: dict[str, base.Arm] = {}
+        for part, site in sites.items():
+            if sim:
+                driver: base.Driver = base.SimDriver(
+                    site.sim_home,
+                    lower=[lo for lo, _ in JOINT_LIMITS],
+                    upper=[hi for _, hi in JOINT_LIMITS],
+                    step_caps=step_caps,
+                    rate_hz=rate_hz,
+                )
+            else:
+                driver = LiveDriver(
+                    site.channel,
+                    gripper_limits=site.gripper_limits,
+                    zero_gravity=zero_gravity,
+                    report=report,
+                )
+            arms[part] = base.Arm(
+                part=part,
+                driver=driver,
+                joint_names=JOINT_NAMES,
+                joint_limits=JOINT_LIMITS,
+                step_caps=step_caps,
+                base_frame=site.base_frame,
+                workspace=workspace,
+                fk=fk,
+                arm_dof=ARM_JOINT_COUNT,
+                home_values=site.sim_home if sim else None,
+                rate_hz=rate_hz,
+                report=report,
+            )
+        return arms
+
+    return build
+
+
+def bimanual(
+    *,
+    workspace: Sequence[Sequence[float]] | None,
+    gripper_limits: Sequence[float],
+    cross_arm: CrossArm | None = None,
+    left: ArmSite | None = None,
+    right: ArmSite | None = None,
+    sim: bool = False,
+    posture: str = "supervised",
+    fk: Callable[[Sequence[float]], tuple[np.ndarray, np.ndarray]] | None = (
+        forward_kinematics
+    ),
+    rate_hz: float = DEFAULT_RATE_HZ,
+    max_joint_speed_rad_s: float = DEFAULT_MAX_JOINT_SPEED_RAD_S,
+    max_gripper_speed_per_s: float = DEFAULT_MAX_GRIPPER_SPEED_PER_S,
+    name: str = "yam-bimanual",
+    robot_id: str = "",
+    cell_id: str = "",
+    cameras: Mapping[str, Camera] | None = None,
+    estop_hardware: bool = False,
+    report: Callable[[str], None] = base.status,
+) -> base.Rig:
+    """Two YAMs, declared as ONE robot with two named parts, so a teleoperator
+    or a Waddle-hosted agent can address either arm by name.
+
+    Declaration only: this opens no bus and starts no thread. ``rig.arms()``
+    is where the hardware opens.
+
+    The required arguments are the ones nothing can default: ``workspace`` (a
+    box in each arm's own base frame — pass ``None`` explicitly to declare
+    none) and ``gripper_limits`` (the bench-measured ``[closed, open]`` motor
+    radians). ``cross_arm`` is optional and its absence is meaningful: with no
+    declared edge, a pose expressed in the other arm's frame refuses loudly
+    downstream rather than resolving through an identity nobody measured.
+
+    ``sim`` is explicit and never inferred — nothing here try-imports the
+    vendor package to decide what a program meant. ``posture`` picks which
+    control verbs the session registers (see
+    `waddle.robots.base.POSTURES`), and on live hardware ``"monitor"``
+    additionally opens the arms compliant, so nothing can command them at
+    either end.
+
+    ``fk`` is the forward kinematics each part reports its TCP from, and it is
+    OPT-IN: pass ``None`` (with ``workspace=None``) for a rig that reports
+    joint positions only.
+    """
+    limits = _checked_gripper_limits(gripper_limits, "bimanual")
+    box = _checked_workspace(workspace, report=report)
+    caps = _step_caps(rate_hz, max_joint_speed_rad_s, max_gripper_speed_per_s)
+    sites = {
+        LEFT_PART: _resolved_site(
+            left,
+            where=f"part={LEFT_PART}",
+            sim=sim,
+            base_frame=LEFT_BASE_FRAME,
+            gripper_limits=limits,
+            sim_home=DEFAULT_SIM_HOME[0],
+        ),
+        RIGHT_PART: _resolved_site(
+            right,
+            where=f"part={RIGHT_PART}",
+            sim=sim,
+            base_frame=RIGHT_BASE_FRAME,
+            gripper_limits=limits,
+            sim_home=DEFAULT_SIM_HOME[1],
+        ),
+    }
+    frames = (
+        (
+            cross_arm.transform(
+                sites[LEFT_PART].base_frame, sites[RIGHT_PART].base_frame
+            ),
+        )
+        if cross_arm is not None
+        else ()
+    )
+    return base.Rig(
+        declaration=declaration(
+            parts=tuple(sites),
+            name=name,
+            robot_id=robot_id,
+            cell_id=cell_id,
+            rate_hz=rate_hz,
+            max_joint_speed_rad_s=max_joint_speed_rad_s,
+            frames=frames,
+            cameras=cameras,
+        ),
+        build_arms=_build_arms(
+            sites,
+            sim=sim,
+            zero_gravity=posture == "monitor",
+            workspace=box,
+            fk=fk,
+            step_caps=caps,
+            rate_hz=rate_hz,
+            report=report,
+        ),
+        rate_hz=rate_hz,
+        posture=posture,
+        estop_hardware=estop_hardware,
+        report=report,
+    )
+
+
+def arm(
+    *,
+    workspace: Sequence[Sequence[float]] | None,
+    gripper_limits: Sequence[float],
+    channel: str | None = None,
+    sim: bool = False,
+    posture: str = "supervised",
+    fk: Callable[[Sequence[float]], tuple[np.ndarray, np.ndarray]] | None = (
+        forward_kinematics
+    ),
+    base_frame: str = BASE_FRAME,
+    sim_home: Sequence[float] | None = None,
+    rate_hz: float = DEFAULT_RATE_HZ,
+    max_joint_speed_rad_s: float = DEFAULT_MAX_JOINT_SPEED_RAD_S,
+    max_gripper_speed_per_s: float = DEFAULT_MAX_GRIPPER_SPEED_PER_S,
+    name: str = "yam",
+    robot_id: str = "",
+    cell_id: str = "",
+    cameras: Mapping[str, Camera] | None = None,
+    declare_urdf: bool = True,
+    estop_hardware: bool = False,
+    report: Callable[[str], None] = base.status,
+) -> base.Rig:
+    """One YAM, declared as the whole robot — a bare joint space, no named
+    parts, and (unlike a bimanual rig) the shipped model carried as
+    ``kinematics_urdf``, since a single arm IS one chain.
+
+    Every argument means what it means on :func:`bimanual`; the difference is
+    that this rig has one arm, so its site facts are arguments rather than an
+    :class:`ArmSite`.
+    """
+    limits = _checked_gripper_limits(gripper_limits, "arm")
+    box = _checked_workspace(workspace, report=report)
+    caps = _step_caps(rate_hz, max_joint_speed_rad_s, max_gripper_speed_per_s)
+    site = _resolved_site(
+        ArmSite(channel=channel, base_frame=base_frame, sim_home=sim_home),
+        where="arm",
+        sim=sim,
+        base_frame=base_frame,
+        gripper_limits=limits,
+        sim_home=DEFAULT_SIM_HOME[0],
+    )
+    return base.Rig(
+        declaration=declaration(
+            name=name,
+            robot_id=robot_id,
+            cell_id=cell_id,
+            rate_hz=rate_hz,
+            max_joint_speed_rad_s=max_joint_speed_rad_s,
+            base_frame=site.base_frame,
+            declare_urdf=declare_urdf,
+            cameras=cameras,
+        ),
+        build_arms=_build_arms(
+            {"": site},
+            sim=sim,
+            zero_gravity=posture == "monitor",
+            workspace=box,
+            fk=fk,
+            step_caps=caps,
+            rate_hz=rate_hz,
+            report=report,
+        ),
+        rate_hz=rate_hz,
+        posture=posture,
+        estop_hardware=estop_hardware,
+        report=report,
+    )
