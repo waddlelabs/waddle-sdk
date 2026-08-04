@@ -65,12 +65,17 @@ waddle-sdk/
         yam.py, yam_data/    # the I2RT YAM: constants-with-provenance, and
                              #   the vendor's own MIT model (URDF text, no
                              #   meshes) shipped beside them so
-                             #   tests/test_yam_facts.py can gate every
-                             #   number against it — directional (a declared
-                             #   limit may only be TIGHTER). A vendor fact
-                             #   with no second source in the wheel is a fact
-                             #   nothing checks; that is the convention for
-                             #   the next vendor module too
+                             #   tests/test_yam_facts.py gates every number
+                             #   the model states — directional (a declared
+                             #   limit may only be TIGHTER). The convention
+                             #   the next vendor module inherits: ship the
+                             #   source that can gate a fact, and where none
+                             #   can (here the MJCF tightenings and both hand
+                             #   facts) the comment names the pinned model it
+                             #   came from — an unsourced number is one
+                             #   nothing checks. Vendored data ships to every
+                             #   installer, comments included: it may name
+                             #   only what a wheel-holder can open (gated)
     teleop/                  # the `waddle-sdk-teleop` companion distribution:
                              #   same rust/Cargo.toml, + the livekit feature
     examples/                # toy_robot.py: the runnable customer program

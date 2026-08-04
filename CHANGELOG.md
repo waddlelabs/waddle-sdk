@@ -86,9 +86,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   needs in order to drive their own arm through their own envelope belongs in
   their hands, and the supervision side's in-cell material for keeping a fleet
   alive is a different artifact that stays where it is.
-  - **Every number has a second source in the wheel.** The vendor's own model
-    ships beside the module (`waddle/robots/yam_data/yam.urdf`, pinned at
-    `I2RT_PIN`) and `sdk/tests/test_yam_facts.py` reads it with the stdlib XML
+  - **Every number the shipped model states is gated against it.** The
+    vendor's own model ships beside the module
+    (`waddle/robots/yam_data/yam.urdf`, pinned at `I2RT_PIN`) and
+    `sdk/tests/test_yam_facts.py` reads it with the stdlib XML
     parser: a declared position limit must sit INSIDE the model's interval, an
     effort ceiling must be `<=` it, and every fact that is not an interval —
     chain origins, rpys, axes, the tool frame — must match to a
@@ -97,11 +98,18 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     walks the model's own chain through `base.chain_fk` and lands where
     `yam.forward_kinematics` does, so a transposition that survived an
     element-wise pass still moves the tool and still fails.
-  - **What the gate cannot see, it names.** The arm limits are the URDF ∧ MJCF
-    intersection and the MJCF is not shipped, so those tightenings carry
-    provenance comments; the one that is visible from here — `joint1`'s upper,
-    3.05433 against the URDF's 3.13 — is asserted, so the table cannot be
-    quietly "corrected" to the looser model.
+  - **What the gate cannot see, it names — and three facts it cannot.**
+    The arm limits are the URDF ∧ MJCF intersection and the MJCF is not
+    shipped, so those tightenings carry provenance comments; the one that is
+    visible from here — `joint1`'s upper, 3.05433 against the URDF's 3.13 — is
+    asserted, so the table cannot be quietly "corrected" to the looser model.
+    Both hand facts (the normalized gripper row and the jaw stroke below) come
+    from the pinned vendor tree rather than the model, which carries no finger
+    geometry at all. Their tests pin the value and the arithmetic, which
+    catches an edit made here and is not the same thing as a second source;
+    re-vendoring against the pin is what catches a change made upstream.
+    Naming which of the two a fact has is the convention, not the claim that
+    every fact has the first.
   - **`GRIPPER_MAX_OPENING_M` is 0.095 m, re-derived, not copied.** The pinned
     vendor tree models this hand as two equality-coupled slide joints, each
     ranged `0 0.0475` along exactly opposed axes, so the jaw separation moves
@@ -109,8 +117,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     same tree's own config declares, conservative rather than equal by luck.
     This retires the 0.075 m figure (`2 × 0.037524` from the MuJoCo Menagerie
     finger range), which was derived from a vendor commit one hardware
-    revision behind the pin. The test pins the ARITHMETIC, so the number
-    cannot be edited without editing its derivation.
+    revision behind the pin. Neither vendor file ships in the wheel, so the
+    test pins the ARITHMETIC instead: the number cannot be edited without
+    editing its derivation, and the derivation is what a re-vendor re-reads.
   - **`forward_kinematics` is public and opt-in** (an arm handed none reports
     joint positions and says so), and takes the six arm joints rather than the
     seven-row part vector — the seventh row is the gripper, and walking it into
@@ -120,9 +129,15 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     Apache-2.0 wheel, shipped with the licence verbatim and a README carrying
     the provenance, the pin and the patch list. Text only — the STL meshes are
     not shipped, which the README states so an unresolved `<mesh>` reference is
-    not read as a broken file — and one comment in the copy was repaired:
-    a `--` inside an XML comment is illegal and made the file unparseable by
-    strict parsers, the stdlib's among them. No element of the model differs.
+    not read as a broken file — and two comment repairs, both of which the
+    README lists: a `--` inside an XML comment is illegal and made the file
+    unparseable by strict parsers, the stdlib's among them; and the patch
+    notes now point only at what a reader of this wheel can open, an internal
+    task label and the path of the check that caught the wrong-axis tool frame
+    having been dropped while the correction itself is still stated. A test
+    refuses either class in any file of the shipped data, since a comment in
+    vendored data is where such a pointer survives. No element of the model
+    differs.
   - No packaging change here either, and this time it is checked: a built wheel
     carries `waddle/robots/yam_data/{yam.urdf,LICENSE,README.md}`, no meshes
     and no bytecode, and the module reads them through `importlib.resources`
