@@ -35,7 +35,7 @@ use crate::emissions::{
     Codec, EmissionEntry, effect_to_value, gate_mode_name, grant_status_name,
     intervention_phase_name, verb_name,
 };
-use crate::scenario::{Scenario, TargetKind, parse_ns, parse_verification_mode};
+use crate::scenario::{PARTS_FEATURE, Scenario, TargetKind, parse_ns, parse_verification_mode};
 use crate::{ConformanceError, scenario_err};
 
 /// No `gate_tick` within this window while claimed ⇒ the caller loop has
@@ -169,6 +169,10 @@ struct GateParts {
     /// Kept alive so gate records are droppable without erroring the ring.
     _records: rtrb::Consumer<GateRecord>,
     space: Option<ActionSpace>,
+    /// Whether this scenario's connection negotiated `waddle.v0.parts`
+    /// ([`part_policy`]) — the answer every intervention intake reads for
+    /// `Action.part`.
+    parts: PartPolicy,
     interp: Interp,
     last_output: Option<GateOutput>,
     /// The Noop reason of the most recent tick, captured from the plan mode
@@ -276,6 +280,7 @@ impl Target {
                     producer,
                     _records: records,
                     space,
+                    parts: part_policy(scenario),
                     interp,
                     last_output: None,
                     last_noop_reason: None,
@@ -1157,13 +1162,12 @@ impl Target {
             let space = gp.space.as_ref().ok_or_else(|| {
                 scenario_err("intervention_chunk requires a declared action space (robot_fixture)")
             })?;
-            // Whether `Action.part` is honored (flag `waddle.v0.parts`).
-            // A runner has no negotiated connection to read the answer off,
-            // so it falls back to the same fact an SDK declares the flag
-            // from: whether the declared space has parts at all. A scenario
-            // whose steps address parts declares the flag in
-            // `requires_features`, which is what got it run at all.
-            let parts = part_policy(space);
+            // Whether `Action.part` is honored: the answer this scenario's
+            // connection negotiated ([`part_policy`]). A scenario whose
+            // steps address parts declares `waddle.v0.parts`, which is what
+            // got it run at all; one that does not gets the pre-flag
+            // reading, whatever the robot declares.
+            let parts = gp.parts;
             match ActionChunk::from_pb(&chunk, space, parts) {
                 Ok(flattened) => {
                     let meta = ChunkMeta {
@@ -1532,14 +1536,24 @@ fn parse_agent_invite(value: &Value) -> Result<AgentInvite, ConformanceError> {
     Ok(AgentInvite { prompt, timeout_ns })
 }
 
-/// Whether an intervention intake honors `Action.part` (flag
-/// `waddle.v0.parts`): only a `Composite` declaration has parts to address,
-/// and on every other space `""` — the sole part — is what the pre-flag
-/// reading already meant, so the two policies agree there.
-fn part_policy(space: &ActionSpace) -> PartPolicy {
-    match space.spec {
-        SpaceSpec::Composite { .. } => PartPolicy::Honor,
-        _ => PartPolicy::Ignore,
+/// Whether an intervention intake honors `Action.part`, decided by the
+/// scenario's own `requires_features`: the runner models a CONNECTION, and
+/// on a connection the answer is the negotiation's (VERSIONING.md §3), never
+/// an inference from the robot. A scenario that lists `waddle.v0.parts` is
+/// one running against a connection that accepted the flag; one that does
+/// not is a pre-flag connection, and gets the pre-flag reading — every
+/// action read against the whole declared space — even on a `Composite`
+/// robot that has parts to address. That case is a behavior the registry row
+/// defines, so it has to be expressible.
+fn part_policy(scenario: &Scenario) -> PartPolicy {
+    if scenario
+        .requires_features
+        .iter()
+        .any(|f| f == PARTS_FEATURE)
+    {
+        PartPolicy::Honor
+    } else {
+        PartPolicy::Ignore
     }
 }
 
