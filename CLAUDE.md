@@ -205,9 +205,18 @@ top-level dirs; they are not built yet.
   governing section's prose when none does (intake validation, dispatch shape, and the
   blend/gripper/part contracts of §4-§5 are prose, not rows) — (b) at least one
   asserting scenario in `fixtures/behaviors/`, (c) green `waddle-conformance` run.
+  (a) and (b) are enforced against each other:
+  `every_behavior_fixture_is_named_in_fsm_md` fails until FSM.md names the fixture,
+  so a scenario can never pin a behavior the standard does not claim.
   The scenario JSON schema is `waddle-protocol/conformance/scenario-format.md`;
   `waddle-conformance` implements exactly that schema — if they drift, the .md wins
-  and the runner is wrong.
+  and the runner is wrong. A scenario's `requires_features` is the NEGOTIATION the
+  runner models, not only a skip filter: where a flag changes how a message is read
+  the runner reads it there and nowhere else, never inferring it from the robot, so
+  a registry row's pre-flag behavior is an expressible scenario. Fixture directories
+  are enumerated at test time, never listed by hand (`behaviors/` in
+  `tests/behaviors.rs`, `wire/` in `tests/wire_fixtures.rs`, `sidecars/` in
+  waddle-sidecar's `tests/fixtures.rs`).
 - **Crate layering.** `waddle-types`/`-fsm`/`-gate`/`-codecs` must stay free of tokio,
   threads, I/O, clocks, and randomness. Only `waddle-ingest` reads OS clocks. Threads
   are owned by `waddle-runtime` (plus the thread harnesses in waddle-tripwire, the
