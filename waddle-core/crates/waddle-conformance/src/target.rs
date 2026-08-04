@@ -931,6 +931,9 @@ impl Target {
                         action: OwnedAction {
                             values: ActionValues::from_slice(&values),
                             gripper,
+                            // As in production: a teleop packet is not
+                            // part-addressed (`flatten_packet`).
+                            part: None,
                         },
                         chunk: None,
                     })

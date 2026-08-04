@@ -528,7 +528,15 @@ fn flatten_packet(packet: &pb::TeleopStreamPacket) -> Option<OwnedAction> {
             gripper = target.gripper;
         }
     }
-    (!values.is_empty()).then_some(OwnedAction { values, gripper })
+    // Untagged: the teleop stream's own per-part addressing
+    // (`PartTarget.part`) is not routed yet — the targets are concatenated in
+    // packet order, so the packet commands the whole declared space or
+    // nothing.
+    (!values.is_empty()).then_some(OwnedAction {
+        values,
+        gripper,
+        part: None,
+    })
 }
 
 /// Plane events → FSM events (claim directives, episode directives,
@@ -891,6 +899,13 @@ fn forward_server_msg(
                                     action: OwnedAction {
                                         values: step.values.clone(),
                                         gripper: step.gripper,
+                                        // Always `None` while this intake
+                                        // reads chunks under
+                                        // `PartPolicy::Ignore` (above): a
+                                        // step is tagged only once the
+                                        // connection negotiates
+                                        // `waddle.v0.parts`.
+                                        part: step.part.clone(),
                                     },
                                     chunk: Some(meta),
                                 });

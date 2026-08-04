@@ -91,6 +91,17 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     commanded nothing when it commanded one arm. `Ignore` is the pre-flag
     reading, byte-for-byte, and is what every intake still passes until the
     plane connection negotiates the flag.
+  - **waddle-core (`waddle-gate`)**: an action leaving the gate carries the
+    part it commands. `OwnedAction` gains `part: Option<Arc<str>>` (`None` =
+    the whole declared space), so a substitute's return tells the caller which
+    part to write and the gate record behind it names the part that moved —
+    an untagged row would claim the whole robot did. The tag is a shared
+    pointer rather than owned bytes because a claimed tick clones the
+    dispatched action twice on the customer's real-time thread (three times
+    when it blends); `tests/alloc_free.rs` grows a part-tagged CLAIMED-arm
+    proof — the first to drive that arm with an action actually pending —
+    measured differentially against the identical untagged loop, and the gate
+    benchmarks are unchanged.
 - **waddle-protocol/waddle-core (agent-invited episodes, new feature flag
   `waddle.v0.agent`)**: a customer can now ask Waddle to drive an episode
   rather than driving it themselves — `Session::run_agent(prompt, timeout_ns,

@@ -22,6 +22,23 @@ use crate::stats::TickStats;
 pub struct OwnedAction {
     pub values: ActionValues,
     pub gripper: Option<f64>,
+    /// The one declared part this action commands (`waddle_types::Step::part`,
+    /// `Action.part` on the wire), or `None` for the whole declared space.
+    /// A tagged action's `values` carry THAT part's width, and the parts it
+    /// does not address carry no command at all — "move this part, hold the
+    /// rest" (docs/FSM.md §4). Whoever dispatches the action needs the tag to
+    /// address it, and whoever records it needs the tag or the row claims the
+    /// whole robot moved.
+    ///
+    /// `Arc<str>`, never an owned `String`: a claimed tick clones the action
+    /// it dispatches twice on the customer's real-time thread — into the
+    /// record ring and into the blend anchor, with the third copy moved into
+    /// the returned `GateOutput` — and a blended tick clones a third time
+    /// (`blend_step`'s own output). An owned string would be a malloc/free
+    /// pair per clone there. The tag is minted once per wire action at the
+    /// intake; every clone here is an atomic increment
+    /// (`tests/alloc_free.rs` proves it).
+    pub part: Option<Arc<str>>,
 }
 
 /// What the gate returned for one tick.
@@ -210,6 +227,10 @@ impl<C: Clock> Gate<C> {
                 let action = OwnedAction {
                     values: ActionValues::from_slice(values),
                     gripper,
+                    // The caller's own action always commands the whole
+                    // declared space; only an intervention action addresses
+                    // one part of it.
+                    part: None,
                 };
                 let provenance = ProvenanceTag::policy();
                 self.record(
@@ -298,9 +319,13 @@ impl<C: Clock> Gate<C> {
                                     }
                                 }
                                 None => {
-                                    // Defense in depth: a dims mismatch here
-                                    // means intake validation was bypassed.
-                                    // Never truncate — hold instead.
+                                    // A part-scoped action is not an endpoint
+                                    // for a whole-robot cross-fade (FSM.md
+                                    // §5), and a dims mismatch here means
+                                    // intake validation was bypassed. Never
+                                    // truncate — hold instead. The action has
+                                    // already been popped: it is dropped, not
+                                    // deferred.
                                     self.record(
                                         stamp,
                                         GateDecision::Hold,
@@ -355,6 +380,22 @@ mod tests {
             provenance: Provenance::Teleop,
             actor: None,
             bypass_approval: false,
+        }
+    }
+
+    /// An agent-chunk arrival addressing one declared part of a bimanual
+    /// composite: 7 values wide (the part's width), not 14 (the robot's).
+    fn part_scoped(seq: u64, received: MonoNs, part: &str, value: f64) -> TimedAction {
+        TimedAction {
+            channel: crate::jitter::StreamChannel::AgentChunk,
+            seq,
+            received,
+            action: OwnedAction {
+                values: smallvec![value; 7],
+                gripper: None,
+                part: Some(Arc::from(part)),
+            },
+            chunk: None,
         }
     }
 
@@ -434,6 +475,7 @@ mod tests {
             action: OwnedAction {
                 values: smallvec![9.0],
                 gripper: None,
+                part: None,
             },
             chunk: None,
         })
@@ -473,6 +515,7 @@ mod tests {
             action: OwnedAction {
                 values: smallvec![10.0],
                 gripper: None,
+                part: None,
             },
             chunk: None,
         })
@@ -486,6 +529,96 @@ mod tests {
                 assert!((action.values[0] - 5.0).abs() < 1e-6);
             }
             other => panic!("expected blend, got {other:?}"),
+        }
+    }
+
+    /// An intervention action that addresses one declared part leaves the
+    /// gate tagged with it — on the return (the caller has to know which part
+    /// to write) and on the record (a row without the tag claims the whole
+    /// robot moved).
+    #[test]
+    fn part_scoped_substitute_carries_the_tag() {
+        let (mut gate, shared, mut tx, mut records, clock) = setup();
+        shared.store_plan(GatePlan {
+            mode: PlanMode::Claimed {
+                provenance: teleop_tag(),
+                blend: None,
+            },
+            since: MonoNs(0),
+        });
+        tx.push(part_scoped(1, MonoNs(1_000), "left", 9.0)).unwrap();
+
+        clock.advance(1_000);
+        match gate.gate(&[0.0; 14], None, None) {
+            GateOutput::Substitute { action, .. } => {
+                assert_eq!(action.part.as_deref(), Some("left"));
+                assert_eq!(
+                    action.values.len(),
+                    7,
+                    "a part-scoped action carries the part's width, not the robot's"
+                );
+            }
+            other => panic!("expected substitute, got {other:?}"),
+        }
+        let rec = records.pop().unwrap();
+        assert_eq!(rec.decision, GateDecision::Substitute);
+        assert_eq!(
+            rec.action.unwrap().part.as_deref(),
+            Some("left"),
+            "the recorded row must name the part it commanded"
+        );
+    }
+
+    /// FSM.md §5: a part-scoped action does not cross-fade in v0. The window
+    /// holds, and it holds by DISCARDING what comes due — the action is not
+    /// re-delivered when the window closes; the stream's next action is.
+    #[test]
+    fn part_scoped_target_holds_during_a_blend_window() {
+        let (mut gate, shared, mut tx, mut records, clock) = setup();
+        // The last commanded whole-robot point a cross-fade would fade from.
+        clock.advance(1_000);
+        assert!(matches!(
+            gate.gate(&[0.5; 14], None, None),
+            GateOutput::Pass { .. }
+        ));
+        while records.pop().is_ok() {}
+
+        shared.store_plan(GatePlan {
+            mode: PlanMode::Claimed {
+                provenance: teleop_tag(),
+                blend: Some(BlendSchedule {
+                    start: MonoNs(1_000),
+                    blend_ns: 1_000,
+                    interp: Interp::Linear,
+                }),
+            },
+            since: MonoNs(1_000),
+        });
+        tx.push(part_scoped(1, MonoNs(1_000), "left", 9.0)).unwrap();
+        clock.set(MonoNs(1_500)); // halfway through the window
+        assert!(
+            matches!(gate.gate(&[0.5; 14], None, None), GateOutput::Hold),
+            "a 7-wide part action is not an endpoint for a 14-wide cross-fade"
+        );
+        assert_eq!(records.pop().unwrap().decision, GateDecision::Hold);
+
+        // Past the window with nothing new on the stream: still a hold — the
+        // dropped action is gone, not queued behind the cross-fade.
+        clock.set(MonoNs(3_000));
+        assert!(matches!(
+            gate.gate(&[0.5; 14], None, None),
+            GateOutput::Hold
+        ));
+
+        // The stream's next action substitutes normally, part-tagged.
+        tx.push(part_scoped(2, MonoNs(3_000), "left", 9.5)).unwrap();
+        clock.advance(1_000);
+        match gate.gate(&[0.5; 14], None, None) {
+            GateOutput::Substitute { action, .. } => {
+                assert_eq!(action.part.as_deref(), Some("left"));
+                assert!((action.values[0] - 9.5).abs() < 1e-12);
+            }
+            other => panic!("expected substitute once the window closed, got {other:?}"),
         }
     }
 

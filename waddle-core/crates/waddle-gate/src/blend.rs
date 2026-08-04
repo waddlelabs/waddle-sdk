@@ -62,6 +62,9 @@ pub fn blend_step(
             (_, b @ Some(_)) => b,
             (a, None) => a,
         },
+        // `from` is only the anchor: what leaves the gate commands what
+        // `to` commands.
+        part: to.part.clone(),
     })
 }
 
@@ -75,6 +78,7 @@ mod tests {
         OwnedAction {
             values: SmallVec::from_slice(vals),
             gripper: None,
+            part: None,
         }
     }
 
@@ -154,10 +158,12 @@ mod tests {
         let from = OwnedAction {
             values: SmallVec::from_slice(&[0.0, 0.0, 0.0]),
             gripper: Some(0.0),
+            part: None,
         };
         let to = OwnedAction {
             values: SmallVec::new(),
             gripper: Some(0.04),
+            part: None,
         };
         let mid = blend_step(&from, &to, 0.5, Interp::Linear)
             .expect("gripper-only is not a dims mismatch");

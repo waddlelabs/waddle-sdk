@@ -339,6 +339,7 @@ mod tests {
                 #[allow(clippy::cast_precision_loss)]
                 values: smallvec![seq as f64],
                 gripper: None,
+                part: None,
             },
             chunk: None,
         }
@@ -361,6 +362,7 @@ mod tests {
             action: OwnedAction {
                 values: smallvec![value],
                 gripper: None,
+                part: None,
             },
             chunk: Some(ChunkMeta {
                 chunk_seq,
