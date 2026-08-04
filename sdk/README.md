@@ -30,6 +30,17 @@ not send"**: Pass returns your exact object, Substitute/Blend a fresh
 float64 ndarray, Noop and Hold return `None`. Exiting the `with` block
 before a terminal outcome terminates the episode `abort` — never success.
 
+A robot that declares named parts (`waddle.Composite` — a bimanual cell,
+say) can be intervened on ONE part at a time, so on such a declaration
+Substitute/Blend comes back **keyed by part** instead: `{"right": ndarray}`
+for a command addressing the right arm — the parts not in the dict are
+commanded nothing, "move this part, hold the rest" — and every declared
+part, sliced by the declared layout, for a whole-robot one.
+`ep.last_gate.part` names the addressed part (`None` = the whole robot),
+and a dispatched chunk's step values follow the same rule. Report state
+back the same way: `session.report_proprio(part="right",
+joint_pos=[...])`. Declarations without parts are untouched.
+
 Works fully offline: with `recording_dir` set, every episode lands as a
 sidecar JSON + MCAP (`/waddle/actions`, `/waddle/observations`) plus a
 `manifest.jsonl`, no control plane required.
@@ -173,13 +184,23 @@ Concretely, in this package:
   Python refuses early only when there is nobody to ask. The only other
   decision made here is *when to reattach and run Python's signal
   handlers*.
+- **Part-keyed payloads** (`Composite` sessions: dict-by-part `gate()`
+  returns and `Chunk` step values, `report_proprio(part=)`): the layout is
+  read off the customer's own declaration — each part's name and width, in
+  declaration order — and applied as arithmetic to a row the core already
+  decided. Which part an action addresses is the core's answer
+  (`Step.part` / `OwnedAction.part`, honored only under a negotiated
+  `waddle.v0.parts`); Python never decides it, never validates a part name
+  (the core refuses an undeclared one), and must never grow an `if` about
+  which part may command what — that is authority, and v0's lease is
+  whole-robot single-writer.
 - Review heuristic: descriptors may validate *shape* ("must declare"),
   never *behavior*.
 
 ## Private test hooks
 
-`waddle._testing` (`engage`/`release`/`push_teleop`/`reset_window_engage`/
-`reset_window_complete`/`mark_done`/`frames`) requires
+`waddle._testing` (`engage`/`release`/`push_teleop`/`push_chunk`/
+`reset_window_engage`/`reset_window_complete`/`mark_done`/`frames`) requires
 `waddle.init(_testing=True)`, which wires an in-process loopback media
 plane. Private and unstable — it exists so the intervention, remote-reset-
 window and agent-invited paths are testable with no real plane at all. Each
