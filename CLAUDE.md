@@ -200,11 +200,14 @@ top-level dirs; they are not built yet.
   mean a new package (`waddle.v1`), never in-place edits — see
   `waddle-protocol/docs/VERSIONING.md`.
 - **Conformance fixtures pin behavior.** Golden fixtures are append-only; changing an
-  existing golden IS a breaking change. New FSM/gate behavior requires (a) a guard-table
-  row in `docs/FSM.md`, (b) at least one asserting scenario in `fixtures/behaviors/`,
-  (c) green `waddle-conformance` run. The scenario JSON schema is
-  `waddle-protocol/conformance/scenario-format.md`; `waddle-conformance` implements
-  exactly that schema — if they drift, the .md wins and the runner is wrong.
+  existing golden IS a breaking change. New FSM/gate behavior requires (a) normative
+  text in `docs/FSM.md` — a guard-table row when a transition or guard moves, the
+  governing section's prose when none does (intake validation, dispatch shape, and the
+  blend/gripper/part contracts of §4-§5 are prose, not rows) — (b) at least one
+  asserting scenario in `fixtures/behaviors/`, (c) green `waddle-conformance` run.
+  The scenario JSON schema is `waddle-protocol/conformance/scenario-format.md`;
+  `waddle-conformance` implements exactly that schema — if they drift, the .md wins
+  and the runner is wrong.
 - **Crate layering.** `waddle-types`/`-fsm`/`-gate`/`-codecs` must stay free of tokio,
   threads, I/O, clocks, and randomness. Only `waddle-ingest` reads OS clocks. Threads
   are owned by `waddle-runtime` (plus the thread harnesses in waddle-tripwire, the
@@ -231,7 +234,10 @@ top-level dirs; they are not built yet.
   that tag**: its variable-length fields (`Provenance::Custom`'s name, the
   `ActorRef`) are `Arc`-shared and minted once per claim, off that thread. Adding an
   owned `String` to it costs a malloc pair per field per tick and the featureless
-  `alloc_free` proof is what catches it.
+  `alloc_free` proof is what catches it. The same rule binds the action the gate
+  dispatches: a claimed tick clones `OwnedAction` twice (record ring, blend anchor;
+  three times when it blends), so its part tag is an `Arc<str>` minted once per wire
+  action at the intake — nothing owned belongs on that struct either.
 - **The control plane carries no bandwidth.** Media rides the media plane; the local
   recorder keeps the full-rate archive. There is exactly ONE declared exception —
   `FrameStill` observations behind `waddle.v0.obs.stills`, bounded by the camera's
