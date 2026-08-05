@@ -528,6 +528,30 @@ def test_a_finished_session_leaves_no_reader_holding_its_arms(terminal, tmp_path
     )
 
 
+def test_a_session_told_not_to_take_the_terminal_offers_no_gesture(terminal, tmp_path):
+    """`console=False` is for a program whose stdin belongs to something else
+    — a REPL, a supervising harness, another library reading it — and it means
+    no reader is started even though a terminal is right there.
+
+    The trap this pins is the terminal being the wrong question: a foreground
+    TTY exists here and nothing is reading it, so the hold must not send a
+    site operator to type a word nothing will receive."""
+    lines: list[str] = []
+    rig = _live_rig([], report=lines.append)
+
+    with rig.session("live-no-console", recording_dir=tmp_path, console=False) as s:
+        assert s.console is None
+        watchdog = _ParkWatchdog(s.park)
+    watchdog.stop()
+
+    assert watchdog.held.is_set(), "live arms were closed without a hold"
+    assert any("STILL HOLDING" in line for line in lines)
+    assert not any(f"type `{base.PARK_WORD}`" in line for line in lines), (
+        "a gesture was offered at a terminal this session is not reading"
+    )
+    assert any("signalled" in line for line in lines)
+
+
 def test_a_session_that_cannot_open_closes_the_arms_it_opened(tmp_path):
     """`__enter__` opened the hardware; if the session then refuses to build,
     a context manager whose `__enter__` raises never gets an `__exit__`, so

@@ -585,6 +585,66 @@ def test_a_finished_mission_on_live_units_says_what_closing_costs():
     assert park.released is True
 
 
+def test_a_finished_mission_offers_the_gesture_only_when_something_reads_it(
+    monkeypatch,
+):
+    """"Is there a terminal" is not the question — "is anyone reading it" is.
+
+    A program whose stdin belongs to something else (`rig.session(...,
+    console=False)`, a REPL, a harness), or whose reader has already reached
+    end-of-input, is standing at a terminal with nobody listening. Naming the
+    `parked` gesture there sends a site operator to type a word nothing will
+    receive, at the moment this layer calls the one ending nobody is standing
+    ready for."""
+    monkeypatch.setattr(base, "console_is_at_the_machine", lambda: True)
+    lines: list[str] = []
+    park = base.ParkGate()
+    arms = {"toy": _arm(_LiveLikeDriver())}
+
+    def operator() -> None:
+        if park.wait_holding(timeout=PATIENCE_S):
+            park.confirm()
+
+    thread = threading.Thread(target=operator, name="pytest-site-operator")
+    thread.start()
+    try:
+        base.hold_until_parked(arms, park, report=lines.append)
+    finally:
+        thread.join(PATIENCE_S)
+
+    assert any("STILL HOLDING" in line for line in lines)
+    assert not any(f"type `{base.PARK_WORD}`" in line for line in lines), (
+        "a gesture was offered with nothing reading the console for it"
+    )
+    assert any("signalled" in line for line in lines)
+
+
+def test_a_finished_mission_asks_for_the_gesture_a_reader_can_take(terminal):
+    """The other half, end to end: with a reader at the terminal the hold
+    names the gesture, and the word typed there is what ends it."""
+    lines: list[str] = []
+    park = base.ParkGate()
+    arms = {"toy": _arm(_LiveLikeDriver())}
+    console = base.start_console_recovery(arms, park, report=lines.append)
+    assert console is not None
+
+    def operator() -> None:
+        if park.wait_holding(timeout=PATIENCE_S):
+            terminal.type(f"{base.PARK_WORD}\n")
+
+    thread = threading.Thread(target=operator, name="pytest-site-operator")
+    thread.start()
+    try:
+        base.hold_until_parked(arms, park, console=console, report=lines.append)
+    finally:
+        thread.join(PATIENCE_S)
+        console.retire()
+
+    assert any(f"type `{base.PARK_WORD}`" in line for line in lines)
+    assert park.released is True
+    assert "parked" in lines[-1]
+
+
 def test_a_pipe_is_not_a_person(monkeypatch):
     """The predicate itself, asked of a stdin this test owns. Everything below
     controls the ANSWER instead of the environment, so this is the one place

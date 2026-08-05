@@ -1187,6 +1187,7 @@ def hold_until_parked(
     arms: Mapping[str, Arm],
     park: ParkGate,
     *,
+    console: ConsoleRecovery | None = None,
     report: Callable[[str], None] = status,
 ) -> None:
     """A finished mission on live units holds them until a human says they are
@@ -1208,9 +1209,17 @@ def hold_until_parked(
     hold their pose, the plane keeps seeing them, and nothing is left
     half-alive while a human walks to the bench.
 
-    With no terminal to be told at, this holds until the program is signalled,
-    which is the honest fallback: the alternative is dropping torque on a
-    schedule nobody is watching."""
+    ``console`` is the reader this program started
+    (:func:`start_console_recovery`), and it decides which ending is OFFERED.
+    The question is not "is there a terminal" but "is anybody reading it":
+    a program whose stdin belongs to something else (`rig.session(...,
+    console=False)`, a REPL, a supervising harness) or whose reader has
+    already reached end-of-input is standing at a terminal with nobody
+    listening, and sending a site operator to type a word nothing will
+    receive is worse than telling them the truth at the one ending nobody is
+    standing ready for. With no listener this holds until the program is
+    signalled, which is the honest fallback: the alternative is dropping
+    torque on a schedule nobody is watching."""
     if not closing_drops_torque(arms):
         return
     park.begin()
@@ -1220,16 +1229,16 @@ def hold_until_parked(
         "motors' own watchdog then cuts ALL torque, gravity compensation "
         "included: they sag from where they are now."
     )
-    if console_is_at_the_machine():
+    if console is not None and console.listening:
         report(
             f"park or support the machine, then type `{PARK_WORD}` here to shut "
             "down (Ctrl-C does the same, once it is safe)"
         )
     else:
         report(
-            "this program has no terminal to be told at (stdin is not a foreground "
-            "tty), so it holds here until it is signalled: park or support the "
-            "machine, THEN stop it"
+            "nothing is reading this program's console, so no typed gesture can "
+            "reach it: it holds here until it is signalled — park or support the "
+            "machine, THEN stop it (Ctrl-C)"
         )
     try:
         park.wait()
@@ -1581,7 +1590,17 @@ class Rig:
         Every keyword that is not this rig's own goes straight to
         `waddle.init` and means exactly what it means there; ``send``
         REPLACES the shipped envelope (see :func:`control`), and
-        ``pre_reset`` defaults to this rig's own scene reset."""
+        ``pre_reset`` defaults to this rig's own scene reset.
+
+        ``console`` (this rig's own, and the last one that is) starts the
+        console recovery when stdin is a foreground terminal: the ONE path
+        that clears an e-stop latch, and the gesture that releases the hold a
+        finished mission takes on live hardware. Pass ``False`` when this
+        program's stdin belongs to something else — a REPL, a supervising
+        harness, another library reading it — and this session must not take
+        it. Nothing then clears a latch but supporting the machine and
+        restarting, and the hold at the end says exactly that instead of
+        naming a gesture nothing would receive."""
         return RigSession(
             self,
             project,
@@ -1753,7 +1772,9 @@ class RigSession:
             # the hold is for. It runs BEFORE the pump stops, so the parts
             # keep reporting for as long as it lasts.
             if not interrupted:
-                hold_until_parked(self.arms, self.park, report=self._report)
+                hold_until_parked(
+                    self.arms, self.park, console=self.console, report=self._report
+                )
         finally:
             self._finish()
         return False
