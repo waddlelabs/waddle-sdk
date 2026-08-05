@@ -171,6 +171,7 @@ impl Reducer {
         mirror: Arc<Mirror>,
         plane: Option<Arc<ControlPlaneClient>>,
         recording_dir: Option<PathBuf>,
+        manifest: Option<ManifestWriter>,
         project: String,
         robot_description_digest: String,
         space: ActionSpace,
@@ -181,10 +182,10 @@ impl Reducer {
         proprio_rx: Receiver<ProprioReport>,
         dispatch_rx: Receiver<DispatchedAction>,
     ) -> Self {
+        // The manifest writer is opened by `SessionBuilder::build`, which is
+        // where a recording directory that cannot be written into becomes a
+        // build error instead of an episode that quietly lands nowhere.
         let fsm = SessionFsm::new(&cfg);
-        let manifest = recording_dir
-            .as_ref()
-            .and_then(|d| ManifestWriter::open(d).ok());
         Self {
             cfg,
             fsm,
@@ -1000,6 +1001,7 @@ mod tests {
             Mirror::new(),
             None,
             Some(dir.path().to_path_buf()),
+            ManifestWriter::open(dir.path()).ok(),
             "tail-project".to_owned(),
             "digest".to_owned(),
             robot.action_space,

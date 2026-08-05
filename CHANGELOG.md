@@ -1605,6 +1605,22 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   in the episode MCAP; callers no longer see the ring.
 
 ### Fixed
+- **A recording directory that does not exist yet no longer costs the entire
+  archive** (`waddle-runtime`, and every binding above it): every file the
+  recorder writes — the per-episode sidecar, the per-episode MCAP, the
+  appended `manifest.jsonl` — is created INSIDE `recording_dir`, and each of
+  those opens was fallible-and-swallowed. So a program that passed
+  `recording_dir="recordings"` from a working directory where no such
+  directory existed opened a session, streamed, drove episodes to their
+  terminal outcome and left NOTHING on disk, with no error on any path. The
+  shipped five-line example is exactly that program.
+  `SessionBuilder::build` now creates the directory (parents included) and
+  proves it writable by opening the manifest there; a path nothing can make a
+  writable directory at — an existing file, a read-only parent — is the new
+  `RuntimeError::RecordingDirUnusable`, naming the path. Same family as the
+  camera-encoding check next to it: a wiring mistake fails at build time
+  instead of silently at every episode. The local recorder holds the
+  full-rate archive, so it may not quietly hold nothing.
 - **A negotiated flag no longer outlives the connection that gave it**
   (`waddle-runtime`): `Status.parts_negotiated` and `Status.stills_negotiated`
   (and the plane pump's own `acks_negotiated`) say what the CURRENT connection

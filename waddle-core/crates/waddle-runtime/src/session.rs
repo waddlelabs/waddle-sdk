@@ -20,6 +20,7 @@ use waddle_gate::plan::GatePlan;
 use waddle_gate::record::GateRecord;
 use waddle_ingest::{LatestSlot, SessionClock};
 use waddle_media::MediaPlane;
+use waddle_sidecar::ManifestWriter;
 use waddle_tripwire::{
     Evaluator, ObsSnapshot, ShutdownToken, Tripwire, TripwireFire, TripwireSink,
 };
@@ -492,6 +493,35 @@ impl SessionBuilder {
         let robot_pb = self.robot.ok_or(RuntimeError::MissingRobot)?;
         let robot = RobotDescription::try_from(&robot_pb)?;
 
+        // The archive's directory, made ready before anything opens: created
+        // if it is missing (a caller who asks for local recording means it),
+        // then PROVED writable by opening the manifest every episode appends
+        // to. Both failures are one build error rather than a silent
+        // degradation, because everything the recorder writes — sidecar,
+        // MCAP, manifest — is a file inside this directory, so a directory
+        // that is not there takes the whole archive with it and nothing else
+        // about the session looks any different.
+        let manifest = match &self.recording_dir {
+            None => None,
+            Some(dir) => {
+                std::fs::create_dir_all(dir).map_err(|source| {
+                    RuntimeError::RecordingDirUnusable {
+                        path: dir.clone(),
+                        source,
+                    }
+                })?;
+                Some(
+                    ManifestWriter::open(dir).map_err(|e| RuntimeError::RecordingDirUnusable {
+                        path: dir.clone(),
+                        source: match e {
+                            waddle_sidecar::SidecarError::Io(io) => io,
+                            other => std::io::Error::other(other.to_string()),
+                        },
+                    })?,
+                )
+            }
+        };
+
         // Cameras: `declared_cameras` backs `publish_frame`'s
         // unknown-camera + declared-resolution checks regardless of what is
         // wired; `camera_uplinks` (built only for cameras a published frame
@@ -710,6 +740,7 @@ impl SessionBuilder {
             mirror.clone(),
             plane.clone(),
             self.recording_dir,
+            manifest,
             self.project.clone(),
             robot_digest(&robot_pb),
             robot.action_space.clone(),

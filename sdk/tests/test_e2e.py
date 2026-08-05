@@ -252,6 +252,40 @@ def test_missing_hold_verb_under_hold_first_raises_actionable_error(tmp_path):
     assert "choose a different handoff policy" in message
 
 
+def test_a_recording_directory_that_does_not_exist_yet_is_created(tmp_path):
+    """A program that names a recording directory gets one. Every file the
+    recorder writes — sidecar, MCAP, manifest — lives INSIDE that directory,
+    so a missing one used to take the whole archive with it while the session
+    opened clean, ran, and looked no different."""
+    recordings = tmp_path / "recordings" / "run-1"
+    assert not recordings.exists()
+
+    waddle.init("py-missing-dir", _robot(), _control(), recording_dir=recordings)
+    with waddle.rollout(task="keep this one") as ep:
+        episode_id = ep.id
+        ep.gate([0.1, 0.2, 0.3], [0.9, 0.8, 0.7])
+        ep.terminate("success", "recorded")
+    waddle.shutdown()
+
+    assert (recordings / f"{episode_id}.sidecar.json").exists()
+    assert (recordings / f"{episode_id}.mcap").exists()
+    assert (recordings / "manifest.jsonl").exists()
+
+
+def test_a_recording_dir_that_cannot_be_a_directory_refuses(tmp_path):
+    """The residue a `mkdir -p` cannot fix — here a path that is already a
+    file — fails `init` by name, rather than opening a session that records
+    nothing."""
+    occupied = tmp_path / "recordings"
+    occupied.write_text("not a directory")
+
+    with pytest.raises(RuntimeError) as exc_info:
+        waddle.init("py-bad-dir", _robot(), _control(), recording_dir=occupied)
+    message = str(exc_info.value)
+    assert "recording_dir" in message
+    assert "recordings" in message
+
+
 def test_nested_rollout_raises(tmp_path):
     waddle.init("py-nested", _robot(), _control())
     with waddle.rollout(task="outer") as ep:

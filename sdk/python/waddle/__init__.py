@@ -482,6 +482,15 @@ def init(
     fix — a supervision session that quietly ran unsupervised because a URL
     went nowhere is the exact failure this layer exists to prevent.
 
+    ``recording_dir`` is where the local archive lands — one sidecar and one
+    MCAP per episode, plus the appended ``manifest.jsonl``. A directory that
+    does not exist yet is CREATED, parents included: a program that names one
+    means it, and every file the recorder writes lives inside it, so a
+    missing directory would otherwise take the whole archive with it while
+    the session opened, ran, and looked no different. A path nothing can
+    make a writable directory at — an existing file, a read-only parent — is
+    a ``RuntimeError`` here, for the same reason.
+
     ``pre_reset``/``post_reset`` declare the session's default reset for
     each phase; ``None`` (the default for both) means no reset is declared
     for that phase at all — an episode with no post-reset declared behaves

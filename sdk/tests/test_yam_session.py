@@ -351,6 +351,29 @@ def test_an_exception_inside_the_body_still_finalizes_the_recording(tmp_path):
     assert waddle._session is None, "the session was left open by an unwinding exit"
 
 
+def test_the_recording_directory_a_program_names_is_the_one_it_gets(tmp_path):
+    """The shipped five-line program passes `recording_dir="recordings"` and
+    makes no directory: nothing in a program that short can. It gets one —
+    created where it asked for it — and the episode lands in it. Anything
+    less is the worst shape of failure this layer has: a session that opens,
+    reports, drives an episode, and leaves no archive at all."""
+    recordings = tmp_path / "recordings"
+    assert not recordings.exists()
+
+    rig = _bimanual()
+    with rig.session("yam-recordings", recording_dir=recordings):
+        with waddle.rollout(task="land in a directory nobody made") as ep:
+            episode_id = ep.id
+            ep.terminate("success")
+
+    assert (recordings / f"{episode_id}.mcap").exists()
+    assert (recordings / "manifest.jsonl").exists()
+    sidecar = json.loads((recordings / f"{episode_id}.sidecar.json").read_text())
+    assert sidecar["task"] == "land in a directory nobody made"
+    # Readable, i.e. a finalized archive rather than a file that merely exists.
+    _observations(recordings / f"{episode_id}.mcap")
+
+
 def test_a_finished_session_lets_the_next_one_open(tmp_path):
     """One session per process is the module's rule; the runner has to leave
     the process able to open another one, or a program that ran two missions
