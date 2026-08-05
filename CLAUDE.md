@@ -71,7 +71,20 @@ waddle-sdk/
                              #   `with` (a half-open rig closes what it
                              #   opened), and `__exit__` finalizes the
                              #   recording whatever the body did, so that is
-                             #   never a customer's `finally:` again
+                             #   never a customer's `finally:` again. The BAR
+                             #   that keeps base.py vendor-neutral is a test:
+                             #   tests/test_robots_base.py builds a whole toy
+                             #   vendor module (facts + SimDriver + factory,
+                             #   ~30 lines) and drives it end to end with
+                             #   nothing vendor-specific in base to help it,
+                             #   and those same lines are the template
+                             #   sdk/README.md's "Robot modules" section
+                             #   shows a customer — that section is where
+                             #   this subpackage is documented OUTWARD (the
+                             #   layering, the envelope-ownership doctrine,
+                             #   the posture table), and the root README
+                             #   carries the five-line quickstart and the
+                             #   I2RT install command
         yam.py, yam_data/    # the I2RT YAM: constants-with-provenance, and
                              #   the vendor's own MIT model (URDF text, no
                              #   meshes) shipped beside them so
@@ -92,8 +105,10 @@ waddle-sdk/
                              #   cannot be an extra (not on PyPI; direct refs
                              #   are rejected there) — it is the documented
                              #   `I2RT_INSTALL` command, BUILT from I2RT_PIN
-                             #   so the two cannot drift, imported lazily
-                             #   inside LiveDriver.__init__ so importing the
+                             #   so the two cannot drift (the root README
+                             #   quotes it verbatim and a test holds that
+                             #   copy to it), and imported lazily inside
+                             #   LiveDriver.__init__ so importing the
                              #   module never needs it. `yam.declaration()` is
                              #   public and byte-equal to what the factories
                              #   register (golden test vs the rig's own
@@ -113,7 +128,10 @@ waddle-sdk/
                              #   signature they still call keeps working.
                              #   toy_robot's background loop is the shipped
                              #   base.RobotPump: one loop, not a second copy
-    tests/                   # pytest: descriptors + e2e (incl. MCAP read-back)
+    tests/                   # pytest: descriptors + e2e (incl. MCAP read-back),
+                             #   the robots suites (base layer, YAM facts, YAM
+                             #   factories, rig session) and both examples run
+                             #   as the subprocess programs they are
 ```
 
 Future artifacts (`waddle-proxy`, `waddle-cpp`, `waddle_ros`) will live in new
@@ -202,6 +220,12 @@ top-level dirs; they are not built yet.
     carry `exclude = ["python/**/__pycache__/**"]`: `python-source` is the
     working tree, so without it a build after a test run ships that
     interpreter's bytecode and a build on a clean checkout does not.
+    Non-Python PACKAGE DATA under `python-source` (today
+    `waddle/robots/yam_data/`, ~5 KB of URDF text + licence + README) ships
+    with no pyproject edit at all, and the code reads it through
+    `importlib.resources` so a wheel, an editable install and a checkout all
+    work. Adding or moving such data is the one time to build a wheel and
+    list it — that it landed, and that no bytecode or mesh came with it.
   - A build without a feature REFUSES the matching `create_session` kwarg
     (`transport_url`/`transport_token`, `media_url`/`media_token`) rather
     than degrading to a silent offline session; the LiveKit refusal names the

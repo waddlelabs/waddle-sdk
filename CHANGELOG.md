@@ -12,6 +12,33 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 ## [Unreleased]
 
 ### Added
+- **docs (robot modules, where a customer actually looks)**: the root
+  `README.md` gains the five-line YAM quickstart and the vendor-package
+  install command it needs to drive metal — a documented `pip install` of a
+  pinned git reference, since I2RT's package is deliberately neither a
+  dependency of this SDK nor an extra of it, and quoted verbatim under a test
+  (`yam.I2RT_INSTALL` is BUILT from the pin so command and facts cannot
+  drift, and a README that writes it out by hand is that drift let back in
+  through the one copy no import can reach) — and `sdk/README.md` gains a
+  robot-modules section: the layering (every piece usable alone, with the
+  hand-wired equivalence that is a test rather than a promise), the
+  **envelope-ownership doctrine** (Waddle never provides the envelope; what
+  ships is a parameterized default over the owner's own numbers that rejects
+  and never clamps, and `send=` replaces it wholesale), the **posture table**
+  (`monitor` registers the owner's stop alone and wires no media plane;
+  `supervised` registers `send`/`hold`/`estop`; neither is an authority
+  decision), the note that `robots/` is owner-side code the hollow-frontend
+  checklist binds, and the **template for writing your own vendor module** —
+  a facts table, a driver admitted on its ten members rather than its
+  ancestry, and a factory, which is the same ~30 lines
+  `tests/test_robots_base.py` drives end to end so the template cannot rot
+  into a snippet nothing runs.
+  Publishing a customer-side robot module in the open is a deliberate product
+  decision, and these READMEs are where it is now said out loud rather than
+  only in a module docstring: what somebody needs in order to drive their own
+  arm through their own envelope belongs in their hands, and the supervision
+  side's in-cell material for keeping a fleet alive is a different artifact
+  that stays where it is.
 - **sdk (`examples/yam_bimanual.py`: the whole program, for a rig the SDK
   knows)**: two I2RT YAM arms supervised in five Waddle-facing lines — build
   the rig, open the session, ask Waddle to drive an episode — around a table
