@@ -75,11 +75,13 @@ waddle-sdk/
                              #   that keeps base.py vendor-neutral is a test:
                              #   tests/test_robots_base.py builds a whole toy
                              #   vendor module (facts + SimDriver + factory,
-                             #   ~30 lines) and drives it end to end with
-                             #   nothing vendor-specific in base to help it,
-                             #   and those same lines are the template
-                             #   sdk/README.md's "Robot modules" section
-                             #   shows a customer — that section is where
+                             #   ~50 lines) and drives it end to end with
+                             #   nothing vendor-specific in base to help it.
+                             #   Those exact lines (between the two --8<--
+                             #   markers) are also the template sdk/README.md
+                             #   publishes, and the copy is held to them by a
+                             #   test in the same file — edit the test, paste
+                             #   what it prints. sdk/README.md is where
                              #   this subpackage is documented OUTWARD (the
                              #   layering, the envelope-ownership doctrine,
                              #   the posture table), and the root README

@@ -6,12 +6,14 @@ VENDOR FACT lives here — the twin, the envelope seam, the e-stop latch's
 console recovery, the loop that reports proprioception — so a second vendor's
 module is its facts, its driver, and a factory, and nothing else.
 
-That claim is a test, not a comment: `toy_vendor.py`-in-a-docstring is at the
-bottom of this file. A ~30-line toy vendor (a facts dict, the shipped
+That claim is a test, not a comment: `toy_vendor.py`-between-two-markers is at
+the bottom of this file. A ~50-line toy vendor (a facts dict, the shipped
 `SimDriver`, one factory) is built through this layer and driven end to end
 against a real session — declaration, envelope, gate, proprio, recording —
 with no vendor-specific code in `base` to help it. If the base layer ever
-stops carrying all of the behaviour, that test is what fails.
+stops carrying all of the behaviour, that test is what fails. Those same
+lines are what `sdk/README.md` publishes as the template a customer copies,
+and one more test here holds that copy to this source.
 
 Every layer here is also usable ALONE, which several tests below pin
 directly: a driver of your own satisfies `Driver`; an `Arm` built without
@@ -26,6 +28,7 @@ import io
 import sys
 import threading
 import time
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -1037,12 +1040,31 @@ def test_an_unknown_posture_is_refused_by_name():
 # The second-vendor bar: a toy vendor module, through the same base layer
 # ---------------------------------------------------------------------------
 #
-# Everything below the line is what a NEW vendor module contains: a facts
-# table, a driver (the shipped twin here — a real one wraps a vendor SDK), and
-# a factory. It is the template a customer copies, and it is a test rather
-# than a docs snippet because the claim it makes — "the base layer carries all
-# of the behaviour" — is only true while it keeps passing.
+# Everything between the two markers below is what a NEW vendor module
+# contains: a facts table, a driver (the shipped twin here — a real one wraps
+# a vendor SDK), and a factory. It is the template a customer copies, and it
+# is a test rather than a docs snippet because the claim it makes — "the base
+# layer carries all of the behaviour" — is only true while it keeps passing.
+#
+# sdk/README.md publishes these lines as that template, and it publishes them
+# by copy, which is the one way the two can drift: a hand-edited snippet still
+# reads as tested long after the signatures it calls have moved. So the copy
+# is held to this source by `test_the_published_template_is_these_same_lines`
+# below. Edit here; the test names the block to paste.
 
+#: The marker pair delimiting the published block, composed at import so that
+#: this definition is not itself a marker.
+_MARKER = "# --8<-- %s of the published template --8<--"
+
+
+def published_template() -> str:
+    """The toy vendor module's own source, between the markers below."""
+    source = Path(__file__).read_text(encoding="utf-8")
+    body = source.split(_MARKER % "START")[1].split(_MARKER % "END")[0]
+    return body.strip("\n")
+
+
+# --8<-- START of the published template --8<--
 TOY_FACTS = {
     # The vendor's own numbers, with their provenance in the comment beside
     # them in a real module. A toy crane: two arm joints and a hand.
@@ -1078,7 +1100,7 @@ def toy_crane(*, posture: str = "supervised") -> base.Rig:
         chunking=waddle.Chunking(horizon=1, replan="immediate", interp="hold"),
     )
 
-    def build_arms() -> dict[str, base.Arm]:
+    def build_arms() -> dict[str, base.Arm]:      # the bus opens HERE
         return {
             "": base.Arm(
                 part="",
@@ -1101,7 +1123,35 @@ def toy_crane(*, posture: str = "supervised") -> base.Rig:
     )
 
 
-# --------------------------- end of the toy vendor -------------------------
+# --8<-- END of the published template --8<--
+
+
+def test_the_published_template_is_these_same_lines():
+    """`sdk/README.md` says its vendor-module block is this test rather than a
+    docs snippet. That is only true while the two texts are the same text.
+
+    A snippet nothing runs rots silently: `base.Arm`'s or `base.Rig`'s
+    signature moves, the test above is fixed with it, and the published block
+    keeps telling a customer to call something that no longer exists — while
+    still carrying the claim that it is tested. This is the drift the module
+    docstring's promise rests on, so it is checked the same way the vendor
+    install command is.
+
+    Only the block is pinned; the prose around it is prose, and the two import
+    lines the README puts above it are the reader's, not this file's.
+    """
+    readme = Path(__file__).resolve().parents[1] / "README.md"
+    assert readme.is_file(), f"{readme} — the SDK's own README"
+    template = published_template()
+    assert template in readme.read_text(encoding="utf-8"), (
+        "sdk/README.md's 'Write your own vendor module' block must be these "
+        "lines verbatim. Paste this in place of it:\n\n" + template
+    )
+
+
+# ---------------------------------------------------------------------------
+# ...and that toy vendor, driven end to end through the base layer
+# ---------------------------------------------------------------------------
 
 
 def _observations(mcap_path):

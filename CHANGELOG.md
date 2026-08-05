@@ -30,9 +30,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   decision), the note that `robots/` is owner-side code the hollow-frontend
   checklist binds, and the **template for writing your own vendor module** —
   a facts table, a driver admitted on its ten members rather than its
-  ancestry, and a factory, which is the same ~30 lines
-  `tests/test_robots_base.py` drives end to end so the template cannot rot
-  into a snippet nothing runs.
+  ancestry, and a factory, published as the very lines
+  `tests/test_robots_base.py` drives end to end and held to that file's own
+  source by a test, so the template cannot rot into a snippet nothing runs
+  while still claiming to be tested.
   Publishing a customer-side robot module in the open is a deliberate product
   decision, and these READMEs are where it is now said out loud rather than
   only in a module docstring: what somebody needs in order to drive their own
@@ -172,11 +173,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     registered robot JSON and the same everything else `create_session` is
     handed. Sugar that cannot be reproduced by hand is a wall.
   - **The second-vendor bar is a test**: `sdk/tests/test_robots_base.py` builds a
-    toy vendor module (facts table + the shipped twin + one factory, ~30 lines),
+    toy vendor module (facts table + the shipped twin + one factory, ~50 lines),
     composes it by hand out of these pieces, and drives it end to end through a
     real session — declaration, envelope, gate, pump, MCAP read-back — with
     nothing vendor-specific in `base` to help it. It doubles as the template a
-    customer copies.
+    customer copies: `sdk/README.md` publishes those exact lines, and a test
+    holds the published copy to them.
   - No packaging change: no new dependency (numpy was already required), no
     extras key, no `pyproject.toml` edit — maturin sweeps the subpackage with
     `python-source`.

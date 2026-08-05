@@ -187,59 +187,87 @@ reads it in ONE direction: `"sim"` alone selects the harmless branch of the
 two questions it asks (does closing this drop all torque, is homing it a
 motion nobody is watching), and every other word is treated as metal.
 
-The rest is a facts table and a factory:
+The rest is a facts table, a driver and a factory. These are the exact lines
+`tests/test_robots_base.py` builds a whole toy vendor module out of and drives
+end to end through a real session — declaration, envelope, gate, pump, MCAP
+read-back — with nothing vendor-specific in `base` to help it:
 
 ```python
 import waddle
 from waddle.robots import base
 
-FACTS = {                                  # your vendor's numbers, each with
-    "joints": ("boom", "stick", "grip"),   # its source in the comment beside it
+TOY_FACTS = {
+    # The vendor's own numbers, with their provenance in the comment beside
+    # them in a real module. A toy crane: two arm joints and a hand.
+    "joints": ("boom", "stick", "grip"),
     "limits": ((-1.0, 1.0), (-1.5, 1.5), (0.0, 1.0)),
-    "step_caps": (0.10, 0.10, 0.25),       # largest jump one command may make
+    "step_caps": (0.10, 0.10, 0.25),
+    "max_effort_nm": 4.0,
     "rate_hz": 20.0,
     "home": (0.0, 0.0, 1.0),
 }
 
-def crane(*, sim: bool = False, posture: str = "supervised") -> base.Rig:
+
+def toy_driver() -> base.SimDriver:
+    return base.SimDriver(
+        TOY_FACTS["home"],
+        lower=[lo for lo, _ in TOY_FACTS["limits"]],
+        upper=[hi for _, hi in TOY_FACTS["limits"]],
+        step_caps=TOY_FACTS["step_caps"],
+        rate_hz=TOY_FACTS["rate_hz"],
+    )
+
+
+def toy_crane(*, posture: str = "supervised") -> base.Rig:
+    """The whole of a second vendor module: declare the robot, say how to open
+    it, hand back a rig."""
     space = waddle.JointSpace(
         joints=[
-            waddle.Joint(name=n, min_position=lo, max_position=hi)
-            for n, (lo, hi) in zip(FACTS["joints"], FACTS["limits"])
+            waddle.Joint(name=name, min_position=lo, max_position=hi,
+                         max_effort=TOY_FACTS["max_effort_nm"])
+            for name, (lo, hi) in zip(TOY_FACTS["joints"], TOY_FACTS["limits"])
         ],
-        rate_hz=FACTS["rate_hz"],
+        rate_hz=TOY_FACTS["rate_hz"],
         chunking=waddle.Chunking(horizon=1, replan="immediate", interp="hold"),
     )
 
     def build_arms() -> dict[str, base.Arm]:      # the bus opens HERE
-        driver = base.SimDriver(
-            FACTS["home"],
-            lower=[lo for lo, _ in FACTS["limits"]],
-            upper=[hi for _, hi in FACTS["limits"]],
-            step_caps=FACTS["step_caps"],
-            rate_hz=FACTS["rate_hz"],
-        ) if sim else MyVendorDriver(...)         # your ten members
         return {
             "": base.Arm(
-                part="", driver=driver,
-                joint_names=FACTS["joints"], joint_limits=FACTS["limits"],
-                step_caps=FACTS["step_caps"], rate_hz=FACTS["rate_hz"],
-                home_values=FACTS["home"],
+                part="",
+                driver=toy_driver(),
+                joint_names=TOY_FACTS["joints"],
+                joint_limits=TOY_FACTS["limits"],
+                step_caps=TOY_FACTS["step_caps"],
+                rate_hz=TOY_FACTS["rate_hz"],
+                home_values=TOY_FACTS["home"],
             )
         }
 
     return base.Rig(
-        declaration=waddle.Robot(name="crane", action_space=space),
-        build_arms=build_arms, rate_hz=FACTS["rate_hz"], posture=posture,
+        declaration=waddle.Robot(
+            name="toy-crane", robot_id="toy-crane-01", action_space=space
+        ),
+        build_arms=build_arms,
+        rate_hz=TOY_FACTS["rate_hz"],
+        posture=posture,
     )
 ```
 
 That is the whole of a second vendor module, and it is a **test** rather than
-a docs snippet: `tests/test_robots_base.py` carries this same toy vendor and
-drives it end to end through a real session — declaration, envelope, gate,
-pump, MCAP read-back — with nothing vendor-specific in `base` to help it. The
-claim "the base layer carries all of the behaviour" is only true while that
-keeps passing.
+a docs snippet in the only sense that survives a year: the claim it makes —
+"the base layer carries all of the behaviour" — is true exactly while that
+test passes, and the block above is not a retelling of it but the same text,
+held to the test's own source by
+`test_the_published_template_is_these_same_lines`. (The two imports are yours;
+every line below them is that file's.)
+
+`toy_driver()` returns the shipped twin because a test has no bus to open.
+Yours returns your own driver there — any object with the ten members above —
+and a module that ships both takes `sim: bool` and branches, as
+`waddle.robots.yam` does. Either way it is constructed inside `build_arms` and
+never at import, so the factory call opens no bus and starts no thread: a
+program may build a rig and then decide not to run it.
 
 For more than one part, declare a `waddle.Composite` and return one `Arm` per
 part name (declaration order IS the concatenated action layout). Add `fk=` to
