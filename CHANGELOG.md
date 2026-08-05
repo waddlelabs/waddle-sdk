@@ -12,6 +12,17 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 ## [Unreleased]
 
 ### Added
+- **sdk (`examples/yam_bimanual.py`: the whole program, for a rig the SDK
+  knows)**: two I2RT YAM arms supervised in five Waddle-facing lines — build
+  the rig, open the session, ask Waddle to drive an episode — around a table
+  of the site numbers that have no defaults (the workspace box, the
+  bench-measured gripper motor radians, the cross-arm mounting, each arm's CAN
+  interface), each carrying what re-measuring it is for. It is the counterpart
+  to `toy_robot.py` rather than a replacement: that file writes the same
+  session out by hand, and this one is what a robot module removes. Tested as
+  the program it is (a subprocess with nothing configured): the factory still
+  takes those arguments, and building a rig — live or sim — still opens no bus
+  and starts no thread.
 - **sdk (`waddle.robots.base`: the vendor-neutral half of a robot module)**: a
   new opt-in subpackage — `import waddle` is unchanged and imports none of it —
   carrying everything a program that drives a real robot writes around its

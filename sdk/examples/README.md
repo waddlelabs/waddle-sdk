@@ -1,5 +1,10 @@
 # Examples
 
+| file | what it is |
+|---|---|
+| [`toy_robot.py`](toy_robot.py) | a whole robot integration written out by hand: declaration, verbs, loop, camera, agent mode. Read this to learn what the SDK asks of a robot. |
+| [`yam_bimanual.py`](yam_bimanual.py) | the same session for a robot the SDK already knows — two I2RT YAM arms — in five Waddle-facing lines. Read this if you have that rig, or to see what a robot module removes. |
+
 ## `toy_robot.py` — a whole robot integration in one file
 
 A 6-dof arm with a parallel gripper and one camera, running the rollout
@@ -158,3 +163,46 @@ Everything the program wants you (or another process) to see is prefixed
 | 0 | finished the requested rollouts, or the agent run succeeded, or `Ctrl-C` |
 | 1 | agent mode: the run did not succeed (`abort`, `failure`, …) |
 | 2 | agent mode was asked for with no supervision plane configured |
+
+## `yam_bimanual.py` — the same session, for a robot the SDK knows
+
+Two I2RT YAM arms, declared as **one robot with two named parts**, so a
+teleoperator or a Waddle-hosted agent can address either arm by name:
+
+```python
+rig = yam.bimanual(workspace=WORKSPACE_M, gripper_limits=GRIPPER_LIMITS_MOTOR_RAD,
+                   cross_arm=CROSS_ARM, sim=True)
+with rig.session("waddle-yam-bimanual", transport=waddle.Grpc(url, token)) as session:
+    result = waddle.agent("move each arm to its taught home, one at a time")
+```
+
+That is the whole program. What `toy_robot.py` writes out by hand —
+the declaration, the `send`/`hold`/`estop` verbs, the owner's per-command
+envelope, the e-stop latch, the reporting loop, the scene reset, the hold a
+finished mission takes on live hardware — is what
+[`waddle.robots.yam`](../python/waddle/robots/yam.py) already carries for
+this rig. None of it is hidden: `rig.robot()`, `rig.arms()`,
+`rig.control(arms)`, `rig.pump(session, arms)` are the same pieces
+separately, and a program that wants its own loop or its own envelope takes
+them and calls `waddle.init` itself.
+
+Run it:
+
+```bash
+WADDLE_YAM_TRANSPORT=http://<plane-host>:<port> \
+WADDLE_YAM_TOKEN=<token> \
+  uv run python examples/yam_bimanual.py
+```
+
+It runs on kinematic twins by default (`WADDLE_YAM_SIM=0` plus
+`WADDLE_YAM_CAN_LEFT` / `_RIGHT` drives metal, and needs the vendor package
+the module's docstring names — it is not a dependency of this SDK and cannot
+be an extra of it). `sim` is explicit either way: nothing try-imports a
+vendor package to guess what you meant.
+
+**The numbers at the top of that file are the reference rig's, not yours.**
+The workspace box, the bench-measured `[closed, open]` gripper motor radians
+and the cross-arm mounting are site facts with no defaults — measure them and
+edit them. What a YAM *is* — joint limits, the chain, the tool frame, the
+hand's stroke — ships in the module and is gated against the vendor's own
+model, so it is the one half you do not have to type.
