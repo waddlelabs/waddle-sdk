@@ -40,7 +40,14 @@ depend on it.
 ```
 waddle-sdk/
   CLAUDE.md, CHANGELOG.md, README.md, LICENSE (Apache-2.0), .gitignore
+  .github/workflows/
+    release.yml              # the ONLY workflow: tag v* (or dispatch) builds
+                             #   both wheels and publishes them to PyPI
+                             #   (Trusted Publishing, no secrets). There is
+                             #   no test/CI workflow yet.
   docs/                      # repo-level customer-facing docs:
+    RELEASING.md             #   the release checklist + the one-time PyPI
+                             #   account setup (pending trusted publishers)
     lease-lifecycle.md       #   the session/lease lifecycle from the
                              #   customer's side (grant/claim/lease/envelope,
                              #   who holds the robot in every phase); cites
@@ -221,7 +228,8 @@ top-level dirs; they are not built yet.
       bump must edit it — otherwise the extra resolves to the previous
       release and `_native` silently falls back to a core with no LiveKit.
       `tests/test_features.py` fails until the pin equals
-      `waddle.__version__`. Build and publish the two wheels together.
+      `waddle.__version__`. Build and publish the two wheels together — in CI,
+      not by hand: see **Release** below and `docs/RELEASING.md`.
   - Build the wheels with `uv build --wheel -o dist .` and `uv build --wheel
     -o dist teleop` (`dist/` is git-ignored). Both `[tool.maturin]` blocks
     carry `exclude = ["python/**/__pycache__/**"]`: `python-source` is the
@@ -257,6 +265,33 @@ top-level dirs; they are not built yet.
   - The built extensions (`python/waddle/_core*.so`,
     `teleop/python/waddle_teleop/_core*.so`) and `dist/` are build artifacts,
     never checked in.
+
+## Release
+
+`docs/RELEASING.md` is the checklist (including the one-time PyPI account setup);
+`.github/workflows/release.yml` is the pipeline, and the only workflow this repo has —
+there is no test/CI workflow yet, so the local gates above are still the gate.
+
+- **The trigger is a `v*` tag** (`workflow_dispatch` is the manual escape hatch).
+  Pushing `main` builds nothing.
+- **Wheels only, never an sdist** — for either project. Both `[tool.maturin]
+  manifest-path`s point at `sdk/rust/Cargo.toml`, whose path deps into
+  `../../waddle-core/crates/*` escape both pyproject directories, so an sdist would be
+  an archive nobody can build. pyo3's `abi3-py310` makes that one wheel per platform,
+  good for 3.10+ (free-threaded interpreters are not abi3 and are not built).
+- **What each matrix leg covers**: `waddle-sdk` on linux x86_64 + aarch64 (manylinux
+  containers, both native so each leg imports the wheel it just built), macOS arm64 +
+  x86_64, Windows x64. `waddle-sdk-teleop` on **linux x86_64 alone** until libwebrtc's
+  wheel is audited elsewhere — so `pip install 'waddle-sdk[teleop]'` resolves there and
+  nowhere else, and that is the honest thing to say in release notes. Every wheel is
+  installed and imported before it is uploaded, asserting its `FEATURES`.
+- **A failing leg stops the release** and must not be given `continue-on-error`: the
+  documented fallback is to ship default-only by dropping `teleop-wheel` from the
+  publish job's `needs`, deliberately and in the notes.
+- **Publishing is Trusted Publishing (OIDC)**: `id-token: write` plus the `pypi`
+  environment, no token or secret in this repo. A version bump edits **two** files
+  (`sdk/rust/Cargo.toml` and the teleop pin in `sdk/pyproject.toml`); the publish job
+  re-checks every built wheel against the tag before anything reaches PyPI.
 
 ## Load-bearing invariants (violating these is a bug, not a style choice)
 

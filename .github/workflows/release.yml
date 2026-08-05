@@ -1,0 +1,249 @@
+# Release — build the two waddle-sdk wheels and publish them to PyPI.
+#
+# WHAT SHIPS (CLAUDE.md, "Two distributions from one source tree"):
+#
+#   waddle-sdk         sdk/pyproject.toml         module waddle._core
+#                      features: pyo3/extension-module + grpc      <- default install
+#   waddle-sdk-teleop  sdk/teleop/pyproject.toml  module waddle_teleop._core
+#                      the SAME rust/Cargo.toml + livekit          <- pip install 'waddle-sdk[teleop]'
+#
+# Each is one build of one manifest (sdk/rust/Cargo.toml), so the two can
+# never disagree on a version; `waddle._native` refuses a mismatched pair at
+# import, and `sdk/tests/test_features.py` holds the `teleop` extra's exact
+# pin to that version. Bumping a version means editing BOTH
+# sdk/rust/Cargo.toml and the pin in sdk/pyproject.toml — see docs/RELEASING.md.
+#
+# WHEELS ONLY — there is deliberately NO sdist, for either project. Both
+# `[tool.maturin] manifest-path`s point at sdk/rust/Cargo.toml, whose
+# dependencies are path deps into ../../waddle-core/crates/* : they escape
+# both pyproject directories, so any sdist maturin could produce would be an
+# archive that cannot build. (`sdk/rust` is its own cargo workspace on
+# purpose; see CLAUDE.md.) One abi3 wheel per platform covers every supported
+# interpreter instead — pyo3 is built `abi3-py310`, so a cp310-abi3 wheel
+# installs on 3.10+. Free-threaded builds (3.13t/3.14t) are NOT abi3 and are
+# not built here; add a separate `-i python3.Xt` matrix leg if they are ever
+# wanted.
+#
+# CREDENTIALS: none. Publishing is PyPI Trusted Publishing (OIDC) — the job
+# has `id-token: write` and the `pypi` environment, and there is no token or
+# secret anywhere in this file. The publisher must be registered on PyPI
+# first (as a *pending* publisher before the projects exist); the exact field
+# values are in docs/RELEASING.md.
+
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  # The manual escape hatch: re-run a release whose publish step failed, or
+  # cut one from a branch. It publishes exactly what it builds, so a dispatch
+  # over an already-published version fails loudly on PyPI (no
+  # `skip-existing`) rather than half-shipping.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------
+  # The default distribution: waddle-sdk (control transport, no LiveKit).
+  # ---------------------------------------------------------------------
+  wheels:
+    name: waddle-sdk (${{ matrix.platform.name }})
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      # A release must be all-or-nothing, and `publish` needs this whole job,
+      # so a failure already blocks the release. Let the other legs finish so
+      # one broken platform is diagnosed in one run instead of five.
+      fail-fast: false
+      matrix:
+        platform:
+          # Linux builds happen inside the manylinux container maturin-action
+          # selects from `manylinux: auto` (the whole GITHUB_WORKSPACE is
+          # mounted, which is what lets the path deps into ../waddle-core
+          # resolve). auditwheel runs there and stamps the compatible tag.
+          # Both legs are NATIVE — aarch64 on an arm runner rather than a
+          # cross container — so each one can import the wheel it just built.
+          - name: linux-x86_64
+            runner: ubuntu-24.04
+            target: x86_64
+          - name: linux-aarch64
+            runner: ubuntu-24.04-arm
+            target: aarch64
+          - name: macos-arm64
+            runner: macos-latest
+            target: aarch64
+          - name: macos-x86_64
+            runner: macos-15-intel
+            target: x86_64
+          - name: windows-x64
+            runner: windows-latest
+            target: x64
+    steps:
+      - uses: actions/checkout@v6
+
+      # 3.10 is the floor (`requires-python = ">=3.10"`) and the abi3 floor.
+      # On the host builds (macOS/Windows) it is also the interpreter maturin
+      # links the abi3 wheel against; on Linux the build interpreter comes
+      # from inside the container, and this one only runs the smoke below.
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+
+      - name: Build the wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          # `working-directory` is where maturin reads pyproject.toml, which
+          # is how the two distributions are selected — the default wheel is
+          # sdk/, the companion is sdk/teleop/. The Rust manifest comes from
+          # that file's `[tool.maturin] manifest-path`, so no -m flag here.
+          working-directory: sdk
+          target: ${{ matrix.platform.target }}
+          # Ignored off Linux; on Linux it picks the container + the tag.
+          manylinux: auto
+          args: --release --out dist
+          # The toolchain is pinned by sdk/rust-toolchain.toml (rustup honors
+          # it in the container too, since the workdir is under it) — do not
+          # restate the version here, it would be a second place to bump.
+          sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+      # Prove the artifact we are about to publish imports and is the build we
+      # think it is: the DEFAULT wheel carries the gRPC control transport and
+      # nothing else (LiveKit lives in the companion). `waddle._native.FEATURES`
+      # is the only feature detection this SDK permits.
+      - name: Smoke-test the wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install sdk/dist/*.whl
+          # Run from the repo root, never from sdk/: the source tree there
+          # would shadow the installed package.
+          python -c "import waddle, waddle._native as n; f=sorted(n.FEATURES); print('waddle', waddle.__version__, f); assert f == ['grpc'], f"
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: wheels-${{ matrix.platform.name }}
+          path: sdk/dist/*.whl
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------
+  # The companion distribution: waddle-sdk-teleop (adds the LiveKit media
+  # plane). linux x86_64 ONLY for now, deliberately.
+  #
+  # webrtc-sys' build script downloads a prebuilt libwebrtc (~690 MB
+  # extracted) — here that happens INSIDE the manylinux container, and the
+  # resulting extension is what auditwheel then has to accept. If auditwheel
+  # rejects it (a disallowed shared-library dependency, or a glibc symbol
+  # newer than the tag), THIS JOB FAILS AND THE RELEASE STOPS. That is
+  # intentional: do NOT add `continue-on-error` — a publish that silently
+  # drops half of what `pip install 'waddle-sdk[teleop]'` resolves to is
+  # worse than no publish. The documented fallback is to ship default-only:
+  # drop `teleop-wheel` from the `publish` job's `needs` (and say so in the
+  # release notes, since the extra then resolves to the previous release, or
+  # to nothing at all on the first one).
+  #
+  # manylinux_2_28 rather than the default wheel's `auto` (2014): libwebrtc's
+  # prebuilt binaries want a modern C++ toolchain, and the 2_28 image has
+  # one. The cost is a higher glibc floor for the teleop extra only
+  # (glibc >= 2.28: Debian 10, Ubuntu 18.10+, RHEL 8+). If the C++ side still
+  # comes up short, `before-script-linux` is where to install what it needs.
+  # ---------------------------------------------------------------------
+  teleop-wheel:
+    name: waddle-sdk-teleop (linux-x86_64)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+
+      - name: Build the wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: sdk/teleop
+          target: x86_64
+          manylinux: "2_28"
+          args: --release --out dist
+          # No sccache: the expensive part is a one-shot libwebrtc download
+          # and link, which it cannot cache anyway.
+
+      # The companion has no Python surface of its own, so the smoke goes
+      # straight at the core: importing it is what proves the libwebrtc
+      # linkage actually resolves at runtime, which is the whole risk in this
+      # job. FEATURES must be the default build's strict superset.
+      - name: Smoke-test the wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install sdk/teleop/dist/*.whl
+          python -c "import waddle_teleop._core as c; f=sorted(c.FEATURES); print('waddle_teleop', c.__version__, f); assert f == ['grpc', 'livekit'], f"
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: wheels-teleop-linux-x86_64
+          path: sdk/teleop/dist/*.whl
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------
+  # Publish both distributions, together, from one OIDC identity.
+  # ---------------------------------------------------------------------
+  publish:
+    name: publish to PyPI
+    needs: [wheels, teleop-wheel]
+    runs-on: ubuntu-24.04
+    # Named in the trusted-publisher config on PyPI; also where a manual
+    # approval gate would go if this ever wants one.
+    environment: pypi
+    permissions:
+      # Mint the OIDC token PyPI exchanges for a short-lived, project-scoped
+      # upload token. Nothing else: this job never touches the repo.
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+
+      # One dist/ for both projects: the token minted from this publisher
+      # covers every project it is registered for, so waddle-sdk and
+      # waddle-sdk-teleop go up in a single call. (If PyPI ever scopes a
+      # minted token to one project, split this into two publish steps with
+      # their own `packages-dir` — see docs/RELEASING.md.)
+      - name: Collect the wheels
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          find artifacts -name '*.whl' -exec mv -n {} dist/ \;
+          ls -l dist
+
+      # The one release trap this repo has (CLAUDE.md's release checklist):
+      # the teleop pin in sdk/pyproject.toml is the ONE version maturin cannot
+      # derive from the manifest. `sdk/tests/test_features.py` catches a
+      # forgotten bump locally; this catches a tag that disagrees with what
+      # was built, before any of it is on PyPI forever.
+      - name: Check the wheels carry the tag's version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          shopt -s nullglob
+          wheels=(dist/*.whl)
+          if [ ${#wheels[@]} -eq 0 ]; then
+            echo "::error::no wheels to publish"
+            exit 1
+          fi
+          for w in "${wheels[@]}"; do
+            case "$(basename "$w")" in
+              *-"$version"-*) ;;
+              *) echo "::error::$(basename "$w") was not built at version $version"; exit 1 ;;
+            esac
+          done
+          echo "all ${#wheels[@]} wheels are version $version"
+
+      # Trusted Publishing: no `password:`, no secrets. Defaults to dist/ and
+      # attaches PEP 740 attestations using the same OIDC identity.
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1
