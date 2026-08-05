@@ -67,6 +67,191 @@ camera, the loop, and `waddle.agent()`, offline by default — is
 [`examples/toy_robot.py`](examples/): `uv run python
 examples/toy_robot.py`.
 
+## Robot modules (`waddle.robots`)
+
+Everything above is what you write for a robot Waddle has never heard of.
+For one it has, `waddle.robots.<vendor>` carries that machine's facts and
+its driver, and [`waddle.robots.base`](python/waddle/robots/base.py) carries
+everything about driving a robot that is *not* a vendor fact: the kinematic
+twin, the envelope seam, the e-stop latch and the console gesture that
+clears it, the reporting loop, and a session's two ends. A vendor module is
+then facts + driver + factory and nothing else. The subpackage is opt-in —
+`import waddle` imports none of it.
+
+```python
+import waddle
+from waddle.robots import yam
+
+rig = yam.bimanual(workspace=WORKSPACE_M, gripper_limits=(0.1, 1.7), sim=True)
+with rig.session("towels", transport=waddle.Grpc(url, token)) as session:
+    result = waddle.agent("stack the cups")
+```
+
+`sim` is EXPLICIT either way, never inferred: no code path try-imports a
+vendor package to decide what you meant. Driving real YAM hardware needs
+I2RT's own package, which is not a dependency of this SDK and cannot be an
+extra of it — PyPI rejects direct references, and the tree behind it is not
+something an install that only supervises a policy should resolve. It is a
+documented command instead: `yam.I2RT_INSTALL`, BUILT from `yam.I2RT_PIN` so
+it cannot drift from the commit those facts are stated against, printed by
+the driver when the import fails, and quoted in the [root
+README](../README.md). Importing `waddle.robots.yam` needs none of it.
+
+`rig.session(...)` exists for the two ends every hand-written version gets
+wrong at least once. `__enter__` opens the drivers **inside the `with`** —
+so a bus that will not open unwinds structurally, and a rig that opens half
+its arms closes them rather than leaving them energized under a vendor's own
+re-send — registers the verbs, calls `waddle.init`, and starts the reporting
+pump. `__exit__` runs whatever the body did: on live hardware it holds (still
+reporting) until a human says the machine is parked — closing stops the
+vendor's command re-send, and the motors' own watchdog then drops all torque
+from wherever the mission left the arms — then stops the pump, shuts the
+session down and closes the drivers. (A `Ctrl-C` skips that hold: whoever
+typed it is already at the machine. A twin returns at once.)
+**Finalizing the recording is
+no longer a `finally:` you remembered to write.** The pump is always on, not
+only for an agent run, so your own loop only gates and applies — there is no
+interleaved robot tick to forget, and a session whose thread is blocked
+inside `waddle.agent()` keeps reporting.
+
+### Every piece is usable alone
+
+The rig is composition sugar over pieces that each stand on their own —
+which is the design, not an accident:
+
+| piece | what it is | alone |
+|---|---|---|
+| `yam.declaration(...)` / `rig.robot()` | the `waddle.Robot` this rig registers | hand it to `waddle.init` yourself; nothing else here is involved |
+| `rig.arms()` | one `base.Arm` per declared part, each an owner's envelope over a driver | the hardware opens **here**, never at the factory call |
+| `rig.control(arms)` | the posture as `waddle.Control` verbs | `send=` replaces the envelope wholesale (below) |
+| `rig.pre_reset(arms)` | the default scene reset — refuses a latched scene, homes a twin, vouches for metal without moving it | pass your own callable to `waddle.init` instead |
+| `rig.pump(session, arms)` | `base.RobotPump` reporting every part at the declared rate | `RobotPump(tick, rate_hz)` runs any tick callable you write |
+| `rig.session(project, ...)` | all of the above, with the two ends | — |
+
+Sugar that cannot be reproduced by hand is a wall, so that claim is a test
+rather than a promise: `tests/test_yam_session.py` wires `yam.declaration()`,
+drivers, `base.Arm`, `waddle.Control`, a plain `waddle.init`, the console
+recovery and a `RobotPump` by hand and asserts the session that opens is
+byte-identical to `rig.session()`'s.
+
+### The envelope is yours
+
+Waddle never provides the envelope — the owner's hard safety is the owner's
+(see [GLOSSARY.md](../waddle-protocol/docs/GLOSSARY.md)). What ships here is
+a **parameterized default built from your own numbers**, on the one object
+every path to the hardware crosses: `base.Arm` checks width, finiteness, your
+declared joint limits, per-step travel against where the unit actually is,
+and — only when the rig was given forward kinematics — the FK'd TCP inside
+your declared workspace box. It **rejects, never clamps**: a failing target
+is refused WHOLE, the unit holds, and one bounded line names the check. A
+clamped command is a command nobody wrote, executed faithfully.
+
+The factory provides the check; you own the envelope by choosing and
+parameterising it — or by replacing it. Pass `send=` to `rig.session(...)`
+(or `rig.control(arms, send=...)`) and your callable is the whole envelope,
+while you keep the twin, the latch, the loop and the console recovery.
+
+Forward kinematics is opt-in and its absence is named rather than filled in:
+an arm built without `fk` reports joint positions only (`ee_pose()` answers
+`None` instead of inventing a frame), and a workspace box declared without
+one is refused at construction rather than silently checking nothing.
+
+### Postures
+
+`posture=` is the one construction-time choice, and it maps to which control
+verbs the session registers — nothing else:
+
+| `posture` | verbs registered | what that buys |
+|---|---|---|
+| `"monitor"` | the owner's `estop` alone | Nothing may command this robot: the session says so on the wire instead of accepting motion it intends to drop. Where a vendor has a compliant mode the driver is *constructed* that way too (a `monitor` YAM opens in zero gravity and then refuses to write), so it is a property of the object rather than of a flag somebody remembered to check. No `hold` — waddle-core reads a registered `hold` as a live engage path and refuses any session offering one with no `send` — and no media plane, which carries the teleoperator's stream as well as the video and so IS an intervention path, refused by the same rule. Watching is undiminished: `transport=` uplinks proprioception and each camera's declared low-rate stills, `recording_dir=` keeps the full-rate archive. |
+| `"supervised"` | `send`, `hold`, `estop` | The ordinary posture: a teleoperator, a reset agent or a Waddle-hosted agent may drive this robot — through the owner's envelope. |
+
+A posture is **not** an authority decision and adds none: who may command a
+robot, when, and under what claim is waddle-core's, identical under both.
+Whether a rollout is agent-driven or windowed stays a call-site choice
+(`waddle.agent()` vs `waddle.rollout()`), never a construction one.
+
+The same rule that governs the rest of this package governs `robots/`: it is
+owner-side code that ships in the frontend, it enforces the OWNER's envelope
+(limits arithmetic on the owner's own numbers), and it asks nothing about who
+may command what. The part an action addresses is the core's answer —
+indexed, never validated. See the hollow-frontend checklist below.
+
+### Write your own vendor module
+
+A driver is any object with the ten members of `base.Driver` (`kind`,
+`estopped`, `read`, `write`, `hold`, `estop`, `re_enable`, `step`, `home`,
+`close`) — a `typing.Protocol`, so yours is admitted on its members and never
+on its ancestry. `kind` is your driver's own word for itself, and this layer
+reads it in ONE direction: `"sim"` alone selects the harmless branch of the
+two questions it asks (does closing this drop all torque, is homing it a
+motion nobody is watching), and every other word is treated as metal.
+
+The rest is a facts table and a factory:
+
+```python
+import waddle
+from waddle.robots import base
+
+FACTS = {                                  # your vendor's numbers, each with
+    "joints": ("boom", "stick", "grip"),   # its source in the comment beside it
+    "limits": ((-1.0, 1.0), (-1.5, 1.5), (0.0, 1.0)),
+    "step_caps": (0.10, 0.10, 0.25),       # largest jump one command may make
+    "rate_hz": 20.0,
+    "home": (0.0, 0.0, 1.0),
+}
+
+def crane(*, sim: bool = False, posture: str = "supervised") -> base.Rig:
+    space = waddle.JointSpace(
+        joints=[
+            waddle.Joint(name=n, min_position=lo, max_position=hi)
+            for n, (lo, hi) in zip(FACTS["joints"], FACTS["limits"])
+        ],
+        rate_hz=FACTS["rate_hz"],
+        chunking=waddle.Chunking(horizon=1, replan="immediate", interp="hold"),
+    )
+
+    def build_arms() -> dict[str, base.Arm]:      # the bus opens HERE
+        driver = base.SimDriver(
+            FACTS["home"],
+            lower=[lo for lo, _ in FACTS["limits"]],
+            upper=[hi for _, hi in FACTS["limits"]],
+            step_caps=FACTS["step_caps"],
+            rate_hz=FACTS["rate_hz"],
+        ) if sim else MyVendorDriver(...)         # your ten members
+        return {
+            "": base.Arm(
+                part="", driver=driver,
+                joint_names=FACTS["joints"], joint_limits=FACTS["limits"],
+                step_caps=FACTS["step_caps"], rate_hz=FACTS["rate_hz"],
+                home_values=FACTS["home"],
+            )
+        }
+
+    return base.Rig(
+        declaration=waddle.Robot(name="crane", action_space=space),
+        build_arms=build_arms, rate_hz=FACTS["rate_hz"], posture=posture,
+    )
+```
+
+That is the whole of a second vendor module, and it is a **test** rather than
+a docs snippet: `tests/test_robots_base.py` carries this same toy vendor and
+drives it end to end through a real session — declaration, envelope, gate,
+pump, MCAP read-back — with nothing vendor-specific in `base` to help it. The
+claim "the base layer carries all of the behaviour" is only true while that
+keeps passing.
+
+For more than one part, declare a `waddle.Composite` and return one `Arm` per
+part name (declaration order IS the concatenated action layout). Add `fk=` to
+each `Arm` if you have forward kinematics, and only then a `workspace=` box.
+Ship the source that can gate a fact next to the facts — `waddle.robots.yam`
+vendors the model its numbers come from (MIT data inside this Apache-2.0
+wheel: [Third-party content in the wheel](#third-party-content-in-the-wheel))
+and `tests/test_yam_facts.py` compares every one of them against it,
+directionally (a declared limit may only be TIGHTER than the model's) — and
+where nothing can gate a number, say in the comment which pinned artifact it
+came from. An unsourced number is one nothing checks.
+
 ## Installing
 
 ```bash
