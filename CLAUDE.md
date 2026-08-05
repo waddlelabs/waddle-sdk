@@ -104,7 +104,12 @@ waddle-sdk/
                              #   meshes) shipped beside them so
                              #   tests/test_yam_facts.py gates every number
                              #   the model states — directional (a declared
-                             #   limit may only be TIGHTER). The convention
+                             #   limit may only be TIGHTER). That gate binds
+                             #   what the WHEEL SHIPS; a rig states what its
+                             #   own machine has via `joint_limits=` on the
+                             #   factories (the owner's envelope, and the
+                             #   same table the declaration carries), which
+                             #   may widen and says so at every start. The convention
                              #   the next vendor module inherits: ship the
                              #   source that can gate a fact, and where none
                              #   can (here the MJCF tightenings and both hand
