@@ -285,13 +285,20 @@ there is no test/CI workflow yet, so the local gates above are still the gate.
   wheel is audited elsewhere — so `pip install 'waddle-sdk[teleop]'` resolves there and
   nowhere else, and that is the honest thing to say in release notes. Every wheel is
   installed and imported before it is uploaded, asserting its `FEATURES`.
-- **A failing leg stops the release** and must not be given `continue-on-error`: the
-  documented fallback is to ship default-only by dropping `teleop-wheel` from the
-  publish job's `needs`, deliberately and in the notes.
-- **Publishing is Trusted Publishing (OIDC)**: `id-token: write` plus the `pypi`
-  environment, no token or secret in this repo. A version bump edits **two** files
-  (`sdk/rust/Cargo.toml` and the teleop pin in `sdk/pyproject.toml`); the publish job
-  re-checks every built wheel against the tag before anything reaches PyPI.
+- **No leg may be given `continue-on-error`.** A failing default leg blocks
+  `publish-sdk`, which needs the whole matrix. A failing teleop build blocks
+  `publish-teleop` only — the split below means the release then ships default-only on
+  its own, which must be said in the release notes (add `teleop-wheel` to
+  `publish-sdk`'s `needs` if a release should be all-or-nothing instead).
+- **Publishing is Trusted Publishing (OIDC)**, no token or secret in this repo — and it
+  is **two jobs, two GitHub environments**: `publish-sdk` → `pypi`, `publish-teleop` →
+  `pypi-teleop`. PyPI keys a pending trusted publisher on (owner, repo, workflow,
+  environment) and refuses that tuple twice, so the two projects cannot share one; a job
+  carries exactly one environment, hence one job each, over artifacts named
+  `sdk-wheels-*` / `teleop-wheels-*` so neither job can upload the other's wheel.
+  A version bump edits **two** files (`sdk/rust/Cargo.toml` and the teleop pin in
+  `sdk/pyproject.toml`); each publish job re-checks its wheels against the tag before
+  anything reaches PyPI.
 
 ## Load-bearing invariants (violating these is a bug, not a style choice)
 

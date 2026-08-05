@@ -45,20 +45,31 @@ via a *pending* trusted publisher — no placeholder upload, no API token, ever.
    | Owner | `waddlelabs` | `waddlelabs` |
    | Repository name | `waddle-sdk` | `waddle-sdk` |
    | Workflow name | `release.yml` | `release.yml` |
-   | Environment name | `pypi` | `pypi` |
+   | Environment name | `pypi` | **`pypi-teleop`** |
 
-   (Owner and repository are the GitHub coordinates —
+   Owner and repository are the GitHub coordinates —
    `github.com/waddlelabs/waddle-sdk`. Workflow name is the *file* name, not the `name:`
-   inside it. Environment name must match the `environment: pypi` on the publish job;
-   it is case-sensitive.)
-3. Optional, in GitHub: **Settings → Environments → New environment → `pypi`**. The
-   workflow works without it being pre-created, but creating it is where a required
-   reviewer / approval gate would go if releases should ever pause for a human.
+   inside it. Environment names are case-sensitive and must match the `environment:` on
+   the corresponding publish job.
+
+   **The two environments differ because they have to.** PyPI keys a pending trusted
+   publisher on the (owner, repository, workflow, environment) tuple and refuses a
+   second registration of the same tuple under a different project name — "A pending
+   trusted publisher matching this configuration has already been registered for a
+   different project name". So the two projects cannot both publish from `pypi`; and
+   since a GitHub job carries exactly one environment, that is also why
+   `.github/workflows/release.yml` has two publish jobs (`publish-sdk` → `pypi`,
+   `publish-teleop` → `pypi-teleop`) with artifact names prefixed per distribution, so
+   each job downloads only what its identity is allowed to upload.
+3. Optional, in GitHub: **Settings → Environments → New environment**, once for `pypi`
+   and once for `pypi-teleop`. The workflow works without them being pre-created, but
+   they are where a required reviewer / approval gate would go if releases should ever
+   pause for a human.
 4. Nothing else. There is no token to generate, no secret to add to the repo, and
    nothing to paste anywhere.
 
-The first successful run converts both pending publishers into ordinary trusted
-publishers attached to the now-existing projects. If a `waddlelabs` PyPI **organization**
+The first successful run converts each pending publisher into an ordinary trusted
+publisher attached to the now-existing project. If a `waddlelabs` PyPI **organization**
 is wanted later, create it and transfer both projects in — the trusted publisher config
 travels with the project, so the pipeline keeps working untouched.
 
@@ -109,7 +120,9 @@ Everything below happens on `main`, with the tree clean and the full local gate 
 
 5. **Watch the run** (`gh run watch`, or the Actions tab). It builds five default wheels
    (linux x86_64/aarch64, macOS arm64/x86_64, Windows x64) and the teleop wheel, imports
-   each one it can, then publishes everything in a single step.
+   each one before uploading it, then publishes each distribution from its own job —
+   `publish-sdk` (environment `pypi`) and `publish-teleop` (environment `pypi-teleop`).
+   Both must be green for the release to be complete.
 
 6. **Verify from the outside**, on a machine that is not this checkout:
 
@@ -139,13 +152,17 @@ Everything below happens on `main`, with the tree clean and the full local gate 
 ## When something goes wrong
 
 - **The teleop job fails (usually auditwheel rejecting the libwebrtc-linked
-  extension).** The release stops, by design — it is not `continue-on-error`, because a
-  publish that ships half of what the extra resolves to is worse than no publish. Either
-  fix it (a newer `manylinux` container, or `before-script-linux` installing what the
-  C++ side wants), or consciously ship default-only for this release: drop
-  `teleop-wheel` from the `publish` job's `needs`, note it in the release notes, and
-  remember that `[teleop]` then resolves to the previous release or to nothing.
-- **A build platform fails.** Same shape: fix it, or drop that leg from the matrix for
+  extension).** Nothing teleop is published — it is not `continue-on-error`, because a
+  green job that uploaded no companion wheel would be a release claiming an extra it did
+  not ship. But note the shape the two-environment split forces: `publish-sdk` does not
+  wait on the teleop build, so **the default wheels still go out** and the release
+  becomes default-only on its own. Either fix the build (a newer `manylinux` container,
+  or `before-script-linux` installing what the C++ side wants) and re-release, or accept
+  it — and say so in the release notes, because `pip install 'waddle-sdk[teleop]'` then
+  resolves to the previous release, or to nothing at all on the first one. If a release
+  should instead be all-or-nothing, add `teleop-wheel` to `publish-sdk`'s `needs`.
+- **A build platform fails.** The whole `wheels` matrix gates `publish-sdk`, so a
+  failing leg stops the default publish. Fix it, or drop that leg from the matrix for
   this release and say so. Never publish a partial set silently.
 - **The publish step fails after some files uploaded.** PyPI does not allow overwriting
   a file, and neither `skip-existing` nor any other paper-over is enabled here. Bump to
@@ -154,8 +171,8 @@ Everything below happens on `main`, with the tree clean and the full local gate 
   `workflow_dispatch` trigger builds and publishes exactly what is on the ref you run it
   from. Use it deliberately — it will happily try to publish an already-published
   version, and fail.
-- **PyPI rejects the OIDC exchange for one of the two projects.** The minted token
-  covers the projects the publisher identity is registered for, which is why both go up
-  in one step. If that ever changes, split the publish into two
-  `pypa/gh-action-pypi-publish` steps with their own `packages-dir` (one per
-  distribution) in the same job.
+- **PyPI rejects the OIDC exchange** ("invalid-publisher", or a 403 on upload). The
+  identity it matches is the whole tuple: owner, repository, workflow *file* name, and
+  environment. Check the failing job's `environment:` against the table above —
+  `publish-sdk` must be `pypi` and `publish-teleop` must be `pypi-teleop`, and renaming
+  either here means editing the trusted publisher on PyPI too.

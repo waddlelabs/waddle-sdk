@@ -24,11 +24,20 @@
 # not built here; add a separate `-i python3.Xt` matrix leg if they are ever
 # wanted.
 #
-# CREDENTIALS: none. Publishing is PyPI Trusted Publishing (OIDC) — the job
-# has `id-token: write` and the `pypi` environment, and there is no token or
-# secret anywhere in this file. The publisher must be registered on PyPI
-# first (as a *pending* publisher before the projects exist); the exact field
-# values are in docs/RELEASING.md.
+# CREDENTIALS: none. Publishing is PyPI Trusted Publishing (OIDC) — the
+# publish jobs hold `id-token: write` and a GitHub environment, and there is
+# no token or secret anywhere in this file. The publishers must be registered
+# on PyPI first (as *pending* publishers, before the projects exist); the
+# exact field values are in docs/RELEASING.md.
+#
+# WHY TWO PUBLISH JOBS, AND TWO ENVIRONMENTS: PyPI keys a pending trusted
+# publisher on the (owner, repository, workflow, environment) tuple and
+# refuses to register the same tuple for a second project name. The two
+# projects therefore cannot share an environment — `waddle-sdk` publishes
+# from `pypi`, `waddle-sdk-teleop` from `pypi-teleop` — and since a job has
+# exactly one environment, that is one publish job each. Artifact names are
+# prefixed per distribution (`sdk-wheels-*` / `teleop-wheels-*`) so each job
+# downloads only what it is allowed to upload.
 
 name: release
 
@@ -53,9 +62,9 @@ jobs:
     name: waddle-sdk (${{ matrix.platform.name }})
     runs-on: ${{ matrix.platform.runner }}
     strategy:
-      # A release must be all-or-nothing, and `publish` needs this whole job,
-      # so a failure already blocks the release. Let the other legs finish so
-      # one broken platform is diagnosed in one run instead of five.
+      # `publish-sdk` needs this whole job, so a failing leg already blocks
+      # the default publish. Let the other legs finish so one broken platform
+      # is diagnosed in one run instead of five.
       fail-fast: false
       matrix:
         platform:
@@ -122,9 +131,11 @@ jobs:
           # would shadow the installed package.
           python -c "import waddle, waddle._native as n; f=sorted(n.FEATURES); print('waddle', waddle.__version__, f); assert f == ['grpc'], f"
 
+      # `sdk-wheels-*` — the prefix `publish-sdk` globs for. Nothing the teleop
+      # job uploads may ever match it.
       - uses: actions/upload-artifact@v6
         with:
-          name: wheels-${{ matrix.platform.name }}
+          name: sdk-wheels-${{ matrix.platform.name }}
           path: sdk/dist/*.whl
           if-no-files-found: error
 
@@ -136,13 +147,17 @@ jobs:
   # extracted) — here that happens INSIDE the manylinux container, and the
   # resulting extension is what auditwheel then has to accept. If auditwheel
   # rejects it (a disallowed shared-library dependency, or a glibc symbol
-  # newer than the tag), THIS JOB FAILS AND THE RELEASE STOPS. That is
-  # intentional: do NOT add `continue-on-error` — a publish that silently
-  # drops half of what `pip install 'waddle-sdk[teleop]'` resolves to is
-  # worse than no publish. The documented fallback is to ship default-only:
-  # drop `teleop-wheel` from the `publish` job's `needs` (and say so in the
-  # release notes, since the extra then resolves to the previous release, or
-  # to nothing at all on the first one).
+  # newer than the tag), THIS JOB FAILS AND NOTHING TELEOP IS PUBLISHED. Do
+  # NOT add `continue-on-error`: a green job that uploaded no companion wheel
+  # would be a release claiming an extra it did not ship.
+  #
+  # Note the consequence of the two-environment split below — `publish-sdk`
+  # does not wait on this job, so a failure here ships the release
+  # DEFAULT-ONLY rather than stopping it, and `pip install
+  # 'waddle-sdk[teleop]'` then resolves to the previous release, or to
+  # nothing at all on the first one. That has to be said out loud in the
+  # release notes. To make it all-or-nothing instead, add `teleop-wheel` to
+  # `publish-sdk`'s `needs`.
   #
   # manylinux_2_28 rather than the default wheel's `auto` (2014): libwebrtc's
   # prebuilt binaries want a modern C++ toolchain, and the 2_28 image has
@@ -182,42 +197,41 @@ jobs:
           python -m pip install sdk/teleop/dist/*.whl
           python -c "import waddle_teleop._core as c; f=sorted(c.FEATURES); print('waddle_teleop', c.__version__, f); assert f == ['grpc', 'livekit'], f"
 
+      # `teleop-wheels-*`, disjoint from the default wheel's `sdk-wheels-*`:
+      # each publish job may only ever see its own distribution.
       - uses: actions/upload-artifact@v6
         with:
-          name: wheels-teleop-linux-x86_64
+          name: teleop-wheels-linux-x86_64
           path: sdk/teleop/dist/*.whl
           if-no-files-found: error
 
   # ---------------------------------------------------------------------
-  # Publish both distributions, together, from one OIDC identity.
+  # Publish, one job per distribution. They are separate because PyPI's
+  # pending trusted publishers are unique per (owner, repo, workflow,
+  # environment): the two projects cannot share the `pypi` environment, and a
+  # job carries exactly one environment. Neither job checks out the repo or
+  # holds any permission beyond minting its OIDC token.
   # ---------------------------------------------------------------------
-  publish:
-    name: publish to PyPI
-    needs: [wheels, teleop-wheel]
+  publish-sdk:
+    name: publish waddle-sdk to PyPI
+    needs: [wheels]
     runs-on: ubuntu-24.04
-    # Named in the trusted-publisher config on PyPI; also where a manual
-    # approval gate would go if this ever wants one.
+    # Half of the identity PyPI matches (with owner/repo/workflow); also
+    # where a manual approval gate would go if this ever wants one.
     environment: pypi
     permissions:
       # Mint the OIDC token PyPI exchanges for a short-lived, project-scoped
       # upload token. Nothing else: this job never touches the repo.
       id-token: write
     steps:
+      # `pattern` + `merge-multiple`: only the default wheels, straight into
+      # dist/. The teleop artifact is not downloaded at all — this job's
+      # identity is not allowed to publish it.
       - uses: actions/download-artifact@v7
         with:
-          path: artifacts
-
-      # One dist/ for both projects: the token minted from this publisher
-      # covers every project it is registered for, so waddle-sdk and
-      # waddle-sdk-teleop go up in a single call. (If PyPI ever scopes a
-      # minted token to one project, split this into two publish steps with
-      # their own `packages-dir` — see docs/RELEASING.md.)
-      - name: Collect the wheels
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          find artifacts -name '*.whl' -exec mv -n {} dist/ \;
-          ls -l dist
+          pattern: sdk-wheels-*
+          merge-multiple: true
+          path: dist
 
       # The one release trap this repo has (CLAUDE.md's release checklist):
       # the teleop pin in sdk/pyproject.toml is the ONE version maturin cannot
@@ -225,16 +239,20 @@ jobs:
       # forgotten bump locally; this catches a tag that disagrees with what
       # was built, before any of it is on PyPI forever.
       - name: Check the wheels carry the tag's version
-        if: startsWith(github.ref, 'refs/tags/v')
         run: |
           set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
+          ls -l dist
           shopt -s nullglob
           wheels=(dist/*.whl)
           if [ ${#wheels[@]} -eq 0 ]; then
             echo "::error::no wheels to publish"
             exit 1
           fi
+          if [ "${GITHUB_REF_TYPE}" != "tag" ]; then
+            echo "not a tag build; skipping the version check"
+            exit 0
+          fi
+          version="${GITHUB_REF_NAME#v}"
           for w in "${wheels[@]}"; do
             case "$(basename "$w")" in
               *-"$version"-*) ;;
@@ -245,5 +263,51 @@ jobs:
 
       # Trusted Publishing: no `password:`, no secrets. Defaults to dist/ and
       # attaches PEP 740 attestations using the same OIDC identity.
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  publish-teleop:
+    name: publish waddle-sdk-teleop to PyPI
+    needs: [teleop-wheel]
+    runs-on: ubuntu-24.04
+    # A DIFFERENT environment from `publish-sdk` — see the header. It is part
+    # of what PyPI matches, so renaming it here means editing the trusted
+    # publisher on PyPI too.
+    environment: pypi-teleop
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: teleop-wheels-*
+          merge-multiple: true
+          path: dist
+
+      # Same check, same reason: the companion carries the version the
+      # `[teleop]` extra pins, so a wheel that disagrees with the tag is
+      # exactly the failure this repo's release checklist exists to prevent.
+      - name: Check the wheels carry the tag's version
+        run: |
+          set -euo pipefail
+          ls -l dist
+          shopt -s nullglob
+          wheels=(dist/*.whl)
+          if [ ${#wheels[@]} -eq 0 ]; then
+            echo "::error::no wheels to publish"
+            exit 1
+          fi
+          if [ "${GITHUB_REF_TYPE}" != "tag" ]; then
+            echo "not a tag build; skipping the version check"
+            exit 0
+          fi
+          version="${GITHUB_REF_NAME#v}"
+          for w in "${wheels[@]}"; do
+            case "$(basename "$w")" in
+              *-"$version"-*) ;;
+              *) echo "::error::$(basename "$w") was not built at version $version"; exit 1 ;;
+            esac
+          done
+          echo "all ${#wheels[@]} wheels are version $version"
+
       - name: Publish
         uses: pypa/gh-action-pypi-publish@release/v1

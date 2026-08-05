@@ -25,20 +25,26 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   Every wheel is imported before it is uploaded, and asserts the features the
   build was supposed to carry (`['grpc']` for the default,
   `['grpc', 'livekit']` for the companion) through the one feature-detection
-  surface the Python layer may use. Publishing is PyPI Trusted Publishing: the
-  job holds `id-token: write` and the `pypi` environment and there is no token or
-  secret in the repo, which is also how both project names get claimed — a
-  *pending* publisher per name, converted by the first successful run, with no
-  placeholder upload. The publish step re-checks that every built wheel carries
-  the tag's version, since the `teleop` extra's pin in `sdk/pyproject.toml` is the
-  one version maturin cannot derive from the manifest. No sdist is built, for
-  either project: `[tool.maturin] manifest-path` points at `sdk/rust/Cargo.toml`,
-  whose path deps into `../../waddle-core/crates/*` escape both pyproject
-  directories, so an sdist would be an archive nobody can build. `docs/RELEASING.md`
-  is the checklist around all of it — the two places a version bump must touch, the
-  gates, the changelog stow, the tag, the one-time PyPI account setup with the
-  exact pending-publisher field values, and what to do when a leg fails (ship
-  default-only by dropping it from `needs`, never `continue-on-error`).
+  surface the Python layer may use. Publishing is PyPI Trusted Publishing —
+  `id-token: write` and a GitHub environment, no token or secret in the repo —
+  and that is also how both project names get claimed: a *pending* publisher per
+  name, converted by the first successful run, with no placeholder upload. It is
+  **two publish jobs over two environments** (`publish-sdk` → `pypi`,
+  `publish-teleop` → `pypi-teleop`), because PyPI keys a pending publisher on
+  (owner, repository, workflow, environment) and refuses to register that tuple
+  for a second project; artifacts are named per distribution so neither job can
+  upload the other's wheel. Each re-checks that every wheel it is about to
+  publish carries the tag's version, since the `teleop` extra's pin in
+  `sdk/pyproject.toml` is the one version maturin cannot derive from the
+  manifest. No sdist is built, for either project: `[tool.maturin]
+  manifest-path` points at `sdk/rust/Cargo.toml`, whose path deps into
+  `../../waddle-core/crates/*` escape both pyproject directories, so an sdist
+  would be an archive nobody can build. `docs/RELEASING.md` is the checklist
+  around all of it — the two places a version bump must touch, the gates, the
+  changelog stow, the tag, the one-time PyPI account setup with the exact
+  pending-publisher field values, and what to do when a leg fails (never
+  `continue-on-error`: a failing default leg blocks its publish, and a failing
+  teleop build ships the release default-only, which the notes must say).
 - **docs (`docs/lease-lifecycle.md`: the session and lease lifecycle, from the
   customer's point of view)**: the one story a customer previously had to
   assemble out of five places (the `waddle/__init__.py` docstrings, `FSM.md`,
