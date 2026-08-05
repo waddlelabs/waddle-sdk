@@ -15,14 +15,16 @@ shutdown. This file gates three things about it.
   registered robot JSON, same everything else `create_session` is handed. And
   a customer's own `send` callable still REPLACES the shipped envelope when it
   goes through the sugar.
-* **It knows what closing costs.** On drivers that answer `kind == "live"` a
-  finished mission holds — still streaming, still holding its pose — until a
-  human says the machine is parked. A twin never does, and a Ctrl-C never does
-  (the operator who typed it is already standing there).
+* **It knows what closing costs.** On drivers this layer reads as METAL —
+  anything whose `kind` is not `sim` — a finished mission holds, still
+  streaming and still holding its pose, until a human says the machine is
+  parked. A twin never does, and a Ctrl-C never does (the operator who typed
+  it is already standing there).
 
 The park/console tests build their rig out of twins that answer
-`kind == "live"`, because that is the ONE question the closing path asks and
-it is asked of the object that has the property. Nothing here opens a bus.
+`kind == "live"`, because that word is the whole of what the closing path
+reads off a driver, and it reads it off the object that has the property.
+Nothing here opens a bus.
 """
 
 from __future__ import annotations
