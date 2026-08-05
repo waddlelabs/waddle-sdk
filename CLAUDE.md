@@ -100,9 +100,19 @@ waddle-sdk/
                              #   customer program)
     teleop/                  # the `waddle-sdk-teleop` companion distribution:
                              #   same rust/Cargo.toml, + the livekit feature
-    examples/                # toy_robot.py: the runnable customer program
-                             #   (simulated 6-dof arm; offline, connected,
-                             #   and agent modes) + its README
+    examples/                # the two ends of the same session, + README:
+                             #   toy_robot.py writes a whole integration by
+                             #   hand (simulated 6-dof arm; offline,
+                             #   connected, and agent modes) and is what to
+                             #   read to learn the surface; yam_bimanual.py
+                             #   is five Waddle-facing lines over a robot
+                             #   module (waddle.robots.yam) and a table of
+                             #   the site numbers that have no defaults.
+                             #   Both are tested as the PROGRAMS they are —
+                             #   subprocess runs, not imports — so a
+                             #   signature they still call keeps working.
+                             #   toy_robot's background loop is the shipped
+                             #   base.RobotPump: one loop, not a second copy
     tests/                   # pytest: descriptors + e2e (incl. MCAP read-back)
 ```
 
