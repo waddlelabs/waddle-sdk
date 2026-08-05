@@ -73,6 +73,7 @@ __all__ = [
     "control",
     "estop_all",
     "hold_all",
+    "hold_until_parked",
     "latched_parts",
     "proprio_tick",
     "quaternion_wxyz",
@@ -899,6 +900,26 @@ class ParkGate:
         self._released.set()
         return True
 
+    def wait(self, timeout: float | None = None) -> bool:
+        """Block until the gesture arrives (the holding side of the gate).
+
+        Waited on rather than polled: the thread that holds a finished mission
+        has nothing else to do, and a poll would put a period between the word
+        being typed and the arms being closed for no reason. On the main
+        thread a Ctrl-C still interrupts this, which is the other way a site
+        operator ends the hold."""
+        return self._released.wait(timeout)
+
+    def wait_holding(self, timeout: float | None = None) -> bool:
+        """Block until a hold BEGINS (the gesturing side of the gate).
+
+        Something has to be able to observe the begin, because
+        :meth:`confirm` before it is deliberately refused — the console reader
+        answers a gesture typed early rather than remembering it, and a
+        supervising thread (or a test) that means to release the hold must be
+        able to wait for the hold rather than guess at when it starts."""
+        return self._holding.wait(timeout)
+
 
 def apply_console_gesture(
     line: str,
@@ -993,6 +1014,66 @@ def start_console_recovery(
         "release the hold this program takes when its mission ends"
     )
     return thread
+
+
+def hold_until_parked(
+    arms: Mapping[str, Arm],
+    park: ParkGate,
+    *,
+    report: Callable[[str], None] = status,
+) -> None:
+    """A finished mission on live units holds them until a human says they are
+    parked. Returns immediately for anything that closing costs nothing (see
+    :func:`closing_drops_torque`).
+
+    A finished leg is not a finished session on metal. Returning from here
+    goes on to shut the session down and close the drivers, which stops the
+    vendor's command re-send: a fraction of a second later the motors' own
+    watchdog cuts everything, gravity compensation included, and the arms sag
+    from wherever the mission left them — which after an agent run is a pose
+    nobody chose in advance. Every park warning this layer has is otherwise
+    attached to a Ctrl-C the site operator TYPED; finishing normally has none,
+    and that is the one ending nobody is standing ready for.
+
+    So the program does not decide that moment: the operator does, with the
+    same console gesture that clears an e-stop latch. The caller keeps
+    reporting meanwhile — this waits, it does not stop anything — so the arms
+    hold their pose, the plane keeps seeing them, and nothing is left
+    half-alive while a human walks to the bench.
+
+    With no terminal to be told at, this holds until the program is signalled,
+    which is the honest fallback: the alternative is dropping torque on a
+    schedule nobody is watching."""
+    if not closing_drops_torque(arms):
+        return
+    park.begin()
+    report(
+        "mission over — these parts are STILL HOLDING and this program is still "
+        "reporting them. Closing stops the vendor's command re-send, and the "
+        "motors' own watchdog then cuts ALL torque, gravity compensation "
+        "included: they sag from where they are now."
+    )
+    if console_is_at_the_machine():
+        report(
+            f"park or support the machine, then type `{PARK_WORD}` here to shut "
+            "down (Ctrl-C does the same, once it is safe)"
+        )
+    else:
+        report(
+            "this program has no terminal to be told at (stdin is not a foreground "
+            "tty), so it holds here until it is signalled: park or support the "
+            "machine, THEN stop it"
+        )
+    try:
+        park.wait()
+    except KeyboardInterrupt:
+        # The operator answered with the other gesture they have. Ending the
+        # hold is what they asked for; re-raising here would replace the
+        # reason this session is closing with the answer to its own question.
+        report("interrupted while holding — closing now")
+    finally:
+        park.end()
+    report(f"{PARK_WORD} — closing")
 
 
 # ---------------------------------------------------------------------------
@@ -1130,6 +1211,8 @@ class RobotPump(threading.Thread):
 # ---------------------------------------------------------------------------
 # Composition: what a vendor's factory hands back
 # ---------------------------------------------------------------------------
+
+
 
 #: How a session is POSTURED, and the only thing the choice touches: which
 #: control verbs the session registers, and therefore which grants Waddle

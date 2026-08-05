@@ -499,6 +499,71 @@ def test_a_park_gesture_is_honoured_only_while_something_is_holding():
     assert park.confirm() is False
 
 
+def test_a_park_gate_is_waited_on_from_both_sides():
+    """Two waits, because two threads care about this gate and neither may
+    poll: the mission waits for the gesture, and whoever will make the gesture
+    (the console reader, a supervising harness) waits for the hold to begin —
+    since a `parked` typed before it does is deliberately refused."""
+    park = base.ParkGate()
+    assert park.wait(timeout=0.0) is False
+    assert park.wait_holding(timeout=0.0) is False
+
+    released = threading.Event()
+
+    def mission() -> None:
+        park.begin()
+        park.wait()
+        released.set()
+
+    thread = threading.Thread(target=mission, name="pytest-mission")
+    thread.start()
+    try:
+        assert park.wait_holding(timeout=PATIENCE_S), "the hold never began"
+        assert park.confirm() is True
+    finally:
+        thread.join(PATIENCE_S)
+    assert released.is_set(), "the gesture never released the mission's wait"
+
+
+def test_a_finished_mission_holds_only_what_closing_would_drop():
+    """`hold_until_parked` asks the DRIVERS whether closing costs anything. A
+    twin has nothing to sag, so it returns at once — which is also what lets a
+    harness wait for a sim program to exit."""
+    lines: list[str] = []
+    park = base.ParkGate()
+
+    base.hold_until_parked({"toy": _arm()}, park, report=lines.append)
+
+    assert lines == [], "a twin was asked to be parked"
+    assert park.released is False
+
+
+def test_a_finished_mission_on_live_units_says_what_closing_costs():
+    """The other branch, driven the way the rig drives it: the warning is said
+    BEFORE the wait (a warning after it would arrive as the torque dropped),
+    and the wait ends on the gesture."""
+    lines: list[str] = []
+    park = base.ParkGate()
+    arms = {"toy": _arm(_LiveLikeDriver())}
+
+    def operator() -> None:
+        if park.wait_holding(timeout=PATIENCE_S):
+            lines.append("gesture")
+            park.confirm()
+
+    thread = threading.Thread(target=operator, name="pytest-site-operator")
+    thread.start()
+    try:
+        base.hold_until_parked(arms, park, report=lines.append)
+    finally:
+        thread.join(PATIENCE_S)
+
+    assert any("STILL HOLDING" in line for line in lines)
+    assert lines.index("gesture") < len(lines) - 1, "the hold ended before the gesture"
+    assert "parked" in lines[-1]
+    assert park.released is True
+
+
 def test_a_pipe_is_not_a_person(monkeypatch):
     """The predicate itself, asked of a stdin this test owns. Everything below
     controls the ANSWER instead of the environment, so this is the one place
