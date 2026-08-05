@@ -19,6 +19,12 @@ two things is here, once:
 * :func:`chunk_sender`, :func:`apply_decision`, :func:`split_by_part` — the
   `Control.send` verb over a set of arms, and the declared-layout arithmetic
   it routes with.
+* :class:`Rig` + :class:`RigSession` — the composition, and nothing that is
+  not composition: `rig.session(...)` opens the arms, registers the verbs,
+  starts the console recovery and the reporting loop, holds live arms until a
+  human says they are parked, and finalizes the recording on the way out.
+  Every piece it composes is usable alone, and a program that wires them by
+  hand gets the same session (`tests/test_yam_session.py` pins that).
 
 **Waddle never provides the envelope; the owner does.** What this module
 ships is a parameterized default built out of the owner's own numbers —
@@ -47,7 +53,7 @@ from typing import Protocol, runtime_checkable
 
 import numpy as np
 
-from .. import Control
+from .. import Control, Handoff, _Handoff, init, shutdown
 from ..descriptors import FrameTransform, Robot
 
 __all__ = [
@@ -59,8 +65,10 @@ __all__ = [
     "POSTURES",
     "ParkGate",
     "RESUME_WORDS",
+    "RIG_DEFAULT",
     "RejectLog",
     "Rig",
+    "RigSession",
     "RobotPump",
     "SimDriver",
     "apply_console_gesture",
@@ -1213,6 +1221,20 @@ class RobotPump(threading.Thread):
 # ---------------------------------------------------------------------------
 
 
+class _RigDefault:
+    """The type of :data:`RIG_DEFAULT`."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "<the rig's own default>"
+
+
+#: "Whatever this rig declares for that" — distinct from ``None``, which is
+#: `waddle.init`'s own "declare nothing for that phase". A `RigSession` uses
+#: it for ``pre_reset``: the default is the rig's scene reset, and passing
+#: ``None`` is how a program declares no pre-reset at all.
+RIG_DEFAULT = _RigDefault()
 
 #: How a session is POSTURED, and the only thing the choice touches: which
 #: control verbs the session registers, and therefore which grants Waddle
@@ -1373,3 +1395,213 @@ class Rig:
         """A :class:`RobotPump` reporting every part of these arms at this
         rig's declared rate. Not started."""
         return RobotPump(proprio_tick(session, arms), self.rate_hz)
+
+    def session(
+        self,
+        project: str,
+        *,
+        send: Callable[[object], None] | None = None,
+        transport=None,
+        media=None,
+        recording_dir=None,
+        handoff: _Handoff = Handoff.HOLD_FIRST,
+        lease_enforcement: str = "advisory",
+        pre_reset=RIG_DEFAULT,
+        post_reset=None,
+        reset_verification: str = "blocking",
+        console: bool = True,
+        _testing: bool = False,
+    ) -> RigSession:
+        """Open a :class:`RigSession` over this rig — the whole program::
+
+            rig = yam.bimanual(workspace=..., gripper_limits=..., sim=True)
+            with rig.session("my-project", transport=waddle.Grpc(url, token)) as s:
+                result = waddle.agent("stack the cups")
+
+        Every keyword that is not this rig's own goes straight to
+        `waddle.init` and means exactly what it means there; ``send``
+        REPLACES the shipped envelope (see :func:`control`), and
+        ``pre_reset`` defaults to this rig's own scene reset."""
+        return RigSession(
+            self,
+            project,
+            send=send,
+            transport=transport,
+            media=media,
+            recording_dir=recording_dir,
+            handoff=handoff,
+            lease_enforcement=lease_enforcement,
+            pre_reset=pre_reset,
+            post_reset=post_reset,
+            reset_verification=reset_verification,
+            console=console,
+            _testing=_testing,
+        )
+
+
+class RigSession:
+    """One robot program, from the arms opening to the recording closing.
+
+    Everything it does, a program can do by hand — and some do, which is why
+    each piece stayed separately usable. What it exists for is the two ends,
+    which are the two things every hand-written version gets wrong at least
+    once:
+
+    **Opening.** ``__enter__`` opens the drivers, maps the rig's posture onto
+    `waddle.Control` verbs, calls `waddle.init`, starts the console recovery
+    and starts the reporting pump. A failure part-way through closes what it
+    opened before it re-raises: a context manager whose ``__enter__`` raises
+    never gets an ``__exit__``, so on live hardware the alternative is arms
+    left energized under the vendor's own re-send with nobody holding a handle
+    to them.
+
+    **Closing.** ``__exit__`` runs whatever happened in the body — a return, a
+    policy that raised, a Ctrl-C. On live drivers it first HOLDS (see
+    :func:`hold_until_parked`), still reporting, until a human says the
+    machine is parked; then it stops the pump, shuts the session down (which
+    is what finalizes the recording) and closes the drivers. **This is the
+    structural fix for the shutdown footgun**: finalization is no longer a
+    ``finally:`` the customer remembered to write.
+
+    The pump is ALWAYS on, not only for an agent run: a program's own loop
+    then only gates and applies, with no interleaved robot tick to forget, and
+    a session with no loop at all (a monitor rig, a thread blocked inside
+    `waddle.agent()`) keeps reporting anyway. The cost is the declared
+    part-count multiplication of the proprio cadence, which is fixed by the
+    declaration and visible to the plane before it accepts.
+
+    A ``monitor`` rig may not be wired to a media plane — including
+    ``_testing=True``, which is that same plane in process. Nothing here
+    checks that: waddle-core reads a wired media plane as an intervention
+    path and refuses a session with no ``send`` verb, and an engage-path rule
+    has exactly one home (see :data:`POSTURES`).
+
+    Attributes: ``arms`` (part -> :class:`Arm`), ``robot`` (the declaration),
+    ``core`` (the `waddle` session object — ``report_proprio``,
+    ``publish_frame`` and the rest live there), ``control`` (the verbs that
+    were registered), ``park``, ``pump``, ``console``, and the summed
+    ``accepted``/``rejected`` counters of the envelope."""
+
+    def __init__(
+        self,
+        rig: Rig,
+        project: str,
+        *,
+        send: Callable[[object], None] | None = None,
+        transport=None,
+        media=None,
+        recording_dir=None,
+        handoff: _Handoff = Handoff.HOLD_FIRST,
+        lease_enforcement: str = "advisory",
+        pre_reset=RIG_DEFAULT,
+        post_reset=None,
+        reset_verification: str = "blocking",
+        console: bool = True,
+        _testing: bool = False,
+    ) -> None:
+        self._rig = rig
+        self._project = project
+        self._send = send
+        self._init_kwargs = dict(
+            transport=transport,
+            media=media,
+            recording_dir=recording_dir,
+            handoff=handoff,
+            lease_enforcement=lease_enforcement,
+            post_reset=post_reset,
+            reset_verification=reset_verification,
+            _testing=_testing,
+        )
+        self._pre_reset = pre_reset
+        self._console_wanted = console
+        self._report = rig.report
+        self.arms: dict[str, Arm] = {}
+        self.core = None
+        self.control: Control | None = None
+        self.park = ParkGate()
+        self.pump: RobotPump | None = None
+        self.console: threading.Thread | None = None
+
+    @property
+    def robot(self) -> Robot:
+        """The declaration this session registered."""
+        return self._rig.robot()
+
+    @property
+    def accepted(self) -> int:
+        """Commands the envelope applied, across every part."""
+        return sum(arm.accepted for arm in self.arms.values())
+
+    @property
+    def rejected(self) -> int:
+        """Commands the envelope refused, across every part. Refused WHOLE —
+        see :meth:`Arm.command`."""
+        return sum(arm.rejected for arm in self.arms.values())
+
+    def __enter__(self) -> RigSession:
+        # The hardware opens HERE, inside the `with`, so a bus that will not
+        # open unwinds structurally instead of at a factory call the program
+        # made before it decided to run.
+        self.arms = self._rig.arms()
+        try:
+            self.control = self._rig.control(self.arms, send=self._send)
+            pre_reset = (
+                self._rig.pre_reset(self.arms)
+                if self._pre_reset is RIG_DEFAULT
+                else self._pre_reset
+            )
+            self.core = init(
+                self._project,
+                self._rig.robot(),
+                self.control,
+                pre_reset=pre_reset,
+                **self._init_kwargs,
+            )
+        except BaseException:
+            self._report(
+                "this session could not open — closing the arms that did, since "
+                "nothing is being handed a driver for them"
+            )
+            close_all(self.arms, report=self._report)
+            raise
+        try:
+            if self._console_wanted:
+                self.console = start_console_recovery(
+                    self.arms, self.park, report=self._report
+                )
+            pump = self._rig.pump(self.core, self.arms)
+            pump.start()
+            # Held only once it is RUNNING: a thread that never started is one
+            # `stop()` would raise on, and that exception would replace
+            # whatever is unwinding this session.
+            self.pump = pump
+        except BaseException:
+            self._finish()
+            raise
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        interrupted = exc_type is not None and issubclass(exc_type, KeyboardInterrupt)
+        try:
+            # A Ctrl-C IS the site operator, standing at the machine already:
+            # holding them there for a gesture would be asking a question they
+            # have answered. Any other ending — a return, a policy that raised
+            # — had no warning attached to it at all, which is exactly what
+            # the hold is for. It runs BEFORE the pump stops, so the parts
+            # keep reporting for as long as it lasts.
+            if not interrupted:
+                hold_until_parked(self.arms, self.park, report=self._report)
+        finally:
+            self._finish()
+        return False
+
+    def _finish(self) -> None:
+        """Stop reporting, finalize the recording, drop the connections — in
+        that order, and each one whatever the one before it did."""
+        if self.pump is not None:
+            self.pump.stop()
+            self.pump = None
+        try:
+            shutdown()
+        finally:
+            close_all(self.arms, report=self._report)
