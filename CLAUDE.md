@@ -56,12 +56,84 @@ waddle-sdk/
     rust/                    # the shim: its OWN cargo workspace (see build notes)
     python/waddle/           # pure-Python surface: init/rollout/Control/agent +
                              #   descriptors; _native.py picks the compiled core
+      robots/                # opt-in robot modules (NOT imported by `import
+                             #   waddle`): base.py is the vendor-neutral half
+                             #   (Driver protocol, SimDriver twin, the Arm
+                             #   envelope seam, console recovery, RobotPump,
+                             #   Rig + its RigSession); a vendor module is
+                             #   facts + driver + factory on top of it.
+                             #   `rig.session(...)` is COMPOSITION ONLY, and
+                             #   the rule that keeps it honest is a test:
+                             #   the same program wired by hand out of the
+                             #   same pieces opens a byte-identical session
+                             #   (tests/test_yam_session.py). Its two ends
+                             #   are the point — hardware opens inside the
+                             #   `with` (a half-open rig closes what it
+                             #   opened), and `__exit__` finalizes the
+                             #   recording whatever the body did, so that is
+                             #   never a customer's `finally:` again. The BAR
+                             #   that keeps base.py vendor-neutral is a test:
+                             #   tests/test_robots_base.py builds a whole toy
+                             #   vendor module (facts + SimDriver + factory,
+                             #   ~50 lines) and drives it end to end with
+                             #   nothing vendor-specific in base to help it.
+                             #   Those exact lines (between the two --8<--
+                             #   markers) are also the template sdk/README.md
+                             #   publishes, and the copy is held to them by a
+                             #   test in the same file — edit the test, paste
+                             #   what it prints. sdk/README.md is where
+                             #   this subpackage is documented OUTWARD (the
+                             #   layering, the envelope-ownership doctrine,
+                             #   the posture table), and the root README
+                             #   carries the five-line quickstart and the
+                             #   I2RT install command
+        yam.py, yam_data/    # the I2RT YAM: constants-with-provenance, and
+                             #   the vendor's own MIT model (URDF text, no
+                             #   meshes) shipped beside them so
+                             #   tests/test_yam_facts.py gates every number
+                             #   the model states — directional (a declared
+                             #   limit may only be TIGHTER). The convention
+                             #   the next vendor module inherits: ship the
+                             #   source that can gate a fact, and where none
+                             #   can (here the MJCF tightenings and both hand
+                             #   facts) the comment names the pinned model it
+                             #   came from — an unsourced number is one
+                             #   nothing checks. Vendored data ships to every
+                             #   installer, comments included: it may name
+                             #   only what a wheel-holder can open (gated).
+                             #   Also the LiveDriver + the bimanual()/arm()
+                             #   factories. GOTCHA: driving metal needs the
+                             #   vendor package, which is NOT a dependency and
+                             #   cannot be an extra (not on PyPI; direct refs
+                             #   are rejected there) — it is the documented
+                             #   `I2RT_INSTALL` command, BUILT from I2RT_PIN
+                             #   so the two cannot drift (the root README
+                             #   quotes it verbatim and a test holds that
+                             #   copy to it), and imported lazily inside
+                             #   LiveDriver.__init__ so importing the
+                             #   module never needs it. `yam.declaration()` is
+                             #   public and byte-equal to what the factories
+                             #   register (golden test vs the rig's own
+                             #   customer program)
     teleop/                  # the `waddle-sdk-teleop` companion distribution:
                              #   same rust/Cargo.toml, + the livekit feature
-    examples/                # toy_robot.py: the runnable customer program
-                             #   (simulated 6-dof arm; offline, connected,
-                             #   and agent modes) + its README
-    tests/                   # pytest: descriptors + e2e (incl. MCAP read-back)
+    examples/                # the two ends of the same session, + README:
+                             #   toy_robot.py writes a whole integration by
+                             #   hand (simulated 6-dof arm; offline,
+                             #   connected, and agent modes) and is what to
+                             #   read to learn the surface; yam_bimanual.py
+                             #   is five Waddle-facing lines over a robot
+                             #   module (waddle.robots.yam) and a table of
+                             #   the site numbers that have no defaults.
+                             #   Both are tested as the PROGRAMS they are —
+                             #   subprocess runs, not imports — so a
+                             #   signature they still call keeps working.
+                             #   toy_robot's background loop is the shipped
+                             #   base.RobotPump: one loop, not a second copy
+    tests/                   # pytest: descriptors + e2e (incl. MCAP read-back),
+                             #   the robots suites (base layer, YAM facts, YAM
+                             #   factories, rig session) and both examples run
+                             #   as the subprocess programs they are
 ```
 
 Future artifacts (`waddle-proxy`, `waddle-cpp`, `waddle_ros`) will live in new
@@ -150,6 +222,14 @@ top-level dirs; they are not built yet.
     carry `exclude = ["python/**/__pycache__/**"]`: `python-source` is the
     working tree, so without it a build after a test run ships that
     interpreter's bytecode and a build on a clean checkout does not.
+    Non-Python PACKAGE DATA under `python-source` (today
+    `waddle/robots/yam_data/`: 16.1 KB of URDF text + licence + README, 5.6 KB
+    of it once deflated into the wheel — sdk/README.md quotes that same 16 KB
+    to a customer, so the two move together) ships with no pyproject edit at
+    all, and the code reads it through `importlib.resources` so a wheel, an
+    editable install and a checkout all work. Adding or moving such data is
+    the one time to build a wheel and list it — that it landed, and that no
+    bytecode or mesh came with it.
   - A build without a feature REFUSES the matching `create_session` kwarg
     (`transport_url`/`transport_token`, `media_url`/`media_token`) rather
     than degrading to a silent offline session; the LiveKit refusal names the
@@ -179,6 +259,16 @@ top-level dirs; they are not built yet.
   `waddle-core` exactly once (`waddle-fsm` is the behavioral conformance target). If a
   binding or frontend grows an `if` about claims, leases, handoffs, or timelines, that
   is a defect. The Python-specific review checklist lives in `sdk/README.md`.
+  `python/waddle/robots/` is owner-side code that ships in the frontend, and the same
+  rule binds it: it enforces the OWNER's envelope (limits arithmetic on the owner's own
+  numbers, refusing whole and never clamping) and asks nothing about who may command
+  what. The part an action addresses is the core's answer — indexed, never validated.
+  A posture (`monitor`/`supervised`) maps to which `Control` verbs are registered, and
+  in a vendor module to how the driver is CONSTRUCTED where the vendor has a compliant
+  mode (`monitor` opens a YAM in zero gravity, and that driver then refuses to write —
+  so "nothing may command it" is a property of the object, not of a flag somebody
+  remembered to check). It maps to no authority decision, ever: who may command a
+  robot, when, and under what claim is waddle-core's and is identical under both.
 - **Vocabulary discipline.** `waddle-protocol/docs/GLOSSARY.md` is normative for every
   word in code, comments, and docs: grant (permission), claim (orchestration), lease
   (actuation single-writer), envelope (owner's hard safety — Waddle never provides
@@ -200,11 +290,23 @@ top-level dirs; they are not built yet.
   mean a new package (`waddle.v1`), never in-place edits — see
   `waddle-protocol/docs/VERSIONING.md`.
 - **Conformance fixtures pin behavior.** Golden fixtures are append-only; changing an
-  existing golden IS a breaking change. New FSM/gate behavior requires (a) a guard-table
-  row in `docs/FSM.md`, (b) at least one asserting scenario in `fixtures/behaviors/`,
-  (c) green `waddle-conformance` run. The scenario JSON schema is
-  `waddle-protocol/conformance/scenario-format.md`; `waddle-conformance` implements
-  exactly that schema — if they drift, the .md wins and the runner is wrong.
+  existing golden IS a breaking change. New FSM/gate behavior requires (a) normative
+  text in `docs/FSM.md` — a guard-table row when a transition or guard moves, the
+  governing section's prose when none does (intake validation, dispatch shape, and the
+  blend/gripper/part contracts of §4-§5 are prose, not rows) — (b) at least one
+  asserting scenario in `fixtures/behaviors/`, (c) green `waddle-conformance` run.
+  (a) and (b) are enforced against each other:
+  `every_behavior_fixture_is_named_in_fsm_md` fails until FSM.md names the fixture,
+  so a scenario can never pin a behavior the standard does not claim.
+  The scenario JSON schema is `waddle-protocol/conformance/scenario-format.md`;
+  `waddle-conformance` implements exactly that schema — if they drift, the .md wins
+  and the runner is wrong. A scenario's `requires_features` is the NEGOTIATION the
+  runner models, not only a skip filter: where a flag changes how a message is read
+  the runner reads it there and nowhere else, never inferring it from the robot, so
+  a registry row's pre-flag behavior is an expressible scenario. Fixture directories
+  are enumerated at test time, never listed by hand (`behaviors/` in
+  `tests/behaviors.rs`, `wire/` in `tests/wire_fixtures.rs`, `sidecars/` in
+  waddle-sidecar's `tests/fixtures.rs`).
 - **Crate layering.** `waddle-types`/`-fsm`/`-gate`/`-codecs` must stay free of tokio,
   threads, I/O, clocks, and randomness. Only `waddle-ingest` reads OS clocks. Threads
   are owned by `waddle-runtime` (plus the thread harnesses in waddle-tripwire, the
@@ -231,16 +333,35 @@ top-level dirs; they are not built yet.
   that tag**: its variable-length fields (`Provenance::Custom`'s name, the
   `ActorRef`) are `Arc`-shared and minted once per claim, off that thread. Adding an
   owned `String` to it costs a malloc pair per field per tick and the featureless
-  `alloc_free` proof is what catches it.
+  `alloc_free` proof is what catches it. The same rule binds the action the gate
+  dispatches: a claimed tick clones `OwnedAction` twice (record ring, blend anchor;
+  three times when it blends), so its part tag is an `Arc<str>` minted once per wire
+  action at the intake — nothing owned belongs on that struct either.
 - **The control plane carries no bandwidth.** Media rides the media plane; the local
   recorder keeps the full-rate archive. There is exactly ONE declared exception —
   `FrameStill` observations behind `waddle.v0.obs.stills`, bounded by the camera's
   declared `StreamPolicy.still_fps` — and it is not a precedent: anything else
   high-bandwidth needs its own flag and its own bound, or it doesn't ride these RPCs.
+  A flag that MULTIPLIES an existing low-rate send answers the same rule and must
+  say so in its registry row: `waddle.v0.parts` makes the `StreamObservations`
+  proprio cadence per part, so a flagged connection carries the declared part count
+  (plus the sole part) times the unflagged rate — bounded by the declaration, which
+  is fixed for the session and visible to the plane before it accepts.
   Messages that may be shed answer `ClientMsg::is_droppable` in waddle-controlplane
   (the ONE place that classifies), and every point a droppable message can queue —
   offline buffer and in-flight transport alike — must honor it; history is never
   shed.
+- **A negotiated flag belongs to one connection.** Feature flags are re-negotiated
+  at every Register and the client re-registers on every reconnect, so acceptance
+  never outlives the connection that gave it (VERSIONING §3). Two halves, both
+  required: producers read the current answer off `Status.*_negotiated`, which the
+  plane pump clears at every connection boundary; and
+  `ClientMsg::connection_scoped_flag` (waddle-controlplane, the ONE place that
+  classifies this) keeps a flag-scoped message off any connection that did not
+  accept its flag — filtered on the way out, and never buffered offline, since the
+  offline buffer replays onto the NEXT connection before it has said what it
+  accepts. Withholding such a message is not shedding history: the local recorder
+  keeps the full-rate archive.
 
 ## Working conventions
 

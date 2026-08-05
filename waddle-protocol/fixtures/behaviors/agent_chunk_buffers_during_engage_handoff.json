@@ -1,0 +1,44 @@
+{
+  "format": "waddle.behavior/v0",
+  "name": "agent_chunk_buffers_during_engage_handoff",
+  "description": "Pins the admission rule for GateServerMessage.intervention_chunk: a chunk is admitted on an ACTIVE CLAIM ALONE, never on the gate already being in GATE_MODE_INTERVENTION. A hosted agent streams its first chunk while the HOLD_FIRST engage is still awaiting the robot's hold — the claim is granted and ENGAGE is in progress, the gate is still PASSTHROUGH with the caller's writer stopped — and the chunk must buffer, not be dropped: a caller tick during the handoff still returns hold (nothing actuates early, and no fault is raised — a chunk that arrives mid-handoff is not a sender making a mistake), and the very first tick after the handoff completes substitutes it. Anything stricter would make a well-behaved agent's opening chunk depend on winning a race against the hold verb. Judgment calls: HOLD_FIRST so the handoff has an observable in-progress stage (an IMMEDIATE engage completes within the same step); the claim is ACTOR_KIND_AGENT because this arm is the one a hosted agent streams on; the chunk is part-scoped ('left') so the substitute it produces is identifiable as this chunk's step and not a leftover; part names and the 7-value part width come from the bimanual fixture.",
+  "target": "gate",
+  "requires_features": ["waddle.v0.core", "waddle.v0.agent", "waddle.v0.parts"],
+  "setup": {
+    "robot_fixture": "../wire/robot_description_bimanual_composite.json",
+    "lease_enforcement": "LEASE_ENFORCEMENT_ENFORCED",
+    "handoff": { "holdFirst": {} },
+    "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING"
+  },
+  "steps": [
+    { "inject": { "kind": "episode_open", "episode_id": "ep-che-0001", "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING" } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "reset_result", "result": { "ok": true, "strategy": "scripted_home", "verification": { "mode": "RESET_VERIFICATION_MODE_BLOCKING", "verified": true, "judgeId": "judge-reset", "judgeVersion": "2.1.0", "score": 0.97, "tNs": "100000000" } } } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_READY" } },
+
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "200000000" } },
+    { "expect_output": { "kind": "pass" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_RUNNING", "gate.mode": "GATE_MODE_PASSTHROUGH" } },
+
+    { "inject": { "kind": "claim_granted", "claim": { "claimId": "claim-che-0001", "episodeId": "ep-che-0001", "actor": { "kind": "ACTOR_KIND_AGENT", "id": "agent-waddle-1", "displayName": "Waddle agent" }, "sourceName": "waddle-agent", "selfInitiated": false, "tGrantedNs": "200000000", "handoff": { "holdFirst": {} }, "spaces": ["SPACE_KIND_JOINT_POSITION"] } } },
+    { "inject": { "kind": "engage", "claim_id": "claim-che-0001", "initiator": "ACTOR_KIND_AGENT" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_INTERVENTION", "episode.intervention_phase": "INTERVENTION_PHASE_ENGAGE", "gate.mode": "GATE_MODE_PASSTHROUGH", "claim.active_claim_id": "claim-che-0001" } },
+
+    { "inject": { "kind": "intervention_chunk", "chunk": { "seq": "1", "sourceId": "agent-waddle-1", "tEmittedNs": "200000000", "tObsNs": "200000000", "horizonNs": "200000000", "provenance": { "kind": "PROVENANCE_KIND_AGENT", "actor": { "kind": "ACTOR_KIND_AGENT", "id": "agent-waddle-1" } }, "actions": [
+      { "tOffsetNs": "0", "part": "left", "jointPosition": { "values": [0.12, -0.38, 0.31, -1.18, 0.06, 0.91, 0.20] } }
+    ] } } },
+    { "expect_no_emission": { "event": { "fault": {} }, "within_ns": "0" } },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "200000000" } },
+    { "expect_output": { "kind": "hold" } },
+
+    { "advance_ns": "50000000" },
+    { "inject": { "kind": "verb_result", "result": { "ok": true, "detail": "hold complete, arms at rest", "tNs": "250000000" } } },
+    { "expect_emission": { "event": { "lease": { "kind": "LEASE_EVENT_KIND_HANDED_OFF", "lease": { "leaseId": "$fresh_lease" } } }, "within_ns": "0" } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_INTERVENTION", "gate.mode": "GATE_MODE_INTERVENTION" } },
+
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "250000000" } },
+    { "expect_output": { "kind": "substitute", "part": "left", "provenance": { "kind": "PROVENANCE_KIND_AGENT" } } },
+    { "expect_no_emission": { "event": { "fault": {} }, "within_ns": "0" } }
+  ]
+}

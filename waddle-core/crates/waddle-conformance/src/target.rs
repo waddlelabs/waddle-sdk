@@ -8,6 +8,7 @@
 //! advances in fixed steps so stall detection, chunk boundaries, jitter
 //! playout and the bypass pump behave identically on every run.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use serde_json::{Map, Value, json};
@@ -19,22 +20,22 @@ use waddle_fsm::{
 };
 use waddle_gate::gate::GateShared;
 use waddle_gate::{
-    BlendSchedule, DivergenceDetector, Gate, GateOutput, GatePlan, GateRecord, OwnedAction,
-    PlanMode, StreamChannel, TimedAction,
+    BlendSchedule, ChunkMeta, DivergenceDetector, Gate, GateOutput, GatePlan, GateRecord,
+    OwnedAction, PlanMode, StreamChannel, TimedAction,
 };
 use waddle_ingest::FakeClock;
 use waddle_types::action::ActionValues;
 use waddle_types::{
-    ActionSpace, ActorKind, ActorRef, ClaimId, EpisodeId, GateMode, GrantStatus, Interp,
-    LeaseEnforcement, LeaseId, MonoNs, ProvenanceTag, ReplanPolicy, TerminalOutcome, Verb,
-    pb::v0 as pb,
+    ActionChunk, ActionSpace, ActorKind, ActorRef, ClaimId, EpisodeId, GateMode, GrantStatus,
+    Interp, LeaseEnforcement, LeaseId, MonoNs, PartPolicy, ProvenanceTag, ReplanPolicy, SpaceSpec,
+    TerminalOutcome, TypesError, Verb, pb::v0 as pb,
 };
 
 use crate::emissions::{
     Codec, EmissionEntry, effect_to_value, gate_mode_name, grant_status_name,
     intervention_phase_name, verb_name,
 };
-use crate::scenario::{Scenario, TargetKind, parse_ns, parse_verification_mode};
+use crate::scenario::{PARTS_FEATURE, Scenario, TargetKind, parse_ns, parse_verification_mode};
 use crate::{ConformanceError, scenario_err};
 
 /// No `gate_tick` within this window while claimed ⇒ the caller loop has
@@ -52,6 +53,112 @@ const RECORD_CAPACITY: usize = 1024;
 /// Deterministic playout: an intervention action is due the instant it
 /// arrives (virtual time already models network delay).
 const PLAYOUT_DELAY_NS: i64 = 0;
+/// The intake an `intervention_chunk` refusal is attributed to
+/// (`Fault.source`). Scenarios assert it as `$nonempty`, never as this
+/// literal — `Fault.source` is implementation-named (control.proto: "who
+/// raised it"), so this spelling binds nobody but the reference runner.
+const AGENT_CHUNK_SOURCE: &str = "agent-chunk";
+
+/// A once-per-claim-window latch, keyed to the window's IDENTITY rather
+/// than to a holder noticing the window shut: two windows meeting inside a
+/// gap the holder never polls (a retake hands the window over with no gap
+/// at all) must not share one refusal. `raise` answers true the first time
+/// it is asked within one window, false for every later ask in the same
+/// one.
+#[derive(Debug, Default)]
+struct WindowLatch {
+    generation: u64,
+    raised: bool,
+}
+
+impl WindowLatch {
+    fn raise(&mut self, generation: u64) -> bool {
+        if self.generation != generation {
+            self.generation = generation;
+            self.raised = false;
+        }
+        !std::mem::replace(&mut self.raised, true)
+    }
+}
+
+/// The `intervention_chunk` intake's bookkeeping: its own ring-seq counter
+/// and one [`WindowLatch`] per refusal reason. The reasons are independent
+/// — a chunk that doesn't fit the declared space, one whose width disagrees
+/// with it, and one whose steps carry nothing to dispatch each say
+/// something different, and a sender is owed each of them once per window.
+#[derive(Debug, Default)]
+struct ChunkIntake {
+    /// Per-STEP seq for the jitter buffer's reorder map, never the chunk's
+    /// own `seq` (one value for the whole chunk — every step in it would
+    /// collide on the same key).
+    next_seq: u64,
+    dims: WindowLatch,
+    not_executable: WindowLatch,
+    inert: WindowLatch,
+}
+
+/// The commanded side of dual-write detection (N14), keyed by the SCOPE each
+/// command addressed: `""` for a whole-robot action, the part's name for a
+/// part-addressed one.
+///
+/// One vector stopped being enough when `Action.part` became executable. A
+/// part-scoped command means "move this part, hold the rest" (docs/FSM.md
+/// §4), so what the robot was last told is one command PER PART, and a
+/// part-width vector compared against whatever proprioception arrives next
+/// scores an intervenor against another part's joints. Hence the two rules
+/// here: a whole-robot command commands every part, so it CLEARS the
+/// part-scoped commands it supersedes; a part-scoped one replaces its own
+/// part only, leaving the last whole-robot command standing as the anchor
+/// for the parts it did not address.
+#[derive(Debug, Default)]
+struct Commanded {
+    by_scope: BTreeMap<String, Vec<f64>>,
+}
+
+impl Commanded {
+    /// Record what just went robot-ward. `part` is the action's own tag
+    /// ([`OwnedAction::part`]); `None` is the whole declared space.
+    fn record(&mut self, part: Option<&str>, values: &[f64]) {
+        if part.is_none() {
+            self.by_scope.clear();
+        }
+        self.by_scope
+            .insert(part.unwrap_or_default().to_owned(), values.to_vec());
+    }
+
+    /// What a `ProprioSample` for `part` may be compared against, or `None`
+    /// when the two describe different scopes and nothing honest can be said
+    /// about the pair.
+    ///
+    /// * A per-part sample answers to that part's own command when one
+    ///   stands, and otherwise to the last whole-robot command's slice for
+    ///   it: slicing an ACTION vector by declaration order is what the
+    ///   declared composite layout means, and "hold the rest" leaves that
+    ///   slice as the part's standing command.
+    /// * A whole-robot sample (`part == ""`) answers to the last whole-robot
+    ///   command, but only while nothing narrower supersedes part of it.
+    ///   Past that, the whole-robot expectation is a composition of one
+    ///   command per part, and the sample's layout is the customer's
+    ///   OBSERVATION layout, which no declaration describes — so the runner
+    ///   never re-lays an observation out by action parts, and says nothing
+    ///   instead. A part-addressed session reports proprioception per part
+    ///   (`ProprioSample.part`), which is the case above.
+    fn expected_for<'a>(&'a self, space: Option<&ActionSpace>, part: &str) -> Option<&'a [f64]> {
+        if part.is_empty() {
+            if self.by_scope.keys().any(|scope| !scope.is_empty()) {
+                return None;
+            }
+            return self.by_scope.get("").map(Vec::as_slice);
+        }
+        if let Some(values) = self.by_scope.get(part) {
+            return Some(values);
+        }
+        let whole = self.by_scope.get("")?;
+        let (offset, dims) = part_span(space?, part)?;
+        let end = (offset + dims).min(whole.len());
+        (offset < end).then(|| &whole[offset..end])
+    }
+}
 
 #[derive(Debug)]
 struct GateParts {
@@ -62,6 +169,10 @@ struct GateParts {
     /// Kept alive so gate records are droppable without erroring the ring.
     _records: rtrb::Consumer<GateRecord>,
     space: Option<ActionSpace>,
+    /// Whether this scenario's connection negotiated `waddle.v0.parts`
+    /// ([`part_policy`]) — the answer every intervention intake reads for
+    /// `Action.part`.
+    parts: PartPolicy,
     interp: Interp,
     last_output: Option<GateOutput>,
     /// The Noop reason of the most recent tick, captured from the plan mode
@@ -73,17 +184,24 @@ struct GateParts {
     /// An intervention stream has produced traffic (stall → bypass only
     /// matters when there is someone to starve).
     traffic: bool,
-    /// Dims-validation contract (mirroring `spawn_media_intake`'s
-    /// `validation_fault_sent`): a dims-mismatched teleop injection faults
-    /// at most once per claim window, not once per packet. Reset the
-    /// instant the claim ends.
-    validation_fault_sent: bool,
+    /// Dims-validation contract (mirroring the media intake's own guard): a
+    /// dims-mismatched teleop injection faults at most once per claim
+    /// window, not once per packet.
+    teleop_dims_fault: WindowLatch,
+    /// The `intervention_chunk` intake's seq counter and refusal latches.
+    chunk_intake: ChunkIntake,
     /// End of the executing policy chunk (chunk-boundary detection).
     chunk_end_ns: Option<i64>,
-    detector: DivergenceDetector,
-    /// Last action dispatched robot-ward (gate pass/substitute/blend or a
-    /// bypass-pump send) — the "commanded" side of dual-write detection.
-    last_commanded: Option<Vec<f64>>,
+    /// One divergence run per proprioception stream, keyed by
+    /// `ProprioSample.part` (`""` = the whole robot). Parts are independent
+    /// streams of content: a part that arrives where it was told must never
+    /// reset — and so mask — the run of a part that is being driven by
+    /// someone else.
+    detectors: BTreeMap<String, DivergenceDetector>,
+    /// What was last dispatched robot-ward (gate pass/substitute/blend or a
+    /// bypass-pump send), per addressed scope — the "commanded" side of
+    /// dual-write detection.
+    commanded: Commanded,
     incident_seq: u32,
 }
 
@@ -105,6 +223,16 @@ pub struct Target {
     pub rejections: Vec<String>,
     lease_seq: u32,
     claim_seq: u32,
+    /// The claim the current `claim_generation` describes.
+    claim_window: Option<ClaimId>,
+    /// The claim WINDOW's identity as a counter: it changes whenever the
+    /// active claim changes — one opening, one ending, and a retake handing
+    /// the window to a different claimant all count. Refreshed after every
+    /// accepted FSM step, so no claim change can slip past an intake that
+    /// only runs when something is injected. It is what every
+    /// "at most once per claim window" refusal is keyed to
+    /// ([`WindowLatch`]).
+    claim_generation: u64,
     /// The single in-flight verb request (`verb_result` correlates to it).
     pending_verb: Option<Verb>,
     gate: Option<GateParts>,
@@ -152,15 +280,17 @@ impl Target {
                     producer,
                     _records: records,
                     space,
+                    parts: part_policy(scenario),
                     interp,
                     last_output: None,
                     last_noop_reason: None,
                     last_tick_ns: None,
                     traffic: false,
-                    validation_fault_sent: false,
+                    teleop_dims_fault: WindowLatch::default(),
+                    chunk_intake: ChunkIntake::default(),
                     chunk_end_ns: None,
-                    detector: DivergenceDetector::new(DIVERGENCE_THRESHOLD, DIVERGENCE_WINDOW_NS),
-                    last_commanded: None,
+                    detectors: BTreeMap::new(),
+                    commanded: Commanded::default(),
                     incident_seq: 0,
                 })
             }
@@ -177,6 +307,8 @@ impl Target {
             rejections: Vec::new(),
             lease_seq: 0,
             claim_seq: 0,
+            claim_window: None,
+            claim_generation: 0,
             pending_verb: None,
             gate,
         })
@@ -204,6 +336,7 @@ impl Target {
         match waddle_fsm::step(&self.cfg, &self.fsm, &event) {
             Ok(step) => {
                 self.fsm = step.next;
+                self.refresh_claim_window();
                 self.apply_effects(step.effects)?;
                 Ok(true)
             }
@@ -212,6 +345,18 @@ impl Target {
                     .push(format!("t={}ns {event:?}: {rejected}", self.now));
                 Ok(false)
             }
+        }
+    }
+
+    /// Re-derive [`Self::claim_generation`] from WHICH claim is active, not
+    /// from `claim.is_some()` going false: a retake replaces one claimant
+    /// with another with no gap at all, and the successor deserves to hear
+    /// a refusal its predecessor already heard.
+    fn refresh_claim_window(&mut self) {
+        let claim_id = self.fsm.claim.as_ref().map(|c| &c.id);
+        if self.claim_window.as_ref() != claim_id {
+            self.claim_window = claim_id.cloned();
+            self.claim_generation = self.claim_generation.wrapping_add(1);
         }
     }
 
@@ -452,7 +597,7 @@ impl Target {
                 sent.push(action);
             }
             if let Some(last) = sent.last() {
-                gp.last_commanded = Some(last.values.to_vec());
+                gp.commanded.record(last.part.as_deref(), &last.values);
             }
         }
         for action in &sent {
@@ -461,6 +606,14 @@ impl Target {
                 value: json!({
                     "provenance": provenance_json,
                     "at": self.now.to_string(),
+                    // The part this send addresses (flag `waddle.v0.parts`),
+                    // reported as `expect_output` reports it: the addressed
+                    // part's name, or `""` for a whole-robot action. The
+                    // bypass pump is the one path an intervention action
+                    // reaches the robot without passing through `gate()`, so
+                    // without this a stalled bimanual session's send log
+                    // could not say which arm moved.
+                    "part": action.part.as_deref().unwrap_or(""),
                     "dims": action.values.len(),
                 }),
             });
@@ -550,6 +703,7 @@ impl Target {
                 gp.chunk_end_ns = Some(now.saturating_add(chunk.horizon_ns));
             }
             "teleop_action" => self.inject_teleop_action(payload)?,
+            "intervention_chunk" => self.inject_intervention_chunk(payload)?,
             "claim_request" => {
                 let source = payload
                     .get("source_name")
@@ -844,9 +998,12 @@ impl Target {
             // adding one is protocol work.
             let output = gp.gate.gate(&values, gripper, None);
             match &output {
-                GateOutput::Pass { .. } => gp.last_commanded = Some(values.clone()),
+                // The caller's own action always commands the whole declared
+                // space; an intervention action carries the part it
+                // addresses, or none for a whole-robot one.
+                GateOutput::Pass { .. } => gp.commanded.record(None, &values),
                 GateOutput::Substitute { action, .. } | GateOutput::Blend { action, .. } => {
-                    gp.last_commanded = Some(action.values.to_vec());
+                    gp.commanded.record(action.part.as_deref(), &action.values);
                 }
                 GateOutput::Noop { .. } | GateOutput::Hold => {}
             }
@@ -889,15 +1046,9 @@ impl Target {
         let (values, gripper) = flatten_teleop_targets(&packet);
         let now = self.now;
         let at = self.at();
-        // Dims-validation contract (mirroring `spawn_media_intake`'s
-        // `validation_fault_sent`): the fault guard resets the instant the
-        // claim ends, so the next claim window gets its own chance to
-        // fault.
-        if self.fsm.claim.is_none()
-            && let Some(gp) = self.gate.as_mut()
-        {
-            gp.validation_fault_sent = false;
-        }
+        // The window this packet is admitted into is the window its refusal
+        // is owed to ([`WindowLatch`]).
+        let generation = self.claim_generation;
         let expected_dims = self
             .gate
             .as_ref()
@@ -931,12 +1082,14 @@ impl Target {
                         action: OwnedAction {
                             values: ActionValues::from_slice(&values),
                             gripper,
+                            // As in production: a teleop packet is not
+                            // part-addressed (`flatten_packet`).
+                            part: None,
                         },
                         chunk: None,
                     })
                     .map_err(|_| scenario_err("intervention stream ring full"))?;
-            } else if !gp.validation_fault_sent {
-                gp.validation_fault_sent = true;
+            } else if gp.teleop_dims_fault.raise(generation) {
                 rejected = Some((values.len(), expected_dims.unwrap_or(0)));
             }
             gp.traffic = true;
@@ -956,6 +1109,130 @@ impl Target {
         self.periodic()
     }
 
+    /// Agent-chunk intake: validate one wire `intervention_chunk` against
+    /// the declared space and buffer its steps on the intervention stream
+    /// (`GateServerMessage.intervention_chunk`; scenario-format.md's
+    /// `intervention_chunk`, flag `waddle.v0.agent`).
+    ///
+    /// Admitted on an ACTIVE CLAIM alone — no `GateMode` match, the same
+    /// gate the teleop path uses — so a chunk arriving during the ENGAGE
+    /// handoff buffers correctly and is ready the instant the handoff
+    /// completes. With no claim there is nobody to buffer for and the chunk
+    /// is dropped, recorded in the rejection log rather than faulted: an
+    /// unclaimed sender is not a sender making a mistake about the space.
+    ///
+    /// Refusal shape, per FSM.md §4: a step that doesn't fit the declared
+    /// space refuses the WHOLE chunk (a partial trajectory from a sender
+    /// that disagrees about the space is not a degraded-but-safe thing to
+    /// actuate), reported as one `Fault{VALIDATION_ERROR}` per reason per
+    /// claim window; INERT steps are skipped, the rest of the chunk still
+    /// executes, and the skip is reported the same way.
+    ///
+    /// Playout is receive-time + each step's `t_offset_ns`, never the
+    /// chunk's own `t_emitted_ns` (a remote sender's emit clock is not an
+    /// anchor on this side); `t_emitted_ns` and `seq` ride along as
+    /// `ChunkMeta` so the jitter buffer can see a chunk boundary and apply
+    /// the declared `ReplanPolicy`. Steps are tagged
+    /// `StreamChannel::AgentChunk` so this seq space never shares a
+    /// reorder cursor with the teleop packets' (`jitter.rs`).
+    fn inject_intervention_chunk(
+        &mut self,
+        payload: &Map<String, Value>,
+    ) -> Result<(), ConformanceError> {
+        let chunk: pb::ActionChunk =
+            self.parse_payload(payload, "chunk", "waddle.v0.ActionChunk")?;
+        let now = self.now;
+        let at = self.at();
+        let generation = self.claim_generation;
+        // A gate-target kind whether or not a claim is active: a scenario
+        // that injects one at the `fsm` target is a scenario error, not a
+        // quietly dropped chunk.
+        self.gate_mut("intervention_chunk")?;
+        if self.fsm.claim.is_none() {
+            self.rejections.push(format!(
+                "t={now}ns intervention_chunk{{seq {}}}: no active claim, nothing to buffer for",
+                chunk.seq
+            ));
+            return Ok(());
+        }
+        let total = chunk.actions.len();
+        let mut rejected: Option<waddle_fsm::RejectReason> = None;
+        {
+            let gp = self.gate_mut("intervention_chunk")?;
+            let space = gp.space.as_ref().ok_or_else(|| {
+                scenario_err("intervention_chunk requires a declared action space (robot_fixture)")
+            })?;
+            // Whether `Action.part` is honored: the answer this scenario's
+            // connection negotiated ([`part_policy`]). A scenario whose
+            // steps address parts declares `waddle.v0.parts`, which is what
+            // got it run at all; one that does not gets the pre-flag
+            // reading, whatever the robot declares.
+            let parts = gp.parts;
+            match ActionChunk::from_pb(&chunk, space, parts) {
+                Ok(flattened) => {
+                    let meta = ChunkMeta {
+                        chunk_seq: flattened.chunk.seq,
+                        t_emitted_ns: flattened.chunk.t_emitted_ns,
+                    };
+                    for step in &flattened.chunk.steps {
+                        gp.chunk_intake.next_seq += 1;
+                        gp.producer
+                            .push(TimedAction {
+                                channel: StreamChannel::AgentChunk,
+                                seq: gp.chunk_intake.next_seq,
+                                received: MonoNs(now.saturating_add(step.offset_ns)),
+                                action: OwnedAction {
+                                    values: step.values.clone(),
+                                    gripper: step.gripper,
+                                    // `Some` only under `PartPolicy::Honor`,
+                                    // where the flattener minted the tag from
+                                    // the part this step addresses.
+                                    part: step.part.clone(),
+                                },
+                                chunk: Some(meta),
+                            })
+                            .map_err(|_| scenario_err("intervention stream ring full"))?;
+                    }
+                    if !flattened.inert.is_empty() && gp.chunk_intake.inert.raise(generation) {
+                        rejected = Some(waddle_fsm::RejectReason::InertStepsSkipped {
+                            skipped: flattened.inert.len(),
+                            of: total,
+                        });
+                    }
+                }
+                Err(TypesError::DimensionMismatch { expected, got }) => {
+                    if gp.chunk_intake.dims.raise(generation) {
+                        rejected = Some(waddle_fsm::RejectReason::Dims {
+                            got,
+                            want: expected,
+                        });
+                    }
+                }
+                // Every other `TypesError` — a target arm the space doesn't
+                // have, a part it doesn't declare, a missing field — means
+                // this chunk isn't speaking the declared space. Reported in
+                // its own words rather than forced into the dims-shaped
+                // report, and latched separately: "which parts exist" and
+                // "how wide this part is" are different disagreements.
+                Err(err) => {
+                    if gp.chunk_intake.not_executable.raise(generation) {
+                        rejected = Some(waddle_fsm::RejectReason::NotExecutable(err.to_string()));
+                    }
+                }
+            }
+            gp.traffic = true;
+        }
+        if let Some(reason) = rejected {
+            self.dispatch(SessionEvent::InterventionRejected {
+                source: AGENT_CHUNK_SOURCE,
+                reason,
+                at,
+            })?;
+        }
+        // Arrival is an event for stall detection and (in bypass) the pump.
+        self.periodic()
+    }
+
     fn inject_proprio_sample(
         &mut self,
         payload: &Map<String, Value>,
@@ -966,12 +1243,19 @@ impl Target {
             Some(v) => parse_ns(v)?,
             None => self.now,
         };
+        // Commanded and observed must describe the same scope before they
+        // are compared at all ([`Commanded::expected_for`]), and each
+        // stream's divergence run stands on its own.
         let verdict = {
             let gp = self.gate_mut("proprio_sample")?;
-            match gp.last_commanded.clone() {
+            match gp.commanded.expected_for(gp.space.as_ref(), &sample.part) {
                 Some(commanded) => gp
-                    .detector
-                    .feed(&commanded, &sample.joint_pos, MonoNs(t_ns)),
+                    .detectors
+                    .entry(sample.part.clone())
+                    .or_insert_with(|| {
+                        DivergenceDetector::new(DIVERGENCE_THRESHOLD, DIVERGENCE_WINDOW_NS)
+                    })
+                    .feed(commanded, &sample.joint_pos, MonoNs(t_ns)),
                 None => None,
             }
         };
@@ -1052,7 +1336,8 @@ impl Target {
     ) -> Result<(Vec<f64>, Option<f64>), ConformanceError> {
         if let Some(space) = self.gate.as_ref().and_then(|g| g.space.as_ref())
             && let Ok(action) = self.codec.parse::<pb::Action>("waddle.v0.Action", value)
-            && let Ok(step) = waddle_types::action::flatten_action(&action, space)
+            && let Ok(step) =
+                waddle_types::action::flatten_action(&action, space, PartPolicy::Ignore)
         {
             return Ok((step.values.to_vec(), step.gripper));
         }
@@ -1199,16 +1484,23 @@ impl Target {
                 "kind": "pass",
                 "provenance": self.provenance_json(provenance)?,
             }),
-            GateOutput::Substitute { provenance, .. } => json!({
+            // `part` (flag `waddle.v0.parts`) rides the two kinds that
+            // return a Waddle-sourced action, and only those: the addressed
+            // part's name, or `""` for an action that commands the whole
+            // declared space — present either way, so a scenario can pin
+            // "untagged" as a fact rather than by omission.
+            GateOutput::Substitute { action, provenance } => json!({
                 "kind": "substitute",
+                "part": action.part.as_deref().unwrap_or(""),
                 "provenance": self.provenance_json(provenance)?,
             }),
             GateOutput::Blend {
+                action,
                 progress,
                 provenance,
-                ..
             } => json!({
                 "kind": "blend",
+                "part": action.part.as_deref().unwrap_or(""),
                 "progress": progress,
                 "provenance": self.provenance_json(provenance)?,
             }),
@@ -1244,6 +1536,51 @@ fn parse_agent_invite(value: &Value) -> Result<AgentInvite, ConformanceError> {
     Ok(AgentInvite { prompt, timeout_ns })
 }
 
+/// Whether an intervention intake honors `Action.part`, decided by the
+/// scenario's own `requires_features`: the runner models a CONNECTION, and
+/// on a connection the answer is the negotiation's (VERSIONING.md §3), never
+/// an inference from the robot. A scenario that lists `waddle.v0.parts` is
+/// one running against a connection that accepted the flag; one that does
+/// not is a pre-flag connection, and gets the pre-flag reading — every
+/// action read against the whole declared space — even on a `Composite`
+/// robot that has parts to address. That case is a behavior the registry row
+/// defines, so it has to be expressible.
+fn part_policy(scenario: &Scenario) -> PartPolicy {
+    if scenario
+        .requires_features
+        .iter()
+        .any(|f| f == PARTS_FEATURE)
+    {
+        PartPolicy::Honor
+    } else {
+        PartPolicy::Ignore
+    }
+}
+
+/// Where a declared part's values sit in a WHOLE-ROBOT action vector: a
+/// composite action is its parts' values concatenated in declaration order
+/// (`waddle_types::action`'s flatten), so a part's span is the widths
+/// declared before it, and its own. `None` when the space declares no parts,
+/// or no part by this name.
+///
+/// Layout arithmetic over the DECLARATION, and applied to commands only —
+/// an observation's layout is the customer's own, declared nowhere, so it is
+/// never sliced this way.
+fn part_span(space: &ActionSpace, name: &str) -> Option<(usize, usize)> {
+    let SpaceSpec::Composite { parts } = &space.spec else {
+        return None;
+    };
+    let mut offset = 0;
+    for (part, part_space) in parts {
+        let dims = part_space.dims()?;
+        if part == name {
+            return Some((offset, dims));
+        }
+        offset += dims;
+    }
+    None
+}
+
 fn parse_actor_kind(s: &str) -> Result<ActorKind, ConformanceError> {
     let value = pb::ActorKind::from_str_name(s)
         .ok_or_else(|| scenario_err(format!("unknown actor kind {s:?}")))?;
@@ -1268,6 +1605,12 @@ fn str_field<'m>(
 /// `waddle.v0.TeleopStreamPacket` and does not pin "first target only" — a
 /// runner that only read `targets[0]` was a runner defect (see
 /// `handoff_immediate_mid_chunk`'s amendment).
+///
+/// Production's KNOWN DEFECT (deferred to media-plane part routing) is
+/// mirrored on purpose: grippers after the first are dropped, because v0
+/// carries one gripper scalar per action. A runner that quietly did better
+/// than the implementations it scores would hide the defect from the
+/// fixtures instead of leaving it visible to them.
 fn flatten_teleop_targets(packet: &pb::TeleopStreamPacket) -> (Vec<f64>, Option<f64>) {
     let mut values = Vec::new();
     let mut gripper = None;

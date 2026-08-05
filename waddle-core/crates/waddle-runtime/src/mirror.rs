@@ -103,6 +103,19 @@ pub struct Status {
     pub episode_state: Option<waddle_fsm::Phase>,
     pub gate_mode: Option<GateMode>,
     pub claim_active: bool,
+    /// IDENTITY of the current claim window, as a counter: it changes
+    /// whenever the active claim changes — one opening, one ending, and a
+    /// retake handing the window to a different claimant all count. 0 before
+    /// the session's first claim.
+    ///
+    /// It exists because "once per claim window" cannot be answered by
+    /// watching `claim_active` go false: the intervention intakes that owe a
+    /// sender exactly one refusal per window are a 20 ms poll loop (the plane
+    /// pump), a packet-driven loop (the media intake), and a seam with no
+    /// loop at all (`push_intervention_chunk`) — any of them can miss the
+    /// gap between two windows entirely, and then swallow the next window's
+    /// first fault. Comparing this value cannot.
+    pub claim_generation: u64,
     /// Provenance tag of the active claim (bypass pump stamps sends with it).
     pub provenance: Option<ProvenanceTag>,
     pub outcome: Option<TerminalOutcome>,
@@ -137,11 +150,29 @@ pub struct Status {
     pub agent_task: Option<AgentTaskStatus>,
     pub plane_connected: bool,
     /// The CURRENT connection accepted `waddle.v0.obs.stills` at Register.
-    /// Refreshed by the plane pump on every registration (flags are
-    /// (re-)negotiated on each reconnect) and read by the media uplink pump,
+    /// Set by the plane pump from that connection's own `RegisterResponse`
+    /// and cleared at every connection boundary (see
+    /// `pumps::forget_negotiated_flags`); read by the media uplink pump,
     /// which emits control-plane stills only while it is set — VERSIONING §3:
     /// a behavior the connection did not accept is never emitted.
     pub stills_negotiated: bool,
+    /// The CURRENT connection accepted `waddle.v0.parts` at Register. Same
+    /// per-connection lifecycle as `stills_negotiated` — set from that
+    /// connection's `RegisterResponse`, cleared the moment the connection
+    /// ends or a new one begins — and read by two threads that never see the
+    /// `RegisterResponse` themselves: the plane pump, which honors
+    /// `Action.part` at the intervention-chunk intake only while it is set,
+    /// and the reducer, which uplinks a named `ProprioSample.part` only
+    /// while it is set (without it, named-part samples are WITHHELD, never
+    /// relabeled `""` — that would put one part's joints on the wire as the
+    /// whole robot's). Local recording is not connection-scoped and always
+    /// carries the part.
+    ///
+    /// Both readers decide on their own thread, so neither can see which
+    /// connection the message actually leaves on; that half is
+    /// `ClientMsg::connection_scoped_flag`'s, which keeps a named-part
+    /// sample out of the offline buffer entirely.
+    pub parts_negotiated: bool,
     pub shutdown: bool,
     /// Set once, at build time, when the session's `ControlRegistry` has no
     /// `estop` callable. Missing `estop` never fails the build (unlike

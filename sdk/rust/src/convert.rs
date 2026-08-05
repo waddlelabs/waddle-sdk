@@ -6,10 +6,12 @@ use std::sync::Arc;
 use numpy::{PyArray1, PyArrayMethods, PyReadonlyArray1};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 use waddle_runtime::{ResetHook, ResetSpec, RuntimeError};
 use waddle_types::pb::v0 as pb;
 use waddle_types::{
-    ActorKind, HandoffPolicy, LeaseEnforcement, ResetVerificationMode, TerminalOutcome,
+    ActionSpace, ActorKind, HandoffPolicy, LeaseEnforcement, ResetVerificationMode, SpaceSpec,
+    TerminalOutcome,
 };
 
 use crate::verbs::PyResetHook;
@@ -46,6 +48,114 @@ pub(crate) fn extract_f64s<'py>(obj: &Bound<'py, PyAny>) -> PyResult<F64s<'py>> 
         }
     }
     Ok(F64s::Owned(obj.extract::<Vec<f64>>()?))
+}
+
+/// The declared `Composite` layout: each part's name and width, in
+/// declaration order — which IS the layout of the concatenated action
+/// vector, so slicing a whole-robot row into parts is arithmetic over the
+/// customer's own declaration and never an invention.
+///
+/// Built once per session and shared (`Arc`) by every payload path that can
+/// carry an intervention into Python: the dispatched-chunk steps
+/// ([`crate::verbs::PySend`]) and the gate's Substitute/Blend returns
+/// ([`crate::episode::PyEpisode`]). Absent — and therefore the flat
+/// float64-ndarray surface, unchanged — for every declaration that is not a
+/// `Composite` of parts with known widths.
+pub(crate) struct PartsLayout {
+    parts: Vec<(String, usize)>,
+    /// The declared space's own width: the parts' widths summed.
+    total: usize,
+}
+
+/// The declared action space, parsed once per session.
+///
+/// `None` when the declaration has none or cannot be parsed — `build()` is
+/// about to refuse it with the real reason, and a second, worse-worded copy
+/// of that refusal here would only get in the way.
+pub(crate) fn declared_space(robot: &pb::RobotDescription) -> Option<Arc<ActionSpace>> {
+    Some(Arc::new(
+        ActionSpace::from_pb(robot.action_space.as_ref()?).ok()?,
+    ))
+}
+
+impl PartsLayout {
+    /// The layout of a declared space, or `None` if it declares no parts.
+    ///
+    /// A `Composite` part with no declared width (an opaque one) yields
+    /// `None` too: such a space is not executable at all
+    /// (`ActionSpace::dims` is `None`, and the core's own chunk intake
+    /// refuses it), so there is no payload for a layout to key.
+    pub(crate) fn of(space: &ActionSpace) -> Option<Arc<Self>> {
+        let SpaceSpec::Composite { parts } = &space.spec else {
+            return None;
+        };
+        let mut layout = Vec::with_capacity(parts.len());
+        let mut total = 0usize;
+        for (name, part) in parts {
+            let dims = part.dims()?;
+            total += dims;
+            layout.push((name.clone(), dims));
+        }
+        Some(Arc::new(Self {
+            parts: layout,
+            total,
+        }))
+    }
+
+    /// One whole-robot row cut into its declared parts, in declaration
+    /// order.
+    pub(crate) fn split<'a>(&self, values: &'a [f64]) -> PyResult<Vec<(&str, &'a [f64])>> {
+        if values.len() != self.total {
+            return Err(PyValueError::new_err(format!(
+                "a whole-robot action carries the declared space's {} rows (its parts \
+                 concatenated in declaration order); got {}",
+                self.total,
+                values.len()
+            )));
+        }
+        let mut out = Vec::with_capacity(self.parts.len());
+        let mut at = 0usize;
+        for (name, width) in &self.parts {
+            out.push((name.as_str(), &values[at..at + width]));
+            at += width;
+        }
+        Ok(out)
+    }
+
+    /// One intervention payload keyed by part — the ONE rule a Composite
+    /// session's Python surface follows, wherever the payload crosses:
+    ///
+    /// * a part-scoped action (`part = Some`) is that part alone, at that
+    ///   part's width. The parts it does not name carry no command at all —
+    ///   "move this part, hold the rest" (docs/FSM.md §4), and an absent key
+    ///   is how that is said;
+    /// * a whole-robot action is every declared part, sliced;
+    /// * a gripper-only action — "hold the arm, move the gripper" — has no
+    ///   rows to carry, so its parts map to EMPTY arrays: the key set still
+    ///   says which arms are being held, and the gripper rides the step's
+    ///   own `gripper` slot as it always has.
+    pub(crate) fn by_part<'py>(
+        &self,
+        py: Python<'py>,
+        values: &[f64],
+        part: Option<&str>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let out = PyDict::new(py);
+        match part {
+            Some(name) => out.set_item(name, PyArray1::from_slice(py, values))?,
+            None if values.is_empty() => {
+                for (name, _) in &self.parts {
+                    out.set_item(name.as_str(), PyArray1::<f64>::from_slice(py, &[]))?;
+                }
+            }
+            None => {
+                for (name, rows) in self.split(values)? {
+                    out.set_item(name, PyArray1::from_slice(py, rows))?;
+                }
+            }
+        }
+        Ok(out)
+    }
 }
 
 pub(crate) fn parse_robot_json(json: &str) -> PyResult<pb::RobotDescription> {

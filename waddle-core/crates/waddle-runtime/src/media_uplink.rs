@@ -110,8 +110,9 @@ use crate::mirror::Mirror;
 
 /// Flag `waddle.v0.obs.stills` (VERSIONING.md registry): declared at
 /// Register iff a declared camera carries `StreamPolicy.still_fps > 0`;
-/// stills are sent only when the current connection accepted it.
-pub(crate) const STILLS_FLAG: &str = "waddle.v0.obs.stills";
+/// stills are sent only when the current connection accepted it. Named
+/// once, in the crate that negotiates it and classifies by it.
+pub(crate) use waddle_controlplane::flags::STILLS as STILLS_FLAG;
 
 /// The per-camera bounded queue's capacity. Small and fixed: video wants the
 /// freshest frame, not a deep backlog — a few frames of slack absorb jitter

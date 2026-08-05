@@ -30,8 +30,8 @@ use waddle_types::pb::v0 as pb;
 use waddle_types::{ActorKind, TerminalOutcome};
 
 use crate::convert::{
-    extract_f64s, outcome_str, parse_enforcement, parse_handoff, parse_outcome, parse_reset_spec,
-    parse_robot_json, parse_verification_mode, runtime_err,
+    PartsLayout, declared_space, extract_f64s, outcome_str, parse_enforcement, parse_handoff,
+    parse_outcome, parse_reset_spec, parse_robot_json, parse_verification_mode, runtime_err,
 };
 use crate::episode::PyEpisode;
 use crate::verbs::{PySend, PyUnit};
@@ -146,6 +146,17 @@ pub(crate) struct PySession {
     /// `waddle._testing` surface drives it).
     testing_far: Option<Mutex<LoopbackFarEnd>>,
     teleop_seq: AtomicU64,
+    /// [`PySession::_testing_push_chunk`]'s own stream sequence — monotone
+    /// per stream, and a different stream from the teleop packets above.
+    chunk_seq: AtomicU64,
+    /// The declared parts layout (`Some` iff `Composite`), handed to every
+    /// episode so a gate return is keyed by part exactly as a dispatched
+    /// chunk's steps are.
+    parts: Option<Arc<PartsLayout>>,
+    /// The declared action space, which [`PartsLayout`] is derived from and
+    /// [`PySession::_testing_push_chunk`] marshals against. `None` only for
+    /// a declaration `build()` would already have refused.
+    space: Option<Arc<waddle_types::ActionSpace>>,
 }
 
 /// Dropping an un-shutdown session must not run the core's blocking
@@ -245,7 +256,7 @@ impl PySession {
         let episode = py
             .detach(move || session.start_episode_with(&task, opts))
             .map_err(runtime_err)?;
-        Ok(PyEpisode::new(episode))
+        Ok(PyEpisode::new(episode, self.parts.clone()))
     }
 
     /// Ask Waddle to drive one episode (flag `waddle.v0.agent`): opens an
@@ -448,15 +459,42 @@ impl PySession {
     /// untagged pose is exactly how misaligned data corrupts a corpus
     /// silently). Raises `ValueError` for a wrong `ee_pose` length or an
     /// empty `ee_pose_frame`.
-    #[pyo3(signature = (joint_vel=None, ee_pose=None, ee_pose_frame="ee", gripper=None))]
+    ///
+    /// `part` says WHICH declared part this sample describes (flag
+    /// `waddle.v0.parts`). The default `""` is the sole/default part — the
+    /// robot as declared — and is always legal; any other value must name a
+    /// part of a `Composite` declaration or this raises `ValueError` by
+    /// name. Each part is patched independently: one arm's sample is not an
+    /// update to the other's, nor to the robot as declared.
+    ///
+    /// `joint_pos` is load-bearing for a named part and optional for `""`. A
+    /// per-part sample cannot ride the flat `gate(obs=...)` vector: the
+    /// observation layout is the customer's own and no declaration describes
+    /// it, so slicing it by action parts would invent a mapping nobody
+    /// declared. For `""` it is most-recent-wins against the gate-tick
+    /// stream, which reports the same thing.
+    #[pyo3(signature = (
+        joint_vel=None,
+        ee_pose=None,
+        ee_pose_frame="ee",
+        gripper=None,
+        part="",
+        joint_pos=None,
+    ))]
     fn report_proprio(
         &self,
         joint_vel: Option<&Bound<'_, PyAny>>,
         ee_pose: Option<&Bound<'_, PyAny>>,
         ee_pose_frame: &str,
         gripper: Option<f64>,
+        part: &str,
+        joint_pos: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<()> {
         let joint_vel = joint_vel
+            .map(extract_f64s)
+            .transpose()?
+            .map(|row| row.as_slice().to_vec());
+        let joint_pos = joint_pos
             .map(extract_f64s)
             .transpose()?
             .map(|row| row.as_slice().to_vec());
@@ -479,12 +517,21 @@ impl PySession {
                 .map_err(|e| PyValueError::new_err(e.to_string()))
             })
             .transpose()?;
-        self.inner.report_proprio(ProprioReport {
-            joint_vel,
-            ee_pose,
-            gripper,
-        });
-        Ok(())
+        // The undeclared-part refusal is the core's (it owns the
+        // declaration), and `runtime_err` is the ONE place a core error
+        // becomes a Python one — it already maps a declaration error to
+        // `ValueError`, which is what an undeclared part is. Classifying it
+        // again here would fix this call's answer and get the next variant's
+        // wrong.
+        self.inner
+            .report_proprio(ProprioReport {
+                part: part.to_owned(),
+                joint_pos,
+                joint_vel,
+                ee_pose,
+                gripper,
+            })
+            .map_err(runtime_err)
     }
 
     /// PRIVATE/UNSTABLE: every raw frame payload the loopback media plane's
@@ -561,6 +608,53 @@ impl PySession {
         far.lock()
             .push(DataTopic::TeleopPose, &packet)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+    }
+
+    /// PRIVATE/UNSTABLE: push ONE intervention step into the session's
+    /// intervention stream — the local counterpart of a plane
+    /// `intervention_chunk`, exactly as `_testing_engage` is the local
+    /// counterpart of a claim directive. It runs the core's own intake
+    /// (`waddle_runtime::push_intervention_chunk`): same validation, same
+    /// once-per-claim-window refusals on the episode timeline, and the
+    /// jitter buffer still decides when — and whether — the step plays out.
+    ///
+    /// `part` addresses one declared part by name (`Action.part`, flag
+    /// `waddle.v0.parts`); `None` is the whole robot. Empty `values` with a
+    /// `gripper` is the gripper-only shape — "hold the arm, move the
+    /// gripper" — and is legal with or without a part.
+    ///
+    /// The wire shape is `waddle_types::unflatten_action`'s, the core's own
+    /// inverse of the flattening its intake will apply: whatever target arm
+    /// the space declares (not always joint position), a `CompositeAction`
+    /// naming every part for a whole-robot row on a `Composite` declaration,
+    /// and a `NoopMarker` carrying the gripper for the gripper-only shape.
+    /// This hook marshals nothing itself — a second, hand-rolled encoder
+    /// here could only disagree with the decoder, and did.
+    #[pyo3(signature = (values, part=None, gripper=None, offset_ns=0))]
+    fn _testing_push_chunk(
+        &self,
+        values: Vec<f64>,
+        part: Option<&str>,
+        gripper: Option<f64>,
+        offset_ns: i64,
+    ) -> PyResult<()> {
+        self.testing_far()?;
+        let space = self.space.as_deref().ok_or_else(|| {
+            PyRuntimeError::new_err("the session's robot declares no action space")
+        })?;
+        let mut action = waddle_types::action::unflatten_action(&values, gripper, part, space)
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        action.t_offset_ns = offset_ns;
+        waddle_runtime::push_intervention_chunk(
+            &self.inner,
+            pb::ActionChunk {
+                actions: vec![action],
+                seq: self.chunk_seq.fetch_add(1, Ordering::SeqCst),
+                source_id: "waddle.testing".to_owned(),
+                ..Default::default()
+            },
+        );
+        Ok(())
     }
 
     /// PRIVATE/UNSTABLE: engage an already-open reset window — injects
@@ -767,9 +861,20 @@ pub(crate) fn create_session(
         .with_robot_cameras(&robot)
     });
 
+    // The declared space, parsed once here, and the parts layout derived
+    // from it — shared by every path an intervention payload crosses on (the
+    // `send` verb's steps, the gate's Substitute/Blend returns). The layout
+    // is absent for every declaration without parts, which is what keeps
+    // those sessions on the flat ndarray surface.
+    let space = declared_space(&robot);
+    let parts = space.as_deref().and_then(PartsLayout::of);
+
     let mut registry = ControlRegistry::default();
     if let Some(cb) = send {
-        registry.send = Some(Arc::new(PySend { cb }));
+        registry.send = Some(Arc::new(PySend {
+            cb,
+            parts: parts.clone(),
+        }));
     }
     if let Some(cb) = hold {
         registry.hold = Some(Arc::new(PyUnit { cb }));
@@ -842,5 +947,8 @@ pub(crate) fn create_session(
         closed: AtomicBool::new(false),
         testing_far,
         teleop_seq: AtomicU64::new(1),
+        chunk_seq: AtomicU64::new(1),
+        parts,
+        space,
     })
 }

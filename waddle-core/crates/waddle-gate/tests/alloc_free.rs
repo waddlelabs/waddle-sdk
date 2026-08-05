@@ -122,7 +122,9 @@ fn passthrough_is_allocation_free_and_fast() {
 /// reorder map (a `BTreeMap`) allocates as it grows — a property of that
 /// buffer's reordering, not of the tick, and unchanged by this test. It
 /// clones the very same tag the same number of times, so the arm is covered
-/// for what this test is about.
+/// for what this test is about; the substituting tick's own steady-state
+/// cost is measured by
+/// [`a_part_tagged_claimed_tick_allocates_no_more_than_an_untagged_one`].
 #[test]
 fn every_plan_arm_is_allocation_free() {
     use std::sync::Arc;
@@ -250,6 +252,115 @@ fn every_plan_arm_is_allocation_free() {
             "the {name} plan arm allocated {counted} times over {CALLS} ticks"
         );
     }
+}
+
+/// A part-tagged intervention action costs the claimed tick nothing.
+///
+/// The tick that substitutes one clones it twice — into the record ring and
+/// into the blend anchor, the third copy being moved into the returned
+/// `GateOutput` — so an owned `String` on `OwnedAction::part` would be a
+/// malloc/free pair per clone on the customer's real-time thread, which is
+/// the same defect `ProvenanceTag`'s `Arc`-shared fields exist to avoid.
+/// `Arc<str>` minted once at the intake makes each clone an atomic
+/// increment.
+///
+/// Unlike the arms above this drives CLAIMED with a PENDING action, so the
+/// jitter buffer's per-channel reorder map (a `BTreeMap`) is exercised too —
+/// an allocator behavior of that buffer, not of the tick. The proof is
+/// therefore differential: the identical loop runs untagged and then tagged,
+/// and the tag must not add a single allocation.
+#[test]
+fn a_part_tagged_claimed_tick_allocates_no_more_than_an_untagged_one() {
+    use std::sync::Arc;
+    use waddle_gate::gate::{GateShared, OwnedAction};
+    use waddle_gate::plan::PlanMode;
+    use waddle_gate::{Gate, GateOutput, GatePlan, StreamChannel, TimedAction};
+    use waddle_ingest::FakeClock;
+    use waddle_types::{MonoNs, ProvenanceTag, ReplanPolicy};
+
+    let clock = FakeClock::default();
+    let (shared, mut stream_tx) = GateShared::new(
+        GatePlan::passthrough(MonoNs(0)),
+        64,
+        0,
+        ReplanPolicy::Immediate,
+    );
+    let (mut gate, mut records_rx) = Gate::new(shared.clone(), clock.clone(), 4096);
+    shared.store_plan(GatePlan {
+        mode: PlanMode::Claimed {
+            provenance: ProvenanceTag::policy(),
+            blend: None,
+        },
+        since: MonoNs(0),
+    });
+
+    let caller_action = [0.25f64; 14];
+    let obs = [0.5f64; 30];
+    // Minted ONCE, the way the intake mints it: off this thread, per wire
+    // action. What the tick pays for is the clone, not this.
+    let tag: Arc<str> = Arc::from("left");
+    let mut seq = 0u64;
+    let mut now = MonoNs(0);
+
+    // One tick: an intervention action comes due and substitutes.
+    let mut tick = |gate: &mut Gate<FakeClock>,
+                    records_rx: &mut rtrb::Consumer<waddle_gate::GateRecord>,
+                    part: Option<Arc<str>>| {
+        seq += 1;
+        clock.advance(1_000);
+        now = MonoNs(now.0 + 1_000);
+        let expected = part.clone();
+        stream_tx
+            .push(TimedAction {
+                channel: StreamChannel::AgentChunk,
+                seq,
+                received: now,
+                action: OwnedAction {
+                    values: smallvec::smallvec![0.5; 7],
+                    gripper: Some(0.5),
+                    part,
+                },
+                chunk: None,
+            })
+            .expect("ring has room: one push, one pop per tick");
+        match gate.gate(&caller_action, Some(0.5), Some(&obs)) {
+            GateOutput::Substitute { action, .. } => assert_eq!(action.part, expected),
+            other => panic!("expected a substitute, got {other:?}"),
+        }
+        while records_rx.pop().is_ok() {}
+    };
+
+    const CALLS: u64 = 10_000;
+    // Warm both shapes before measuring either (the reorder map grows on
+    // first use, and neither loop is the thing being compared then).
+    for _ in 0..1_000 {
+        tick(&mut gate, &mut records_rx, None);
+        tick(&mut gate, &mut records_rx, Some(tag.clone()));
+    }
+
+    let before = allocations();
+    for _ in 0..CALLS {
+        tick(&mut gate, &mut records_rx, None);
+    }
+    let untagged = allocations() - before;
+
+    let before = allocations();
+    for _ in 0..CALLS {
+        tick(&mut gate, &mut records_rx, Some(tag.clone()));
+    }
+    let tagged = allocations() - before;
+
+    assert_eq!(
+        tagged, untagged,
+        "a part-tagged claimed tick allocated {tagged} times over {CALLS} ticks against \
+         {untagged} untagged: the tag must ride the fast path as a shared pointer, never as \
+         owned bytes"
+    );
+    assert_eq!(
+        untagged, 0,
+        "the claimed substitute path itself started allocating ({untagged} times over {CALLS} \
+         ticks) — the differential above no longer proves anything on its own"
+    );
 }
 
 /// Observations wider than the 32-dim inline bound spill to the heap:

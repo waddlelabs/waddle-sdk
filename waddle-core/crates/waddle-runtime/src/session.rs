@@ -20,6 +20,7 @@ use waddle_gate::plan::GatePlan;
 use waddle_gate::record::GateRecord;
 use waddle_ingest::{LatestSlot, SessionClock};
 use waddle_media::MediaPlane;
+use waddle_sidecar::ManifestWriter;
 use waddle_tripwire::{
     Evaluator, ObsSnapshot, ShutdownToken, Tripwire, TripwireFire, TripwireSink,
 };
@@ -280,9 +281,22 @@ impl EePose {
 /// reducer's latest known sample — `None` leaves the previously reported
 /// value in place (there is no way to clear a previously-reported field in
 /// v0), so a caller can e.g. report `gripper` on every tick without
-/// re-supplying `ee_pose` each time.
+/// re-supplying `ee_pose` each time. The patch is scoped to [`Self::part`]:
+/// one part's report never touches another's.
 #[derive(Clone, Debug, Default)]
 pub struct ProprioReport {
+    /// Which declared part this sample describes (`ProprioSample.part`).
+    /// `""` — the default — is the sole/default part, i.e. the robot as
+    /// declared, and is always legal; any other value must name a part of a
+    /// `Composite` declaration or [`Session::report_proprio`] refuses it.
+    pub part: String,
+    /// This part's joint positions. Load-bearing for a named part and
+    /// optional for `""`: a per-part sample cannot ride the gate's flat
+    /// `obs` vector, because the observation layout is not the action
+    /// layout and slicing one by the other would invent a mapping the
+    /// customer never declared. For `""` this is most-recent-wins against
+    /// the `gate(obs=...)` stream, which reports the same thing.
+    pub joint_pos: Option<Vec<f64>>,
     pub joint_vel: Option<Vec<f64>>,
     pub ee_pose: Option<EePose>,
     pub gripper: Option<f64>,
@@ -479,6 +493,35 @@ impl SessionBuilder {
         let robot_pb = self.robot.ok_or(RuntimeError::MissingRobot)?;
         let robot = RobotDescription::try_from(&robot_pb)?;
 
+        // The archive's directory, made ready before anything opens: created
+        // if it is missing (a caller who asks for local recording means it),
+        // then PROVED writable by opening the manifest every episode appends
+        // to. Both failures are one build error rather than a silent
+        // degradation, because everything the recorder writes — sidecar,
+        // MCAP, manifest — is a file inside this directory, so a directory
+        // that is not there takes the whole archive with it and nothing else
+        // about the session looks any different.
+        let manifest = match &self.recording_dir {
+            None => None,
+            Some(dir) => {
+                std::fs::create_dir_all(dir).map_err(|source| {
+                    RuntimeError::RecordingDirUnusable {
+                        path: dir.clone(),
+                        source,
+                    }
+                })?;
+                Some(
+                    ManifestWriter::open(dir).map_err(|e| RuntimeError::RecordingDirUnusable {
+                        path: dir.clone(),
+                        source: match e {
+                            waddle_sidecar::SidecarError::Io(io) => io,
+                            other => std::io::Error::other(other.to_string()),
+                        },
+                    })?,
+                )
+            }
+        };
+
         // Cameras: `declared_cameras` backs `publish_frame`'s
         // unknown-camera + declared-resolution checks regardless of what is
         // wired; `camera_uplinks` (built only for cameras a published frame
@@ -572,6 +615,10 @@ impl SessionBuilder {
         cfg.clutch_source = self.clutch_source.clone();
         let dims = robot.action_space.dims();
         let gripper_spec = robot.action_space.gripper.clone();
+        let part_names = declared_part_names(&robot.action_space);
+        // One `Arc` for both intervention-chunk intakes: the plane pump's
+        // and `push_intervention_chunk`'s.
+        let action_space = Arc::new(robot.action_space.clone());
 
         let (gate_shared, stream_tx) = GateShared::new(
             GatePlan::passthrough(MonoNs(0)),
@@ -582,6 +629,10 @@ impl SessionBuilder {
         // Shared (see `StreamProducer`): media intake and the plane pump's
         // reset-window agent-chunk arm both write into it.
         let stream_tx: StreamProducer = Arc::new(parking_lot::Mutex::new(stream_tx));
+        // ONE agent-chunk intake per session, shared by the plane pump and
+        // [`push_intervention_chunk`] — see [`pumps::ChunkIntakeState`] for
+        // why the seq counter cannot be per-producer.
+        let chunk_intake: pumps::SharedChunkIntake = Arc::default();
 
         let (outcome_tx, outcome_rx) = std::sync::mpsc::channel::<VerbOutcome>();
         let verbs = Arc::new(VerbDispatch::spawn(self.control, clock.clone(), outcome_tx));
@@ -627,6 +678,15 @@ impl SessionBuilder {
         // claim a behavior this session can never produce.
         if declares_stills {
             feature_flags.push(media_uplink::STILLS_FLAG.to_owned());
+        }
+        // Part-addressed control (`waddle.v0.parts`) follows the same rule as
+        // stills, for the same reason: it is declared from the ROBOT's own
+        // declaration, and only when the session can actually exhibit the
+        // behavior. A single-part robot has no part to address — `""` is the
+        // sole part and is already core — so declaring the flag would claim
+        // a behavior this session can never perform.
+        if !part_names.is_empty() {
+            feature_flags.push(pumps::PARTS_FLAG.to_owned());
         }
 
         let plane = self.transport.map(|t| {
@@ -680,6 +740,7 @@ impl SessionBuilder {
             mirror.clone(),
             plane.clone(),
             self.recording_dir,
+            manifest,
             self.project.clone(),
             robot_digest(&robot_pb),
             robot.action_space.clone(),
@@ -770,7 +831,8 @@ impl SessionBuilder {
                 clock.clone(),
                 mirror.clone(),
                 stream_tx.clone(),
-                Arc::new(robot.action_space.clone()),
+                action_space.clone(),
+                chunk_intake.clone(),
             ));
         }
 
@@ -830,6 +892,10 @@ impl SessionBuilder {
                 mirror,
                 inject_tx,
                 proprio_tx,
+                part_names,
+                stream_tx,
+                action_space,
+                chunk_intake,
                 record_slot,
                 task_slot,
                 pre_reset: self.pre_reset,
@@ -905,6 +971,21 @@ fn missing_engage_verb(
     None
 }
 
+/// The parts a declaration can address by name, in DECLARATION order (the
+/// normative order — GLOSSARY "part"). Empty for every space that declares
+/// none, which is what makes it the one condition behind both the
+/// `waddle.v0.parts` declaration and [`Session::report_proprio`]'s
+/// validation. `""` is never listed: it is the sole/default part, already
+/// core, and always legal.
+fn declared_part_names(space: &waddle_types::ActionSpace) -> Arc<[String]> {
+    match &space.spec {
+        waddle_types::SpaceSpec::Composite { parts } => {
+            parts.iter().map(|(name, _)| name.clone()).collect()
+        }
+        _ => Arc::from([]),
+    }
+}
+
 fn robot_digest(robot: &pb::RobotDescription) -> String {
     // A stable content digest of the declaration (FNV-1a over the encoded
     // bytes — collision resistance is not a goal here; identity is).
@@ -924,6 +1005,21 @@ struct SessionInner {
     inject_tx: Sender<Injected>,
     /// See [`Session::report_proprio`].
     proprio_tx: Sender<ProprioReport>,
+    /// The declared parts, in declaration order (see `declared_part_names`).
+    /// [`Session::report_proprio`] validates against this — the ONE place a
+    /// caller-supplied part name is checked before it becomes a recorded
+    /// row's key.
+    part_names: Arc<[String]>,
+    /// The intervention stream's producer end (shared with the media intake
+    /// and the plane pump) and the declared space to validate against: what
+    /// [`push_intervention_chunk`] needs to run the same intake the plane
+    /// pump runs.
+    stream_tx: StreamProducer,
+    action_space: Arc<waddle_types::ActionSpace>,
+    /// The session's ONE agent-chunk seq counter and fault guards, shared
+    /// with the plane pump: both stamp the same `StreamChannel::AgentChunk`,
+    /// which has one reorder cursor (see [`pumps::ChunkIntakeState`]).
+    chunk_intake: pumps::SharedChunkIntake,
     record_slot: RecordSlot,
     task_slot: TaskSlot,
     pre_reset: Option<ResetSpec>,
@@ -1391,8 +1487,22 @@ impl Session {
     /// `SessionClock` read (or the owning gate tick's stamp, for the merged
     /// copy) — v0 accepts no caller-supplied timestamp on the report itself
     /// (the two-clock discipline).
-    pub fn report_proprio(&self, report: ProprioReport) {
+    ///
+    /// [`ProprioReport::part`] names which declared part the sample
+    /// describes; `""` (the default) is the robot as declared. A part the
+    /// declaration does not have is refused BY NAME here, at the call,
+    /// rather than landing under a key nothing will ever read — this is
+    /// declaration validation, the same class as `publish_frame`'s
+    /// unknown-camera check, and carries no claim, lease, or timeline
+    /// logic.
+    pub fn report_proprio(&self, report: ProprioReport) -> Result<(), RuntimeError> {
+        if !report.part.is_empty() && !self.inner.part_names.iter().any(|p| p == &report.part) {
+            return Err(RuntimeError::Types(waddle_types::TypesError::UnknownPart(
+                report.part,
+            )));
+        }
         let _ = self.inner.proprio_tx.send(report);
+        Ok(())
     }
 
     /// Frames dropped for `camera` because the uplink pump fell behind (the
@@ -1538,6 +1648,51 @@ pub fn grant_and_engage(session: &Session, claim_id: &str, source: &str, actor: 
         claim: waddle_types::ClaimId::new(claim_id),
         at: clock_now(session),
     });
+}
+
+/// Convenience: push one intervention chunk straight into the session's
+/// intervention stream — the local counterpart of a plane
+/// `intervention_chunk` message, exactly as [`grant_and_engage`] is the
+/// local counterpart of a `ClaimDirective`. Used by tests and by the
+/// `waddle-sdk` shim's testing hooks to drive an intervention without a
+/// control-plane transport; production chunks arrive on the plane.
+///
+/// It runs the SAME intake the plane pump runs
+/// (`pumps::intake_intervention_chunk`): same validation, same
+/// once-per-claim-window faults on the episode timeline, same ring-seq
+/// space discipline. Nothing is buffered unless a claim is active, and the
+/// jitter buffer still decides when — and whether — a step plays out.
+///
+/// One thing it cannot take from the plane pump: whether to honor
+/// `Action.part`. There is no connection here to have negotiated
+/// `waddle.v0.parts` with, so this seam falls back to the same fact
+/// `SessionBuilder::build` declares the flag from — whether the declared
+/// space has parts at all. A locally injected chunk is not an emission to a
+/// plane, so VERSIONING §3 has nothing to say about it; what it must not do
+/// is claim a part the declaration does not have, and that is exactly what
+/// the declaration check refuses.
+pub fn push_intervention_chunk(session: &Session, chunk: pb::ActionChunk) {
+    let inner = &session.inner;
+    let at = inner.clock.stamp_now().mono_ns();
+    // ONE snapshot: the window this chunk is admitted into is the window its
+    // refusals are owed to. This seam has no loop of its own, so it can
+    // never watch a claim window close — the guards ride the claim
+    // generation instead, exactly as the plane pump's do.
+    let status = inner.mirror.read();
+    let mut intake = inner.chunk_intake.lock();
+    if !status.claim_active {
+        return;
+    }
+    pumps::intake_intervention_chunk(
+        &chunk,
+        &inner.inject_tx,
+        at,
+        &inner.stream_tx,
+        &inner.action_space,
+        pumps::part_policy(!inner.part_names.is_empty()),
+        status.claim_generation,
+        &mut intake,
+    );
 }
 
 /// Convenience: release a local claim (the counterpart of

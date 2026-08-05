@@ -34,7 +34,13 @@ conforming implementation must produce identical results on every run.
     (which may stall) plus a scripted intervention stream.
 - `requires_features` — feature flags (see `docs/VERSIONING.md`) the
   implementation must have negotiated for the scenario to apply. Runners skip
-  (not fail) scenarios whose flags they do not implement.
+  (not fail) scenarios whose flags they do not implement. This list **is** the
+  scenario's negotiated feature set, not only a skip filter: where a flag
+  changes how a message is read, the runner reads it from this list and
+  nowhere else — never inferred from the robot declaration. So a scenario that
+  omits a flag is a scenario running on a connection that did not accept it,
+  and the pre-flag behavior a registry row defines is expressible as a
+  scenario like any other.
 - `setup.robot_fixture` — path (relative to the scenario file) to a wire
   fixture whose `message` is a `waddle.v0.RobotDescription`.
 - `setup.handoff` — canonical proto3 JSON of a `waddle.v0.HandoffPolicy`.
@@ -78,6 +84,7 @@ as unknown:
 | `gate_tick` | `action?`: `waddle.v0.Action`, `obs_t_ns?` | gate | one caller-loop tick through `gate()` |
 | `chunk_arrival` | `chunk`: `waddle.v0.ActionChunk` | gate | a policy chunk arrives |
 | `teleop_action` | `packet`: `waddle.v0.TeleopStreamPacket` | gate | an intervention-stream action arrives |
+| `intervention_chunk` | `chunk`: `waddle.v0.ActionChunk` | gate | an intervention chunk arrives from the control plane (`GateServerMessage.intervention_chunk`) under an engaged claim; its steps enter the intervention stream at their `tOffsetNs` (needs `waddle.v0.agent` — a Waddle-hosted agent is v0's producer of this arm). A step's non-empty `Action.part` is honored only when the scenario lists `waddle.v0.parts`; without it the step is read against the whole declared space (the pre-flag meaning `docs/VERSIONING.md`'s registry row defines), which is a behavior a scenario may pin |
 | `claim_request` | fields of `waddle.v0.ClaimEpisodeRequest` | fsm, gate | an actor asks to claim |
 | `claim_granted` | `claim`: `waddle.v0.Claim` | fsm, gate | the claim was granted |
 | `claim_released` | `claim_id` | fsm, gate | the claim was released |
@@ -101,6 +108,18 @@ as unknown:
 
 Runners MUST reject a scenario containing an unknown kind (this set only grows
 by protocol revision).
+
+`ProprioSample.part` selects what the sample is compared against, and the
+comparison never crosses scopes (N14 detection is per stream of content): a
+sample naming a part answers to that part's own last command, or — for a part
+no part-scoped command has addressed — to the last whole-robot command's
+slice for it, which the declared part order defines; a whole-robot sample
+(`part: ""`) answers to the last whole-robot command, and says nothing at all
+while a part-scoped command supersedes part of it, since an observation's
+layout is the customer's own and no declaration describes it. A scenario
+driving a part-addressed intervention therefore reports proprioception per
+part (needs `waddle.v0.parts`), and one that reports it whole-robot asserts
+nothing about divergence.
 
 ### `expect_state`
 
@@ -128,6 +147,13 @@ paths. Present keys must match; absent keys are unconstrained.
   advances virtual time by `within_ns` and fails if a matching emission
   occurred in the window.
 
+Scenarios pin the SHAPE of an emission, never an implementation's wording.
+`Fault.source` is implementation-named (control.proto: "who raised it") and
+`Fault.detail` is an implementation's to phrase, so a scenario asserting that
+a fault names its producer writes `"source": "$nonempty"` — never a literal
+like the reference runner's own intake names, which no normative document
+defines and which a conforming frontend is free to spell differently.
+
 ### `expect_output` (gate target only)
 
 ```json
@@ -138,6 +164,16 @@ Asserts on the return of the **most recent** `gate_tick`. `kind` is one of
 `pass | substitute | blend | noop | hold`; `provenance` may be asserted as a
 partial `waddle.v0.ProvenanceTag`.
 
+`part` asserts which declared `Composite` part the returned action addresses.
+Runners report it on the two kinds that return an action — `substitute` and
+`blend` — as the addressed part's name, or `""` when the action addresses the
+whole robot, so a scenario can pin either fact; it is absent from `pass`,
+`noop`, and `hold`, which return no Waddle-sourced action at all. Pinning a
+NAMED part needs `waddle.v0.parts`, since only a connection that accepted the
+flag can produce one; `""` is the sole/default part and is core, so it may be
+pinned on any connection — on an unflagged one it is the assertion that no
+tag was minted. As everywhere else, an absent key is unconstrained.
+
 ### `expect_send` (gate target only)
 
 ```json
@@ -146,6 +182,15 @@ partial `waddle.v0.ProvenanceTag`.
 
 Asserts the implementation invoked the integrator's `send` verb directly
 (bypass mode pump), with a partial match on the dispatched chunk's provenance.
+
+`part` asserts which declared `Composite` part the dispatched action
+addresses, reported and gated exactly as `expect_output` reports and gates it:
+the addressed part's name (needs `waddle.v0.parts`), or `""` for an action
+that commands the whole declared space. The bypass pump is the one path on
+which an intervention action reaches the robot without passing through
+`gate()`, so without this a part-addressed command dispatched during a stalled
+caller loop would be unassertable. As everywhere else, an absent key is
+unconstrained.
 
 ## Match values
 

@@ -29,7 +29,11 @@ unsafe extern "C" fn send_cb(
     _values: *const f64,
     _len: usize,
     _gripper: *const f64,
+    part: *const c_char,
 ) -> i32 {
+    // This robot declares no parts, so nothing addressed to it can name one:
+    // NULL is how "the whole declared space" crosses.
+    assert!(part.is_null(), "an unpartitioned robot has no part to name");
     0
 }
 
@@ -125,6 +129,11 @@ fn full_round_trip_with_recording() {
         let result = unsafe { &*out.as_ptr() };
         assert!(matches!(result.kind, WaddleGateKind::Pass));
         assert_eq!(result.provenance, 0);
+        // The caller's own action commands the whole declared space, so the
+        // part tag is empty — and a consumer reads that from `part_len`
+        // without having to scan the buffer.
+        assert_eq!(result.part_len, 0);
+        assert_eq!(result.part[0], 0);
     }
 
     let rc = unsafe { waddle_episode_terminate(episode, 1, std::ptr::null()) };

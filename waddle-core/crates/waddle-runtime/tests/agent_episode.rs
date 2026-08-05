@@ -282,10 +282,10 @@ fn run_agent_returns_success_with_recording_ref_from_completed_update() {
             // drives — the toy example's `RobotPump` shape, and the only
             // proprioception an agent-invited episode can have (its caller
             // is blocked inside `run_agent` and never ticks `gate`).
-            session.report_proprio(ProprioReport {
+            let _ = session.report_proprio(ProprioReport {
                 joint_vel: Some(vec![0.01, 0.02, 0.03, 0.04, 0.05, 0.06]),
-                ee_pose: None,
                 gripper: Some(0.25),
+                ..Default::default()
             });
             // One chunk at a time, each awaited before the next is sent.
             // Under the declared IMMEDIATE replan a chunk arriving while

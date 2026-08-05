@@ -8,6 +8,52 @@ fn behaviors_dir() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../waddle-protocol/fixtures/behaviors")
 }
 
+fn fsm_doc() -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../waddle-protocol/docs/FSM.md")
+}
+
+/// Every behavioral fixture is named by `docs/FSM.md` — in a guard-table row's
+/// Fixture column where a transition or guard governs it, or in the governing
+/// section's prose where none does. A fixture the normative document never
+/// names pins a behavior the standard does not claim: the implementation is
+/// then conformant to its own test suite and to nothing else, which is the
+/// failure mode this asserts against. Adding behavior means adding the prose
+/// too, in the same change.
+#[test]
+fn every_behavior_fixture_is_named_in_fsm_md() {
+    let doc = std::fs::read_to_string(fsm_doc()).expect("FSM.md readable");
+    let mut unnamed: Vec<String> = std::fs::read_dir(behaviors_dir())
+        .expect("behaviors dir readable")
+        .map(|e| e.expect("dir entry").path())
+        .filter(|p| p.extension().is_some_and(|ext| ext == "json"))
+        .filter_map(|p| {
+            let name = p.file_stem()?.to_str()?.to_owned();
+            (!doc.contains(&name)).then_some(name)
+        })
+        .collect();
+    unnamed.sort();
+    assert!(
+        unnamed.is_empty(),
+        "these fixtures are named nowhere normative — give each one a home in \
+         docs/FSM.md: {unnamed:?}"
+    );
+}
+
+/// The scenarios this runner does not run yet, by name: each would require a
+/// feature flag absent from `waddle_conformance::SUPPORTED_FEATURES`, so the
+/// runner would skip it — and a skipped scenario asserts NOTHING. Naming them
+/// (rather than only counting the directory) keeps that state honest in both
+/// directions. **Empty**: every flag the fixtures use is implemented, so
+/// every scenario in the directory runs, and a scenario that stops running
+/// for any reason — a `requires_features` typo, a flag renamed in
+/// `SUPPORTED_FEATURES`, a new fixture written ahead of its flag — fails here
+/// instead of quietly going green with its behavior unchecked. Writing
+/// scenarios first stays a commitment rather than a note: the list has to
+/// come back to empty before the work is done.
+/// Never add a name here to silence a failure: a scenario that runs and
+/// fails is a defect, not a pending flag.
+const PENDING_FLAG_IMPLEMENTATION: &[&str] = &[];
+
 #[test]
 fn all_behavior_scenarios_pass() {
     let reports =
@@ -15,9 +61,21 @@ fn all_behavior_scenarios_pass() {
 
     assert_eq!(
         reports.len(),
-        36,
-        "expected the 36 pinned behavioral scenarios, found {}",
+        50,
+        "expected the 50 pinned behavioral scenarios, found {}",
         reports.len()
+    );
+
+    let mut skipped: Vec<&str> = reports
+        .iter()
+        .filter(|r| r.skipped)
+        .map(|r| r.name.as_str())
+        .collect();
+    skipped.sort_unstable();
+    assert_eq!(
+        skipped, PENDING_FLAG_IMPLEMENTATION,
+        "the skipped set must be exactly the scenarios whose feature flag is \
+         unimplemented (see PENDING_FLAG_IMPLEMENTATION)"
     );
 
     let mut failures = Vec::new();

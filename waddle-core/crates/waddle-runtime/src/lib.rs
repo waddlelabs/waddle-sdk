@@ -21,7 +21,8 @@ pub use mirror::{AgentTaskKind, AgentTaskStatus, ResetProgressPhase, ResetProgre
 pub use pumps::STALL_THRESHOLD_NS;
 pub use session::{
     AgentOutcome, EePose, Episode, EpisodeOptions, ProprioReport, ResetHook, ResetSpec, Session,
-    SessionBuilder, grant_and_engage, release_claim, reset_window_complete, reset_window_engage,
+    SessionBuilder, grant_and_engage, push_intervention_chunk, release_claim,
+    reset_window_complete, reset_window_engage,
 };
 // The invite payload `EpisodeOptions::agent_invite` carries is waddle-fsm's
 // own type (the FSM is the authority on what an invite is — hollow
@@ -82,5 +83,25 @@ pub enum RuntimeError {
         verb: &'static str,
         required_by: &'static str,
         remedy: &'static str,
+    },
+    /// A build-time check: `SessionBuilder::recording_dir` names a path this
+    /// session cannot keep an archive in. A directory that does not exist yet
+    /// is CREATED rather than refused — a caller who asks for local recording
+    /// means it — so what reaches here is a path no directory can be made at,
+    /// or one nothing may write into: an existing file, an unwritable parent,
+    /// a read-only mount.
+    ///
+    /// Caught at build time because the alternative is the failure this
+    /// variant exists to prevent: every writer downstream opens files INSIDE
+    /// that directory, so the session opens clean, runs for as long as it is
+    /// asked to, and leaves nothing on disk. The local recorder holds the
+    /// full-rate archive; it may not silently hold nothing.
+    #[error(
+        "recording_dir {path:?} cannot hold this session's archive: {source} — \
+         point it at a writable directory (a missing one is created)"
+    )]
+    RecordingDirUnusable {
+        path: std::path::PathBuf,
+        source: std::io::Error,
     },
 }

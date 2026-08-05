@@ -12,6 +12,593 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 ## [Unreleased]
 
 ### Added
+- **docs (robot modules, where a customer actually looks)**: the root
+  `README.md` gains the five-line YAM quickstart and the vendor-package
+  install command it needs to drive metal — a documented `pip install` of a
+  pinned git reference, since I2RT's package is deliberately neither a
+  dependency of this SDK nor an extra of it, and quoted verbatim under a test
+  (`yam.I2RT_INSTALL` is BUILT from the pin so command and facts cannot
+  drift, and a README that writes it out by hand is that drift let back in
+  through the one copy no import can reach) — and `sdk/README.md` gains a
+  robot-modules section: the layering (every piece usable alone, with the
+  hand-wired equivalence that is a test rather than a promise), the
+  **envelope-ownership doctrine** (Waddle never provides the envelope; what
+  ships is a parameterized default over the owner's own numbers that rejects
+  and never clamps, and `send=` replaces it wholesale), the **posture table**
+  (`monitor` registers the owner's stop alone and wires no media plane;
+  `supervised` registers `send`/`hold`/`estop`; neither is an authority
+  decision), the note that `robots/` is owner-side code the hollow-frontend
+  checklist binds, and the **template for writing your own vendor module** —
+  a facts table, a driver admitted on its ten members rather than its
+  ancestry, and a factory, published as the very lines
+  `tests/test_robots_base.py` drives end to end and held to that file's own
+  source by a test, so the template cannot rot into a snippet nothing runs
+  while still claiming to be tested.
+  Publishing a customer-side robot module in the open is a deliberate product
+  decision, and these READMEs are where it is now said out loud rather than
+  only in a module docstring: what somebody needs in order to drive their own
+  arm through their own envelope belongs in their hands, and the supervision
+  side's in-cell material for keeping a fleet alive is a different artifact
+  that stays where it is.
+- **sdk (`examples/yam_bimanual.py`: the whole program, for a rig the SDK
+  knows)**: two I2RT YAM arms supervised in five Waddle-facing lines — build
+  the rig, open the session, ask Waddle to drive an episode — around a table
+  of the site numbers that have no defaults (the workspace box, the
+  bench-measured gripper motor radians, the cross-arm mounting, each arm's CAN
+  interface), each carrying what re-measuring it is for. It is the counterpart
+  to `toy_robot.py` rather than a replacement: that file writes the same
+  session out by hand, and this one is what a robot module removes. Tested as
+  the program it is (a subprocess with nothing configured): the factory still
+  takes those arguments, and building a rig — live or sim — still opens no bus
+  and starts no thread.
+- **sdk (`waddle.robots.base`: the vendor-neutral half of a robot module)**: a
+  new opt-in subpackage — `import waddle` is unchanged and imports none of it —
+  carrying everything a program that drives a real robot writes around its
+  vendor's driver, so a robot module is facts + driver + factory and nothing
+  else.
+  - **`Driver`** is a `typing.Protocol` (ten members: `kind`, `estopped`,
+    `read`, `write`, `hold`, `estop`, `re_enable`, `step`, `home`, `close`), so
+    a driver written by hand is admitted on its members, never its ancestry.
+    `kind` is the DRIVER's own word, and the two questions this layer asks of
+    it — does closing this drop all torque, is homing it a motion nobody is
+    watching — both have an unsafe answer, so it is read in ONE direction
+    (`drives_metal`): `sim` alone selects the harmless branch, and every other
+    word, including one this layer has never seen, is treated as metal. A twin
+    somebody called something else waits for a park gesture it never needed;
+    the other direction would drop torque on real hardware with none of the
+    warning.
+    **`SimDriver`** is the rate-limited kinematic twin, parameterized by the
+    owner's limits/step caps/rate: it walks at most one accepted command's
+    worth of travel per control period, which is what makes a sim run a
+    rehearsal of the live one rather than an easier version of it.
+  - **`Arm`** is the envelope seam every command crosses — width, finiteness,
+    declared joint limits, per-step travel against where the unit actually is,
+    and (only with forward kinematics) the FK'd TCP inside a declared workspace
+    box. It **rejects, never clamps**: a failing target is refused WHOLE, the
+    unit holds, and one bounded line (`RejectLog`) names the check. An EMPTY
+    value vector is the wire's "hold this part" and is honoured as such; a
+    latched e-stop refuses everything else, so `accepted` keeps meaning what it
+    says. Waddle never provides the envelope: this is a parameterized default
+    built from the owner's own numbers, and `control(arms, send=...)` replaces
+    it wholesale with the customer's own callable. The MEASURED side of the
+    arithmetic is checked like the commanded one: a driver whose `read()` has
+    drifted from the declared joint list is refused by name (and held, and
+    counted) rather than broadcast into the step-cap comparison.
+  - **Forward kinematics is opt-in and its absence is named, not filled in**: an
+    arm built without `fk` reports joint positions only (`ee_pose()` answers
+    `None` rather than inventing a frame), and a workspace box declared without
+    one is refused at construction instead of silently checking nothing.
+    `chain_fk`/`quaternion_wxyz`/`rpy_matrix` are the generic chain math for
+    modules that do declare one (wxyz pinned, all four conversion branches
+    tested).
+  - **The e-stop latch and the one human path out of it**: `estop_all` (every
+    part gets the call even if an earlier one raised), `close_all` (the same
+    doctrine for dropping connections, with the opposite ending: a close that
+    fails is REPORTED, never raised, because closing runs while something else
+    is already unwinding and an exception here would replace the reason it is),
+    `latched_parts`,
+    `ParkGate`, `apply_console_gesture` / `start_console_recovery` — a `resume`
+    typed at a foreground TTY, never the wire (`VERB_RESUME` releases a *hold*)
+    and never the next episode's reset. There is ONE reader per terminal in a
+    process, not one per session: stdin is a single stream and two readers of
+    it deal alternate lines to each other, so `start_console_recovery` hands
+    back a `ConsoleRecovery` — the arms it is aimed at — which a second
+    session RE-AIMS and which its owner RETIRES. A reader left aimed at a
+    finished session would answer half the words typed at the machine on arms
+    nobody is driving, and on metal a `resume` there re-enables a driver whose
+    bus is already closed. `scene_reset` is the default pre-reset hook: it
+    refuses a latched scene on every backing, homes a twin, and vouches for
+    anything it reads as metal without moving it.
+  - **`RobotPump`** runs any tick callable at a declared rate on its own thread
+    (`proprio_tick` is the usual one: step every part, report it per part),
+    because the robot's own housekeeping cannot pause while the caller's thread
+    is blocked inside `waddle.agent()`.
+  - **`Rig`** is composition sugar and nothing more: a declaration, a way to
+    open the arms behind it, and the rate they run at. Constructing one opens no
+    bus and starts no thread — `arms()` is where hardware opens. `posture`
+    (`"monitor"` | `"supervised"`) is the one construction-time choice and it
+    maps to **verb presence only** (`monitor` registers the owner's stop alone,
+    so the session declares that nothing may command this robot instead of
+    accepting motion it intends to drop); it adds no authority logic, and
+    agent-driven versus windowed stays a call-site choice. What a `monitor`
+    session may be wired to follows from that and is documented where the
+    posture is: with no `send` verb it may register no `hold` either, and it
+    wires no media plane (the media plane carries the teleoperator's stream,
+    so wiring one is an intervention path waddle-core refuses without a
+    `send`) — watching rides `transport=` (proprioception + each camera's
+    declared low-rate stills) and `recording_dir=`.
+  - **`rig.session(project, ...)`** is that composition as a context manager
+    (`RigSession`), and it exists for the two ends every hand-written version
+    gets wrong at least once. `__enter__` opens the drivers — inside the
+    `with`, so a bus that will not open unwinds structurally — registers the
+    verbs, calls `waddle.init`, starts the console recovery and starts the
+    reporting pump; a failure part-way through closes what it opened, since a
+    context manager whose `__enter__` raises never gets an `__exit__`.
+    `__exit__` retires the console reader, stops the pump, shuts the session
+    down and closes the drivers whatever the body did, which **retires the
+    shutdown footgun**: finalizing the recording is no longer a `finally:` the
+    customer remembered to write (pinned by a test that raises mid-rollout and
+    then reads the recording back). Every keyword that is not the rig's own
+    goes straight through to `waddle.init` and means what it means there —
+    including a customer's own `send`, which still REPLACES the shipped
+    envelope through the sugar. The two that ARE the rig's own are documented
+    on it: `send`, and `console=False` for a program whose stdin belongs to
+    something else (a REPL, a supervising harness) and which therefore has no
+    typed way to clear an e-stop latch.
+  - **The pump is always on inside a session**, not only for an agent run: a
+    program's own loop then only gates and applies, with no interleaved robot
+    tick to forget, and a session whose caller is blocked inside
+    `waddle.agent()` (or has no loop at all) keeps reporting. The bandwidth is
+    the declared part-count multiplication of the proprio cadence, fixed by
+    the declaration and visible to the plane before it accepts.
+  - **`hold_until_parked`** (+ `ParkGate.wait` / `.wait_holding`): a finished
+    mission on drivers this layer reads as metal keeps holding and keeps
+    reporting until a human says the machine is parked, because closing stops
+    the vendor's command re-send and the motors' own watchdog then drops ALL
+    torque from wherever the mission left the arms. Every park warning this
+    layer has is otherwise attached to a Ctrl-C the site operator TYPED —
+    finishing normally had none, and that is the one ending nobody is standing
+    ready for. WHICH ending it offers is decided by whether anything is
+    reading the console (the `ConsoleRecovery` the session started), never by
+    whether a terminal exists: a `console=False` session, a stdin that belongs
+    to a harness, or a reader already at end-of-input all mean a typed gesture
+    nothing would receive, and it says so and names the signal instead. A twin
+    returns at once (nothing to sag, and a harness must be
+    able to wait for a sim program to exit) and a Ctrl-C skips the hold (that
+    operator is already at the machine).
+  - **The composition is sugar, and a test says so**: `test_yam_session.py`
+    wires `yam.declaration()`, drivers, `base.Arm`, `waddle.Control`, a plain
+    `waddle.init`, the console recovery and a `RobotPump` by hand, and asserts
+    the session that opens is byte-identical to `rig.session()`'s — the same
+    registered robot JSON and the same everything else `create_session` is
+    handed. Sugar that cannot be reproduced by hand is a wall.
+  - **The second-vendor bar is a test**: `sdk/tests/test_robots_base.py` builds a
+    toy vendor module (facts table + the shipped twin + one factory, ~50 lines),
+    composes it by hand out of these pieces, and drives it end to end through a
+    real session — declaration, envelope, gate, pump, MCAP read-back — with
+    nothing vendor-specific in `base` to help it. It doubles as the template a
+    customer copies: `sdk/README.md` publishes those exact lines, and a test
+    holds the published copy to them.
+  - No packaging change: no new dependency (numpy was already required), no
+    extras key, no `pyproject.toml` edit — maturin sweeps the subpackage with
+    `python-source`.
+- **sdk (`waddle.robots.yam`: what an I2RT YAM is, in numbers that are
+  checked)**: the facts half of the first vendor module — the six arm joints
+  and their limits, the kinematic chain, the tool frame, the hand's stroke —
+  plus the forward kinematics those facts describe. Shipping a customer-side
+  robot module in the open is a deliberate product decision: what somebody
+  needs in order to drive their own arm through their own envelope belongs in
+  their hands, and the supervision side's in-cell material for keeping a fleet
+  alive is a different artifact that stays where it is.
+  - **Every number the shipped model states is gated against it.** The
+    vendor's own model ships beside the module
+    (`waddle/robots/yam_data/yam.urdf`, pinned at `I2RT_PIN`) and
+    `sdk/tests/test_yam_facts.py` reads it with the stdlib XML
+    parser: a declared position limit must sit INSIDE the model's interval, an
+    effort ceiling must be `<=` it, and every fact that is not an interval —
+    chain origins, rpys, axes, the tool frame — must match to a
+    nanometre/nanoradian. Tightening a limit for your own rig is therefore
+    always allowed; widening one past the hardware is what fails. The gate also
+    walks the model's own chain through `base.chain_fk` and lands where
+    `yam.forward_kinematics` does, so a transposition that survived an
+    element-wise pass still moves the tool and still fails.
+  - **What the gate cannot see, it names — and three facts it cannot.**
+    The arm limits are the URDF ∧ MJCF intersection and the MJCF is not
+    shipped, so those tightenings carry provenance comments; the one that is
+    visible from here — `joint1`'s upper, 3.05433 against the URDF's 3.13 — is
+    asserted, so the table cannot be quietly "corrected" to the looser model.
+    Both hand facts (the normalized gripper row and the jaw stroke below) come
+    from the pinned vendor tree rather than the model, which carries no finger
+    geometry at all. Their tests pin the value and the arithmetic, which
+    catches an edit made here and is not the same thing as a second source;
+    re-vendoring against the pin is what catches a change made upstream.
+    Naming which of the two a fact has is the convention, not the claim that
+    every fact has the first.
+  - **`GRIPPER_MAX_OPENING_M` is 0.095 m, re-derived, not copied.** The pinned
+    vendor tree models this hand as two equality-coupled slide joints, each
+    ranged `0 0.0475` along exactly opposed axes, so the jaw separation moves
+    `2 × 0.0475` end to end — 1 mm short of the `gripper_stroke: 0.096` the
+    same tree's own config declares, conservative rather than equal by luck.
+    This retires the 0.075 m figure (`2 × 0.037524` from the MuJoCo Menagerie
+    finger range), which was derived from a vendor commit one hardware
+    revision behind the pin. Neither vendor file ships in the wheel, so the
+    test pins the ARITHMETIC instead: the number cannot be edited without
+    editing its derivation, and the derivation is what a re-vendor re-reads.
+  - **`forward_kinematics` is public and opt-in** (an arm handed none reports
+    joint positions and says so), and takes the six arm joints rather than the
+    seven-row part vector — the seventh row is the gripper, and walking it into
+    the chain would put the tool where nobody commanded. The refusal is
+    structural.
+  - **Third-party content, declared**: `yam_data/` is MIT vendor data inside an
+    Apache-2.0 wheel, shipped with the licence verbatim and a README carrying
+    the provenance, the pin and the patch list. Text only — the STL meshes are
+    not shipped, which the README states so an unresolved `<mesh>` reference is
+    not read as a broken file — and two comment repairs, both of which the
+    README lists: a `--` inside an XML comment is illegal and made the file
+    unparseable by strict parsers, the stdlib's among them; and the patch
+    notes now point only at what a reader of this wheel can open, an internal
+    task label and the path of the check that caught the wrong-axis tool frame
+    having been dropped while the correction itself is still stated. A test
+    refuses either class in any file of the shipped data, since a comment in
+    vendored data is where such a pointer survives. No element of the model
+    differs.
+  - No packaging change here either, and this time it is checked: a built wheel
+    carries `waddle/robots/yam_data/{yam.urdf,LICENSE,README.md}`, no meshes
+    and no bytecode, and the module reads them through `importlib.resources`
+    from the installed package rather than from a path beside its own file.
+- **sdk (`waddle.robots.yam`: the live driver, and the rigs its factories
+  build)**: the other two thirds of the first vendor module — what moves a
+  real arm, and what assembles one into a session-ready rig out of the site's
+  own numbers.
+  - **`yam.LiveDriver`** is the thin honest layer over four vendor calls, and
+    the LATCH they make necessary. The stop the vendor offers
+    (`zero_torque_mode()`) zeroes the arm's kp/kd along with its setpoint, so
+    after it the vendor's own thread accepts every command and the arm hangs
+    limp under gravity compensation: a driver without a latch reports commands
+    as applied while nothing moves, and every episode after the stop reads
+    SUCCESS. The latch is set BEFORE the vendor call (a stop that
+    half-happened is still a stop), every write is refused while it holds, and
+    the only exit restores the gains snapshotted at connect — or refuses,
+    because a made-up kp is how an arm slams. The gripper range is passed on
+    every connect rather than discovered: building without it runs an
+    auto-calibration that physically drives the jaws. It reads defensively in
+    one direction only: an absent velocity is reported as zero because the wire
+    has no "unknown" for one, and an absent POSITION is a fault — the hand
+    included, since this module declares it as a joint row rather than a
+    sidechannel. A fabricated 0.0 there would be recorded as a measured closed
+    hand, and it is the number the envelope measures the next command's
+    per-step cap against, so guessing it would let a large uncommanded jaw
+    motion through the check that exists to refuse one.
+  - **A refusal never leaves an arm open.** The bus is already up by the time
+    anything can refuse (an arm that reports a different DOF than this module
+    declares), and a constructor that raises hands its caller an exception
+    rather than a driver — so the handle it opened is closed before the refusal
+    propagates, or the vendor's own ~1 kHz server thread keeps re-sending the
+    last setpoint to an arm nothing can reach.
+  - **The vendor package is a documented command, not a dependency.** It is
+    imported lazily inside `__init__`, so importing `waddle.robots.yam` on a
+    machine that has never seen a YAM is an ordinary import; asking for a live
+    arm without it raises with `I2RT_INSTALL` in the text, which is BUILT from
+    `I2RT_PIN` and so cannot drift from the commit every fact in the module is
+    stated against. It cannot be a `waddle-sdk[yam]` extra: PyPI rejects
+    direct references, and the tree behind it (an exact numpy, a simulator
+    stack) is not something an install that only supervises a policy should
+    resolve.
+  - **`yam.declaration()` is public and stands alone.** A program that wants
+    only the declaration — its own driver, its own loop, a plain
+    `waddle.init` — gets exactly the robot a factory would have registered.
+    That is a test, not a claim: `sdk/tests/test_robots_yam.py` compiles
+    `yam.bimanual(...)` to JSON and compares it field for field against a
+    verbatim replica of the customer program already running at the reference
+    rig, with every number typed out independently.
+  - **`yam.bimanual()` / `yam.arm()`** hand back a `base.Rig`: declaration,
+    drivers, the owner's envelope and the reporting loop, still opening
+    nothing until `rig.arms()` is called. The site facts have no defaults —
+    the workspace box, the bench-measured `[closed, open]` motor radians, the
+    CAN channel, the cross-arm mounting — while the choices that do (rate,
+    speeds, part and frame names, twin homes) are named as choices where they
+    are written down. The per-step cap the envelope enforces is DERIVED from
+    the declared speed and rate, so the number a teleoperator reads off the
+    declaration and the number that refuses a jump cannot disagree. Arms open
+    one at a time, so `arms()` can fail with some of them already connected —
+    and it closes those before it re-raises: half a rig is not a rig, the
+    caller is holding no handle to close them with, and on metal they would
+    otherwise stay energized under the vendor's own re-send. The exception that
+    started the unwind is still the one the caller sees.
+  - **Two things are opt-in, and both say what opting out costs.** Forward
+    kinematics: `fk=None` is a legal rig that reports joint positions only,
+    and a workspace box — a statement about a TCP — is then refused rather
+    than silently unenforced. The cross-arm edge: with none declared, a pose
+    expressed in the other arm's frame refuses downstream instead of resolving
+    through an identity nobody measured.
+  - **One chain may carry the shipped model; two may not.** `yam.arm()`
+    declares `kinematics_urdf` from the vendored URDF and `yam.bimanual()`
+    does not — that field describes ONE chain, and naming one arm's would name
+    the other's tool frame as something it is not (asked for explicitly, it is
+    refused rather than dropped). Where the model IS carried, the rename
+    between its own root link and the frame poses are reported in is declared
+    as the identity edge it is, so a consumer is not handed two unrelated
+    trees.
+  - `posture=` is a factory argument, mapping to which `Control` verbs the
+    session registers and — on live hardware — to opening the arms in the
+    vendor's zero-gravity mode under `monitor`, where the driver then refuses
+    to write at all. No authority logic anywhere near it.
+  - `base.CrossArm` (vendor-neutral, re-exported by `yam`) carries a measured
+    xyz + rpy mounting and converts it ONCE to the wire's wxyz quaternion, so
+    no call site is in a position to declare an xyzw one — the classic silent
+    corruption, and one that reads as a plausible pose.
+- **waddle-protocol (part-addressed control, new feature flag
+  `waddle.v0.parts`)**: the normative surface for intervening on ONE declared
+  part of a `Composite` robot — one arm of a bimanual cell — without
+  inventing values for the others. No `.proto` change: `Action.part`,
+  `CompositeAction`, and `ProprioSample.part` have been on the v0 wire since
+  the beginning; what is new is that a connection may negotiate having them
+  honored.
+  - **VERSIONING.md registry row**: the flag gates honoring `Action.part` at
+    the intervention-chunk intake (validate and flatten against *that part's*
+    space, dispatch part-tagged) and emitting a non-empty `ProprioSample.part`
+    on the `StreamObservations` uplink. Declared **iff** the client's declared
+    action space is `Composite`. It is a flag rather than a defect fix because
+    the pre-flag behavior is defined and legible — a part-scoped action
+    flattens against the whole space and the chunk is refused with
+    `Fault{FAULT_KIND_VALIDATION_ERROR}` — and §3 forbids a plane planning
+    against behavior a connection did not declare. The row defines the pre-flag
+    behavior in BOTH directions, so neither is left to an implementation: on a
+    connection without the flag, per-part proprio is withheld from the uplink
+    entirely rather than relabeled `""`, which would put one arm's joint vector
+    on the wire as the whole robot's and let parts overwrite each other.
+    Local MCAP recording is not connection-scoped and always records `part`
+    (withholding is an uplink rule, never a recording one); media-plane part routing
+    (`PartTarget.part`, `ClutchTransition.part`) is explicitly NOT gated here
+    and remains unimplemented in v0.
+  - **GLOSSARY.md** gains **part**: a named sub-space of a `Composite`
+    declaration, normative declaration order, depth pinned to 1, `""` = the
+    sole/default part — and the line that keeps it honest, that a part is an
+    addressing axis on actions and proprioception, never an authority axis
+    (claims, leases, and handoffs stay whole-robot single-writer in v0).
+  - **FSM.md §4/§5 prose, no guard-row changes** (this is intake validation
+    and dispatch shape, not a transition): a part-scoped action validates
+    against the addressed part's dims (wrong width → the ordinary whole-chunk
+    dims refusal; undeclared name or nested composite → not executable, its
+    own words), and executes as **"move this part, hold the rest"** — the
+    generalization of the shipped gripper-only contract, where "hold" means no
+    new command is sent. The two rejected alternatives are written down with
+    their defects: passing the caller's values through for the unaddressed
+    parts resumes the paused policy's actuation under the intervenor's
+    provenance with no transition saying so, and hold-filling from the last
+    commanded point fabricates a full-width command the sender never issued
+    into `/waddle/actions` (with no anchor at all when the caller never
+    ticked). §5: a part-scoped action does **not** cross-fade into a
+    whole-robot point — a cross-fade needs two endpoints of the same scope, so
+    the gate holds, without faulting, until the blend window closes. That hold
+    **discards** what comes
+    due rather than deferring it: an action whose playout time falls inside the
+    window is consumed and dropped, so a streaming sender pays `blend_ns` of
+    hold and nothing else, while a sender that issues one part-scoped chunk
+    instead of a stream loses it entirely and must declare HOLD_FIRST or
+    `IMMEDIATE{blend_ns: 0}`.
+  - **Conformance**: `scenario-format.md` gains the `intervention_chunk`
+    inject kind (the control-plane chunk arm had no scenario surface at all)
+    and the `expect_output.part` matcher; `fixtures/wire/action_chunk_part_scoped.json`
+    pins the wire shape; five scenarios pin the behavior
+    (`bimanual_part_scoped_substitute`, `bimanual_part_dims_mismatch_faults`,
+    `bimanual_unknown_part_refused`, `bimanual_part_scoped_blend_holds`,
+    `bimanual_part_scoped_gripper_crosses_anchorless_blend`).
+    Runners that do not implement the flag skip them by the `requires_features`
+    rule. `scenario-format.md` also states, once and for all, that scenarios
+    pin the SHAPE of an emission and never an implementation's wording:
+    `Fault.source` is implementation-named, so a scenario asserts
+    `"source": "$nonempty"` — that a producer is named — rather than freezing
+    one runner's spelling into an append-only golden.
+  - **waddle-core (`waddle-conformance`), the reference runner implements
+    both**: an injected `intervention_chunk` runs the same intake shape the
+    runtime's does — admitted on an active claim alone (so a chunk arriving
+    mid-ENGAGE is ready the instant the handoff completes), validated whole
+    against the declared space, buffered on the intervention stream at
+    receive-time plus each step's own `t_offset_ns`, on its own channel and
+    seq space — and `expect_output` reports the part a substitute or a blend
+    addresses. Every scenario in `fixtures/behaviors/` now RUNS: the suite
+    asserts the skipped set is empty by name, so a fixture written ahead of
+    its flag fails rather than passing with its behavior unchecked. The
+    runner's once-per-claim-window refusals are keyed to the claim window's
+    identity, as the runtime's are, and its three refusal reasons latch
+    independently — "which parts exist" and "how wide this part is" are
+    different disagreements and a sender is owed each of them once.
+  - **`expect_send` names the part too** (`scenario-format.md`,
+    `waddle-conformance`): the bypass pump is the one path an intervention
+    action takes to the robot without passing through `gate()`, so the
+    dispatched action's part rides its send log, spelled exactly as
+    `expect_output` spells it (the addressed part's name, `""` for a
+    whole-robot action). Without it a part-addressed command dispatched
+    during a stalled caller loop was a width and nothing more, and the
+    reference runner dropped identity the standard's own dispatch preserves.
+  - **Eight behavior scenarios** turning that intake's prose into
+    assertions, since a contract only the commit message states is a
+    contract nothing checks: a chunk buffers mid-ENGAGE and substitutes on
+    the first tick after the handoff (`agent_chunk_buffers_during_engage_handoff`),
+    is dropped without a claim and does not resurface in the next one
+    (`agent_chunk_dropped_without_a_claim`), plays each step out at
+    receive-time plus its own `t_offset_ns`
+    (`agent_chunk_step_offsets_play_out`), and is refused at most once per
+    reason per claim window — with the successor claim owed its own answer
+    (`agent_chunk_refusals_latch_per_reason_and_window`, and
+    `teleop_dims_refusal_is_per_claim_window` for the media intake's guard,
+    now the same latch); a part-scoped action dispatched by the bypass pump
+    names its part (`bimanual_part_scoped_bypass_send`); and per-part
+    proprioception is scored against the part it describes
+    (`bimanual_part_scoped_proprio_scoped_to_its_part`,
+    `bimanual_part_scoped_dual_write_detected`). Each one was measured to
+    fail against a runner mutated to break exactly the sentence it pins.
+  - **waddle-core (`waddle-types`)**: the wire↔row seam learns parts.
+    `flatten_action` / `ActionChunk::from_pb` take a `PartPolicy`
+    (`Honor` | `Ignore`) — the flag decision belongs to whoever negotiated the
+    connection, and nothing below that line reads a flag. Under `Honor` an
+    action naming a declared part is flattened and validated against **that
+    part's** own space and dims and comes out as a `Step` tagged with
+    `part: Option<Arc<str>>` (`Arc` because the tag is minted once at the
+    intake and then cloned per tick on the gate's fast path). The part is
+    resolved before anything is decoded, so an undeclared name is refused as
+    an unknown part rather than reported as a width mismatch — the two are
+    different facts and senders fix them differently — and a part-scoped
+    action carrying a `CompositeAction` is refused by name, since v0 pins
+    nesting to depth 1. `unflatten_action` takes the tag and rebuilds the
+    part's wire `Action`, without which a part-scoped dispatch would land in
+    `/waddle/actions` as an empty action list: a recording that says a tick
+    commanded nothing when it commanded one arm. `Ignore` is the pre-flag
+    reading, byte-for-byte, and is what every intake still passes until the
+    plane connection negotiates the flag.
+  - **waddle-core (`waddle-gate`)**: an action leaving the gate carries the
+    part it commands. `OwnedAction` gains `part: Option<Arc<str>>` (`None` =
+    the whole declared space), so a substitute's return tells the caller which
+    part to write and the gate record behind it names the part that moved —
+    an untagged row would claim the whole robot did. The tag is a shared
+    pointer rather than owned bytes because a claimed tick clones the
+    dispatched action twice on the customer's real-time thread (three times
+    when it blends); `tests/alloc_free.rs` grows a part-tagged CLAIMED-arm
+    proof — the first to drive that arm with an action actually pending —
+    measured differentially against the identical untagged loop, and the gate
+    benchmarks are unchanged.
+  - **waddle-core (`waddle-gate`), cross-fade endpoints**: `blend_step` takes
+    the anchor as an `Option` and refuses any pair that is not two endpoints
+    of the **same scope** — each refusal is the hold FSM.md §5 specifies.
+    Beyond the shipped width defense (a part-width action against a
+    whole-robot point), two refusals are new: a pair naming two DIFFERENT
+    parts, whose widths match whenever the parts are symmetric, so no width
+    check can see it and blending would fade one arm's last commanded point
+    into the other arm's target — a trajectory no sender issued, dispatched
+    and recorded under that sender's provenance; and a part-scoped ARM ROW
+    with no anchor at all (an episode whose caller never ticked, FSM.md E24),
+    where the gate used to manufacture an anchor out of the target itself and
+    so would have faded a one-arm command in as if it commanded the whole
+    robot. The scope rule binds a gripper-only action too: it is exempt from
+    the width check (it has no arm row by construction) but not from the scope
+    one, since it still fades from the last commanded grip — the shape
+    `flatten_action` builds from a part-scoped noop plus a gripper. Scope and
+    width stay two rules rather than one: a whole-robot point is held out of a
+    proper part's cross-fade by *width* (the gate has no part layout to slice
+    it with), so a part-tagged gripper-only action, which has no rows to
+    slice, does fade out of that point — it commands every part's grip, and v0
+    carries one gripper channel per action, never one per part. The same
+    premise decides the anchorless case, where §5 now says so explicitly: a
+    part-scoped gripper-only action crosses that window as itself, part tag
+    and all, because it fabricates nothing for anyone; narrowing the exception
+    to "no anchor and no tag" would drop a commanded grip in exactly the
+    episodes that have no anchor, and
+    `bimanual_part_scoped_gripper_crosses_anchorless_blend` scores the arm row
+    and the grip against each other in one window. A blended
+    action now carries its target's part tag, so the one-part `Composite`
+    that legitimately cross-fades does not silently widen into a whole-robot
+    command. FSM.md §4 and §5 state the scope rule.
+  - **waddle-core (`waddle-runtime`), the connection that negotiates it**: the
+    SDK declares `waddle.v0.parts` at Register **iff** the declared action
+    space is `Composite` (the `waddle.v0.obs.stills` rule — declare from the
+    robot's declaration, never claim a behavior this session cannot exhibit:
+    a single-part robot has no part to address, and `""` is already core).
+    The plane pump refreshes acceptance on every `Registered` (flags are
+    re-negotiated on each reconnect) onto `Status.parts_negotiated`, and the
+    intervention-chunk intake honors `Action.part` only while it is set —
+    without it the chunk is read against the whole declared space and refused
+    exactly as before, once per claim window, which is the behavior a plane
+    that did not negotiate the flag is entitled to plan against. Acceptance
+    belongs to the connection that gave it, in both directions — see the two
+    lifecycle entries under **Fixed**, which this flag's uplink is the first
+    non-droppable producer to depend on.
+  - **waddle-core (`waddle-runtime`), the dispatch and the row**: the part tag
+    rides from the intake through the gate to the declared `send` verb —
+    including the BYPASS/reset path, where the pump, not the caller's gate,
+    is what reaches the robot (and is the ONLY path an agent-invited episode
+    has). The `/waddle/actions` rows behind both name the part: a part-width
+    row is rebuilt against that part's space, where before it did not decode
+    against the whole space at all and the recording said the tick commanded
+    NOTHING when it commanded one arm.
+  - **waddle-core (`waddle-runtime`), per-part proprioception**:
+    `ProprioReport` gains `part` and `joint_pos`, and
+    `Session::report_proprio` is now fallible — a part the declaration does
+    not have is refused BY NAME at the call, rather than landing under a key
+    nothing will ever read. `joint_pos` is what makes a named part
+    reportable at all: a per-part sample cannot ride the gate's flat `obs`
+    vector, because the observation layout is not the action layout and
+    slicing one by the other would invent a mapping the customer never
+    declared. The reducer keeps its latest known state per part instead of
+    once for the robot, so one arm's report can never be read as the other's
+    (or as the whole robot's), each part gets its own `/waddle/observations`
+    row naming itself, and the 10 Hz `StreamObservations` cap is charged
+    **per part** — parts are independent content streams (the per-camera
+    `still_fps` precedent), and one shared slot would deliver each of N parts
+    at ~10/N Hz and could starve one entirely while the plane's freshness
+    checks key on exactly the part they ask about.
+  - **waddle-core (`waddle-runtime`), `push_intervention_chunk`**: the local
+    counterpart of a plane `intervention_chunk`, exactly as
+    `grant_and_engage` is the local counterpart of a `ClaimDirective` — a
+    test, or the SDK's testing hooks, can now drive an intervention without
+    standing up a control-plane transport. It is the SAME intake the plane
+    pump runs, extracted rather than reimplemented, so the two cannot drift
+    on validation, on the once-per-claim-window faults, or on the ring-seq
+    discipline. The one thing it cannot inherit is the negotiation: with no
+    connection to have negotiated with, it honors `Action.part` from the
+    same fact Register declares the flag from — whether the declared space
+    has parts at all.
+  - **sdk (`waddle-sdk`), one rule for every payload that names a part**: on a
+    `Composite` declaration, an intervention payload crossing into Python is
+    **keyed by part**. `episode.gate(...)` returns `{"right": ndarray}` for an
+    action addressing one arm and every declared part, sliced by the declared
+    layout, for a whole-robot one; a dispatched `Chunk`'s step values follow
+    the same rule; `GateInfo.part` names the addressed part on both
+    (`None` = the whole robot). The parts absent from the dict are commanded
+    nothing — "move this part, hold the rest" said in the shape of the
+    payload — and a gripper-only step maps its parts to empty arrays, the
+    same "hold the arm, move the gripper" an empty array has always meant.
+    The slicing is arithmetic over the customer's own declaration (declaration
+    order IS the concatenated layout), never invention. Without this, one
+    arm's 7 values arrive indistinguishable from a 14-row whole-robot
+    command, on the DEFAULT (gRPC-enabled) wheel, for any customer whose
+    declaration is `Composite` — which is exactly the confusion the flag
+    exists to prevent. **This closes the release gate** the `GateInfo.part`
+    work left open: `waddle.v0.parts` is now expressible end to end on this
+    distribution.
+  - **sdk (`waddle-sdk`), `report_proprio(part=, joint_pos=)`**: report one
+    part's state at a time (`ProprioSample.part`), refused by name with a
+    `ValueError` if the declaration has no such part. `joint_pos` is a kwarg
+    here for the same reason it is a field in core: a per-part sample cannot
+    ride the flat `gate(obs=...)` vector, because the observation layout is
+    the customer's own and no declaration describes it. `part=""` (the
+    default) is the robot as declared and behaves exactly as before.
+  - **sdk (`waddle-sdk`), `waddle._testing.push_chunk`**: the private test
+    hook for the local intervention seam — one part-addressed (or
+    whole-robot) step pushed into a session with no control-plane transport,
+    running the core's own intake. A whole-robot push on a `Composite`
+    declaration is marshalled into the `CompositeAction` the wire requires,
+    split by the same declared layout the returns are keyed by.
+  - **waddle-core (`waddle-ffi`), the C ABI names the part too** (ABI
+    UNSTABLE, N5): `WaddleGateResult` gains `part` (an inline NUL-terminated
+    buffer, `WADDLE_MAX_PART_NAME`) and `part_len`, and the `send` callback
+    takes a fifth argument, `part_or_null`. Both are source-breaking for C
+    consumers, deliberately: without them a part-scoped substitute crossed as
+    a bare 7-wide vector that a 14-row cell can only read as the whole robot,
+    which is one arm's setpoint written into the other's. `part_len` reports
+    the name's true length so a truncated name is detectable rather than
+    silently answering to another part's; a name that cannot cross as a C
+    string fails the verb rather than crossing as NULL.
+  - **What a part still does NOT address, stated rather than left to be
+    discovered.** Parts are an addressing axis on intervention actions and on
+    proprioception, and nothing else moved: a claim, a lease and a handoff
+    stay whole-robot single-writer, the sidecar and episode schemas keep no
+    part axis, and a `rate_hz` declared below the top level is still parsed
+    and unused. The **teleop media plane is not part-routed** — a
+    `TeleopStreamPacket`'s `PartTarget.part` is ignored and its targets are
+    concatenated in packet order, `ClutchTransition.part` is dropped, and
+    (the one outright defect in that set, now written down in
+    `flatten_packet`'s own doc comment and mirrored in the reference runner's)
+    **only the first target's gripper survives a packet**, so a bimanual
+    teleoperator closing both hands in one packet closes one. It is deferred
+    rather than patched because v0 carries a single gripper scalar per action
+    end to end, so every local repair either invents a channel or turns
+    working single-gripper teleop into refusals; the honest fix is part-scoped
+    targets, which is the same deferred stage that would route
+    `PartTarget.part` at all. None of it is reachable from the canonical
+    bimanual declaration this flag serves, which folds each part's gripper
+    into that part's joint vector (`Gripper.parallel(dim = -1)`), where it is
+    an ordinary row that the part-scoped path above already carries.
 - **waddle-protocol/waddle-core (agent-invited episodes, new feature flag
   `waddle.v0.agent`)**: a customer can now ask Waddle to drive an episode
   rather than driving it themselves — `Session::run_agent(prompt, timeout_ns,
@@ -934,6 +1521,37 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   dict as before.
 
 ### Changed
+- **`examples/toy_robot.py` runs its background loop on the shipped pump**
+  (`waddle.robots.base.RobotPump`) instead of a class of its own. The example's
+  copy and the one a robot module used were the same monotonic-deadline thread
+  written twice, which is how the two start drifting; the pump knows nothing
+  about arms, so the example hands it its own `robot_tick` and keeps every
+  other line. Nothing about the program's behaviour or its status lines
+  changes, and the agent-mode path that only this loop keeps alive is now
+  covered: a test drives the example's own `run_agent_mode` with the caller
+  blocked inside `waddle.agent()` and asserts the camera keeps publishing.
+- **An anchorless cross-fade now emits the commanded setpoint exactly**
+  (`waddle-gate`): with nothing yet commanded (an episode whose caller has
+  never ticked — every agent-invited one), a whole-robot action is its own
+  endpoint and crosses the blend window unchanged. It always crossed, but the
+  previous code got there by anchoring the missing `from` ON the target and
+  interpolating, and `x * (1 - w) + x * w` is `x` only up to rounding: over
+  uniformly sampled joint values and weights, ~1.5% of pairs came out one ULP
+  off the value the sender asked for. The anchorless arm now returns the
+  target itself, so the first commanded setpoint of such an episode is the
+  one that reaches the robot, bit for bit, rather than one that merely looks
+  like it in a printout.
+- **sdk (`waddle-sdk`) — a `Composite` session's intervention payloads are
+  dict-by-part**: `episode.gate(...)`'s Substitute/Blend return and a
+  dispatched `Chunk`'s step values are a `dict[str, ndarray]` keyed by
+  declared part where they were a flat float64 ndarray. Source-breaking for a
+  customer whose declaration is `Composite` and who receives interventions;
+  **every other declaration is untouched**, and Pass (your own object) and
+  Noop/Hold (`None`) are unchanged everywhere. The old shape could not
+  express what the wire had already been able to say since v0 — an action
+  addressing one arm — so a bimanual customer's only alternative was to read
+  a 7-row command as a 14-row one. `sdk/tests/test_bimanual.py` pins both
+  halves, the changed one and the unchanged one.
 - **Public types (pre-1.0 / API unstable per N5) — a claim's actor and a
   custom provenance are now SHARED, not owned**: `ActiveClaim.actor` is an
   `Arc<ActorRef>` where it was a bare `ActorKind` (a claim now carries who
@@ -1016,6 +1634,112 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   in the episode MCAP; callers no longer see the ring.
 
 ### Fixed
+- **A recording directory that does not exist yet no longer costs the entire
+  archive** (`waddle-runtime`, and every binding above it): every file the
+  recorder writes — the per-episode sidecar, the per-episode MCAP, the
+  appended `manifest.jsonl` — is created INSIDE `recording_dir`, and each of
+  those opens was fallible-and-swallowed. So a program that passed
+  `recording_dir="recordings"` from a working directory where no such
+  directory existed opened a session, streamed, drove episodes to their
+  terminal outcome and left NOTHING on disk, with no error on any path. The
+  shipped five-line example is exactly that program.
+  `SessionBuilder::build` now creates the directory (parents included) and
+  proves it writable by opening the manifest there; a path nothing can make a
+  writable directory at — an existing file, a read-only parent — is the new
+  `RuntimeError::RecordingDirUnusable`, naming the path. Same family as the
+  camera-encoding check next to it: a wiring mistake fails at build time
+  instead of silently at every episode. The local recorder holds the
+  full-rate archive, so it may not quietly hold nothing.
+- **A step-cap refusal now says which of its two rates is the cap**
+  (`waddle.robots.base.Arm`): the line read `joint1 would move 1.3000 in one
+  command, cap 0.1000 (at 10 Hz that is 13.000 per second)`, where the 13.000
+  is what the command ASKED for — sitting immediately after the cap, where it
+  reads as the cap's own allowance. The declared cap at 10 Hz is 1.0 per
+  second. Both numbers are now named as what they are: `cap 0.1000 (1.000 per
+  second at 10 Hz); this asks for 13.000 per second`. An arm with no declared
+  `rate_hz` still says only the per-command pair rather than inventing a
+  cadence.
+- **The five-line example no longer describes an offline mode it does not
+  have** (`examples/yam_bimanual.py`): its docstring promised that with no
+  transport "the twins move, both parts report, and every episode lands in
+  the recording directory", one sentence away from the exit it actually
+  takes. Those five lines end in `waddle.agent()`, so with no transport the
+  program says what it needs and exits 2 before a session opens — nothing
+  steps and nothing is recorded. A rig needs no plane in general
+  (`rig.session(...)` without one is a local recorder a program drives from
+  its own loop); the file and `examples/README.md` now say which of those is
+  which.
+- **A negotiated flag no longer outlives the connection that gave it**
+  (`waddle-runtime`): `Status.parts_negotiated` and `Status.stills_negotiated`
+  (and the plane pump's own `acks_negotiated`) say what the CURRENT connection
+  accepted, but were only ever WRITTEN, at `Registered` — never cleared. So
+  across a partition the reducer kept minting named-part `ProprioSample`s
+  under a dead connection's answer, the uplink kept sending control-plane
+  stills to nobody, and the chunk intake kept an `Action.part` policy the next
+  plane had not agreed to. A connection that has ended has accepted nothing,
+  and one that has not registered yet has accepted nothing either: all three
+  are now forgotten at every connection boundary. Pinned by
+  `named_part_samples_never_survive_a_partition`, which fails without it.
+- **A flag-scoped message never crosses a connection that did not accept its
+  flag** (`waddle-controlplane`): the other half of the same hole, and the
+  half that survives a reconnect. `ClientMsg::connection_scoped_flag` is now
+  the one place that answers "is this message's content legal only under a
+  negotiated flag?" — a named `ProprioSample.part` (`waddle.v0.parts`), a
+  `FrameStill` (`waddle.v0.obs.stills`), a `DirectiveAck`
+  (`waddle.v0.plane.acks`) — and, like `is_droppable`, it binds at every point
+  the message could escape: filtered on the way out against the current
+  `RegisterResponse`, and kept out of the offline buffer entirely, because
+  that buffer replays onto the NEXT connection and replays right after
+  Register, before that connection has said what it accepts. A `DirectiveAck`
+  produced during a partition was therefore replayed at a plane that had never
+  asked for acks, and per-part proprioception — non-droppable history, unlike
+  a still, so it BUFFERS — became a queue of one arm's joint vectors handed to
+  a plane that had just refused `waddle.v0.parts`. Holding them until the new
+  answer arrives is not an option either: history replays in order, and a
+  partial hold reorders the stream it belongs to. Withholding is not data
+  loss — the local recorder keeps the full-rate archive, part and all. The
+  flag names now live once, in `waddle_controlplane::flags`.
+- **A claim window is owed its own refusal** (`waddle-runtime`,
+  `waddle-conformance`): every "at most once per claim window" fault guard was
+  reset by whoever happened to notice `claim_active` go false, which nobody
+  can promise — the plane pump polls every 20 ms, the media intake polls per
+  packet, and `push_intervention_chunk` has no loop at all, running only when
+  someone calls it. Two claim windows meeting inside any of those gaps shared
+  one set of guards and the SECOND window's refusal was swallowed; a retake,
+  where the claim changes with no gap at all, does the same to all of them.
+  The guards are now `WindowLatch`es keyed to `Status.claim_generation`, the
+  claim window's identity, published whenever the active claim changes — so
+  the lifecycle rides the window rather than an observer's cadence. A
+  recording missing a refusal says the sender was never told, when it was.
+  Pinned by `each_claim_window_is_owed_its_own_refusal` and the scenarios
+  `agent_chunk_refusals_latch_per_reason_and_window` and
+  `teleop_dims_refusal_is_per_claim_window`.
+- **Dual-write detection compares like with like once a command addresses one
+  part** (`waddle-conformance`): the reference runner kept ONE
+  `last_commanded` vector and fed it into ONE `DivergenceDetector`, which was
+  right while every command was whole-robot and became wrong the moment a
+  part-tagged action could reach it. A part-width command was compared
+  position by position against a whole-robot `ProprioSample.joint_pos`,
+  scoring an intervenor driving the right arm against the LEFT arm's joints:
+  measured on the bimanual fixture, a chunk commanding `right` to a pose the
+  robot then reported reaching exactly still raised
+  `DualWriteDetected{VERB_HOLD, divergence 1.31}` — a fabricated safety
+  escalation against a sender doing precisely what it said it would, where
+  the identical scenario with a whole-robot chunk stayed silent. Two rules
+  now hold, and each is pinned by a scenario: the commanded side is keyed by
+  the SCOPE each command addressed — a whole-robot command commands every
+  part and clears the part-scoped commands it supersedes, a part-scoped one
+  replaces its own part and leaves the whole-robot command standing as the
+  anchor for the parts it did not address — and a sample is compared only
+  against its own scope. A sample for a part with no part-scoped command is
+  compared against the last whole-robot command's slice for it (declaration
+  order defines that slice; "hold the rest" means it still stands), while a
+  whole-robot sample says nothing at all under a standing part-scoped
+  command, because the composition it would need is not what its layout
+  describes — an observation's layout is the customer's own and no
+  declaration describes it, so it is never re-laid-out by action parts. Each
+  part also gets its own divergence run: an arm arriving where it was told
+  must not reset, and so mask, the run of an arm someone else is writing.
 - **A gripper-only intervention step is an action, not a drop**
   (`waddle-types`/`waddle-gate`/`waddle-runtime`): control.proto has
   `Action.gripper` "ride alongside the target in one logical tick", and

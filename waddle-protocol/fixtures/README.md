@@ -72,7 +72,13 @@ suite outright.
 ## Adding fixtures
 
 New fixtures are non-breaking and welcome; new FSM or gate behavior REQUIRES
-one (with a guard-table row in `../docs/FSM.md` — see
-`../docs/VERSIONING.md` §6). Runners MUST enumerate these directories at test
-time rather than keep a fixture list by hand: append-only directories plus a
-hand-kept list is how coverage silently rots.
+one, together with the normative text it pins in `../docs/FSM.md` — a
+guard-table row when a transition or guard moves, the governing section's
+prose when none does (intake validation, dispatch shape, and the
+blend/gripper/part contracts of §4–§5 are prose, not rows). See
+`../docs/VERSIONING.md` §6. A fixture the document never names pins a
+behavior the standard does not claim.
+
+Runners MUST enumerate these directories at test time rather than keep a
+fixture list by hand: append-only directories plus a hand-kept list is how
+coverage silently rots.

@@ -331,11 +331,13 @@ def test_failing_post_reset_hook_pins_success_and_sets_post_reset_failed(tmp_pat
 
 
 def test_with_exit_during_post_reset_does_not_abort_it(tmp_path):
+    entered = threading.Event()
     proceed = threading.Event()
     hook_calls: list[str] = []
 
     def slow_post_hook(task):
         hook_calls.append(task)
+        entered.set()
         proceed.wait(timeout=5)
         return True
 
@@ -353,9 +355,13 @@ def test_with_exit_during_post_reset_does_not_abort_it(tmp_path):
         term_thread = threading.Thread(target=lambda: ep.terminate("success"), daemon=True)
         term_thread.start()
 
-        deadline = time.monotonic() + 5.0
-        while not ep.done and time.monotonic() < deadline:
-            time.sleep(0.005)
+        # The window this test needs open is "the post-reset hook is running
+        # and has not returned yet", so it waits for the hook itself to say it
+        # is in there. Polling `done` is not that: `done` is observable BEFORE
+        # the dispatch thread enters the hook, so under load this proceeded
+        # with `hook_calls` still empty and the assertions below raced the
+        # thread they are about.
+        assert entered.wait(timeout=5.0), "the post-reset hook was never entered"
         assert ep.done, "episode never reached POST_RESET"
         assert ep.outcome == waddle.Outcome.SUCCESS
         # Exit here, with the post-reset hook still blocked on `proceed`:

@@ -11,6 +11,10 @@ use crate::emissions::Codec;
 use crate::{ConformanceError, scenario_err};
 
 pub const FORMAT: &str = "waddle.behavior/v0";
+/// Part-addressed control (VERSIONING.md §3). Named because the runner reads
+/// it twice: once to decide the scenario is runnable at all, and once as the
+/// negotiated answer an intake asks for `Action.part`.
+pub const PARTS_FEATURE: &str = "waddle.v0.parts";
 /// Feature flags this runner implements; scenarios requiring anything else
 /// are skipped, not failed (scenario-format.md).
 pub const SUPPORTED_FEATURES: &[&str] = &[
@@ -18,6 +22,7 @@ pub const SUPPORTED_FEATURES: &[&str] = &[
     "waddle.v0.reset.phases",
     "waddle.v0.reset.remote",
     "waddle.v0.agent",
+    PARTS_FEATURE,
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -244,7 +249,7 @@ fn parse_step(raw: &Map<String, Value>) -> Result<Step, ConformanceError> {
         }
         "expect_output" => Ok(Step::ExpectOutput(value.clone())),
         "expect_send" => {
-            let (expected, within_ns) = split_expectation(value, &["provenance"])?;
+            let (expected, within_ns) = split_expectation(value, &["provenance", "part"])?;
             Ok(Step::ExpectSend {
                 expected,
                 within_ns,
