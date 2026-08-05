@@ -223,11 +223,13 @@ top-level dirs; they are not built yet.
     working tree, so without it a build after a test run ships that
     interpreter's bytecode and a build on a clean checkout does not.
     Non-Python PACKAGE DATA under `python-source` (today
-    `waddle/robots/yam_data/`, ~5 KB of URDF text + licence + README) ships
-    with no pyproject edit at all, and the code reads it through
-    `importlib.resources` so a wheel, an editable install and a checkout all
-    work. Adding or moving such data is the one time to build a wheel and
-    list it — that it landed, and that no bytecode or mesh came with it.
+    `waddle/robots/yam_data/`: 16.1 KB of URDF text + licence + README, 5.6 KB
+    of it once deflated into the wheel — sdk/README.md quotes that same 16 KB
+    to a customer, so the two move together) ships with no pyproject edit at
+    all, and the code reads it through `importlib.resources` so a wheel, an
+    editable install and a checkout all work. Adding or moving such data is
+    the one time to build a wheel and list it — that it landed, and that no
+    bytecode or mesh came with it.
   - A build without a feature REFUSES the matching `create_session` kwarg
     (`transport_url`/`transport_token`, `media_url`/`media_token`) rather
     than degrading to a silent offline session; the LiveKit refusal names the

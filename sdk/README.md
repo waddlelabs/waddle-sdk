@@ -305,7 +305,7 @@ This repo is Apache-2.0 and the wheel carries one deliberate exception:
 description, shipped under its own MIT licence (`yam_data/LICENSE`, verbatim
 from the source repo) and pinned to the upstream commit its README names. It
 is data rather than code, text only — the STL meshes are not shipped — and it
-earns its ~15 KB twice: `waddle.robots.yam` hands it to a single-arm
+earns its 16 KB twice: `waddle.robots.yam` hands it to a single-arm
 declaration as `kinematics_urdf`, and `tests/test_yam_facts.py` compares every
 constant in that module against the vendor's own numbers in it.
 
