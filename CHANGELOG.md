@@ -12,6 +12,28 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 ## [Unreleased]
 
 ### Added
+- **docs (`docs/lease-lifecycle.md`: the session and lease lifecycle, from the
+  customer's point of view)**: the one story a customer previously had to
+  assemble out of five places (the `waddle/__init__.py` docstrings, `FSM.md`,
+  `sdk/README.md`, the toy example and the glossary), told once as prose: the
+  lease is a single whole-robot single-writer right whose holder changes by
+  phase, and the page follows it through a rollout (your loop holds it,
+  `gate()` returns Pass), an intervention (the claimant holds it, per the
+  declared `Handoff`, part-tagged on a `Composite`, driven straight to `send`
+  when the loop goes quiet, and passed to a successor without a handback on
+  retake), a remote reset window before and after the episode (gate mode RESET,
+  no-op ticks, handback ordered before READY and before TERMINAL), an
+  agent-invited episode, and the `monitor` posture that lends the lease to
+  nobody. Cross-references `FSM.md`'s guard rows rather than restating them and
+  the `sdk/README.md` posture table rather than duplicating it; linked from the
+  root README's quickstart and from that posture section. Says what the layer
+  does NOT provide, in the same breath as what it does: advisory enforcement is
+  a discipline the caller keeps rather than a guard, since waddle-core's
+  divergence detector is implemented and pinned by conformance but not yet fed
+  by a live SDK session; the envelope and the physical stop are the owner's
+  floor throughout; and a retake successor is opened under the surviving claim
+  but handed to no Python caller, so the next `rollout()` raises while it is
+  live.
 - **docs (robot modules, where a customer actually looks)**: the root
   `README.md` gains the five-line YAM quickstart and the vendor-package
   install command it needs to drive metal — a documented `pip install` of a

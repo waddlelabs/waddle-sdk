@@ -48,6 +48,13 @@ one file — a simulated 6-dof arm with a camera, the rollout loop, and
 cd sdk && uv run python examples/toy_robot.py
 ```
 
+For what supervision actually does to your loop,
+[`docs/lease-lifecycle.md`](docs/lease-lifecycle.md) follows the lease (the
+single-writer right to command the robot) through a whole session from the
+customer's side: who holds it during a rollout, an intervention, a reset window
+and an agent-driven episode, what `gate()` returns while they do, and what the
+SDK does not provide.
+
 ## If the SDK already knows your robot
 
 That whole integration is a factory call. `waddle.robots.<vendor>` carries a

@@ -169,7 +169,10 @@ verbs the session registers — nothing else:
 A posture is **not** an authority decision and adds none: who may command a
 robot, when, and under what claim is waddle-core's, identical under both.
 Whether a rollout is agent-driven or windowed stays a call-site choice
-(`waddle.agent()` vs `waddle.rollout()`), never a construction one.
+(`waddle.agent()` vs `waddle.rollout()`), never a construction one. For that
+authority story in full (which phase hands the lease to whom, what `gate()`
+returns while they hold it, and what a `monitor` session therefore cannot do),
+see [`docs/lease-lifecycle.md`](../docs/lease-lifecycle.md).
 
 The same rule that governs the rest of this package governs `robots/`: it is
 owner-side code that ships in the frontend, it enforces the OWNER's envelope

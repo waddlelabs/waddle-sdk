@@ -40,7 +40,12 @@ depend on it.
 ```
 waddle-sdk/
   CLAUDE.md, CHANGELOG.md, README.md, LICENSE (Apache-2.0), .gitignore
-  docs/changelogs/           # stowed changelogs of released versions
+  docs/                      # repo-level customer-facing docs:
+    lease-lifecycle.md       #   the session/lease lifecycle from the
+                             #   customer's side (grant/claim/lease/envelope,
+                             #   who holds the robot in every phase); cites
+                             #   FSM.md rather than restating it
+    changelogs/              #   stowed changelogs of released versions
   waddle-protocol/           # THE STANDARD: schemas + fixtures + normative docs
     proto/waddle/v0/         # descriptors, control, episode, sidecar, services, media
     fixtures/                # wire/ sidecars/ behaviors/ (JSON, semantic-compared)
