@@ -34,3 +34,6 @@ dist/
 
 # The toy example's default local recording dir (sidecars + MCAPs)
 toy-recordings/
+
+# Puddle GUI
+.puddle
