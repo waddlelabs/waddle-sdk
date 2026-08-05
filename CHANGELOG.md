@@ -20,6 +20,14 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   - **`Driver`** is a `typing.Protocol` (ten members: `kind`, `estopped`,
     `read`, `write`, `hold`, `estop`, `re_enable`, `step`, `home`, `close`), so
     a driver written by hand is admitted on its members, never its ancestry.
+    `kind` is the DRIVER's own word, and the two questions this layer asks of
+    it — does closing this drop all torque, is homing it a motion nobody is
+    watching — both have an unsafe answer, so it is read in ONE direction
+    (`drives_metal`): `sim` alone selects the harmless branch, and every other
+    word, including one this layer has never seen, is treated as metal. A twin
+    somebody called something else waits for a park gesture it never needed;
+    the other direction would drop torque on real hardware with none of the
+    warning.
     **`SimDriver`** is the rate-limited kinematic twin, parameterized by the
     owner's limits/step caps/rate: it walks at most one accepted command's
     worth of travel per control period, which is what makes a sim run a
@@ -52,9 +60,16 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     `latched_parts`,
     `ParkGate`, `apply_console_gesture` / `start_console_recovery` — a `resume`
     typed at a foreground TTY, never the wire (`VERB_RESUME` releases a *hold*)
-    and never the next episode's reset. `scene_reset` is the default pre-reset
-    hook: it refuses a latched scene on every backing, homes a twin, and vouches
-    for a live unit without moving it.
+    and never the next episode's reset. There is ONE reader per terminal in a
+    process, not one per session: stdin is a single stream and two readers of
+    it deal alternate lines to each other, so `start_console_recovery` hands
+    back a `ConsoleRecovery` — the arms it is aimed at — which a second
+    session RE-AIMS and which its owner RETIRES. A reader left aimed at a
+    finished session would answer half the words typed at the machine on arms
+    nobody is driving, and on metal a `resume` there re-enables a driver whose
+    bus is already closed. `scene_reset` is the default pre-reset hook: it
+    refuses a latched scene on every backing, homes a twin, and vouches for
+    anything it reads as metal without moving it.
   - **`RobotPump`** runs any tick callable at a declared rate on its own thread
     (`proprio_tick` is the usual one: step every part, report it per part),
     because the robot's own housekeeping cannot pause while the caller's thread
@@ -80,13 +95,17 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     verbs, calls `waddle.init`, starts the console recovery and starts the
     reporting pump; a failure part-way through closes what it opened, since a
     context manager whose `__enter__` raises never gets an `__exit__`.
-    `__exit__` stops the pump, shuts the session down and closes the drivers
-    whatever the body did, which **retires the shutdown footgun**: finalizing
-    the recording is no longer a `finally:` the customer remembered to write
-    (pinned by a test that raises mid-rollout and then reads the recording
-    back). Every keyword that is not the rig's own goes straight through to
-    `waddle.init` and means what it means there — including a customer's own
-    `send`, which still REPLACES the shipped envelope through the sugar.
+    `__exit__` retires the console reader, stops the pump, shuts the session
+    down and closes the drivers whatever the body did, which **retires the
+    shutdown footgun**: finalizing the recording is no longer a `finally:` the
+    customer remembered to write (pinned by a test that raises mid-rollout and
+    then reads the recording back). Every keyword that is not the rig's own
+    goes straight through to `waddle.init` and means what it means there —
+    including a customer's own `send`, which still REPLACES the shipped
+    envelope through the sugar. The two that ARE the rig's own are documented
+    on it: `send`, and `console=False` for a program whose stdin belongs to
+    something else (a REPL, a supervising harness) and which therefore has no
+    typed way to clear an e-stop latch.
   - **The pump is always on inside a session**, not only for an agent run: a
     program's own loop then only gates and applies, with no interleaved robot
     tick to forget, and a session whose caller is blocked inside
@@ -94,13 +113,18 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     the declared part-count multiplication of the proprio cadence, fixed by
     the declaration and visible to the plane before it accepts.
   - **`hold_until_parked`** (+ `ParkGate.wait` / `.wait_holding`): a finished
-    mission on drivers that answer `kind == "live"` keeps holding and keeps
+    mission on drivers this layer reads as metal keeps holding and keeps
     reporting until a human says the machine is parked, because closing stops
     the vendor's command re-send and the motors' own watchdog then drops ALL
     torque from wherever the mission left the arms. Every park warning this
     layer has is otherwise attached to a Ctrl-C the site operator TYPED —
     finishing normally had none, and that is the one ending nobody is standing
-    ready for. A twin returns at once (nothing to sag, and a harness must be
+    ready for. WHICH ending it offers is decided by whether anything is
+    reading the console (the `ConsoleRecovery` the session started), never by
+    whether a terminal exists: a `console=False` session, a stdin that belongs
+    to a harness, or a reader already at end-of-input all mean a typed gesture
+    nothing would receive, and it says so and names the signal instead. A twin
+    returns at once (nothing to sag, and a harness must be
     able to wait for a sim program to exit) and a Ctrl-C skips the hold (that
     operator is already at the machine).
   - **The composition is sugar, and a test says so**: `test_yam_session.py`
