@@ -71,6 +71,7 @@ __all__ = [
     "RigSession",
     "RobotPump",
     "SimDriver",
+    "TWIN_KIND",
     "apply_console_gesture",
     "apply_decision",
     "chain_fk",
@@ -79,6 +80,7 @@ __all__ = [
     "closing_drops_torque",
     "console_is_at_the_machine",
     "control",
+    "drives_metal",
     "estop_all",
     "hold_all",
     "hold_until_parked",
@@ -223,10 +225,17 @@ class Driver(Protocol):
     load-bearing somewhere in this layer:
 
     ``kind``
-        ``"sim"``, ``"live"``, or your own word for it. Read where the
-        question is "does closing this drop torque" or "is homing this a
-        motion nobody is watching" — asked of the object that HAS the
-        property, never of the flag that built it.
+        :data:`TWIN_KIND` (``"sim"``) for a twin; ``"live"``, or your own word
+        for it, for anything that moves real metal. Read where the question is
+        "does closing this drop torque" (:func:`closing_drops_torque`) or "is
+        homing this a motion nobody is watching" (:func:`scene_reset`) — asked
+        of the object that HAS the property, never of the flag that built it.
+        Both of those have an unsafe answer, so the word is read in ONE
+        direction (:func:`drives_metal`): ``"sim"`` alone selects the harmless
+        branch, and every other word — a vendor's, yours, one this layer has
+        never seen — is read as metal. A driver you wrote therefore needs no
+        particular word for metal; one that is a TWIN has to say ``"sim"``, or
+        it is treated as something that can hurt somebody.
     ``estopped``
         Whether the owner's stop latch is set on this unit.
     ``read()``
@@ -797,16 +806,41 @@ def latched_parts(arms: Mapping[str, Arm]) -> list[str]:
     return sorted(part for part, arm in arms.items() if arm.estopped)
 
 
+#: The one word this layer reads off a driver's ``kind``, and the only one
+#: that selects a harmless branch: what :class:`SimDriver` — and any other
+#: twin — carries. See :func:`drives_metal`.
+TWIN_KIND = "sim"
+
+
+def drives_metal(driver: Driver) -> bool:
+    """Whether this driver moves something that can hurt somebody — the ONE
+    place a driver's ``kind`` is read.
+
+    Read in one direction on purpose. Both questions this layer asks of it
+    have an unsafe answer — closing a live unit drops all torque, and homing
+    one is an unattended motion a runbook forbids — and ``kind`` is the
+    DRIVER's own word, since a driver written by a customer or a vendor is a
+    supported thing to hand this layer. So :data:`TWIN_KIND` is the only word
+    that means "nothing here can hurt anyone", and everything else, including
+    a word this layer has never seen, is treated as metal.
+
+    The cost is borne by the safe side: a twin whose author called it
+    something else is held for a park gesture it never needed, and says so
+    while it waits. The other direction would drop torque on real hardware
+    with none of the warning this layer exists to give."""
+    return getattr(driver, "kind", "") != TWIN_KIND
+
+
 def closing_drops_torque(arms: Mapping[str, Arm]) -> bool:
-    """Whether closing these drivers drops all torque — asked of the DRIVERS,
-    not of the flag that built them.
+    """Whether closing these drivers drops all torque — asked of the DRIVERS
+    (:func:`drives_metal`), not of the flag that built them.
 
     A twin has nothing to hold and nothing to sag. A live unit typically holds
     its pose only while this process keeps the vendor's command re-send alive:
     close the connection and the motors' own watchdog cuts everything, gravity
     compensation included. That difference is the whole reason a finished
     mission may exit on its own in sim and may not on metal."""
-    return any(getattr(arm.driver, "kind", "") == "live" for arm in arms.values())
+    return any(drives_metal(arm.driver) for arm in arms.values())
 
 
 def estop_all(
@@ -1101,10 +1135,11 @@ def scene_reset(
     stop and the next rollout cancelling it, and on metal it would be a
     rollout driving a unit that has no gains.
 
-    Past the latch, a twin snaps back to its declared home and a LIVE unit
-    does not move: an unattended homing motion is exactly what a runbook
-    forbids, and the site operator standing at the rig is the reset. That is
-    stated on every episode rather than assumed.
+    Past the latch, a twin snaps back to its declared home and anything this
+    layer reads as METAL (:func:`drives_metal`) does not move: an unattended
+    homing motion is exactly what a runbook forbids, and the site operator
+    standing at the rig is the reset. That is stated on every episode rather
+    than assumed.
 
     It is a default like everything else here — a rig with a scene of its own
     (a fixture to re-seed, a part feeder to advance) passes its own callable
@@ -1121,7 +1156,7 @@ def scene_reset(
             )
             return False
         for part, arm in arms.items():
-            if getattr(arm.driver, "kind", "") == "live":
+            if drives_metal(arm.driver):
                 report(f"pre_reset part={part}: no motion — the site operator is the reset")
                 continue
             if arm.home_values is None:

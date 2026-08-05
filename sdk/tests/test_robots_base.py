@@ -655,6 +655,34 @@ def test_closing_a_live_arm_drops_torque_and_a_twin_has_none_to_drop():
     assert base.closing_drops_torque({"left": _arm()}) is False
 
 
+def test_a_driver_whose_word_for_metal_is_its_own_is_not_read_as_a_twin():
+    """`kind` is the DRIVER's word — the protocol says so, and user-written
+    drivers are a supported path — so this layer reads it in the one direction
+    that fails safe: `sim` is the only word that selects a harmless branch and
+    everything else is metal.
+
+    Both questions it answers have an unsafe branch, and a vendor whose word
+    is "hardware" must not take either of them: closing would drop all torque
+    with none of the warning, and a scene reset would command an unattended
+    homing motion on real metal, which is what a runbook forbids."""
+
+    class _VendorDriver(_CountingDriver):
+        kind = "hardware"  # a word this layer has never seen
+
+    lines: list[str] = []
+    driver = _VendorDriver()
+    arms = {"left": _arm(driver, part="left", home_values=(0.5, 0.5, 0.5))}
+    assert isinstance(driver, base.Driver)
+
+    assert base.drives_metal(driver) is True
+    assert base.closing_drops_torque(arms) is True
+    assert base.scene_reset(arms, report=lines.append)("fold the towel") is True
+    assert list(driver.read()[0]) == pytest.approx(HOME), (
+        "the scene reset moved metal nobody was watching"
+    )
+    assert any("no motion" in line for line in lines)
+
+
 # ---------------------------------------------------------------------------
 # The loop
 # ---------------------------------------------------------------------------
