@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import sys
 import types
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -585,6 +586,22 @@ def test_a_missing_vendor_package_names_the_command_that_installs_it():
     assert (
         'pip install "i2rt @ git+https://github.com/i2rt-robotics/i2rt@'
         f'{yam.I2RT_PIN}"' in message
+    )
+
+
+def test_the_published_quickstart_quotes_that_command_verbatim():
+    """`I2RT_INSTALL` is BUILT from the pin precisely so the command and the
+    facts cannot drift — and then the root README writes it out by hand, which
+    is that drift let back in through the one copy no import can reach.
+    Somebody following a README that quotes an older commit installs a vendor
+    tree these numbers are not stated against, and nothing in the run says so.
+
+    Only the command is pinned here. The prose around it is prose."""
+    readme = Path(__file__).resolve().parents[2] / "README.md"
+    assert readme.is_file(), f"{readme} — the repository's own README"
+    assert yam.I2RT_INSTALL in readme.read_text(), (
+        "the root README's quickstart must quote yam.I2RT_INSTALL verbatim, "
+        f"which is now: {yam.I2RT_INSTALL}"
     )
 
 
