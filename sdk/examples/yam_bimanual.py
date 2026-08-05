@@ -13,10 +13,16 @@ Run it against a supervision plane::
     WADDLE_YAM_TOKEN=<the plane's credential for this session> \\
       uv run python examples/yam_bimanual.py
 
-With no transport it still runs: the twins move, both parts report, and every
-episode lands in the recording directory — there is just nobody at the other
-end to invite, so the program says so and exits. Agent mode is what a plane
-is for.
+A plane is what THIS program is for: its five lines end in `waddle.agent()`,
+so with no ``WADDLE_YAM_TRANSPORT`` it says what it needs and exits(2) before
+anything opens — no session, no twin stepping, no episode. (A rig needs no
+plane in general: `rig.session(...)` with no transport is a local recorder a
+program drives from its own loop, which is what ``examples/toy_robot.py``
+runs offline. That is a different program, not a mode of this one.)
+
+While a session is open, every episode lands in ``WADDLE_YAM_RECORDING_DIR``
+— ``recordings/`` here, created if it is not there yet — as one sidecar and
+one MCAP apiece.
 
 `sim=True` is the default here and is EXPLICIT, never inferred: no code path
 try-imports the vendor package to decide what you meant. Set

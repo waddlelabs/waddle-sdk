@@ -1630,6 +1630,16 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   second at 10 Hz); this asks for 13.000 per second`. An arm with no declared
   `rate_hz` still says only the per-command pair rather than inventing a
   cadence.
+- **The five-line example no longer describes an offline mode it does not
+  have** (`examples/yam_bimanual.py`): its docstring promised that with no
+  transport "the twins move, both parts report, and every episode lands in
+  the recording directory", one sentence away from the exit it actually
+  takes. Those five lines end in `waddle.agent()`, so with no transport the
+  program says what it needs and exits 2 before a session opens — nothing
+  steps and nothing is recorded. A rig needs no plane in general
+  (`rig.session(...)` without one is a local recorder a program drives from
+  its own loop); the file and `examples/README.md` now say which of those is
+  which.
 - **A negotiated flag no longer outlives the connection that gave it**
   (`waddle-runtime`): `Status.parts_negotiated` and `Status.stills_negotiated`
   (and the plane pump's own `acks_negotiated`) say what the CURRENT connection

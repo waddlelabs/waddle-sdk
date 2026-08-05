@@ -194,6 +194,12 @@ WADDLE_YAM_TOKEN=<token> \
   uv run python examples/yam_bimanual.py
 ```
 
+The transport is not optional here, unlike in `toy_robot.py`: these five
+lines end in `waddle.agent()`, so with no `WADDLE_YAM_TRANSPORT` the program
+says what it needs and exits 2 before a session opens. (A rig itself needs no
+plane — `rig.session(...)` without one is a local recorder a program drives
+from its own loop — that is just not what this file does.)
+
 It runs on kinematic twins by default (`WADDLE_YAM_SIM=0` plus
 `WADDLE_YAM_CAN_LEFT` / `_RIGHT` drives metal, and needs the vendor package
 the module's docstring names — it is not a dependency of this SDK and cannot
