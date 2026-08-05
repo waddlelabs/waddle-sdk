@@ -263,6 +263,36 @@ def test_the_envelope_refuses_a_command_whole_and_says_which_check_refused_it(
     assert "toy" in lines[0], "the line says which part refused"
 
 
+def test_a_step_cap_refusal_names_the_cap_and_the_ask_in_the_same_units():
+    """The step-cap line is the one a program's console shows most often and
+    the one a runbook quotes, so both rates are named and each says which it
+    is. Only one of them is the cap: at 20 Hz a 0.10 per-command cap is 2.0
+    per second, and asking for 0.5 in one command is asking for 10 per
+    second. A line carrying only the second number, right after the cap,
+    reads as though the cap permitted it."""
+    lines: list[str] = []
+    arm = _arm(_CountingDriver(), lines=lines)
+
+    assert arm.command([0.5, 0.0, 1.0]) is False
+    line = lines[0]
+    assert "cap 0.1000" in line
+    assert "2.000 per second" in line, "the cap's own per-second value is missing"
+    assert "10.000 per second" in line, "what the command asked for is missing"
+    assert "20 Hz" in line, "neither rate means anything without the cadence"
+
+
+def test_a_step_cap_refusal_without_a_declared_rate_names_only_the_step():
+    """`rate_hz` is optional on an `Arm` — an arm built without one has no
+    cadence to convert with, and the line says the per-command numbers rather
+    than inventing a second pair."""
+    lines: list[str] = []
+    arm = _arm(_CountingDriver(), lines=lines, rate_hz=None)
+
+    assert arm.command([0.5, 0.0, 1.0]) is False
+    assert "would move 0.5000 in one command, cap 0.1000" in lines[0]
+    assert "per second" not in lines[0]
+
+
 def test_the_envelope_applies_a_command_it_admits():
     driver = _CountingDriver()
     arm = _arm(driver)

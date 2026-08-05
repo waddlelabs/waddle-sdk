@@ -1621,6 +1621,15 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   camera-encoding check next to it: a wiring mistake fails at build time
   instead of silently at every episode. The local recorder holds the
   full-rate archive, so it may not quietly hold nothing.
+- **A step-cap refusal now says which of its two rates is the cap**
+  (`waddle.robots.base.Arm`): the line read `joint1 would move 1.3000 in one
+  command, cap 0.1000 (at 10 Hz that is 13.000 per second)`, where the 13.000
+  is what the command ASKED for — sitting immediately after the cap, where it
+  reads as the cap's own allowance. The declared cap at 10 Hz is 1.0 per
+  second. Both numbers are now named as what they are: `cap 0.1000 (1.000 per
+  second at 10 Hz); this asks for 13.000 per second`. An arm with no declared
+  `rate_hz` still says only the per-command pair rather than inventing a
+  cadence.
 - **A negotiated flag no longer outlives the connection that gave it**
   (`waddle-runtime`): `Status.parts_negotiated` and `Status.stills_negotiated`
   (and the plane pump's own `acks_negotiated`) say what the CURRENT connection

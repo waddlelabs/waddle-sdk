@@ -614,9 +614,14 @@ class Arm:
         step = np.abs(target - measured)
         for i, (moved, cap) in enumerate(zip(step, self.step_caps, strict=True)):
             if moved > cap:
+                # Both rates, each named as what it is. The cap is a
+                # PER-COMMAND number, and the speed it stands for is what the
+                # owner actually chose — so a line that converted only the ask
+                # would put the one number this command may NOT have directly
+                # after the cap, where it reads as the cap's own allowance.
                 rate = (
-                    f" (at {self.rate_hz:g} Hz that is {moved * self.rate_hz:.3f} per "
-                    "second)"
+                    f" ({cap * self.rate_hz:.3f} per second at {self.rate_hz:g} Hz); "
+                    f"this asks for {moved * self.rate_hz:.3f} per second"
                     if self.rate_hz
                     else ""
                 )
