@@ -46,6 +46,27 @@ def _clean_session():
 # observable event and this only bounds the failure.
 PATIENCE_S = 5.0
 
+
+def _until(predicate, what: str, timeout: float = PATIENCE_S):
+    """Wait for another thread's work to become OBSERVABLE. The timeout only
+    bounds the failure — the assertion is always on the observation."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        got = predicate()
+        if got:
+            return got
+        time.sleep(0.005)
+    pytest.fail(what)
+
+
+def _readers() -> set[threading.Thread]:
+    """Every live console reader in this process, whoever started it."""
+    return {
+        t
+        for t in threading.enumerate()
+        if t.name == base.CONSOLE_THREAD_NAME and t.is_alive()
+    }
+
 # One toy part: three rows, the last one a gripper in normalized units. Wide
 # enough to have a layout, narrow enough to read in a failure message.
 JOINTS = ("lift", "swing", "grip")
@@ -600,15 +621,78 @@ def test_console_recovery_reads_the_gestures_typed_at_a_terminal(monkeypatch):
     arms = {"left": _arm(part="left")}
     arms["left"].estop()
 
-    thread = base.start_console_recovery(arms, park=base.ParkGate(), report=lines.append)
-    assert thread is not None
+    console = base.start_console_recovery(arms, park=base.ParkGate(), report=lines.append)
+    assert console is not None
     # The reader ends when its input does — an observable end, not a deadline.
-    thread.join(PATIENCE_S)
-    assert not thread.is_alive(), "the reader ends with the input it was given"
+    console.join(PATIENCE_S)
+    assert not console.listening, "the reader ends with the input it was given"
 
     assert base.latched_parts(arms) == [], "the gesture reached the arms"
     assert sum("type `resume`" in line for line in lines) == 1, "the banner is said once"
     assert any("resume part=left" in line for line in lines)
+
+
+def test_a_retired_console_holds_no_arms_and_the_next_one_reuses_its_thread(terminal):
+    """A reader that outlives the session that started it is worse than no
+    reader at all.
+
+    stdin is ONE stream, so two readers of it deal alternate lines to each
+    other — and the word at stake is `resume`, the ONE path that clears an
+    owner's e-stop latch. A stale reader answers it plausibly ("nothing is
+    e-stopped", about arms nobody is driving) while the running session's arms
+    stay latched. So a recovery is RETIRED, and a second session re-aims the
+    reader the first one left instead of adding another."""
+    first_lines: list[str] = []
+    second_lines: list[str] = []
+    first_arms = {"left": _arm(part="left")}
+    first_arms["left"].estop()
+    second_arms = {"left": _arm(part="left")}
+    second_arms["left"].estop()
+
+    first = base.start_console_recovery(first_arms, report=first_lines.append)
+    assert first is not None and first.listening is True
+    started = _readers()
+
+    first.retire()
+    assert first.listening is False
+
+    second = base.start_console_recovery(second_arms, report=second_lines.append)
+    assert second is not None and second.listening is True
+    assert _readers() <= started, (
+        "a second session started a second reader of one terminal — two of them "
+        "deal alternate lines to each other"
+    )
+
+    terminal.type("resume\n")
+    _until(
+        lambda: not base.latched_parts(second_arms),
+        "the gesture never reached the session that is running",
+    )
+    assert base.latched_parts(first_arms) == ["left"], (
+        "the retired reader still held the finished session's arms"
+    )
+    second.retire()
+
+
+def test_a_gesture_typed_with_nothing_aimed_is_still_answered(terminal):
+    """Between two sessions the terminal is still there and the reader is
+    still parked in it. A word typed then is answered as what it is — a
+    gesture that silently did nothing would be indistinguishable, at the rig,
+    from a program that had stopped listening."""
+    lines: list[str] = []
+    arms = {"left": _arm(part="left")}
+    arms["left"].estop()
+
+    console = base.start_console_recovery(arms, report=lines.append)
+    assert console is not None
+    console.retire()
+
+    terminal.type("resume\n")
+    _until(
+        lambda: any("nothing is listening" in line for line in lines),
+        "a word typed with no session open was swallowed",
+    )
+    assert base.latched_parts(arms) == ["left"], "a retired reader drove the arms"
 
 
 # ---------------------------------------------------------------------------

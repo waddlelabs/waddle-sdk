@@ -12,8 +12,10 @@ two things is here, once:
   sent it: the program's own policy, a teleoperator's jog, a Waddle-hosted
   agent's trajectory. It rejects; it never clamps.
 * :class:`RejectLog`, :class:`ParkGate`, :func:`apply_console_gesture`,
-  :func:`start_console_recovery` — bounded reporting, and the one path by
-  which a human at the machine clears an e-stop latch.
+  :func:`start_console_recovery` + :class:`ConsoleRecovery` — bounded
+  reporting, and the one path by which a human at the machine clears an
+  e-stop latch. One reader per terminal, aimed at the arms of whoever started
+  it and retired with them.
 * :class:`RobotPump` + :func:`proprio_tick` — the loop that keeps reporting
   while the caller's thread is busy (blocked inside `waddle.agent()`, say).
 * :func:`chunk_sender`, :func:`apply_decision`, :func:`split_by_part` — the
@@ -58,6 +60,8 @@ from ..descriptors import FrameTransform, Robot
 
 __all__ = [
     "Arm",
+    "CONSOLE_THREAD_NAME",
+    "ConsoleRecovery",
     "CrossArm",
     "Driver",
     "PARK_WORD",
@@ -1015,14 +1019,127 @@ def apply_console_gesture(
             report(f"resume part={part} restored, holding the measured pose")
 
 
+#: What a console reader thread is called. One per terminal, not one per
+#: session — see :class:`ConsoleRecovery`.
+CONSOLE_THREAD_NAME = "waddle-robots-console"
+
+#: The reader this process has on its console, and the lock that keeps two
+#: sessions from starting a second one. Module state because the thing it
+#: describes is: there is one stdin per process.
+_console_lock = threading.Lock()
+_console_reader: _ConsoleReader | None = None
+
+
+class _ConsoleReader(threading.Thread):
+    """The thread reading one input stream, and the recovery it currently
+    feeds. Private: what a caller holds is the :class:`ConsoleRecovery` it was
+    handed."""
+
+    def __init__(self, stream) -> None:
+        super().__init__(name=CONSOLE_THREAD_NAME, daemon=True)
+        self.stream = stream
+        self._lock = threading.Lock()
+        self._aimed: ConsoleRecovery | None = None
+        self._report: Callable[[str], None] = status
+
+    def aim(self, recovery: ConsoleRecovery) -> None:
+        with self._lock:
+            self._aimed = recovery
+            self._report = recovery.report
+
+    def retire(self, recovery: ConsoleRecovery) -> None:
+        """Drop this aim, waiting out a gesture already being applied — so a
+        caller that retires and then closes its drivers cannot close them
+        underneath a half-applied ``resume``."""
+        with self._lock:
+            if self._aimed is recovery:
+                self._aimed = None
+
+    def aims_at(self, recovery: ConsoleRecovery) -> bool:
+        with self._lock:
+            return self._aimed is recovery
+
+    def run(self) -> None:
+        for line in self.stream:
+            with self._lock:
+                aimed, report = self._aimed, self._report
+                if aimed is not None:
+                    aimed.apply(line)
+                    continue
+            word = line.strip()
+            if word:
+                report(
+                    f"console: nothing is listening for {word!r} — no session is "
+                    "open on this terminal right now"
+                )
+
+
+class ConsoleRecovery:
+    """A console reader aimed at one set of arms: what
+    :func:`start_console_recovery` hands back, and what retires it.
+
+    There is one reader per TERMINAL in a process, not one per session. stdin
+    is a single stream, and two threads reading it deal alternate lines to
+    each other — so a word typed at the machine would reach the session that
+    is running only half the time, while the other half is answered plausibly
+    by a session nobody is driving. The word at stake is ``resume``, the ONE
+    path that clears an owner's e-stop latch. A second session in the same
+    process therefore RE-AIMS the reader the first one left.
+
+    :meth:`retire` does not kill the thread: nothing portably interrupts a
+    thread parked mid-read, and one that could would lose the line. It drops
+    the aim, which is what matters — the arms and the :class:`ParkGate` this
+    recovery held are released, so nothing can drive a closed session's
+    drivers, and a word that arrives with nothing aimed is answered as such
+    rather than swallowed."""
+
+    def __init__(
+        self,
+        reader: _ConsoleReader,
+        arms: Mapping[str, Arm],
+        park: ParkGate | None,
+        report: Callable[[str], None],
+    ) -> None:
+        self._reader = reader
+        self._arms = arms
+        self._park = park
+        self.report = report
+
+    @property
+    def listening(self) -> bool:
+        """Whether a word typed NOW would reach these arms — the question
+        anything that offers a console gesture has to ask (there being a
+        terminal is a different one; see :func:`hold_until_parked`)."""
+        return self._reader.is_alive() and self._reader.aims_at(self)
+
+    def apply(self, line: str) -> None:
+        """One line, applied to the arms this recovery holds."""
+        apply_console_gesture(line, self._arms, self._park, report=self.report)
+
+    def retire(self) -> None:
+        """Give the terminal back: these arms stop being what a word typed
+        here reaches. Idempotent, and safe to call from anything unwinding."""
+        self._reader.retire(self)
+
+    def join(self, timeout: float | None = None) -> None:
+        """Wait for the reader to reach the end of its input.
+
+        Only ever returns at end-of-input — a terminal a human is standing at
+        does not have one — so this is for a program feeding the reader a
+        stream it knows will end, never for a session on its way out. Retiring
+        is what a session does."""
+        self._reader.join(timeout)
+
+
 def start_console_recovery(
     arms: Mapping[str, Arm],
     park: ParkGate | None = None,
     *,
     report: Callable[[str], None] = status,
-) -> threading.Thread | None:
+) -> ConsoleRecovery | None:
     """Start the ONE path that clears an e-stop latch — and the one that ends
-    a finished mission: a word typed here. Returns the reader thread, or
+    a finished mission: a word typed here. Returns a :class:`ConsoleRecovery`
+    to RETIRE when the program that started it is done with these arms, or
     ``None`` when there is no terminal to be told at.
 
     An e-stop latch is the owner's, and clearing it is a human action AT THE
@@ -1036,6 +1153,7 @@ def start_console_recovery(
     site operator standing at. With no such terminal the program says so once
     and the latch is then cleared only by supporting the machine and
     restarting — which is the honest fallback, not a degraded one."""
+    global _console_reader
     if not console_is_at_the_machine():
         report(
             "console: none (stdin is not a terminal in the foreground) — a latched "
@@ -1043,19 +1161,26 @@ def start_console_recovery(
             "program"
         )
         return None
-
-    def reader() -> None:
-        for line in sys.stdin:
-            apply_console_gesture(line, arms, park, report=report)
-
-    thread = threading.Thread(target=reader, name="waddle-robots-console", daemon=True)
-    thread.start()
+    stream = sys.stdin
+    with _console_lock:
+        reader = _console_reader
+        # A reader that has ended (its input did) or that is parked in some
+        # OTHER stream cannot carry this aim, and one that is already reading
+        # this terminal must not be doubled.
+        fresh = reader is None or not reader.is_alive() or reader.stream is not stream
+        if fresh:
+            reader = _ConsoleReader(stream)
+            _console_reader = reader
+        recovery = ConsoleRecovery(reader, arms, park, report)
+        reader.aim(recovery)
+        if fresh:
+            reader.start()
     report(
         "console: type `resume` here to clear a latched e-stop (restores what the "
         f"driver snapshotted, then holds the measured pose), or `{PARK_WORD}` to "
         "release the hold this program takes when its mission ends"
     )
-    return thread
+    return recovery
 
 
 def hold_until_parked(
@@ -1493,10 +1618,11 @@ class RigSession:
     **Closing.** ``__exit__`` runs whatever happened in the body — a return, a
     policy that raised, a Ctrl-C. On live drivers it first HOLDS (see
     :func:`hold_until_parked`), still reporting, until a human says the
-    machine is parked; then it stops the pump, shuts the session down (which
-    is what finalizes the recording) and closes the drivers. **This is the
-    structural fix for the shutdown footgun**: finalization is no longer a
-    ``finally:`` the customer remembered to write.
+    machine is parked; then it retires the console reader, stops the pump,
+    shuts the session down (which is what finalizes the recording) and closes
+    the drivers. **This is the structural fix for the shutdown footgun**:
+    finalization is no longer a ``finally:`` the customer remembered to
+    write.
 
     The pump is ALWAYS on, not only for an agent run: a program's own loop
     then only gates and applies, with no interleaved robot tick to forget, and
@@ -1514,7 +1640,9 @@ class RigSession:
     Attributes: ``arms`` (part -> :class:`Arm`), ``robot`` (the declaration),
     ``core`` (the `waddle` session object — ``report_proprio``,
     ``publish_frame`` and the rest live there), ``control`` (the verbs that
-    were registered), ``park``, ``pump``, ``console``, and the summed
+    were registered), ``park``, ``pump``, ``console`` (the
+    :class:`ConsoleRecovery` this session started, retired on the way out and
+    kept afterwards as the record of what it had), and the summed
     ``accepted``/``rejected`` counters of the envelope."""
 
     def __init__(
@@ -1555,7 +1683,7 @@ class RigSession:
         self.control: Control | None = None
         self.park = ParkGate()
         self.pump: RobotPump | None = None
-        self.console: threading.Thread | None = None
+        self.console: ConsoleRecovery | None = None
 
     @property
     def robot(self) -> Robot:
@@ -1631,8 +1759,19 @@ class RigSession:
         return False
 
     def _finish(self) -> None:
-        """Stop reporting, finalize the recording, drop the connections — in
-        that order, and each one whatever the one before it did."""
+        """Retire the console, stop reporting, finalize the recording, drop
+        the connections — in that order, and each one whatever the one before
+        it did.
+
+        The console goes FIRST because it is the one thing here that can still
+        drive these arms. stdin is one stream: a reader left aimed at a
+        finished session holds its arms and its :class:`ParkGate` for the life
+        of the process, so the next session's ``resume`` lands on the closed
+        one half the time — answered with a plausible line while the running
+        session's latch stays set — and on metal that call re-enables a driver
+        whose bus this method is about to close."""
+        if self.console is not None:
+            self.console.retire()
         if self.pump is not None:
             self.pump.stop()
             self.pump = None

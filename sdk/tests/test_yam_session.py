@@ -473,35 +473,59 @@ def test_an_interrupted_mission_is_not_asked_to_park_itself(tmp_path):
 # --------------------------------------------------------------------------
 
 
-def test_the_console_clears_a_latch_on_a_running_session(monkeypatch, tmp_path):
+def test_the_console_clears_a_latch_on_a_running_session(terminal, tmp_path):
     """The ONE path that clears an e-stop latch is a word typed at the
     machine, and the session starts that reader itself. The rig here opens
     already latched, which is what a program restarted after an e-stop
     finds."""
-
-    class _Terminal:
-        """A stdin of this test's own: one gesture, then end-of-input (so the
-        reader thread ends on an observable, not on a deadline)."""
-
-        def __iter__(self):
-            return iter(["resume\n"])
-
-    monkeypatch.setattr(base, "console_is_at_the_machine", lambda: True)
-    monkeypatch.setattr("sys.stdin", _Terminal())
     lines: list[str] = []
     rig = _live_rig([], estopped=True, report=lines.append)
 
     with rig.session("live-latched", recording_dir=tmp_path) as s:
         assert s.console is not None
         # These drivers answer `live`, so the exit holds for a park gesture
-        # the one-line terminal above will never type.
+        # this test never types.
         watchdog = _ParkWatchdog(s.park)
+        terminal.type("resume\n")
         _until(
             lambda: not base.latched_parts(s.arms),
             "the session's console never cleared the latch",
         )
     watchdog.stop()
     assert any("resume part=left_arm" in line for line in lines)
+
+
+def test_a_finished_session_leaves_no_reader_holding_its_arms(terminal, tmp_path):
+    """Sequential sessions in one process are a supported path (see above),
+    and stdin is ONE stream. A reader left aimed at a finished session would
+    compete with the next one for every word typed at the machine — and the
+    word at stake is `resume`, the ONE path that clears an owner's e-stop
+    latch. Worse on metal: `resume` on a closed session calls `re_enable` on a
+    driver whose bus is already torn down.
+
+    So the session retires its reader on the way out, and the next session
+    re-aims that same reader at its own arms."""
+    first_rig = _live_rig([], estopped=True)
+    with first_rig.session("live-first", recording_dir=tmp_path) as first:
+        watchdog = _ParkWatchdog(first.park)
+        assert first.console is not None and first.console.listening is True
+    watchdog.stop()
+    assert first.console.listening is False, (
+        "the finished session's reader still holds its arms and its ParkGate"
+    )
+
+    second_rig = _live_rig([], estopped=True)
+    with second_rig.session("live-second", recording_dir=tmp_path) as second:
+        watchdog = _ParkWatchdog(second.park)
+        terminal.type("resume\n")
+        _until(
+            lambda: not base.latched_parts(second.arms),
+            "the gesture never reached the session that is running",
+        )
+    watchdog.stop()
+    assert base.latched_parts(first.arms) == ["left_arm", "right_arm"], (
+        "the finished session's reader answered the word typed at the machine"
+    )
 
 
 def test_a_session_that_cannot_open_closes_the_arms_it_opened(tmp_path):
@@ -659,12 +683,18 @@ def test_the_hand_wired_composition_is_the_session_the_rig_opens(
         pre_reset=base.scene_reset(arms),
     )
     park = base.ParkGate()
-    base.start_console_recovery(arms, park)
+    console = base.start_console_recovery(arms, park)
     pump = base.RobotPump(base.proprio_tick(session, arms), yam.DEFAULT_RATE_HZ)
     pump.start()
     try:
         by_hand = _one_commanded_step(arms)
     finally:
+        # The same order the sugar unwinds in, and for the same reasons: the
+        # reader goes first because it is the one thing left that could still
+        # drive these arms, and closing is last because it is what drops the
+        # torque.
+        if console is not None:
+            console.retire()
         pump.stop()
         waddle.shutdown()
         base.close_all(arms)
