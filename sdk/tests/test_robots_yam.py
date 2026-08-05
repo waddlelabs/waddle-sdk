@@ -599,7 +599,7 @@ def test_the_published_quickstart_quotes_that_command_verbatim():
     Only the command is pinned here. The prose around it is prose."""
     readme = Path(__file__).resolve().parents[2] / "README.md"
     assert readme.is_file(), f"{readme} — the repository's own README"
-    assert yam.I2RT_INSTALL in readme.read_text(), (
+    assert yam.I2RT_INSTALL in readme.read_text(encoding="utf-8"), (
         "the root README's quickstart must quote yam.I2RT_INSTALL verbatim, "
         f"which is now: {yam.I2RT_INSTALL}"
     )
