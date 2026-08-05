@@ -279,6 +279,93 @@ def test_the_example_sends_an_intervening_claimants_gripper(tmp_path):
     assert example.GRIPPER_OPEN_M in arm.gripper_commands
 
 
+def test_the_examples_agent_run_keeps_the_robot_running_while_it_blocks(tmp_path, monkeypatch):
+    # Agent mode's whole shape is that the main thread is blocked inside
+    # `waddle.agent()` while the robot's own housekeeping runs elsewhere:
+    # the arm keeps integrating the agent's commands and the camera keeps
+    # feeding the stills the agent perceives through. Every other test in
+    # this file drives the example's loop from the main thread, so a
+    # background loop that never runs would be invisible here — and it is
+    # the SDK's loop now (`waddle.robots.base.RobotPump`, ticked by the
+    # example's own `robot_tick`), which is exactly the seam a migration
+    # can get wrong.
+    example = _load_example()
+    arm = example.ToyArm()
+    # HOLD_FIRST: the handoff holds before the claimant drives, so the hold
+    # verb firing IS the agent's claim landing — which is also the proof
+    # that the invited episode is live and can be ended below.
+    engaged = threading.Event()
+
+    def hold() -> None:
+        engaged.set()
+        arm.hold()
+
+    session = waddle.init(
+        "py-toy-agent",
+        example.robot_description(),
+        waddle.Control(send=lambda chunk: None, hold=hold, estop=arm.estop),
+        recording_dir=tmp_path,
+        _testing=True,
+    )
+
+    # The invite line is the example's own announcement that the warm-up
+    # rollout is over: agent mode runs one first, and an "agent" claim
+    # engaged while THAT episode is live lands on the warm-up instead — so
+    # the claim below has to wait for this, not race it.
+    invited = threading.Event()
+    printed = example.status
+
+    def status(message: str) -> None:
+        if message.startswith("agent invite "):
+            invited.set()
+        printed(message)
+
+    monkeypatch.setattr(example, "status", status)
+    args = example.parse_args(
+        [
+            "--mode", "agent",
+            "--prompt", "stack the cups",
+            "--episode-seconds", "0.2",
+            "--agent-timeout", "60",
+        ]
+    )
+
+    box: dict = {}
+
+    def run() -> None:
+        try:
+            box["code"] = example.run_agent_mode(session, arm, args)
+        except BaseException as exc:  # re-raised on the main thread below
+            box["error"] = exc
+
+    caller = threading.Thread(target=run, name="pytest-toy-agent", daemon=True)
+    caller.start()
+    try:
+        _until(invited.is_set, "the example never got as far as its agent invite")
+        _until(
+            engaged.is_set,
+            "the agent's claim never engaged",
+            tick=lambda: waddle._testing.engage(session, "agent-claim", "agent"),
+        )
+        # The caller is inside `waddle.agent()` from here on, so nothing it
+        # does can publish a frame: every frame after this one came from the
+        # background loop.
+        published = len(waddle._testing.frames(session, example.CAMERA_NAME))
+        _until(
+            lambda: len(waddle._testing.frames(session, example.CAMERA_NAME)) > published,
+            "the robot stopped publishing while the caller was blocked in agent()",
+        )
+        # What ends an agent run: the outcome arrives from outside the
+        # customer's loop, and the blocked caller holds no episode handle.
+        waddle._testing.mark_done(session, "success", "the agent is done")
+    finally:
+        caller.join(timeout=20.0)
+
+    assert not caller.is_alive(), "waddle.agent() never returned"
+    assert "error" not in box, f"the example's agent mode raised: {box.get('error')!r}"
+    assert box["code"] == 0
+
+
 def test_the_examples_estop_survives_the_scene_reset():
     # `pre_reset` runs the scene reset before EVERY episode. A latched
     # e-stop is the owner's envelope; if the reset cleared it, every e-stop

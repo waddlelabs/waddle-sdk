@@ -79,6 +79,7 @@ from pathlib import Path
 import numpy as np
 
 import waddle
+from waddle.robots import base
 
 # --------------------------------------------------------------------------
 # The robot: one source of truth for the kinematics.
@@ -460,32 +461,6 @@ def robot_tick(session, arm: ToyArm, dt: float) -> None:
     )
 
 
-class RobotPump(threading.Thread):
-    """Runs :func:`robot_tick` at the control rate on its own thread, for
-    the stretch where the main thread is blocked inside
-    ``waddle.agent()``."""
-
-    def __init__(self, session, arm: ToyArm) -> None:
-        super().__init__(name="toy-robot-pump", daemon=True)
-        self._session = session
-        self._arm = arm
-        # NOT `_stop`: threading.Thread already owns that name internally,
-        # and shadowing it breaks `join()`.
-        self._stopping = threading.Event()
-
-    def run(self) -> None:
-        period = 1.0 / CONTROL_HZ
-        deadline = time.monotonic()
-        while not self._stopping.is_set():
-            robot_tick(self._session, self._arm, period)
-            deadline += period
-            self._stopping.wait(max(0.0, deadline - time.monotonic()))
-
-    def stop(self) -> None:
-        self._stopping.set()
-        self.join(timeout=5.0)
-
-
 def run_rollout(session, arm: ToyArm, number: int, task: str, seconds: float) -> str:
     """One supervised episode, driven by the scripted policy.
 
@@ -667,7 +642,14 @@ def run_agent_mode(session, arm: ToyArm, args: argparse.Namespace) -> int:
     # own loop moves to a background thread: the arm keeps integrating the
     # agent's commands, and the camera keeps feeding the stills the agent
     # perceives through.
-    pump = RobotPump(session, arm)
+    #
+    # The loop is the SDK's (`waddle.robots.base.RobotPump`) and the tick is
+    # this program's: the pump knows nothing about arms, so a robot with its
+    # own housekeeping hands it its own callable. Writing the deadline loop
+    # here instead is how two copies of it start drifting.
+    pump = base.RobotPump(
+        lambda dt: robot_tick(session, arm, dt), CONTROL_HZ, name="toy-robot-pump"
+    )
     pump.start()
     status(f"agent invite prompt={args.prompt!r} timeout_s={args.agent_timeout}")
     try:

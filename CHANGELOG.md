@@ -1481,6 +1481,15 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   dict as before.
 
 ### Changed
+- **`examples/toy_robot.py` runs its background loop on the shipped pump**
+  (`waddle.robots.base.RobotPump`) instead of a class of its own. The example's
+  copy and the one a robot module used were the same monotonic-deadline thread
+  written twice, which is how the two start drifting; the pump knows nothing
+  about arms, so the example hands it its own `robot_tick` and keeps every
+  other line. Nothing about the program's behaviour or its status lines
+  changes, and the agent-mode path that only this loop keeps alive is now
+  covered: a test drives the example's own `run_agent_mode` with the caller
+  blocked inside `waddle.agent()` and asserts the camera keeps publishing.
 - **An anchorless cross-fade now emits the commanded setpoint exactly**
   (`waddle-gate`): with nothing yet commanded (an episode whose caller has
   never ticked — every agent-invited one), a whole-robot action is its own
