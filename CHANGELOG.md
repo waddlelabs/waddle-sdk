@@ -73,6 +73,42 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     so wiring one is an intervention path waddle-core refuses without a
     `send`) — watching rides `transport=` (proprioception + each camera's
     declared low-rate stills) and `recording_dir=`.
+  - **`rig.session(project, ...)`** is that composition as a context manager
+    (`RigSession`), and it exists for the two ends every hand-written version
+    gets wrong at least once. `__enter__` opens the drivers — inside the
+    `with`, so a bus that will not open unwinds structurally — registers the
+    verbs, calls `waddle.init`, starts the console recovery and starts the
+    reporting pump; a failure part-way through closes what it opened, since a
+    context manager whose `__enter__` raises never gets an `__exit__`.
+    `__exit__` stops the pump, shuts the session down and closes the drivers
+    whatever the body did, which **retires the shutdown footgun**: finalizing
+    the recording is no longer a `finally:` the customer remembered to write
+    (pinned by a test that raises mid-rollout and then reads the recording
+    back). Every keyword that is not the rig's own goes straight through to
+    `waddle.init` and means what it means there — including a customer's own
+    `send`, which still REPLACES the shipped envelope through the sugar.
+  - **The pump is always on inside a session**, not only for an agent run: a
+    program's own loop then only gates and applies, with no interleaved robot
+    tick to forget, and a session whose caller is blocked inside
+    `waddle.agent()` (or has no loop at all) keeps reporting. The bandwidth is
+    the declared part-count multiplication of the proprio cadence, fixed by
+    the declaration and visible to the plane before it accepts.
+  - **`hold_until_parked`** (+ `ParkGate.wait` / `.wait_holding`): a finished
+    mission on drivers that answer `kind == "live"` keeps holding and keeps
+    reporting until a human says the machine is parked, because closing stops
+    the vendor's command re-send and the motors' own watchdog then drops ALL
+    torque from wherever the mission left the arms. Every park warning this
+    layer has is otherwise attached to a Ctrl-C the site operator TYPED —
+    finishing normally had none, and that is the one ending nobody is standing
+    ready for. A twin returns at once (nothing to sag, and a harness must be
+    able to wait for a sim program to exit) and a Ctrl-C skips the hold (that
+    operator is already at the machine).
+  - **The composition is sugar, and a test says so**: `test_yam_session.py`
+    wires `yam.declaration()`, drivers, `base.Arm`, `waddle.Control`, a plain
+    `waddle.init`, the console recovery and a `RobotPump` by hand, and asserts
+    the session that opens is byte-identical to `rig.session()`'s — the same
+    registered robot JSON and the same everything else `create_session` is
+    handed. Sugar that cannot be reproduced by hand is a wall.
   - **The second-vendor bar is a test**: `sdk/tests/test_robots_base.py` builds a
     toy vendor module (facts table + the shipped twin + one factory, ~30 lines),
     composes it by hand out of these pieces, and drives it end to end through a

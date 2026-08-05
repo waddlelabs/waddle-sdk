@@ -60,8 +60,18 @@ waddle-sdk/
                              #   waddle`): base.py is the vendor-neutral half
                              #   (Driver protocol, SimDriver twin, the Arm
                              #   envelope seam, console recovery, RobotPump,
-                             #   Rig); a vendor module is facts + driver +
-                             #   factory on top of it
+                             #   Rig + its RigSession); a vendor module is
+                             #   facts + driver + factory on top of it.
+                             #   `rig.session(...)` is COMPOSITION ONLY, and
+                             #   the rule that keeps it honest is a test:
+                             #   the same program wired by hand out of the
+                             #   same pieces opens a byte-identical session
+                             #   (tests/test_yam_session.py). Its two ends
+                             #   are the point — hardware opens inside the
+                             #   `with` (a half-open rig closes what it
+                             #   opened), and `__exit__` finalizes the
+                             #   recording whatever the body did, so that is
+                             #   never a customer's `finally:` again
         yam.py, yam_data/    # the I2RT YAM: constants-with-provenance, and
                              #   the vendor's own MIT model (URDF text, no
                              #   meshes) shipped beside them so
