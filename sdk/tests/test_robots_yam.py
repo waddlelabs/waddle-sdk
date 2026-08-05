@@ -315,6 +315,92 @@ def test_an_unknown_posture_is_refused_by_name():
         _bimanual(posture="observe")
 
 
+#: This rig's `joint3` accepts 20 mrad below the model's theoretical zero —
+#: the shape of a real correction: a motor zeroed slightly off rests just
+#: outside a theoretical range, and a hold that echoes its own measured pose
+#: would otherwise be a command the envelope refuses forever.
+_ZERO_OFFSET_LIMITS = tuple(
+    (lo - 0.02, hi) if name == "joint3" else (lo, hi)
+    for name, (lo, hi) in zip(yam.JOINT_NAMES, yam.JOINT_LIMITS, strict=True)
+)
+#: A twin parked exactly on that theoretical zero, so one step below it is a
+#: legal-sized move that only the interval decides.
+_AT_THE_ZERO = (0.20, 1.00, 0.0, 0.10, -0.50, 0.05, 0.00)
+
+
+def test_a_rig_declares_the_limits_its_own_machine_has():
+    """The model's numbers are a DEFAULT, not a ceiling on what an owner may
+    declare: the envelope is the owner's, and the machine is what it is."""
+    # No workspace box and no forward kinematics: the only thing that may
+    # decide this command is the declared interval.
+    def _rig(**overrides) -> base.Rig:
+        return _arm_rig(
+            workspace=None, fk=None, sim_home=_AT_THE_ZERO, **overrides
+        )
+
+    rig = _rig(joint_limits=_ZERO_OFFSET_LIMITS)
+    joint3 = rig.robot().action_space.joints[2]
+    assert joint3.name == "joint3"
+    assert joint3.min_position == pytest.approx(-0.02)
+
+    below = np.array(_AT_THE_ZERO, dtype=float)
+    below[2] = -0.002
+    assert rig.arms()[""].command(below) is True
+
+    # ...and the same command against the model's own numbers is refused, so
+    # the test is about the declared interval and nothing else.
+    default = _rig().arms()[""]
+    assert default.command(below) is False
+    assert default.rejected == 1
+
+
+def test_widening_past_the_shipped_model_is_reported_never_silent():
+    lines: list[str] = []
+    _arm_rig(joint_limits=_ZERO_OFFSET_LIMITS, report=lines.append)
+    assert any("WIDER than the shipped model" in line for line in lines)
+    assert any("joint3" in line for line in lines)
+
+    quiet: list[str] = []
+    _arm_rig(joint_limits=yam.JOINT_LIMITS, report=quiet.append)
+    assert not any("WIDER" in line for line in quiet)
+
+
+def test_the_declaration_carries_the_interval_the_envelope_enforces():
+    """One number, two readers: a teleoperator or an agent is shown the range
+    this rig really has, because it is the range that will judge them."""
+    rig = _bimanual(joint_limits=_ZERO_OFFSET_LIMITS)
+    for space in rig.robot().action_space.parts.values():
+        assert space.joints[2].min_position == pytest.approx(-0.02)
+    hand_wired = yam.declaration(
+        parts=("left_arm", "right_arm"),
+        name="yam-bimanual",
+        joint_limits=_ZERO_OFFSET_LIMITS,
+        frames=(
+            _cross_arm().transform(
+                SUBSTRATE_LEFT_BASE_FRAME, SUBSTRATE_RIGHT_BASE_FRAME
+            ),
+        ),
+    )
+    grants = _grants(rig)
+    assert _as_json(hand_wired, grants) == _as_json(rig.robot(), grants)
+
+
+@pytest.mark.parametrize(
+    "limits",
+    [
+        yam.JOINT_LIMITS[:-1],  # six rows for a seven-row part
+        yam.JOINT_LIMITS + ((-1.0, 1.0),),  # one row too many
+        tuple((lo, hi, 0.0) for lo, hi in yam.JOINT_LIMITS),  # not intervals
+        tuple((hi, lo) for lo, hi in yam.JOINT_LIMITS),  # upside down
+        ((float("nan"), 1.0),) + yam.JOINT_LIMITS[1:],
+        0.5,
+    ],
+)
+def test_a_malformed_joint_limit_table_is_refused(limits):
+    with pytest.raises(ValueError, match="joint_limits"):
+        _bimanual(joint_limits=limits)
+
+
 def test_a_factory_call_opens_nothing(vendor):
     """Declaration is cheap: constructing a live rig touches no CAN bus, so a
     program can be built and then decide not to run. `arms()` is where the

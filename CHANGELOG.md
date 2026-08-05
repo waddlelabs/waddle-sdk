@@ -12,6 +12,21 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 ## [Unreleased]
 
 ### Added
+- **`joint_limits=` on the YAM factories and `yam.declaration()`**: the intervals a
+  rig accepts are the OWNER's to state, and the shipped model's `JOINT_LIMITS` are
+  the default rather than a ceiling. One table reaches both readers — the envelope
+  `base.Arm` enforces and the `Joint.min_position`/`max_position` the declaration
+  carries to the plane — so a teleoperator or a Waddle-hosted agent is shown the
+  range the rig really has. Rows wider than the shipped model's are reported by
+  name and by how far, at every start, so nobody inherits a widened envelope
+  silently; malformed tables are refused by argument name, in sim as on metal.
+  Found on live metal: a motor zeroed ~3 mrad off rests just outside a theoretical
+  range whose lower limit is exactly 0, so a hold of its own measured pose was a
+  command the envelope refused forever (1800 of 1800 in one warm-up rollout) — a
+  correct refusal of a number that did not describe that machine. The directional
+  fact gate is unchanged and still binds what the wheel SHIPS (a declared limit may
+  only be tighter than the vendor's model); what a particular rig accepts is a
+  different statement, made by its owner.
 - **release pipeline (`.github/workflows/release.yml`, `docs/RELEASING.md`)**: the
   first CI this repo has — a tag of the form `v*` (or a manual dispatch) builds
   both distributions and publishes them to PyPI. `waddle-sdk` is built on five

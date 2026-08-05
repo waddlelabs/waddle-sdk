@@ -700,7 +700,11 @@ class LiveDriver:
 # ---------------------------------------------------------------------------
 
 
-def _part_space(rate_hz: float, max_joint_speed_rad_s: float) -> JointSpace:
+def _part_space(
+    rate_hz: float,
+    max_joint_speed_rad_s: float,
+    joint_limits: Sequence[Sequence[float]] = JOINT_LIMITS,
+) -> JointSpace:
     """One arm: six joints plus the gripper row, at the declared rate."""
     return JointSpace(
         joints=[
@@ -711,7 +715,7 @@ def _part_space(rate_hz: float, max_joint_speed_rad_s: float) -> JointSpace:
                 max_velocity=max_joint_speed_rad_s,
                 max_effort=MAX_JOINT_EFFORT_NM,
             )
-            for name, (lo, hi) in zip(JOINT_NAMES, JOINT_LIMITS, strict=True)
+            for name, (lo, hi) in zip(JOINT_NAMES, joint_limits, strict=True)
         ],
         rate_hz=rate_hz,
         # One action per tick, replaced as soon as the next arrives.
@@ -727,6 +731,7 @@ def declaration(
     cell_id: str = "",
     rate_hz: float = DEFAULT_RATE_HZ,
     max_joint_speed_rad_s: float = DEFAULT_MAX_JOINT_SPEED_RAD_S,
+    joint_limits: Sequence[Sequence[float]] = JOINT_LIMITS,
     base_frame: str = BASE_FRAME,
     declare_urdf: bool | None = None,
     frames: Sequence[FrameTransform] = (),
@@ -745,6 +750,12 @@ def declaration(
         concatenated action vector. ``None`` (the default) declares a bare
         joint space with no named parts — one arm, addressed as the whole
         robot.
+    ``joint_limits``
+        The interval each row accepts, defaulting to the shipped model's
+        ``JOINT_LIMITS``. Pass a rig's own when it differs from the model
+        (see :func:`bimanual`): what the declaration carries and what the
+        envelope enforces are then the same numbers, which is the only way a
+        teleoperator or an agent is shown the range this rig really has.
     ``declare_urdf``
         Whether to carry the shipped model as ``kinematics_urdf``. Defaults to
         "yes if this declaration describes ONE chain". A URDF field describes
@@ -764,12 +775,12 @@ def declaration(
             rate_hz=rate_hz,
             chunking=Chunking(horizon=1, replan="immediate", interp="hold"),
             **{
-                part: _part_space(rate_hz, max_joint_speed_rad_s)
+                part: _part_space(rate_hz, max_joint_speed_rad_s, joint_limits)
                 for part in part_names
             },
         )
     else:
-        action_space = _part_space(rate_hz, max_joint_speed_rad_s)
+        action_space = _part_space(rate_hz, max_joint_speed_rad_s, joint_limits)
 
     one_chain = len(part_names) <= 1
     if declare_urdf is None:
@@ -830,6 +841,62 @@ def _checked_gripper_limits(pair: Sequence[float], where: str) -> tuple[float, f
             f"open ({values[1]})"
         )
     return values
+
+
+def _checked_joint_limits(
+    limits: Sequence[Sequence[float]] | None,
+    where: str,
+    *,
+    report: Callable[[str], None],
+) -> tuple[tuple[float, float], ...]:
+    """The intervals THIS rig accepts, defaulting to the shipped model's.
+
+    `JOINT_LIMITS` describes a YAM as the vendor's model states it; a rig is a
+    particular machine. The two differ for reasons that are facts about the
+    machine and not about the model — a motor zeroed a few milliradians off
+    reads (and rests) just outside a theoretical range, and a hold that echoes
+    that reading would be a command its own envelope refuses forever. So the
+    interval is the owner's to state, and stating it is not editing the model.
+
+    Widening past the model is legal and LOUD: every row that reaches beyond
+    the shipped interval is reported by name and by how far. Nothing here
+    clamps and nothing here quietly accepts — this is the number the envelope
+    will judge every command by, and the same number the declaration carries
+    to the plane, so a teleoperator and a Waddle-hosted agent are shown the
+    range this rig really has."""
+    if limits is None:
+        return JOINT_LIMITS
+    try:
+        rows = tuple(tuple(float(v) for v in row) for row in limits)
+    except TypeError:
+        rows = ()
+    if len(rows) != JOINT_COUNT or any(len(row) != 2 for row in rows):
+        raise ValueError(
+            f"{where} joint_limits={limits!r}: expected {JOINT_COUNT} (lower, "
+            f"upper) pairs, one per row of a YAM part "
+            f"({', '.join(JOINT_NAMES)})"
+        )
+    for name, row in zip(JOINT_NAMES, rows, strict=True):
+        if not all(math.isfinite(v) for v in row) or not row[0] < row[1]:
+            raise ValueError(
+                f"{where} joint_limits: {name}={row!r} is not a finite (lower, "
+                "upper) interval with lower below upper"
+            )
+    widened = [
+        f"{name} [{row[0]:.4f}, {row[1]:.4f}] vs the model's "
+        f"[{model[0]:.4f}, {model[1]:.4f}]"
+        for name, row, model in zip(JOINT_NAMES, rows, JOINT_LIMITS, strict=True)
+        if row[0] < model[0] or row[1] > model[1]
+    ]
+    if widened:
+        report(
+            f"{where}: this rig declares joint limits WIDER than the shipped "
+            f"model — {'; '.join(widened)}. That is the owner's call to make "
+            "and it is now the envelope this program enforces and the range it "
+            "declares; a motor whose zero is off is cured properly by re-zeroing "
+            "it (the vendor's set_zero.py), not by the margin"
+        )
+    return rows
 
 
 def _checked_workspace(
@@ -925,6 +992,7 @@ def _build_arms(
     workspace,
     fk,
     step_caps: Sequence[float],
+    joint_limits: Sequence[Sequence[float]],
     rate_hz: float,
     report: Callable[[str], None],
 ) -> Callable[[], dict[str, base.Arm]]:
@@ -948,8 +1016,8 @@ def _build_arms(
                 if sim:
                     driver: base.Driver = base.SimDriver(
                         site.sim_home,
-                        lower=[lo for lo, _ in JOINT_LIMITS],
-                        upper=[hi for _, hi in JOINT_LIMITS],
+                        lower=[lo for lo, _ in joint_limits],
+                        upper=[hi for _, hi in joint_limits],
                         step_caps=step_caps,
                         rate_hz=rate_hz,
                     )
@@ -965,7 +1033,7 @@ def _build_arms(
                     part=part,
                     driver=driver,
                     joint_names=JOINT_NAMES,
-                    joint_limits=JOINT_LIMITS,
+                    joint_limits=joint_limits,
                     step_caps=step_caps,
                     base_frame=site.base_frame,
                     workspace=workspace,
@@ -1001,6 +1069,7 @@ def bimanual(
     fk: Callable[[Sequence[float]], tuple[np.ndarray, np.ndarray]] | None = (
         forward_kinematics
     ),
+    joint_limits: Sequence[Sequence[float]] | None = None,
     rate_hz: float = DEFAULT_RATE_HZ,
     max_joint_speed_rad_s: float = DEFAULT_MAX_JOINT_SPEED_RAD_S,
     max_gripper_speed_per_s: float = DEFAULT_MAX_GRIPPER_SPEED_PER_S,
@@ -1034,8 +1103,18 @@ def bimanual(
     ``fk`` is the forward kinematics each part reports its TCP from, and it is
     OPT-IN: pass ``None`` (with ``workspace=None``) for a rig that reports
     joint positions only.
+
+    ``joint_limits`` is the interval each row accepts, defaulting to the
+    shipped model's ``JOINT_LIMITS``. It is the OWNER's envelope, so a rig
+    whose machine differs from the model states its own — the usual reason
+    being a motor zeroed a few milliradians off, which rests just outside a
+    theoretical range and makes a hold of its own measured pose a command the
+    envelope refuses forever. A row wider than the model's is reported, never
+    silent. Whatever is declared here is both what the envelope enforces and
+    what the declaration carries to the plane.
     """
     limits = _checked_gripper_limits(gripper_limits, "bimanual")
+    joints = _checked_joint_limits(joint_limits, "bimanual", report=report)
     box = _checked_workspace(workspace, report=report)
     caps = _step_caps(rate_hz, max_joint_speed_rad_s, max_gripper_speed_per_s)
     sites = {
@@ -1073,6 +1152,7 @@ def bimanual(
             cell_id=cell_id,
             rate_hz=rate_hz,
             max_joint_speed_rad_s=max_joint_speed_rad_s,
+            joint_limits=joints,
             frames=frames,
             cameras=cameras,
         ),
@@ -1083,6 +1163,7 @@ def bimanual(
             workspace=box,
             fk=fk,
             step_caps=caps,
+            joint_limits=joints,
             rate_hz=rate_hz,
             report=report,
         ),
@@ -1105,6 +1186,7 @@ def arm(
     ),
     base_frame: str = BASE_FRAME,
     sim_home: Sequence[float] | None = None,
+    joint_limits: Sequence[Sequence[float]] | None = None,
     rate_hz: float = DEFAULT_RATE_HZ,
     max_joint_speed_rad_s: float = DEFAULT_MAX_JOINT_SPEED_RAD_S,
     max_gripper_speed_per_s: float = DEFAULT_MAX_GRIPPER_SPEED_PER_S,
@@ -1125,6 +1207,7 @@ def arm(
     :class:`ArmSite`.
     """
     limits = _checked_gripper_limits(gripper_limits, "arm")
+    joints = _checked_joint_limits(joint_limits, "arm", report=report)
     box = _checked_workspace(workspace, report=report)
     caps = _step_caps(rate_hz, max_joint_speed_rad_s, max_gripper_speed_per_s)
     site = _resolved_site(
@@ -1142,6 +1225,7 @@ def arm(
             cell_id=cell_id,
             rate_hz=rate_hz,
             max_joint_speed_rad_s=max_joint_speed_rad_s,
+            joint_limits=joints,
             base_frame=site.base_frame,
             declare_urdf=declare_urdf,
             cameras=cameras,
@@ -1153,6 +1237,7 @@ def arm(
             workspace=box,
             fk=fk,
             step_caps=caps,
+            joint_limits=joints,
             rate_hz=rate_hz,
             report=report,
         ),

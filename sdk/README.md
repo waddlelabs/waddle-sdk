@@ -151,6 +151,17 @@ parameterising it — or by replacing it. Pass `send=` to `rig.session(...)`
 (or `rig.control(arms, send=...)`) and your callable is the whole envelope,
 while you keep the twin, the latch, the loop and the console recovery.
 
+A vendor module's shipped limits are a **default, not a ceiling on what you may
+declare**: `joint_limits=` states the intervals *your* machine has, and they
+become both what the envelope enforces and what the declaration carries to the
+plane — one number, so a teleoperator or a Waddle-hosted agent is shown the
+range the rig really has. The usual reason to need it is a motor zeroed a few
+milliradians off: it rests just outside a theoretical range, and a hold of its
+own measured pose is then a command the envelope refuses forever. Any row wider
+than the shipped model's is reported at every start, never silent. (The
+directional fact gate below binds what this wheel *ships*, which is a claim
+about a YAM; what a particular rig accepts is the owner's to state.)
+
 Forward kinematics is opt-in and its absence is named rather than filled in:
 an arm built without `fk` reports joint positions only (`ee_pose()` answers
 `None` instead of inventing a frame), and a workspace box declared without
