@@ -56,6 +56,7 @@ fn robot_json_roundtrip(json: &str) -> PyResult<String> {
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<session::PySession>()?;
+    m.add_class::<session::PySessionStamp>()?;
     m.add_class::<session::AgentResult>()?;
     m.add_class::<episode::PyEpisode>()?;
     m.add_class::<episode::GateInfo>()?;

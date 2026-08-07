@@ -63,7 +63,7 @@ import atexit
 import enum
 import json
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from os import PathLike
 from typing import TYPE_CHECKING
@@ -93,6 +93,7 @@ if TYPE_CHECKING:  # `_core.pyi` types whichever core `_native` selected
 #: The compiled core's version — the ONE version this package has (the
 #: Python surface and the shim ship together, from one Cargo.toml).
 __version__: str = core.__version__
+SessionStamp = core.SessionStamp
 
 __all__ = [
     "AgentReset",
@@ -113,6 +114,7 @@ __all__ = [
     "Opaque",
     "Outcome",
     "Robot",
+    "SessionStamp",
     "StreamPolicy",
     "TeleopReset",
     "TimeSeries",
@@ -634,9 +636,23 @@ class _Rollout:
         return False
 
 
+def _task_metadata(value: Mapping[str, str] | None) -> dict[str, str]:
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise TypeError("task_metadata must be a mapping of strings to strings")
+    result: dict[str, str] = {}
+    for key, item in value.items():
+        if not isinstance(key, str) or not isinstance(item, str):
+            raise TypeError("task_metadata must be a mapping of strings to strings")
+        result[key] = item
+    return result
+
+
 def rollout(
     task: str,
     *,
+    task_metadata: Mapping[str, str] | None = None,
     pre_reset: Callable | TeleopReset | AgentReset | None | _UnsetType = _UNSET,
     post_reset: Callable | TeleopReset | AgentReset | None | _UnsetType = _UNSET,
 ) -> _Rollout:
@@ -647,6 +663,9 @@ def rollout(
     under "optimistic", as soon as it is ``ok`` — the design contract: this
     call never yields an invalid scene. Raises ``RuntimeError`` if the
     pre-reset fails (or every configured strategy is exhausted).
+
+    ``task_metadata`` is optional generic string context persisted with the
+    episode. It is never interpreted as capability or authority.
 
     ``pre_reset``/``post_reset`` default to inheriting whatever ``init()``
     declared for the session; pass ``None`` to disable a phase for this one
@@ -675,7 +694,11 @@ def rollout(
         **_reset_override_kwargs("pre_reset", pre_reset),
         **_reset_override_kwargs("post_reset", post_reset),
     }
-    return _Rollout(_require_session().start_episode(task, **kwargs))
+    return _Rollout(
+        _require_session().start_episode(
+            task, task_metadata=_task_metadata(task_metadata), **kwargs
+        )
+    )
 
 
 @dataclass(frozen=True)
@@ -701,6 +724,7 @@ def agent(
     prompt: str,
     *,
     timeout_s: float = 600.0,
+    task_metadata: Mapping[str, str] | None = None,
     pre_reset: Callable | TeleopReset | AgentReset | None | _UnsetType = _UNSET,
     post_reset: Callable | TeleopReset | AgentReset | None | _UnsetType = _UNSET,
 ) -> AgentResult:
@@ -713,7 +737,10 @@ def agent(
         if result.outcome == "success":
             ...
 
-    ``prompt`` is both the invite and the episode's task. ``timeout_s`` is
+    ``prompt`` is both the invite and the episode's task. ``task_metadata``
+    is optional generic string context persisted in the sidecar and forwarded
+    with the invite; it is never interpreted as capability or authority.
+    ``timeout_s`` is
     the invite deadline: if no agent claims the episode in that time the
     episode aborts and this returns ``outcome == "abort"`` — a normal
     result, not an exception. ``pre_reset``/``post_reset`` override this
@@ -764,7 +791,12 @@ def agent(
         **_reset_override_kwargs("pre_reset", pre_reset),
         **_reset_override_kwargs("post_reset", post_reset),
     }
-    result = session.agent(prompt, int(timeout_s * 1_000_000_000), **kwargs)
+    result = session.agent(
+        prompt,
+        int(timeout_s * 1_000_000_000),
+        task_metadata=_task_metadata(task_metadata),
+        **kwargs,
+    )
     return AgentResult(
         outcome=result.outcome,
         episode_id=result.episode_id,

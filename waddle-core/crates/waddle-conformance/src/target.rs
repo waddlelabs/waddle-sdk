@@ -1522,7 +1522,7 @@ impl Target {
     }
 }
 
-/// Parse an `episode_open` agent-invite declaration (`{prompt, timeout_ns}`,
+/// Parse an `episode_open` agent-invite declaration (prompt, timeout, optional metadata;
 /// scenario-format.md's `agent_invite` key — flag `waddle.v0.agent`).
 fn parse_agent_invite(value: &Value) -> Result<AgentInvite, ConformanceError> {
     let obj = value
@@ -1533,7 +1533,33 @@ fn parse_agent_invite(value: &Value) -> Result<AgentInvite, ConformanceError> {
         obj.get("timeout_ns")
             .ok_or_else(|| scenario_err("agent_invite missing \"timeout_ns\""))?,
     )?;
-    Ok(AgentInvite { prompt, timeout_ns })
+    let task_metadata = obj
+        .get("task_metadata")
+        .map(|value| {
+            value
+                .as_object()
+                .ok_or_else(|| scenario_err("agent_invite task_metadata must be an object"))?
+                .iter()
+                .map(|(key, value)| {
+                    Ok((
+                        key.clone(),
+                        value
+                            .as_str()
+                            .ok_or_else(|| {
+                                scenario_err("agent_invite task_metadata values must be strings")
+                            })?
+                            .to_owned(),
+                    ))
+                })
+                .collect::<Result<_, ConformanceError>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    Ok(AgentInvite {
+        prompt,
+        timeout_ns,
+        task_metadata,
+    })
 }
 
 /// Whether an intervention intake honors `Action.part`, decided by the

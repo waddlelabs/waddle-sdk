@@ -767,6 +767,7 @@ pub fn step(
                     id,
                     &invite.prompt,
                     invite.timeout_ns,
+                    &invite.task_metadata,
                 ));
                 ctx.effects.push(Effect::ArmTimer {
                     id: TimerId::AgentInviteTimeout,

@@ -2,6 +2,8 @@
 //! are real wire messages so every consumer (sidecar, recorder, control
 //! plane, conformance runner) sees exactly one vocabulary.
 
+use std::collections::BTreeMap;
+
 use waddle_types::{
     ActorKind, ClaimId, ClientId, EpisodeId, EpisodeStateKind, GateMode, GrantStatus,
     InterventionPhase, LeaseEnforcement, LeaseId, MonoNs, ResetKind, TerminalOutcome, Verb,
@@ -324,12 +326,14 @@ pub fn agent_invite(
     episode: &EpisodeId,
     prompt: &str,
     timeout_ns: i64,
+    task_metadata: &BTreeMap<String, String>,
 ) -> pb::EpisodeEvent {
     let mut ev = base(at, Some(episode));
     ev.event = Some(pb::episode_event::Event::AgentInvite(
         pb::AgentInviteEvent {
             prompt: prompt.to_owned(),
             timeout_ns,
+            task_metadata: task_metadata.clone().into_iter().collect(),
         },
     ));
     ev

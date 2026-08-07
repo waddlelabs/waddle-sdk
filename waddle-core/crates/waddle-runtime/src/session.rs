@@ -6,7 +6,7 @@
 //! tripwire evaluator — and the control-plane client thread. Nothing
 //! executes on the caller's thread except `Episode::gate()`.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
@@ -134,6 +134,9 @@ impl std::fmt::Debug for ResetSpec {
 pub struct EpisodeOptions {
     pub pre_reset: Option<Option<ResetSpec>>,
     pub post_reset: Option<Option<ResetSpec>>,
+    /// Generic episode context. Persisted in the sidecar and, for an agent invite,
+    /// forwarded with that invite. It never participates in authority decisions.
+    pub task_metadata: BTreeMap<String, String>,
     /// Open this episode agent-invited (flag `waddle.v0.agent`, FSM.md E23):
     /// the invite is emitted to the plane at open — like any other emission
     /// — and the invite deadline (`AgentInviteTimeout`, E25) is armed. The
@@ -180,9 +183,40 @@ pub struct AgentOutcome {
 /// loop.
 pub(crate) type RecordSlot = Arc<parking_lot::Mutex<Option<rtrb::Consumer<GateRecord>>>>;
 
-/// The current task, written by `start_episode` before the open event so the
-/// reducer stamps it into the episode's records.
-pub(crate) type TaskSlot = Arc<parking_lot::Mutex<String>>;
+/// The current task and its generic metadata, written before the open event so
+/// the reducer stamps one coherent context into the episode's records.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct TaskContext {
+    pub task: String,
+    pub metadata: BTreeMap<String, String>,
+}
+
+pub(crate) type TaskSlot = Arc<parking_lot::Mutex<TaskContext>>;
+
+const TASK_METADATA_MAX_ENTRIES: usize = 64;
+const TASK_METADATA_MAX_KEY_BYTES: usize = 128;
+const TASK_METADATA_MAX_VALUE_BYTES: usize = 4096;
+const TASK_METADATA_MAX_TOTAL_BYTES: usize = 16 * 1024;
+
+fn validate_task_metadata(metadata: &BTreeMap<String, String>) -> Result<(), RuntimeError> {
+    let total = metadata
+        .iter()
+        .map(|(key, value)| key.len() + value.len())
+        .sum::<usize>();
+    let invalid = metadata.len() > TASK_METADATA_MAX_ENTRIES
+        || total > TASK_METADATA_MAX_TOTAL_BYTES
+        || metadata.iter().any(|(key, value)| {
+            key.is_empty()
+                || key.len() > TASK_METADATA_MAX_KEY_BYTES
+                || value.len() > TASK_METADATA_MAX_VALUE_BYTES
+        });
+    if invalid {
+        return Err(RuntimeError::InvalidTaskMetadata(
+            "expected at most 64 non-empty keys (128 bytes/key, 4096 bytes/value, 16384 bytes total)".to_owned(),
+        ));
+    }
+    Ok(())
+}
 
 /// The episode `start_episode_with` is currently running the pre-reset phase
 /// for, inline on the caller thread — recorded before `EpisodeOpen` is
@@ -724,7 +758,7 @@ impl SessionBuilder {
         // episode's MCAP writer (the pump owns no episode state at all).
         let (dispatch_tx, dispatch_rx) = std::sync::mpsc::channel::<pumps::DispatchedAction>();
         let record_slot: RecordSlot = Arc::new(parking_lot::Mutex::new(None));
-        let task_slot: TaskSlot = Arc::new(parking_lot::Mutex::new(String::new()));
+        let task_slot: TaskSlot = Arc::new(parking_lot::Mutex::new(TaskContext::default()));
         // Tripwire ObsSource wiring: published by the reducer from
         // the gate record stream, read by the tripwire evaluator below.
         let obs_slot: ObsSlot = Arc::new(LatestSlot::new());
@@ -1053,6 +1087,13 @@ struct SessionInner {
     _plane: Option<Arc<ControlPlaneClient>>,
 }
 
+/// One atomically paired session/wall-clock location.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SessionStamp {
+    pub session_ns: i64,
+    pub unix_ns: i64,
+}
+
 /// One live supervision session.
 #[derive(Clone)]
 pub struct Session {
@@ -1069,6 +1110,16 @@ impl Session {
     #[must_use]
     pub fn builder(project: impl Into<String>) -> SessionBuilder {
         SessionBuilder::new(project)
+    }
+
+    /// Capture a paired session-monotonic and Unix timestamp from one clock stamp.
+    #[must_use]
+    pub fn stamp(&self) -> SessionStamp {
+        let stamp = self.inner.clock.stamp_now();
+        SessionStamp {
+            session_ns: stamp.mono_ns().0,
+            unix_ns: stamp.epoch_ns().0,
+        }
     }
 
     /// Advanced/testing surface: inject a session event directly (the same
@@ -1125,9 +1176,13 @@ impl Session {
         }
 
         let id = EpisodeId::new(format!("ep-{}", uuid::Uuid::new_v4().simple()));
-        // Written before the open event so the reducer stamps this task into
-        // the episode's sidecar (retake successors inherit it).
-        *self.inner.task_slot.lock() = task.to_owned();
+        validate_task_metadata(&opts.task_metadata)?;
+        // Written before the open event so the reducer stamps this task context
+        // into the sidecar (retake successors inherit both fields).
+        *self.inner.task_slot.lock() = TaskContext {
+            task: task.to_owned(),
+            metadata: opts.task_metadata.clone(),
+        };
         // The fresh record ring goes into the hand-off slot BEFORE the open
         // event: the reducer adopts it (discarding any stale predecessor
         // ring) no later than the wake that opens this episode's recording,
@@ -1302,6 +1357,7 @@ impl Session {
             agent_invite: Some(AgentInvite {
                 prompt: prompt.to_owned(),
                 timeout_ns,
+                task_metadata: opts.task_metadata.clone(),
             }),
             ..opts
         };

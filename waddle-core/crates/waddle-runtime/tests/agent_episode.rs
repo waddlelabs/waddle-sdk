@@ -343,11 +343,17 @@ fn run_agent_returns_success_with_recording_ref_from_completed_update() {
         .unwrap();
     *session_cell.lock() = Some(session.clone());
 
+    let task_metadata = [("trace_id".to_owned(), "trace-agent-1".to_owned())]
+        .into_iter()
+        .collect();
     let result = session
         .run_agent(
             "clear the table and stack the cups",
             30_000_000_000,
-            EpisodeOptions::default(),
+            EpisodeOptions {
+                task_metadata,
+                ..Default::default()
+            },
         )
         .unwrap();
     assert_eq!(result.outcome, TerminalOutcome::Success);
@@ -361,6 +367,10 @@ fn run_agent_returns_success_with_recording_ref_from_completed_update() {
         .expect("the agent_invite emission must reach the plane");
     assert_eq!(invite.prompt, "clear the table and stack the cups");
     assert_eq!(invite.timeout_ns, 30_000_000_000);
+    assert_eq!(
+        invite.task_metadata.get("trace_id").map(String::as_str),
+        Some("trace-agent-1")
+    );
 
     // The agent's chunks were dispatched by the BYPASS pump with agent
     // provenance (the mirror's claim provenance at pop time).
@@ -389,6 +399,10 @@ fn run_agent_returns_success_with_recording_ref_from_completed_update() {
     // correct PROVENANCE: it must name the agent that drove, not merely note
     // that "something intervened".
     let sidecar = read_sidecar(dir.path(), result.episode_id.as_str());
+    assert_eq!(
+        sidecar.task_metadata.get("trace_id").map(String::as_str),
+        Some("trace-agent-1")
+    );
 
     // The claim span carries the plane's ActorRef whole — kind AND the id it
     // stamped. `sourceName` names the stream, never the actor.
@@ -804,6 +818,7 @@ fn caller_gate_ticks_noop_during_unengaged_agent_episode() {
                 agent_invite: Some(AgentInvite {
                     prompt: "the agent will drive".into(),
                     timeout_ns: 30_000_000_000,
+                    task_metadata: Default::default(),
                 }),
                 ..Default::default()
             },
@@ -889,6 +904,7 @@ fn stalled_caller_bypass_drives_send_during_engaged_agent_episode() {
                 agent_invite: Some(AgentInvite {
                     prompt: "agent bypass".into(),
                     timeout_ns: 30_000_000_000,
+                    task_metadata: Default::default(),
                 }),
                 ..Default::default()
             },

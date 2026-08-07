@@ -43,7 +43,12 @@ joint_pos=[...])`. Declarations without parts are untouched.
 
 Works fully offline: with `recording_dir` set, every episode lands as a
 sidecar JSON + MCAP (`/waddle/actions`, `/waddle/observations`) plus a
-`manifest.jsonl`, no control plane required.
+`manifest.jsonl`, no control plane required. Add generic correlation context
+with `waddle.rollout(task, task_metadata={"trace_id": ...})`; it is stored
+in the sidecar but never used for capability or authority. `session.stamp()`
+returns one immutable `SessionStamp(session_ns, unix_ns)` whose two clocks were
+captured as a pair, so external evidence can be located on the session timeline
+without deriving an epoch twin later.
 
 Connect a supervision plane with `waddle.init(transport=waddle.Grpc(url,
 token))` and the same loop is supervised: a teleoperator can intervene, a

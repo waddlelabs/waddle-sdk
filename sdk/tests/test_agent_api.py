@@ -108,10 +108,12 @@ class _StubCoreSession:
     reaches the caller unchanged."""
 
     def __init__(self) -> None:
-        self.calls: list[tuple[str, int]] = []
+        self.calls: list[tuple[str, int, dict[str, str]]] = []
 
-    def agent(self, prompt: str, timeout_ns: int) -> _StubCoreResult:
-        self.calls.append((prompt, timeout_ns))
+    def agent(
+        self, prompt: str, timeout_ns: int, *, task_metadata: dict[str, str], **kwargs
+    ) -> _StubCoreResult:
+        self.calls.append((prompt, timeout_ns, task_metadata))
         return _StubCoreResult()
 
 
@@ -120,9 +122,13 @@ def test_agent_marshals_the_prompt_in_and_every_field_out(monkeypatch):
     monkeypatch.setattr(waddle, "_session", stub)
     monkeypatch.setattr(waddle, "_session_has_plane", True)
 
-    result = waddle.agent("stack the cups", timeout_s=1.5)
+    result = waddle.agent(
+        "stack the cups", timeout_s=1.5, task_metadata={"trace_id": "trace-1"}
+    )
 
-    assert stub.calls == [("stack the cups", 1_500_000_000)]
+    assert stub.calls == [
+        ("stack the cups", 1_500_000_000, {"trace_id": "trace-1"})
+    ]
     assert isinstance(result, waddle.AgentResult)
     assert (result.outcome, result.episode_id) == ("success", "ep-stub")
     assert result.recording_ref == "waddle://recordings/stub"

@@ -108,6 +108,7 @@ mod tests {
                 pb::AgentInviteEvent {
                     prompt: "stack the cups".into(),
                     timeout_ns: 30_000_000_000,
+                    task_metadata: [("trace_id".into(), "trace-7".into())].into(),
                 },
             )),
         };

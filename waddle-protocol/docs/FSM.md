@@ -141,7 +141,11 @@ This pins the atomicity of E20's engage; it adds no new states or rows.
 Preface (normative): rows E23–E26/E26b and C8 exist only when
 `waddle.v0.agent` is negotiated **and** the episode was opened agent-invited
 (the customer asked Waddle to drive; the open carries
-`agent_invite{prompt, timeout_ns}`). An agent-invited episode is otherwise a
+`agent_invite{prompt, timeout_ns, task_metadata?}`). `task_metadata` is a
+generic string map copied exactly into `AgentInviteEvent.task_metadata` and
+the episode sidecar. It describes task context only: it grants no capability,
+claim, lease, or authority, and no guard reads it
+(`agent_invite_task_metadata`). An agent-invited episode is otherwise a
 NORMAL episode: E7 engage, intervention chunks, E10 termination, and the
 reset phases all apply verbatim. The two terminating triggers this section
 adds — E25's invite timeout and E26's pre-engage DENIED — are **members of
@@ -197,7 +201,7 @@ does.
 
 | # | From | Trigger | Guard | To | Effects / emissions | Fixture |
 |---|---|---|---|---|---|---|
-| E23 | (open) | `episode_open{agent_invite}` | E1 guard (no other episode active in session) | RESETTING | E1's effect set, plus emission `agent_invite{prompt, timeout_ns}` and `arm_timer{agent_invite_timeout, deadline = open + timeout_ns}` | `agent_invite_happy` |
+| E23 | (open) | `episode_open{agent_invite}` | E1 guard (no other episode active in session) | RESETTING | E1's effect set, plus emission `agent_invite{prompt, timeout_ns, task_metadata}` and `arm_timer{agent_invite_timeout, deadline = open + timeout_ns}` | `agent_invite_happy`, `agent_invite_task_metadata` |
 | E24 | RESETTING, READY, RUNNING, or INTERVENTION | `gate_tick` | episode agent-invited ∧ no engaged claim (gate mode PASSTHROUGH; INTERVENTION with the gate still PASSTHROUGH is the *engage window* — the handoff is in flight and nothing is engaged yet) | unchanged | the caller's action NEVER dispatches: the gate plan is Noop with reason `NOOP_REASON_AGENT_EPISODE` (no fault, no state change). With an engaged claim, ordinary intervention semantics apply unchanged — substitution flows through `gate()` as ever. POST_RESET and TERMINAL are outside this row: the run is over, and its cleanup (or the successor) is the caller's to drive | `agent_caller_tick_noop`, `agent_invite_retake_successor` |
 | E25 | RESETTING, READY, or RUNNING | `timer{agent_invite_timeout}` | invite open (no agent claim has ENGAGEd; E7 cancels this timer) | from RESETTING or READY: TERMINAL{ABORT}; from RUNNING: TERMINAL{ABORT} per E10, or POST_RESET{ABORT pinned} per E14 when post-reset declared ∧ not yet entered | termination carries detail "no agent engaged"; the taken route's effect set applies verbatim (E10's, or E14's with the outcome pinned to ABORT) | `agent_invite_timeout`, `agent_invite_timeout_post_reset` |
 | E26 | RESETTING, READY, or RUNNING | `agent_update{DENIED}` | invite open (no agent claim has ENGAGEd) | routes exactly as E25: from RESETTING or READY TERMINAL{ABORT}; from RUNNING per E10, or per E14 when post-reset declared ∧ not yet entered | `cancel_timer{agent_invite_timeout}`; termination carries the update's detail; the taken route's effect set applies verbatim | `agent_invite_denied` |

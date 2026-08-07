@@ -7,7 +7,7 @@ describes both. Keep this file in step with `sdk/rust/src/*.rs` — it is
 hand-written, and nothing regenerates it.
 """
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Final
 
 import numpy as np
@@ -88,10 +88,19 @@ class AgentResult:
     def detail(self) -> str: ...
     def __repr__(self) -> str: ...
 
+class SessionStamp:
+    @property
+    def session_ns(self) -> int: ...
+    @property
+    def unix_ns(self) -> int: ...
+    def __repr__(self) -> str: ...
+
 class Session:
+    def stamp(self) -> SessionStamp: ...
     def start_episode(
         self,
         task: str,
+        task_metadata: Mapping[str, str] | None = None,
         pre_reset_kind: str | None = None,
         pre_reset_hook: Callable | None = None,
         pre_reset_prompt: str | None = None,
@@ -105,6 +114,7 @@ class Session:
         self,
         prompt: str,
         timeout_ns: int,
+        task_metadata: Mapping[str, str] | None = None,
         pre_reset_kind: str | None = None,
         pre_reset_hook: Callable | None = None,
         pre_reset_prompt: str | None = None,

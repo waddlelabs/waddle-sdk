@@ -67,6 +67,7 @@ waddle-sdk/
     pyproject.toml           # maturin backend; module waddle._core; uv-managed
     rust/                    # the shim: its OWN cargo workspace (see build notes)
     python/waddle/           # pure-Python surface: init/rollout/Control/agent +
+                             #   generic task_metadata and paired Session.stamp;
                              #   descriptors; _native.py picks the compiled core
       robots/                # opt-in robot modules (NOT imported by `import
                              #   waddle`): base.py is the vendor-neutral half

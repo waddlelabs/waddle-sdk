@@ -432,6 +432,7 @@ message JudgmentAttached {
 message AgentInviteEvent {
   string prompt = 1;
   int64 timeout_ns = 2;
+  map<string, string> task_metadata = 3;
 }
 
 // ---------------------------------------------------------------------------

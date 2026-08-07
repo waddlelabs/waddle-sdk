@@ -235,8 +235,10 @@ fn post_reset_failure_sets_sidecar_flag_and_never_alters_outcome() {
 fn retake_successor_passes_through_reset_via_the_pump() {
     let pre_runs = Arc::new(AtomicUsize::new(0));
     let pre_runs2 = pre_runs.clone();
+    let dir = tempfile::tempdir().unwrap();
     let session = Session::builder("reset-pump-retake")
         .robot(robot())
+        .recording_dir(dir.path())
         .control(registry())
         .pre_reset(ResetSpec::Hook(Arc::new(move |_task: &str| {
             pre_runs2.fetch_add(1, Ordering::SeqCst);
@@ -245,7 +247,17 @@ fn retake_successor_passes_through_reset_via_the_pump() {
         .build()
         .unwrap();
 
-    let mut ep1 = session.start_episode("first").unwrap();
+    let mut ep1 = session
+        .start_episode_with(
+            "first",
+            EpisodeOptions {
+                task_metadata: [("trace_id".to_owned(), "trace-retake".to_owned())]
+                    .into_iter()
+                    .collect(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
     let first_id = ep1.id().clone();
     assert_eq!(pre_runs.load(Ordering::SeqCst), 1, "inline pre-reset ran");
     let _ = ep1.gate(&[0.0; 3], None, None);
@@ -277,6 +289,16 @@ fn retake_successor_passes_through_reset_via_the_pump() {
     );
     assert!(session.episode_done(&first_id));
     session.shutdown();
+    for episode_id in [first_id, successor] {
+        let path = dir.path().join(format!("{episode_id}.sidecar.json"));
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("sidecar {} must exist: {error}", path.display()));
+        let sidecar = waddle_sidecar::sidecar_from_json(&text).unwrap();
+        assert_eq!(
+            sidecar.task_metadata.get("trace_id").map(String::as_str),
+            Some("trace-retake")
+        );
+    }
 }
 
 /// The pump runs the effective POST hook exactly once per episode (the

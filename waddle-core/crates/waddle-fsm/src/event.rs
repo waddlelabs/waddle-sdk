@@ -2,6 +2,8 @@
 //! clock. The variants mirror the scenario-format inject kinds plus the
 //! completions the runtime feeds back for effects.
 
+use std::collections::BTreeMap;
+
 use waddle_types::{
     ActorKind, ActorRef, ClaimId, EpisodeId, LeaseId, MonoNs, ResetVerificationMode,
     TerminalOutcome, Verb, pb::v0 as pb,
@@ -46,6 +48,9 @@ pub struct AgentInvite {
     pub prompt: String,
     /// Deadline offset from episode open; arms `AgentInviteTimeout` (E25).
     pub timeout_ns: i64,
+    /// Generic episode context forwarded with the invite. It carries no authority.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub task_metadata: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

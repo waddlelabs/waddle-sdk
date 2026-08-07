@@ -53,7 +53,10 @@ For what supervision actually does to your loop,
 single-writer right to command the robot) through a whole session from the
 customer's side: who holds it during a rollout, an intervention, a reset window
 and an agent-driven episode, what `gate()` returns while they do, and what the
-SDK does not provide.
+SDK does not provide. Generic episode correlation stays deliberately outside
+that authority model: pass string `task_metadata` to `waddle.rollout()` or
+`waddle.agent()`, and use `session.stamp()` for an atomically paired
+session/Unix timestamp.
 
 ## If the SDK already knows your robot
 

@@ -422,6 +422,7 @@ fn agent_task_denied_acks_e26_and_nacks_e26b_while_queued_never_acks() {
                 agent_invite: Some(AgentInvite {
                     prompt: "wipe down the counter".into(),
                     timeout_ns: 60_000_000_000,
+                    task_metadata: Default::default(),
                 }),
                 ..Default::default()
             },

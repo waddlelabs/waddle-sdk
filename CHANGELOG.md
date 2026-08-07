@@ -12,6 +12,14 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 ## [Unreleased]
 
 ### Added
+- **generic episode task context and paired session stamps**: `waddle.rollout()`
+  and `waddle.agent()` accept bounded string `task_metadata`, persisted in every
+  sidecar and forwarded unchanged on `AgentInviteEvent.task_metadata` (append-only
+  field 3) without participating in authority. `Session.stamp()` returns an
+  immutable `SessionStamp(session_ns, unix_ns)` minted by the existing core
+  session clock in one paired read, preserving the two-clock discipline for
+  external evidence. Fresh conformance, Rust, and Python tests pin invite-wire
+  propagation and metadata retention across outcomes, reset failure, and retake.
 - **`joint_limits=` on the YAM factories and `yam.declaration()`**: the intervals a
   rig accepts are the OWNER's to state, and the shipped model's `JOINT_LIMITS` are
   the default rather than a ceiling. One table reaches both readers — the envelope

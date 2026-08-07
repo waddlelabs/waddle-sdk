@@ -260,7 +260,9 @@ pub(crate) fn outcome_str(outcome: TerminalOutcome) -> &'static str {
 
 pub(crate) fn runtime_err(e: RuntimeError) -> PyErr {
     match e {
-        RuntimeError::MissingRobot | RuntimeError::Types(_) => PyValueError::new_err(e.to_string()),
+        RuntimeError::MissingRobot
+        | RuntimeError::Types(_)
+        | RuntimeError::InvalidTaskMetadata(_) => PyValueError::new_err(e.to_string()),
         _ => PyRuntimeError::new_err(e.to_string()),
     }
 }

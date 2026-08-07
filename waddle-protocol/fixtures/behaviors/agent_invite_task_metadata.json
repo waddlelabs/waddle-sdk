@@ -1,0 +1,63 @@
+{
+  "format": "waddle.behavior/v0",
+  "name": "agent_invite_task_metadata",
+  "description": "Pins the append-only generic task context on FSM.md E23: episode_open accepts string task_metadata and the AgentInviteEvent emission carries that map byte-for-byte. The context is descriptive only and changes no state, timer, claim, lease, or authority behavior.",
+  "target": "fsm",
+  "requires_features": ["waddle.v0.core", "waddle.v0.agent"],
+  "setup": {
+    "robot_fixture": "../wire/robot_description_bimanual_composite.json",
+    "lease_enforcement": "LEASE_ENFORCEMENT_ADVISORY",
+    "handoff": { "holdFirst": {} },
+    "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING"
+  },
+  "steps": [
+    {
+      "inject": {
+        "kind": "episode_open",
+        "episode_id": "ep-agent-context-0001",
+        "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING",
+        "agent_invite": {
+          "prompt": "place the cup",
+          "timeout_ns": "5000000000",
+          "task_metadata": {
+            "trace_id": "trace-7",
+            "workspace_digest": "sha256:abc"
+          }
+        }
+      }
+    },
+    {
+      "expect_emission": {
+        "event": {
+          "agentInvite": {
+            "prompt": "place the cup",
+            "timeoutNs": "5000000000",
+            "taskMetadata": {
+              "trace_id": "trace-7",
+              "workspace_digest": "sha256:abc"
+            }
+          }
+        },
+        "within_ns": "0"
+      }
+    },
+    {
+      "expect_emission": {
+        "effect": {
+          "arm_timer": {
+            "timer_id": "agent_invite_timeout",
+            "deadline_ns": "5000000000"
+          }
+        },
+        "within_ns": "0"
+      }
+    },
+    {
+      "expect_state": {
+        "episode.state": "EPISODE_STATE_RESETTING",
+        "episode.agent_invited": true,
+        "episode.agent_engaged": false
+      }
+    }
+  ]
+}

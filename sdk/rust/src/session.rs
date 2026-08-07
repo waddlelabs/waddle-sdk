@@ -10,6 +10,7 @@
 //! | `Episode::gate`, `done`, `outcome` | nothing                         | keep GIL |
 //! | `Session::agent`                   | a whole agent-driven episode    | detach in short slices (see [`PySession::agent`]) |
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{RecvTimeoutError, channel};
@@ -24,7 +25,7 @@ use pyo3::types::PyBytes;
 use waddle_media::{DataTopic, LoopbackFarEnd, LoopbackMedia};
 use waddle_runtime::{
     AgentOutcome, ControlRegistry, EePose, EpisodeOptions, EstopDecl, FrameData, ProprioReport,
-    Session,
+    Session, SessionStamp,
 };
 use waddle_types::pb::v0 as pb;
 use waddle_types::{ActorKind, TerminalOutcome};
@@ -46,6 +47,34 @@ const DEFAULT_RESET_TIMEOUT_NS: i64 = 600_000_000_000;
 /// handlers. Short enough that Ctrl-C reads as immediate, long enough that
 /// an episode running for minutes costs nothing to wait on.
 const AGENT_POLL_SLICE: Duration = Duration::from_millis(50);
+
+/// One paired session-monotonic/Unix stamp, copied from core's single clock read.
+#[pyclass(name = "SessionStamp", frozen, skip_from_py_object)]
+pub(crate) struct PySessionStamp {
+    #[pyo3(get)]
+    session_ns: i64,
+    #[pyo3(get)]
+    unix_ns: i64,
+}
+
+impl From<SessionStamp> for PySessionStamp {
+    fn from(stamp: SessionStamp) -> Self {
+        Self {
+            session_ns: stamp.session_ns,
+            unix_ns: stamp.unix_ns,
+        }
+    }
+}
+
+#[pymethods]
+impl PySessionStamp {
+    fn __repr__(&self) -> String {
+        format!(
+            "SessionStamp(session_ns={}, unix_ns={})",
+            self.session_ns, self.unix_ns
+        )
+    }
+}
 
 /// The result of one agent-driven episode — a verbatim marshalling of
 /// `waddle_runtime::AgentOutcome` (flag `waddle.v0.agent`). Every field is
@@ -103,6 +132,7 @@ fn episode_options(
     post_reset_hook: Option<Py<PyAny>>,
     post_reset_prompt: Option<&str>,
     post_reset_timeout_ns: i64,
+    task_metadata: Option<BTreeMap<String, String>>,
 ) -> PyResult<EpisodeOptions> {
     let pre_reset = pre_reset_kind
         .map(|kind| {
@@ -129,6 +159,7 @@ fn episode_options(
     Ok(EpisodeOptions {
         pre_reset,
         post_reset,
+        task_metadata: task_metadata.unwrap_or_default(),
         // Append-proof against runtime-side EpisodeOptions growth.
         // `agent_invite` is NOT set here: `Session::run_agent` owns it (it
         // is the invite, not an episode option a caller composes).
@@ -209,6 +240,11 @@ impl PySession {
 
 #[pymethods]
 impl PySession {
+    /// Capture paired session-monotonic and Unix nanoseconds from core's session clock.
+    fn stamp(&self) -> PySessionStamp {
+        self.inner.stamp().into()
+    }
+
     /// Open an episode; blocks through the reset pipeline (GIL released).
     /// Every `*_reset_kind` kwarg defaults to `None` (inherit the session's
     /// declared default for that phase, exactly as plain `start_episode`
@@ -219,6 +255,7 @@ impl PySession {
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
         task,
+        task_metadata=None,
         pre_reset_kind=None,
         pre_reset_hook=None,
         pre_reset_prompt=None,
@@ -232,6 +269,7 @@ impl PySession {
         &self,
         py: Python<'_>,
         task: &str,
+        task_metadata: Option<BTreeMap<String, String>>,
         pre_reset_kind: Option<&str>,
         pre_reset_hook: Option<Py<PyAny>>,
         pre_reset_prompt: Option<&str>,
@@ -250,6 +288,7 @@ impl PySession {
             post_reset_hook,
             post_reset_prompt,
             post_reset_timeout_ns,
+            task_metadata,
         )?;
         let session = self.inner.clone();
         let task = task.to_owned();
@@ -296,6 +335,7 @@ impl PySession {
     #[pyo3(signature = (
         prompt,
         timeout_ns,
+        task_metadata=None,
         pre_reset_kind=None,
         pre_reset_hook=None,
         pre_reset_prompt=None,
@@ -310,6 +350,7 @@ impl PySession {
         py: Python<'_>,
         prompt: &str,
         timeout_ns: i64,
+        task_metadata: Option<BTreeMap<String, String>>,
         pre_reset_kind: Option<&str>,
         pre_reset_hook: Option<Py<PyAny>>,
         pre_reset_prompt: Option<&str>,
@@ -328,6 +369,7 @@ impl PySession {
             post_reset_hook,
             post_reset_prompt,
             post_reset_timeout_ns,
+            task_metadata,
         )?;
         let session = self.inner.clone();
         let prompt = prompt.to_owned();

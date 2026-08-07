@@ -809,6 +809,7 @@ impl Driver {
                         // timer fires under random exploration (like the
                         // window timer).
                         timeout_ns: 2_000_000_000,
+                        task_metadata: Default::default(),
                     }),
                     at,
                 }

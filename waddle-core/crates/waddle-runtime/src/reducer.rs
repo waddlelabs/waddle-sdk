@@ -506,13 +506,14 @@ impl Reducer {
         self.finalize_episode_if_terminal(true);
 
         let anchor = self.clock.anchor();
+        let task = self.task.lock().clone();
         let mut builder = SidecarBuilder::new(
             id.clone(),
             self.project.clone(),
             self.cfg.session_id.clone(),
             self.cfg.robot_id.clone(),
             self.cfg.cell_id.clone(),
-            self.task.lock().clone(),
+            task.task,
             anchor,
             if self.recording_dir.is_some() {
                 pb::RecordingMode::Local
@@ -520,6 +521,7 @@ impl Reducer {
                 pb::RecordingMode::SidecarOnly
             },
         );
+        builder.set_task_metadata(task.metadata);
         builder.open_bounds(self.clock.stamp_now());
         builder.set_born_claimed(born_claimed);
         builder.set_post_reset_declared(post_reset_declared);
@@ -1006,7 +1008,10 @@ mod tests {
             "digest".to_owned(),
             robot.action_space,
             Arc::new(parking_lot::Mutex::new(None)),
-            Arc::new(parking_lot::Mutex::new("task".to_owned())),
+            Arc::new(parking_lot::Mutex::new(crate::session::TaskContext {
+                task: "task".to_owned(),
+                metadata: Default::default(),
+            })),
             None,
             Arc::new(waddle_ingest::LatestSlot::new()),
             proprio_rx,

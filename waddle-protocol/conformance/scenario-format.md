@@ -77,7 +77,7 @@ as unknown:
 
 | kind | payload | targets | meaning |
 |---|---|---|---|
-| `episode_open` | `episode_id`, `verification_mode?`, `born_claimed?`, `parent_episode_id?`, `post_reset?: bool` (needs `waddle.v0.reset.phases`), `pre_reset_window?: {expected_actor, prompt?, timeout_ns}` (needs `waddle.v0.reset.remote`), `post_reset_window?: {expected_actor, prompt?, timeout_ns}` (needs both flags), `agent_invite?: {prompt, timeout_ns}` (needs `waddle.v0.agent`) | fsm, gate | open an episode in RESETTING; the optional keys declare the post-reset phase, remote reset windows, and/or the agent invite for this episode |
+| `episode_open` | `episode_id`, `verification_mode?`, `born_claimed?`, `parent_episode_id?`, `post_reset?: bool` (needs `waddle.v0.reset.phases`), `pre_reset_window?: {expected_actor, prompt?, timeout_ns}` (needs `waddle.v0.reset.remote`), `post_reset_window?: {expected_actor, prompt?, timeout_ns}` (needs both flags), `agent_invite?: {prompt, timeout_ns, task_metadata?: {string: string}}` (needs `waddle.v0.agent`) | fsm, gate | open an episode in RESETTING; the optional keys declare the post-reset phase, remote reset windows, and/or the agent invite for this episode |
 | `reset_result` | `result`: `waddle.v0.ResetResult` | fsm, gate | the reset pipeline reported |
 | `verification_result` | `verification`: `waddle.v0.ResetVerification` | fsm, gate | a (possibly late/async) reset verification |
 | `start` | — | fsm | READY → RUNNING without modeling gate ticks |
@@ -248,7 +248,9 @@ key; `agent_engaged` latches true when an `ACTOR_KIND_AGENT` claim engages
 (FSM.md §1.5) and never resets within the episode. The gate-plan noop reason
 `NOOP_REASON_AGENT_EPISODE` (asserted via `expect_output`) and the
 `agent_invite` `EpisodeEvent` arm (asserted via `expect_emission.event`)
-likewise need `waddle.v0.agent`.
+likewise need `waddle.v0.agent`. Its optional `task_metadata` object has
+string values and is matched as the emitted proto map; it changes no snapshot
+or transition.
 
 `grants` is matched by `(verb, send_interface)` lookup, expressed as
 `grants[VERB_HOLD].status` or `grants[VERB_SEND/SPACE_KIND_EE_POSE_DELTA].status`.

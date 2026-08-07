@@ -327,7 +327,7 @@ pub(crate) fn spawn_reset_pump(
                                 serviced_pre = Some(id);
                                 let (ok, verified) = match &pre {
                                     Some(ResetSpec::Hook(hook)) => {
-                                        let task = task.lock().clone();
+                                        let task = task.lock().task.clone();
                                         hook(&task)
                                     }
                                     // No spec: the placeholder default — a
@@ -352,7 +352,7 @@ pub(crate) fn spawn_reset_pump(
                             effective_spec(&episode_specs, &id, &session_post, |s| s.post.clone());
                         match post {
                             Some(ResetSpec::Hook(hook)) => {
-                                let task = task.lock().clone();
+                                let task = task.lock().task.clone();
                                 let (ok, _verified) = hook(&task);
                                 let _ = inject.send(
                                     SessionEvent::PostResetResult {

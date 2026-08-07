@@ -26,6 +26,8 @@
 //! offsets across host suspends and is the postmortem behind the `Stamp`
 //! type.
 
+use std::collections::HashMap;
+
 use waddle_types::pb::v0 as pb;
 use waddle_types::time::{ClockAnchor, Stamp};
 use waddle_types::{
@@ -72,6 +74,7 @@ pub struct SidecarBuilder {
     robot_id: RobotId,
     cell_id: CellId,
     task: String,
+    task_metadata: HashMap<String, String>,
     anchor: ClockAnchor,
     recording_mode: pb::RecordingMode,
 
@@ -129,6 +132,7 @@ impl SidecarBuilder {
             robot_id,
             cell_id,
             task: task.into(),
+            task_metadata: HashMap::new(),
             anchor,
             recording_mode,
             bounds_start: None,
@@ -158,6 +162,11 @@ impl SidecarBuilder {
             interventions: Vec::new(),
             open_intervention: None,
         }
+    }
+
+    /// Set generic task metadata captured atomically with the episode task.
+    pub fn set_task_metadata(&mut self, metadata: impl IntoIterator<Item = (String, String)>) {
+        self.task_metadata = metadata.into_iter().collect();
     }
 
     /// Open the episode bounds. Both twins (`bounds.t_start_ns` and
@@ -447,7 +456,7 @@ impl SidecarBuilder {
             robot_id: self.robot_id.as_str().to_owned(),
             cell_id: self.cell_id.as_str().to_owned(),
             task: self.task,
-            task_metadata: Default::default(),
+            task_metadata: self.task_metadata,
             clock_anchor: Some(self.anchor.to_pb()),
             bounds: Some(span(
                 start.mono_ns().0,

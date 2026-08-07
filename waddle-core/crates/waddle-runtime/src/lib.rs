@@ -21,7 +21,7 @@ pub use mirror::{AgentTaskKind, AgentTaskStatus, ResetProgressPhase, ResetProgre
 pub use pumps::STALL_THRESHOLD_NS;
 pub use session::{
     AgentOutcome, EePose, Episode, EpisodeOptions, ProprioReport, ResetHook, ResetSpec, Session,
-    SessionBuilder, grant_and_engage, push_intervention_chunk, release_claim,
+    SessionBuilder, SessionStamp, grant_and_engage, push_intervention_chunk, release_claim,
     reset_window_complete, reset_window_engage,
 };
 // The invite payload `EpisodeOptions::agent_invite` carries is waddle-fsm's
@@ -40,6 +40,8 @@ pub enum RuntimeError {
     ResetFailed(String),
     #[error("an episode is already active (one active episode per session)")]
     EpisodeActive,
+    #[error("invalid task metadata: {0}")]
+    InvalidTaskMetadata(String),
     #[error("media plane: {0}")]
     Media(#[from] waddle_media::MediaError),
     #[error("the session is shutting down")]
