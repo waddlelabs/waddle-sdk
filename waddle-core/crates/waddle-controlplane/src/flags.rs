@@ -27,3 +27,7 @@ pub const STILLS: &str = "waddle.v0.obs.stills";
 /// intake, and emitting a named `ProprioSample.part` on the observation
 /// uplink.
 pub const PARTS: &str = "waddle.v0.parts";
+
+/// Authenticated UI chat with the session's active invited host. Requests
+/// belong to the connection that accepted them and are never replayed.
+pub const CHAT: &str = "waddle.v0.agent.chat";

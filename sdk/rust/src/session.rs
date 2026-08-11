@@ -21,11 +21,11 @@ use numpy::{PyArray3, PyArrayMethods, PyUntypedArrayMethods};
 use parking_lot::Mutex;
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::PyBytes;
+use pyo3::types::{PyBytes, PyDict, PyList};
 use waddle_media::{DataTopic, LoopbackFarEnd, LoopbackMedia};
 use waddle_runtime::{
-    AgentOutcome, ControlRegistry, EePose, EpisodeOptions, EstopDecl, FrameData, ProprioReport,
-    Session, SessionStamp,
+    AgentOutcome, ControlRegistry, EePose, EpisodeOptions, EstopDecl, FrameData, JogAxis,
+    JogRequest, ProprioReport, Session, SessionStamp,
 };
 use waddle_types::pb::v0 as pb;
 use waddle_types::{ActorKind, TerminalOutcome};
@@ -188,6 +188,72 @@ pub(crate) struct PySession {
     /// [`PySession::_testing_push_chunk`] marshals against. `None` only for
     /// a declaration `build()` would already have refused.
     space: Option<Arc<waddle_types::ActionSpace>>,
+    /// Declared cameras and the latest accepted raw RGB8 frame per camera.
+    /// One bounded latest value each; no image codec dependency.
+    cameras: Arc<BTreeMap<String, (u32, u32)>>,
+    latest_frames: Mutex<BTreeMap<String, LatestRawFrame>>,
+}
+
+#[derive(Clone)]
+struct LatestRawFrame {
+    width: u32,
+    height: u32,
+    data: Bytes,
+}
+
+fn append_jog_target(
+    py: Python<'_>,
+    targets: &Bound<'_, PyList>,
+    part: Option<&str>,
+    space: &waddle_types::ActionSpace,
+) -> PyResult<()> {
+    use waddle_types::SpaceSpec;
+
+    match &space.spec {
+        SpaceSpec::Composite { parts } => {
+            for (name, part_space) in parts {
+                append_jog_target(py, targets, Some(name), part_space)?;
+            }
+        }
+        SpaceSpec::JointPosition { joints } => {
+            let target = PyDict::new(py);
+            target.set_item("part", part)?;
+            target.set_item("kind", "joint_position")?;
+            target.set_item(
+                "joints",
+                joints
+                    .iter()
+                    .map(|joint| joint.name.as_str())
+                    .collect::<Vec<_>>(),
+            )?;
+            targets.append(target)?;
+        }
+        SpaceSpec::EePoseDelta {
+            frame,
+            rotation,
+            delta_frame,
+            ..
+        } => {
+            let target = PyDict::new(py);
+            target.set_item("part", part)?;
+            target.set_item("kind", "ee_pose_delta")?;
+            target.set_item("frame", frame.as_str())?;
+            target.set_item("rotation", format!("{rotation:?}"))?;
+            target.set_item("delta_frame", format!("{delta_frame:?}"))?;
+            targets.append(target)?;
+        }
+        SpaceSpec::JointVelocity { .. }
+        | SpaceSpec::EePoseAbs { .. }
+        | SpaceSpec::BaseTwist { .. }
+        | SpaceSpec::Opaque { .. } => {
+            let target = PyDict::new(py);
+            target.set_item("part", part)?;
+            target.set_item("kind", format!("{:?}", space.kind()))?;
+            target.set_item("unsupported", true)?;
+            targets.append(target)?;
+        }
+    }
+    Ok(())
 }
 
 /// Dropping an un-shutdown session must not run the core's blocking
@@ -243,6 +309,181 @@ impl PySession {
     /// Capture paired session-monotonic and Unix nanoseconds from core's session clock.
     fn stamp(&self) -> PySessionStamp {
         self.inner.stamp().into()
+    }
+
+    /// Authoritative core session status plus declaration-only UI metadata.
+    /// No claim/lease/handoff decision is reconstructed in the shim.
+    fn status<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let status = self.inner.status();
+        let out = PyDict::new(py);
+        out.set_item(
+            "episode_id",
+            status.episode_id.as_ref().map(ToString::to_string),
+        )?;
+        out.set_item(
+            "episode_state",
+            status.episode_state.map(|phase| format!("{phase:?}")),
+        )?;
+        out.set_item(
+            "gate_mode",
+            status.gate_mode.map(|mode| format!("{mode:?}")),
+        )?;
+        out.set_item("claim_active", status.claim_active)?;
+        out.set_item(
+            "active_claim_id",
+            status.active_claim_id.as_ref().map(ToString::to_string),
+        )?;
+        out.set_item(
+            "provenance",
+            status
+                .provenance
+                .as_ref()
+                .map(|tag| tag.provenance.to_string()),
+        )?;
+        out.set_item("plane_connected", status.plane_connected)?;
+        out.set_item("chat_negotiated", status.chat_negotiated)?;
+        out.set_item("agent_invited", status.agent_invited)?;
+        out.set_item("agent_engaged", status.agent_engaged)?;
+        out.set_item("shutdown", status.shutdown)?;
+        out.set_item("estop_unregistered", status.estop_unregistered)?;
+
+        let cameras = PyList::empty(py);
+        let latest = self.latest_frames.lock();
+        for (name, (width, height)) in self.cameras.iter() {
+            let camera = PyDict::new(py);
+            camera.set_item("name", name)?;
+            camera.set_item("width", width)?;
+            camera.set_item("height", height)?;
+            camera.set_item("available", latest.contains_key(name))?;
+            cameras.append(camera)?;
+        }
+        drop(latest);
+        out.set_item("cameras", cameras)?;
+
+        let targets = PyList::empty(py);
+        if let Some(space) = self.space.as_deref() {
+            append_jog_target(py, &targets, None, space)?;
+        }
+        out.set_item("jog_targets", targets)?;
+        Ok(out)
+    }
+
+    /// Queue the core's priority e-stop path. Returns only "requested".
+    fn request_estop(&self) -> PyResult<&'static str> {
+        self.inner.request_estop().map_err(runtime_err)?;
+        Ok("requested")
+    }
+
+    /// One local jog intent. Expected core refusals return a typed triple
+    /// `(accepted, code, detail)` rather than becoming unstructured Python
+    /// exceptions. Engage may invoke Python hold/send callbacks, so detach.
+    #[pyo3(signature = (kind, index, direction, step, part=None))]
+    fn jog(
+        &self,
+        py: Python<'_>,
+        kind: &str,
+        index: usize,
+        direction: i8,
+        step: f64,
+        part: Option<&str>,
+    ) -> PyResult<(bool, String, String)> {
+        let axis = match kind {
+            "joint" => JogAxis::Joint(index),
+            "linear" => JogAxis::Linear(index),
+            "angular" => JogAxis::Angular(index),
+            _ => {
+                return Ok((
+                    false,
+                    "invalid_request".into(),
+                    "kind must be joint, linear, or angular".into(),
+                ));
+            }
+        };
+        let request = JogRequest {
+            part: part.map(str::to_owned),
+            axis,
+            direction,
+            step,
+        };
+        let session = self.inner.clone();
+        match py.detach(move || session.jog(request)) {
+            Ok(()) => Ok((true, "accepted".into(), "accepted".into())),
+            Err(refusal) => Ok((false, refusal.code().to_owned(), refusal.to_string())),
+        }
+    }
+
+    fn jog_heartbeat(&self) -> (bool, String, String) {
+        match self.inner.jog_heartbeat() {
+            Ok(()) => (true, "accepted".into(), "accepted".into()),
+            Err(refusal) => (false, refusal.code().to_owned(), refusal.to_string()),
+        }
+    }
+
+    fn jog_release(&self, py: Python<'_>) {
+        let session = self.inner.clone();
+        py.detach(move || session.release_jog());
+    }
+
+    fn chat_submit(&self, request_id: &str, text: &str) -> PyResult<()> {
+        self.inner
+            .submit_chat(request_id, text)
+            .map_err(runtime_err)
+    }
+
+    #[pyo3(signature = (request_id, after_sequence=0, timeout_ms=0))]
+    fn chat_events<'py>(
+        &self,
+        py: Python<'py>,
+        request_id: &str,
+        after_sequence: u64,
+        timeout_ms: u64,
+    ) -> PyResult<Vec<Bound<'py, PyDict>>> {
+        let session = self.inner.clone();
+        let request_id_owned = request_id.to_owned();
+        let events = py.detach(move || {
+            session.chat_events(
+                &request_id_owned,
+                after_sequence,
+                Duration::from_millis(timeout_ms.min(30_000)),
+            )
+        });
+        events
+            .into_iter()
+            .map(|event| {
+                let item = PyDict::new(py);
+                item.set_item("request_id", event.request_id)?;
+                item.set_item("sequence", event.sequence)?;
+                item.set_item(
+                    "kind",
+                    match pb::ChatEventKind::try_from(event.kind) {
+                        Ok(pb::ChatEventKind::Accepted) => "accepted",
+                        Ok(pb::ChatEventKind::Text) => "text",
+                        Ok(pb::ChatEventKind::Done) => "done",
+                        Ok(pb::ChatEventKind::Unavailable) => "unavailable",
+                        Ok(pb::ChatEventKind::Error) => "error",
+                        _ => "unavailable",
+                    },
+                )?;
+                item.set_item("text", event.text)?;
+                item.set_item("detail", event.detail)?;
+                Ok(item)
+            })
+            .collect()
+    }
+
+    /// Latest accepted raw RGB8 frame for the local UI.
+    fn _ui_frame<'py>(
+        &self,
+        py: Python<'py>,
+        camera: &str,
+    ) -> Option<(u32, u32, Bound<'py, PyBytes>)> {
+        self.latest_frames.lock().get(camera).cloned().map(|frame| {
+            (
+                frame.width,
+                frame.height,
+                PyBytes::new(py, frame.data.as_ref()),
+            )
+        })
     }
 
     /// Open an episode; blocks through the reset pipeline (GIL released).
@@ -478,8 +719,20 @@ impl PySession {
             .map_err(|_| PyTypeError::new_err("frame must be a contiguous numpy array"))?;
         // numpy image convention: shape is (height, width, channels).
         let (height, width) = (shape[0] as u32, shape[1] as u32);
-        let data = FrameData::rgb8(width, height, Bytes::copy_from_slice(slice));
-        self.inner.publish_frame(camera, data).map_err(runtime_err)
+        let bytes = Bytes::copy_from_slice(slice);
+        let data = FrameData::rgb8(width, height, bytes.clone());
+        self.inner
+            .publish_frame(camera, data)
+            .map_err(runtime_err)?;
+        self.latest_frames.lock().insert(
+            camera.to_owned(),
+            LatestRawFrame {
+                width,
+                height,
+                data: bytes,
+            },
+        );
+        Ok(())
     }
 
     /// Report a richer proprioceptive sample than the bare `joint_pos`
@@ -827,6 +1080,13 @@ pub(crate) fn create_session(
     media_token: Option<&str>,
 ) -> PyResult<PySession> {
     let robot = parse_robot_json(robot_json)?;
+    let cameras: Arc<BTreeMap<String, (u32, u32)>> = Arc::new(
+        robot
+            .cameras
+            .iter()
+            .map(|camera| (camera.name.clone(), (camera.width, camera.height)))
+            .collect(),
+    );
     let handoff = parse_handoff(handoff_kind, handoff_ns)?;
     let enforcement = parse_enforcement(lease_enforcement)?;
     let pre_reset = parse_reset_spec(
@@ -992,5 +1252,7 @@ pub(crate) fn create_session(
         chunk_seq: AtomicU64::new(1),
         parts,
         space,
+        cameras,
+        latest_frames: Mutex::new(BTreeMap::new()),
     })
 }

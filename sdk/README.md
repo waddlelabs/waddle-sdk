@@ -67,6 +67,65 @@ anyway (FSM.md E24), which is why this call takes the thread instead of
 handing back an episode handle. An ask nobody answers comes back
 `outcome == "abort"` at the deadline — a result, not an exception.
 
+## In-process browser UI (`waddle.ui()`)
+
+After `waddle.init()`, start the session's local control and inspection page
+from the same process:
+
+```python
+dashboard = waddle.ui(
+    joint_step_rad=0.01,
+    linear_step_m=0.005,
+    angular_step_rad=0.02,
+)
+print(dashboard.url)
+```
+
+`waddle.ui()` starts one background server for the active session, bound to
+`127.0.0.1` on an OS-selected port. Repeated calls return the same `UIHandle`;
+`dashboard.close()` (or leaving `with waddle.ui() as dashboard:`) stops it,
+and `waddle.shutdown()` always closes it before core teardown. There is
+deliberately no `waddle ui` command: the page is useful because it is attached
+to this process's native session and the exact `Control` callbacks the robot
+owner registered.
+
+The printed URL contains a fresh 256-bit token in its fragment. The fragment
+does not reach the HTTP server; the bundled application presents it in the
+required `X-Waddle-Token` header on every data/control request, alongside the
+custom request marker. The server enforces its exact loopback `Host` and
+same-origin `Origin`, has no CORS path, bounds request bodies, sets
+`Cache-Control: no-store`, CSP and no-referrer headers, and ships no web
+framework or image dependency. Treat the URL as a bearer secret: the page has
+a permanent warning because it exposes lab imagery and real motion controls.
+
+State is the native session's authoritative status, rendered directly. E-stop
+sets the existing native priority e-stop path and reports **requested**, never
+confirmed; it sends no control-plane request. Jog is a core-owned local
+site-operator intervention: holding the browser deadman heartbeats every
+250 ms, and core releases its claim after one second without a heartbeat or
+immediately on release, page close or SDK shutdown. Joint jog derives one
+absolute target from the freshest reported proprio; Cartesian jog follows the
+declared delta frame/rotation convention. Missing proprio and unsupported or
+opaque spaces are typed refusals. Each accepted press is one normal action
+chunk through `Control.send`, so the owner's envelope still accepts or refuses
+the whole command—nothing in the UI clamps it. The three positive finite step
+sizes may be changed in the page for this UI run only.
+
+The camera view is the native shim's bounded latest raw-RGB frame per declared
+camera, drawn directly to a canvas. Recordings are read from `manifest.jsonl`:
+the list shows task/outcome/timestamps, and downloads resolve only the
+manifest-named sidecar/MCAP files beneath `recording_dir`; there is no playback
+or MCAP web dependency.
+
+All of that remains local with no plane. With a connected plane, the only
+remote feature in this page is chat: one outstanding bounded request travels
+on the existing `GateActions` stream under `waddle.v0.agent.chat` to the active
+invited host, and the page long-polls its bounded native event ring. Thinking,
+prompts, tool names/payloads, delegated output and internal errors are not chat
+events. A missing transport, unnegotiated flag, dead plane or absent host is an
+explicit unavailable status; local state, e-stop, jog, cameras and recordings
+continue to work.
+
 All of the above in one runnable file — a simulated 6-dof arm with a
 camera, the loop, and `waddle.agent()`, offline by default — is
 [`examples/toy_robot.py`](examples/): `uv run python
@@ -427,6 +486,12 @@ Concretely, in this package:
   Python refuses early only when there is nobody to ask. The only other
   decision made here is *when to reattach and run Python's signal
   handlers*.
+- **Local UI** (`waddle.ui`, `UIHandle`): Python owns loopback HTTP security,
+  static assets, positive-finite presentation settings and safe manifest path
+  resolution only. It renders `Session.status()` and marshals typed native
+  operations. E-stop priority, jog/deadman timing, claim engage/release,
+  declared-space action construction, chat negotiation/connection scoping and
+  every refusal live in core; JavaScript and Python never infer authority.
 - **Part-keyed payloads** (`Composite` sessions: dict-by-part `gate()`
   returns and `Chunk` step values, `report_proprio(part=)`): the layout is
   read off the customer's own declaration — each part's name and width, in

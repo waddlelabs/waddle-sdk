@@ -9,6 +9,8 @@
 //! each confined to its own thread's private current-thread runtime.
 
 mod ack;
+mod chat;
+mod jog;
 mod media_uplink;
 pub mod mirror;
 pub mod pumps;
@@ -16,6 +18,7 @@ pub mod reducer;
 pub mod session;
 pub mod verbs;
 
+pub use jog::{JogAxis, JogRefusal, JogRequest};
 pub use media_uplink::{FrameData, FramePixels};
 pub use mirror::{AgentTaskKind, AgentTaskStatus, ResetProgressPhase, ResetProgressStatus, Status};
 pub use pumps::STALL_THRESHOLD_NS;
@@ -42,6 +45,10 @@ pub enum RuntimeError {
     EpisodeActive,
     #[error("invalid task metadata: {0}")]
     InvalidTaskMetadata(String),
+    #[error("invalid chat request: {0}")]
+    InvalidChat(String),
+    #[error("chat unavailable: {0}")]
+    ChatUnavailable(String),
     #[error("media plane: {0}")]
     Media(#[from] waddle_media::MediaError),
     #[error("the session is shutting down")]

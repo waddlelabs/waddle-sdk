@@ -71,8 +71,17 @@ from waddle.robots import yam
 
 rig = yam.bimanual(workspace=WORKSPACE_M, gripper_limits=(0.1, 1.7), sim=True)
 with rig.session("towels", transport=waddle.Grpc(url, token)) as session:
+    dashboard = waddle.ui()  # authenticated 127.0.0.1 UI for this live session
     result = waddle.agent("stack the cups")
 ```
+
+`waddle.ui()` has no standalone command: it runs inside the initialized SDK
+process so state, e-stop, jog/deadman, camera frames and local recordings never
+leave the customer machine. Only its optional chat crosses the existing
+control stream to the active invited host; when chat is unavailable, every
+local endpoint remains usable. The printed fragment-bearing URL is a per-run
+bearer secret. Lifecycle, loopback security and motion semantics are detailed
+in [`sdk/README.md`](sdk/README.md#in-process-browser-ui-waddleui).
 
 `WORKSPACE_M` and the gripper's `[closed, open]` motor radians are SITE facts
 and have no defaults — measure them at your own bench. What a YAM *is* (joint

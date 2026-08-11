@@ -12,10 +12,11 @@
 //   - ClaimEpisode / HandoffLease are UNARY: atomic decisions with an
 //     immediate grant/deny, mirroring the production broker's lease protocol.
 //   - GateActions is the ONE ordered event stream per session. SDK → plane:
-//     EpisodeEvents, VerbResults, gate status. Plane → SDK: claim directives,
+//     EpisodeEvents, VerbResults, gate status, and flagged UI chat requests.
+//     Plane → SDK: claim directives,
 //     intervention action chunks, verb requests, grant changes, episode
-//     directives. Conformance scenarios assert emissions on exactly this
-//     stream.
+//     directives, and flagged UI chat events. Conformance scenarios assert
+//     emissions on exactly this stream.
 //   - Heartbeat is bidi so grant demotions have a low-latency down-path
 //     independent of gate traffic.
 //   - RequestReset is server-streaming: resets are long-running, with phase
@@ -194,7 +195,41 @@ message GateClientMessage {
     // Flag waddle.v0.plane.acks: the SDK's accept/reject answer to a plane
     // directive that carried a directive_id (see DirectiveAck).
     DirectiveAck ack = 4;
+    // Flag waddle.v0.agent.chat: one bounded, explicitly correlated user
+    // message for the session's active invited host. Connection-scoped:
+    // never buffered offline or replayed after re-registration.
+    ChatRequest chat_request = 5;
   }
+}
+
+// Flag waddle.v0.agent.chat. Text is UTF-8 and bounded by the receiving
+// implementation to 4 KiB; request_id is an opaque caller correlation id
+// bounded to 128 UTF-8 bytes. A receiver MUST reject larger values rather
+// than truncate them.
+message ChatRequest {
+  string request_id = 1;
+  string text = 2;
+}
+
+enum ChatEventKind {
+  CHAT_EVENT_KIND_UNSPECIFIED = 0;
+  CHAT_EVENT_KIND_ACCEPTED = 1;
+  CHAT_EVENT_KIND_TEXT = 2;
+  CHAT_EVENT_KIND_DONE = 3;
+  CHAT_EVENT_KIND_UNAVAILABLE = 4;
+  CHAT_EVENT_KIND_ERROR = 5;
+}
+
+// Flag waddle.v0.agent.chat. Events for one request are ordered by sequence.
+// `text` is main-conversation assistant text only. `detail` is a bounded,
+// public-safe lifecycle explanation; neither field may contain thinking,
+// prompts, tool names/payloads, delegated output, or internal errors.
+message ChatEvent {
+  string request_id = 1;
+  uint64 sequence = 2;
+  ChatEventKind kind = 3;
+  string text = 4;
+  string detail = 5;
 }
 
 enum ClaimDirectiveKind {
@@ -256,6 +291,7 @@ message GateServerMessage {
     EpisodeDirective episode = 5;
     ResetWindowDirective reset_window = 6; // flag waddle.v0.reset.remote
     AgentTaskUpdate agent_update = 7;      // flag waddle.v0.agent
+    ChatEvent chat_event = 8;              // flag waddle.v0.agent.chat
   }
 }
 

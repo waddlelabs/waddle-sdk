@@ -98,8 +98,11 @@ impl ClientMsg {
             // An ack answers ONE directive, on the connection that sent it
             // and asked to be answered. A replayed one is both un-negotiated
             // on the new connection and stale on the old correlation.
-            Self::Gate(msg) => matches!(msg.msg, Some(pb::gate_client_message::Msg::Ack(_)))
-                .then_some(crate::flags::ACKS),
+            Self::Gate(msg) => match msg.msg {
+                Some(pb::gate_client_message::Msg::Ack(_)) => Some(crate::flags::ACKS),
+                Some(pb::gate_client_message::Msg::ChatRequest(_)) => Some(crate::flags::CHAT),
+                _ => None,
+            },
             _ => None,
         }
     }
@@ -383,19 +386,27 @@ mod tests {
                 pb::EpisodeEvent::default(),
             )),
         });
+        let chat = ClientMsg::Gate(pb::GateClientMessage {
+            msg: Some(pb::gate_client_message::Msg::ChatRequest(pb::ChatRequest {
+                request_id: "ui-1".into(),
+                text: "What do you see?".into(),
+            })),
+        });
 
         assert_eq!(named.connection_scoped_flag(), Some(crate::flags::PARTS));
         assert_eq!(ack.connection_scoped_flag(), Some(crate::flags::ACKS));
+        assert_eq!(chat.connection_scoped_flag(), Some(crate::flags::CHAT));
         assert_eq!(sole.connection_scoped_flag(), None);
         assert_eq!(event.connection_scoped_flag(), None);
 
         assert!(!named.buffer_when_offline(), "cannot cross a connection");
         assert!(!ack.buffer_when_offline(), "cannot cross a connection");
+        assert!(!chat.buffer_when_offline(), "cannot cross a connection");
         assert!(sole.buffer_when_offline(), "history, and core surface");
         assert!(event.buffer_when_offline(), "history, and core surface");
         // Withheld is not shed: none of this is droppable, so nothing here
         // may be discarded by a transport that is merely slow.
-        for msg in [&named, &sole, &ack, &event] {
+        for msg in [&named, &sole, &ack, &chat, &event] {
             assert!(!msg.is_droppable(), "{msg:?}");
         }
     }

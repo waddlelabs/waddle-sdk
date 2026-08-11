@@ -66,6 +66,7 @@ import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from os import PathLike
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from . import _native, descriptors
@@ -86,6 +87,7 @@ from .descriptors import (
     TimeSeries,
     Uplink,
 )
+from ._ui import UIHandle
 
 if TYPE_CHECKING:  # `_core.pyi` types whichever core `_native` selected
     from . import _core
@@ -119,11 +121,13 @@ __all__ = [
     "TeleopReset",
     "TimeSeries",
     "Uplink",
+    "UIHandle",
     "agent",
     "descriptors",
     "init",
     "rollout",
     "shutdown",
+    "ui",
 ]
 
 
@@ -423,6 +427,8 @@ _session: _core.Session | None = None
 # out to its deadline. A declaration fact recorded at `init` time, never
 # plane state: nothing here observes a connection.
 _session_has_plane = False
+_recording_dir: Path | None = None
+_ui_handle: UIHandle | None = None
 _atexit_registered = False
 
 
@@ -517,7 +523,7 @@ def init(
     late verification failure permanently flags the episode's record as
     unverified — core-only today, not yet a Python getter).
     """
-    global _session, _session_has_plane, _atexit_registered
+    global _session, _session_has_plane, _recording_dir, _atexit_registered
     if not isinstance(robot, Robot):
         raise TypeError("robot must be a waddle.Robot")
     if not isinstance(control, Control):
@@ -592,10 +598,67 @@ def init(
         )
         _session = session
         _session_has_plane = transport is not None or _testing
+        _recording_dir = None if recording_dir is None else Path(recording_dir)
         if not _atexit_registered:
             atexit.register(shutdown)
             _atexit_registered = True
     return session
+
+
+def ui(
+    *,
+    joint_step_rad: float = 0.01,
+    linear_step_m: float = 0.005,
+    angular_step_rad: float = 0.02,
+) -> UIHandle:
+    """Start this session's authenticated local browser UI.
+
+    Requires an active :func:`init` session and binds only to an
+    OS-selected port on ``127.0.0.1``. The printed URL carries a per-run
+    256-bit token in its fragment; every data/control request must present
+    it in a custom header. Repeated calls for the same session return the
+    existing handle. There is deliberately no standalone ``waddle ui``
+    command: the controls and cameras belong to the in-process customer
+    session and its registered ``Control`` callbacks.
+
+    The three positive finite increments are local presentation settings
+    for this UI run only. Browser changes update only this handle. Neither
+    this function nor the browser clamps a command: core constructs one
+    declared-space step, and the owner's envelope remains the final
+    whole-command refusal.
+    """
+
+    global _ui_handle
+    # Validate before consulting the existing handle so a malformed call is
+    # never silently accepted. `_ui.UIHandle` applies the same checks again
+    # when it owns the configuration.
+    from ._ui import _positive
+
+    increments = {
+        "joint_step_rad": _positive("joint_step_rad", joint_step_rad),
+        "linear_step_m": _positive("linear_step_m", linear_step_m),
+        "angular_step_rad": _positive("angular_step_rad", angular_step_rad),
+    }
+    with _lock:
+        if _session is None:
+            raise RuntimeError("waddle.ui() requires an active waddle.init() session")
+        if _ui_handle is not None and not _ui_handle.closed:
+            return _ui_handle
+        handle = UIHandle(
+            _session,
+            _recording_dir,
+            **increments,
+        )
+        _ui_handle = handle
+        status = dict(_session.status())
+    local = "available (state, e-stop, jog, cameras, recordings)"
+    chat = (
+        "available when the invited host is alive"
+        if status.get("plane_connected") and status.get("chat_negotiated")
+        else "unavailable on the current connection; local controls remain available"
+    )
+    print(f"Waddle UI: {handle.url}\nLocal: {local}\nChat: {chat}")
+    return handle
 
 
 def _require_session() -> _core.Session:
@@ -808,9 +871,13 @@ def agent(
 def shutdown() -> None:
     """Join all core threads and flush recorders. Idempotent; also
     registered via ``atexit`` by ``init``."""
-    global _session, _session_has_plane
+    global _session, _session_has_plane, _recording_dir, _ui_handle
     with _lock:
         session, _session = _session, None
+        handle, _ui_handle = _ui_handle, None
         _session_has_plane = False
+        _recording_dir = None
+    if handle is not None:
+        handle.close()
     if session is not None:
         session.shutdown()

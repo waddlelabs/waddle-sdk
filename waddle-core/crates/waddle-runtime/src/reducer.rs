@@ -23,9 +23,12 @@ use waddle_types::{
 };
 
 use crate::ack::Injected;
+use crate::jog::LatestJoints;
 use crate::mirror::Mirror;
 use crate::pumps::{BYPASS_PUMP_SOURCE, DispatchedAction};
-use crate::session::{ObsSlot, ProprioReport, RecordSlot, ResetSpec, TaskSlot};
+use crate::session::{
+    ObsSlot, ProprioReport, RecordSlot, ResetSpec, StampedProprioReport, TaskSlot,
+};
 use crate::verbs::VerbDispatch;
 
 /// The `StreamObservations` uplink cadence: no dedicated
@@ -132,7 +135,10 @@ pub(crate) struct Reducer {
     obs_slot: ObsSlot,
     /// `Session::report_proprio`'s side channel — drained every
     /// wake, same discipline as `record_slot`/`records_rx`.
-    proprio_rx: Receiver<ProprioReport>,
+    proprio_rx: Receiver<StampedProprioReport>,
+    /// Timestamp-ordered joint-position projection shared with the local
+    /// jog controller. This is observation state only, never FSM state.
+    latest_joints: Arc<LatestJoints>,
     /// The bypass pump's dispatch side channel: what it drove straight to
     /// `send` without passing through the caller's gate, drained every wake
     /// onto the episode recording (`write_dispatched`).
@@ -179,7 +185,8 @@ impl Reducer {
         task: TaskSlot,
         post_reset: Option<ResetSpec>,
         obs_slot: ObsSlot,
-        proprio_rx: Receiver<ProprioReport>,
+        proprio_rx: Receiver<StampedProprioReport>,
+        latest_joints: Arc<LatestJoints>,
         dispatch_rx: Receiver<DispatchedAction>,
     ) -> Self {
         // The manifest writer is opened by `SessionBuilder::build`, which is
@@ -204,6 +211,7 @@ impl Reducer {
             records_rx: None,
             obs_slot,
             proprio_rx,
+            latest_joints,
             dispatch_rx,
             latest: BTreeMap::new(),
             claim_window: None,
@@ -564,6 +572,8 @@ impl Reducer {
                 // (the observation layout is not the action layout; slicing
                 // one by the other would invent a mapping nobody declared).
                 let joint_pos = obs.to_vec();
+                self.latest_joints
+                    .publish(SOLE_PART, rec.stamp.mono_ns(), &joint_pos);
                 self.part_mut(SOLE_PART).joint_pos = joint_pos;
             }
             self.write_record(&rec);
@@ -593,7 +603,8 @@ impl Reducer {
     /// so it must be written before the MCAP closes rather than surfacing on
     /// a later wake with nowhere to go.
     fn drain_proprio_reports(&mut self) {
-        while let Ok(report) = self.proprio_rx.try_recv() {
+        while let Ok(stamped) = self.proprio_rx.try_recv() {
+            let report = stamped.report;
             // Patched into THIS report's part and no other: the report named
             // what it describes, and one arm's state is not an update to
             // the other's (nor to the robot as declared).
@@ -612,7 +623,7 @@ impl Reducer {
             // recording is not connection-scoped: every part is recorded
             // whatever the plane negotiated (see `maybe_uplink_observation`,
             // where the flag DOES bind).
-            let stamp = self.clock.stamp_now();
+            let stamp = stamped.stamp;
             let sample = self.proprio_sample_for(&report.part);
             if let Some(mcap) = &mut self.mcap {
                 let _ = mcap.write_observation(&pb::ObservationUpdate {
@@ -921,6 +932,7 @@ impl Reducer {
             s.episode_state = episode_state;
             s.gate_mode = gate_mode;
             s.claim_active = claim_active;
+            s.active_claim_id = claim_id.cloned();
             s.claim_generation = claim_generation;
             s.provenance = provenance;
             s.outcome = outcome;
@@ -997,7 +1009,7 @@ mod tests {
 
         let mut reducer = Reducer::new(
             SessionConfig::minimal("loop", HandoffPolicy::HoldFirst, LeaseEnforcement::Advisory),
-            clock,
+            clock.clone(),
             gate_shared,
             verbs,
             Mirror::new(),
@@ -1015,6 +1027,7 @@ mod tests {
             None,
             Arc::new(waddle_ingest::LatestSlot::new()),
             proprio_rx,
+            LatestJoints::new(),
             dispatch_rx,
         );
 
@@ -1022,10 +1035,13 @@ mod tests {
         reducer.open_episode_records(&id, false, None, false);
         // Queued, never drained by a wake: this IS the tail.
         proprio_tx
-            .send(ProprioReport {
-                joint_vel: Some(vec![7.0, 8.0, 9.0]),
-                gripper: Some(0.25),
-                ..Default::default()
+            .send(StampedProprioReport {
+                report: ProprioReport {
+                    joint_vel: Some(vec![7.0, 8.0, 9.0]),
+                    gripper: Some(0.25),
+                    ..Default::default()
+                },
+                stamp: clock.stamp_now(),
             })
             .unwrap();
         reducer.finalize_episode_if_terminal(true);

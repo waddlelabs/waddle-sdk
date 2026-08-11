@@ -9,10 +9,11 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 use std::thread::JoinHandle;
 
-use waddle_controlplane::{ClientConfig, ControlPlaneClient, ControlTransport};
+use waddle_controlplane::{ClientConfig, ClientMsg, ControlPlaneClient, ControlTransport};
 use waddle_fsm::{AgentInvite, Phase, SessionConfig, SessionEvent, WindowSpec};
 use waddle_gate::gate::{Gate, GateOutput, GateShared};
 use waddle_gate::jitter::TimedAction;
@@ -27,12 +28,16 @@ use waddle_tripwire::{
 use waddle_types::pb::v0 as pb;
 use waddle_types::time::Clock;
 use waddle_types::{
-    ActorKind, CellId, EpisodeId, HandoffPolicy, LeaseEnforcement, MonoNs, ResetVerificationMode,
-    RobotDescription, RobotId, SessionId, TerminalOutcome,
+    ActorKind, CellId, EpisodeId, HandoffPolicy, InterventionPhase, LeaseEnforcement, MonoNs,
+    ResetVerificationMode, RobotDescription, RobotId, SessionId, TerminalOutcome, VerbRequest,
 };
 
 use crate::RuntimeError;
 use crate::ack::{ACKS_FLAG, Injected};
+use crate::chat::{CHAT_REQUEST_ID_MAX_BYTES, CHAT_REQUEST_TEXT_MAX_BYTES, ChatInbox};
+use crate::jog::{
+    JogDeadman, JogRefusal, JogRequest, LOCAL_JOG_SOURCE, LatestJoints, build_action,
+};
 use crate::media_uplink::{self, CameraUplink, FrameData};
 use crate::mirror::Mirror;
 use crate::pumps;
@@ -334,6 +339,13 @@ pub struct ProprioReport {
     pub joint_vel: Option<Vec<f64>>,
     pub ee_pose: Option<EePose>,
     pub gripper: Option<f64>,
+}
+
+/// Internal envelope retaining the exact paired session stamp captured when
+/// [`Session::report_proprio`] accepted the observation.
+pub(crate) struct StampedProprioReport {
+    pub(crate) report: ProprioReport,
+    pub(crate) stamp: waddle_types::Stamp,
 }
 
 pub struct SessionBuilder {
@@ -667,6 +679,8 @@ impl SessionBuilder {
         // [`push_intervention_chunk`] — see [`pumps::ChunkIntakeState`] for
         // why the seq counter cannot be per-producer.
         let chunk_intake: pumps::SharedChunkIntake = Arc::default();
+        let chat = ChatInbox::new();
+        let latest_joints = LatestJoints::new();
 
         let (outcome_tx, outcome_rx) = std::sync::mpsc::channel::<VerbOutcome>();
         let verbs = Arc::new(VerbDispatch::spawn(self.control, clock.clone(), outcome_tx));
@@ -695,6 +709,7 @@ impl SessionBuilder {
             "waddle.v0.reset".to_owned(),
             ACKS_FLAG.to_owned(),
             AGENT_FLAG.to_owned(),
+            waddle_controlplane::flags::CHAT.to_owned(),
         ];
         if self.post_reset.is_some() {
             feature_flags.push("waddle.v0.reset.phases".to_owned());
@@ -752,7 +767,7 @@ impl SessionBuilder {
         // reducer — deliberately NOT the `Injected`/`SessionEvent` funnel
         // (this carries no FSM guard, so it never touches `step()`; see
         // `Reducer::drain_proprio_reports`).
-        let (proprio_tx, proprio_rx) = std::sync::mpsc::channel::<ProprioReport>();
+        let (proprio_tx, proprio_rx) = std::sync::mpsc::channel::<StampedProprioReport>();
         // The bypass pump's dispatch side channel: an action it drove
         // straight to `send` is recorded by the reducer, which owns the
         // episode's MCAP writer (the pump owns no episode state at all).
@@ -783,6 +798,7 @@ impl SessionBuilder {
             self.post_reset.clone(),
             obs_slot.clone(),
             proprio_rx,
+            latest_joints.clone(),
             dispatch_rx,
         );
         let reducer_tx = inject_tx.clone();
@@ -791,7 +807,15 @@ impl SessionBuilder {
             .spawn(move || reducer.run(&inject_rx, &reducer_tx))
             .expect("spawn reducer");
 
-        let mut threads = vec![reducer_thread];
+        let release_inject = inject_tx.clone();
+        let release_mirror = mirror.clone();
+        let release_clock = clock.clone();
+        let release_local_jog: Arc<dyn Fn(String) + Send + Sync> = Arc::new(move |claim_id| {
+            inject_local_jog_release(&release_inject, &release_mirror, &release_clock, &claim_id);
+        });
+        let (jog_deadman, jog_thread) = JogDeadman::spawn(clock.clone(), release_local_jog);
+
+        let mut threads = vec![reducer_thread, jog_thread];
         let tripwire_shutdown = ShutdownToken::new();
 
         // Verb outcomes → FSM events.
@@ -867,6 +891,7 @@ impl SessionBuilder {
                 stream_tx.clone(),
                 action_space.clone(),
                 chunk_intake.clone(),
+                chat.clone(),
             ));
         }
 
@@ -926,10 +951,15 @@ impl SessionBuilder {
                 mirror,
                 inject_tx,
                 proprio_tx,
+                latest_joints,
                 part_names,
                 stream_tx,
                 action_space,
                 chunk_intake,
+                chat,
+                local_jog_claim_id: format!("ui-jog-{}", uuid::Uuid::new_v4().simple()),
+                local_jog_seq: AtomicU64::new(0),
+                jog_deadman,
                 record_slot,
                 task_slot,
                 pre_reset: self.pre_reset,
@@ -1038,7 +1068,10 @@ struct SessionInner {
     mirror: Arc<Mirror>,
     inject_tx: Sender<Injected>,
     /// See [`Session::report_proprio`].
-    proprio_tx: Sender<ProprioReport>,
+    proprio_tx: Sender<StampedProprioReport>,
+    /// Freshest timestamped joint positions for core-owned absolute jog
+    /// target derivation.
+    latest_joints: Arc<LatestJoints>,
     /// The declared parts, in declaration order (see `declared_part_names`).
     /// [`Session::report_proprio`] validates against this — the ONE place a
     /// caller-supplied part name is checked before it becomes a recorded
@@ -1054,6 +1087,12 @@ struct SessionInner {
     /// with the plane pump: both stamp the same `StreamChannel::AgentChunk`,
     /// which has one reorder cursor (see [`pumps::ChunkIntakeState`]).
     chunk_intake: pumps::SharedChunkIntake,
+    /// One outstanding, connection-scoped UI chat request and its bounded
+    /// public event tail. Chat carries no authority state.
+    chat: Arc<ChatInbox>,
+    local_jog_claim_id: String,
+    local_jog_seq: AtomicU64,
+    jog_deadman: Arc<JogDeadman>,
     record_slot: RecordSlot,
     task_slot: TaskSlot,
     pre_reset: Option<ResetSpec>,
@@ -1467,6 +1506,234 @@ impl Session {
         self.inner.mirror.read()
     }
 
+    /// Request the registered priority e-stop path locally. This queues no
+    /// control-plane RPC and reports only that the request was made; the
+    /// callback's eventual result is a separate verb outcome.
+    pub fn request_estop(&self) -> Result<(), RuntimeError> {
+        if self.inner.mirror.read().shutdown {
+            return Err(RuntimeError::ShuttingDown);
+        }
+        self.inner._verbs.request(VerbRequest::Estop);
+        Ok(())
+    }
+
+    /// Perform one core-owned local site-operator jog step. The FSM alone
+    /// engages the claim; this method waits for its authoritative mirror
+    /// projection before admitting the one-step chunk.
+    pub fn jog(&self, request: JogRequest) -> Result<(), JogRefusal> {
+        let mut action = build_action(
+            &request,
+            &self.inner.action_space,
+            &self.inner.latest_joints,
+        )?;
+        action.t_offset_ns = 0;
+        let claim_id = &self.inner.local_jog_claim_id;
+        let mut status = self.inner.mirror.read();
+        if status.shutdown {
+            return Err(JogRefusal::ShuttingDown);
+        }
+        if status.agent_invited {
+            return Err(JogRefusal::AgentInvitedEpisode);
+        }
+        if status.claim_active
+            && status
+                .active_claim_id
+                .as_ref()
+                .is_none_or(|active| active.as_str() != claim_id)
+        {
+            return Err(JogRefusal::ConflictingClaim);
+        }
+        if !status.claim_active {
+            if !matches!(status.episode_state, Some(Phase::Running)) {
+                return Err(JogRefusal::NoRunningEpisode);
+            }
+            let claim = waddle_types::ClaimId::new(claim_id);
+            self.inject(SessionEvent::ClaimGranted {
+                id: claim.clone(),
+                source: LOCAL_JOG_SOURCE.to_owned(),
+                actor: waddle_types::ActorRef::of_kind(ActorKind::SiteOperator),
+                self_initiated: true,
+                at: self.inner.clock.stamp_now().mono_ns(),
+            });
+            self.inject(SessionEvent::Engage {
+                claim,
+                at: self.inner.clock.stamp_now().mono_ns(),
+            });
+        }
+        status = self.inner.mirror.wait_until_for(
+            &self.inner.clock,
+            std::time::Duration::from_secs(2),
+            |status| {
+                status.shutdown
+                    || (status.claim_active
+                        && status
+                            .active_claim_id
+                            .as_ref()
+                            .is_some_and(|active| active.as_str() != claim_id))
+                    || (status
+                        .active_claim_id
+                        .as_ref()
+                        .is_some_and(|active| active.as_str() == claim_id)
+                        && matches!(
+                            status.episode_state,
+                            Some(Phase::Intervention(InterventionPhase::Settle))
+                        ))
+            },
+        );
+        if status.shutdown {
+            return Err(JogRefusal::ShuttingDown);
+        }
+        if status
+            .active_claim_id
+            .as_ref()
+            .is_some_and(|active| active.as_str() != claim_id)
+        {
+            return Err(JogRefusal::ConflictingClaim);
+        }
+        if status
+            .active_claim_id
+            .as_ref()
+            .is_none_or(|active| active.as_str() != claim_id)
+            || !matches!(
+                status.episode_state,
+                Some(Phase::Intervention(InterventionPhase::Settle))
+            )
+        {
+            inject_local_jog_release(
+                &self.inner.inject_tx,
+                &self.inner.mirror,
+                &self.inner.clock,
+                claim_id,
+            );
+            return Err(JogRefusal::EngageRefused);
+        }
+
+        let stamp = self.inner.clock.stamp_now();
+        self.inner.jog_deadman.arm(claim_id, stamp.mono_ns());
+        let seq = self.inner.local_jog_seq.fetch_add(1, Ordering::Relaxed) + 1;
+        push_intervention_chunk(
+            self,
+            pb::ActionChunk {
+                actions: vec![action],
+                horizon_ns: 0,
+                t_emitted_ns: stamp.mono_ns().0,
+                t_obs_ns: stamp.mono_ns().0,
+                seq,
+                source_id: LOCAL_JOG_SOURCE.to_owned(),
+                provenance: Some(pb::ProvenanceTag {
+                    kind: pb::ProvenanceKind::Custom as i32,
+                    custom_name: LOCAL_JOG_SOURCE.to_owned(),
+                    actor: Some(pb::ActorRef {
+                        kind: pb::ActorKind::SiteOperator as i32,
+                        ..Default::default()
+                    }),
+                    bypass_approval: true,
+                }),
+            },
+        );
+        Ok(())
+    }
+
+    /// Extend the local jog claim's one-second deadman deadline.
+    pub fn jog_heartbeat(&self) -> Result<(), JogRefusal> {
+        if self.inner.mirror.read().shutdown {
+            return Err(JogRefusal::ShuttingDown);
+        }
+        self.inner
+            .jog_deadman
+            .heartbeat(self.inner.clock.stamp_now().mono_ns())
+    }
+
+    /// Explicitly release the local jog claim and wait briefly for the FSM's
+    /// authoritative release projection. Safe and idempotent.
+    pub fn release_jog(&self) {
+        let claim = self
+            .inner
+            .jog_deadman
+            .disarm()
+            .unwrap_or_else(|| self.inner.local_jog_claim_id.clone());
+        inject_local_jog_release(
+            &self.inner.inject_tx,
+            &self.inner.mirror,
+            &self.inner.clock,
+            &claim,
+        );
+        let _ = self.inner.mirror.wait_until_for(
+            &self.inner.clock,
+            std::time::Duration::from_secs(2),
+            |status| {
+                status.shutdown
+                    || status
+                        .active_claim_id
+                        .as_ref()
+                        .is_none_or(|active| active.as_str() != claim)
+            },
+        );
+    }
+
+    /// Submit one bounded UI chat turn to the active invited host. The
+    /// request is connection-scoped and therefore cannot enter the offline
+    /// replay buffer. This method makes no claim/lease/timeline decision.
+    pub fn submit_chat(&self, request_id: &str, text: &str) -> Result<(), RuntimeError> {
+        if request_id.is_empty() || request_id.len() > CHAT_REQUEST_ID_MAX_BYTES {
+            return Err(RuntimeError::InvalidChat(format!(
+                "request_id must be 1..={CHAT_REQUEST_ID_MAX_BYTES} UTF-8 bytes"
+            )));
+        }
+        if text.trim().is_empty() || text.len() > CHAT_REQUEST_TEXT_MAX_BYTES {
+            return Err(RuntimeError::InvalidChat(format!(
+                "text must be non-empty and at most {CHAT_REQUEST_TEXT_MAX_BYTES} UTF-8 bytes"
+            )));
+        }
+        let status = self.inner.mirror.read();
+        if status.shutdown {
+            return Err(RuntimeError::ShuttingDown);
+        }
+        if !status.plane_connected {
+            return Err(RuntimeError::ChatUnavailable(
+                "the control plane is disconnected; local controls remain available".into(),
+            ));
+        }
+        if !status.chat_negotiated {
+            return Err(RuntimeError::ChatUnavailable(
+                "this connection did not negotiate chat; local controls remain available".into(),
+            ));
+        }
+        let Some(plane) = &self.inner._plane else {
+            return Err(RuntimeError::ChatUnavailable(
+                "this session has no control-plane transport; local controls remain available"
+                    .into(),
+            ));
+        };
+        self.inner
+            .chat
+            .begin(request_id)
+            .map_err(|detail| RuntimeError::ChatUnavailable(detail.into()))?;
+        plane.send(ClientMsg::Gate(pb::GateClientMessage {
+            msg: Some(pb::gate_client_message::Msg::ChatRequest(pb::ChatRequest {
+                request_id: request_id.to_owned(),
+                text: text.to_owned(),
+            })),
+        }));
+        Ok(())
+    }
+
+    /// Long-poll the bounded event tail for one chat request.
+    #[must_use]
+    pub fn chat_events(
+        &self,
+        request_id: &str,
+        after_sequence: u64,
+        timeout: std::time::Duration,
+    ) -> Vec<pb::ChatEvent> {
+        self.inner.chat.wait(
+            &self.inner.clock,
+            request_id,
+            after_sequence,
+            timeout.min(std::time::Duration::from_secs(30)),
+        )
+    }
+
     /// Publish one raw RGB8 video frame for a declared camera.
     /// Cheap on the caller's thread — validates `camera` against the
     /// robot's declared `cameras` and `frame`'s dimensions against that
@@ -1507,11 +1774,6 @@ impl Session {
         let Some(&(width, height)) = self.inner.declared_cameras.get(camera) else {
             return Err(RuntimeError::UnknownCamera(camera.to_owned()));
         };
-        let Some(uplink) = self.inner.camera_uplinks.get(camera) else {
-            // Declared, but neither leg has anywhere to go (no media plane
-            // wired, no declared stills with a transport to carry them).
-            return Ok(());
-        };
         let expected_len = (width as usize) * (height as usize) * 3;
         if frame.width() != width || frame.height() != height || frame.byte_len() != expected_len {
             return Err(RuntimeError::Media(waddle_media::MediaError::BadFrame {
@@ -1520,6 +1782,11 @@ impl Session {
                 layout: "RGB8 at the camera's declared resolution",
             }));
         }
+        let Some(uplink) = self.inner.camera_uplinks.get(camera) else {
+            // Declared and validated, but neither leg has somewhere to go
+            // (no media plane wired, no declared stills with a transport).
+            return Ok(());
+        };
         let now_ns = self.inner.clock.stamp_now().mono_ns().0;
         media_uplink::admit_and_enqueue(uplink, now_ns, frame);
         Ok(())
@@ -1557,7 +1824,16 @@ impl Session {
                 report.part,
             )));
         }
-        let _ = self.inner.proprio_tx.send(report);
+        let stamp = self.inner.clock.stamp_now();
+        if let Some(joint_pos) = &report.joint_pos {
+            self.inner
+                .latest_joints
+                .publish(&report.part, stamp.mono_ns(), joint_pos);
+        }
+        let _ = self
+            .inner
+            .proprio_tx
+            .send(StampedProprioReport { report, stamp });
         Ok(())
     }
 
@@ -1582,6 +1858,11 @@ impl Session {
     /// dispatch drops the outcome sender so the outcome pump's blocking recv
     /// ends), then join.
     pub fn shutdown(self) {
+        self.release_jog();
+        self.inner.jog_deadman.close();
+        self.inner
+            .chat
+            .unavailable("the SDK is shutting down; local controls are closing");
         self.inner.mirror.update(|s| s.shutdown = true);
         self.inner.tripwire_shutdown.shutdown();
         self.inner._verbs.stop();
@@ -1590,6 +1871,37 @@ impl Session {
             let _ = t.join();
         }
     }
+}
+
+/// Choose the existing release event appropriate to the local claim's
+/// authoritative phase. A fully engaged intervention follows E8; a claim
+/// that is still engaging (or whose engage was refused) is withdrawn with
+/// the existing pre-intervention `ClaimReleased` event.
+fn inject_local_jog_release(
+    inject: &Sender<Injected>,
+    mirror: &Mirror,
+    clock: &SessionClock,
+    claim_id: &str,
+) {
+    let status = mirror.read();
+    if status
+        .active_claim_id
+        .as_ref()
+        .is_none_or(|active| active.as_str() != claim_id)
+    {
+        return;
+    }
+    let claim = waddle_types::ClaimId::new(claim_id);
+    let at = clock.stamp_now().mono_ns();
+    let event = if matches!(
+        status.episode_state,
+        Some(Phase::Intervention(InterventionPhase::Settle))
+    ) {
+        SessionEvent::Release { claim, at }
+    } else {
+        SessionEvent::ClaimReleased { id: claim, at }
+    };
+    let _ = inject.send(event.into());
 }
 
 /// One rollout attempt. Owned by the caller's loop thread; `gate()` is the

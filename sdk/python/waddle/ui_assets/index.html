@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Waddle local session</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <aside class="warning" role="alert">This loopback service exposes lab imagery and real motion controls. Keep this tab and its token private; remain within reach of the hardware e-stop.</aside>
+  <header><h1>Waddle local session</h1><div id="connection">Connecting…</div></header>
+  <main>
+    <section><h2>Authoritative state</h2><pre id="state"></pre><button id="estop" class="danger">Request e-stop</button><p id="motion-status"></p></section>
+    <section><h2>Jog increments</h2><div class="increments"><label>Joint rad <input id="joint-step" type="number" min="0" step="any"></label><label>Linear m <input id="linear-step" type="number" min="0" step="any"></label><label>Angular rad <input id="angular-step" type="number" min="0" step="any"></label><button id="save-increments">Apply for this UI run</button></div><div id="jog"></div></section>
+    <section><h2>Cameras</h2><div id="cameras" class="cameras"></div></section>
+    <section><h2>Invited-host chat</h2><p id="chat-status">Chat status follows the current control-plane connection. Local controls remain available if chat is unavailable.</p><form id="chat-form"><textarea id="chat-text" maxlength="4096" required></textarea><button>Send</button></form><div id="chat-log" class="chat-log"></div></section>
+    <section><h2>Recordings</h2><button id="refresh-recordings">Refresh</button><div id="recordings"></div></section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

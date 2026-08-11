@@ -12,6 +12,24 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 ## [Unreleased]
 
 ### Added
+- **`waddle.ui()` and remote invited-host chat**: an active SDK session can now
+  open one dependency-free browser application on an OS-selected
+  `127.0.0.1` port and receives a `UIHandle` with `url`, `close()` and context
+  management. A per-run 256-bit fragment token, exact Host/Origin checks,
+  custom JSON headers, no CORS, bounded bodies, no-store/CSP/referrer policy
+  and automatic pre-core shutdown protect the loopback surface. Native core
+  remains authoritative for rendered status, the priority local e-stop request,
+  and site-operator jog/deadman claims (250 ms browser heartbeat, one-second
+  expiry, injected-clock coverage); accepted jogs are ordinary one-step chunks
+  through `Control.send`, leaving the owner's whole-command envelope final.
+  The shim retains only latest proprio and one raw RGB frame per declared
+  camera, while recording browsing resolves manifest-named sidecar/MCAP files
+  beneath `recording_dir`. The additive `waddle.v0.agent.chat` flag adds bounded
+  correlated ChatRequest/ChatEvent arms to `GateActions`; requests are
+  connection-scoped, never buffered offline, and a bounded event ring exposes
+  only accepted/text/done/unavailable/error lifecycle to the page. Local state,
+  e-stop, jog, cameras and recordings are independent of chat availability.
+  There is deliberately no `waddle ui` command.
 - **generic episode task context and paired session stamps**: `waddle.rollout()`
   and `waddle.agent()` accept bounded string `task_metadata`, persisted in every
   sidecar and forwarded unchanged on `AgentInviteEvent.task_metadata` (append-only

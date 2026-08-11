@@ -262,7 +262,8 @@ pub(crate) fn runtime_err(e: RuntimeError) -> PyErr {
     match e {
         RuntimeError::MissingRobot
         | RuntimeError::Types(_)
-        | RuntimeError::InvalidTaskMetadata(_) => PyValueError::new_err(e.to_string()),
+        | RuntimeError::InvalidTaskMetadata(_)
+        | RuntimeError::InvalidChat(_) => PyValueError::new_err(e.to_string()),
         _ => PyRuntimeError::new_err(e.to_string()),
     }
 }

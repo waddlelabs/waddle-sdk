@@ -6,6 +6,7 @@
 use std::sync::Arc;
 
 use parking_lot::{Condvar, Mutex};
+use waddle_ingest::SessionClock;
 use waddle_types::pb::v0 as pb;
 use waddle_types::{EpisodeId, GateMode, ProvenanceTag, TerminalOutcome};
 
@@ -103,6 +104,9 @@ pub struct Status {
     pub episode_state: Option<waddle_fsm::Phase>,
     pub gate_mode: Option<GateMode>,
     pub claim_active: bool,
+    /// The active claim's opaque identity, projected directly from the FSM.
+    /// Observability only; callers must never derive authority from it.
+    pub active_claim_id: Option<waddle_types::ClaimId>,
     /// IDENTITY of the current claim window, as a counter: it changes
     /// whenever the active claim changes — one opening, one ending, and a
     /// retake handing the window to a different claimant all count. 0 before
@@ -173,6 +177,10 @@ pub struct Status {
     /// `ClientMsg::connection_scoped_flag`'s, which keeps a named-part
     /// sample out of the offline buffer entirely.
     pub parts_negotiated: bool,
+    /// The CURRENT connection accepted `waddle.v0.agent.chat` at Register.
+    /// Chat is connection-scoped, so this is cleared at every boundary and
+    /// is status only: it never participates in an authority decision.
+    pub chat_negotiated: bool,
     pub shutdown: bool,
     /// Set once, at build time, when the session's `ControlRegistry` has no
     /// `estop` callable. Missing `estop` never fails the build (unlike
@@ -211,6 +219,32 @@ impl Mirror {
         let mut s = self.state.lock();
         while !pred(&s) && !s.shutdown {
             self.changed.wait(&mut s);
+        }
+        s.clone()
+    }
+
+    /// Like [`Self::wait_until`], but returns the latest authoritative
+    /// snapshot when `timeout` elapses. Used by synchronous local adapters
+    /// that must report an FSM refusal without waiting indefinitely.
+    pub fn wait_until_for(
+        &self,
+        clock: &SessionClock,
+        timeout: std::time::Duration,
+        mut pred: impl FnMut(&Status) -> bool,
+    ) -> Status {
+        let timeout_ns = i64::try_from(timeout.as_nanos()).unwrap_or(i64::MAX);
+        let deadline_ns = clock.now().0.saturating_add(timeout_ns);
+        let mut s = self.state.lock();
+        while !pred(&s) && !s.shutdown {
+            let remaining_ns = deadline_ns.saturating_sub(clock.now().0);
+            if remaining_ns == 0 {
+                break;
+            }
+            #[allow(clippy::cast_sign_loss)]
+            let remaining = std::time::Duration::from_nanos(remaining_ns as u64);
+            if self.changed.wait_for(&mut s, remaining).timed_out() {
+                break;
+            }
         }
         s.clone()
     }

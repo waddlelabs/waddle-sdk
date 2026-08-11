@@ -1,0 +1,9 @@
+{
+  "format": "waddle.fixture/v0",
+  "type": "waddle.v0.ChatRequest",
+  "description": "A bounded, correlated UI message for the active invited host; it is connection-scoped under waddle.v0.agent.chat and is never replayed after reconnect.",
+  "message": {
+    "requestId": "ui-01J5Y7QK8R6M4N2P",
+    "text": "Is the gripper aligned with the blue block?"
+  }
+}

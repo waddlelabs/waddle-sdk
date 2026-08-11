@@ -21,6 +21,7 @@ use waddle_types::{
 
 use crate::RuntimeError;
 use crate::ack::{ACKS_FLAG, AckGroup, Injected};
+use crate::chat::ChatInbox;
 use crate::media_uplink::STILLS_FLAG;
 use crate::mirror::{
     AgentTaskKind, AgentTaskStatus, Mirror, ResetProgressPhase, ResetProgressStatus,
@@ -570,6 +571,7 @@ fn flatten_packet(packet: &pb::TeleopStreamPacket) -> Option<OwnedAction> {
 /// pump tracks whether the plane accepted the flag at Register and, when it
 /// did, wraps id-carrying directives' events in a shared [`AckGroup`] the
 /// reducer completes.
+#[allow(clippy::too_many_arguments)] // one owned input for each independent pump lane
 pub(crate) fn spawn_plane_pump(
     plane: Arc<ControlPlaneClient>,
     inject: Sender<Injected>,
@@ -578,6 +580,7 @@ pub(crate) fn spawn_plane_pump(
     stream: StreamProducer,
     action_space: Arc<ActionSpace>,
     chunk_intake: SharedChunkIntake,
+    chat: Arc<ChatInbox>,
 ) -> JoinHandle<()> {
     std::thread::Builder::new()
         .name("waddle-plane-pump".into())
@@ -620,15 +623,20 @@ pub(crate) fn spawn_plane_pump(
                                 // living in this thread's locals.
                                 let parts =
                                     resp.accepted_feature_flags.iter().any(|f| f == PARTS_FLAG);
+                                let chat_on = resp
+                                    .accepted_feature_flags
+                                    .iter()
+                                    .any(|f| f == waddle_controlplane::flags::CHAT);
                                 mirror.update(|s| {
                                     s.stills_negotiated = stills;
                                     s.parts_negotiated = parts;
+                                    s.chat_negotiated = chat_on;
                                 });
                             }
                             // A connection exists but has not registered yet:
                             // it has accepted nothing, and the previous one's
                             // answers are not its to inherit.
-                            _ => forget_negotiated_flags(&mirror, &mut acks_negotiated),
+                            _ => forget_negotiated_flags(&mirror, &chat, &mut acks_negotiated),
                         }
                         if !was_connected {
                             was_connected = true;
@@ -636,7 +644,7 @@ pub(crate) fn spawn_plane_pump(
                         }
                     }
                     PlaneEvent::Disconnected => {
-                        forget_negotiated_flags(&mirror, &mut acks_negotiated);
+                        forget_negotiated_flags(&mirror, &chat, &mut acks_negotiated);
                         if was_connected {
                             was_connected = false;
                             let _ = inject.send(SessionEvent::PartitionStart { at }.into());
@@ -651,6 +659,7 @@ pub(crate) fn spawn_plane_pump(
                         &stream,
                         &action_space,
                         &chunk_intake,
+                        &chat,
                         acks_negotiated,
                     ),
                 }
@@ -670,11 +679,13 @@ pub(crate) fn spawn_plane_pump(
 /// connection would see. (The offline buffer refuses to carry such messages
 /// across a connection at all — `ClientMsg::connection_scoped_flag` — so
 /// this and that guard bracket the same hole from both ends.)
-fn forget_negotiated_flags(mirror: &Mirror, acks_negotiated: &mut bool) {
+fn forget_negotiated_flags(mirror: &Mirror, chat: &ChatInbox, acks_negotiated: &mut bool) {
     *acks_negotiated = false;
+    chat.unavailable("chat connection lost; local controls remain available");
     mirror.update(|s| {
         s.stills_negotiated = false;
         s.parts_negotiated = false;
+        s.chat_negotiated = false;
     });
 }
 
@@ -957,6 +968,7 @@ fn forward_server_msg(
     stream: &StreamProducer,
     space: &ActionSpace,
     intake: &SharedChunkIntake,
+    chat: &ChatInbox,
     acks_negotiated: bool,
 ) {
     match msg {
@@ -1170,6 +1182,7 @@ fn forward_server_msg(
                     });
                 }
             }
+            Some(pb::gate_server_message::Msg::ChatEvent(event)) => chat.push(event),
             _ => {}
         },
         ServerMsg::HeartbeatAck(ack) => {

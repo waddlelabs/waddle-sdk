@@ -1,0 +1,11 @@
+{
+  "format": "waddle.fixture/v0",
+  "type": "waddle.v0.ChatEvent",
+  "description": "One ordered, public-safe main-conversation assistant text event correlated to a UI chat request.",
+  "message": {
+    "requestId": "ui-01J5Y7QK8R6M4N2P",
+    "sequence": "2",
+    "kind": "CHAT_EVENT_KIND_TEXT",
+    "text": "The gripper is slightly left of the blue block."
+  }
+}

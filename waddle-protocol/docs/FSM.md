@@ -255,6 +255,25 @@ remains the source's to report. A clutch that is not admissible for any other
 reason (a claim is already active, the episode is not RUNNING) stays silent
 as before. Fixture: `agent_invite_clutch_denied`.
 
+**Local site-operator jog is an adapter over this machine, not another
+authority path.** An in-process owner UI grants one self-initiated
+`ACTOR_KIND_SITE_OPERATOR` claim with source `local-ui-jog`, then uses the
+ordinary engage, intervention-chunk intake, lease, and release transitions.
+The adapter derives a joint-position jog's single absolute target from the
+freshest local proprioception, or carries one declared-frame EE pose delta;
+an unsupported/opaque space or missing observation is refused before a claim
+is engaged. Every accepted jog is a one-step chunk dispatched through the
+customer's declared `send` verb, so the owner's envelope still accepts or
+refuses the whole command and no value is clamped.
+
+The adapter owns a deadman deadline. A held browser control refreshes it every
+250 ms; one second without a heartbeat injects the ordinary `release`, as do
+explicit release, UI-server close, and session shutdown. Only core owns the
+deadline and claim transitions: a frontend may request or heartbeat a jog but
+MUST NOT infer claim, lease, handoff, or release state. The deterministic
+transition is pinned by `local_site_jog_deadman_release`; runtime clock tests
+pin the one-second deadline without a wall-clock race.
+
 ---
 
 ## 3. Lease machine

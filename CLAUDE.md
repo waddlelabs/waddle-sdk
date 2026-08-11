@@ -67,7 +67,13 @@ waddle-sdk/
     pyproject.toml           # maturin backend; module waddle._core; uv-managed
     rust/                    # the shim: its OWN cargo workspace (see build notes)
     python/waddle/           # pure-Python surface: init/rollout/Control/agent +
-                             #   generic task_metadata and paired Session.stamp;
+                             #   generic task_metadata, paired Session.stamp,
+                             #   and waddle.ui(): one authenticated 127.0.0.1
+                             #   server per active session. _ui.py owns HTTP
+                             #   security/presentation/path resolution only;
+                             #   ui_assets/ is dependency-free HTML/CSS/JS;
+                             #   e-stop, jog/deadman, status and chat state are
+                             #   native. No standalone `waddle ui` command.
                              #   descriptors; _native.py picks the compiled core
       robots/                # opt-in robot modules (NOT imported by `import
                              #   waddle`): base.py is the vendor-neutral half
@@ -150,7 +156,8 @@ waddle-sdk/
                              #   base.RobotPump: one loop, not a second copy
     tests/                   # pytest: descriptors + e2e (incl. MCAP read-back),
                              #   the robots suites (base layer, YAM facts, YAM
-                             #   factories, rig session) and both examples run
+                             #   factories, rig session), UI loopback/security/
+                             #   manifest tests, and both examples run
                              #   as the subprocess programs they are
 ```
 
