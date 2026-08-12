@@ -75,6 +75,27 @@ with rig.session("towels", transport=waddle.Grpc(url, token)) as session:
     result = waddle.agent("stack the cups")
 ```
 
+Long-lived processes can give the same lifecycle to the module-level API.
+`waddle.init(rig=rig)` is mutually exclusive with the legacy
+`waddle.init(project, robot, control)` form and makes `waddle.shutdown()`
+close every opened arm, camera, capture/reporting pump, core thread, and
+recording:
+
+```python
+session = waddle.init("towels", rig=rig, transport=waddle.Grpc(url, token))
+try:
+    dashboard = waddle.ui()
+    result = waddle.agent("stack the cups")
+finally:
+    waddle.shutdown()
+```
+
+RGB-D camera drivers are structural and optional. Install
+`waddle-sdk[orbbec]`, `waddle-sdk[realsense]`, or the aggregate
+`waddle-sdk[cameras]`; each composes with `[teleop]`. Captures receive one
+paired session/Unix stamp, RGB follows the existing recording/media path, and
+aligned depth remains local so calibration sends only a bounded 3-D point.
+
 `waddle.ui()` has no standalone command: it runs inside the initialized SDK
 process so state, e-stop, jog/deadman, camera frames and local recordings never
 leave the customer machine. Only its optional chat crosses the existing
@@ -82,6 +103,15 @@ control stream to the active invited host; when chat is unavailable, every
 local endpoint remains usable. The printed fragment-bearing URL is a per-run
 bearer secret. Lifecycle, loopback security and motion semantics are detailed
 in [`sdk/README.md`](sdk/README.md#in-process-browser-ui-waddleui).
+
+The same page exposes named durable hosted-task conversations, live output,
+interjection/interrupt, local RGB-D calibration, reviewed workspace delivery,
+and a generic Hosted/Local execution selector. Local motion first asks
+waddle-core to finish any remote claim's E8 release and lease handback; only
+then does an ordinary site-operator jog traverse core intake and the customer's
+`Control.send`. Local execution packages are loaded only through the
+versioned `waddle.execution.v1` entry-point contract after the user selects
+one—the public SDK has no private-runtime import.
 
 `WORKSPACE_M` and the gripper's `[closed, open]` motor radians are SITE facts
 and have no defaults — measure them at your own bench. What a YAM *is* (joint

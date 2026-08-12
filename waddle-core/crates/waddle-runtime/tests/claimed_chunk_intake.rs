@@ -22,7 +22,10 @@ use parking_lot::Mutex;
 use waddle_controlplane::{ClientMsg, InMemoryTransport, ServerMsg};
 use waddle_fsm::Phase;
 use waddle_gate::gate::GateOutput;
-use waddle_runtime::{ControlRegistry, Session, VerbError, grant_and_engage, release_claim};
+use waddle_runtime::{
+    ControlRegistry, JogAxis, JogRefusal, JogRequest, ProprioReport, Session, VerbError,
+    grant_and_engage, release_claim,
+};
 use waddle_types::pb::v0 as pb;
 use waddle_types::{ActorKind, GateMode, Provenance, TerminalOutcome};
 
@@ -807,4 +810,72 @@ fn claimed_mode_inert_step_is_skipped_and_the_chunk_survives() {
         "the fault must say what was skipped: {:?}",
         faults[0].detail
     );
+}
+
+/// A site command never races a remote writer. The ordinary jog call first
+/// refuses the active remote claim; the explicit core handoff releases E8
+/// and waits for lease handback; only then can the same normal jog intake
+/// engage its local claim and reach the owner's registered send callback.
+#[test]
+fn remote_to_local_handoff_is_exclusive_and_local_uses_normal_intake() {
+    let send_log: SendLog = Arc::new(Mutex::new(Vec::new()));
+    let session = Session::builder("exclusive-handoff")
+        .robot(joint_robot())
+        .control(registry(&send_log))
+        .build()
+        .unwrap();
+    let mut ep = session.start_episode("exclusive handoff").unwrap();
+    let _ = ep.gate(&[0.0; 3], None, None);
+    wait_for(&session, |s| {
+        matches!(s.episode_state, Some(Phase::Running))
+    });
+    session
+        .report_proprio(ProprioReport {
+            joint_pos: Some(vec![0.0; 3]),
+            ..Default::default()
+        })
+        .unwrap();
+
+    grant_and_engage(
+        &session,
+        "remote-claim",
+        "remote-teleoperator",
+        ActorKind::Teleoperator,
+    );
+    wait_for(&session, |s| {
+        s.gate_mode == Some(GateMode::Intervention)
+            && s.active_claim_id
+                .as_ref()
+                .is_some_and(|id| id.as_str() == "remote-claim")
+    });
+    let jog = JogRequest {
+        part: None,
+        axis: JogAxis::Joint(0),
+        direction: 1,
+        step: 0.05,
+    };
+    assert_eq!(session.jog(jog.clone()), Err(JogRefusal::ConflictingClaim));
+    assert!(
+        send_log.lock().is_empty(),
+        "refused local command cannot send"
+    );
+
+    session.handoff_remote_to_local().unwrap();
+    assert!(!session.status().claim_active);
+    assert!(matches!(
+        session.status().episode_state,
+        Some(Phase::Running)
+    ));
+    session.jog(jog).unwrap();
+    wait_for(&session, |s| {
+        s.claim_active
+            && s.active_claim_id
+                .as_ref()
+                .is_some_and(|id| id.as_str() != "remote-claim")
+    });
+    wait_for(&session, |_| !send_log.lock().is_empty());
+
+    session.release_jog();
+    ep.terminate(TerminalOutcome::Abort, "test complete");
+    session.shutdown();
 }

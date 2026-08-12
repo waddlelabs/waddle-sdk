@@ -13,6 +13,7 @@ mod chat;
 mod jog;
 mod media_uplink;
 pub mod mirror;
+mod plane_events;
 pub mod pumps;
 pub mod reducer;
 pub mod session;
@@ -49,6 +50,10 @@ pub enum RuntimeError {
     InvalidChat(String),
     #[error("chat unavailable: {0}")]
     ChatUnavailable(String),
+    #[error("invalid optional plane request: {0}")]
+    InvalidPlaneRequest(String),
+    #[error("optional plane service unavailable: {0}")]
+    PlaneServiceUnavailable(String),
     #[error("media plane: {0}")]
     Media(#[from] waddle_media::MediaError),
     #[error("the session is shutting down")]

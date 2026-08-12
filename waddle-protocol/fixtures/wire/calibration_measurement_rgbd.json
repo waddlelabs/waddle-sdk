@@ -1,0 +1,19 @@
+{
+  "format": "waddle.fixture/v0",
+  "type": "waddle.v0.CalibrationMeasurement",
+  "description": "A locally depth-resolved RGB-D click represented only as a bounded 3-D point on the session timeline; no pixels or depth image cross the control plane.",
+  "message": {
+    "calibrationId": "cal-01J9",
+    "sampleId": "sample-0007",
+    "camera": "wrist",
+    "frameSeq": "42",
+    "tNs": "913000000",
+    "frameId": "cam_wrist",
+    "point": {
+      "x": 0.012,
+      "y": -0.004,
+      "z": 0.238
+    },
+    "depthM": 0.238
+  }
+}

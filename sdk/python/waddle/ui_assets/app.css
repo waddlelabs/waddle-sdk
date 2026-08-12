@@ -7,20 +7,23 @@ header { display: flex; align-items: baseline; justify-content: space-between; }
 main { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 1rem; }
 section { padding: 1rem; border: 1px solid #344052; border-radius: 10px; background: #1a202a; }
 h1, h2, h3 { margin-top: 0; }
-button, input, textarea { font: inherit; }
+button, input, textarea, select { font: inherit; }
 button { padding: .55rem .8rem; border: 1px solid #53657c; border-radius: 6px; background: #2b3748; color: inherit; cursor: pointer; }
 button:active { transform: translateY(1px); }
+button:disabled { cursor: not-allowed; opacity: .55; }
 .danger { background: #9c1c28; border-color: #e74b58; font-weight: 800; }
-.increments { display: grid; gap: .5rem; }
-.increments label { display: flex; justify-content: space-between; gap: 1rem; }
-input, textarea { background: #0f1319; color: inherit; border: 1px solid #53657c; border-radius: 5px; padding: .4rem; }
+.increments, .form-grid { display: grid; gap: .5rem; }
+.increments label, .form-grid label { display: flex; justify-content: space-between; gap: 1rem; }
+input, textarea, select { background: #0f1319; color: inherit; border: 1px solid #53657c; border-radius: 5px; padding: .4rem; }
 textarea { width: 100%; min-height: 5rem; }
+.button-row { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .5rem; }
 .jog-row { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin: .45rem 0; }
 .jog-row span { min-width: 10rem; }
 .jog-row button { min-width: 3rem; touch-action: none; user-select: none; }
 .cameras { display: grid; gap: .75rem; }
-canvas { display: block; max-width: 100%; height: auto; background: #050608; image-rendering: auto; }
+canvas { display: block; max-width: 100%; height: auto; background: #050608; image-rendering: auto; cursor: crosshair; }
 pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .chat-log { min-height: 4rem; white-space: pre-wrap; margin-top: .75rem; padding: .6rem; background: #0f1319; border-radius: 5px; }
-.recording { padding: .55rem 0; border-bottom: 1px solid #344052; }
+.recording, .task-row { padding: .55rem 0; border-bottom: 1px solid #344052; }
+.task-row.active { border-left: 3px solid #70a7ff; padding-left: .5rem; }
 .muted { color: #aeb9c7; }

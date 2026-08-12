@@ -71,6 +71,7 @@ from typing import TYPE_CHECKING
 
 from . import _native, descriptors
 from ._native import core
+from .cameras import CameraDriver, CameraFrame, CameraSample
 from .descriptors import (
     Camera,
     Chunking,
@@ -87,10 +88,19 @@ from .descriptors import (
     TimeSeries,
     Uplink,
 )
+from ._services import (
+    CalibrationMeasurement,
+    ExecutionBackend,
+    TaskSession,
+    WorkspaceArtifactRequest,
+    execution_backends,
+)
+from . import _services
 from ._ui import UIHandle
 
 if TYPE_CHECKING:  # `_core.pyi` types whichever core `_native` selected
     from . import _core
+    from .robots.base import Rig, RigSession
 
 #: The compiled core's version — the ONE version this package has (the
 #: Python surface and the shim ship together, from one Cargo.toml).
@@ -101,10 +111,15 @@ __all__ = [
     "AgentReset",
     "AgentResult",
     "Camera",
+    "CameraDriver",
+    "CameraFrame",
+    "CameraSample",
+    "CalibrationMeasurement",
     "Chunking",
     "Composite",
     "Control",
     "EEDelta",
+    "ExecutionBackend",
     "FrameTransform",
     "Gripper",
     "Grpc",
@@ -118,15 +133,22 @@ __all__ = [
     "Robot",
     "SessionStamp",
     "StreamPolicy",
+    "TaskSession",
     "TeleopReset",
     "TimeSeries",
     "Uplink",
     "UIHandle",
+    "WorkspaceArtifactRequest",
     "agent",
+    "calibration_click",
+    "calibration_updates",
     "descriptors",
+    "execution_backends",
     "init",
+    "request_workspace_artifact",
     "rollout",
     "shutdown",
+    "task_session",
     "ui",
 ]
 
@@ -429,6 +451,9 @@ _session: _core.Session | None = None
 _session_has_plane = False
 _recording_dir: Path | None = None
 _ui_handle: UIHandle | None = None
+_managed_rig: RigSession | None = None
+_session_starting = False
+_session_closing = False
 _atexit_registered = False
 
 
@@ -457,7 +482,7 @@ def _derive_grants(control: Control, space: descriptors._Space) -> list[dict]:
     return grants
 
 
-def init(
+def _create_core_session(
     project: str,
     robot: Robot,
     control: Control,
@@ -472,58 +497,7 @@ def init(
     reset_verification: str = "blocking",
     _testing: bool = False,
 ) -> _core.Session:
-    """Open the supervision session. One session per process in v1.
-
-    ``transport`` connects the session to the supervision plane
-    (``waddle.Grpc(url, token)``); without it the session is a local
-    recorder, and everything a plane would drive — teleoperator
-    intervention, remote reset windows, :func:`agent` — has nothing at the
-    other end. ``media`` wires the session's media plane — camera frames
-    (``session.publish_frame``, documented there) and the teleop stream all
-    ride it — and needs the teleop companion wheel (see
-    :class:`LiveKit`). Both are mutually exclusive with ``_testing=True``
-    (the in-process loopback, which stands in for a plane): the private
-    test/example path, not for production use.
-
-    Neither is silently ignorable. If this core was not built with the
-    matching transport, declaring one raises a ``RuntimeError`` naming the
-    fix — a supervision session that quietly ran unsupervised because a URL
-    went nowhere is the exact failure this layer exists to prevent.
-
-    ``recording_dir`` is where the local archive lands — one sidecar and one
-    MCAP per episode, plus the appended ``manifest.jsonl``. A directory that
-    does not exist yet is CREATED, parents included: a program that names one
-    means it, and every file the recorder writes lives inside it, so a
-    missing directory would otherwise take the whole archive with it while
-    the session opened, ran, and looked no different. A path nothing can
-    make a writable directory at — an existing file, a read-only parent — is
-    a ``RuntimeError`` here, for the same reason.
-
-    ``pre_reset``/``post_reset`` declare the session's default reset for
-    each phase; ``None`` (the default for both) means no reset is declared
-    for that phase at all — an episode with no post-reset declared behaves
-    exactly as it did before this feature existed (FSM.md §1.3). A
-    callable is a scripted hook, ``fn(task: str) -> bool | (bool,
-    Optional[bool])``, run locally (see :func:`rollout` for what a bare
-    ``bool`` versus the full tuple means); :class:`TeleopReset` /
-    :class:`AgentReset` instead declare a **remote reset window** handed to
-    a connected supervision plane — see their docstrings for the
-    production-readiness caveat. Either declaration can be overridden, or
-    disabled, per episode via ``rollout()``'s own ``pre_reset``/
-    ``post_reset`` kwargs; a remote-window override only takes effect if
-    the session already declared a remote reset for *some* phase here (the
-    `waddle.v0.reset.remote` feature is negotiated once, at session build
-    time).
-
-    ``reset_verification`` controls how a pre-reset's ``ok`` is trusted
-    before the episode leaves RESETTING (FSM.md rows E2-E4):
-    ``"blocking"`` (the default) holds the episode in RESETTING until the
-    reset is both ``ok`` *and* explicitly ``verified``; ``"optimistic"``
-    enters READY as soon as ``ok`` is true and verifies asynchronously (a
-    late verification failure permanently flags the episode's record as
-    unverified — core-only today, not yet a Python getter).
-    """
-    global _session, _session_has_plane, _recording_dir, _atexit_registered
+    """Build one core session without registering module lifecycle ownership."""
     if not isinstance(robot, Robot):
         raise TypeError("robot must be a waddle.Robot")
     if not isinstance(control, Control):
@@ -543,10 +517,6 @@ def init(
         raise ValueError(
             "media and _testing=True both wire a media plane — pass only one"
         )
-    # Keyed on what this core was BUILT with (`_core.FEATURES`), never on a
-    # try-import or on anything about a live connection: the question here
-    # is "can this build do it at all", and the answer decides which error
-    # names the actionable fix.
     if media is not None and "livekit" not in _native.FEATURES:
         raise RuntimeError(
             "LiveKit media is teleop-only and not compiled into this core — "
@@ -564,45 +534,140 @@ def init(
         **_reset_spec_kwargs("pre_reset", pre_reset),
         **_reset_spec_kwargs("post_reset", post_reset),
     }
-
     robot_json = json.dumps(robot._compile(_derive_grants(control, robot.action_space)))
-    with _lock:
-        if _session is not None:
-            raise RuntimeError("waddle.init() called while a session is open; "
-                               "call waddle.shutdown() first")
-        session = core.create_session(
-            project=project,
-            robot_json=robot_json,
-            send=control.send,
-            hold=control.hold,
-            resume=control.resume,
-            home=control.home,
-            estop=control.estop,
-            estop_hardware=control.estop_hardware,
-            estop_latency_bound_ns=(
-                int(control.estop_latency_bound_ms * 1_000_000)
-                if control.estop_latency_bound_ms is not None
-                else None
-            ),
-            recording_dir=(None if recording_dir is None else str(recording_dir)),
-            handoff_kind=handoff.kind,
-            handoff_ns=handoff.ns,
+    return core.create_session(
+        project=project,
+        robot_json=robot_json,
+        send=control.send,
+        hold=control.hold,
+        resume=control.resume,
+        home=control.home,
+        estop=control.estop,
+        estop_hardware=control.estop_hardware,
+        estop_latency_bound_ns=(
+            int(control.estop_latency_bound_ms * 1_000_000)
+            if control.estop_latency_bound_ms is not None
+            else None
+        ),
+        recording_dir=(None if recording_dir is None else str(recording_dir)),
+        handoff_kind=handoff.kind,
+        handoff_ns=handoff.ns,
+        lease_enforcement=lease_enforcement,
+        reset_verification=reset_verification,
+        testing_loopback=_testing,
+        transport_url=(None if transport is None else transport.url),
+        transport_token=(None if transport is None else transport.token),
+        media_url=(None if media is None else media.url),
+        media_token=(None if media is None else media.token),
+        **reset_kwargs,
+    )
+
+
+def init(
+    project: str,
+    robot: Robot | None = None,
+    control: Control | None = None,
+    *,
+    rig: Rig | None = None,
+    send: Callable[[object], None] | None = None,
+    console: bool = True,
+    recording_dir: str | PathLike | None = None,
+    handoff: _Handoff = Handoff.HOLD_FIRST,
+    lease_enforcement: str = "advisory",
+    transport: Grpc | None = None,
+    media: LiveKit | None = None,
+    pre_reset: Callable | TeleopReset | AgentReset | None | _UnsetType = _UNSET,
+    post_reset: Callable | TeleopReset | AgentReset | None = None,
+    reset_verification: str = "blocking",
+    _testing: bool = False,
+) -> _core.Session:
+    """Open the process's one supervision session.
+
+    Pass the legacy ``robot`` and ``control`` pair, or pass ``rig=`` and let
+    the SDK own that rig's arms, reporting pump and camera capture until
+    :func:`shutdown`. The two forms are mutually exclusive. ``send`` and
+    ``console`` are rig-only equivalents of :meth:`Rig.session`'s keywords.
+    A rig inherits its own pre-reset when ``pre_reset`` is omitted; an explicit
+    ``None`` disables it. The legacy path keeps its historical no-reset default.
+    """
+    global _session, _session_has_plane, _recording_dir, _managed_rig
+    global _session_starting, _atexit_registered
+
+    managed: RigSession | None = None
+    if rig is not None:
+        if robot is not None or control is not None:
+            raise ValueError("rig is mutually exclusive with robot and control")
+        from .robots.base import RIG_DEFAULT, Rig
+
+        if not isinstance(rig, Rig):
+            raise TypeError("rig must be a waddle.robots.base.Rig")
+        if not isinstance(console, bool):
+            raise TypeError("console must be a bool")
+        managed = rig.session(
+            project,
+            send=send,
+            transport=transport,
+            media=media,
+            recording_dir=recording_dir,
+            handoff=handoff,
             lease_enforcement=lease_enforcement,
+            pre_reset=(RIG_DEFAULT if pre_reset is _UNSET else pre_reset),
+            post_reset=post_reset,
             reset_verification=reset_verification,
-            testing_loopback=_testing,
-            transport_url=(None if transport is None else transport.url),
-            transport_token=(None if transport is None else transport.token),
-            media_url=(None if media is None else media.url),
-            media_token=(None if media is None else media.token),
-            **reset_kwargs,
+            console=console,
+            _testing=_testing,
         )
-        _session = session
-        _session_has_plane = transport is not None or _testing
-        _recording_dir = None if recording_dir is None else Path(recording_dir)
-        if not _atexit_registered:
-            atexit.register(shutdown)
-            _atexit_registered = True
-    return session
+    else:
+        if robot is None or control is None:
+            raise TypeError("waddle.init() needs either rig= or both robot and control")
+        if send is not None:
+            raise ValueError(
+                "send is a rig-only keyword; put it on Control for this path"
+            )
+        if console is not True:
+            raise ValueError("console is a rig-only keyword")
+        pre_reset = None if pre_reset is _UNSET else pre_reset
+
+    with _lock:
+        if _session is not None or _session_starting or _session_closing:
+            raise RuntimeError(
+                "waddle.init() called while a session is open or closing; "
+                "call waddle.shutdown() first"
+            )
+        _session_starting = True
+    try:
+        if managed is not None:
+            managed._open(_create_core_session)
+            assert managed.core is not None
+            session = managed.core
+        else:
+            assert robot is not None and control is not None
+            session = _create_core_session(
+                project,
+                robot,
+                control,
+                recording_dir=recording_dir,
+                handoff=handoff,
+                lease_enforcement=lease_enforcement,
+                transport=transport,
+                media=media,
+                pre_reset=pre_reset,
+                post_reset=post_reset,
+                reset_verification=reset_verification,
+                _testing=_testing,
+            )
+        with _lock:
+            _session = session
+            _managed_rig = managed
+            _session_has_plane = transport is not None or _testing
+            _recording_dir = None if recording_dir is None else Path(recording_dir)
+            if not _atexit_registered:
+                atexit.register(shutdown)
+                _atexit_registered = True
+        return session
+    finally:
+        with _lock:
+            _session_starting = False
 
 
 def ui(
@@ -647,6 +712,7 @@ def ui(
         handle = UIHandle(
             _session,
             _recording_dir,
+            managed_rig=_managed_rig,
             **increments,
         )
         _ui_handle = handle
@@ -666,6 +732,74 @@ def _require_session() -> _core.Session:
         if _session is None:
             raise RuntimeError("waddle.init() has not been called")
         return _session
+
+
+def task_session(
+    name: str, *, task_session_id: str | None = None
+) -> TaskSession:
+    """Create or resume a named durable hosted task conversation.
+
+    A new handle submits CREATE immediately. Pass a plane-issued
+    ``task_session_id`` to resume a durable conversation before sending a
+    message, interjection, or interrupt. Public-safe live output and history
+    are available through :meth:`TaskSession.events` and ``history``.
+    """
+    return TaskSession(_require_session(), name, task_session_id=task_session_id)
+
+
+def calibration_click(
+    calibration_id: str,
+    sample_id: str,
+    camera: str,
+    frame_sequence: int,
+    x: int,
+    y: int,
+) -> CalibrationMeasurement:
+    """Resolve a managed rig's retained RGB-D pixel and submit only its point."""
+    session = _require_session()
+    with _lock:
+        managed = _managed_rig
+    return _services.submit_calibration_click(
+        session,
+        managed,
+        calibration_id=calibration_id,
+        sample_id=sample_id,
+        camera=camera,
+        frame_sequence=frame_sequence,
+        x=x,
+        y=y,
+    )
+
+
+def calibration_updates(
+    calibration_id: str,
+    *,
+    after_sequence: int = 0,
+    timeout_s: float = 0.0,
+) -> list[dict]:
+    """Poll bounded public calibration lifecycle updates from the plane."""
+    return _services.calibration_updates(
+        _require_session(),
+        calibration_id,
+        after_sequence=after_sequence,
+        timeout_s=timeout_s,
+    )
+
+
+def request_workspace_artifact(
+    *,
+    graph_ids: tuple[str, ...] | list[str] = (),
+    calibration_names: tuple[str, ...] | list[str] = (),
+) -> WorkspaceArtifactRequest:
+    """Request a signed allowlisted workspace and poll its bounded status.
+
+    The returned metadata contains an opaque one-time ``download_ref`` for a
+    separate authenticated artifact endpoint. Archive bytes never transit the
+    session's GateActions stream or this helper.
+    """
+    return WorkspaceArtifactRequest(
+        _require_session(), graph_ids, calibration_names
+    )
 
 
 class _Rollout:
@@ -869,15 +1003,25 @@ def agent(
 
 
 def shutdown() -> None:
-    """Join all core threads and flush recorders. Idempotent; also
-    registered via ``atexit`` by ``init``."""
+    """Join core threads and close every owner-side managed rig resource."""
     global _session, _session_has_plane, _recording_dir, _ui_handle
+    global _managed_rig, _session_closing
     with _lock:
         session, _session = _session, None
         handle, _ui_handle = _ui_handle, None
+        managed, _managed_rig = _managed_rig, None
         _session_has_plane = False
         _recording_dir = None
-    if handle is not None:
-        handle.close()
-    if session is not None:
-        session.shutdown()
+        if session is None and managed is None and handle is None:
+            return
+        _session_closing = True
+    try:
+        if handle is not None:
+            handle.close()
+        if managed is not None:
+            managed.close()
+        elif session is not None:
+            session.shutdown()
+    finally:
+        with _lock:
+            _session_closing = False

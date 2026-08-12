@@ -31,3 +31,13 @@ pub const PARTS: &str = "waddle.v0.parts";
 /// Authenticated UI chat with the session's active invited host. Requests
 /// belong to the connection that accepted them and are never replayed.
 pub const CHAT: &str = "waddle.v0.agent.chat";
+
+/// Durable named hosted-task sessions. Requests belong to the accepting
+/// connection; the plane persists them after acknowledgement.
+pub const TASK_SESSIONS: &str = "waddle.v0.task.sessions";
+
+/// Locally depth-resolved 3-D calibration measurements.
+pub const CALIBRATION_MEASUREMENTS: &str = "waddle.v0.calibration.measurements";
+
+/// Reviewed workspace export requests and one-time artifact metadata.
+pub const WORKSPACE_ARTIFACTS: &str = "waddle.v0.workspace.artifacts";

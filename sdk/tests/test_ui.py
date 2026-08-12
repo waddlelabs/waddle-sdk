@@ -163,6 +163,8 @@ def test_jog_uses_native_proprio_claim_and_normal_send_path():
     with waddle.rollout(task="jog test") as episode:
         episode.gate([0.0, 0.0], [0.0, 0.0])
         session.report_proprio(joint_pos=[0.5, -0.25])
+        with _open(handle, "/api/handoff", method="POST", value={}) as response:
+            assert json.load(response)["accepted"] is True
         with _open(
             handle,
             "/api/jog",
@@ -213,6 +215,8 @@ def test_jog_reaches_the_owner_envelope_and_is_refused_whole():
     with waddle.rollout(task="envelope refusal") as episode:
         episode.gate([0.0, 0.0], [0.0, 0.0])
         session.report_proprio(joint_pos=[0.5, -0.25])
+        with _open(handle, "/api/handoff", method="POST", value={}) as response:
+            assert json.load(response)["accepted"] is True
         with _open(
             handle,
             "/api/jog",

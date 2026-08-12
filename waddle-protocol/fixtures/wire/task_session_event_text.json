@@ -1,0 +1,14 @@
+{
+  "format": "waddle.fixture/v0",
+  "type": "waddle.v0.TaskSessionEvent",
+  "description": "One ordered public-safe main-conversation text event in a named durable hosted-task session.",
+  "message": {
+    "requestId": "req-01J9TASK0001",
+    "taskSessionId": "task-01J9SESSION01",
+    "name": "blue-block alignment",
+    "sequence": "2",
+    "kind": "TASK_SESSION_EVENT_KIND_TEXT",
+    "role": "assistant",
+    "text": "The gripper is aligned and ready to descend."
+  }
+}

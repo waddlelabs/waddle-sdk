@@ -181,6 +181,12 @@ pub struct Status {
     /// Chat is connection-scoped, so this is cleared at every boundary and
     /// is status only: it never participates in an authority decision.
     pub chat_negotiated: bool,
+    /// The CURRENT connection accepted durable named task sessions.
+    pub task_sessions_negotiated: bool,
+    /// The CURRENT connection accepted bounded 3-D calibration samples.
+    pub calibration_measurements_negotiated: bool,
+    /// The CURRENT connection accepted signed-workspace artifact requests.
+    pub workspace_artifacts_negotiated: bool,
     pub shutdown: bool,
     /// Set once, at build time, when the session's `ControlRegistry` has no
     /// `estop` callable. Missing `estop` never fails the build (unlike

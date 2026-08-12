@@ -66,26 +66,41 @@ waddle-sdk/
   sdk/                       # the Python `waddle-sdk` frontend (PyO3 + maturin)
     pyproject.toml           # maturin backend; module waddle._core; uv-managed
     rust/                    # the shim: its OWN cargo workspace (see build notes)
-    python/waddle/           # pure-Python surface: init/rollout/Control/agent +
+    python/waddle/           # pure-Python surface: init (legacy robot/control
+                             #   OR managed rig=), rollout/Control/agent,
                              #   generic task_metadata, paired Session.stamp,
-                             #   and waddle.ui(): one authenticated 127.0.0.1
-                             #   server per active session. _ui.py owns HTTP
-                             #   security/presentation/path resolution only;
-                             #   ui_assets/ is dependency-free HTML/CSS/JS;
-                             #   e-stop, jog/deadman, status and chat state are
-                             #   native. No standalone `waddle ui` command.
+                             #   durable task/calibration/artifact facades in
+                             #   _services.py, and waddle.ui(): one authenticated
+                             #   127.0.0.1 server per active session. _ui.py
+                             #   owns HTTP security/presentation/path resolution
+                             #   only; ui_assets/ is dependency-free HTML/CSS/JS;
+                             #   e-stop, exclusive core-owned handoff, jog/
+                             #   deadman, status and connection-scoped service
+                             #   state are native. Optional local execution is
+                             #   discovered only from waddle.execution.v1 entry
+                             #   points after selection. No standalone
+                             #   `waddle ui` command.
                              #   descriptors; _native.py picks the compiled core
+      cameras/               # structural CameraDriver plus immutable paired-
+                             #   timestamp RGB/RGB-D samples; latest aligned
+                             #   depth stays local for click deprojection.
+                             #   Orbbec/RealSense adapters import vendor SDKs
+                             #   lazily behind [orbbec]/[realsense]/[cameras]
       robots/                # opt-in robot modules (NOT imported by `import
                              #   waddle`): base.py is the vendor-neutral half
                              #   (Driver protocol, SimDriver twin, the Arm
                              #   envelope seam, console recovery, RobotPump,
-                             #   Rig + its RigSession); a vendor module is
+                             #   CameraPump, Rig + its RigSession); a vendor
+                             #   module is
                              #   facts + driver + factory on top of it.
                              #   `rig.session(...)` is COMPOSITION ONLY, and
                              #   the rule that keeps it honest is a test:
                              #   the same program wired by hand out of the
                              #   same pieces opens a byte-identical session
-                             #   (tests/test_yam_session.py). Its two ends
+                             #   (tests/test_yam_session.py). That lifecycle
+                             #   is shared by rig.session(...) and
+                             #   waddle.init(rig=...), whose process ownership
+                             #   makes shutdown() deterministic. Its two ends
                              #   are the point — hardware opens inside the
                              #   `with` (a half-open rig closes what it
                              #   opened), and `__exit__` finalizes the
@@ -221,6 +236,13 @@ top-level dirs; they are not built yet.
       default install cannot reach the supervision plane would be a strange
       thing to ship — and therefore in `uv sync` / `maturin develop` too, so
       the dev extension is connected, not offline.
+      Camera support is independently lazy: `[orbbec]` installs
+      `pyorbbecsdk2`, `[realsense]` installs `pyrealsense2`, and
+      `[cameras]` composes both. The base wheel imports neither vendor SDK,
+      and all three extras compose with `[teleop]`. Metadata/install
+      combinations are held by `tests/test_clean_installs.py`;
+      hardware construction remains opt-in because importing an adapter never
+      opens a device.
     - `waddle-sdk-teleop` (`sdk/teleop/pyproject.toml`, module
       `waddle_teleop._core`): the same manifest with `livekit` added.
       Installed as the extra, never by name: `pip install

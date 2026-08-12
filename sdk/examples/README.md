@@ -186,6 +186,39 @@ this rig. None of it is hidden: `rig.robot()`, `rig.arms()`,
 separately, and a program that wants its own loop or its own envelope takes
 them and calls `waddle.init` itself.
 
+The example uses `rig.session(...)` because a `with` block owns its whole
+lifetime. A service or notebook that already has a shutdown boundary can use
+the equivalent process-owned form; this opens the arms and any structural
+camera drivers, starts their pumps, and closes all of them at
+`waddle.shutdown()`:
+
+```python
+rig = yam.bimanual(
+    workspace=WORKSPACE_M,
+    gripper_limits=GRIPPER_LIMITS_MOTOR_RAD,
+    cross_arm=CROSS_ARM,
+    sim=True,
+)
+waddle.init(
+    "waddle-yam-bimanual",
+    rig=rig,
+    transport=waddle.Grpc(url, token),
+)
+try:
+    dashboard = waddle.ui()
+    result = waddle.agent("move each arm to its taught home, one at a time")
+finally:
+    waddle.shutdown()
+```
+
+In that UI, local jog remains disabled until **Take Local Control** completes
+the core-owned exclusive remote-to-local handoff. A managed RGB-D camera keeps
+aligned depth local: the page labels RGB with a frame sequence, and a
+calibration click is deprojected against that exact retained frame before only
+the bounded 3-D measurement is submitted. Install vendor adapters separately
+with `waddle-sdk[orbbec]`, `waddle-sdk[realsense]`, or both with
+`waddle-sdk[cameras]`; these extras compose with `[teleop]`.
+
 Run it:
 
 ```bash

@@ -1,0 +1,14 @@
+{
+  "format": "waddle.fixture/v0",
+  "type": "waddle.v0.TaskSessionEvent",
+  "description": "Terminates one bounded durable-history page and supplies the cursor for the next page without exposing private hosted-task state.",
+  "message": {
+    "requestId": "req-01J9HISTORY01",
+    "taskSessionId": "task-01J9SESSION01",
+    "name": "blue-block alignment",
+    "sequence": "15",
+    "kind": "TASK_SESSION_EVENT_KIND_HISTORY_COMPLETE",
+    "historyCursor": "14",
+    "detail": "history page complete"
+  }
+}

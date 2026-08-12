@@ -40,6 +40,7 @@ use crate::jog::{
 };
 use crate::media_uplink::{self, CameraUplink, FrameData};
 use crate::mirror::Mirror;
+use crate::plane_events::PlaneEvents;
 use crate::pumps;
 use crate::reducer::Reducer;
 use crate::verbs::{ControlRegistry, VerbDispatch, VerbOutcome};
@@ -680,6 +681,7 @@ impl SessionBuilder {
         // why the seq counter cannot be per-producer.
         let chunk_intake: pumps::SharedChunkIntake = Arc::default();
         let chat = ChatInbox::new();
+        let plane_events = PlaneEvents::new();
         let latest_joints = LatestJoints::new();
 
         let (outcome_tx, outcome_rx) = std::sync::mpsc::channel::<VerbOutcome>();
@@ -710,6 +712,9 @@ impl SessionBuilder {
             ACKS_FLAG.to_owned(),
             AGENT_FLAG.to_owned(),
             waddle_controlplane::flags::CHAT.to_owned(),
+            waddle_controlplane::flags::TASK_SESSIONS.to_owned(),
+            waddle_controlplane::flags::CALIBRATION_MEASUREMENTS.to_owned(),
+            waddle_controlplane::flags::WORKSPACE_ARTIFACTS.to_owned(),
         ];
         if self.post_reset.is_some() {
             feature_flags.push("waddle.v0.reset.phases".to_owned());
@@ -892,6 +897,7 @@ impl SessionBuilder {
                 action_space.clone(),
                 chunk_intake.clone(),
                 chat.clone(),
+                plane_events.clone(),
             ));
         }
 
@@ -957,6 +963,7 @@ impl SessionBuilder {
                 action_space,
                 chunk_intake,
                 chat,
+                plane_events,
                 local_jog_claim_id: format!("ui-jog-{}", uuid::Uuid::new_v4().simple()),
                 local_jog_seq: AtomicU64::new(0),
                 jog_deadman,
@@ -1090,6 +1097,9 @@ struct SessionInner {
     /// One outstanding, connection-scoped UI chat request and its bounded
     /// public event tail. Chat carries no authority state.
     chat: Arc<ChatInbox>,
+    /// Bounded public-safe replies for optional plane services. These carry
+    /// no authority state and are correlated at connection boundaries.
+    plane_events: Arc<PlaneEvents>,
     local_jog_claim_id: String,
     local_jog_seq: AtomicU64,
     jog_deadman: Arc<JogDeadman>,
@@ -1517,6 +1527,56 @@ impl Session {
         Ok(())
     }
 
+    /// Exclusively hand an engaged remote claim back to the customer loop.
+    ///
+    /// This is a core-owned FSM operation, not a Python authority shortcut:
+    /// the active claim is released through E8, which performs the ordinary
+    /// lease handback before the gate returns to PASSTHROUGH. The method
+    /// blocks on the authoritative mirror so a subsequent local jog can
+    /// enter only after the remote writer has lost its lease. It never sends
+    /// an action itself; local commands still use `jog()` and therefore the
+    /// ordinary intervention intake and owner `Control.send` callback.
+    pub fn handoff_remote_to_local(&self) -> Result<(), JogRefusal> {
+        let status = self.inner.mirror.read();
+        if status.shutdown {
+            return Err(JogRefusal::ShuttingDown);
+        }
+        let Some(claim) = status.active_claim_id.as_ref() else {
+            return Ok(());
+        };
+        if claim.as_str() == self.inner.local_jog_claim_id {
+            return Ok(());
+        }
+        if !matches!(
+            status.episode_state,
+            Some(Phase::Intervention(InterventionPhase::Settle))
+        ) {
+            return Err(JogRefusal::TakeoverUnavailable);
+        }
+        let claim = claim.clone();
+        self.inject(SessionEvent::Release {
+            claim: claim.clone(),
+            at: self.inner.clock.stamp_now().mono_ns(),
+        });
+        let status = self.inner.mirror.wait_until_for(
+            &self.inner.clock,
+            std::time::Duration::from_secs(2),
+            |status| {
+                status.shutdown
+                    || (status.active_claim_id.is_none()
+                        && matches!(status.episode_state, Some(Phase::Running)))
+            },
+        );
+        if status.shutdown {
+            return Err(JogRefusal::ShuttingDown);
+        }
+        if status.active_claim_id.is_some() || !matches!(status.episode_state, Some(Phase::Running))
+        {
+            return Err(JogRefusal::TakeoverUnavailable);
+        }
+        Ok(())
+    }
+
     /// Perform one core-owned local site-operator jog step. The FSM alone
     /// engages the claim; this method waits for its authoritative mirror
     /// projection before admitting the one-step chunk.
@@ -1689,14 +1749,9 @@ impl Session {
         if status.shutdown {
             return Err(RuntimeError::ShuttingDown);
         }
-        if !status.plane_connected {
-            return Err(RuntimeError::ChatUnavailable(
-                "the control plane is disconnected; local controls remain available".into(),
-            ));
-        }
         if !status.chat_negotiated {
             return Err(RuntimeError::ChatUnavailable(
-                "this connection did not negotiate chat; local controls remain available".into(),
+                "the connection is unavailable or did not negotiate chat; local controls remain available".into(),
             ));
         }
         let Some(plane) = &self.inner._plane else {
@@ -1730,6 +1785,195 @@ impl Session {
             &self.inner.clock,
             request_id,
             after_sequence,
+            timeout.min(std::time::Duration::from_secs(30)),
+        )
+    }
+
+    /// Submit one durable named task-session operation. This is a hosted
+    /// conversation lane only: it does not create or modify authority.
+    pub fn submit_task_session(&self, request: pb::TaskSessionRequest) -> Result<(), RuntimeError> {
+        let request_id_bounded = |value: &str| !value.is_empty() && value.len() <= 128;
+        let task_id_bounded = |value: &str| !value.is_empty() && value.len() <= 200;
+        if !request_id_bounded(&request.request_id)
+            || request.task_session_id.len() > 200
+            || request.name.len() > 200
+            || request.text.len() > CHAT_REQUEST_TEXT_MAX_BYTES
+        {
+            return Err(RuntimeError::InvalidPlaneRequest(
+                "task request fields exceed their protocol bounds".into(),
+            ));
+        }
+        let kind = pb::TaskSessionRequestKind::try_from(request.kind).map_err(|_| {
+            RuntimeError::InvalidPlaneRequest("unknown task session request kind".into())
+        })?;
+        let shape_ok = match kind {
+            pb::TaskSessionRequestKind::Create => {
+                !request.name.trim().is_empty() && request.text.is_empty()
+            }
+            pb::TaskSessionRequestKind::Message | pb::TaskSessionRequestKind::Interject => {
+                task_id_bounded(&request.task_session_id) && !request.text.trim().is_empty()
+            }
+            pb::TaskSessionRequestKind::Interrupt | pb::TaskSessionRequestKind::History => {
+                task_id_bounded(&request.task_session_id) && request.text.is_empty()
+            }
+            pb::TaskSessionRequestKind::Unspecified => false,
+        };
+        if !shape_ok {
+            return Err(RuntimeError::InvalidPlaneRequest(
+                "task request fields do not match its operation".into(),
+            ));
+        }
+        let status = self.inner.mirror.read();
+        if status.shutdown {
+            return Err(RuntimeError::ShuttingDown);
+        }
+        if !status.task_sessions_negotiated {
+            return Err(RuntimeError::PlaneServiceUnavailable(
+                "this connection did not negotiate named task sessions".into(),
+            ));
+        }
+        let Some(plane) = &self.inner._plane else {
+            return Err(RuntimeError::PlaneServiceUnavailable(
+                "this session has no control-plane transport".into(),
+            ));
+        };
+        self.inner
+            .plane_events
+            .begin_task(&request.request_id, &request.task_session_id, &request.name)
+            .map_err(|detail| RuntimeError::PlaneServiceUnavailable(detail.into()))?;
+        plane.send(ClientMsg::Gate(pb::GateClientMessage {
+            msg: Some(pb::gate_client_message::Msg::TaskSessionRequest(request)),
+        }));
+        Ok(())
+    }
+
+    /// Long-poll the bounded public event tail for a named task operation.
+    #[must_use]
+    pub fn task_session_events(
+        &self,
+        request_id: &str,
+        after_sequence: u64,
+        timeout: std::time::Duration,
+    ) -> Vec<pb::TaskSessionEvent> {
+        self.inner.plane_events.wait_tasks(
+            &self.inner.clock,
+            request_id,
+            after_sequence,
+            timeout.min(std::time::Duration::from_secs(30)),
+        )
+    }
+
+    /// Send one locally resolved 3-D calibration measurement. RGB/depth
+    /// pixels never ride the control plane; only this bounded point does.
+    pub fn submit_calibration_measurement(
+        &self,
+        measurement: pb::CalibrationMeasurement,
+    ) -> Result<(), RuntimeError> {
+        let point = measurement.point.as_ref().ok_or_else(|| {
+            RuntimeError::InvalidPlaneRequest("calibration point is required".into())
+        })?;
+        if measurement.calibration_id.is_empty()
+            || measurement.calibration_id.len() > 128
+            || measurement.sample_id.is_empty()
+            || measurement.sample_id.len() > 128
+            || measurement.camera.is_empty()
+            || measurement.camera.len() > 128
+            || measurement.frame_id.is_empty()
+            || measurement.frame_id.len() > 256
+            || measurement.t_ns < 0
+            || !point.x.is_finite()
+            || !point.y.is_finite()
+            || !point.z.is_finite()
+            || measurement
+                .depth_m
+                .is_some_and(|depth| !depth.is_finite() || depth <= 0.0)
+        {
+            return Err(RuntimeError::InvalidPlaneRequest(
+                "calibration measurement is incomplete, non-finite, or out of bounds".into(),
+            ));
+        }
+        let status = self.inner.mirror.read();
+        if !status.calibration_measurements_negotiated {
+            return Err(RuntimeError::PlaneServiceUnavailable(
+                "this connection did not negotiate calibration measurements".into(),
+            ));
+        }
+        let Some(plane) = &self.inner._plane else {
+            return Err(RuntimeError::PlaneServiceUnavailable(
+                "this session has no control-plane transport".into(),
+            ));
+        };
+        plane.send(ClientMsg::Gate(pb::GateClientMessage {
+            msg: Some(pb::gate_client_message::Msg::CalibrationMeasurement(
+                measurement,
+            )),
+        }));
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn calibration_updates(
+        &self,
+        calibration_id: &str,
+        after_sequence: u64,
+        timeout: std::time::Duration,
+    ) -> Vec<pb::CalibrationUpdate> {
+        self.inner.plane_events.wait_calibrations(
+            &self.inner.clock,
+            calibration_id,
+            after_sequence,
+            timeout.min(std::time::Duration::from_secs(30)),
+        )
+    }
+
+    /// Request a signed, allowlisted workspace artifact. Delivery itself is
+    /// through the separately authenticated one-time reference in the reply.
+    pub fn request_workspace_artifact(
+        &self,
+        request: pb::WorkspaceArtifactRequest,
+    ) -> Result<(), RuntimeError> {
+        if request.request_id.is_empty()
+            || request.request_id.len() > 128
+            || request.graph_ids.len() > 32
+            || request.calibration_names.len() > 32
+            || request
+                .graph_ids
+                .iter()
+                .chain(request.calibration_names.iter())
+                .any(|value| value.is_empty() || value.len() > 128)
+        {
+            return Err(RuntimeError::InvalidPlaneRequest(
+                "workspace artifact request exceeds protocol bounds".into(),
+            ));
+        }
+        let status = self.inner.mirror.read();
+        if !status.workspace_artifacts_negotiated {
+            return Err(RuntimeError::PlaneServiceUnavailable(
+                "this connection did not negotiate workspace artifacts".into(),
+            ));
+        }
+        let Some(plane) = &self.inner._plane else {
+            return Err(RuntimeError::PlaneServiceUnavailable(
+                "this session has no control-plane transport".into(),
+            ));
+        };
+        plane.send(ClientMsg::Gate(pb::GateClientMessage {
+            msg: Some(pb::gate_client_message::Msg::WorkspaceArtifactRequest(
+                request,
+            )),
+        }));
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn workspace_artifact_events(
+        &self,
+        request_id: &str,
+        timeout: std::time::Duration,
+    ) -> Vec<pb::WorkspaceArtifactReady> {
+        self.inner.plane_events.wait_artifact(
+            &self.inner.clock,
+            request_id,
             timeout.min(std::time::Duration::from_secs(30)),
         )
     }

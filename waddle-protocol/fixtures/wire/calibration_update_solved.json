@@ -1,0 +1,13 @@
+{
+  "format": "waddle.fixture/v0",
+  "type": "waddle.v0.CalibrationUpdate",
+  "description": "A virtual-cell solve result naming a customer-scoped catalog entry explicitly sourced from another project.",
+  "message": {
+    "calibrationId": "cal-01J9",
+    "kind": "CALIBRATION_UPDATE_KIND_SOLVED",
+    "sequence": "4",
+    "catalogName": "wrist-to-left-base-v3",
+    "sourceProject": "calibration-bench",
+    "detail": "calibration stored"
+  }
+}

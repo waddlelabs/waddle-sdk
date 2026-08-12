@@ -28,6 +28,9 @@ dynamic = ["version"]
 # `tests/test_features.py::test_the_teleop_extra_pins_this_builds_version`
 # fails until the two agree.
 teleop = ["waddle-sdk-teleop==0.0.0"]
+orbbec = ["pyorbbecsdk2"]
+realsense = ["pyrealsense2"]
+cameras = ["pyorbbecsdk2", "pyrealsense2"]
 
 [tool.uv.sources]
 # Dev-loop only (uv reads this; published wheel metadata never carries it):

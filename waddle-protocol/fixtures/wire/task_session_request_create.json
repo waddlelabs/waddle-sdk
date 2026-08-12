@@ -1,0 +1,11 @@
+{
+  "format": "waddle.fixture/v0",
+  "type": "waddle.v0.TaskSessionRequest",
+  "description": "Creates a named durable hosted-task session using a connection-scoped request that the plane de-duplicates transactionally.",
+  "message": {
+    "requestId": "req-01J9TASK0001",
+    "name": "blue-block alignment",
+    "kind": "TASK_SESSION_REQUEST_KIND_CREATE",
+    "text": "Align the gripper with the blue block."
+  }
+}

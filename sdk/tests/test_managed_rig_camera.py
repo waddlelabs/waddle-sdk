@@ -1,0 +1,287 @@
+"""Managed rig ownership and the vendor-neutral camera seam."""
+
+from __future__ import annotations
+
+import queue
+import sys
+import threading
+from dataclasses import dataclass
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+import waddle
+from waddle.cameras import CameraDriver, CameraFrame, CameraSample
+from waddle.robots import base
+
+
+@pytest.fixture(autouse=True)
+def _clean_session():
+    yield
+    waddle.shutdown()
+
+
+JOINTS = ("joint",)
+LIMITS = ((-1.0, 1.0),)
+STEPS = (0.1,)
+RATE_HZ = 20.0
+
+
+class _ClosingTwin(base.SimDriver):
+    def __init__(self, closed: list[str]) -> None:
+        super().__init__(
+            [0.0], lower=[-1.0], upper=[1.0], step_caps=STEPS, rate_hz=RATE_HZ
+        )
+        self._closed = closed
+
+    def close(self) -> None:
+        self._closed.append("arm")
+
+
+class _BlockingCamera:
+    """A structural driver whose close observably unblocks capture."""
+
+    def __init__(self, closed: list[str]) -> None:
+        self._frames: queue.Queue[CameraFrame | None] = queue.Queue()
+        self._closed = closed
+        self._close_lock = threading.Lock()
+
+    def push(self, frame: CameraFrame) -> None:
+        self._frames.put(frame)
+
+    def capture(self) -> CameraFrame:
+        frame = self._frames.get()
+        if frame is None:
+            raise RuntimeError("camera closed")
+        return frame
+
+    def close(self) -> None:
+        with self._close_lock:
+            if "camera" in self._closed:
+                return
+            self._closed.append("camera")
+            self._frames.put(None)
+
+
+def _robot() -> waddle.Robot:
+    return waddle.Robot(
+        name="camera-rig",
+        action_space=waddle.JointSpace(joints=JOINTS, rate_hz=RATE_HZ),
+        cameras={
+            "overhead": waddle.Camera(
+                width=2,
+                height=2,
+                fps=RATE_HZ,
+                intrinsics=waddle.Intrinsics(
+                    fx=100.0,
+                    fy=100.0,
+                    cx=0.0,
+                    cy=0.0,
+                    depth_scale_mm=1.0,
+                ),
+            )
+        },
+    )
+
+
+def _rig(
+    closed: list[str], camera: _BlockingCamera, *, camera_name: str = "overhead"
+) -> base.Rig:
+    def build_arms() -> dict[str, base.Arm]:
+        return {
+            "": base.Arm(
+                part="",
+                driver=_ClosingTwin(closed),
+                joint_names=JOINTS,
+                joint_limits=LIMITS,
+                step_caps=STEPS,
+                rate_hz=RATE_HZ,
+            )
+        }
+
+    return base.Rig(
+        declaration=_robot(),
+        build_arms=build_arms,
+        build_cameras=lambda: {camera_name: camera},
+        rate_hz=RATE_HZ,
+        report=lambda _line: None,
+    )
+
+
+def test_init_accepts_exactly_one_of_rig_or_the_legacy_pair():
+    closed: list[str] = []
+    camera = _BlockingCamera(closed)
+    rig = _rig(closed, camera)
+    robot = _robot()
+    control = waddle.Control(send=lambda _action: None, hold=lambda: None)
+
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        waddle.init("project", robot, control, rig=rig, console=False)
+    with pytest.raises(TypeError, match="either rig= or both robot and control"):
+        waddle.init("project")
+    with pytest.raises(TypeError, match="either rig= or both robot and control"):
+        waddle.init("project", robot)
+
+    session = waddle.init("project", robot, control)
+    assert session is not None
+    waddle.shutdown()
+    assert closed == []  # rejecting ``rig=`` opened none of its hardware
+
+
+def test_managed_init_owns_pumps_and_closes_a_blocked_camera():
+    closed: list[str] = []
+    camera = _BlockingCamera(closed)
+    rig = _rig(closed, camera)
+
+    session = waddle.init("project", rig=rig, console=False)
+    managed = waddle._managed_rig
+    assert session is managed.core
+    assert managed.pump is not None and managed.pump.is_alive()
+    assert managed.camera_pumps["overhead"].is_alive()
+
+    waddle.shutdown()
+
+    assert closed == ["camera", "arm"]
+    assert managed.pump is None
+    assert managed.camera_pumps == {}
+    assert waddle._session is None
+    assert waddle._managed_rig is None
+
+    waddle.shutdown()
+    assert closed == ["camera", "arm"]
+
+
+def test_partial_camera_open_failure_closes_camera_then_arm():
+    closed: list[str] = []
+    camera = _BlockingCamera(closed)
+    rig = _rig(closed, camera, camera_name="not-declared")
+
+    with pytest.raises(ValueError, match="exactly match the declaration"):
+        waddle.init("project", rig=rig, console=False)
+
+    assert closed == ["camera", "arm"]
+    assert waddle._session is None
+    assert waddle._managed_rig is None
+
+
+@dataclass(frozen=True)
+class _Stamp:
+    session_ns: int
+    unix_ns: int
+
+
+class _RecordingSession:
+    def __init__(self) -> None:
+        self._next = 0
+        self.published: list[tuple[str, np.ndarray]] = []
+
+    def stamp(self) -> _Stamp:
+        self._next += 1
+        return _Stamp(session_ns=self._next, unix_ns=1_000_000 + self._next)
+
+    def publish_frame(self, camera: str, rgb: np.ndarray) -> None:
+        self.published.append((camera, rgb))
+
+
+def test_capture_keeps_correlated_depth_local_and_resolves_pixels():
+    closed: list[str] = []
+    driver = _BlockingCamera(closed)
+    rig = _rig(closed, driver)
+    session = _RecordingSession()
+    pump = rig.camera_pumps(session, {"overhead": driver})["overhead"]
+
+    source_rgb = np.arange(12, dtype=np.uint8).reshape(2, 2, 3)
+    source_depth = np.array([[1000, 1500], [1750, 2000]], dtype=np.uint16)
+    frame = CameraFrame(rgb=source_rgb, depth=source_depth)
+    source_rgb[:] = 0
+    source_depth[:] = 0
+
+    pump.start()
+    driver.push(frame)
+    sample = rig.wait_camera("overhead", timeout_s=2.0)
+    assert sample is not None
+    pump.stop()
+
+    assert isinstance(driver, CameraDriver)
+    assert isinstance(sample, CameraSample)
+    assert (sample.session_ns, sample.unix_ns) == (1, 1_000_001)
+    assert sample.rgb.flags.writeable is False
+    assert sample.depth is not None and sample.depth.flags.writeable is False
+    np.testing.assert_array_equal(
+        sample.rgb, np.arange(12, dtype=np.uint8).reshape(2, 2, 3)
+    )
+    np.testing.assert_array_equal(
+        sample.depth, np.array([[1000, 1500], [1750, 2000]], dtype=np.uint16)
+    )
+    assert rig.resolve_pixel("overhead", 1, 1) == pytest.approx((0.02, 0.02, 2.0))
+
+    assert len(session.published) == 1
+    camera_name, published = session.published[0]
+    assert camera_name == "overhead"
+    assert published is sample.rgb
+    assert published.ndim == 3  # publish_frame receives RGB, never the depth plane
+    assert closed == ["camera"]
+
+
+def test_camera_sample_refuses_unresolvable_depth():
+    intrinsics = waddle.Intrinsics(
+        fx=100.0, fy=100.0, cx=0.0, cy=0.0, depth_scale_mm=1.0
+    )
+    sample = CameraSample(
+        stamp=_Stamp(session_ns=1, unix_ns=2),
+        rgb=np.zeros((1, 1, 3), dtype=np.uint8),
+        depth=np.zeros((1, 1), dtype=np.uint16),
+    )
+
+    with pytest.raises(ValueError, match="no valid depth"):
+        sample.point_at(0, 0, intrinsics)
+    with pytest.raises(ValueError, match="outside"):
+        sample.point_at(1, 0, intrinsics)
+    with pytest.raises(ValueError, match="non-zero distortion"):
+        sample.point_at(
+            0,
+            0,
+            waddle.Intrinsics(
+                fx=100.0,
+                fy=100.0,
+                cx=0.0,
+                cy=0.0,
+                distortion=(0.1,),
+                depth_scale_mm=1.0,
+            ),
+        )
+
+
+def test_vendor_adapters_are_lazy_and_name_their_install_extras(monkeypatch):
+    before = set(sys.modules)
+    from waddle.cameras import orbbec, realsense
+
+    assert "pyorbbecsdk" not in set(sys.modules) - before
+    assert "pyrealsense2" not in set(sys.modules) - before
+
+    def absent(name: str):
+        raise ModuleNotFoundError(name=name)
+
+    monkeypatch.setattr(orbbec.importlib, "import_module", absent)
+    with pytest.raises(RuntimeError, match=r"waddle-sdk\[orbbec\]"):
+        orbbec.OrbbecDriver()
+    monkeypatch.setattr(realsense.importlib, "import_module", absent)
+    with pytest.raises(RuntimeError, match=r"waddle-sdk\[realsense\]"):
+        realsense.RealSenseDriver()
+
+
+def test_camera_extra_metadata_is_orthogonal_to_teleop():
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # pragma: no cover - Python 3.10 only
+        import tomli as tomllib
+
+    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    extras = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"][
+        "optional-dependencies"
+    ]
+    assert extras["orbbec"] == ["pyorbbecsdk2"]
+    assert extras["realsense"] == ["pyrealsense2"]
+    assert set(extras["cameras"]) == set(extras["orbbec"] + extras["realsense"])
+    assert extras["teleop"] == [f"waddle-sdk-teleop=={waddle.__version__}"]

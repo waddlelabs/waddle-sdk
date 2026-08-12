@@ -18,13 +18,17 @@ import secrets
 import shutil
 import threading
 import urllib.parse
+from dataclasses import asdict
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from . import _services
+
 
 if TYPE_CHECKING:
     from . import _core
+    from .robots.base import RigSession
 
 _MAX_BODY = 16 * 1024
 _MAX_MANIFEST_WINDOW = 8 * 1024 * 1024
@@ -57,6 +61,7 @@ class _Server(ThreadingHTTPServer):
         self,
         session: _core.Session,
         recording_dir: Path | None,
+        managed_rig: RigSession | None,
         token: str,
         config: dict[str, float],
         config_lock: threading.Lock,
@@ -66,11 +71,21 @@ class _Server(ThreadingHTTPServer):
         self.recording_dir = (
             None if recording_dir is None else recording_dir.resolve(strict=False)
         )
+        self.managed_rig = managed_rig
         self.token = token
         self.config = config
         self.config_lock = config_lock
         self.control_lock = threading.Lock()
         self.closing = threading.Event()
+        self.local_handoff_ready = False
+        self.tasks: dict[str, _services.TaskSession] = {}
+        self.task_requests: dict[str, _services.TaskSession] = {}
+        self.artifacts: dict[str, _services.WorkspaceArtifactRequest] = {}
+        self.backends = {
+            backend.id: backend for backend in _services.execution_backends()
+        }
+        self.selected_backend = "hosted"
+        self.execution_integration: object | None = None
         host, port = self.server_address
         self.expected_host = f"{host}:{port}"
         self.origin = f"http://{self.expected_host}"
@@ -225,26 +240,43 @@ class _Handler(BaseHTTPRequestHandler):
             with self.server.config_lock:
                 state["increments"] = dict(self.server.config)
             state["local_controls_available"] = True
+            state["local_handoff_ready"] = self.server.local_handoff_ready
+            state["execution_backend"] = self.server.selected_backend
             self._json(HTTPStatus.OK, state)
         elif parsed.path.startswith("/api/cameras/"):
             camera = urllib.parse.unquote(parsed.path.removeprefix("/api/cameras/"))
             if not camera or "/" in camera or "\\" in camera:
                 self._reject(HTTPStatus.BAD_REQUEST, "invalid camera name")
                 return
-            frame = self.server.session._ui_frame(camera)
-            if frame is None:
-                self._reject(HTTPStatus.NOT_FOUND, "no frame is available")
+            try:
+                sample = (
+                    None
+                    if self.server.managed_rig is None
+                    else self.server.managed_rig.camera_sample(camera)
+                )
+            except ValueError as exc:
+                self._reject(HTTPStatus.BAD_REQUEST, str(exc))
                 return
-            width, height, data = frame
+            frame = self.server.session._ui_frame(camera) if sample is None else None
+            extra = {"X-Waddle-Pixel-Format": "RGB8"}
+            if sample is not None:
+                height, width = sample.rgb.shape[:2]
+                data = sample.rgb.tobytes(order="C")
+                extra["X-Waddle-Frame-Sequence"] = str(sample.frame_sequence)
+                extra["X-Waddle-Session-Ns"] = str(sample.session_ns)
+            elif frame is not None:
+                width, height, data = frame
+            if frame is None:
+                if sample is None:
+                    self._reject(HTTPStatus.NOT_FOUND, "no frame is available")
+                    return
+            extra["X-Waddle-Width"] = str(width)
+            extra["X-Waddle-Height"] = str(height)
             self._bytes(
                 HTTPStatus.OK,
                 data,
                 "application/octet-stream",
-                {
-                    "X-Waddle-Width": str(width),
-                    "X-Waddle-Height": str(height),
-                    "X-Waddle-Pixel-Format": "RGB8",
-                },
+                extra,
             )
         elif parsed.path == "/api/recordings":
             self._json(HTTPStatus.OK, {"recordings": self._recordings()})
@@ -265,6 +297,82 @@ class _Handler(BaseHTTPRequestHandler):
                 request_id, max(0, after), timeout_ms=20_000
             )
             self._json(HTTPStatus.OK, {"events": events})
+        elif parsed.path == "/api/tasks":
+            tasks = [
+                {
+                    "key": key,
+                    "name": task.name,
+                    "task_session_id": task.task_session_id,
+                    "request_id": task.request_id,
+                    "history": task.history,
+                }
+                for key, task in self.server.tasks.items()
+            ]
+            self._json(HTTPStatus.OK, {"tasks": tasks})
+        elif parsed.path == "/api/tasks/events":
+            query = urllib.parse.parse_qs(parsed.query, strict_parsing=True)
+            request_id = query.get("request_id", [""])[0]
+            task = self.server.task_requests.get(request_id)
+            if task is None:
+                self._reject(HTTPStatus.NOT_FOUND, "task request not found")
+                return
+            try:
+                events = task.events(request_id=request_id, timeout_s=20.0)
+            except (TypeError, ValueError) as exc:
+                self._reject(HTTPStatus.BAD_REQUEST, str(exc))
+                return
+            except RuntimeError as exc:
+                self._reject(HTTPStatus.CONFLICT, str(exc))
+                return
+            self._json(
+                HTTPStatus.OK,
+                {
+                    "events": events,
+                    "task_session_id": task.task_session_id,
+                    "name": task.name,
+                },
+            )
+        elif parsed.path == "/api/calibration/updates":
+            query = urllib.parse.parse_qs(parsed.query, strict_parsing=True)
+            calibration_id = query.get("calibration_id", [""])[0]
+            try:
+                after = int(query.get("after", ["0"])[0])
+                updates = _services.calibration_updates(
+                    self.server.session,
+                    calibration_id,
+                    after_sequence=after,
+                    timeout_s=20.0,
+                )
+            except (TypeError, ValueError) as exc:
+                self._reject(HTTPStatus.BAD_REQUEST, str(exc))
+                return
+            except RuntimeError as exc:
+                self._reject(HTTPStatus.CONFLICT, str(exc))
+                return
+            self._json(HTTPStatus.OK, {"updates": updates})
+        elif parsed.path == "/api/artifacts/events":
+            query = urllib.parse.parse_qs(parsed.query, strict_parsing=True)
+            request_id = query.get("request_id", [""])[0]
+            artifact = self.server.artifacts.get(request_id)
+            if artifact is None:
+                self._reject(HTTPStatus.NOT_FOUND, "artifact request not found")
+                return
+            try:
+                events = artifact.events(timeout_s=20.0)
+            except RuntimeError as exc:
+                self._reject(HTTPStatus.CONFLICT, str(exc))
+                return
+            self._json(HTTPStatus.OK, {"events": events})
+        elif parsed.path == "/api/execution/backends":
+            self._json(
+                HTTPStatus.OK,
+                {
+                    "backends": [
+                        backend.public() for backend in self.server.backends.values()
+                    ],
+                    "selected": self.server.selected_backend,
+                },
+            )
         else:
             self._reject(HTTPStatus.NOT_FOUND, "not found")
 
@@ -307,7 +415,40 @@ class _Handler(BaseHTTPRequestHandler):
                     self.server.config.clear()
                     self.server.config.update(config)
                 self._json(HTTPStatus.OK, {"increments": config})
+            elif parsed.path == "/api/handoff":
+                accepted, code, detail = (
+                    self.server.session.handoff_remote_to_local()
+                )
+                self.server.local_handoff_ready = accepted
+                self._json(
+                    HTTPStatus.OK,
+                    {"accepted": accepted, "code": code, "detail": detail},
+                )
             elif parsed.path == "/api/jog":
+                if not self.server.local_handoff_ready:
+                    self._json(
+                        HTTPStatus.OK,
+                        {
+                            "accepted": False,
+                            "code": "handoff_required",
+                            "detail": "take local control before jogging",
+                        },
+                    )
+                    return
+                handed_off, handoff_code, handoff_detail = (
+                    self.server.session.handoff_remote_to_local()
+                )
+                if not handed_off:
+                    self.server.local_handoff_ready = False
+                    self._json(
+                        HTTPStatus.OK,
+                        {
+                            "accepted": False,
+                            "code": handoff_code,
+                            "detail": handoff_detail,
+                        },
+                    )
+                    return
                 kind = body.get("kind")
                 index = body.get("index")
                 direction = body.get("direction")
@@ -335,14 +476,94 @@ class _Handler(BaseHTTPRequestHandler):
                     {"accepted": accepted, "code": code, "detail": detail},
                 )
             elif parsed.path == "/api/jog/heartbeat":
-                accepted, code, detail = self.server.session.jog_heartbeat()
+                if self.server.local_handoff_ready:
+                    accepted, code, detail = self.server.session.jog_heartbeat()
+                else:
+                    accepted, code, detail = (
+                        False,
+                        "handoff_required",
+                        "take local control before jogging",
+                    )
                 self._json(
                     HTTPStatus.OK,
                     {"accepted": accepted, "code": code, "detail": detail},
                 )
             elif parsed.path == "/api/jog/release":
                 self.server.session.jog_release()
+                self.server.local_handoff_ready = False
                 self._json(HTTPStatus.OK, {"released": True})
+            elif parsed.path == "/api/tasks/create":
+                task = _services.TaskSession(
+                    self.server.session, body.get("name")
+                )
+                key = secrets.token_urlsafe(18)
+                self.server.tasks[key] = task
+                assert task.request_id is not None
+                self.server.task_requests[task.request_id] = task
+                self._json(
+                    HTTPStatus.ACCEPTED,
+                    {"key": key, "request_id": task.request_id},
+                )
+            elif parsed.path in (
+                "/api/tasks/message",
+                "/api/tasks/interject",
+                "/api/tasks/interrupt",
+            ):
+                key = body.get("key")
+                if not isinstance(key, str) or key not in self.server.tasks:
+                    raise ValueError("unknown task key")
+                task = self.server.tasks[key]
+                operation = parsed.path.rsplit("/", 1)[-1]
+                if operation == "message":
+                    request_id = task.message(body.get("text"))
+                elif operation == "interject":
+                    request_id = task.interject(body.get("text"))
+                else:
+                    request_id = task.interrupt()
+                self.server.task_requests[request_id] = task
+                self._json(
+                    HTTPStatus.ACCEPTED,
+                    {"key": key, "request_id": request_id},
+                )
+            elif parsed.path == "/api/calibration/click":
+                measurement = _services.submit_calibration_click(
+                    self.server.session,
+                    self.server.managed_rig,
+                    calibration_id=body.get("calibration_id"),
+                    sample_id=body.get("sample_id"),
+                    camera=body.get("camera"),
+                    frame_sequence=body.get("frame_sequence"),
+                    x=body.get("x"),
+                    y=body.get("y"),
+                )
+                self._json(HTTPStatus.ACCEPTED, {"measurement": asdict(measurement)})
+            elif parsed.path == "/api/artifacts":
+                artifact = _services.WorkspaceArtifactRequest(
+                    self.server.session,
+                    body.get("graph_ids", ()),
+                    body.get("calibration_names", ()),
+                )
+                self.server.artifacts[artifact.request_id] = artifact
+                self._json(
+                    HTTPStatus.ACCEPTED,
+                    {"request_id": artifact.request_id},
+                )
+            elif parsed.path == "/api/execution/select":
+                backend_id = body.get("backend_id")
+                if not isinstance(backend_id, str):
+                    raise TypeError("backend_id must be a string")
+                backend = self.server.backends.get(backend_id)
+                if backend is None:
+                    raise ValueError("unknown execution backend")
+                try:
+                    integration = backend.load()
+                except Exception as exc:  # noqa: BLE001 — optional package boundary
+                    raise RuntimeError(
+                        "the selected local execution backend could not be loaded"
+                    ) from exc
+                self.server.selected_backend = backend.id
+                self.server.execution_integration = integration
+                self._json(HTTPStatus.OK, {"backend": backend.public()})
             elif parsed.path == "/api/chat":
                 text = body.get("text")
                 if not isinstance(text, str):
@@ -503,6 +724,7 @@ class UIHandle:
         self,
         session: _core.Session,
         recording_dir: Path | None,
+        managed_rig: RigSession | None = None,
         *,
         joint_step_rad: float,
         linear_step_m: float,
@@ -521,6 +743,7 @@ class UIHandle:
         self._server = _Server(
             session,
             recording_dir,
+            managed_rig,
             self._token,
             self._config,
             self._config_lock,

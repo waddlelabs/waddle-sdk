@@ -585,6 +585,16 @@ is **re-primed on fresh observations** (a new chunk computed from a current
 `t_obs_ns` — never resuming a stale pre-engage chunk); the lease hands back;
 the claim releases; blending per policy applies symmetrically.
 
+A local site-operator control that wants to take over from an active remote
+claim MUST first ask the core to complete this release path. The core accepts
+that remote-to-local handoff only in `INTERVENTION/SETTLE`, applies E8, and
+waits until the authoritative mirrors show RUNNING with no active claim. Only
+then may the local adapter request its ordinary self-initiated claim and send a
+command through the registered customer `Control.send` verb. A frontend MUST
+NOT clear, replace, or infer the remote claim, and a failed or incomplete
+release leaves local motion refused. This is the same exclusive claim/lease
+machine in both directions, not a second local authority path.
+
 ### Bypass mode (claimed-while-stalled)
 
 If the integrator's loop stalls while a claim is active (no `gate_tick`

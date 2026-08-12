@@ -1,0 +1,11 @@
+{
+  "format": "waddle.fixture/v0",
+  "type": "waddle.v0.TaskSessionRequest",
+  "description": "Requests the bounded durable suffix of a named task session strictly after a session-global sequence cursor.",
+  "message": {
+    "requestId": "req-01J9HISTORY01",
+    "taskSessionId": "task-01J9SESSION01",
+    "kind": "TASK_SESSION_REQUEST_KIND_HISTORY",
+    "afterSequence": "14"
+  }
+}

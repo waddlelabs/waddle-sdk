@@ -99,6 +99,7 @@ class Session:
     def stamp(self) -> SessionStamp: ...
     def status(self) -> dict[str, Any]: ...
     def request_estop(self) -> str: ...
+    def handoff_remote_to_local(self) -> tuple[bool, str, str]: ...
     def jog(
         self,
         kind: str,
@@ -114,6 +115,49 @@ class Session:
         self,
         request_id: str,
         after_sequence: int = 0,
+        timeout_ms: int = 0,
+    ) -> list[dict[str, Any]]: ...
+    def task_session_submit(
+        self,
+        request_id: str,
+        operation: str,
+        task_session_id: str | None = None,
+        name: str | None = None,
+        text: str | None = None,
+        after_sequence: int = 0,
+    ) -> None: ...
+    def task_session_events(
+        self,
+        request_id: str,
+        after_sequence: int = 0,
+        timeout_ms: int = 0,
+    ) -> list[dict[str, Any]]: ...
+    def calibration_measurement_submit(
+        self,
+        calibration_id: str,
+        sample_id: str,
+        camera: str,
+        frame_sequence: int,
+        frame_id: str,
+        t_ns: int,
+        point_xyz: Sequence[float],
+        depth_m: float | None = None,
+    ) -> None: ...
+    def calibration_updates(
+        self,
+        calibration_id: str,
+        after_sequence: int = 0,
+        timeout_ms: int = 0,
+    ) -> list[dict[str, Any]]: ...
+    def workspace_artifact_request(
+        self,
+        request_id: str,
+        graph_ids: Sequence[str],
+        calibration_names: Sequence[str],
+    ) -> None: ...
+    def workspace_artifact_events(
+        self,
+        request_id: str,
         timeout_ms: int = 0,
     ) -> list[dict[str, Any]]: ...
     def start_episode(

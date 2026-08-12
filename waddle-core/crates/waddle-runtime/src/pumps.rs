@@ -26,6 +26,7 @@ use crate::media_uplink::STILLS_FLAG;
 use crate::mirror::{
     AgentTaskKind, AgentTaskStatus, Mirror, ResetProgressPhase, ResetProgressStatus,
 };
+use crate::plane_events::PlaneEvents;
 use crate::session::{
     EpisodeResetSpecs, ResetOwnerSlot, ResetSpec, ResetSpecSlot, StreamProducer, TaskSlot,
 };
@@ -581,6 +582,7 @@ pub(crate) fn spawn_plane_pump(
     action_space: Arc<ActionSpace>,
     chunk_intake: SharedChunkIntake,
     chat: Arc<ChatInbox>,
+    plane_events: Arc<PlaneEvents>,
 ) -> JoinHandle<()> {
     std::thread::Builder::new()
         .name("waddle-plane-pump".into())
@@ -627,16 +629,35 @@ pub(crate) fn spawn_plane_pump(
                                     .accepted_feature_flags
                                     .iter()
                                     .any(|f| f == waddle_controlplane::flags::CHAT);
+                                let tasks_on = resp
+                                    .accepted_feature_flags
+                                    .iter()
+                                    .any(|f| f == waddle_controlplane::flags::TASK_SESSIONS);
+                                let calibration_on = resp.accepted_feature_flags.iter().any(|f| {
+                                    f == waddle_controlplane::flags::CALIBRATION_MEASUREMENTS
+                                });
+                                let artifacts_on = resp
+                                    .accepted_feature_flags
+                                    .iter()
+                                    .any(|f| f == waddle_controlplane::flags::WORKSPACE_ARTIFACTS);
                                 mirror.update(|s| {
                                     s.stills_negotiated = stills;
                                     s.parts_negotiated = parts;
                                     s.chat_negotiated = chat_on;
+                                    s.task_sessions_negotiated = tasks_on;
+                                    s.calibration_measurements_negotiated = calibration_on;
+                                    s.workspace_artifacts_negotiated = artifacts_on;
                                 });
                             }
                             // A connection exists but has not registered yet:
                             // it has accepted nothing, and the previous one's
                             // answers are not its to inherit.
-                            _ => forget_negotiated_flags(&mirror, &chat, &mut acks_negotiated),
+                            _ => forget_negotiated_flags(
+                                &mirror,
+                                &chat,
+                                &plane_events,
+                                &mut acks_negotiated,
+                            ),
                         }
                         if !was_connected {
                             was_connected = true;
@@ -644,7 +665,12 @@ pub(crate) fn spawn_plane_pump(
                         }
                     }
                     PlaneEvent::Disconnected => {
-                        forget_negotiated_flags(&mirror, &chat, &mut acks_negotiated);
+                        forget_negotiated_flags(
+                            &mirror,
+                            &chat,
+                            &plane_events,
+                            &mut acks_negotiated,
+                        );
                         if was_connected {
                             was_connected = false;
                             let _ = inject.send(SessionEvent::PartitionStart { at }.into());
@@ -660,6 +686,7 @@ pub(crate) fn spawn_plane_pump(
                         &action_space,
                         &chunk_intake,
                         &chat,
+                        &plane_events,
                         acks_negotiated,
                     ),
                 }
@@ -679,13 +706,22 @@ pub(crate) fn spawn_plane_pump(
 /// connection would see. (The offline buffer refuses to carry such messages
 /// across a connection at all — `ClientMsg::connection_scoped_flag` — so
 /// this and that guard bracket the same hole from both ends.)
-fn forget_negotiated_flags(mirror: &Mirror, chat: &ChatInbox, acks_negotiated: &mut bool) {
+fn forget_negotiated_flags(
+    mirror: &Mirror,
+    chat: &ChatInbox,
+    plane_events: &PlaneEvents,
+    acks_negotiated: &mut bool,
+) {
     *acks_negotiated = false;
     chat.unavailable("chat connection lost; local controls remain available");
+    plane_events.unavailable("control-plane connection lost; local controls remain available");
     mirror.update(|s| {
         s.stills_negotiated = false;
         s.parts_negotiated = false;
         s.chat_negotiated = false;
+        s.task_sessions_negotiated = false;
+        s.calibration_measurements_negotiated = false;
+        s.workspace_artifacts_negotiated = false;
     });
 }
 
@@ -969,6 +1005,7 @@ fn forward_server_msg(
     space: &ActionSpace,
     intake: &SharedChunkIntake,
     chat: &ChatInbox,
+    plane_events: &PlaneEvents,
     acks_negotiated: bool,
 ) {
     match msg {
@@ -1183,6 +1220,15 @@ fn forward_server_msg(
                 }
             }
             Some(pb::gate_server_message::Msg::ChatEvent(event)) => chat.push(event),
+            Some(pb::gate_server_message::Msg::TaskSessionEvent(event)) => {
+                plane_events.push_task(event);
+            }
+            Some(pb::gate_server_message::Msg::CalibrationUpdate(update)) => {
+                plane_events.push_calibration(update);
+            }
+            Some(pb::gate_server_message::Msg::WorkspaceArtifactReady(ready)) => {
+                plane_events.push_artifact(ready);
+            }
             _ => {}
         },
         ServerMsg::HeartbeatAck(ack) => {

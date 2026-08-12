@@ -59,8 +59,10 @@ result = waddle.agent("clear the table and stack the cups")
 print(result.outcome, result.episode_id, result.detail)
 ```
 
-`waddle.agent()` blocks until the episode reaches an outcome. The invited
-agent claims it through the very same intervention machinery a
+`waddle.agent()` blocks until the episode reaches an outcome. It is the
+one-shot synchronous surface over the same hosted task execution used by
+named UI conversations. The invited agent claims it through the very same
+intervention machinery a
 teleoperator uses, so its actions arrive at the `send` verb you already
 registered; your own `gate()` ticks would not dispatch in such an episode
 anyway (FSM.md E24), which is why this call takes the thread instead of
@@ -100,31 +102,85 @@ a permanent warning because it exposes lab imagery and real motion controls.
 
 State is the native session's authoritative status, rendered directly. E-stop
 sets the existing native priority e-stop path and reports **requested**, never
-confirmed; it sends no control-plane request. Jog is a core-owned local
-site-operator intervention: holding the browser deadman heartbeats every
-250 ms, and core releases its claim after one second without a heartbeat or
-immediately on release, page close or SDK shutdown. Joint jog derives one
-absolute target from the freshest reported proprio; Cartesian jog follows the
-declared delta frame/rotation convention. Missing proprio and unsupported or
-opaque spaces are typed refusals. Each accepted press is one normal action
-chunk through `Control.send`, so the owner's envelope still accepts or refuses
-the whole command—nothing in the UI clamps it. The three positive finite step
-sizes may be changed in the page for this UI run only.
+confirmed; it sends no control-plane request. Before jog is enabled, the site
+operator must press **Take Local Control**. That asks core for an exclusive
+remote-to-local handoff; a refusal leaves jog disabled, and Python/JavaScript
+never infer that remote authority has gone away. Once the handoff completes,
+holding the browser deadman heartbeats every 250 ms, and core releases its
+local claim after one second without a heartbeat or immediately on release,
+page close or SDK shutdown. Joint jog derives one absolute target from the
+freshest reported proprio; Cartesian jog follows the declared delta
+frame/rotation convention. Missing proprio and unsupported or opaque spaces
+are typed refusals. Each accepted press is one normal action chunk through
+`Control.send`, so the owner's envelope still accepts or refuses the whole
+command—nothing in the UI clamps it. The three positive finite step sizes may
+be changed in the page for this UI run only.
 
-The camera view is the native shim's bounded latest raw-RGB frame per declared
-camera, drawn directly to a canvas. Recordings are read from `manifest.jsonl`:
-the list shows task/outcome/timestamps, and downloads resolve only the
-manifest-named sidecar/MCAP files beneath `recording_dir`; there is no playback
-or MCAP web dependency.
+The camera view is the bounded latest RGB frame per declared camera, drawn
+directly to a canvas. A managed RGB-D rig keeps the pixel-aligned depth beside
+that exact frame in the customer process. Calibration clicks carry the frame
+sequence shown by the UI; the SDK rejects a stale sequence, deprojects the
+pixel locally from the declared intrinsics, and submits only bounded IDs,
+timestamps and the 3-D point. Image and depth arrays never enter the
+calibration message. Recordings are read from `manifest.jsonl`: the list shows
+task/outcome/timestamps, and downloads resolve only the manifest-named
+sidecar/MCAP files beneath `recording_dir`; there is no playback or MCAP web
+dependency.
 
-All of that remains local with no plane. With a connected plane, the only
-remote feature in this page is chat: one outstanding bounded request travels
-on the existing `GateActions` stream under `waddle.v0.agent.chat` to the active
-invited host, and the page long-polls its bounded native event ring. Thinking,
-prompts, tool names/payloads, delegated output and internal errors are not chat
-events. A missing transport, unnegotiated flag, dead plane or absent host is an
-explicit unavailable status; local state, e-stop, jog, cameras and recordings
-continue to work.
+With a connected plane the page also exposes durable named task sessions:
+create a conversation, watch public-safe live output, send a message
+or interjection, and interrupt the active turn. Internal prompts, tool
+names/payloads, traces and private errors are not task events. The equivalent
+Python handle is `waddle.task_session(name, task_session_id=...)`; its bounded
+`history` is the events observed through that handle, while the plane-issued
+ID resumes the durable conversation. A resumed handle requests the first
+bounded history page immediately; `refresh()` requests the next suffix using
+the last durable cursor:
+
+```python
+task = waddle.task_session("bench setup")
+while task.task_session_id is None:
+    task.events(timeout_s=20.0)
+
+task.message("Use the wrist camera for the next check")
+for event in task.events(timeout_s=20.0):
+    print(event)
+
+task.interject("Leave the red fixture in place")
+# task.interrupt() stops the active hosted turn.
+```
+
+resumed = waddle.task_session("bench setup", task_session_id=task.task_session_id)
+resumed.events(timeout_s=20.0)  # first durable page requested by construction
+
+Workspace export is similarly metadata-only on the session stream. A request
+selects allowlisted graphs and calibrations; its ready event contains an
+opaque, one-time `download_ref` for the plane's separate authenticated artifact
+endpoint, never archive bytes:
+
+```python
+artifact = waddle.request_workspace_artifact(
+    graph_ids=["clear-table"],
+    calibration_names=["bench-v3"],
+)
+for event in artifact.events(timeout_s=20.0):
+    print(event.get("download_ref"))
+```
+
+Execution choices are **Hosted** plus any explicitly installed **Local**
+integration. Optional local integrations register the versioned
+`waddle.execution.v1` entry-point group. Discovery lists metadata without
+importing them; only selecting one in the UI, or explicitly calling its
+`ExecutionBackend.load()`, loads its package:
+
+```python
+local = next(backend for backend in waddle.execution_backends() if backend.local)
+integration = local.load()  # the sole optional local-runtime import boundary
+```
+
+A missing transport, unnegotiated service, dead plane or absent hosted worker
+is an explicit unavailable status. Local state, e-stop, camera viewing,
+recordings, and the handoff-controlled jog path continue to work.
 
 All of the above in one runnable file — a simulated 6-dof arm with a
 camera, the loop, and `waddle.agent()`, offline by default — is
@@ -146,9 +202,22 @@ then facts + driver + factory and nothing else. The subpackage is opt-in —
 import waddle
 from waddle.robots import yam
 
-rig = yam.bimanual(workspace=WORKSPACE_M, gripper_limits=(0.1, 1.7), sim=True)
-with rig.session("towels", transport=waddle.Grpc(url, token)) as session:
+rig = yam.bimanual(
+    workspace=WORKSPACE_M,
+    gripper_limits=(0.1, 1.7),
+    sim=True,
+)
+waddle.init(
+    "towels",
+    rig=rig,
+    transport=waddle.Grpc(url, token),
+    recording_dir="./recordings",
+)
+try:
+    dashboard = waddle.ui()
     result = waddle.agent("stack the cups")
+finally:
+    waddle.shutdown()
 ```
 
 `sim` is EXPLICIT either way, never inferred: no code path try-imports a
@@ -161,8 +230,16 @@ it cannot drift from the commit those facts are stated against, printed by
 the driver when the import fails, and quoted in the [root
 README](../README.md). Importing `waddle.robots.yam` needs none of it.
 
-`rig.session(...)` exists for the two ends every hand-written version gets
-wrong at least once. `__enter__` opens the drivers **inside the `with`** —
+`waddle.init(rig=...)` and `rig.session(...)` share one `RigSession`
+lifecycle. The former is useful when a process already owns shutdown; the
+latter is its context-manager spelling. `rig=` is mutually exclusive with
+the legacy `robot`/`control` pair, so hardware is never registered twice.
+Opening starts the arms, optional cameras, proprio pump and capture pumps;
+`waddle.shutdown()` (or `RigSession.__exit__`) stops blocked capture, joins
+the pumps, finalizes the recording and closes everything deterministically.
+
+The context-manager spelling exists for the two ends every hand-written
+version gets wrong at least once. `__enter__` opens the drivers **inside the `with`** —
 so a bus that will not open unwinds structurally, and a rig that opens half
 its arms closes them rather than leaving them energized under a vendor's own
 re-send — registers the verbs, calls `waddle.init`, and starts the reporting
@@ -178,6 +255,51 @@ only for an agent run, so your own loop only gates and applies — there is no
 interleaved robot tick to forget, and a session whose thread is blocked
 inside `waddle.agent()` keeps reporting.
 
+### Managed cameras (RGB and RGB-D)
+
+A camera driver is structural: it implements `capture() -> CameraFrame` and
+an idempotent `close()` that unblocks a pending capture. `CameraFrame.rgb` is
+a contiguous `uint8[height, width, 3]` array; optional `depth` is a
+pixel-aligned `uint16[height, width]` array. The SDK copies reusable vendor
+buffers when necessary and exposes immutable `CameraSample`s stamped once
+with the session-monotonic/Unix clock pair plus a monotonically increasing
+`frame_sequence`.
+
+```python
+from waddle.robots import base
+
+
+class SiteCamera:
+    def capture(self) -> waddle.CameraFrame:
+        return waddle.CameraFrame(
+            rgb=capture_rgb_uint8(),
+            depth=capture_aligned_depth_uint16(),
+        )
+
+    def close(self) -> None:
+        close_device_and_unblock_capture()
+
+
+rig = base.Rig(
+    declaration=robot_with_declared_wrist_camera,
+    build_arms=open_arms,
+    build_cameras=lambda: {"wrist": SiteCamera()},
+    rate_hz=50.0,
+)
+```
+
+The camera names returned by `build_cameras` must exactly equal the robot
+declaration's camera names. Capture publishes only RGB through the existing
+declared camera paths and retains only the latest correlated local RGB-D
+sample for calibration. `waddle.calibration_click(calibration_id, sample_id,
+camera, frame_sequence, x, y)` requires rectified depth plus declared
+intrinsics and `frame_id`; it refuses stale frames, invalid depth and non-zero
+distortion rather than guessing.
+
+The built-in `OrbbecDriver` and `RealSenseDriver` adapters are imported lazily.
+Their vendor SDKs are optional extras; importing `waddle` or
+`waddle.cameras` never imports either vendor package.
+
 ### Every piece is usable alone
 
 The rig is composition sugar over pieces that each stand on their own —
@@ -187,6 +309,7 @@ which is the design, not an accident:
 |---|---|---|
 | `yam.declaration(...)` / `rig.robot()` | the `waddle.Robot` this rig registers | hand it to `waddle.init` yourself; nothing else here is involved |
 | `rig.arms()` | one `base.Arm` per declared part, each an owner's envelope over a driver | the hardware opens **here**, never at the factory call |
+| `rig.cameras()` | one structural `CameraDriver` per declared camera | capture opens **here** and aligned depth remains local |
 | `rig.control(arms)` | the posture as `waddle.Control` verbs | `send=` replaces the envelope wholesale (below) |
 | `rig.pre_reset(arms)` | the default scene reset — refuses a latched scene, homes a twin, vouches for metal without moving it | pass your own callable to `waddle.init` instead |
 | `rig.pump(session, arms)` | `base.RobotPump` reporting every part at the declared rate | `RobotPump(tick, rate_hz)` runs any tick callable you write |
@@ -361,8 +484,12 @@ came from. An unsourced number is one nothing checks.
 ## Installing
 
 ```bash
-pip install waddle-sdk              # control plane included
-pip install 'waddle-sdk[teleop]'    # + the LiveKit media plane
+pip install waddle-sdk                    # control plane included
+pip install 'waddle-sdk[orbbec]'          # + lazy Orbbec RGB-D adapter
+pip install 'waddle-sdk[realsense]'       # + lazy RealSense RGB-D adapter
+pip install 'waddle-sdk[cameras]'         # + both camera adapters
+pip install 'waddle-sdk[teleop]'          # + the LiveKit media plane
+pip install 'waddle-sdk[cameras,teleop]'  # camera adapters + LiveKit media plane
 ```
 
 Two distributions from one source tree (the psycopg / psycopg-binary
@@ -489,9 +616,20 @@ Concretely, in this package:
 - **Local UI** (`waddle.ui`, `UIHandle`): Python owns loopback HTTP security,
   static assets, positive-finite presentation settings and safe manifest path
   resolution only. It renders `Session.status()` and marshals typed native
-  operations. E-stop priority, jog/deadman timing, claim engage/release,
-  declared-space action construction, chat negotiation/connection scoping and
-  every refusal live in core; JavaScript and Python never infer authority.
+  operations. E-stop priority, exclusive remote-to-local handoff,
+  jog/deadman timing, claim engage/release, declared-space action construction,
+  service negotiation/connection scoping and every refusal live in core;
+  JavaScript and Python never infer authority.
+- **Managed rig and cameras** (`init(rig=...)`, `CameraDriver`): Python owns
+  hardware construction, capture/reporting pump lifetime, deterministic close,
+  array shape validation and local RGB-D deprojection. Core still owns session
+  time, intake and authority. Calibration submits only the selected frame's
+  bounded 3-D measurement; no Python branch decides whether motion may occur.
+- **Hosted services and local integration** (`TaskSession`, calibration and
+  artifact handles, `execution_backends`): Python validates bounded public
+  shapes and tracks client cursors. Core owns negotiation, correlation and
+  handoff. Optional local execution enters only through the versioned
+  `waddle.execution.v1` entry point after explicit selection.
 - **Part-keyed payloads** (`Composite` sessions: dict-by-part `gate()`
   returns and `Chunk` step values, `report_proprio(part=)`): the layout is
   read off the customer's own declaration — each part's name and width, in

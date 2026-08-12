@@ -342,6 +342,15 @@ impl PySession {
         )?;
         out.set_item("plane_connected", status.plane_connected)?;
         out.set_item("chat_negotiated", status.chat_negotiated)?;
+        out.set_item("task_sessions_negotiated", status.task_sessions_negotiated)?;
+        out.set_item(
+            "calibration_measurements_negotiated",
+            status.calibration_measurements_negotiated,
+        )?;
+        out.set_item(
+            "workspace_artifacts_negotiated",
+            status.workspace_artifacts_negotiated,
+        )?;
         out.set_item("agent_invited", status.agent_invited)?;
         out.set_item("agent_engaged", status.agent_engaged)?;
         out.set_item("shutdown", status.shutdown)?;
@@ -372,6 +381,16 @@ impl PySession {
     fn request_estop(&self) -> PyResult<&'static str> {
         self.inner.request_estop().map_err(runtime_err)?;
         Ok("requested")
+    }
+
+    /// Release an engaged remote claim through the core FSM and wait for
+    /// authoritative lease handback before any local command is admitted.
+    fn handoff_remote_to_local(&self, py: Python<'_>) -> (bool, String, String) {
+        let session = self.inner.clone();
+        match py.detach(move || session.handoff_remote_to_local()) {
+            Ok(()) => (true, "accepted".into(), "accepted".into()),
+            Err(refusal) => (false, refusal.code().to_owned(), refusal.to_string()),
+        }
     }
 
     /// One local jog intent. Expected core refusals return a typed triple
@@ -465,6 +484,206 @@ impl PySession {
                     },
                 )?;
                 item.set_item("text", event.text)?;
+                item.set_item("detail", event.detail)?;
+                Ok(item)
+            })
+            .collect()
+    }
+
+    #[pyo3(signature = (request_id, operation, task_session_id=None, name=None, text=None, after_sequence=0))]
+    fn task_session_submit(
+        &self,
+        request_id: &str,
+        operation: &str,
+        task_session_id: Option<&str>,
+        name: Option<&str>,
+        text: Option<&str>,
+        after_sequence: u64,
+    ) -> PyResult<()> {
+        let kind = match operation {
+            "create" => pb::TaskSessionRequestKind::Create,
+            "message" => pb::TaskSessionRequestKind::Message,
+            "interject" => pb::TaskSessionRequestKind::Interject,
+            "interrupt" => pb::TaskSessionRequestKind::Interrupt,
+            "history" => pb::TaskSessionRequestKind::History,
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "unknown task session operation {other:?}"
+                )));
+            }
+        };
+        self.inner
+            .submit_task_session(pb::TaskSessionRequest {
+                request_id: request_id.to_owned(),
+                task_session_id: task_session_id.unwrap_or_default().to_owned(),
+                name: name.unwrap_or_default().to_owned(),
+                kind: kind as i32,
+                text: text.unwrap_or_default().to_owned(),
+                after_sequence,
+            })
+            .map_err(runtime_err)
+    }
+
+    #[pyo3(signature = (request_id, after_sequence=0, timeout_ms=0))]
+    fn task_session_events<'py>(
+        &self,
+        py: Python<'py>,
+        request_id: &str,
+        after_sequence: u64,
+        timeout_ms: u64,
+    ) -> PyResult<Vec<Bound<'py, PyDict>>> {
+        let session = self.inner.clone();
+        let request_id = request_id.to_owned();
+        let events = py.detach(move || {
+            session.task_session_events(
+                &request_id,
+                after_sequence,
+                Duration::from_millis(timeout_ms.min(30_000)),
+            )
+        });
+        events
+            .into_iter()
+            .map(|event| {
+                let item = PyDict::new(py);
+                item.set_item("request_id", event.request_id)?;
+                item.set_item("task_session_id", event.task_session_id)?;
+                item.set_item("name", event.name)?;
+                item.set_item("sequence", event.sequence)?;
+                item.set_item(
+                    "kind",
+                    match pb::TaskSessionEventKind::try_from(event.kind) {
+                        Ok(pb::TaskSessionEventKind::Accepted) => "accepted",
+                        Ok(pb::TaskSessionEventKind::Text) => "text",
+                        Ok(pb::TaskSessionEventKind::Done) => "done",
+                        Ok(pb::TaskSessionEventKind::Interrupted) => "interrupted",
+                        Ok(pb::TaskSessionEventKind::Unavailable) => "unavailable",
+                        Ok(pb::TaskSessionEventKind::Error) => "error",
+                        Ok(pb::TaskSessionEventKind::HistoryComplete) => "history_complete",
+                        _ => "unavailable",
+                    },
+                )?;
+                item.set_item("text", event.text)?;
+                item.set_item("detail", event.detail)?;
+                item.set_item("role", event.role)?;
+                item.set_item("history_cursor", event.history_cursor)?;
+                Ok(item)
+            })
+            .collect()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn calibration_measurement_submit(
+        &self,
+        calibration_id: &str,
+        sample_id: &str,
+        camera: &str,
+        frame_sequence: u64,
+        frame_id: &str,
+        t_ns: i64,
+        point_xyz: (f64, f64, f64),
+        depth_m: Option<f64>,
+    ) -> PyResult<()> {
+        self.inner
+            .submit_calibration_measurement(pb::CalibrationMeasurement {
+                calibration_id: calibration_id.to_owned(),
+                sample_id: sample_id.to_owned(),
+                camera: camera.to_owned(),
+                frame_seq: frame_sequence,
+                t_ns,
+                frame_id: frame_id.to_owned(),
+                point: Some(pb::Vec3 {
+                    x: point_xyz.0,
+                    y: point_xyz.1,
+                    z: point_xyz.2,
+                }),
+                depth_m,
+            })
+            .map_err(runtime_err)
+    }
+
+    #[pyo3(signature = (calibration_id, after_sequence=0, timeout_ms=0))]
+    fn calibration_updates<'py>(
+        &self,
+        py: Python<'py>,
+        calibration_id: &str,
+        after_sequence: u64,
+        timeout_ms: u64,
+    ) -> PyResult<Vec<Bound<'py, PyDict>>> {
+        let session = self.inner.clone();
+        let calibration_id = calibration_id.to_owned();
+        let updates = py.detach(move || {
+            session.calibration_updates(
+                &calibration_id,
+                after_sequence,
+                Duration::from_millis(timeout_ms.min(30_000)),
+            )
+        });
+        updates
+            .into_iter()
+            .map(|update| {
+                let item = PyDict::new(py);
+                item.set_item("calibration_id", update.calibration_id)?;
+                item.set_item("camera", update.camera)?;
+                item.set_item("frame_sequence", update.frame_seq)?;
+                item.set_item("sequence", update.sequence)?;
+                item.set_item("catalog_name", update.catalog_name)?;
+                item.set_item("source_project", update.source_project)?;
+                item.set_item("detail", update.detail)?;
+                item.set_item(
+                    "kind",
+                    match pb::CalibrationUpdateKind::try_from(update.kind) {
+                        Ok(pb::CalibrationUpdateKind::Accepted) => "accepted",
+                        Ok(pb::CalibrationUpdateKind::NeedsSample) => "needs_sample",
+                        Ok(pb::CalibrationUpdateKind::Solved) => "solved",
+                        Ok(pb::CalibrationUpdateKind::Refused) => "refused",
+                        _ => "refused",
+                    },
+                )?;
+                Ok(item)
+            })
+            .collect()
+    }
+
+    fn workspace_artifact_request(
+        &self,
+        request_id: &str,
+        graph_ids: Vec<String>,
+        calibration_names: Vec<String>,
+    ) -> PyResult<()> {
+        self.inner
+            .request_workspace_artifact(pb::WorkspaceArtifactRequest {
+                request_id: request_id.to_owned(),
+                graph_ids,
+                calibration_names,
+            })
+            .map_err(runtime_err)
+    }
+
+    #[pyo3(signature = (request_id, timeout_ms=0))]
+    fn workspace_artifact_events<'py>(
+        &self,
+        py: Python<'py>,
+        request_id: &str,
+        timeout_ms: u64,
+    ) -> PyResult<Vec<Bound<'py, PyDict>>> {
+        let session = self.inner.clone();
+        let request_id = request_id.to_owned();
+        let events = py.detach(move || {
+            session.workspace_artifact_events(
+                &request_id,
+                Duration::from_millis(timeout_ms.min(30_000)),
+            )
+        });
+        events
+            .into_iter()
+            .map(|event| {
+                let item = PyDict::new(py);
+                item.set_item("request_id", event.request_id)?;
+                item.set_item("artifact_id", event.artifact_id)?;
+                item.set_item("sha256", event.sha256)?;
+                item.set_item("size_bytes", event.size_bytes)?;
+                item.set_item("download_ref", event.download_ref)?;
+                item.set_item("expires_unix_ns", event.expires_unix_ns)?;
                 item.set_item("detail", event.detail)?;
                 Ok(item)
             })

@@ -1,0 +1,13 @@
+{
+  "format": "waddle.fixture/v0",
+  "type": "waddle.v0.WorkspaceArtifactReady",
+  "description": "Bounded signed-artifact metadata and an opaque one-time reference; archive bytes use a separate authenticated endpoint.",
+  "message": {
+    "requestId": "export-01J9",
+    "artifactId": "artifact-01J9",
+    "sha256": "4f1f68c10f32a4f6b66f4a30445a247b06f35fcf79f968967f80221b0c9ad7c8",
+    "sizeBytes": "16384",
+    "downloadRef": "wdl_a1.CwwrQbX9dQsD3D-E.yQ6pEJx7Wc6Zc98-X7VgQw",
+    "expiresUnixNs": "1786530000000000000"
+  }
+}

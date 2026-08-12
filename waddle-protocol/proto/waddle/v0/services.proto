@@ -199,6 +199,16 @@ message GateClientMessage {
     // message for the session's active invited host. Connection-scoped:
     // never buffered offline or replayed after re-registration.
     ChatRequest chat_request = 5;
+    // Flag waddle.v0.task.sessions: a named, durable hosted-task operation.
+    // Connection-scoped delivery; durability begins only after the plane
+    // acknowledges it with a TaskSessionEvent.
+    TaskSessionRequest task_session_request = 6;
+    // Flag waddle.v0.calibration.measurements: one locally resolved 3-D
+    // calibration observation. Pixels and depth never ride GateActions.
+    CalibrationMeasurement calibration_measurement = 7;
+    // Flag waddle.v0.workspace.artifacts: request a reviewed workspace
+    // delivery. The archive itself never rides GateActions.
+    WorkspaceArtifactRequest workspace_artifact_request = 8;
   }
 }
 
@@ -230,6 +240,137 @@ message ChatEvent {
   ChatEventKind kind = 3;
   string text = 4;
   string detail = 5;
+}
+
+// ---------------------------------------------------------------------------
+// Named hosted-task sessions (flag waddle.v0.task.sessions)
+// ---------------------------------------------------------------------------
+
+enum TaskSessionRequestKind {
+  TASK_SESSION_REQUEST_KIND_UNSPECIFIED = 0;
+  TASK_SESSION_REQUEST_KIND_CREATE = 1;
+  TASK_SESSION_REQUEST_KIND_MESSAGE = 2;
+  TASK_SESSION_REQUEST_KIND_INTERJECT = 3;
+  TASK_SESSION_REQUEST_KIND_INTERRUPT = 4;
+  TASK_SESSION_REQUEST_KIND_HISTORY = 5;
+}
+
+// A named durable conversation with the hosted task mechanism. request_id
+// is bounded to 128 UTF-8 bytes, task_session_id and name to 200 bytes,
+// and text to 4 KiB. CREATE carries a name and initial text; subsequent
+// mutations carry the plane-issued task_session_id. HISTORY carries that id
+// and after_sequence only, and returns at most one plane-bounded page followed
+// by HISTORY_COMPLETE. Receivers reject, never truncate, an over-bound value.
+// Requests are connection-scoped and are not
+// replayed after reconnect: retry uses a fresh request_id against the durable
+// task_session_id, and the plane de-duplicates it transactionally.
+message TaskSessionRequest {
+  string request_id = 1;
+  string task_session_id = 2;
+  string name = 3;
+  TaskSessionRequestKind kind = 4;
+  string text = 5;
+  // HISTORY returns the durable suffix strictly after this session-global
+  // sequence. The plane bounds each reply page; clients advance this cursor.
+  uint64 after_sequence = 6;
+}
+
+enum TaskSessionEventKind {
+  TASK_SESSION_EVENT_KIND_UNSPECIFIED = 0;
+  TASK_SESSION_EVENT_KIND_ACCEPTED = 1;
+  TASK_SESSION_EVENT_KIND_TEXT = 2;
+  TASK_SESSION_EVENT_KIND_DONE = 3;
+  TASK_SESSION_EVENT_KIND_INTERRUPTED = 4;
+  TASK_SESSION_EVENT_KIND_UNAVAILABLE = 5;
+  TASK_SESSION_EVENT_KIND_ERROR = 6;
+  TASK_SESSION_EVENT_KIND_HISTORY_COMPLETE = 7;
+}
+
+// Ordered public-safe output and lifecycle for one named task session.
+// text is main-conversation user/assistant output only; role is "user" or
+// "assistant" when text is present and empty otherwise. detail is plane-authored
+// lifecycle text. Thinking, prompts, skills markdown, tool/delegated payloads,
+// traces, internal errors, and provider metadata are forbidden in both.
+message TaskSessionEvent {
+  string request_id = 1;
+  string task_session_id = 2;
+  string name = 3;
+  uint64 sequence = 4;
+  TaskSessionEventKind kind = 5;
+  string text = 6;
+  string detail = 7;
+  string role = 8;
+  // Set only on HISTORY_COMPLETE. This is the last durable session sequence
+  // represented by the page and is the cursor for the next HISTORY request.
+  uint64 history_cursor = 9;
+}
+
+// ---------------------------------------------------------------------------
+// Calibration measurements (flag waddle.v0.calibration.measurements)
+// ---------------------------------------------------------------------------
+
+// One RGB-D click resolved by the customer process against the depth sample
+// captured with that RGB frame. Only this bounded 3-D result crosses the
+// control plane. point is expressed in frame_id; the virtual cell owns pose
+// validation, collection, solving, and catalog updates. Motion continues to
+// use ordinary ActionChunk intake and is refused whole, never clamped.
+message CalibrationMeasurement {
+  string calibration_id = 1;
+  string sample_id = 2;
+  string camera = 3;
+  uint64 frame_seq = 4;
+  int64 t_ns = 5;
+  string frame_id = 6;
+  Vec3 point = 7;
+  optional double depth_m = 8;
+}
+
+enum CalibrationUpdateKind {
+  CALIBRATION_UPDATE_KIND_UNSPECIFIED = 0;
+  CALIBRATION_UPDATE_KIND_ACCEPTED = 1;
+  CALIBRATION_UPDATE_KIND_NEEDS_SAMPLE = 2;
+  CALIBRATION_UPDATE_KIND_SOLVED = 3;
+  CALIBRATION_UPDATE_KIND_REFUSED = 4;
+}
+
+// Bounded lifecycle only. A NEEDS_SAMPLE update identifies the camera and
+// frame in which the site operator should click; it carries no pixels. SOLVED
+// identifies a customer-scoped catalog entry, optionally sourced explicitly
+// from another project owned by the same authenticated customer.
+message CalibrationUpdate {
+  string calibration_id = 1;
+  CalibrationUpdateKind kind = 2;
+  string camera = 3;
+  uint64 frame_seq = 4;
+  string catalog_name = 5;
+  string source_project = 6;
+  string detail = 7;
+  uint64 sequence = 8;          // strictly increasing within calibration_id
+}
+
+// ---------------------------------------------------------------------------
+// Reviewed workspace artifacts (flag waddle.v0.workspace.artifacts)
+// ---------------------------------------------------------------------------
+
+// Asks the plane to export the allowlisted workspace program. Calibration
+// names select catalog entries explicitly; prompts, skills markdown, MCP
+// definitions, traces, secrets, and authoring metadata are never implied.
+message WorkspaceArtifactRequest {
+  string request_id = 1;
+  repeated string graph_ids = 2;
+  repeated string calibration_names = 3;
+}
+
+// Bounded metadata plus an opaque one-time reference for a separate
+// authenticated artifact endpoint. No archive bytes ride GateActions.
+message WorkspaceArtifactReady {
+  string request_id = 1;
+  string artifact_id = 2;
+  string sha256 = 3;
+  uint64 size_bytes = 4;
+  string download_ref = 5;
+  int64 expires_unix_ns = 6;
+  string detail = 7;
 }
 
 enum ClaimDirectiveKind {
@@ -292,6 +433,9 @@ message GateServerMessage {
     ResetWindowDirective reset_window = 6; // flag waddle.v0.reset.remote
     AgentTaskUpdate agent_update = 7;      // flag waddle.v0.agent
     ChatEvent chat_event = 8;              // flag waddle.v0.agent.chat
+    TaskSessionEvent task_session_event = 9; // flag waddle.v0.task.sessions
+    CalibrationUpdate calibration_update = 10; // flag waddle.v0.calibration.measurements
+    WorkspaceArtifactReady workspace_artifact_ready = 11; // flag waddle.v0.workspace.artifacts
   }
 }
 

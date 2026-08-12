@@ -101,6 +101,15 @@ impl ClientMsg {
             Self::Gate(msg) => match msg.msg {
                 Some(pb::gate_client_message::Msg::Ack(_)) => Some(crate::flags::ACKS),
                 Some(pb::gate_client_message::Msg::ChatRequest(_)) => Some(crate::flags::CHAT),
+                Some(pb::gate_client_message::Msg::TaskSessionRequest(_)) => {
+                    Some(crate::flags::TASK_SESSIONS)
+                }
+                Some(pb::gate_client_message::Msg::CalibrationMeasurement(_)) => {
+                    Some(crate::flags::CALIBRATION_MEASUREMENTS)
+                }
+                Some(pb::gate_client_message::Msg::WorkspaceArtifactRequest(_)) => {
+                    Some(crate::flags::WORKSPACE_ARTIFACTS)
+                }
                 _ => None,
             },
             _ => None,
@@ -392,21 +401,63 @@ mod tests {
                 text: "What do you see?".into(),
             })),
         });
+        let task = ClientMsg::Gate(pb::GateClientMessage {
+            msg: Some(pb::gate_client_message::Msg::TaskSessionRequest(
+                pb::TaskSessionRequest::default(),
+            )),
+        });
+        let calibration = ClientMsg::Gate(pb::GateClientMessage {
+            msg: Some(pb::gate_client_message::Msg::CalibrationMeasurement(
+                pb::CalibrationMeasurement::default(),
+            )),
+        });
+        let artifact = ClientMsg::Gate(pb::GateClientMessage {
+            msg: Some(pb::gate_client_message::Msg::WorkspaceArtifactRequest(
+                pb::WorkspaceArtifactRequest::default(),
+            )),
+        });
 
         assert_eq!(named.connection_scoped_flag(), Some(crate::flags::PARTS));
         assert_eq!(ack.connection_scoped_flag(), Some(crate::flags::ACKS));
         assert_eq!(chat.connection_scoped_flag(), Some(crate::flags::CHAT));
+        assert_eq!(
+            task.connection_scoped_flag(),
+            Some(crate::flags::TASK_SESSIONS)
+        );
+        assert_eq!(
+            calibration.connection_scoped_flag(),
+            Some(crate::flags::CALIBRATION_MEASUREMENTS)
+        );
+        assert_eq!(
+            artifact.connection_scoped_flag(),
+            Some(crate::flags::WORKSPACE_ARTIFACTS)
+        );
         assert_eq!(sole.connection_scoped_flag(), None);
         assert_eq!(event.connection_scoped_flag(), None);
 
         assert!(!named.buffer_when_offline(), "cannot cross a connection");
         assert!(!ack.buffer_when_offline(), "cannot cross a connection");
         assert!(!chat.buffer_when_offline(), "cannot cross a connection");
+        assert!(!task.buffer_when_offline(), "cannot cross a connection");
+        assert!(
+            !calibration.buffer_when_offline(),
+            "cannot cross a connection"
+        );
+        assert!(!artifact.buffer_when_offline(), "cannot cross a connection");
         assert!(sole.buffer_when_offline(), "history, and core surface");
         assert!(event.buffer_when_offline(), "history, and core surface");
         // Withheld is not shed: none of this is droppable, so nothing here
         // may be discarded by a transport that is merely slow.
-        for msg in [&named, &sole, &ack, &chat, &event] {
+        for msg in [
+            &named,
+            &sole,
+            &ack,
+            &chat,
+            &task,
+            &calibration,
+            &artifact,
+            &event,
+        ] {
             assert!(!msg.is_droppable(), "{msg:?}");
         }
     }

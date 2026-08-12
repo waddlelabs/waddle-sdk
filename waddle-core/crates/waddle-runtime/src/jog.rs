@@ -46,6 +46,8 @@ pub enum JogRefusal {
     AgentInvitedEpisode,
     #[error("another intervention claim is active")]
     ConflictingClaim,
+    #[error("remote-to-local takeover is legal only from an engaged SETTLE claim")]
+    TakeoverUnavailable,
     #[error("the local jog claim was refused or did not engage")]
     EngageRefused,
     #[error("a composite action space requires a declared part")]
@@ -76,6 +78,7 @@ impl JogRefusal {
             Self::NoRunningEpisode => "no_running_episode",
             Self::AgentInvitedEpisode => "agent_invited_episode",
             Self::ConflictingClaim => "conflicting_claim",
+            Self::TakeoverUnavailable => "takeover_unavailable",
             Self::EngageRefused => "engage_refused",
             Self::PartRequired => "part_required",
             Self::UnknownPart(_) => "unknown_part",

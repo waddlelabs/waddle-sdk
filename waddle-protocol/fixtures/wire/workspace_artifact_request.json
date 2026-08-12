@@ -1,0 +1,14 @@
+{
+  "format": "waddle.fixture/v0",
+  "type": "waddle.v0.WorkspaceArtifactRequest",
+  "description": "A reviewed workspace export request selecting only allowlisted graphs and named calibration catalog entries.",
+  "message": {
+    "requestId": "export-01J9",
+    "graphIds": [
+      "pick-and-place"
+    ],
+    "calibrationNames": [
+      "wrist-to-left-base-v3"
+    ]
+  }
+}

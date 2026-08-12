@@ -12,6 +12,38 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 ## [Unreleased]
 
 ### Added
+- **managed rigs and lazy RGB-D cameras**: `waddle.init()` now accepts a
+  mutually exclusive `rig=` form while preserving the existing
+  `robot`/`control` API. The shared `RigSession` opens arms and cameras
+  inside the lifecycle, starts reporting and latest-only capture pumps, closes
+  every partially opened resource on failure, and lets `waddle.shutdown()`
+  deterministically finalize the recording and hardware. A structural
+  `CameraDriver` returns immutable RGB or pixel-aligned RGB-D
+  `CameraFrame` values; the rig pairs each capture with one
+  `Session.stamp()`, publishes RGB through the existing bounded paths, and
+  retains depth locally for pinhole deprojection. Lazy adapters and extras are
+  `[orbbec]`, `[realsense]`, and `[cameras]`; the base wheel stays free of
+  vendor camera dependencies and every extra composes with `[teleop]`.
+- **durable task, calibration, artifact, and execution facades**: three
+  append-only connection-scoped protocol flags add named hosted-task sessions,
+  locally resolved calibration measurements, and reviewed workspace-delivery
+  metadata. Task history is durable across reconnects and plane restarts;
+  clients page it explicitly with a session-global cursor and a bounded
+  completion marker. Task events expose only bounded user/assistant text plus
+  public-safe lifecycle; calibration sends a correlated 3-D measurement but
+  no RGB/depth bytes; GateActions carries artifact metadata and a one-time
+  reference but never archive bytes. The Python SDK provides typed facades and
+  the authenticated UI adds named sessions, live history, interjection,
+  interrupt, cameras, calibration, recordings, and Hosted/Local selection.
+  Optional local runtimes are discovered lazily through the versioned
+  `waddle.execution.v1` entry-point group.
+- **exclusive remote-to-local control handoff**: waddle-core now owns the
+  operation that releases an active remote claim through normative E8, waits
+  for lease handback and RUNNING/no-claim mirrors, and only then permits a
+  normal local site-operator jog. The UI requires that handoff before every
+  gesture; local commands still traverse the ordinary claim, action intake,
+  deadman, and customer `Control.send` path, so a frontend never becomes a
+  second authority and the owner's reject-whole envelope remains final.
 - **`waddle.ui()` and remote invited-host chat**: an active SDK session can now
   open one dependency-free browser application on an OS-selected
   `127.0.0.1` port and receives a `UIHandle` with `url`, `close()` and context

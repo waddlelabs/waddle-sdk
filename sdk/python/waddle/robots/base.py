@@ -56,11 +56,17 @@ from typing import Protocol, runtime_checkable
 import numpy as np
 
 from .. import Control, Handoff, _Handoff, init, shutdown
+from ..cameras import CameraDriver, CameraFrame, CameraSample
+from ..descriptors import Camera as CameraDescription
 from ..descriptors import FrameTransform, Robot
 
 __all__ = [
     "Arm",
     "CONSOLE_THREAD_NAME",
+    "CameraDriver",
+    "CameraFrame",
+    "CameraPump",
+    "CameraSample",
     "ConsoleRecovery",
     "CrossArm",
     "Driver",
@@ -1390,6 +1396,130 @@ class RobotPump(threading.Thread):
         self.join(timeout=timeout)
 
 
+class _LatestCameraSamples:
+    """One correlated RGB/RGB-D sample per camera, with observable updates."""
+
+    def __init__(self) -> None:
+        self._samples: dict[str, CameraSample] = {}
+        self._changed = threading.Condition()
+
+    def clear(self) -> None:
+        with self._changed:
+            self._samples.clear()
+            self._changed.notify_all()
+
+    def publish(self, name: str, sample: CameraSample) -> None:
+        with self._changed:
+            self._samples[name] = sample
+            self._changed.notify_all()
+
+    def get(self, name: str) -> CameraSample | None:
+        with self._changed:
+            return self._samples.get(name)
+
+    def wait(
+        self, name: str, *, after_session_ns: int = -1, timeout: float | None = None
+    ) -> CameraSample | None:
+        deadline = None if timeout is None else time.monotonic() + timeout
+        with self._changed:
+            while True:
+                sample = self._samples.get(name)
+                if sample is not None and sample.session_ns > after_session_ns:
+                    return sample
+                if deadline is None:
+                    self._changed.wait()
+                    continue
+                remaining = deadline - time.monotonic()
+                if remaining <= 0.0:
+                    return None
+                self._changed.wait(remaining)
+
+
+class CameraPump(threading.Thread):
+    """Capture one declared camera into a latest-only, timestamped local slot.
+
+    RGB is also passed to ``Session.publish_frame`` for the existing recording,
+    still and media paths. Pixel-aligned depth never crosses that method and is
+    retained only in :class:`CameraSample` for local resolution.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        description: CameraDescription,
+        driver: CameraDriver,
+        session,
+        latest: _LatestCameraSamples,
+        *,
+        report: Callable[[str], None] = status,
+    ) -> None:
+        super().__init__(name=f"waddle-camera-{name}", daemon=True)
+        self._camera_name = name
+        self._description = description
+        self._driver = driver
+        self._session = session
+        self._latest = latest
+        self._report = report
+        self._stopping = threading.Event()
+        self._closed = False
+        self._close_lock = threading.Lock()
+        self._next_sequence = 0
+
+    def run(self) -> None:
+        period = 1.0 / float(self._description.fps)
+        deadline = time.monotonic()
+        while not self._stopping.is_set():
+            try:
+                frame = self._driver.capture()
+                if self._stopping.is_set():
+                    return
+                if not isinstance(frame, CameraFrame):
+                    raise TypeError("CameraDriver.capture() must return CameraFrame")
+                self._next_sequence += 1
+                sample = CameraSample(
+                    stamp=self._session.stamp(),
+                    rgb=frame.rgb,
+                    depth=frame.depth,
+                    frame_sequence=self._next_sequence,
+                )
+                expected = (self._description.height, self._description.width)
+                if sample.rgb.shape[:2] != expected:
+                    raise ValueError(
+                        f"camera {self._camera_name!r} captured "
+                        f"{sample.rgb.shape[1]}x{sample.rgb.shape[0]}, declaration is "
+                        f"{self._description.width}x{self._description.height}"
+                    )
+                self._latest.publish(self._camera_name, sample)
+                self._session.publish_frame(self._camera_name, sample.rgb)
+            except Exception as exc:  # noqa: BLE001 — vendor capture can throw anything
+                if not self._stopping.is_set():
+                    self._report(
+                        f"camera={self._camera_name} capture stopped after {exc!r}"
+                    )
+                return
+            deadline += period
+            self._stopping.wait(max(0.0, deadline - time.monotonic()))
+
+    def stop(self, timeout: float = 5.0) -> None:
+        self._stopping.set()
+        with self._close_lock:
+            if not self._closed:
+                self._closed = True
+                try:
+                    self._driver.close()
+                except Exception as exc:  # noqa: BLE001 — vendor close may throw
+                    self._report(
+                        f"close camera={self._camera_name} raised {exc!r} — this "
+                        "camera may still be connected"
+                    )
+        if threading.current_thread() is not self:
+            self.join(timeout=timeout)
+            if self.is_alive():
+                self._report(
+                    f"camera={self._camera_name} capture did not stop after {timeout}s"
+                )
+
+
 # ---------------------------------------------------------------------------
 # Composition: what a vendor's factory hands back
 # ---------------------------------------------------------------------------
@@ -1527,6 +1657,10 @@ class Rig:
     posture: str = "supervised"
     estop_hardware: bool = False
     report: Callable[[str], None] = status
+    build_cameras: Callable[[], dict[str, CameraDriver]] | None = None
+    _camera_samples: _LatestCameraSamples = field(
+        default_factory=_LatestCameraSamples, init=False, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         if not isinstance(self.declaration, Robot):
@@ -1537,6 +1671,8 @@ class Rig:
             )
         if self.rate_hz <= 0:
             raise ValueError("Rig.rate_hz must be > 0")
+        if self.build_cameras is not None and not callable(self.build_cameras):
+            raise TypeError("Rig.build_cameras must be callable or None")
 
     def robot(self) -> Robot:
         """The declaration this rig registers — the same object a vendor
@@ -1548,6 +1684,96 @@ class Rig:
         """Open the drivers and build one :class:`Arm` per declared part. The
         hardware opens HERE."""
         return self.build_arms()
+
+    def cameras(self) -> dict[str, CameraDriver]:
+        """Open this rig's optional camera drivers and validate their names.
+
+        A builder describes every declared camera or none. Any returned driver
+        is closed before a declaration/driver mismatch is raised.
+        """
+        if self.build_cameras is None:
+            return {}
+        drivers = dict(self.build_cameras())
+        try:
+            declared = set(self.declaration.cameras)
+            actual = set(drivers)
+            if actual != declared:
+                raise ValueError(
+                    "camera drivers must exactly match the declaration: "
+                    f"declared={sorted(declared)!r}, built={sorted(actual)!r}"
+                )
+            for name, driver in drivers.items():
+                if not isinstance(driver, CameraDriver):
+                    raise TypeError(
+                        f"camera driver {name!r} must provide capture() and close()"
+                    )
+        except BaseException:
+            close_all(drivers, report=self.report)
+            raise
+        self._camera_samples.clear()
+        return drivers
+
+    def camera_sample(self, name: str) -> CameraSample | None:
+        """Return the latest local correlated sample for a declared camera."""
+        if name not in self.declaration.cameras:
+            raise ValueError(f"camera {name!r} is not declared by this rig")
+        return self._camera_samples.get(name)
+
+    def wait_camera(
+        self,
+        name: str,
+        *,
+        after_session_ns: int = -1,
+        timeout_s: float | None = None,
+    ) -> CameraSample | None:
+        """Wait for a newer local sample; ``None`` means the timeout elapsed."""
+        if name not in self.declaration.cameras:
+            raise ValueError(f"camera {name!r} is not declared by this rig")
+        if timeout_s is not None and timeout_s < 0:
+            raise ValueError("timeout_s must be >= 0 or None")
+        return self._camera_samples.wait(
+            name, after_session_ns=after_session_ns, timeout=timeout_s
+        )
+
+    def resolve_pixel(
+        self,
+        name: str,
+        x: int,
+        y: int,
+        *,
+        frame_sequence: int | None = None,
+    ) -> tuple[float, float, float]:
+        """Resolve one pixel against the latest aligned depth, entirely locally."""
+        description = self.declaration.cameras.get(name)
+        if description is None:
+            raise ValueError(f"camera {name!r} is not declared by this rig")
+        if description.intrinsics is None:
+            raise ValueError(f"camera {name!r} declares no intrinsics")
+        sample = self.camera_sample(name)
+        if sample is None:
+            raise RuntimeError(f"camera {name!r} has not captured a sample")
+        if frame_sequence is not None and sample.frame_sequence != frame_sequence:
+            raise RuntimeError(
+                f"camera {name!r} frame {frame_sequence} is no longer retained; "
+                f"latest is {sample.frame_sequence}"
+            )
+        return sample.point_at(x, y, description.intrinsics)
+
+    def camera_pumps(
+        self, session, drivers: Mapping[str, CameraDriver]
+    ) -> dict[str, CameraPump]:
+        """Build this rig's capture pumps. They are returned not started."""
+        return {
+            name: CameraPump(
+                name,
+                self.declaration.cameras[name],
+                driver,
+                session,
+                self._camera_samples,
+                report=self.report,
+            )
+            for name, driver in drivers.items()
+        }
 
     def control(
         self, arms: Mapping[str, Arm], *, send: Callable[[object], None] | None = None
@@ -1624,50 +1850,12 @@ class Rig:
 
 
 class RigSession:
-    """One robot program, from the arms opening to the recording closing.
+    """The shared lifecycle behind ``rig.session`` and ``waddle.init(rig=)``.
 
-    Everything it does, a program can do by hand — and some do, which is why
-    each piece stayed separately usable. What it exists for is the two ends,
-    which are the two things every hand-written version gets wrong at least
-    once:
-
-    **Opening.** ``__enter__`` opens the drivers, maps the rig's posture onto
-    `waddle.Control` verbs, calls `waddle.init`, starts the console recovery
-    and starts the reporting pump. A failure part-way through closes what it
-    opened before it re-raises: a context manager whose ``__enter__`` raises
-    never gets an ``__exit__``, so on live hardware the alternative is arms
-    left energized under the vendor's own re-send with nobody holding a handle
-    to them.
-
-    **Closing.** ``__exit__`` runs whatever happened in the body — a return, a
-    policy that raised, a Ctrl-C. On live drivers it first HOLDS (see
-    :func:`hold_until_parked`), still reporting, until a human says the
-    machine is parked; then it retires the console reader, stops the pump,
-    shuts the session down (which is what finalizes the recording) and closes
-    the drivers. **This is the structural fix for the shutdown footgun**:
-    finalization is no longer a ``finally:`` the customer remembered to
-    write.
-
-    The pump is ALWAYS on, not only for an agent run: a program's own loop
-    then only gates and applies, with no interleaved robot tick to forget, and
-    a session with no loop at all (a monitor rig, a thread blocked inside
-    `waddle.agent()`) keeps reporting anyway. The cost is the declared
-    part-count multiplication of the proprio cadence, which is fixed by the
-    declaration and visible to the plane before it accepts.
-
-    A ``monitor`` rig may not be wired to a media plane — including
-    ``_testing=True``, which is that same plane in process. Nothing here
-    checks that: waddle-core reads a wired media plane as an intervention
-    path and refuses a session with no ``send`` verb, and an engage-path rule
-    has exactly one home (see :data:`POSTURES`).
-
-    Attributes: ``arms`` (part -> :class:`Arm`), ``robot`` (the declaration),
-    ``core`` (the `waddle` session object — ``report_proprio``,
-    ``publish_frame`` and the rest live there), ``control`` (the verbs that
-    were registered), ``park``, ``pump``, ``console`` (the
-    :class:`ConsoleRecovery` this session started, retired on the way out and
-    kept afterwards as the record of what it had), and the summed
-    ``accepted``/``rejected`` counters of the envelope."""
+    Hardware opens inside :meth:`_open`; every later failure closes all opened
+    arms and cameras. Normal close retires local recovery, stops capture and
+    proprio pumps, finalizes the core session, and only then closes the arms.
+    """
 
     def __init__(
         self,
@@ -1702,7 +1890,14 @@ class RigSession:
         self._pre_reset = pre_reset
         self._console_wanted = console
         self._report = rig.report
+        self._close_session: Callable[[], None] | None = None
+        self._lifecycle_lock = threading.Lock()
+        self._closing = False
+        self._finished = False
+        self._opened = False
         self.arms: dict[str, Arm] = {}
+        self.cameras: dict[str, CameraDriver] = {}
+        self.camera_pumps: dict[str, CameraPump] = {}
         self.core = None
         self.control: Control | None = None
         self.park = ParkGate()
@@ -1721,87 +1916,144 @@ class RigSession:
 
     @property
     def rejected(self) -> int:
-        """Commands the envelope refused, across every part. Refused WHOLE —
-        see :meth:`Arm.command`."""
+        """Commands the envelope refused, across every part. Refused whole."""
         return sum(arm.rejected for arm in self.arms.values())
 
+    def camera_sample(self, name: str) -> CameraSample | None:
+        return self._rig.camera_sample(name)
+
+    def wait_camera(
+        self,
+        name: str,
+        *,
+        after_session_ns: int = -1,
+        timeout_s: float | None = None,
+    ) -> CameraSample | None:
+        return self._rig.wait_camera(
+            name, after_session_ns=after_session_ns, timeout_s=timeout_s
+        )
+
+    def resolve_pixel(
+        self,
+        name: str,
+        x: int,
+        y: int,
+        *,
+        frame_sequence: int | None = None,
+    ) -> tuple[float, float, float]:
+        return self._rig.resolve_pixel(name, x, y, frame_sequence=frame_sequence)
+
     def __enter__(self) -> RigSession:
-        # The hardware opens HERE, inside the `with`, so a bus that will not
-        # open unwinds structurally instead of at a factory call the program
-        # made before it decided to run.
-        self.arms = self._rig.arms()
+        return self._open(init, close_session=shutdown)
+
+    def _open(
+        self,
+        open_session: Callable[..., object],
+        *,
+        close_session: Callable[[], None] | None = None,
+    ) -> RigSession:
+        """Open through one supplied core-session builder.
+
+        ``rig.session`` supplies the public ``waddle.init``/``shutdown`` pair.
+        Managed ``waddle.init(rig=...)`` supplies the unregistered core builder,
+        so module ownership is registered only after every pump is alive.
+        """
+        with self._lifecycle_lock:
+            if self._opened or self._finished:
+                raise RuntimeError("this RigSession has already been opened")
+            self._opened = True
         try:
+            self.arms = self._rig.arms()
+            self.cameras = self._rig.cameras()
             self.control = self._rig.control(self.arms, send=self._send)
             pre_reset = (
                 self._rig.pre_reset(self.arms)
                 if self._pre_reset is RIG_DEFAULT
                 else self._pre_reset
             )
-            self.core = init(
+            self.core = open_session(
                 self._project,
                 self._rig.robot(),
                 self.control,
                 pre_reset=pre_reset,
                 **self._init_kwargs,
             )
-        except BaseException:
-            self._report(
-                "this session could not open — closing the arms that did, since "
-                "nothing is being handed a driver for them"
-            )
-            close_all(self.arms, report=self._report)
-            raise
-        try:
+            self._close_session = close_session or self.core.shutdown
+
             if self._console_wanted:
                 self.console = start_console_recovery(
                     self.arms, self.park, report=self._report
                 )
             pump = self._rig.pump(self.core, self.arms)
             pump.start()
-            # Held only once it is RUNNING: a thread that never started is one
-            # `stop()` would raise on, and that exception would replace
-            # whatever is unwinding this session.
             self.pump = pump
+
+            for name, camera_pump in self._rig.camera_pumps(
+                self.core, self.cameras
+            ).items():
+                camera_pump.start()
+                self.camera_pumps[name] = camera_pump
+            return self
         except BaseException:
+            self._report(
+                "this session could not open — closing the hardware that did, "
+                "since nothing is being handed its drivers"
+            )
             self._finish()
             raise
-        return self
 
     def __exit__(self, exc_type, exc, tb) -> bool:
         interrupted = exc_type is not None and issubclass(exc_type, KeyboardInterrupt)
+        self.close(interrupted=interrupted)
+        return False
+
+    def close(self, *, interrupted: bool = False) -> None:
+        """Close once; used by context exit and module-level ``shutdown``."""
+        with self._lifecycle_lock:
+            if self._finished or self._closing:
+                return
+            self._closing = True
         try:
-            # A Ctrl-C IS the site operator, standing at the machine already:
-            # holding them there for a gesture would be asking a question they
-            # have answered. Any other ending — a return, a policy that raised
-            # — had no warning attached to it at all, which is exactly what
-            # the hold is for. It runs BEFORE the pump stops, so the parts
-            # keep reporting for as long as it lasts.
             if not interrupted:
                 hold_until_parked(
                     self.arms, self.park, console=self.console, report=self._report
                 )
         finally:
             self._finish()
-        return False
 
     def _finish(self) -> None:
-        """Retire the console, stop reporting, finalize the recording, drop
-        the connections — in that order, and each one whatever the one before
-        it did.
+        """Stop every owner-side activity and close every opened handle once."""
+        with self._lifecycle_lock:
+            if self._finished:
+                return
+            self._finished = True
+            self._closing = True
 
-        The console goes FIRST because it is the one thing here that can still
-        drive these arms. stdin is one stream: a reader left aimed at a
-        finished session holds its arms and its :class:`ParkGate` for the life
-        of the process, so the next session's ``resume`` lands on the closed
-        one half the time — answered with a plausible line while the running
-        session's latch stays set — and on metal that call re-enables a driver
-        whose bus this method is about to close."""
         if self.console is not None:
             self.console.retire()
+        closed_cameras: set[str] = set()
+        for name, camera_pump in list(self.camera_pumps.items()):
+            camera_pump.stop()
+            closed_cameras.add(name)
+        self.camera_pumps.clear()
         if self.pump is not None:
             self.pump.stop()
             self.pump = None
+
+        for name, driver in self.cameras.items():
+            if name in closed_cameras:
+                continue
+            try:
+                driver.close()
+            except Exception as exc:  # noqa: BLE001 — vendor close can throw anything
+                self._report(
+                    f"close camera={name} raised {exc!r} — this camera may still "
+                    "be connected"
+                )
+
+        close_session, self._close_session = self._close_session, None
         try:
-            shutdown()
+            if close_session is not None:
+                close_session()
         finally:
             close_all(self.arms, report=self._report)
