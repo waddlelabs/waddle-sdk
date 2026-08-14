@@ -28,8 +28,8 @@ import pytest
 from mcap.reader import make_reader
 from mcap_protobuf.decoder import DecoderFactory
 
-import waddle
-import waddle._testing
+import waddle_sdk
+import waddle_sdk._testing
 
 EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "toy_robot.py"
 
@@ -52,7 +52,7 @@ def _load_example():
 @pytest.fixture(autouse=True)
 def _clean_session():
     yield
-    waddle.shutdown()
+    waddle_sdk.shutdown()
 
 
 def _until(predicate, what: str, timeout: float = 20.0, tick=None):
@@ -136,10 +136,10 @@ def test_the_examples_declared_camera_matches_the_frames_it_renders():
     example = _load_example()
     arm = example.ToyArm()
 
-    session = waddle.init(
+    session = waddle_sdk.init(
         "py-toy-example",
         example.robot_description(),
-        waddle.Control(send=lambda chunk: None, hold=arm.hold, estop=arm.estop),
+        waddle_sdk.Control(send=lambda chunk: None, hold=arm.hold, estop=arm.estop),
         _testing=True,
     )
 
@@ -159,7 +159,7 @@ def test_the_examples_declared_camera_matches_the_frames_it_renders():
     deadline = time.monotonic() + 5.0
     got: list[bytes] = []
     while time.monotonic() < deadline:
-        got = waddle._testing.frames(session, example.CAMERA_NAME)
+        got = waddle_sdk._testing.frames(session, example.CAMERA_NAME)
         if got:
             break
         time.sleep(0.005)
@@ -177,10 +177,10 @@ def test_the_examples_loop_publishes_frames_and_reports_proprio(tmp_path):
     # `report_proprio`, so nothing else in this file would notice.
     example = _load_example()
     arm = example.ToyArm()
-    session = waddle.init(
+    session = waddle_sdk.init(
         "py-toy-loop",
         example.robot_description(),
-        waddle.Control(send=lambda chunk: None, hold=arm.hold, estop=arm.estop),
+        waddle_sdk.Control(send=lambda chunk: None, hold=arm.hold, estop=arm.estop),
         recording_dir=tmp_path,
         _testing=True,
     )
@@ -189,12 +189,12 @@ def test_the_examples_loop_publishes_frames_and_reports_proprio(tmp_path):
     assert outcome == "success"
 
     frames = _until(
-        lambda: waddle._testing.frames(session, example.CAMERA_NAME),
+        lambda: waddle_sdk._testing.frames(session, example.CAMERA_NAME),
         "the example's loop never published a frame",
     )
     assert len(frames[-1]) == example.CAMERA_W * example.CAMERA_H * 3
 
-    waddle.shutdown()
+    waddle_sdk.shutdown()
     observations = _decoded_observations(next(iter(tmp_path.glob("*.mcap"))))
     assert observations, "the episode recorded no observations"
     last = observations[-1].proprio
@@ -227,10 +227,10 @@ def test_the_example_sends_an_intervening_claimants_gripper(tmp_path):
             super().command(joints, gripper)
 
     arm = RecordingArm()
-    session = waddle.init(
+    session = waddle_sdk.init(
         "py-toy-intervention",
         example.robot_description(),
-        waddle.Control(send=lambda chunk: None, hold=arm.hold, estop=arm.estop),
+        waddle_sdk.Control(send=lambda chunk: None, hold=arm.hold, estop=arm.estop),
         recording_dir=tmp_path,
         _testing=True,
     )
@@ -256,11 +256,11 @@ def test_the_example_sends_an_intervening_claimants_gripper(tmp_path):
     loop.start()
     try:
         _until(lambda: arm.gripper_commands, "the example's loop never dispatched an action")
-        waddle._testing.engage(session, "claim-1", "teleop")
+        waddle_sdk._testing.engage(session, "claim-1", "teleop")
         _until(
             lambda: any(g == pytest.approx(expected_m) for g in list(arm.gripper_commands)),
             "the example never sent the claimant's gripper (it sent its own)",
-            tick=lambda: waddle._testing.push_teleop(
+            tick=lambda: waddle_sdk._testing.push_teleop(
                 session, [0.3, 0.0, 0.0, 0.0, 0.0, 0.0], claimant_normalized
             ),
         )
@@ -270,7 +270,7 @@ def test_the_example_sends_an_intervening_claimants_gripper(tmp_path):
         # waits out those 60 seconds. Skipped if the loop already died — its
         # own exception is the interesting one, not "no live episode".
         if loop.is_alive() and not failed:
-            waddle._testing.mark_done(session, "success")
+            waddle_sdk._testing.mark_done(session, "success")
         loop.join(timeout=10.0)
     if failed:
         raise failed[0]
@@ -281,12 +281,12 @@ def test_the_example_sends_an_intervening_claimants_gripper(tmp_path):
 
 def test_the_examples_agent_run_keeps_the_robot_running_while_it_blocks(tmp_path, monkeypatch):
     # Agent mode's whole shape is that the main thread is blocked inside
-    # `waddle.agent()` while the robot's own housekeeping runs elsewhere:
+    # `waddle_sdk.agent()` while the robot's own housekeeping runs elsewhere:
     # the arm keeps integrating the agent's commands and the camera keeps
     # feeding the stills the agent perceives through. Every other test in
     # this file drives the example's loop from the main thread, so a
     # background loop that never runs would be invisible here — and it is
-    # the SDK's loop now (`waddle.robots.base.RobotPump`, ticked by the
+    # the SDK's loop now (`waddle_sdk.robots.base.RobotPump`, ticked by the
     # example's own `robot_tick`), which is exactly the seam a migration
     # can get wrong.
     example = _load_example()
@@ -300,10 +300,10 @@ def test_the_examples_agent_run_keeps_the_robot_running_while_it_blocks(tmp_path
         engaged.set()
         arm.hold()
 
-    session = waddle.init(
+    session = waddle_sdk.init(
         "py-toy-agent",
         example.robot_description(),
-        waddle.Control(send=lambda chunk: None, hold=hold, estop=arm.estop),
+        waddle_sdk.Control(send=lambda chunk: None, hold=hold, estop=arm.estop),
         recording_dir=tmp_path,
         _testing=True,
     )
@@ -345,23 +345,23 @@ def test_the_examples_agent_run_keeps_the_robot_running_while_it_blocks(tmp_path
         _until(
             engaged.is_set,
             "the agent's claim never engaged",
-            tick=lambda: waddle._testing.engage(session, "agent-claim", "agent"),
+            tick=lambda: waddle_sdk._testing.engage(session, "agent-claim", "agent"),
         )
-        # The caller is inside `waddle.agent()` from here on, so nothing it
+        # The caller is inside `waddle_sdk.agent()` from here on, so nothing it
         # does can publish a frame: every frame after this one came from the
         # background loop.
-        published = len(waddle._testing.frames(session, example.CAMERA_NAME))
+        published = len(waddle_sdk._testing.frames(session, example.CAMERA_NAME))
         _until(
-            lambda: len(waddle._testing.frames(session, example.CAMERA_NAME)) > published,
+            lambda: len(waddle_sdk._testing.frames(session, example.CAMERA_NAME)) > published,
             "the robot stopped publishing while the caller was blocked in agent()",
         )
         # What ends an agent run: the outcome arrives from outside the
         # customer's loop, and the blocked caller holds no episode handle.
-        waddle._testing.mark_done(session, "success", "the agent is done")
+        waddle_sdk._testing.mark_done(session, "success", "the agent is done")
     finally:
         caller.join(timeout=20.0)
 
-    assert not caller.is_alive(), "waddle.agent() never returned"
+    assert not caller.is_alive(), "waddle_sdk.agent() never returned"
     assert "error" not in box, f"the example's agent mode raised: {box.get('error')!r}"
     assert box["code"] == 0
 
@@ -435,7 +435,7 @@ def test_empty_environment_variables_mean_unset(monkeypatch):
     # empty (examples/README.md), so that has to build a real transport.
     args = example.parse_args(["--transport", "http://127.0.0.1:9", "--token", ""])
     assert args.token is None
-    waddle.Grpc(args.transport, args.token)
+    waddle_sdk.Grpc(args.transport, args.token)
 
 
 def test_the_examples_success_criterion_is_not_free():

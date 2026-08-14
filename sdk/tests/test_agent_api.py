@@ -1,11 +1,11 @@
-"""`waddle.agent(prompt)` — "Waddle, drive this one" (flag
+"""`waddle_sdk.agent(prompt)` — "Waddle, drive this one" (flag
 `waddle.v0.agent`), one layer up from `test_agent.py`'s `_core` tests, the
 way `test_reset_api.py` sits above `test_reset.py`.
 
 The centrepiece is one whole agent-driven episode over the `_testing`
 loopback rig: the invited agent claims through the ordinary intervention
 machinery, its stream reaches the customer's OWN registered `send` while
-the caller sits blocked in `waddle.agent()`, and a plane-shaped MARK_DONE
+the caller sits blocked in `waddle_sdk.agent()`, and a plane-shaped MARK_DONE
 ends the run. Everything asserted here is core's decision arriving intact
 in Python — there is no agent logic in this package to test.
 """
@@ -17,23 +17,23 @@ import time
 
 import pytest
 
-import waddle
-import waddle._native
-import waddle._testing
+import waddle_sdk
+import waddle_sdk._native
+import waddle_sdk._testing
 
 
 @pytest.fixture(autouse=True)
 def _clean_session():
     yield
-    waddle.shutdown()
+    waddle_sdk.shutdown()
 
 
-def _robot(n_joints: int = 6) -> waddle.Robot:
-    return waddle.Robot(
+def _robot(n_joints: int = 6) -> waddle_sdk.Robot:
+    return waddle_sdk.Robot(
         name="pytest-agent-api-bot",
         robot_id="py-agent-api-01",
         cell_id="cell-py-agent-api",
-        action_space=waddle.JointSpace(
+        action_space=waddle_sdk.JointSpace(
             joints=[f"j{i}" for i in range(n_joints)], rate_hz=50
         ),
     )
@@ -43,25 +43,25 @@ def _robot(n_joints: int = 6) -> waddle.Robot:
 
 
 def test_agent_without_a_session_raises():
-    with pytest.raises(RuntimeError, match="waddle.init"):
-        waddle.agent("stack the cups")
+    with pytest.raises(RuntimeError, match="waddle_sdk.init"):
+        waddle_sdk.agent("stack the cups")
 
 
 def test_agent_without_a_declared_plane_refuses():
     """A session that declared no plane has nobody to ask: the invite could
     only ever run out to its deadline. Say so at the call, naming the fix,
     rather than blocking for ten minutes and returning an abort."""
-    waddle.init(
+    waddle_sdk.init(
         "py-agent-api-offline",
         _robot(),
-        waddle.Control(send=lambda chunk: None, hold=lambda: None),
+        waddle_sdk.Control(send=lambda chunk: None, hold=lambda: None),
     )
-    with pytest.raises(RuntimeError, match="transport=waddle.Grpc"):
-        waddle.agent("stack the cups")
+    with pytest.raises(RuntimeError, match="transport=waddle_sdk.Grpc"):
+        waddle_sdk.agent("stack the cups")
 
 
 @pytest.mark.skipif(
-    "grpc" not in waddle._native.FEATURES,
+    "grpc" not in waddle_sdk._native.FEATURES,
     reason="needs a declared plane, and this build has no control transport",
 )
 def test_agent_without_a_way_to_actuate_surfaces_cores_refusal():
@@ -72,24 +72,24 @@ def test_agent_without_a_way_to_actuate_surfaces_cores_refusal():
     story — it just never answers, and the deadline returns an ordinary
     abort.) The declaration-only session below is the one shape that gets
     this far: wire any of send/hold/media and `init` itself has opinions."""
-    waddle.init(
+    waddle_sdk.init(
         "py-agent-api-no-verbs",
         _robot(),
-        waddle.Control(),
-        transport=waddle.Grpc("http://127.0.0.1:9"),
+        waddle_sdk.Control(),
+        transport=waddle_sdk.Grpc("http://127.0.0.1:9"),
     )
     with pytest.raises(RuntimeError, match="requires a registered") as excinfo:
-        waddle.agent("stack the cups", timeout_s=1.0)
+        waddle_sdk.agent("stack the cups", timeout_s=1.0)
     assert "an agent invite is a live engage path" in str(excinfo.value)
 
 
 def test_agent_validates_its_own_arguments():
     with pytest.raises(ValueError, match="non-empty prompt"):
-        waddle.agent("")
+        waddle_sdk.agent("")
     with pytest.raises(ValueError, match="positive number of seconds"):
-        waddle.agent("stack the cups", timeout_s=0)
+        waddle_sdk.agent("stack the cups", timeout_s=0)
     with pytest.raises(TypeError, match="positive number of seconds"):
-        waddle.agent("stack the cups", timeout_s="600")
+        waddle_sdk.agent("stack the cups", timeout_s="600")
 
 
 # --- Marshalling: core's words, verbatim -----------------------------------
@@ -119,17 +119,17 @@ class _StubCoreSession:
 
 def test_agent_marshals_the_prompt_in_and_every_field_out(monkeypatch):
     stub = _StubCoreSession()
-    monkeypatch.setattr(waddle, "_session", stub)
-    monkeypatch.setattr(waddle, "_session_has_plane", True)
+    monkeypatch.setattr(waddle_sdk, "_session", stub)
+    monkeypatch.setattr(waddle_sdk, "_session_has_plane", True)
 
-    result = waddle.agent(
+    result = waddle_sdk.agent(
         "stack the cups", timeout_s=1.5, task_metadata={"trace_id": "trace-1"}
     )
 
     assert stub.calls == [
         ("stack the cups", 1_500_000_000, {"trace_id": "trace-1"})
     ]
-    assert isinstance(result, waddle.AgentResult)
+    assert isinstance(result, waddle_sdk.AgentResult)
     assert (result.outcome, result.episode_id) == ("success", "ep-stub")
     assert result.recording_ref == "waddle://recordings/stub"
     assert result.detail == "cups stacked"
@@ -148,8 +148,8 @@ def test_agent_drives_a_whole_episode_over_the_loopback(tmp_path):
         # observe without reaching into core's mirror.
         engaged.set()
 
-    control = waddle.Control(send=sent.append, hold=hold, resume=lambda: None)
-    session = waddle.init(
+    control = waddle_sdk.Control(send=sent.append, hold=hold, resume=lambda: None)
+    session = waddle_sdk.init(
         "py-agent-api-loopback",
         _robot(),
         control,
@@ -161,7 +161,7 @@ def test_agent_drives_a_whole_episode_over_the_loopback(tmp_path):
 
     def run() -> None:
         try:
-            box["result"] = waddle.agent("stack the cups", timeout_s=30.0)
+            box["result"] = waddle_sdk.agent("stack the cups", timeout_s=30.0)
         except BaseException as exc:  # reported on the main thread below
             box["error"] = exc
 
@@ -173,7 +173,7 @@ def test_agent_drives_a_whole_episode_over_the_loopback(tmp_path):
         # agent's claim is admissible almost immediately; C8 admits
         # ACTOR_KIND_AGENT and nothing else on an agent-invited episode.
         time.sleep(0.5)
-        waddle._testing.engage(session, "agent-claim-1", "agent")
+        waddle_sdk._testing.engage(session, "agent-claim-1", "agent")
         assert engaged.wait(timeout=5.0), "the agent's claim never engaged"
 
         # The caller is blocked in `agent()` and never ticks, so the
@@ -181,7 +181,7 @@ def test_agent_drives_a_whole_episode_over_the_loopback(tmp_path):
         # stream to the customer's own registered `send`.
         deadline = time.monotonic() + 10.0
         while time.monotonic() < deadline:
-            waddle._testing.push_teleop(session, [0.7, 0.0, 0.0])
+            waddle_sdk._testing.push_teleop(session, [0.7, 0.0, 0.0])
             if any(chunk.provenance == "agent" for chunk in sent):
                 break
             time.sleep(0.01)
@@ -191,15 +191,15 @@ def test_agent_drives_a_whole_episode_over_the_loopback(tmp_path):
 
         # What a plane `EpisodeDirective{MARK_DONE}` does: the outcome is
         # decided from outside the customer's loop, and THAT is what
-        # unblocks `waddle.agent()`.
-        waddle._testing.mark_done(session, "success", "agent task complete")
+        # unblocks `waddle_sdk.agent()`.
+        waddle_sdk._testing.mark_done(session, "success", "agent task complete")
     finally:
         caller.join(timeout=15.0)
 
-    assert not caller.is_alive(), "waddle.agent() never returned"
+    assert not caller.is_alive(), "waddle_sdk.agent() never returned"
     assert "error" not in box, f"the agent run raised: {box.get('error')!r}"
     result = box["result"]
-    assert isinstance(result, waddle.AgentResult)
+    assert isinstance(result, waddle_sdk.AgentResult)
     assert result.outcome == "success"
     assert result.episode_id.startswith("ep-")
     # No plane here, so no `AgentTaskUpdate` ever arrived: the two fields
@@ -207,7 +207,7 @@ def test_agent_drives_a_whole_episode_over_the_loopback(tmp_path):
     assert result.recording_ref is None
     assert result.detail == ""
 
-    waddle.shutdown()
+    waddle_sdk.shutdown()
     assert (tmp_path / f"{result.episode_id}.sidecar.json").exists(), (
         "the agent-driven episode must be recorded like any other"
     )
@@ -226,13 +226,13 @@ def test_agent_runs_the_reset_phase_it_was_given():
         ran.append(task)
         return True
 
-    waddle.init(
+    waddle_sdk.init(
         "py-agent-api-reset",
         _robot(),
-        waddle.Control(send=lambda chunk: None, hold=lambda: None),
+        waddle_sdk.Control(send=lambda chunk: None, hold=lambda: None),
         _testing=True,
     )
-    result = waddle.agent("stack the cups", timeout_s=0.15, pre_reset=scripted_pre_reset)
+    result = waddle_sdk.agent("stack the cups", timeout_s=0.15, pre_reset=scripted_pre_reset)
 
     # The prompt is the episode's task, so that is what the hook is handed.
     assert ran == ["stack the cups"], "the episode ran the pre_reset it was given"
@@ -243,14 +243,14 @@ def test_agent_invite_deadline_comes_back_as_an_outcome():
     """Nobody can ever engage over a loopback with no script, so the invite
     deadline (FSM.md E25) closes the episode — and that is a RESULT, not an
     exception: "the ask went unanswered" is an answer."""
-    waddle.init(
+    waddle_sdk.init(
         "py-agent-api-timeout",
         _robot(),
-        waddle.Control(send=lambda chunk: None, hold=lambda: None),
+        waddle_sdk.Control(send=lambda chunk: None, hold=lambda: None),
         _testing=True,
     )
     started = time.monotonic()
-    result = waddle.agent("nobody home", timeout_s=0.15)
+    result = waddle_sdk.agent("nobody home", timeout_s=0.15)
     elapsed = time.monotonic() - started
 
     assert result.outcome == "abort"

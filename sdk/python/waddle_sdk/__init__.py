@@ -2,7 +2,7 @@
 
 The six-line tutorial loop::
 
-    with waddle.rollout(task="fold the towel") as ep:
+    with waddle_sdk.rollout(task="fold the towel") as ep:
         while not ep.done:
             obs = get_obs()
             action = policy(obs)
@@ -44,7 +44,7 @@ media plane is a clean error at :func:`init` time, not a per-frame failure.
 
 Everything above works with no supervision plane at all: with
 ``recording_dir`` set, every episode lands as a local sidecar + MCAP.
-``init(transport=waddle.Grpc(url, token))`` connects the session to a
+``init(transport=waddle_sdk.Grpc(url, token))`` connects the session to a
 plane, which is what makes supervision (teleoperator intervention, remote
 reset windows) and :func:`agent` — "Waddle, drive this one" — possible. The
 control transport is compiled into the published ``waddle-sdk`` wheel; the
@@ -53,7 +53,7 @@ wheel (``pip install 'waddle-sdk[teleop]'``), which is also the only
 difference between the two.
 
 This package is a hollow frontend: every claim/lease/handoff/timeline
-decision is made in waddle-core (the Rust runtime under ``waddle._core``);
+decision is made in waddle-core (the Rust runtime under ``waddle_sdk._core``);
 Python only declares and marshals.
 """
 
@@ -252,7 +252,7 @@ class LiveKit:
     session with no media. Low-rate stills for a Waddle-hosted agent are a
     different path entirely (they ride the control plane, bounded by each
     camera's declared ``StreamPolicy.still_fps``) and need no media plane.
-    Use ``waddle.init(_testing=True)`` (the in-process loopback) to
+    Use ``waddle_sdk.init(_testing=True)`` (the in-process loopback) to
     exercise ``publish_frame`` and the teleop stream in tests."""
 
     url: str
@@ -308,9 +308,9 @@ class TeleopReset:
     claim/lease/gate-mode sequencing lives entirely in waddle-core.
 
     A window declared this way needs a connected supervision plane to grant
-    and complete it — ``waddle.init(transport=waddle.Grpc(url, token))``.
+    and complete it — ``waddle_sdk.init(transport=waddle_sdk.Grpc(url, token))``.
     With no plane declared, the window opens and can only run out its
-    timeout; the private `waddle._testing` reset-window hooks (tests only)
+    timeout; the private `waddle_sdk._testing` reset-window hooks (tests only)
     are what drive one without a plane."""
 
     prompt: str
@@ -411,7 +411,7 @@ def _reset_spec_kwargs(label: str, value: Callable | TeleopReset | AgentReset | 
     if callable(value):
         return {f"{label}_kind": "hook", f"{label}_hook": _normalize_reset_hook(value)}
     raise TypeError(
-        f"{label} must be None, a callable, waddle.TeleopReset, or waddle.AgentReset "
+        f"{label} must be None, a callable, waddle_sdk.TeleopReset, or waddle_sdk.AgentReset "
         f"(got {type(value).__name__})"
     )
 
@@ -499,15 +499,15 @@ def _create_core_session(
 ) -> _core.Session:
     """Build one core session without registering module lifecycle ownership."""
     if not isinstance(robot, Robot):
-        raise TypeError("robot must be a waddle.Robot")
+        raise TypeError("robot must be a waddle_sdk.Robot")
     if not isinstance(control, Control):
-        raise TypeError("control must be a waddle.Control")
+        raise TypeError("control must be a waddle_sdk.Control")
     if not isinstance(handoff, _Handoff):
-        raise TypeError("handoff must be a waddle.Handoff declaration")
+        raise TypeError("handoff must be a waddle_sdk.Handoff declaration")
     if transport is not None and not isinstance(transport, Grpc):
-        raise TypeError("transport must be a waddle.Grpc or None")
+        raise TypeError("transport must be a waddle_sdk.Grpc or None")
     if media is not None and not isinstance(media, LiveKit):
-        raise TypeError("media must be a waddle.LiveKit or None")
+        raise TypeError("media must be a waddle_sdk.LiveKit or None")
     if transport is not None and _testing:
         raise ValueError(
             "transport and _testing=True are mutually exclusive: the loopback "
@@ -600,7 +600,7 @@ def init(
         from .robots.base import RIG_DEFAULT, Rig
 
         if not isinstance(rig, Rig):
-            raise TypeError("rig must be a waddle.robots.base.Rig")
+            raise TypeError("rig must be a waddle_sdk.robots.base.Rig")
         if not isinstance(console, bool):
             raise TypeError("console must be a bool")
         managed = rig.session(
@@ -619,7 +619,7 @@ def init(
         )
     else:
         if robot is None or control is None:
-            raise TypeError("waddle.init() needs either rig= or both robot and control")
+            raise TypeError("waddle_sdk.init() needs either rig= or both robot and control")
         if send is not None:
             raise ValueError(
                 "send is a rig-only keyword; put it on Control for this path"
@@ -631,8 +631,8 @@ def init(
     with _lock:
         if _session is not None or _session_starting or _session_closing:
             raise RuntimeError(
-                "waddle.init() called while a session is open or closing; "
-                "call waddle.shutdown() first"
+                "waddle_sdk.init() called while a session is open or closing; "
+                "call waddle_sdk.shutdown() first"
             )
         _session_starting = True
     try:
@@ -706,7 +706,7 @@ def ui(
     }
     with _lock:
         if _session is None:
-            raise RuntimeError("waddle.ui() requires an active waddle.init() session")
+            raise RuntimeError("waddle_sdk.ui() requires an active waddle_sdk.init() session")
         if _ui_handle is not None and not _ui_handle.closed:
             return _ui_handle
         handle = UIHandle(
@@ -730,7 +730,7 @@ def ui(
 def _require_session() -> _core.Session:
     with _lock:
         if _session is None:
-            raise RuntimeError("waddle.init() has not been called")
+            raise RuntimeError("waddle_sdk.init() has not been called")
         return _session
 
 
@@ -875,7 +875,7 @@ def rollout(
     decided, ``ep.done`` flips to ``True`` immediately — even though its
     declared post-reset (scene cleanup) may still be running. Calling
     ``ep.terminate(...)`` explicitly *blocks* until that cleanup fully
-    finishes, so the ordinary ``with waddle.rollout(...) as ep: ...
+    finishes, so the ordinary ``with waddle_sdk.rollout(...) as ep: ...
     ep.terminate(...)`` pattern already blocks the ``with``-exit through
     POST_RESET. If the ``with`` block exits some other way while POST_RESET
     is still running (an exception, or a loop that only checks ``ep.done``
@@ -930,7 +930,7 @@ def agent(
     Opens an *agent-invited* episode on the module session and blocks until
     it reaches a terminal outcome::
 
-        result = waddle.agent("clear the table and stack the cups")
+        result = waddle_sdk.agent("clear the table and stack the cups")
         if result.outcome == "success":
             ...
 
@@ -971,7 +971,7 @@ def agent(
     waddle-core's; this function marshals a prompt in and an
     :class:`AgentResult` out."""
     if not isinstance(prompt, str) or not prompt:
-        raise ValueError("waddle.agent() needs a non-empty prompt")
+        raise ValueError("waddle_sdk.agent() needs a non-empty prompt")
     if isinstance(timeout_s, bool) or not isinstance(timeout_s, (int, float)):
         raise TypeError("timeout_s must be a positive number of seconds")
     if timeout_s <= 0:
@@ -979,10 +979,10 @@ def agent(
     session = _require_session()
     if not _session_has_plane:
         raise RuntimeError(
-            "waddle.agent() asks the supervision plane to drive the episode, and "
+            "waddle_sdk.agent() asks the supervision plane to drive the episode, and "
             "this session declared no transport (nor the private _testing "
             "loopback that stands in for one) — pass "
-            "transport=waddle.Grpc(url, token) to waddle.init()"
+            "transport=waddle_sdk.Grpc(url, token) to waddle_sdk.init()"
         )
     kwargs = {
         **_reset_override_kwargs("pre_reset", pre_reset),

@@ -12,11 +12,11 @@ source tree"):
 
 | Distribution | Project file | Module | Cargo features |
 | --- | --- | --- | --- |
-| `waddle-sdk` | `sdk/pyproject.toml` | `waddle._core` | `pyo3/extension-module`, `grpc` |
+| `waddle-sdk` | `sdk/pyproject.toml` | `waddle_sdk._core` | `pyo3/extension-module`, `grpc` |
 | `waddle-sdk-teleop` | `sdk/teleop/pyproject.toml` | `waddle_teleop._core` | the same, plus `livekit` |
 
 Both are one build of `sdk/rust/Cargo.toml`, so they cannot disagree on a version, and
-`waddle._native` refuses a mismatched pair at import rather than loading a core built
+`waddle_sdk._native` refuses a mismatched pair at import rather than loading a core built
 from other sources. The companion is installed as the extra — `pip install
 'waddle-sdk[teleop]'` — never by name.
 
@@ -86,7 +86,7 @@ Everything below happens on `main`, with the tree clean and the full local gate 
 
    That literal is the ONE version maturin cannot derive (PEP 621 has no dynamic
    optional-dependencies). Forget it and `pip install 'waddle-sdk[teleop]'` resolves the
-   *previous* release, `waddle._native` sees the mismatch, and the install silently has
+   *previous* release, `waddle_sdk._native` sees the mismatch, and the install silently has
    no LiveKit. `sdk/tests/test_features.py::test_the_teleop_extra_pins_this_builds_version`
    fails until the two agree, and the publish job re-checks the built wheels against the
    tag.
@@ -128,11 +128,11 @@ Everything below happens on `main`, with the tree clean and the full local gate 
 
    ```sh
    pip install waddle-sdk
-   python -c "import waddle, waddle._native as n; print(waddle.__version__, sorted(n.FEATURES))"
+   python -c "import waddle_sdk, waddle_sdk._native as n; print(waddle_sdk.__version__, sorted(n.FEATURES))"
    # -> X.Y.Z ['grpc']
 
    pip install 'waddle-sdk[teleop]'                       # linux x86_64 only, for now
-   python -c "import waddle, waddle._native as n; print(waddle.__version__, sorted(n.FEATURES))"
+   python -c "import waddle_sdk, waddle_sdk._native as n; print(waddle_sdk.__version__, sorted(n.FEATURES))"
    # -> X.Y.Z ['grpc', 'livekit']
    ```
 

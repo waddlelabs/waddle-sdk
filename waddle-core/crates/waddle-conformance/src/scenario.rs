@@ -1,4 +1,4 @@
-//! Serde model of the `waddle.behavior/v0` scenario file plus the
+//! Serde model of the `waddle_sdk.behavior/v0` scenario file plus the
 //! wire-fixture envelope loader for `setup.robot_fixture`.
 
 use std::path::Path;
@@ -10,7 +10,7 @@ use waddle_types::{HandoffPolicy, LeaseEnforcement, ResetVerificationMode, pb::v
 use crate::emissions::Codec;
 use crate::{ConformanceError, scenario_err};
 
-pub const FORMAT: &str = "waddle.behavior/v0";
+pub const FORMAT: &str = "waddle_sdk.behavior/v0";
 /// Part-addressed control (VERSIONING.md §3). Named because the runner reads
 /// it twice: once to decide the scenario is runnable at all, and once as the
 /// negotiated answer an intake asks for `Action.part`.
@@ -189,7 +189,7 @@ fn load_robot_fixture(
 ) -> Result<waddle_types::RobotDescription, ConformanceError> {
     let text = std::fs::read_to_string(path)?;
     let fixture: WireFixture = serde_json::from_str(&text)?;
-    if fixture.format != "waddle.fixture/v0" {
+    if fixture.format != "waddle_sdk.fixture/v0" {
         return Err(scenario_err(format!(
             "{}: unsupported wire-fixture format {:?}",
             path.display(),

@@ -221,7 +221,7 @@ fn nominal_episode_records_sidecar_and_mcap() {
         observations.len()
     );
     let chunk = &actions[0];
-    assert_eq!(chunk.source_id, "waddle.gate");
+    assert_eq!(chunk.source_id, "waddle_sdk.gate");
     assert_eq!(chunk.provenance.as_ref().unwrap().kind, {
         pb::ProvenanceKind::Policy as i32
     });

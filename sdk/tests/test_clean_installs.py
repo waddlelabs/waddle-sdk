@@ -4,7 +4,7 @@ The test wheelhouse is entirely local: the SDK wheel contains this checkout's
 Python package and already-built extension, while tiny dependency wheels make
 pip exercise the real optional-dependency metadata without a package index or
 camera hardware.  The vendor-module stubs raise on import, making successful
-``waddle`` and adapter-module imports a proof that camera SDK loading stays
+``waddle_sdk`` and adapter-module imports a proof that camera SDK loading stays
 lazy.
 """
 
@@ -20,7 +20,7 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 import pytest
-import waddle
+import waddle_sdk
 
 try:
     import tomllib
@@ -29,8 +29,8 @@ except ModuleNotFoundError:  # pragma: no cover - Python 3.10 only
 
 
 SDK = Path(__file__).resolve().parents[1]
-PACKAGE = SDK / "python" / "waddle"
-VERSION = waddle.__version__
+PACKAGE = SDK / "python" / "waddle_sdk"
+VERSION = waddle_sdk.__version__
 
 
 def _wheel_name(distribution: str) -> str:
@@ -82,7 +82,7 @@ def _package_files() -> dict[str, bytes]:
         if not path.is_file() or "__pycache__" in path.parts:
             continue
         files[path.relative_to(SDK / "python").as_posix()] = path.read_bytes()
-    if not any(name.startswith("waddle/_core.") for name in files):
+    if not any(name.startswith("waddle_sdk/_core.") for name in files):
         raise AssertionError(
             "the clean-install test needs the extension built by uv sync or "
             "maturin develop"
@@ -210,8 +210,8 @@ import importlib.metadata
 import json
 import sys
 
-import waddle
-from waddle.cameras import orbbec, realsense
+import waddle_sdk
+from waddle_sdk.cameras import orbbec, realsense
 
 names = {
     dist.metadata["Name"].lower()
@@ -220,8 +220,8 @@ names = {
 }
 print(json.dumps({
     "names": sorted(names),
-    "core": waddle._native.core.__name__,
-    "features": sorted(waddle._native.FEATURES),
+    "core": waddle_sdk._native.core.__name__,
+    "features": sorted(waddle_sdk._native.FEATURES),
     "requirements": importlib.metadata.requires("waddle-sdk"),
     "vendor_modules": sorted(
         name for name in sys.modules
@@ -248,4 +248,4 @@ print(json.dumps({
         assert result["core"] == "waddle_teleop._core"
         assert result["features"] == ["grpc", "livekit"]
     else:
-        assert result["core"] == "waddle._core"
+        assert result["core"] == "waddle_sdk._core"

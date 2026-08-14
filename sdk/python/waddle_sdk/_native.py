@@ -2,7 +2,7 @@
 
 ``waddle-sdk`` ships two distributions built from ONE source tree (the
 psycopg / psycopg-binary shape). The default ``waddle-sdk`` wheel bundles
-``waddle._core``, built with the gRPC control transport. The companion
+``waddle_sdk._core``, built with the gRPC control transport. The companion
 ``waddle-sdk-teleop`` wheel — installed via ``pip install
 'waddle-sdk[teleop]'`` — ships the SAME shim with the LiveKit media plane
 also compiled in, as ``waddle_teleop._core``. This module is the one place
@@ -23,7 +23,7 @@ Selection, in order:
 4. Otherwise the teleop core: same shim, a strict superset of the bundled
    one's transports.
 
-``import waddle._core`` keeps meaning the BUNDLED module everywhere — this
+``import waddle_sdk._core`` keeps meaning the BUNDLED module everywhere — this
 module never reassigns that submodule attribute, it only chooses what the
 package's own call sites use. ``_core.pyi`` types both cores, because both
 are the same shim.

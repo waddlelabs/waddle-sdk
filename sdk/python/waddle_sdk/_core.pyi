@@ -1,8 +1,8 @@
-"""Typed surface of the PyO3 shim (`waddle._core`).
+"""Typed surface of the PyO3 shim (`waddle_sdk._core`).
 
-Types BOTH compiled cores: the bundled `waddle._core` and the teleop
+Types BOTH compiled cores: the bundled `waddle_sdk._core` and the teleop
 companion wheel's `waddle_teleop._core` are the same shim built with
-different cargo features (`waddle._native` picks one), so one stub
+different cargo features (`waddle_sdk._native` picks one), so one stub
 describes both. Keep this file in step with `sdk/rust/src/*.rs` — it is
 hand-written, and nothing regenerates it.
 """

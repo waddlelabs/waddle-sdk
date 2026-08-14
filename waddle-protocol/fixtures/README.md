@@ -19,14 +19,14 @@ Every fixture file under `wire/` and `sidecars/` is a single JSON object:
 
 ```json
 {
-  "format": "waddle.fixture/v0",
+  "format": "waddle_sdk.fixture/v0",
   "type": "waddle.v0.ActionChunk",
   "description": "what this fixture pins and why it exists",
   "message": { }
 }
 ```
 
-- `format` — MUST be exactly `"waddle.fixture/v0"`.
+- `format` — MUST be exactly `"waddle_sdk.fixture/v0"`.
 - `type` — the fully-qualified message name; MUST name a message in package
   `waddle.v0`. Files in `sidecars/` always carry `"waddle.v0.Sidecar"`.
 - `description` — required; states what the fixture pins. A deprecated golden

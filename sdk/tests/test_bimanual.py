@@ -30,8 +30,8 @@ import pytest
 from mcap.reader import make_reader
 from mcap_protobuf.decoder import DecoderFactory
 
-import waddle
-import waddle._testing
+import waddle_sdk
+import waddle_sdk._testing
 
 # Seven rows per arm — six joints plus the gripper folded in as the last row,
 # which is the canonical bimanual declaration (`Gripper.parallel(dim=-1)`) and
@@ -58,21 +58,21 @@ OFFER_INTERVAL_S = 0.1
 @pytest.fixture(autouse=True)
 def _clean_session():
     yield
-    waddle.shutdown()
+    waddle_sdk.shutdown()
 
 
-def _arm(prefix: str) -> waddle.JointSpace:
-    return waddle.JointSpace(joints=[f"{prefix}{i}" for i in range(ARM_DIMS)])
+def _arm(prefix: str) -> waddle_sdk.JointSpace:
+    return waddle_sdk.JointSpace(joints=[f"{prefix}{i}" for i in range(ARM_DIMS)])
 
 
-def _bimanual() -> waddle.Robot:
+def _bimanual() -> waddle_sdk.Robot:
     """Two named 7-row parts, in declaration order (which IS the concatenated
     14-row layout)."""
-    return waddle.Robot(
+    return waddle_sdk.Robot(
         name="pytest-bimanual",
         robot_id="py-bimanual-01",
         cell_id="cell-py-bimanual",
-        action_space=waddle.Composite(
+        action_space=waddle_sdk.Composite(
             left=_arm("l"),
             right=_arm("r"),
             rate_hz=50,
@@ -80,25 +80,25 @@ def _bimanual() -> waddle.Robot:
     )
 
 
-def _single_part() -> waddle.Robot:
+def _single_part() -> waddle_sdk.Robot:
     """A declaration with no addressable parts at all — the surface that must
     not move."""
-    return waddle.Robot(
+    return waddle_sdk.Robot(
         name="pytest-one-arm",
         robot_id="py-one-arm-01",
         cell_id="cell-py-bimanual",
-        action_space=waddle.JointSpace(
+        action_space=waddle_sdk.JointSpace(
             joints=[f"j{i}" for i in range(ARM_DIMS)], rate_hz=50
         ),
     )
 
 
-def _control(chunks: list | None = None) -> waddle.Control:
+def _control(chunks: list | None = None) -> waddle_sdk.Control:
     def send(chunk):
         if chunks is not None:
             chunks.append(chunk)
 
-    return waddle.Control(send=send, hold=lambda: None, resume=lambda: None)
+    return waddle_sdk.Control(send=send, hold=lambda: None, resume=lambda: None)
 
 
 class _Offer:
@@ -114,7 +114,7 @@ class _Offer:
         now = time.monotonic()
         if now >= self._next:
             session, values, part, gripper = self._push
-            waddle._testing.push_chunk(session, values, part=part, gripper=gripper)
+            waddle_sdk._testing.push_chunk(session, values, part=part, gripper=gripper)
             self._next = now + OFFER_INTERVAL_S
 
 
@@ -194,15 +194,15 @@ def test_single_part_surface_is_unchanged():
     `(float64 ndarray, gripper, offset_ns)`. Dict-by-part is what a Composite
     declaration buys; it is not a tax on everyone else."""
     chunks: list = []
-    session = waddle.init(
+    session = waddle_sdk.init(
         "py-parts-single", _single_part(), _control(chunks), _testing=True
     )
 
-    with waddle.rollout(task="one arm") as ep:
+    with waddle_sdk.rollout(task="one arm") as ep:
         ep.gate(np.zeros(ARM_DIMS))
         # Passthrough is a whole-robot decision like any other: no part.
         assert ep.last_gate.part is None
-        waddle._testing.engage(session, "claim-single", "agent")
+        waddle_sdk._testing.engage(session, "claim-single", "agent")
         values, gripper, offset_ns = _bypass_step(session, chunks, [0.25] * ARM_DIMS)
 
         assert isinstance(values, np.ndarray)
@@ -212,7 +212,7 @@ def test_single_part_surface_is_unchanged():
         assert gripper is None
         assert offset_ns == 0
 
-        waddle._testing.release(session, "claim-single")
+        waddle_sdk._testing.release(session, "claim-single")
         ep.terminate("success")
 
 
@@ -220,12 +220,12 @@ def test_part_scoped_substitute_returns_dict_by_part():
     """`gate()` on a Composite session returns the intervention keyed by the
     part it commands. Without this, one arm's 7 rows arrive indistinguishable
     from a 14-row whole-robot command."""
-    session = waddle.init("py-parts-gate", _bimanual(), _control(), _testing=True)
+    session = waddle_sdk.init("py-parts-gate", _bimanual(), _control(), _testing=True)
 
-    with waddle.rollout(task="right arm alone") as ep:
+    with waddle_sdk.rollout(task="right arm alone") as ep:
         whole = np.zeros(2 * ARM_DIMS)
         ep.gate(whole)
-        waddle._testing.engage(session, "claim-gate", "agent")
+        waddle_sdk._testing.engage(session, "claim-gate", "agent")
         out = _gated_substitute(ep, session, whole, [0.75] * ARM_DIMS, part="right")
 
         assert isinstance(out, dict), f"a Composite session returns dict-by-part, got {out!r}"
@@ -235,7 +235,7 @@ def test_part_scoped_substitute_returns_dict_by_part():
         assert ep.last_gate.kind == "substitute"
         assert ep.last_gate.part == "right"
 
-        waddle._testing.release(session, "claim-gate")
+        waddle_sdk._testing.release(session, "claim-gate")
         ep.terminate("success")
 
 
@@ -244,13 +244,13 @@ def test_composite_send_receives_dict_by_part_steps():
     part-scoped step carries only the part it addresses, a whole-robot step
     carries every declared part, sliced by the declared layout."""
     chunks: list = []
-    session = waddle.init(
+    session = waddle_sdk.init(
         "py-parts-send", _bimanual(), _control(chunks), _testing=True
     )
 
-    with waddle.rollout(task="both arms") as ep:
+    with waddle_sdk.rollout(task="both arms") as ep:
         ep.gate(np.zeros(2 * ARM_DIMS))
-        waddle._testing.engage(session, "claim-send", "agent")
+        waddle_sdk._testing.engage(session, "claim-send", "agent")
 
         values, _, _ = _bypass_step(session, chunks, [1.25] * ARM_DIMS, part="right")
         assert isinstance(values, dict)
@@ -269,7 +269,7 @@ def test_composite_send_receives_dict_by_part_steps():
         assert list(values["left"]) == [0.1] * ARM_DIMS
         assert list(values["right"]) == [0.2] * ARM_DIMS
 
-        waddle._testing.release(session, "claim-send")
+        waddle_sdk._testing.release(session, "claim-send")
         ep.terminate("success")
 
 
@@ -286,7 +286,7 @@ def test_part_scoped_gripper_only_step_is_an_empty_array_for_that_part(tmp_path)
     marshalled as one is refused at the intake and never dispatched. The
     timeline is asserted clean for exactly that reason."""
     chunks: list = []
-    session = waddle.init(
+    session = waddle_sdk.init(
         "py-parts-grip",
         _bimanual(),
         _control(chunks),
@@ -294,10 +294,10 @@ def test_part_scoped_gripper_only_step_is_an_empty_array_for_that_part(tmp_path)
         _testing=True,
     )
 
-    with waddle.rollout(task="close the right gripper") as ep:
+    with waddle_sdk.rollout(task="close the right gripper") as ep:
         episode_id = ep.id
         ep.gate(np.zeros(2 * ARM_DIMS))
-        waddle._testing.engage(session, "claim-grip", "agent")
+        waddle_sdk._testing.engage(session, "claim-grip", "agent")
 
         values, gripper, _ = _bypass_step(
             session, chunks, [], part="right", gripper=0.03
@@ -308,9 +308,9 @@ def test_part_scoped_gripper_only_step_is_an_empty_array_for_that_part(tmp_path)
         assert values["right"].size == 0, "a gripper-only step commands no arm rows"
         assert gripper == pytest.approx(0.03)
 
-        waddle._testing.release(session, "claim-grip")
+        waddle_sdk._testing.release(session, "claim-grip")
         ep.terminate("success")
-    waddle.shutdown()
+    waddle_sdk.shutdown()
 
     assert _validation_faults(tmp_path, episode_id) == [], (
         "a part-scoped gripper-only step is a legal action; a validation "
@@ -323,11 +323,11 @@ def test_report_proprio_part_round_trips_through_mcap(tmp_path):
     flat `obs` vector — the observation layout is the customer's own and no
     declaration describes it, so slicing it by action parts would invent a
     mapping nobody declared — which is why `joint_pos` is a kwarg here."""
-    session = waddle.init(
+    session = waddle_sdk.init(
         "py-parts-proprio", _bimanual(), _control(), recording_dir=tmp_path
     )
 
-    with waddle.rollout(task="report both arms") as ep:
+    with waddle_sdk.rollout(task="report both arms") as ep:
         episode_id = ep.id
         session.report_proprio(part="left", joint_pos=[0.5] * ARM_DIMS, gripper=0.02)
         session.report_proprio(
@@ -337,7 +337,7 @@ def test_report_proprio_part_round_trips_through_mcap(tmp_path):
             ep.gate(np.zeros(2 * ARM_DIMS), np.zeros(2 * ARM_DIMS))
             time.sleep(0.01)
         ep.terminate("success")
-    waddle.shutdown()
+    waddle_sdk.shutdown()
 
     samples = [o.proprio for o in _observations(tmp_path / f"{episode_id}.mcap")]
     by_part = {s.part: s for s in samples}
@@ -356,9 +356,9 @@ def test_report_proprio_unknown_part_raises():
     """Refused by NAME: a typo'd part is a declaration error the caller can
     fix, and reporting one arm's state under a name the robot does not have
     would put it in the corpus as fact."""
-    session = waddle.init("py-parts-unknown", _bimanual(), _control())
+    session = waddle_sdk.init("py-parts-unknown", _bimanual(), _control())
 
-    with waddle.rollout(task="typo") as ep:
+    with waddle_sdk.rollout(task="typo") as ep:
         with pytest.raises(ValueError, match="waist"):
             session.report_proprio(part="waist", joint_pos=[0.0] * ARM_DIMS)
         # "" is the sole/default part and is always legal, on any declaration.
@@ -392,22 +392,22 @@ def test_blend_window_holds_part_scoped(tmp_path):
     has observably stopped passing the caller's action through, which is
     this side's view of the engage completing.
     """
-    session = waddle.init(
+    session = waddle_sdk.init(
         "py-parts-blend",
         _bimanual(),
         _control(),
-        handoff=waddle.Handoff.IMMEDIATE(blend_ms=600_000),
+        handoff=waddle_sdk.Handoff.IMMEDIATE(blend_ms=600_000),
         recording_dir=tmp_path,
         _testing=True,
     )
 
-    with waddle.rollout(task="cross-fade") as ep:
+    with waddle_sdk.rollout(task="cross-fade") as ep:
         episode_id = ep.id
         whole = np.zeros(2 * ARM_DIMS)
         for _ in range(5):
             assert ep.gate(whole) is whole  # an anchor exists to fade out of
 
-        waddle._testing.engage(session, "claim-blend", "agent")
+        waddle_sdk._testing.engage(session, "claim-blend", "agent")
         # Engage is the core's to complete on its own schedule; under a claim
         # the gate stops handing the caller's action back, which is the
         # observable edge every push below depends on.
@@ -434,9 +434,9 @@ def test_blend_window_holds_part_scoped(tmp_path):
         assert ep.last_gate.part is None
         assert list(out) == ["left", "right"]
 
-        waddle._testing.release(session, "claim-blend")
+        waddle_sdk._testing.release(session, "claim-blend")
         ep.terminate("success")
-    waddle.shutdown()
+    waddle_sdk.shutdown()
 
     assert _validation_faults(tmp_path, episode_id) == [], (
         "the part-scoped chunk must have been ADMITTED: a validation fault "

@@ -11,12 +11,40 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+### Changed
+- **BREAKING (pre-release): the importable package is now `waddle_sdk`, not
+  `waddle`.** `pip install waddle-sdk` then `import waddle_sdk`; the
+  distribution name is unchanged. The extension module is `waddle_sdk._core`.
+
+  WHY. The closed backend's own Python package is also named `waddle`, and the
+  two must share one environment — `waddle` depends on `waddle-metal`, which
+  imports this SDK (`from waddle_sdk.robots.base import Rig, CrossArm, ...`).
+  Two distributions cannot both own a top-level `waddle/`. Co-installed, the
+  result was not an error but something worse: `import waddle` resolved to
+  whichever landed in `site-packages` while submodules still resolved through
+  the other's editable finder — a silent HYBRID, masked whenever the cwd
+  happened to be a repo root. It cost an evening to find.
+
+  The SDK yields rather than the backend because the blast radius is 26 import
+  sites against 481, and because nothing is released: this is `v0.0.0` with an
+  empty `docs/changelogs/`, so no installed user is broken.
+
+  What did NOT move, deliberately:
+  - `waddle.execution.v1` — the entry-point group is a cross-repo contract
+    (`waddle-metal` registers it and asserts it in tests). A string
+    identifier, not an import; it never participated in the collision.
+  - `waddle.v0` / a future `waddle.v1` — the wire protocol namespace.
+  - MCAP topic names (`/waddle/observations`, `/waddle/actions`) and the
+    `waddle.testing` source id. A recorded name that changes with a package
+    rename splits one stream in two across the rename boundary.
+  - `waddle-sdk-teleop` and its `waddle_teleop._core` module, already distinct.
+
 ### Added
-- **managed rigs and lazy RGB-D cameras**: `waddle.init()` now accepts a
+- **managed rigs and lazy RGB-D cameras**: `waddle_sdk.init()` now accepts a
   mutually exclusive `rig=` form while preserving the existing
   `robot`/`control` API. The shared `RigSession` opens arms and cameras
   inside the lifecycle, starts reporting and latest-only capture pumps, closes
-  every partially opened resource on failure, and lets `waddle.shutdown()`
+  every partially opened resource on failure, and lets `waddle_sdk.shutdown()`
   deterministically finalize the recording and hardware. A structural
   `CameraDriver` returns immutable RGB or pixel-aligned RGB-D
   `CameraFrame` values; the rig pairs each capture with one
@@ -44,7 +72,7 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   gesture; local commands still traverse the ordinary claim, action intake,
   deadman, and customer `Control.send` path, so a frontend never becomes a
   second authority and the owner's reject-whole envelope remains final.
-- **`waddle.ui()` and remote invited-host chat**: an active SDK session can now
+- **`waddle_sdk.ui()` and remote invited-host chat**: an active SDK session can now
   open one dependency-free browser application on an OS-selected
   `127.0.0.1` port and receives a `UIHandle` with `url`, `close()` and context
   management. A per-run 256-bit fragment token, exact Host/Origin checks,
@@ -62,8 +90,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   only accepted/text/done/unavailable/error lifecycle to the page. Local state,
   e-stop, jog, cameras and recordings are independent of chat availability.
   There is deliberately no `waddle ui` command.
-- **generic episode task context and paired session stamps**: `waddle.rollout()`
-  and `waddle.agent()` accept bounded string `task_metadata`, persisted in every
+- **generic episode task context and paired session stamps**: `waddle_sdk.rollout()`
+  and `waddle_sdk.agent()` accept bounded string `task_metadata`, persisted in every
   sidecar and forwarded unchanged on `AgentInviteEvent.task_metadata` (append-only
   field 3) without participating in authority. `Session.stamp()` returns an
   immutable `SessionStamp(session_ns, unix_ns)` minted by the existing core
@@ -179,8 +207,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   the program it is (a subprocess with nothing configured): the factory still
   takes those arguments, and building a rig — live or sim — still opens no bus
   and starts no thread.
-- **sdk (`waddle.robots.base`: the vendor-neutral half of a robot module)**: a
-  new opt-in subpackage — `import waddle` is unchanged and imports none of it —
+- **sdk (`waddle_sdk.robots.base`: the vendor-neutral half of a robot module)**: a
+  new opt-in subpackage — `import waddle_sdk` is unchanged and imports none of it —
   carrying everything a program that drives a real robot writes around its
   vendor's driver, so a robot module is facts + driver + factory and nothing
   else.
@@ -240,7 +268,7 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   - **`RobotPump`** runs any tick callable at a declared rate on its own thread
     (`proprio_tick` is the usual one: step every part, report it per part),
     because the robot's own housekeeping cannot pause while the caller's thread
-    is blocked inside `waddle.agent()`.
+    is blocked inside `waddle_sdk.agent()`.
   - **`Rig`** is composition sugar and nothing more: a declaration, a way to
     open the arms behind it, and the rate they run at. Constructing one opens no
     bus and starts no thread — `arms()` is where hardware opens. `posture`
@@ -259,7 +287,7 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     (`RigSession`), and it exists for the two ends every hand-written version
     gets wrong at least once. `__enter__` opens the drivers — inside the
     `with`, so a bus that will not open unwinds structurally — registers the
-    verbs, calls `waddle.init`, starts the console recovery and starts the
+    verbs, calls `waddle_sdk.init`, starts the console recovery and starts the
     reporting pump; a failure part-way through closes what it opened, since a
     context manager whose `__enter__` raises never gets an `__exit__`.
     `__exit__` retires the console reader, stops the pump, shuts the session
@@ -267,7 +295,7 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     shutdown footgun**: finalizing the recording is no longer a `finally:` the
     customer remembered to write (pinned by a test that raises mid-rollout and
     then reads the recording back). Every keyword that is not the rig's own
-    goes straight through to `waddle.init` and means what it means there —
+    goes straight through to `waddle_sdk.init` and means what it means there —
     including a customer's own `send`, which still REPLACES the shipped
     envelope through the sugar. The two that ARE the rig's own are documented
     on it: `send`, and `console=False` for a program whose stdin belongs to
@@ -276,7 +304,7 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   - **The pump is always on inside a session**, not only for an agent run: a
     program's own loop then only gates and applies, with no interleaved robot
     tick to forget, and a session whose caller is blocked inside
-    `waddle.agent()` (or has no loop at all) keeps reporting. The bandwidth is
+    `waddle_sdk.agent()` (or has no loop at all) keeps reporting. The bandwidth is
     the declared part-count multiplication of the proprio cadence, fixed by
     the declaration and visible to the plane before it accepts.
   - **`hold_until_parked`** (+ `ParkGate.wait` / `.wait_holding`): a finished
@@ -295,8 +323,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     able to wait for a sim program to exit) and a Ctrl-C skips the hold (that
     operator is already at the machine).
   - **The composition is sugar, and a test says so**: `test_yam_session.py`
-    wires `yam.declaration()`, drivers, `base.Arm`, `waddle.Control`, a plain
-    `waddle.init`, the console recovery and a `RobotPump` by hand, and asserts
+    wires `yam.declaration()`, drivers, `base.Arm`, `waddle_sdk.Control`, a plain
+    `waddle_sdk.init`, the console recovery and a `RobotPump` by hand, and asserts
     the session that opens is byte-identical to `rig.session()`'s — the same
     registered robot JSON and the same everything else `create_session` is
     handed. Sugar that cannot be reproduced by hand is a wall.
@@ -310,7 +338,7 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   - No packaging change: no new dependency (numpy was already required), no
     extras key, no `pyproject.toml` edit — maturin sweeps the subpackage with
     `python-source`.
-- **sdk (`waddle.robots.yam`: what an I2RT YAM is, in numbers that are
+- **sdk (`waddle_sdk.robots.yam`: what an I2RT YAM is, in numbers that are
   checked)**: the facts half of the first vendor module — the six arm joints
   and their limits, the kinematic chain, the tool frame, the hand's stroke —
   plus the forward kinematics those facts describe. Shipping a customer-side
@@ -374,7 +402,7 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     carries `waddle/robots/yam_data/{yam.urdf,LICENSE,README.md}`, no meshes
     and no bytecode, and the module reads them through `importlib.resources`
     from the installed package rather than from a path beside its own file.
-- **sdk (`waddle.robots.yam`: the live driver, and the rigs its factories
+- **sdk (`waddle_sdk.robots.yam`: the live driver, and the rigs its factories
   build)**: the other two thirds of the first vendor module — what moves a
   real arm, and what assembles one into a session-ready rig out of the site's
   own numbers.
@@ -404,7 +432,7 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     propagates, or the vendor's own ~1 kHz server thread keeps re-sending the
     last setpoint to an arm nothing can reach.
   - **The vendor package is a documented command, not a dependency.** It is
-    imported lazily inside `__init__`, so importing `waddle.robots.yam` on a
+    imported lazily inside `__init__`, so importing `waddle_sdk.robots.yam` on a
     machine that has never seen a YAM is an ordinary import; asking for a live
     arm without it raises with `I2RT_INSTALL` in the text, which is BUILT from
     `I2RT_PIN` and so cannot drift from the commit every fact in the module is
@@ -414,7 +442,7 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     resolve.
   - **`yam.declaration()` is public and stands alone.** A program that wants
     only the declaration — its own driver, its own loop, a plain
-    `waddle.init` — gets exactly the robot a factory would have registered.
+    `waddle_sdk.init` — gets exactly the robot a factory would have registered.
     That is a test, not a claim: `sdk/tests/test_robots_yam.py` compiles
     `yam.bimanual(...)` to JSON and compares it field for field against a
     verbatim replica of the customer program already running at the reference
@@ -691,7 +719,7 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     ride the flat `gate(obs=...)` vector, because the observation layout is
     the customer's own and no declaration describes it. `part=""` (the
     default) is the robot as declared and behaves exactly as before.
-  - **sdk (`waddle-sdk`), `waddle._testing.push_chunk`**: the private test
+  - **sdk (`waddle-sdk`), `waddle_sdk._testing.push_chunk`**: the private test
     hook for the local intervention seam — one part-addressed (or
     whole-robot) step pushed into a session with no control-plane transport,
     running the core's own intake. A whole-robot push on a `Composite`
@@ -848,17 +876,17 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     Control-plane stills are also the first *droppable* history-free message
     class: see the `waddle-controlplane` entry under Fixed for how they are
     shed rather than buffered while a plane is unreachable or stalled.
-- **sdk (Python: `init(transport=…, media=…)`, `waddle.agent()`, and the
+- **sdk (Python: `init(transport=…, media=…)`, `waddle_sdk.agent()`, and the
   `[teleop]` companion distribution)**: the connected surface, in the two
   places a user actually touches it.
-  - **`waddle.init(transport=waddle.Grpc(url, token=None))`** connects the
-    supervision plane, and **`waddle.init(media=waddle.LiveKit(url, token))`**
+  - **`waddle_sdk.init(transport=waddle_sdk.Grpc(url, token=None))`** connects the
+    supervision plane, and **`waddle_sdk.init(media=waddle_sdk.LiveKit(url, token))`**
     the teleop media plane — both small frozen config dataclasses handed
     straight to core constructors; nothing in Python inspects a connection.
     The two are mutually exclusive with `_testing=True` (which wires the
     in-process loopback), and `media` requires its token, because the plane
     mints room tokens and this SDK never does.
-  - **`waddle.agent(prompt, *, timeout_s=600.0, pre_reset=…, post_reset=…)
+  - **`waddle_sdk.agent(prompt, *, timeout_s=600.0, pre_reset=…, post_reset=…)
     -> AgentResult`**: hand a
     whole episode to Waddle instead of driving it. It blocks until the
     episode reaches an outcome and returns a frozen
@@ -881,14 +909,14 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     `rust/Cargo.toml`, built with `livekit` as well. Splitting them keeps
     libwebrtc's ~690 MB of build out of installs that only supervise a
     policy; measured, the companion is ~4.5x the default wheel. Either way
-    you `import waddle`: **`waddle._native`** is the one module that picks a
+    you `import waddle_sdk`: **`waddle_sdk._native`** is the one module that picks a
     core, preferring the companion when a version-matched one is installed,
     warning and falling back to the bundled core when the two versions
     disagree (a half-upgraded environment must not load a core built from
     other sources), and honouring `WADDLE_NO_TELEOP=1`. The extra's exact
     pin is the one version maturin cannot derive from the manifest, so a
-    test holds it to `waddle.__version__` rather than to memory.
-  - `waddle.__version__` re-exports `_core.__version__`, so the Python
+    test holds it to `waddle_sdk.__version__` rather than to memory.
+  - `waddle_sdk.__version__` re-exports `_core.__version__`, so the Python
     surface and the compiled core can always be reported as one thing.
 - **sdk (connected shim: transport features, `_core.FEATURES`,
   `Session.agent`)**: the PyO3 shim can now be BUILT with the transports the
@@ -902,8 +930,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   since "not compiled" alone is not something a caller can act on). Each
   core states its own `FEATURES` (a frozenset of the built feature names)
   and `__version__`; the frozenset the Python layer actually probes is
-  `waddle._native.FEATURES`, re-exported from whichever core `_native`
-  selected — reading `waddle._core.FEATURES` would describe the bundled
+  `waddle_sdk._native.FEATURES`, re-exported from whichever core `_native`
+  selected — reading `waddle_sdk._core.FEATURES` would describe the bundled
   core even in a process running the teleop one. It is the only feature
   detection the Python layer may do. The shim gains
   kwargs, never logic. Neither feature is a cargo default (the featureless
@@ -941,7 +969,7 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 - **sdk (`examples/toy_robot.py`: a whole robot integration in one file)**:
   the program a customer would actually run, and the first artifact in this
   repo that exercises the declaration surface, the loop, the media/stills
-  legs and `waddle.agent()` together rather than one at a time. A 6-dof arm
+  legs and `waddle_sdk.agent()` together rather than one at a time. A 6-dof arm
   with per-joint limits, a parallel gripper declared in **metres** (`0.0`
   open / `0.04` closed — deliberately not 0/1, so the normalized-to-declared
   mapping a claimant's gripper command goes through is actually exercised), a
@@ -975,7 +1003,7 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     `VAR=${MAYBE_UNSET}` is how a harness parameterizes a child; previously
     those died in `int("")` or in credential validation before the first
     status line.
-- **sdk (`waddle.StreamPolicy(still_fps=…)`)**: the Python declaration for
+- **sdk (`waddle_sdk.StreamPolicy(still_fps=…)`)**: the Python declaration for
   control-plane stills (flag `waddle.v0.obs.stills`), which core has
   honoured since the entry above but no Python program could ask for. `None`
   (the default) and `0` both mean no stills, matching the wire; a negative
@@ -1197,7 +1225,7 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     contiguous array is copied once into the frame the core queues. A
     wrong dtype/rank/shape (or a non-contiguous array) raises `TypeError`;
     an unknown camera or a resolution mismatch raises `RuntimeError` (from
-    the core). `waddle.init(..., media=waddle.LiveKit(url, token))`
+    the core). `waddle_sdk.init(..., media=waddle_sdk.LiveKit(url, token))`
     declares a real WebRTC-backed media plane. The heavy `livekit` Cargo
     feature (~690 MB webrtc-sys download, tokio) rides the `[teleop]`
     companion wheel rather than the default one, so a core built without
@@ -1206,7 +1234,7 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     transport, by contrast, IS in the default wheel — see the
     two-distribution entry above); `_testing=True` (the in-process
     loopback) is unaffected and is how `publish_frame` is exercised
-    end-to-end in tests (`waddle._testing.frames(session, camera)`
+    end-to-end in tests (`waddle_sdk._testing.frames(session, camera)`
     observes the far end).
 - **waddle-media (real LiveKit `MediaPlane` behind the `livekit` feature)**:
   `livekit::LiveKitMedia` is the first real transport.
@@ -1242,18 +1270,18 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   variants and `Unimplemented` now names what is deferred.
 - **sdk (Python reset API: `TeleopReset`/`AgentReset`, `init`/`rollout`
   kwargs)**: the headline user-facing surface for the reset-phases branch.
-  `waddle.TeleopReset(prompt, *, timeout_s=600.0)` and
-  `waddle.AgentReset(prompt, *, timeout_s=600.0)` are small frozen,
+  `waddle_sdk.TeleopReset(prompt, *, timeout_s=600.0)` and
+  `waddle_sdk.AgentReset(prompt, *, timeout_s=600.0)` are small frozen,
   repr-friendly dataclasses declaring a remote reset window for a
   teleoperator/agent respectively (their docstrings name what a window
   needs to run: a connected supervision plane to grant and complete it —
-  `waddle.init(transport=waddle.Grpc(url, token))` — since with no plane
+  `waddle_sdk.init(transport=waddle_sdk.Grpc(url, token))` — since with no plane
   declared a window can only run out its timeout, and only the private
-  `waddle._testing` reset-window hooks drive one without a plane).
-  `waddle.init` gains
+  `waddle_sdk._testing` reset-window hooks drive one without a plane).
+  `waddle_sdk.init` gains
   `pre_reset=None`, `post_reset=None` (`None` | callable | `TeleopReset` |
   `AgentReset`) and `reset_verification="blocking"` (`"blocking"` |
-  `"optimistic"`); `waddle.rollout(task, *, pre_reset=_UNSET,
+  `"optimistic"`); `waddle_sdk.rollout(task, *, pre_reset=_UNSET,
   post_reset=_UNSET)` gains the same two kwargs with a module-level
   `_UNSET` sentinel distinguishing "inherit `init()`'s declaration"
   (`_UNSET`, the default) from "disable this phase for this one episode
@@ -1270,7 +1298,7 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   normalizing to `(False, None)` — the `rollout()` caller sees the same
   generic `RuntimeError: reset failed` as a hook that legitimately
   returns `False`, and cannot tell the two apart from that exception
-  alone. `waddle._testing` gains `reset_window_engage`/
+  alone. `waddle_sdk._testing` gains `reset_window_engage`/
   `reset_window_complete` thin wrappers alongside the existing
   `engage`/`release`/`push_teleop` (they deserved the same wrapper
   treatment). `rollout`'s docstring now
@@ -1571,7 +1599,7 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   `Gripper`) compiling to canonical proto3 JSON. `ep.gate(action, obs)`
   returns "what you should send, or None if you must not send" (Pass
   returns the caller's exact object; Noop/Hold return None); exiting
-  `rollout()` non-terminal aborts, never succeeds. Private `waddle._testing`
+  `rollout()` non-terminal aborts, never succeeds. Private `waddle_sdk._testing`
   hooks (engage/release/push_teleop over the loopback media plane) drive the
   intervention pytest; the nominal pytest reads the episode MCAP back as the
   Python-side proof of obs logging + gate-record persistence. New core
@@ -1621,7 +1649,7 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   by Rust round-trip tests and a real C caller compiled with gcc against the
   generated header and linked to `libwaddle.so`.
 - **sdk (descriptors: intrinsics, stream policy, URDF, frame graph, joint
-  limits)**: `sdk/python/waddle/descriptors.py` widens to cover the rest of
+  limits)**: `sdk/python/waddle_sdk/descriptors.py` widens to cover the rest of
   `descriptors.proto`'s declaration surface (shape only — the hollow-frontend
   rule: no new semantic validation, `RobotDescription::try_from` remains the
   one semantic validator). `Camera` gains optional `intrinsics: Intrinsics`
@@ -1650,14 +1678,14 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Changed
 - **`examples/toy_robot.py` runs its background loop on the shipped pump**
-  (`waddle.robots.base.RobotPump`) instead of a class of its own. The example's
+  (`waddle_sdk.robots.base.RobotPump`) instead of a class of its own. The example's
   copy and the one a robot module used were the same monotonic-deadline thread
   written twice, which is how the two start drifting; the pump knows nothing
   about arms, so the example hands it its own `robot_tick` and keeps every
   other line. Nothing about the program's behaviour or its status lines
   changes, and the agent-mode path that only this loop keeps alive is now
   covered: a test drives the example's own `run_agent_mode` with the caller
-  blocked inside `waddle.agent()` and asserts the camera keeps publishing.
+  blocked inside `waddle_sdk.agent()` and asserts the camera keeps publishing.
 - **An anchorless cross-fade now emits the commanded setpoint exactly**
   (`waddle-gate`): with nothing yet commanded (an episode whose caller has
   never ticked — every agent-invited one), a whole-robot action is its own
@@ -1779,7 +1807,7 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   instead of silently at every episode. The local recorder holds the
   full-rate archive, so it may not quietly hold nothing.
 - **A step-cap refusal now says which of its two rates is the cap**
-  (`waddle.robots.base.Arm`): the line read `joint1 would move 1.3000 in one
+  (`waddle_sdk.robots.base.Arm`): the line read `joint1 would move 1.3000 in one
   command, cap 0.1000 (at 10 Hz that is 13.000 per second)`, where the 13.000
   is what the command ASKED for — sitting immediately after the cap, where it
   reads as the cap's own allowance. The declared cap at 10 Hz is 1.0 per
@@ -1791,7 +1819,7 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   have** (`examples/yam_bimanual.py`): its docstring promised that with no
   transport "the twins move, both parts report, and every episode lands in
   the recording directory", one sentence away from the exit it actually
-  takes. Those five lines end in `waddle.agent()`, so with no transport the
+  takes. Those five lines end in `waddle_sdk.agent()`, so with no transport the
   program says what it needs and exits 2 before a session opens — nothing
   steps and nothing is recorded. A rig needs no plane in general
   (`rig.session(...)` without one is a local recorder a program drives from
@@ -1967,9 +1995,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
     now produces an `/waddle/actions` row like any gate tick's, stamped by
     the `SessionClock` at dispatch and carrying the claim's provenance
     (which, per the two fixes above, now names the agent). Its rows are
-    tagged `source_id: "waddle.bypass-pump"` with their own `seq` space,
+    tagged `source_id: "waddle_sdk.bypass-pump"` with their own `seq` space,
     since `ActionChunk.seq` is monotone *per stream* and the caller's gate
-    (`waddle.gate`) is a different stream into the same episode. The row is
+    (`waddle_sdk.gate`) is a different stream into the same episode. The row is
     written before the `send` request, so a dispatch that fails is still on
     the record. This covers remote reset-window actuation too — the same
     pump drives it.
@@ -2302,7 +2330,7 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   retake successors still inherit the caller's ring) or terminate a later
   episode (`terminate` is a no-op unless the episode is still live);
   `Episode::done` now also flips on session shutdown, so the tutorial loop
-  cannot spin forever after `waddle.shutdown()`. New
+  cannot spin forever after `waddle_sdk.shutdown()`. New
   `Episode::records_dropped()` surfaces ring overflow (training-data
   loss). A gated action that does not fit the declared space (raw teleop
   stream ahead of closed-side retargeting) now records an action-less

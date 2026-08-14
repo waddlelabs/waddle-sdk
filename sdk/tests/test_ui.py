@@ -12,24 +12,24 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-import waddle
-from waddle.robots import base
+import waddle_sdk
+from waddle_sdk.robots import base
 
 
 @pytest.fixture(autouse=True)
 def _clean_session():
     yield
-    waddle.shutdown()
+    waddle_sdk.shutdown()
 
 
-def _robot(*, camera: bool = False) -> waddle.Robot:
-    return waddle.Robot(
+def _robot(*, camera: bool = False) -> waddle_sdk.Robot:
+    return waddle_sdk.Robot(
         name="ui-bot",
         robot_id="ui-01",
         cell_id="ui-cell",
-        action_space=waddle.JointSpace(joints=["j0", "j1"], rate_hz=20),
+        action_space=waddle_sdk.JointSpace(joints=["j0", "j1"], rate_hz=20),
         cameras=(
-            {"overhead": waddle.Camera(width=2, height=2, fps=10)}
+            {"overhead": waddle_sdk.Camera(width=2, height=2, fps=10)}
             if camera
             else {}
         ),
@@ -37,7 +37,7 @@ def _robot(*, camera: bool = False) -> waddle.Robot:
 
 
 def _open(
-    handle: waddle.UIHandle,
+    handle: waddle_sdk.UIHandle,
     path: str,
     *,
     method: str = "GET",
@@ -71,23 +71,23 @@ def _open(
 
 def test_ui_requires_init_validates_increments_and_is_one_per_session():
     with pytest.raises(RuntimeError, match="requires an active"):
-        waddle.ui()
-    waddle.init("ui", _robot(), waddle.Control())
+        waddle_sdk.ui()
+    waddle_sdk.init("ui", _robot(), waddle_sdk.Control())
     with pytest.raises(TypeError):
-        waddle.ui(joint_step_rad=True)
+        waddle_sdk.ui(joint_step_rad=True)
     with pytest.raises(ValueError):
-        waddle.ui(linear_step_m=float("nan"))
-    handle = waddle.ui()
+        waddle_sdk.ui(linear_step_m=float("nan"))
+    handle = waddle_sdk.ui()
     parsed = urllib.parse.urlsplit(handle.url)
     assert parsed.hostname == "127.0.0.1"
     assert parsed.port
     assert len(urllib.parse.parse_qs(parsed.fragment)["token"][0]) >= 43
-    assert waddle.ui() is handle
+    assert waddle_sdk.ui() is handle
 
 
 def test_loopback_security_headers_auth_host_origin_and_shutdown():
-    session = waddle.init("ui", _robot(), waddle.Control())
-    handle = waddle.ui()
+    session = waddle_sdk.init("ui", _robot(), waddle_sdk.Control())
+    handle = waddle_sdk.ui()
     parsed = urllib.parse.urlsplit(handle.url)
     with urllib.request.urlopen(
         f"{parsed.scheme}://{parsed.netloc}/",
@@ -119,18 +119,18 @@ def test_loopback_security_headers_auth_host_origin_and_shutdown():
         state = json.load(response)
     assert state["episode_state"] == session.status()["episode_state"]
     assert state["local_controls_available"] is True
-    waddle.shutdown()
+    waddle_sdk.shutdown()
     assert handle.closed
 
 
 def test_estop_is_a_local_requested_operation_and_latest_camera_is_raw_rgb():
     estopped = threading.Event()
-    session = waddle.init(
+    session = waddle_sdk.init(
         "ui",
         _robot(camera=True),
-        waddle.Control(estop=estopped.set),
+        waddle_sdk.Control(estop=estopped.set),
     )
-    handle = waddle.ui()
+    handle = waddle_sdk.ui()
     with _open(handle, "/api/estop", method="POST", value={}) as response:
         assert json.load(response) == {"status": "requested"}
     assert estopped.wait(2), "local e-stop callback was not invoked"
@@ -154,13 +154,13 @@ def test_jog_uses_native_proprio_claim_and_normal_send_path():
         chunks.append(chunk)
         sent.set()
 
-    session = waddle.init(
+    session = waddle_sdk.init(
         "ui",
         _robot(),
-        waddle.Control(send=send, hold=lambda: None, resume=lambda: None),
+        waddle_sdk.Control(send=send, hold=lambda: None, resume=lambda: None),
     )
-    handle = waddle.ui(joint_step_rad=0.125)
-    with waddle.rollout(task="jog test") as episode:
+    handle = waddle_sdk.ui(joint_step_rad=0.125)
+    with waddle_sdk.rollout(task="jog test") as episode:
         episode.gate([0.0, 0.0], [0.0, 0.0])
         session.report_proprio(joint_pos=[0.5, -0.25])
         with _open(handle, "/api/handoff", method="POST", value={}) as response:
@@ -202,17 +202,17 @@ def test_jog_reaches_the_owner_envelope_and_is_refused_whole():
         report=lambda _line: refused.set(),
     )
     arms = {"robot": arm}
-    session = waddle.init(
+    session = waddle_sdk.init(
         "ui",
         _robot(),
-        waddle.Control(
+        waddle_sdk.Control(
             send=base.chunk_sender(arms),
             hold=lambda: base.hold_all(arms),
             resume=lambda: None,
         ),
     )
-    handle = waddle.ui(joint_step_rad=0.125)
-    with waddle.rollout(task="envelope refusal") as episode:
+    handle = waddle_sdk.ui(joint_step_rad=0.125)
+    with waddle_sdk.rollout(task="envelope refusal") as episode:
         episode.gate([0.0, 0.0], [0.0, 0.0])
         session.report_proprio(joint_pos=[0.5, -0.25])
         with _open(handle, "/api/handoff", method="POST", value={}) as response:
@@ -261,8 +261,8 @@ def test_manifest_downloads_are_resolved_beneath_recording_root(tmp_path: Path):
     (root / "manifest.jsonl").write_text(
         "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
     )
-    waddle.init("ui", _robot(), waddle.Control(), recording_dir=root)
-    handle = waddle.ui()
+    waddle_sdk.init("ui", _robot(), waddle_sdk.Control(), recording_dir=root)
+    handle = waddle_sdk.ui()
     with _open(handle, "/api/recordings") as response:
         recordings = json.load(response)["recordings"]
     assert [item["episode_id"] for item in recordings] == ["safe"]

@@ -1,4 +1,4 @@
-"""The fact gate for `waddle.robots.yam`: every number, against its source.
+"""The fact gate for `waddle_sdk.robots.yam`: every number, against its source.
 
 A robot module is a pile of numbers somebody transcribed. Transcription is
 where robot code goes quietly wrong — a limit widened by a digit, a chain
@@ -7,7 +7,7 @@ flange's frame — and none of it announces itself: the arm executes the
 nonsense faithfully.
 
 So the numbers are not trusted here either. `yam.py` writes them down once,
-the shipped URDF (`waddle/robots/yam_data/yam.urdf`, the pinned vendor
+the shipped URDF (`waddle_sdk/robots/yam_data/yam.urdf`, the pinned vendor
 snapshot) states them again in the vendor's own words, and this file compares
 the two. It is the open-side twin of the gate the closed repo runs against
 the same URDF, and it is **directional** in exactly the same way:
@@ -38,8 +38,8 @@ from importlib.resources import files
 import numpy as np
 import pytest
 
-from waddle import descriptors
-from waddle.robots import base, yam
+from waddle_sdk import descriptors
+from waddle_sdk.robots import base, yam
 
 # A nanometre / nanoradian. The CAD export leaves dust as large as 1.2e-13 in
 # the URDF (`joint4`'s rpy pitch), and the smallest number that means anything
@@ -47,7 +47,7 @@ from waddle.robots import base, yam
 # ~10^4 clear of both, and no edit a human could make to a fact survives it.
 EXACT = 1e-9
 
-DATA = files("waddle.robots") / "yam_data"
+DATA = files("waddle_sdk.robots") / "yam_data"
 
 #: Pointers that resolve only inside the repository this snapshot was patched
 #: in. `test_the_shipped_data_points_only_at_what_a_wheel_holder_can_open`

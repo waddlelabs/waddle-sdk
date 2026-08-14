@@ -11,7 +11,7 @@ Apache-2.0 wheel under its own MIT licence.
 | Pinned commit | `570ef66681ff12bd8298aba34084307cfecc9f05` |
 | Licence | MIT — [`./LICENSE`](./LICENSE), copied verbatim from the source repo root |
 
-`waddle.robots.yam` reads this file two ways: `yam.urdf_text()` hands it to a
+`waddle_sdk.robots.yam` reads this file two ways: `yam.urdf_text()` hands it to a
 single-arm declaration as `kinematics_urdf`, and `sdk/tests/test_yam_facts.py`
 compares every constant in `yam.py` against the numbers written here. That
 second use is the reason the file ships at all — a fact table with no second
@@ -46,7 +46,7 @@ wheel's.
    **X**. Translation does not depend on `rpy`, so `grasp_link`'s *position*
    matched exactly and the wrong axis went unnoticed until an FK-agreement
    check compared *orientations* and found 120° of divergence. This is why
-   `waddle.robots.yam` states its tool fact in the tool's frame and asserts
+   `waddle_sdk.robots.yam` states its tool fact in the tool's frame and asserts
    the frame names, rather than in the flange's.
 3. **`link_6` meshes backfilled** from upstream commit
    `d4efb66d81bd8bde42909880b16591d4af82e8c0`: `link_6_visual.stl` /

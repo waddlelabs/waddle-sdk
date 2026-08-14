@@ -1,4 +1,4 @@
-"""Private, unstable test hooks. Requires ``waddle.init(_testing=True)``,
+"""Private, unstable test hooks. Requires ``waddle_sdk.init(_testing=True)``,
 which wires an in-process loopback media plane whose far end these drive.
 
 Everything here is marshalling into core-side helpers — no session-event
@@ -78,7 +78,7 @@ def mark_done(
 ) -> None:
     """End the live episode the way a plane `EpisodeDirective{MARK_DONE}`
     would: the terminal outcome comes from outside the customer's loop.
-    This is how a `waddle.agent(...)` run finishes without a plane — the
+    This is how a `waddle_sdk.agent(...)` run finishes without a plane — the
     caller of `agent()` is blocked and holds no episode handle, so there is
     nothing else for a test to terminate through."""
     session._testing_mark_done(outcome, reason)

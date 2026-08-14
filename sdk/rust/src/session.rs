@@ -174,7 +174,7 @@ pub(crate) struct PySession {
     inner: Session,
     closed: AtomicBool,
     /// The loopback far end, present iff `testing_loopback` (the private
-    /// `waddle._testing` surface drives it).
+    /// `waddle_sdk._testing` surface drives it).
     testing_far: Option<Mutex<LoopbackFarEnd>>,
     teleop_seq: AtomicU64,
     /// [`PySession::_testing_push_chunk`]'s own stream sequence — monotone
@@ -260,7 +260,7 @@ fn append_jog_target(
 /// teardown (thread joins, transitively the verb thread) while holding the
 /// GIL — a verb callback mid-`try_attach` would deadlock. Dealloc happens
 /// with the GIL held, so detach around the join. The blessed
-/// `waddle.init`/`waddle.shutdown` path never reaches this (atexit calls
+/// `waddle_sdk.init`/`waddle_sdk.shutdown` path never reaches this (atexit calls
 /// shutdown first); this covers direct `_core.create_session` users.
 impl Drop for PySession {
     fn drop(&mut self) {
@@ -280,7 +280,7 @@ impl PySession {
     fn testing_far(&self) -> PyResult<&Mutex<LoopbackFarEnd>> {
         self.testing_far.as_ref().ok_or_else(|| {
             PyRuntimeError::new_err(
-                "test hooks require waddle.init(_testing=True) (loopback media plane)",
+                "test hooks require waddle_sdk.init(_testing=True) (loopback media plane)",
             )
         })
     }
@@ -1164,6 +1164,12 @@ impl PySession {
             pb::ActionChunk {
                 actions: vec![action],
                 seq: self.chunk_seq.fetch_add(1, Ordering::SeqCst),
+                // NOT `waddle_sdk.testing`, though the Python package was
+                // renamed: this is a RECORDED identifier, and it rides into
+                // MCAP beside topic names like `/waddle/observations` that
+                // did not move either. A wire name that changes with a
+                // package rename splits one stream into two across the
+                // rename boundary, for no reader's benefit.
                 source_id: "waddle.testing".to_owned(),
                 ..Default::default()
             },
@@ -1194,7 +1200,7 @@ impl PySession {
     /// half is `SessionEvent::Terminate`, which is exactly what
     /// `terminate_episode` injects (`pumps::forward_server_msg`'s
     /// `Msg::Episode` arm). The live episode is read from the same mirror
-    /// snapshot that names it, because a `waddle.agent()` caller holds no
+    /// snapshot that names it, because a `waddle_sdk.agent()` caller holds no
     /// episode handle to terminate through — that is the whole point of a
     /// plane-driven episode, and it is why this seam exists at all.
     /// Blocks through the terminal (and any post-reset) with the GIL
@@ -1334,7 +1340,7 @@ pub(crate) fn create_session(
     if transport_url.is_some() {
         return Err(PyRuntimeError::new_err(
             "transport_url requires a waddle-sdk built with the `grpc` feature; this build has \
-             none (see waddle._native.FEATURES)",
+             none (see waddle_sdk._native.FEATURES)",
         ));
     }
     #[cfg(not(feature = "livekit"))]
@@ -1342,7 +1348,7 @@ pub(crate) fn create_session(
         return Err(PyRuntimeError::new_err(
             "media_url requires a waddle-sdk built with the `livekit` feature; this build has \
              none — install the teleop extra: pip install 'waddle-sdk[teleop]' (see \
-             waddle._native.FEATURES)",
+             waddle_sdk._native.FEATURES)",
         ));
     }
     if transport_token.is_some() && transport_url.is_none() {

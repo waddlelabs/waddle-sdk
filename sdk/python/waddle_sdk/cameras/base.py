@@ -100,7 +100,7 @@ class CameraSample:
             or not isinstance(unix_ns, int)
             or unix_ns <= 0
         ):
-            raise TypeError("CameraSample.stamp must be a paired waddle.SessionStamp")
+            raise TypeError("CameraSample.stamp must be a paired waddle_sdk.SessionStamp")
         if (
             isinstance(self.frame_sequence, bool)
             or not isinstance(self.frame_sequence, int)

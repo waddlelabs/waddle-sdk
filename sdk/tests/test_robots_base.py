@@ -1,4 +1,4 @@
-"""The vendor-neutral half of a robot module: `waddle.robots.base`.
+"""The vendor-neutral half of a robot module: `waddle_sdk.robots.base`.
 
 A robot module is what a customer imports instead of writing a driver, an
 envelope and a report loop from scratch. Everything in it that is not a
@@ -35,14 +35,14 @@ import pytest
 from mcap.reader import make_reader
 from mcap_protobuf.decoder import DecoderFactory
 
-import waddle
-from waddle.robots import base
+import waddle_sdk
+from waddle_sdk.robots import base
 
 
 @pytest.fixture(autouse=True)
 def _clean_session():
     yield
-    waddle.shutdown()
+    waddle_sdk.shutdown()
 
 # How long a poll for another thread's work may run before the test gives up.
 # Never a deadline an assertion depends on: every wait below ends on an
@@ -1090,14 +1090,14 @@ def toy_driver() -> base.SimDriver:
 def toy_crane(*, posture: str = "supervised") -> base.Rig:
     """The whole of a second vendor module: declare the robot, say how to open
     it, hand back a rig."""
-    space = waddle.JointSpace(
+    space = waddle_sdk.JointSpace(
         joints=[
-            waddle.Joint(name=name, min_position=lo, max_position=hi,
+            waddle_sdk.Joint(name=name, min_position=lo, max_position=hi,
                          max_effort=TOY_FACTS["max_effort_nm"])
             for name, (lo, hi) in zip(TOY_FACTS["joints"], TOY_FACTS["limits"])
         ],
         rate_hz=TOY_FACTS["rate_hz"],
-        chunking=waddle.Chunking(horizon=1, replan="immediate", interp="hold"),
+        chunking=waddle_sdk.Chunking(horizon=1, replan="immediate", interp="hold"),
     )
 
     def build_arms() -> dict[str, base.Arm]:      # the bus opens HERE
@@ -1114,7 +1114,7 @@ def toy_crane(*, posture: str = "supervised") -> base.Rig:
         }
 
     return base.Rig(
-        declaration=waddle.Robot(
+        declaration=waddle_sdk.Robot(
             name="toy-crane", robot_id="toy-crane-01", action_space=space
         ),
         build_arms=build_arms,
@@ -1198,20 +1198,20 @@ def test_a_monitor_rig_opens_a_session_that_offers_only_the_owners_stop(tmp_path
     rig = toy_crane(posture="monitor")
     arms = rig.arms()
     verbs = rig.control(arms)
-    assert waddle._derive_grants(verbs, rig.robot().action_space) == [
+    assert waddle_sdk._derive_grants(verbs, rig.robot().action_space) == [
         {"verb": "VERB_ESTOP"}
     ]
 
-    waddle.init("monitor-smoke", rig.robot(), verbs, recording_dir=tmp_path)
+    waddle_sdk.init("monitor-smoke", rig.robot(), verbs, recording_dir=tmp_path)
     try:
-        with waddle.rollout(task="watch the crane") as ep:
+        with waddle_sdk.rollout(task="watch the crane") as ep:
             position = arms[""].state()[0]
             decided = ep.gate(position + np.array([0.05, 0.0, 0.0]), position)
             assert decided is not None, "the program's own action still passes through"
             base.apply_decision(arms, decided)
             ep.terminate("success")
     finally:
-        waddle.shutdown()
+        waddle_sdk.shutdown()
 
     assert arms[""].accepted == 1 and arms[""].rejected == 0
 
@@ -1233,7 +1233,7 @@ def test_a_monitor_session_may_not_wire_a_media_plane():
     an engage-path rule to phrase the message more kindly."""
     rig = toy_crane(posture="monitor")
     with pytest.raises(RuntimeError, match="hold"):
-        waddle.init("monitor-media", rig.robot(), rig.control(rig.arms()), _testing=True)
+        waddle_sdk.init("monitor-media", rig.robot(), rig.control(rig.arms()), _testing=True)
 
 
 def test_a_second_vendor_rides_the_base_layer_end_to_end(tmp_path):
@@ -1248,7 +1248,7 @@ def test_a_second_vendor_rides_the_base_layer_end_to_end(tmp_path):
     lands as joint positions with no TCP rather than a pose nobody declared."""
     rig = toy_crane()
     arms = rig.arms()
-    session = waddle.init(
+    session = waddle_sdk.init(
         "toy-vendor-smoke",
         rig.robot(),
         rig.control(arms),
@@ -1273,7 +1273,7 @@ def test_a_second_vendor_rides_the_base_layer_end_to_end(tmp_path):
     pump = base.RobotPump(tick, rig.rate_hz)
     pump.start()
     try:
-        with waddle.rollout(task="raise the boom") as ep:
+        with waddle_sdk.rollout(task="raise the boom") as ep:
             episode_id = ep.id
             in_episode.set()
             for _ in range(10):
@@ -1287,7 +1287,7 @@ def test_a_second_vendor_rides_the_base_layer_end_to_end(tmp_path):
             ep.terminate("success")
     finally:
         pump.stop()
-        waddle.shutdown()
+        waddle_sdk.shutdown()
         for arm in arms.values():
             arm.close()
 

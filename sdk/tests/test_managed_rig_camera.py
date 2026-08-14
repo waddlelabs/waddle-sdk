@@ -11,15 +11,15 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-import waddle
-from waddle.cameras import CameraDriver, CameraFrame, CameraSample
-from waddle.robots import base
+import waddle_sdk
+from waddle_sdk.cameras import CameraDriver, CameraFrame, CameraSample
+from waddle_sdk.robots import base
 
 
 @pytest.fixture(autouse=True)
 def _clean_session():
     yield
-    waddle.shutdown()
+    waddle_sdk.shutdown()
 
 
 JOINTS = ("joint",)
@@ -64,16 +64,16 @@ class _BlockingCamera:
             self._frames.put(None)
 
 
-def _robot() -> waddle.Robot:
-    return waddle.Robot(
+def _robot() -> waddle_sdk.Robot:
+    return waddle_sdk.Robot(
         name="camera-rig",
-        action_space=waddle.JointSpace(joints=JOINTS, rate_hz=RATE_HZ),
+        action_space=waddle_sdk.JointSpace(joints=JOINTS, rate_hz=RATE_HZ),
         cameras={
-            "overhead": waddle.Camera(
+            "overhead": waddle_sdk.Camera(
                 width=2,
                 height=2,
                 fps=RATE_HZ,
-                intrinsics=waddle.Intrinsics(
+                intrinsics=waddle_sdk.Intrinsics(
                     fx=100.0,
                     fy=100.0,
                     cx=0.0,
@@ -114,18 +114,18 @@ def test_init_accepts_exactly_one_of_rig_or_the_legacy_pair():
     camera = _BlockingCamera(closed)
     rig = _rig(closed, camera)
     robot = _robot()
-    control = waddle.Control(send=lambda _action: None, hold=lambda: None)
+    control = waddle_sdk.Control(send=lambda _action: None, hold=lambda: None)
 
     with pytest.raises(ValueError, match="mutually exclusive"):
-        waddle.init("project", robot, control, rig=rig, console=False)
+        waddle_sdk.init("project", robot, control, rig=rig, console=False)
     with pytest.raises(TypeError, match="either rig= or both robot and control"):
-        waddle.init("project")
+        waddle_sdk.init("project")
     with pytest.raises(TypeError, match="either rig= or both robot and control"):
-        waddle.init("project", robot)
+        waddle_sdk.init("project", robot)
 
-    session = waddle.init("project", robot, control)
+    session = waddle_sdk.init("project", robot, control)
     assert session is not None
-    waddle.shutdown()
+    waddle_sdk.shutdown()
     assert closed == []  # rejecting ``rig=`` opened none of its hardware
 
 
@@ -134,21 +134,21 @@ def test_managed_init_owns_pumps_and_closes_a_blocked_camera():
     camera = _BlockingCamera(closed)
     rig = _rig(closed, camera)
 
-    session = waddle.init("project", rig=rig, console=False)
-    managed = waddle._managed_rig
+    session = waddle_sdk.init("project", rig=rig, console=False)
+    managed = waddle_sdk._managed_rig
     assert session is managed.core
     assert managed.pump is not None and managed.pump.is_alive()
     assert managed.camera_pumps["overhead"].is_alive()
 
-    waddle.shutdown()
+    waddle_sdk.shutdown()
 
     assert closed == ["camera", "arm"]
     assert managed.pump is None
     assert managed.camera_pumps == {}
-    assert waddle._session is None
-    assert waddle._managed_rig is None
+    assert waddle_sdk._session is None
+    assert waddle_sdk._managed_rig is None
 
-    waddle.shutdown()
+    waddle_sdk.shutdown()
     assert closed == ["camera", "arm"]
 
 
@@ -158,11 +158,11 @@ def test_partial_camera_open_failure_closes_camera_then_arm():
     rig = _rig(closed, camera, camera_name="not-declared")
 
     with pytest.raises(ValueError, match="exactly match the declaration"):
-        waddle.init("project", rig=rig, console=False)
+        waddle_sdk.init("project", rig=rig, console=False)
 
     assert closed == ["camera", "arm"]
-    assert waddle._session is None
-    assert waddle._managed_rig is None
+    assert waddle_sdk._session is None
+    assert waddle_sdk._managed_rig is None
 
 
 @dataclass(frozen=True)
@@ -225,7 +225,7 @@ def test_capture_keeps_correlated_depth_local_and_resolves_pixels():
 
 
 def test_camera_sample_refuses_unresolvable_depth():
-    intrinsics = waddle.Intrinsics(
+    intrinsics = waddle_sdk.Intrinsics(
         fx=100.0, fy=100.0, cx=0.0, cy=0.0, depth_scale_mm=1.0
     )
     sample = CameraSample(
@@ -242,7 +242,7 @@ def test_camera_sample_refuses_unresolvable_depth():
         sample.point_at(
             0,
             0,
-            waddle.Intrinsics(
+            waddle_sdk.Intrinsics(
                 fx=100.0,
                 fy=100.0,
                 cx=0.0,
@@ -255,7 +255,7 @@ def test_camera_sample_refuses_unresolvable_depth():
 
 def test_vendor_adapters_are_lazy_and_name_their_install_extras(monkeypatch):
     before = set(sys.modules)
-    from waddle.cameras import orbbec, realsense
+    from waddle_sdk.cameras import orbbec, realsense
 
     assert "pyorbbecsdk" not in set(sys.modules) - before
     assert "pyrealsense2" not in set(sys.modules) - before
@@ -284,4 +284,4 @@ def test_camera_extra_metadata_is_orthogonal_to_teleop():
     assert extras["orbbec"] == ["pyorbbecsdk2"]
     assert extras["realsense"] == ["pyrealsense2"]
     assert set(extras["cameras"]) == set(extras["orbbec"] + extras["realsense"])
-    assert extras["teleop"] == [f"waddle-sdk-teleop=={waddle.__version__}"]
+    assert extras["teleop"] == [f"waddle-sdk-teleop=={waddle_sdk.__version__}"]

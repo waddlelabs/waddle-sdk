@@ -1,7 +1,7 @@
 """Shared fixtures.
 
 Only one so far, and it exists because of a rule every test that touches
-`waddle.robots.base`'s console recovery has to obey: **no test may take the
+`waddle_sdk.robots.base`'s console recovery has to obey: **no test may take the
 developer's own terminal.** The reader starts only when stdin is a foreground
 TTY — which it IS under `pytest -s` — and a thread reading the real one would
 sit in `for line in sys.stdin` eating keystrokes for the rest of the run. So a
@@ -15,7 +15,7 @@ import sys
 
 import pytest
 
-from waddle.robots import base
+from waddle_sdk.robots import base
 
 
 class Terminal:

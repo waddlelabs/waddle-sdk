@@ -6,26 +6,26 @@ import json
 
 import pytest
 
-import waddle
+import waddle_sdk
 
 
 @pytest.fixture(autouse=True)
 def _clean_session():
     yield
-    waddle.shutdown()
+    waddle_sdk.shutdown()
 
 
-def _robot() -> waddle.Robot:
-    return waddle.Robot(
+def _robot() -> waddle_sdk.Robot:
+    return waddle_sdk.Robot(
         name="task-context-bot",
         robot_id="task-context-01",
         cell_id="cell-task-context",
-        action_space=waddle.JointSpace(joints=["j0", "j1"], rate_hz=50),
+        action_space=waddle_sdk.JointSpace(joints=["j0", "j1"], rate_hz=50),
     )
 
 
-def _control() -> waddle.Control:
-    return waddle.Control(send=lambda chunk: None, hold=lambda: None)
+def _control() -> waddle_sdk.Control:
+    return waddle_sdk.Control(send=lambda chunk: None, hold=lambda: None)
 
 
 def _sidecar(recording_dir, episode_id: str) -> dict:
@@ -35,12 +35,12 @@ def _sidecar(recording_dir, episode_id: str) -> dict:
 
 
 def test_session_stamp_is_one_immutable_paired_clock_read():
-    session = waddle.init("stamp", _robot(), _control())
+    session = waddle_sdk.init("stamp", _robot(), _control())
 
     first = session.stamp()
     second = session.stamp()
 
-    assert isinstance(first, waddle.SessionStamp)
+    assert isinstance(first, waddle_sdk.SessionStamp)
     assert second.session_ns >= first.session_ns >= 0
     assert second.unix_ns >= first.unix_ns
     assert first.unix_ns - first.session_ns == second.unix_ns - second.session_ns
@@ -50,14 +50,14 @@ def test_session_stamp_is_one_immutable_paired_clock_read():
 
 @pytest.mark.parametrize("outcome", ["success", "abort"])
 def test_rollout_persists_metadata_for_every_terminal_outcome(tmp_path, outcome):
-    waddle.init("metadata", _robot(), _control(), recording_dir=tmp_path)
+    waddle_sdk.init("metadata", _robot(), _control(), recording_dir=tmp_path)
     metadata = {"trace_id": f"trace-{outcome}", "workspace_digest": "sha256:abc"}
 
-    with waddle.rollout("place the cup", task_metadata=metadata) as episode:
+    with waddle_sdk.rollout("place the cup", task_metadata=metadata) as episode:
         episode_id = episode.id
         episode.gate([0.0, 0.0])
         episode.terminate(outcome)
-    waddle.shutdown()
+    waddle_sdk.shutdown()
 
     sidecar = _sidecar(tmp_path, episode_id)
     assert sidecar["task"] == "place the cup"
@@ -65,7 +65,7 @@ def test_rollout_persists_metadata_for_every_terminal_outcome(tmp_path, outcome)
 
 
 def test_failed_reset_still_persists_metadata(tmp_path):
-    waddle.init(
+    waddle_sdk.init(
         "metadata-reset-failure",
         _robot(),
         _control(),
@@ -74,11 +74,11 @@ def test_failed_reset_still_persists_metadata(tmp_path):
     )
 
     with pytest.raises(RuntimeError, match="reset failed"):
-        with waddle.rollout(
+        with waddle_sdk.rollout(
             "reset must fail", task_metadata={"trace_id": "trace-reset-failure"}
         ):
             pass
-    waddle.shutdown()
+    waddle_sdk.shutdown()
 
     sidecars = list(tmp_path.glob("*.sidecar.json"))
     assert len(sidecars) == 1
@@ -87,10 +87,10 @@ def test_failed_reset_still_persists_metadata(tmp_path):
 
 
 def test_task_metadata_is_string_only_and_bounded(tmp_path):
-    waddle.init("metadata-validation", _robot(), _control(), recording_dir=tmp_path)
+    waddle_sdk.init("metadata-validation", _robot(), _control(), recording_dir=tmp_path)
 
     with pytest.raises(TypeError, match="strings to strings"):
-        waddle.rollout("bad", task_metadata={"attempt": 1})
+        waddle_sdk.rollout("bad", task_metadata={"attempt": 1})
     with pytest.raises(ValueError, match="invalid task metadata"):
-        waddle.rollout("bad", task_metadata={"x": "y" * 4097})
+        waddle_sdk.rollout("bad", task_metadata={"x": "y" * 4097})
 

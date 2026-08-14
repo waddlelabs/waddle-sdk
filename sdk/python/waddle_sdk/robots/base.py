@@ -1,6 +1,6 @@
 """The vendor-neutral half of a robot module.
 
-A robot module (`waddle.robots.yam`, say) is a vendor's FACTS plus a driver
+A robot module (`waddle_sdk.robots.yam`, say) is a vendor's FACTS plus a driver
 that speaks that vendor's bus. Everything else a program needs around those
 two things is here, once:
 
@@ -17,7 +17,7 @@ two things is here, once:
   e-stop latch. One reader per terminal, aimed at the arms of whoever started
   it and retired with them.
 * :class:`RobotPump` + :func:`proprio_tick` — the loop that keeps reporting
-  while the caller's thread is busy (blocked inside `waddle.agent()`, say).
+  while the caller's thread is busy (blocked inside `waddle_sdk.agent()`, say).
 * :func:`chunk_sender`, :func:`apply_decision`, :func:`split_by_part` — the
   `Control.send` verb over a set of arms, and the declared-layout arithmetic
   it routes with.
@@ -113,7 +113,7 @@ def status(message: str) -> None:
     only its default. Pass a logger's ``.info`` (or ``lambda line: None``) to
     route these somewhere other than stdout — nothing here decides anything
     from what it prints, so silencing it costs only the record."""
-    print(f"[waddle.robots] {message}", flush=True)
+    print(f"[waddle_sdk.robots] {message}", flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -760,7 +760,7 @@ def chunk_sender(
 
     Waddle drives them through the returned callable, from its own dispatch
     thread, whenever something holds the lease: a teleoperator, a reset agent,
-    or the hosted agent :func:`waddle.agent` invites.
+    or the hosted agent :func:`waddle_sdk.agent` invites.
 
     A step may carry a GRIPPER value on the sidechannel, and this layer models
     a hand as a JOINT row — so there is nowhere to put one. Such a step is
@@ -1288,7 +1288,7 @@ def scene_reset(
 
     It is a default like everything else here — a rig with a scene of its own
     (a fixture to re-seed, a part feeder to advance) passes its own callable
-    to `waddle.init` instead."""
+    to `waddle_sdk.init` instead."""
 
     def pre_reset(task: str) -> bool:
         report(f"pre_reset {task!r}")
@@ -1325,7 +1325,7 @@ def proprio_tick(session, arms: Mapping[str, Arm]) -> Callable[[float], None]:
 
     Separate from the gate tick on purpose — this has to keep running on a
     background thread while the caller's thread is blocked inside
-    ``waddle.agent()``, because the machine still moves and the agent still
+    ``waddle_sdk.agent()``, because the machine still moves and the agent still
     needs to see it.
 
     ``joint_pos`` is passed explicitly for every part. A per-part sample
@@ -1364,7 +1364,7 @@ class RobotPump(threading.Thread):
     own tick. The usual one is :func:`proprio_tick`.
 
     It exists because the robot's own housekeeping cannot pause while the
-    caller's thread is elsewhere — blocked inside ``waddle.agent()``, or
+    caller's thread is elsewhere — blocked inside ``waddle_sdk.agent()``, or
     sitting in a monitor-only session with no rollout loop at all. ``stop()``
     joins."""
 
@@ -1535,7 +1535,7 @@ class _RigDefault:
 
 
 #: "Whatever this rig declares for that" — distinct from ``None``, which is
-#: `waddle.init`'s own "declare nothing for that phase". A `RigSession` uses
+#: `waddle_sdk.init`'s own "declare nothing for that phase". A `RigSession` uses
 #: it for ``pre_reset``: the default is the rig's scene reset, and passing
 #: ``None`` is how a program declares no pre-reset at all.
 RIG_DEFAULT = _RigDefault()
@@ -1561,7 +1561,7 @@ RIG_DEFAULT = _RigDefault()
 #:
 #:     For the same reason a monitor session wires no MEDIA plane. The media
 #:     plane carries the teleoperator's stream as well as the video, so wiring
-#:     one IS an intervention path: `waddle.init(media=...)` — and
+#:     one IS an intervention path: `waddle_sdk.init(media=...)` — and
 #:     ``_testing=True``, which is that same plane in process — refuses a
 #:     session with no ``send`` verb, naming the verb rather than the posture.
 #:     Watching is undiminished: ``transport=`` uplinks proprioception and each
@@ -1577,7 +1577,7 @@ RIG_DEFAULT = _RigDefault()
 #: A posture is NOT an authority decision and adds none: who may command a
 #: robot, when, and under what claim is waddle-core's, unchanged either way.
 #: Whether a rollout is agent-driven or windowed stays a call-site choice —
-#: `waddle.agent()` versus `waddle.rollout()` — never a construction one.
+#: `waddle_sdk.agent()` versus `waddle_sdk.rollout()` — never a construction one.
 POSTURES = ("monitor", "supervised")
 
 
@@ -1590,11 +1590,11 @@ def control(
     estop_latency_bound_ms: float | None = None,
     report: Callable[[str], None] = status,
 ) -> Control:
-    """Build the `waddle.Control` over these arms for one posture.
+    """Build the `waddle_sdk.Control` over these arms for one posture.
 
     ``posture`` is :data:`POSTURES`, which is also where what a ``monitor``
     session may and may not be wired to is written down — the choice reaches
-    `waddle.init` as which verbs exist, and nothing else here reads it.
+    `waddle_sdk.init` as which verbs exist, and nothing else here reads it.
 
     ``send`` REPLACES the default envelope-crossing sender
     (:func:`chunk_sender`) — the whole envelope, since that callable is where
@@ -1641,13 +1641,13 @@ class Rig:
 
     Every piece is separately usable, which is the point of the layering:
 
-    * ``rig.robot()`` is the `waddle.Robot` — hand it to `waddle.init`
+    * ``rig.robot()`` is the `waddle_sdk.Robot` — hand it to `waddle_sdk.init`
       yourself and none of the rest of this module is involved;
     * ``rig.arms()`` builds the arms, each with the owner's envelope on it;
     * ``rig.control(arms)`` maps the posture onto verbs (and takes your own
       ``send=`` if the default envelope is not the arithmetic you want);
     * ``rig.pre_reset(arms)`` is the default scene reset — pass your own
-      callable to `waddle.init` instead if your scene has more to it;
+      callable to `waddle_sdk.init` instead if your scene has more to it;
     * ``rig.pump(session, arms)`` is the reporting loop, and
       :class:`RobotPump` runs any tick you write instead."""
 
@@ -1664,7 +1664,7 @@ class Rig:
 
     def __post_init__(self) -> None:
         if not isinstance(self.declaration, Robot):
-            raise TypeError("Rig.declaration must be a waddle.Robot")
+            raise TypeError("Rig.declaration must be a waddle_sdk.Robot")
         if self.posture not in POSTURES:
             raise ValueError(
                 f"posture={self.posture!r}: expected one of {', '.join(POSTURES)}"
@@ -1677,7 +1677,7 @@ class Rig:
     def robot(self) -> Robot:
         """The declaration this rig registers — the same object a vendor
         module's ``declaration()`` hands back for a hand-wired
-        `waddle.init`."""
+        `waddle_sdk.init`."""
         return self.declaration
 
     def arms(self) -> dict[str, Arm]:
@@ -1778,7 +1778,7 @@ class Rig:
     def control(
         self, arms: Mapping[str, Arm], *, send: Callable[[object], None] | None = None
     ) -> Control:
-        """This rig's posture as `waddle.Control` verbs (see :func:`control`)."""
+        """This rig's posture as `waddle_sdk.Control` verbs (see :func:`control`)."""
         return control(
             arms,
             posture=self.posture,
@@ -1815,11 +1815,11 @@ class Rig:
         """Open a :class:`RigSession` over this rig — the whole program::
 
             rig = yam.bimanual(workspace=..., gripper_limits=..., sim=True)
-            with rig.session("my-project", transport=waddle.Grpc(url, token)) as s:
-                result = waddle.agent("stack the cups")
+            with rig.session("my-project", transport=waddle_sdk.Grpc(url, token)) as s:
+                result = waddle_sdk.agent("stack the cups")
 
         Every keyword that is not this rig's own goes straight to
-        `waddle.init` and means exactly what it means there; ``send``
+        `waddle_sdk.init` and means exactly what it means there; ``send``
         REPLACES the shipped envelope (see :func:`control`), and
         ``pre_reset`` defaults to this rig's own scene reset.
 
@@ -1850,7 +1850,7 @@ class Rig:
 
 
 class RigSession:
-    """The shared lifecycle behind ``rig.session`` and ``waddle.init(rig=)``.
+    """The shared lifecycle behind ``rig.session`` and ``waddle_sdk.init(rig=)``.
 
     Hardware opens inside :meth:`_open`; every later failure closes all opened
     arms and cameras. Normal close retires local recovery, stops capture and
@@ -1954,8 +1954,8 @@ class RigSession:
     ) -> RigSession:
         """Open through one supplied core-session builder.
 
-        ``rig.session`` supplies the public ``waddle.init``/``shutdown`` pair.
-        Managed ``waddle.init(rig=...)`` supplies the unregistered core builder,
+        ``rig.session`` supplies the public ``waddle_sdk.init``/``shutdown`` pair.
+        Managed ``waddle_sdk.init(rig=...)`` supplies the unregistered core builder,
         so module ownership is registered only after every pump is alive.
         """
         with self._lifecycle_lock:

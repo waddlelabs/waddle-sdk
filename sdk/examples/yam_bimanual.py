@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Two I2RT YAM arms, supervised, in five lines of Waddle.
 
-This is the whole program for a rig `waddle.robots.yam` already knows: build
+This is the whole program for a rig `waddle_sdk.robots.yam` already knows: build
 the rig out of YOUR site's numbers, open a session over it, ask Waddle to
 drive an episode. The five lines at the bottom are the entire Waddle-facing
 surface — everything above them is either a number measured at a bench or an
@@ -13,7 +13,7 @@ Run it against a supervision plane::
     WADDLE_YAM_TOKEN=<the plane's credential for this session> \\
       uv run python examples/yam_bimanual.py
 
-A plane is what THIS program is for: its five lines end in `waddle.agent()`,
+A plane is what THIS program is for: its five lines end in `waddle_sdk.agent()`,
 so with no ``WADDLE_YAM_TRANSPORT`` it says what it needs and exits(2) before
 anything opens — no session, no twin stepping, no episode. (A rig needs no
 plane in general: `rig.session(...)` with no transport is a local recorder a
@@ -28,7 +28,7 @@ one MCAP apiece.
 try-imports the vendor package to decide what you meant. Set
 ``WADDLE_YAM_SIM=0`` and give each arm its CAN interface
 (``WADDLE_YAM_CAN_LEFT`` / ``_RIGHT``) to drive metal — and read
-`waddle.robots.yam`'s own docstring first, because that needs the vendor
+`waddle_sdk.robots.yam`'s own docstring first, because that needs the vendor
 package this SDK deliberately does not depend on.
 
 **The numbers below are the reference rig's, and they are not yours.** The
@@ -37,7 +37,7 @@ mounting are SITE facts: measure them at your own bench and edit them here.
 That is why the factory has no defaults for them — a default would be a
 measurement nobody took, and the arm executes it faithfully. What a YAM *is*
 (joint limits, the chain, the tool frame, the hand's stroke) is a model fact
-and ships in `waddle.robots.yam`, gated against the vendor's own model.
+and ships in `waddle_sdk.robots.yam`, gated against the vendor's own model.
 """
 
 from __future__ import annotations
@@ -45,8 +45,8 @@ from __future__ import annotations
 import os
 import sys
 
-import waddle
-from waddle.robots import yam
+import waddle_sdk
+from waddle_sdk.robots import yam
 
 # --------------------------------------------------------------------------
 # SITE FACTS — the reference rig's. Re-measure every one of them for yours.
@@ -109,10 +109,10 @@ if not TRANSPORT:
 
 with rig.session(
     "waddle-yam-bimanual",
-    transport=waddle.Grpc(TRANSPORT, env("WADDLE_YAM_TOKEN")),
+    transport=waddle_sdk.Grpc(TRANSPORT, env("WADDLE_YAM_TOKEN")),
     recording_dir=env("WADDLE_YAM_RECORDING_DIR", "recordings"),
 ) as session:
-    result = waddle.agent(PROMPT, timeout_s=float(env("WADDLE_YAM_AGENT_TIMEOUT", "900")))
+    result = waddle_sdk.agent(PROMPT, timeout_s=float(env("WADDLE_YAM_AGENT_TIMEOUT", "900")))
 
 print(f"agent result {result.outcome} episode={result.episode_id} detail={result.detail!r}")
 print(f"envelope accepted={session.accepted} rejected={session.rejected}")

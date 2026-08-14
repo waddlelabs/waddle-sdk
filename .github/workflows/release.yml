@@ -2,13 +2,13 @@
 #
 # WHAT SHIPS (CLAUDE.md, "Two distributions from one source tree"):
 #
-#   waddle-sdk         sdk/pyproject.toml         module waddle._core
+#   waddle-sdk         sdk/pyproject.toml         module waddle_sdk._core
 #                      features: pyo3/extension-module + grpc      <- default install
 #   waddle-sdk-teleop  sdk/teleop/pyproject.toml  module waddle_teleop._core
 #                      the SAME rust/Cargo.toml + livekit          <- pip install 'waddle-sdk[teleop]'
 #
 # Each is one build of one manifest (sdk/rust/Cargo.toml), so the two can
-# never disagree on a version; `waddle._native` refuses a mismatched pair at
+# never disagree on a version; `waddle_sdk._native` refuses a mismatched pair at
 # import, and `sdk/tests/test_features.py` holds the `teleop` extra's exact
 # pin to that version. Bumping a version means editing BOTH
 # sdk/rust/Cargo.toml and the pin in sdk/pyproject.toml — see docs/RELEASING.md.
@@ -119,7 +119,7 @@ jobs:
 
       # Prove the artifact we are about to publish imports and is the build we
       # think it is: the DEFAULT wheel carries the gRPC control transport and
-      # nothing else (LiveKit lives in the companion). `waddle._native.FEATURES`
+      # nothing else (LiveKit lives in the companion). `waddle_sdk._native.FEATURES`
       # is the only feature detection this SDK permits.
       - name: Smoke-test the wheel
         shell: bash
@@ -129,7 +129,7 @@ jobs:
           python -m pip install sdk/dist/*.whl
           # Run from the repo root, never from sdk/: the source tree there
           # would shadow the installed package.
-          python -c "import waddle, waddle._native as n; f=sorted(n.FEATURES); print('waddle', waddle.__version__, f); assert f == ['grpc'], f"
+          python -c "import waddle_sdk, waddle_sdk._native as n; f=sorted(n.FEATURES); print('waddle', waddle_sdk.__version__, f); assert f == ['grpc'], f"
 
       # `sdk-wheels-*` — the prefix `publish-sdk` globs for. Nothing the teleop
       # job uploads may ever match it.

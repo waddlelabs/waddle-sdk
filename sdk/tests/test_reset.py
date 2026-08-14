@@ -1,7 +1,7 @@
 """The PyO3 shim's reset surface: reset kwargs, PyResetHook normalization, and the
 `_testing` reset-window hooks.
 
-Drives `waddle._core` directly rather than `waddle.init`/`waddle.rollout`:
+Drives `waddle_sdk._core` directly rather than `waddle_sdk.init`/`waddle_sdk.rollout`:
 the Python-side sugar (`TeleopReset`/`AgentReset`, `rollout(pre_reset=...)`)
 is a later task, and this one's own scope statement is "this task ends at
 the `_core` module surface" — so these tests exercise exactly that surface.
@@ -15,31 +15,31 @@ import time
 
 import pytest
 
-import waddle
-import waddle._core as _core
+import waddle_sdk
+import waddle_sdk._core as _core
 
 
-def _robot(n_joints: int = 3) -> waddle.Robot:
-    return waddle.Robot(
+def _robot(n_joints: int = 3) -> waddle_sdk.Robot:
+    return waddle_sdk.Robot(
         name="pytest-reset-bot",
         robot_id="py-reset-01",
         cell_id="cell-py-reset",
-        action_space=waddle.JointSpace(
+        action_space=waddle_sdk.JointSpace(
             joints=[f"j{i}" for i in range(n_joints)], rate_hz=50
         ),
     )
 
 
-def _control() -> waddle.Control:
-    return waddle.Control(send=lambda chunk: None, hold=lambda: None, resume=lambda: None)
+def _control() -> waddle_sdk.Control:
+    return waddle_sdk.Control(send=lambda chunk: None, hold=lambda: None, resume=lambda: None)
 
 
 def _session(testing_loopback: bool = False, **reset_kwargs) -> _core.Session:
-    """Build a session directly against `_core` (bypassing `waddle.init`,
+    """Build a session directly against `_core` (bypassing `waddle_sdk.init`,
     which does not thread reset kwargs through yet)."""
     control = _control()
     robot = _robot()
-    robot_json = json.dumps(robot._compile(waddle._derive_grants(control, robot.action_space)))
+    robot_json = json.dumps(robot._compile(waddle_sdk._derive_grants(control, robot.action_space)))
     return _core.create_session(
         project="pytest-reset",
         robot_json=robot_json,

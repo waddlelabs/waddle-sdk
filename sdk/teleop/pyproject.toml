@@ -8,7 +8,7 @@
 # shape, two distributions from one source tree.
 #
 # Install it as the extra, never by name: `pip install 'waddle-sdk[teleop]'`.
-# Then `import waddle` as always — `waddle._native` finds this core and
+# Then `import waddle_sdk` as always — `waddle_sdk._native` finds this core and
 # prefers it (see its module docstring for the selection rules).
 [build-system]
 requires = ["maturin>=1.14,<2"]
@@ -29,7 +29,7 @@ dynamic = ["version"]
 # The shim lives one directory up and is built verbatim; the version comes
 # from that same Cargo.toml, so the two wheels can never disagree unless
 # they were built from different checkouts (which is exactly what
-# `waddle._native`'s version check catches).
+# `waddle_sdk._native`'s version check catches).
 manifest-path = "../rust/Cargo.toml"
 python-source = "python"
 module-name = "waddle_teleop._core"

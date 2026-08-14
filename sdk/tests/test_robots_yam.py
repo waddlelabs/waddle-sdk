@@ -7,7 +7,7 @@ own model. This file gates what it BUILDS out of them:
   the rig, compiled to JSON and compared field for field, so "the module
   declares what the program declared" is a check rather than a claim;
 * `yam.declaration()` standing alone, since a customer who wires
-  `waddle.init` by hand must get the same robot the factory registers;
+  `waddle_sdk.init` by hand must get the same robot the factory registers;
 * the live driver's refusals — an absent vendor package, an arm that reports
   a different number of joints than this module declares, a command after an
   e-stop — driven against a stand-in vendor module, because the real one is
@@ -34,14 +34,14 @@ import pytest
 from mcap.reader import make_reader
 from mcap_protobuf.decoder import DecoderFactory
 
-import waddle
-from waddle.robots import base, yam
+import waddle_sdk
+from waddle_sdk.robots import base, yam
 
 
 @pytest.fixture(autouse=True)
 def _clean_session():
     yield
-    waddle.shutdown()
+    waddle_sdk.shutdown()
 
 
 # --------------------------------------------------------------------------
@@ -80,7 +80,7 @@ def _arm_rig(**overrides) -> base.Rig:
 
 
 def _grants(rig: base.Rig) -> list[dict]:
-    return waddle._derive_grants(rig.control(rig.arms()), rig.robot().action_space)
+    return waddle_sdk._derive_grants(rig.control(rig.arms()), rig.robot().action_space)
 
 
 def _observations(mcap_path):
@@ -98,7 +98,7 @@ def _observations(mcap_path):
 # --------------------------------------------------------------------------
 #
 # A verbatim replica of the bimanual-YAM customer program's declaration, with
-# every number typed out rather than imported from `waddle.robots.yam`. Two
+# every number typed out rather than imported from `waddle_sdk.robots.yam`. Two
 # independent statements of one declaration: a factory that stops producing
 # this shape — a renamed part, a dropped chunking policy, a joint limit
 # widened, an xyzw quaternion where a wxyz one belongs — fails here.
@@ -130,10 +130,10 @@ SUBSTRATE_LEFT_BASE_FRAME = "yam_left_base"
 SUBSTRATE_RIGHT_BASE_FRAME = "yam_right_base"
 
 
-def _substrate_part_space() -> waddle.JointSpace:
-    return waddle.JointSpace(
+def _substrate_part_space() -> waddle_sdk.JointSpace:
+    return waddle_sdk.JointSpace(
         joints=[
-            waddle.Joint(
+            waddle_sdk.Joint(
                 name=name,
                 min_position=lo,
                 max_position=hi,
@@ -145,23 +145,23 @@ def _substrate_part_space() -> waddle.JointSpace:
             )
         ],
         rate_hz=SUBSTRATE_RATE_HZ,
-        chunking=waddle.Chunking(horizon=1, replan="immediate", interp="hold"),
+        chunking=waddle_sdk.Chunking(horizon=1, replan="immediate", interp="hold"),
     )
 
 
-def _substrate_declaration() -> waddle.Robot:
-    return waddle.Robot(
+def _substrate_declaration() -> waddle_sdk.Robot:
+    return waddle_sdk.Robot(
         name="waddle-yam-bimanual",
         robot_id="yam-bimanual-01",
         cell_id="yam-cell",
-        action_space=waddle.Composite(
+        action_space=waddle_sdk.Composite(
             left_arm=_substrate_part_space(),
             right_arm=_substrate_part_space(),
             rate_hz=SUBSTRATE_RATE_HZ,
-            chunking=waddle.Chunking(horizon=1, replan="immediate", interp="hold"),
+            chunking=waddle_sdk.Chunking(horizon=1, replan="immediate", interp="hold"),
         ),
         frames=(
-            waddle.FrameTransform(
+            waddle_sdk.FrameTransform(
                 parent=SUBSTRATE_LEFT_BASE_FRAME,
                 child=SUBSTRATE_RIGHT_BASE_FRAME,
                 position=CROSS_ARM_XYZ,
@@ -171,7 +171,7 @@ def _substrate_declaration() -> waddle.Robot:
     )
 
 
-def _as_json(robot: waddle.Robot, grants: list[dict]) -> dict:
+def _as_json(robot: waddle_sdk.Robot, grants: list[dict]) -> dict:
     return json.loads(json.dumps(robot._compile(grants)))
 
 
@@ -193,7 +193,7 @@ def test_the_standalone_declaration_is_the_one_the_rig_registers():
     """THE AMENDMENT, item 1: `yam.declaration()` is a first-class product.
 
     A customer who wants none of the rest of this module — their own driver,
-    their own loop, a plain `waddle.init` — still gets exactly the robot the
+    their own loop, a plain `waddle_sdk.init` — still gets exactly the robot the
     factory would have registered, or the two would drift and the hand-wired
     program would be the one that broke."""
     rig = _bimanual(
@@ -432,7 +432,7 @@ def test_a_monitor_rig_registers_only_the_owners_stop():
     rig = _bimanual(posture="monitor")
     verbs = rig.control(rig.arms())
     assert verbs.send is None and verbs.hold is None
-    assert waddle._derive_grants(verbs, rig.robot().action_space) == [
+    assert waddle_sdk._derive_grants(verbs, rig.robot().action_space) == [
         {"verb": "VERB_ESTOP"}
     ]
 
@@ -457,8 +457,8 @@ def test_the_sim_factory_drives_its_twins_through_the_envelope(tmp_path):
     arms = rig.arms()
     assert set(arms) == {"left_arm", "right_arm"}
 
-    waddle.init("yam-sim-smoke", rig.robot(), rig.control(arms), recording_dir=tmp_path)
-    with waddle.rollout(task="nudge both arms") as ep:
+    waddle_sdk.init("yam-sim-smoke", rig.robot(), rig.control(arms), recording_dir=tmp_path)
+    with waddle_sdk.rollout(task="nudge both arms") as ep:
         position = np.concatenate(
             [arms[p].state()[0] for p in ("left_arm", "right_arm")]
         )
@@ -504,15 +504,15 @@ def _report_one_tick(rig: base.Rig, tmp_path, project: str):
     proprio samples. No pump and no thread — the tick is called directly, so
     nothing here waits on a clock."""
     arms = rig.arms()
-    session = waddle.init(
+    session = waddle_sdk.init(
         project, rig.robot(), rig.control(arms), recording_dir=tmp_path
     )
     tick = base.proprio_tick(session, arms)
-    with waddle.rollout(task="report once") as ep:
+    with waddle_sdk.rollout(task="report once") as ep:
         episode_id = ep.id
         tick(1.0 / rig.rate_hz)
         ep.terminate("success")
-    waddle.shutdown()
+    waddle_sdk.shutdown()
     return [o.proprio for o in _observations(tmp_path / f"{episode_id}.mcap")]
 
 

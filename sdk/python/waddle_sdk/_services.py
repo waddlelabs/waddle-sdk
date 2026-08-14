@@ -62,7 +62,7 @@ def _request_id() -> str:
 class TaskSession:
     """One named hosted task conversation and its bounded public event history.
 
-    Constructed by :func:`waddle.task_session`.  A new handle submits CREATE;
+    Constructed by :func:`waddle_sdk.task_session`.  A new handle submits CREATE;
     a resumed handle names an existing durable ``task_session_id``.  Message,
     interjection, and interrupt operations each receive a fresh request id and
     expose ordered public-safe events through :meth:`events`.
@@ -242,7 +242,7 @@ def submit_calibration_click(
 ) -> CalibrationMeasurement:
     """Resolve one retained RGB-D pixel locally and send only its 3-D point."""
     if managed_rig is None:
-        raise RuntimeError("calibration clicks require waddle.init(rig=...)")
+        raise RuntimeError("calibration clicks require waddle_sdk.init(rig=...)")
     calibration_id = _identifier("calibration_id", calibration_id)
     sample_id = _identifier("sample_id", sample_id)
     camera = _identifier("camera", camera)

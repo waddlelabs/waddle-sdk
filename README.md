@@ -14,7 +14,7 @@ This monorepo hosts the open artifacts:
 |---|---|---|
 | [`waddle-protocol/`](waddle-protocol/) | v0 | The standard: protobuf schemas, the episode/claim/lease FSM spec, the sidecar schema, conformance fixtures. Implementable without waddle-core — that is the point. |
 | [`waddle-core/`](waddle-core/) | 0.1 | The Rust reference implementation: episode/claim/lease FSMs, the gate, tripwires, sidecar + MCAP recording, codecs, control-plane client. Emits the `libwaddle` C ABI. |
-| [`sdk/`](sdk/) | 0.1 | The Python frontend (`waddle-sdk`): the six-line rollout loop, local recording, the connected surface, and the opt-in robot modules (`waddle.robots`). A hollow frontend — every decision lives in waddle-core. |
+| [`sdk/`](sdk/) | 0.1 | The Python frontend (`waddle-sdk`): the six-line rollout loop, local recording, the connected surface, and the opt-in robot modules (`waddle_sdk.robots`). A hollow frontend — every decision lives in waddle-core. |
 | `waddle-proxy`, `waddle-cpp`, `waddle_ros` | planned | Further hollow frontends over waddle-core, per the design doc's artifact family. |
 
 The design rationale (including three adversarial stress-test passes) lives at
@@ -42,7 +42,7 @@ The Python package ships as two distributions from this one source tree —
 For a running program rather than a snippet,
 [`sdk/examples/toy_robot.py`](sdk/examples/) is a whole robot integration in
 one file — a simulated 6-dof arm with a camera, the rollout loop, and
-`waddle.agent()`. It needs no hardware and no plane:
+`waddle_sdk.agent()`. It needs no hardware and no plane:
 
 ```bash
 cd sdk && uv run python examples/toy_robot.py
@@ -54,40 +54,40 @@ single-writer right to command the robot) through a whole session from the
 customer's side: who holds it during a rollout, an intervention, a reset window
 and an agent-driven episode, what `gate()` returns while they do, and what the
 SDK does not provide. Generic episode correlation stays deliberately outside
-that authority model: pass string `task_metadata` to `waddle.rollout()` or
-`waddle.agent()`, and use `session.stamp()` for an atomically paired
+that authority model: pass string `task_metadata` to `waddle_sdk.rollout()` or
+`waddle_sdk.agent()`, and use `session.stamp()` for an atomically paired
 session/Unix timestamp.
 
 ## If the SDK already knows your robot
 
-That whole integration is a factory call. `waddle.robots.<vendor>` carries a
+That whole integration is a factory call. `waddle_sdk.robots.<vendor>` carries a
 machine's model facts, its driver and the owner's per-command envelope; the
 first vendor module is the I2RT YAM, and two of them supervised is five
 lines:
 
 ```python
-import waddle
-from waddle.robots import yam
+import waddle_sdk
+from waddle_sdk.robots import yam
 
 rig = yam.bimanual(workspace=WORKSPACE_M, gripper_limits=(0.1, 1.7), sim=True)
-with rig.session("towels", transport=waddle.Grpc(url, token)) as session:
-    dashboard = waddle.ui()  # authenticated 127.0.0.1 UI for this live session
-    result = waddle.agent("stack the cups")
+with rig.session("towels", transport=waddle_sdk.Grpc(url, token)) as session:
+    dashboard = waddle_sdk.ui()  # authenticated 127.0.0.1 UI for this live session
+    result = waddle_sdk.agent("stack the cups")
 ```
 
 Long-lived processes can give the same lifecycle to the module-level API.
-`waddle.init(rig=rig)` is mutually exclusive with the legacy
-`waddle.init(project, robot, control)` form and makes `waddle.shutdown()`
+`waddle_sdk.init(rig=rig)` is mutually exclusive with the legacy
+`waddle_sdk.init(project, robot, control)` form and makes `waddle_sdk.shutdown()`
 close every opened arm, camera, capture/reporting pump, core thread, and
 recording:
 
 ```python
-session = waddle.init("towels", rig=rig, transport=waddle.Grpc(url, token))
+session = waddle_sdk.init("towels", rig=rig, transport=waddle_sdk.Grpc(url, token))
 try:
-    dashboard = waddle.ui()
-    result = waddle.agent("stack the cups")
+    dashboard = waddle_sdk.ui()
+    result = waddle_sdk.agent("stack the cups")
 finally:
-    waddle.shutdown()
+    waddle_sdk.shutdown()
 ```
 
 RGB-D camera drivers are structural and optional. Install
@@ -96,7 +96,7 @@ RGB-D camera drivers are structural and optional. Install
 paired session/Unix stamp, RGB follows the existing recording/media path, and
 aligned depth remains local so calibration sends only a bounded 3-D point.
 
-`waddle.ui()` has no standalone command: it runs inside the initialized SDK
+`waddle_sdk.ui()` has no standalone command: it runs inside the initialized SDK
 process so state, e-stop, jog/deadman, camera frames and local recordings never
 leave the customer machine. Only its optional chat crosses the existing
 control stream to the active invited host; when chat is unavailable, every

@@ -851,7 +851,7 @@ impl Reducer {
             t_emitted_ns: t_ns,
             t_obs_ns: if rec.obs.is_some() { t_ns } else { 0 },
             seq: rec.seq,
-            source_id: "waddle.gate".into(),
+            source_id: "waddle_sdk.gate".into(),
             provenance: Some(rec.provenance.to_pb()),
         });
     }

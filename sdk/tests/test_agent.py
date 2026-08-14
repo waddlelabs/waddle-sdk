@@ -2,9 +2,9 @@
 transport kwargs on `create_session`, and `Session.agent` (flag
 `waddle.v0.agent`).
 
-Drives `waddle._core` directly, exactly as `test_reset.py` does: these
+Drives `waddle_sdk._core` directly, exactly as `test_reset.py` does: these
 tests end at the `_core` module surface. The friendly Python surface built
-on top of it (`waddle.agent`, `waddle.init(transport=...)`) is
+on top of it (`waddle_sdk.agent`, `waddle_sdk.init(transport=...)`) is
 `test_agent_api.py`'s and `test_features.py`'s.
 """
 
@@ -16,26 +16,26 @@ import time
 
 import pytest
 
-import waddle
-import waddle._core as _core
+import waddle_sdk
+import waddle_sdk._core as _core
 
 
-def _robot() -> waddle.Robot:
-    return waddle.Robot(
+def _robot() -> waddle_sdk.Robot:
+    return waddle_sdk.Robot(
         name="pytest-agent-bot",
         robot_id="py-agent-01",
         cell_id="cell-py-agent",
-        action_space=waddle.JointSpace(joints=["j0", "j1", "j2"], rate_hz=50),
+        action_space=waddle_sdk.JointSpace(joints=["j0", "j1", "j2"], rate_hz=50),
     )
 
 
 def _session(**kwargs) -> _core.Session:
-    control = waddle.Control(
+    control = waddle_sdk.Control(
         send=lambda chunk: None, hold=lambda: None, resume=lambda: None
     )
     robot = _robot()
     robot_json = json.dumps(
-        robot._compile(waddle._derive_grants(control, robot.action_space))
+        robot._compile(waddle_sdk._derive_grants(control, robot.action_space))
     )
     return _core.create_session(
         project="pytest-agent",

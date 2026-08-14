@@ -10,7 +10,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from waddle import _services
+from waddle_sdk import _services
 
 try:
     import tomllib
@@ -29,16 +29,16 @@ MANAGED_RIG_EXAMPLE = '''rig = yam.bimanual(
     cross_arm=CROSS_ARM,
     sim=True,
 )
-waddle.init(
+waddle_sdk.init(
     "waddle-yam-bimanual",
     rig=rig,
-    transport=waddle.Grpc(url, token),
+    transport=waddle_sdk.Grpc(url, token),
 )
 try:
-    dashboard = waddle.ui()
-    result = waddle.agent("move each arm to its taught home, one at a time")
+    dashboard = waddle_sdk.ui()
+    result = waddle_sdk.agent("move each arm to its taught home, one at a time")
 finally:
-    waddle.shutdown()'''
+    waddle_sdk.shutdown()'''
 
 
 def test_examples_publish_the_process_owned_rig_lifecycle_verbatim():
@@ -62,9 +62,9 @@ def test_camera_install_commands_are_held_to_package_metadata():
 
 def test_readme_holds_the_public_service_and_integration_boundaries():
     prose = " ".join(README.split())
-    assert "waddle.init(rig=...)" in README
-    assert "waddle.task_session(name, task_session_id=...)" in README
-    assert "waddle.request_workspace_artifact(" in README
+    assert "waddle_sdk.init(rig=...)" in README
+    assert "waddle_sdk.task_session(name, task_session_id=...)" in README
+    assert "waddle_sdk.request_workspace_artifact(" in README
     assert "Calibration clicks carry the frame sequence" in prose
     assert "exclusive remote-to-local handoff" in prose
     assert _services._EXECUTION_GROUP == "waddle.execution.v1"

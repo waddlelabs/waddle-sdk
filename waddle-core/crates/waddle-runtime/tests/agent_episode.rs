@@ -39,7 +39,7 @@ const AGENT_CHUNK_XS: [f64; 3] = [0.5, 0.6, 0.7];
 /// The `source_id` the bypass pump's recorded dispatches carry. Spelled out
 /// here rather than imported: it is a WIRE value consumers key on, so the
 /// test pins the string, not the constant.
-const BYPASS_PUMP_SOURCE: &str = "waddle.bypass-pump";
+const BYPASS_PUMP_SOURCE: &str = "waddle_sdk.bypass-pump";
 
 /// A 6-dim `BaseTwist` robot (mirrors `reset_window_actuation.rs`): agent
 /// `BaseTwist` chunk steps and teleop `Twist` packets both flatten to

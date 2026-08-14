@@ -224,7 +224,7 @@ class _Handler(BaseHTTPRequestHandler):
                 return
             name, content_type = _STATIC[parsed.path]
             body = (
-                importlib.resources.files("waddle")
+                importlib.resources.files("waddle_sdk")
                 .joinpath("ui_assets", name)
                 .read_bytes()
             )

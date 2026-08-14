@@ -1,7 +1,7 @@
 # Waddle API Design Doc
 
 **Design Document — Draft v0.9**
-*(v0.9: added §7, a third adversarial pass attacking the v0.8 amendments themselves; proposes N11–N19 (not yet applied) and a closed-side v1 cut list. v0.8: applied amendments N1–N10 into the body (§2.3, §2.4, §2.6, §2.7, §2.8, §3.1, §3.2, §3.6), marked inline with (N#) tags. v0.7: added §6, a final adversarial pass against the v0.6 design, adopting ten normative amendments (N1–N10) and a v1 cut list. v0.6: unified internal and external vocabulary into one glossary — permissions are **grants** (capability now means robot skills only, protocol evolution uses **feature flags**), the data product is the **Corpus** (`waddle.corpus`), and the intervention lifecycle (engage/settle/release/**retake**) is adopted from production into the protocol FSM. v0.5: added §3, the explicit component layout of every artifact. v0.4: adopted the final artifact naming — `waddle-protocol` / `waddle-core` / `waddle-sdk` / `waddle-cpp` / `waddle_ros` / `waddle-proxy` / `waddle-relay` — added the protocol glossary (§2.8), and added Appendix A: the rename plan for the existing internal cell codebase.)*
+*(v0.9: added §7, a third adversarial pass attacking the v0.8 amendments themselves; proposes N11–N19 (not yet applied) and a closed-side v1 cut list. v0.8: applied amendments N1–N10 into the body (§2.3, §2.4, §2.6, §2.7, §2.8, §3.1, §3.2, §3.6), marked inline with (N#) tags. v0.7: added §6, a final adversarial pass against the v0.6 design, adopting ten normative amendments (N1–N10) and a v1 cut list. v0.6: unified internal and external vocabulary into one glossary — permissions are **grants** (capability now means robot skills only, protocol evolution uses **feature flags**), the data product is the **Corpus** (`waddle_sdk.corpus`), and the intervention lifecycle (engage/settle/release/**retake**) is adopted from production into the protocol FSM. v0.5: added §3, the explicit component layout of every artifact. v0.4: adopted the final artifact naming — `waddle-protocol` / `waddle-core` / `waddle-sdk` / `waddle-cpp` / `waddle_ros` / `waddle-proxy` / `waddle-relay` — added the protocol glossary (§2.8), and added Appendix A: the rename plan for the existing internal cell codebase.)*
 
 ---
 
@@ -169,7 +169,7 @@ Each verb is a customer-provided callable (Python), topic (ROS), or endpoint (re
 The customer may register **multiple command interfaces** for `send`:
 
 ```python
-control = waddle.Control(
+control = waddle_sdk.Control(
     send={"joint_position": robot.command_joint_pos,       # policy's native space
           "ee_delta":       my_ik_streamer},               # unlocks Cartesian teleop
     hold=robot.hold, resume=robot.resume, home=robot.go_home,
@@ -199,9 +199,9 @@ RESETTING ─► READY ─► RUNNING ─► (INTERVENTION ⇄ RUNNING) ─► T
 The Python surface:
 
 ```python
-waddle.init(project=..., robot=..., cameras=..., control=..., ...)
+waddle_sdk.init(project=..., robot=..., cameras=..., control=..., ...)
 
-with waddle.rollout(task="fold the towel") as ep:   # ← blocks until scene reset completes
+with waddle_sdk.rollout(task="fold the towel") as ep:   # ← blocks until scene reset completes
     while not ep.done:                              # ← flips on judge/operator/timeout
         obs    = get_obs()
         action = policy(obs)
@@ -217,14 +217,14 @@ An intervention span follows the **intervention lifecycle**: **engage** (lease h
 
 **Chunk handoff.** Because policies emit chunks and interventions arrive mid-chunk, the claim protocol includes a declared `HandoffPolicy`: `IMMEDIATE` (drop remaining chunk, cross-fade over `blend_ms` using the space's interpolation rule), `CHUNK_BOUNDARY` (finish the executing chunk, then switch), or `HOLD_FIRST` (freeze via `hold()`, human takes over from rest). Release mirrors it in reverse, with the policy re-primed on fresh observations before un-claim. This contract lives in the protocol so the Python `with` block, the ROS mux, and a C++ client all behave identically.
 
-**Resets happen *between* the `with` blocks.** `waddle.rollout()` does not yield until the reset pipeline reports the scene valid — Waddle owns everything outside the block; the block is the episode. `ep.done` flips when a judge, an operator, a timeout, or the customer (`ep.terminate(...)`) calls it.
+**Resets happen *between* the `with` blocks.** `waddle_sdk.rollout()` does not yield until the reset pipeline reports the scene valid — Waddle owns everything outside the block; the block is the episode. `ep.done` flips when a judge, an operator, a timeout, or the customer (`ep.terminate(...)`) calls it.
 
 **Integration idioms.** Three tiers, one protocol:
 
 | Tier | Form | Lines | For whom |
 |---|---|---|---|
 | 1 | `ep.gate()` inline in the loop | ~6 | anyone with a hand-rolled loop |
-| 2 | `@waddle.watching` decorator around an episode fn | ~2 | structured codebases |
+| 2 | `@waddle_sdk.watching` decorator around an episode fn | ~2 | structured codebases |
 | 3 | `waddle proxy` / `waddle-ros` mux | 0 (config) | LeRobot-async & openpi websocket users; ROS graphs |
 
 Tier 3 exploits the fact that the policy-server pattern (LeRobot async inference's gRPC client/server; openpi's `WebsocketClientPolicy`) already routes every observation and every action chunk through one socket. `waddle proxy --policy ws://gpu:8000 --listen :9000` puts Waddle in the write path with a one-URL change. For ROS, `waddle-ros` is a YAML-configured node using the standard priority-mux idiom (à la `twist_mux`): Waddle publishes on a higher-priority command topic when it holds a claim.
@@ -234,7 +234,7 @@ Tier 3 exploits the fact that the policy-server pattern (LeRobot async inference
 Three slots, three small ABCs, all orchestrated by the (closed) planner but implementable by anyone:
 
 ```python
-class InterventionSource(waddle.plugins.InterventionSource):
+class InterventionSource(waddle_sdk.plugins.InterventionSource):
     name: str
     spaces: list[str]                    # which ActionSpace types it can emit
     def engaged(self) -> bool: ...       # local sources: clutch/deadman poll (each gate tick)
@@ -242,12 +242,12 @@ class InterventionSource(waddle.plugins.InterventionSource):
     def get_action(self, obs) -> Action: ...
     def stop(self): ...
 
-class ResetStrategy(waddle.plugins.ResetStrategy):
+class ResetStrategy(waddle_sdk.plugins.ResetStrategy):
     name: str
     def applicable(self, scene_report) -> bool: ...
     def execute(self, ctl: Control, ctx) -> ResetResult: ...
 
-class Judge(waddle.plugins.Judge):
+class Judge(waddle_sdk.plugins.Judge):
     name: str
     def on_episode(self, episode_handle) -> Labels: ...   # async, off the hot path
 ```
@@ -255,11 +255,11 @@ class Judge(waddle.plugins.Judge):
 Registered at init, in priority order:
 
 ```python
-waddle.init(...,
-    interventions=[MyLeaderArm(), waddle.interventions.Teleop(), waddle.interventions.CodeAsPolicy()],
-    resets=[waddle.resets.CodeAsPolicy(scene="tabletop"), waddle.resets.Teleop(),
-            waddle.resets.Scripted(my_reset_fn)],
-    judges=[waddle.judges.VLM(rubric="towel is folded within the blue square"),
+waddle_sdk.init(...,
+    interventions=[MyLeaderArm(), waddle_sdk.interventions.Teleop(), waddle_sdk.interventions.CodeAsPolicy()],
+    resets=[waddle_sdk.resets.CodeAsPolicy(scene="tabletop"), waddle_sdk.resets.Teleop(),
+            waddle_sdk.resets.Scripted(my_reset_fn)],
+    judges=[waddle_sdk.judges.VLM(rubric="towel is folded within the blue square"),
             MyForceThresholdJudge()],
 )
 ```
@@ -268,7 +268,7 @@ Waddle's supervisor decides *when* (detection is closed); the registry decides *
 
 ### 2.6 The Corpus: data model and the flywheel
 
-The project-level index of episodes — sidecars, labels, judge outputs, and archive references, queryable as one dataset — is the **Corpus**, the same name (and lineage) as the internal component that owns episode indexing today. `waddle.corpus` is its client API. Every sidecar carries **`robot_id`** (and **`cell_id`** where applicable) as first-class fields, so fleet-level queries ("SR across all cells running task X") are joins, not archaeology *(N10)*.
+The project-level index of episodes — sidecars, labels, judge outputs, and archive references, queryable as one dataset — is the **Corpus**, the same name (and lineage) as the internal component that owns episode indexing today. `waddle_sdk.corpus` is its client API. Every sidecar carries **`robot_id`** (and **`cell_id`** where applicable) as first-class fields, so fleet-level queries ("SR across all cells running task X") are joins, not archaeology *(N10)*.
 
 **Recording modes.** What persists beyond the sidecar is a pluggable slot chosen at init: **`Local`** (batteries included — Waddle writes full MCAP episodes to local disk with a retention policy; the default for customers with no logging infrastructure, and the mode the cell's broker recorder reference-implements), **`Reference`** (the customer's existing recorder keeps the bulk bytes; Waddle emits only sidecars whose entries carry references — stream id, time range on the session timeline, content hash — resolved at read time through a small open resolver interface), and **`SidecarOnly`** (semantic records only; nothing bulk persists). Independent of mode, the relay/SDK keeps a short rolling ring buffer and persists **incident clips** around events — intervention spans, tripwire fires, judge-flagged failures, reset verifications — because supervision needs replays even when the customer owns the archive.
 
@@ -291,14 +291,14 @@ Exports: `ds.to_lerobot(path)` (LeRobotDataset, training-ready), `waddle export 
 The post-training toolkit (open-source interfaces, some closed-hosted implementations):
 
 ```python
-ds = waddle.corpus.load("kitchen-pilot")
-ds = waddle.corpus.smooth_handoffs(ds, blend_s=0.4)     # de-spike policy→human boundaries
-ds = waddle.corpus.dejitter(ds, method="awe")           # waypoint-extraction cleanup of VLA jitter
+ds = waddle_sdk.corpus.load("kitchen-pilot")
+ds = waddle_sdk.corpus.smooth_handoffs(ds, blend_s=0.4)     # de-spike policy→human boundaries
+ds = waddle_sdk.corpus.dejitter(ds, method="awe")           # waypoint-extraction cleanup of VLA jitter
 ds_int = ds.filter(provenance="teleop")               # corrections only
 
-waddle.optimize.filtered_bc(ds, base="lerobot/smolvla_base", weight="intervention")  # IWR/Sirius-style
-waddle.optimize.hil_serl(robot_hooks=..., classifier=ds.judge_head(), ...)           # online RL, live rig
-waddle.optimize.rlpd(offline=ds, ...)                                                # offline+online mix
+waddle_sdk.optimize.filtered_bc(ds, base="lerobot/smolvla_base", weight="intervention")  # IWR/Sirius-style
+waddle_sdk.optimize.hil_serl(robot_hooks=..., classifier=ds.judge_head(), ...)           # online RL, live rig
+waddle_sdk.optimize.rlpd(offline=ds, ...)                                                # offline+online mix
 ```
 
 Every transform and optimizer **declares its data requirements** and fails loudly at load time against the project's recording mode ("this project records SidecarOnly; `filtered_bc` requires Local or Reference-with-resolver") — `SidecarOnly` is the metrics/ops tier, not the data tier, and the product tiering says so explicitly *(N8)*.
@@ -320,7 +320,7 @@ This is the retention argument: even as the customer's policy improves and inter
 |---|---|---|---|
 | Protocol | `waddle-protocol` | open (repo + crates) | protobuf/IDL schemas, the claim/lease FSM spec, the sidecar schema, **conformance fixtures** (wire captures, golden sidecars, behavioral scenarios). The standard itself — implementable without `waddle-core`. |
 | Rust core | `waddle-core` | open (crate) | reference implementation: episode/claim FSM, gate, tripwire engine, codecs, media plane, sidecar writer, ring buffer, clock sync. Emits the `libwaddle` C ABI (`cdylib` + cbindgen). |
-| Python SDK | **PyPI distribution `waddle-sdk`**, **`import waddle`**, **CLI `waddle`** | open | PyO3/maturin wheels over `waddle-core`, plus descriptors, sugar (`rollout`/`watching`), adapters (LeRobot, gym), plugin ABCs, `waddle.corpus` / `waddle.optimize`. The CLI uses entry-point subcommand discovery so other packages (including the closed cell package) can register subcommands into the same `waddle …` namespace. |
+| Python SDK | **PyPI distribution `waddle-sdk`**, **`import waddle_sdk`**, **CLI `waddle`** | open | PyO3/maturin wheels over `waddle-core`, plus descriptors, sugar (`rollout`/`watching`), adapters (LeRobot, gym), plugin ABCs, `waddle_sdk.corpus` / `waddle_sdk.optimize`. The CLI uses entry-point subcommand discovery so other packages (including the closed cell package) can register subcommands into the same `waddle …` namespace. |
 | C++ binding | `waddle-cpp` | open | thin header + lib over the `libwaddle` C ABI. |
 | ROS 2 | `waddle_ros` package, **`waddle_gate`** node | open | lifecycle node (C++ over the C ABI): YAML-declared topics, priority-mux / `ros2_control`-switch takeover, services for control verbs and episode lifecycle. **Never named "bridge"** — see below. |
 | Proxy | `waddle-proxy` (`waddle proxy`) | open binary | policy-server impersonation: codecs + the shared semantic core; zero-code integration tier. |
@@ -345,7 +345,7 @@ This is the retention argument: even as the customer's policy improves and inter
 | **intervention lifecycle** | engage → settle → release \| retake; **retake** = terminate the episode and open a new one under the still-held claim | protocol (from the production `InterventionLifecycle`) |
 | **provenance** | per-action origin tag (`policy \| teleop \| agent \| custom:<name>`), written at gate time; carries authorization semantics (the `operator_initiated` stamp generalizes to a provenance attribute: may bypass approval, never the envelope) | protocol |
 | **sidecar** | the small semantic record per episode (boundaries, task, claims, provenance spans, events, labels); bulk bytes may live in customer storage via references | protocol |
-| **corpus** | the project-level index of episodes, sidecars, labels, and archive references; the queryable data product (`waddle.corpus`) | control plane (Local mode: cell/SDK) |
+| **corpus** | the project-level index of episodes, sidecars, labels, and archive references; the queryable data product (`waddle_sdk.corpus`) | control plane (Local mode: cell/SDK) |
 | **capability** | *reserved for robot skills* in the CapabilityLibrary sense (code-as-policy actions a cell can perform). Never used for permissions (those are **grants**) or protocol versioning (those are **feature flags**) | cell / control plane |
 | **feature flag** | a protocol-evolution unit negotiated per-connection; how pinned SDKs and an evolving backend coexist | protocol |
 
@@ -457,7 +457,7 @@ One repo, mixed Rust/Python, built by maturin. PyPI distribution `waddle-sdk`, i
 ```
 waddle-sdk/
   rust/                    # the PyO3 shim crate: waddle-runtime in, pyclass handles out.
-  python/waddle/
+  python/waddle_sdk/
     __init__.py            # init, rollout, watching, log, Control, EStop, Handoff
     descriptors.py         # Robot, JointSpace/EEDelta/Composite/Opaque, Camera,
                            #   TimeSeries, Gripper, Stream, Chunking — sugar that
@@ -477,13 +477,13 @@ waddle-sdk/
     optimize/              # filtered_bc, hil_serl, rlpd — interfaces + reference
                            #   recipes (torch optional extra)
     cli/                   # `waddle` entry point; subcommand discovery via the
-                           #   "waddle.commands" entry-point group (doctor, proxy
+                           #   "waddle_sdk.commands" entry-point group (doctor, proxy
                            #   launcher, episode marks, export); cell package
                            #   registers `waddle cell …` here
     _core.pyi              # typed surface of the PyO3 module
 ```
 
-Boundary rules, enforced in review: no claim/lease/handoff/timeline logic in Python (hollow-frontend); `gate()` is exactly one FFI call; user taps registered as callables are invoked from core-owned threads that acquire the GIL only for the duration of the call and hand the returned buffer straight into `waddle-ingest` (users are steered toward core-native capture — e.g. the RealSense helper — when rates are high); `waddle.corpus`/`waddle.optimize` never import the core at all — they read sidecars and archives, so they work on machines with no robot and no Rust.
+Boundary rules, enforced in review: no claim/lease/handoff/timeline logic in Python (hollow-frontend); `gate()` is exactly one FFI call; user taps registered as callables are invoked from core-owned threads that acquire the GIL only for the duration of the call and hand the returned buffer straight into `waddle-ingest` (users are steered toward core-native capture — e.g. the RealSense helper — when rates are high); `waddle_sdk.corpus`/`waddle_sdk.optimize` never import the core at all — they read sidecars and archives, so they work on machines with no robot and no Rust.
 
 ### 3.4 `waddle-cpp` — the C++ frontend
 
@@ -492,7 +492,7 @@ Deliberately the smallest artifact: a distribution of `libwaddle` plus ergonomic
 ```
 waddle-cpp/
   include/waddle/waddle.h     # generated C header (cbindgen), the actual contract
-  include/waddle/waddle.hpp   # header-only RAII wrapper: Session/Episode objects,
+  include/waddle/waddle_sdk.hpp   # header-only RAII wrapper: Session/Episode objects,
                               #   RAII claim guards, std::span views over shm frames
   cmake/                      # find_package(waddle) config; fetches prebuilt
                               #   libwaddle per triple, or builds from source
@@ -518,7 +518,7 @@ waddle_ros/
   waddle_ros_tests/          # launch_testing against protocol behavior fixtures
 ```
 
-The YAML *is* the declaration layer (`waddle.init` equivalent): camera topics (`image_raw`/`camera_info` pairs — intrinsics and TF extrinsics harvested automatically, which auto-unlocks the calibrated rungs of the grant lattice), joint-state topic, command topic + mux priorities or `ros2_control` controller names, verb services (`hold`/`resume`/`home` service names, e-stop declaration), action-space block, project/task/judges. Node interfaces: subscribes to declared sensor/command topics; publishes the muxed command topic and `~/events`; offers `~/start_episode`, `~/end_episode`, `~/claim_status` services. Because the node is out-of-process from any policy code, this is structurally the native-path integration — its grant report says so.
+The YAML *is* the declaration layer (`waddle_sdk.init` equivalent): camera topics (`image_raw`/`camera_info` pairs — intrinsics and TF extrinsics harvested automatically, which auto-unlocks the calibrated rungs of the grant lattice), joint-state topic, command topic + mux priorities or `ros2_control` controller names, verb services (`hold`/`resume`/`home` service names, e-stop declaration), action-space block, project/task/judges. Node interfaces: subscribes to declared sensor/command topics; publishes the muxed command topic and `~/events`; offers `~/start_episode`, `~/end_episode`, `~/claim_status` services. Because the node is out-of-process from any policy code, this is structurally the native-path integration — its grant report says so.
 
 ### 3.6 `waddle-proxy` — the zero-code binary
 
@@ -529,7 +529,7 @@ waddle-proxy
   ├─ subcommands:  run (default) · codecs (list dialects+versions) · verify
   │                (round-trip certification against a live upstream) · record
   │                (passthrough + capture only)
-  ├─ waddle.yaml:  project/task/api key · upstream URL + codec dialect ·
+  ├─ waddle_sdk.yaml:  project/task/api key · upstream URL + codec dialect ·
   │                ActionSpace mapping for the action tensor · which obs keys
   │                are cameras (+optional intrinsics) · judges · HandoffPolicy ·
   │                recording mode · episode-boundary source (endpoint | heuristic)
@@ -563,8 +563,8 @@ The relay is the one place closed code runs on customer infrastructure; the layo
 | Episode/claim/lease FSM (§2.4) | `episode.proto` + `FSM.md` | `waddle-fsm` | `rollout()`, mux, proxy |
 | `gate()` + handoff (§2.4) | `control.proto` (HandoffPolicy) | `waddle-gate` | `ep.gate()`, mux arbitration, chunk substitution |
 | Tripwires vs envelope (§2.3) | `GLOSSARY.md` | `waddle-tripwire` (tripwires only) | `tripwires.py`, YAML |
-| Plugin slots (§2.5) | service RPCs | control plane (closed) + user impls | `waddle.plugins` ABCs |
-| Sidecar & recording modes (§2.6) | `sidecar.proto` | `waddle-sidecar` | `recording.py`, `waddle.corpus` |
+| Plugin slots (§2.5) | service RPCs | control plane (closed) + user impls | `waddle_sdk.plugins` ABCs |
+| Sidecar & recording modes (§2.6) | `sidecar.proto` | `waddle-sidecar` | `recording.py`, `waddle_sdk.corpus` |
 | Conformance (§2.7) | `fixtures/`, `conformance/` | every artifact's CI | `waddle doctor`, `waddle-proxy verify` |
 
 ---
@@ -594,7 +594,7 @@ import numpy as np
 import pyrealsense2 as rs
 from i2rt.robots.get_robot import get_yam_robot   # i2rt SDK: joint-space YAM control
 
-import waddle
+import waddle_sdk
 
 # ── 1. Hardware, exactly as they already run it ─────────────────────────────
 left  = get_yam_robot(channel="can_left")          # 6 DOF + linear parallel gripper
@@ -622,81 +622,81 @@ tap_wr,   intr_wr   = make_rs_tap("827312072XXX")
 from lab.ik import BimanualIK                      # in-house; tuned null-space for YAM
 ik = BimanualIK(urdf="yam_bimanual.urdf")
 
-def ee_delta_send(chunk: waddle.ActionChunk):
+def ee_delta_send(chunk: waddle_sdk.ActionChunk):
     """Waddle teleop emits per-arm SE(3) deltas; their IK owns the joint solution."""
     for step in chunk.steps:
         q = ik.solve_delta(left=step["left_ee"], right=step["right_ee"],
                            q_now=np.r_[left.get_joint_pos(), right.get_joint_pos()])
         left.command_joint_pos(q[:7]); right.command_joint_pos(q[7:])
 
-def joint_send(chunk: waddle.ActionChunk):         # native space: policy + reset agent
+def joint_send(chunk: waddle_sdk.ActionChunk):         # native space: policy + reset agent
     for step in chunk.steps:
         left.command_joint_pos(step["left"]); right.command_joint_pos(step["right"])
 
 # ── 3. Declarations ─────────────────────────────────────────────────────────
-robot = waddle.Robot(
+robot = waddle_sdk.Robot(
     name="yam-bimanual-01",
-    action_space=waddle.Composite(
-        left =waddle.JointSpace(joints=[f"l{i}" for i in range(6)] + ["l_grip"],
+    action_space=waddle_sdk.Composite(
+        left =waddle_sdk.JointSpace(joints=[f"l{i}" for i in range(6)] + ["l_grip"],
                                 units="rad", rate_hz=50,
-                                gripper=waddle.Gripper.parallel(dim=-1, open=1.0, closed=0.0)),
-        right=waddle.JointSpace(joints=[f"r{i}" for i in range(6)] + ["r_grip"],
+                                gripper=waddle_sdk.Gripper.parallel(dim=-1, open=1.0, closed=0.0)),
+        right=waddle_sdk.JointSpace(joints=[f"r{i}" for i in range(6)] + ["r_grip"],
                                 units="rad", rate_hz=50,
-                                gripper=waddle.Gripper.parallel(dim=-1, open=1.0, closed=0.0)),
-        chunking=waddle.Chunking(horizon=20, replan="IMMEDIATE", interp="linear"),
+                                gripper=waddle_sdk.Gripper.parallel(dim=-1, open=1.0, closed=0.0)),
+        chunking=waddle_sdk.Chunking(horizon=20, replan="IMMEDIATE", interp="linear"),
     ),
     kinematics="yam_bimanual.urdf",                # unlocks 3D overlays + geometric tripwires
 )
 
-control = waddle.Control(
+control = waddle_sdk.Control(
     send={"joint_position": joint_send,
           "ee_delta":       ee_delta_send},        # ← teleop taps THEIR IK here
     hold=lambda: (left.hold(), right.hold()),
     resume=lambda: None,
     home=lambda: (left.command_joint_pos(HOME_L), right.command_joint_pos(HOME_R)),
-    handoff=waddle.Handoff.IMMEDIATE(blend_ms=300),
+    handoff=waddle_sdk.Handoff.IMMEDIATE(blend_ms=300),
 )
 
-class SpikeJudge(waddle.plugins.Judge):            # custom judge alongside Waddle's VLM
+class SpikeJudge(waddle_sdk.plugins.Judge):            # custom judge alongside Waddle's VLM
     name = "ft_spike"
     def on_episode(self, ep):
         ft = ep.series("/robot/ft_wrist")
-        return waddle.Labels(flags=["force_spike"] if (np.abs(ft.values) > 40.0).any() else [])
+        return waddle_sdk.Labels(flags=["force_spike"] if (np.abs(ft.values) > 40.0).any() else [])
 
-waddle.init(
+waddle_sdk.init(
     project="towel-folding-pilot", api_key="wd_live_…", mode="relay",   # on-prem relay: video stays on LAN
     robot=robot, control=control,
     cameras={
-        "overhead":    waddle.Camera(tap=tap_over, intrinsics=intr_over, frame_id="cam_overhead",
-                                     stream=waddle.Stream(local="full", uplink="h264@15fps")),
-        "wrist_left":  waddle.Camera(tap=tap_wl, intrinsics=intr_wl, frame_id="l_wrist"),
-        "wrist_right": waddle.Camera(tap=tap_wr, intrinsics=intr_wr, frame_id="r_wrist"),
+        "overhead":    waddle_sdk.Camera(tap=tap_over, intrinsics=intr_over, frame_id="cam_overhead",
+                                     stream=waddle_sdk.Stream(local="full", uplink="h264@15fps")),
+        "wrist_left":  waddle_sdk.Camera(tap=tap_wl, intrinsics=intr_wl, frame_id="l_wrist"),
+        "wrist_right": waddle_sdk.Camera(tap=tap_wr, intrinsics=intr_wr, frame_id="r_wrist"),
     },
-    series={"/robot/ft_wrist": waddle.TimeSeries(shape=(6,), units="N,Nm", tap=lab_ft_tap)},
-    interventions=[waddle.interventions.Teleop(rig="bimanual", space="ee_delta")],
-    resets=[waddle.resets.CodeAsPolicy(scene="tabletop_softgoods"),
-            waddle.resets.Teleop()],               # human fallback when the agent punts
-    judges=[waddle.judges.VLM(rubric="towel folded into quarters inside the marked zone"),
+    series={"/robot/ft_wrist": waddle_sdk.TimeSeries(shape=(6,), units="N,Nm", tap=lab_ft_tap)},
+    interventions=[waddle_sdk.interventions.Teleop(rig="bimanual", space="ee_delta")],
+    resets=[waddle_sdk.resets.CodeAsPolicy(scene="tabletop_softgoods"),
+            waddle_sdk.resets.Teleop()],               # human fallback when the agent punts
+    judges=[waddle_sdk.judges.VLM(rubric="towel folded into quarters inside the marked zone"),
             SpikeJudge()],
-    tripwires=[waddle.tripwires.Workspace(aabb=[[-.6,-.5,0],[.6,.5,.7]]),   # local, no-network
-               waddle.tripwires.JointLimitMargin(rad=0.05)],
+    tripwires=[waddle_sdk.tripwires.Workspace(aabb=[[-.6,-.5,0],[.6,.5,.7]]),   # local, no-network
+               waddle_sdk.tripwires.JointLimitMargin(rad=0.05)],
 )
 
 # ── 4. Their rollout loop, 6 lines changed ──────────────────────────────────
 for _ in range(200):                               # overnight unattended eval
-    with waddle.rollout(task="fold the towel into quarters") as ep:   # blocks through reset
+    with waddle_sdk.rollout(task="fold the towel into quarters") as ep:   # blocks through reset
         while not ep.done:
             obs    = collect_obs(left, right)      # their code, unchanged
             action = policy.infer(obs)             # their VLA, wherever it runs
             action = ep.gate(action, obs)          # log + tripwires + claim check
             joint_send_single(action)              # their transport, unchanged
 
-report = waddle.corpus.load("towel-folding-pilot").summary()   # SR, MTTI, failure taxonomy
+report = waddle_sdk.corpus.load("towel-folding-pilot").summary()   # SR, MTTI, failure taxonomy
 
 # ── 5. Two weeks later: policy improvement from the same corpus ────────────
-ds = waddle.corpus.load("towel-folding-pilot")
-ds = waddle.corpus.smooth_handoffs(ds, blend_s=0.4)  # kill the takeover spikes
-waddle.optimize.hil_serl(dataset=ds, robot_hooks=waddle.hooks.from_init(),
+ds = waddle_sdk.corpus.load("towel-folding-pilot")
+ds = waddle_sdk.corpus.smooth_handoffs(ds, blend_s=0.4)  # kill the takeover spikes
+waddle_sdk.optimize.hil_serl(dataset=ds, robot_hooks=waddle_sdk.hooks.from_init(),
                          judge_head=ds.judge_head("vlm"))     # live online-RL rig
 ```
 
@@ -712,7 +712,7 @@ import numpy as np
 from xarm.wrapper import XArmAPI                    # xArm-Python-SDK
 from pyorbbecsdk import Pipeline, Config, OBSensorType, OBFormat
 
-import waddle
+import waddle_sdk
 
 # ── 1. Hardware as they already run it ──────────────────────────────────────
 arm = XArmAPI("192.168.1.221")
@@ -731,7 +731,7 @@ def make_orbbec_tap(index: int):
     return tap
 
 # ── 2. Their leader arm as a first-class InterventionSource ─────────────────
-class LeaderArm(waddle.plugins.InterventionSource):
+class LeaderArm(waddle_sdk.plugins.InterventionSource):
     """Kinematically-matched leader; clutch on the handle. Vendor IK untouched."""
     name, spaces = "leader_arm", ["joint_position"]
     def __init__(self, dev="/dev/ttyUSB0"):
@@ -740,40 +740,40 @@ class LeaderArm(waddle.plugins.InterventionSource):
         return self.leader.clutch_pressed()                # operator grabs it → claim
     def start(self, ctx):
         self.leader.sync_to(ctx.robot_qpos)                # avoid a jump at handoff
-    def get_action(self, obs) -> waddle.Action:
-        return waddle.Action(joint_position=self.leader.read_qpos())
+    def get_action(self, obs) -> waddle_sdk.Action:
+        return waddle_sdk.Action(joint_position=self.leader.read_qpos())
     def stop(self):
         self.leader.release()
 
 # ── 3. Declarations — note what is ABSENT: no Waddle teleop registered ──────
-waddle.init(
+waddle_sdk.init(
     project="cnc-tending", api_key="wd_live_…",
-    robot=waddle.Robot(
+    robot=waddle_sdk.Robot(
         name="xarm7-cell-3",
-        action_space=waddle.JointSpace(
+        action_space=waddle_sdk.JointSpace(
             joints=[f"j{i}" for i in range(1, 8)], units="rad", rate_hz=100,
-            chunking=waddle.Chunking(horizon=16, replan="CHUNK_BOUNDARY", interp="cubic"),
-            gripper=waddle.Gripper.parallel(dim=-1, open=850, closed=0)),  # xArm gripper units, mapped
+            chunking=waddle_sdk.Chunking(horizon=16, replan="CHUNK_BOUNDARY", interp="cubic"),
+            gripper=waddle_sdk.Gripper.parallel(dim=-1, open=850, closed=0)),  # xArm gripper units, mapped
         kinematics="xarm7.urdf",
     ),
-    control=waddle.Control(
+    control=waddle_sdk.Control(
         send={"joint_position": lambda ch: [arm.set_servo_angle_j(s.q, is_radian=True)
                                             for s in ch.steps]},
         hold=lambda: arm.set_state(3),                     # xArm pause state
         resume=lambda: arm.set_state(0),
         home=lambda: arm.move_gohome(wait=True),
-        handoff=waddle.Handoff.HOLD_FIRST(),               # industrial: freeze, then human
+        handoff=waddle_sdk.Handoff.HOLD_FIRST(),               # industrial: freeze, then human
     ),
-    cameras={"cell": waddle.Camera(tap=make_orbbec_tap(0)),
-             "gripper": waddle.Camera(tap=make_orbbec_tap(1))},
+    cameras={"cell": waddle_sdk.Camera(tap=make_orbbec_tap(0)),
+             "gripper": waddle_sdk.Camera(tap=make_orbbec_tap(1))},
     interventions=[LeaderArm()],                           # ← their plugin; Waddle teleop opted out
-    resets=[waddle.resets.Scripted(lambda ctl, ctx: run_vendor_reset_motion(arm)),
-            waddle.resets.CodeAsPolicy(scene="machine_tending")],  # agent when script isn't enough
-    judges=[waddle.judges.VLM(rubric="part seated in chuck; door closed; no part on table")],
+    resets=[waddle_sdk.resets.Scripted(lambda ctl, ctx: run_vendor_reset_motion(arm)),
+            waddle_sdk.resets.CodeAsPolicy(scene="machine_tending")],  # agent when script isn't enough
+    judges=[waddle_sdk.judges.VLM(rubric="part seated in chuck; door closed; no part on table")],
 )
 
 # ── 4. Rollouts. Detection is Waddle's; hands are theirs. ──────────────────
-with waddle.rollout(task="load blank into chuck") as ep:
+with waddle_sdk.rollout(task="load blank into chuck") as ep:
     while not ep.done:
         obs = {"qpos": np.array(arm.get_servo_angle(is_radian=True)[1])}
         a   = ep.gate(vla_client.infer(obs), obs)
@@ -783,9 +783,9 @@ with waddle.rollout(task="load blank into chuck") as ep:
         arm.set_servo_angle_j(a.q, is_radian=True)
 
 # ── 5. Their payoff: corrections become training data with zero labeling ────
-ds = waddle.corpus.load("cnc-tending")
-ds = waddle.corpus.smooth_handoffs(ds, blend_s=0.3)
-waddle.optimize.filtered_bc(ds, base="their-pi0-finetune",
+ds = waddle_sdk.corpus.load("cnc-tending")
+ds = waddle_sdk.corpus.smooth_handoffs(ds, blend_s=0.3)
+waddle_sdk.optimize.filtered_bc(ds, base="their-pi0-finetune",
                             weight="intervention")         # IWR-style upweighting
 ```
 
@@ -798,22 +798,22 @@ The stress test for P1: *nothing* in their stack is standard. That's fine, becau
 ```python
 """Company C: custom OS layer, custom RGB cameras, custom USB wire protocol."""
 import numpy as np
-import waddle
+import waddle_sdk
 from ourstack import bus, camd                      # their proprietary layer
 
 # ── 1. Their transport, wrapped in the five verbs. Waddle never sees USB. ───
 dev = bus.open("/dev/ourbot0")                      # custom framed-packet protocol
 
-def send(chunk: waddle.ActionChunk):
+def send(chunk: waddle_sdk.ActionChunk):
     for step in chunk.steps:
         dev.write(bus.pack_joint_target(step.q, step.t_ns))   # their framing
 
-control = waddle.Control(
+control = waddle_sdk.Control(
     send={"joint_position": send},
     hold=lambda: dev.write(bus.HOLD),
     resume=lambda: dev.write(bus.RESUME),
     home=lambda: dev.write(bus.pack_joint_target(HOME_Q)),
-    estop=waddle.EStop(fn=lambda: dev.write(bus.ESTOP), hardware=False, latency_ms=15),
+    estop=waddle_sdk.EStop(fn=lambda: dev.write(bus.ESTOP), hardware=False, latency_ms=15),
 )
 
 # ── 2. Custom cameras: a tap is just a callable returning pixels + a clock ──
@@ -825,24 +825,24 @@ def cam_tap(cam_id: int):
     return tap
 
 # ── 3. Declarations. The URDF is the key that unlocks Waddle-side teleop. ───
-waddle.init(
+waddle_sdk.init(
     project="ourbot-alpha", api_key="wd_live_…",
-    robot=waddle.Robot(
+    robot=waddle_sdk.Robot(
         name="ourbot-proto-4",
-        action_space=waddle.JointSpace(joints=[f"a{i}" for i in range(6)],
+        action_space=waddle_sdk.JointSpace(joints=[f"a{i}" for i in range(6)],
                                        units="rad", rate_hz=30,
-                                       chunking=waddle.Chunking(horizon=8, replan="IMMEDIATE",
+                                       chunking=waddle_sdk.Chunking(horizon=8, replan="IMMEDIATE",
                                                                 interp="linear")),
         kinematics=open("ourbot.urdf", "rb").read(),   # → Waddle IK + retargeting, closed side
     ),
     control=control,
-    cameras={"front": waddle.Camera(tap=cam_tap(0)),   # uncalibrated RGB: monitoring + VLM
-             "wrist": waddle.Camera(tap=cam_tap(1))},  #   judging work; 3D overlays don't (yet)
-    interventions=[waddle.interventions.Teleop(space="ee_delta"),   # Waddle IK: ee_delta→their joints
-                   waddle.interventions.CodeAsPolicy()],
-    resets=[waddle.resets.Scripted(lambda ctl, ctx: our_reset_routine(dev)),   # their routine, slot-in
-            waddle.resets.Teleop()],
-    judges=[waddle.judges.VLM(rubric="all three blocks inside the tray")],
+    cameras={"front": waddle_sdk.Camera(tap=cam_tap(0)),   # uncalibrated RGB: monitoring + VLM
+             "wrist": waddle_sdk.Camera(tap=cam_tap(1))},  #   judging work; 3D overlays don't (yet)
+    interventions=[waddle_sdk.interventions.Teleop(space="ee_delta"),   # Waddle IK: ee_delta→their joints
+                   waddle_sdk.interventions.CodeAsPolicy()],
+    resets=[waddle_sdk.resets.Scripted(lambda ctl, ctx: our_reset_routine(dev)),   # their routine, slot-in
+            waddle_sdk.resets.Teleop()],
+    judges=[waddle_sdk.judges.VLM(rubric="all three blocks inside the tray")],
 )
 
 # `waddle doctor` matters most for exactly this customer:
@@ -852,21 +852,21 @@ waddle.init(
 #   grant report: monitor ✓ pause ✓ takeover(ee_delta via waddle-ik) ✓ reset(scripted+teleop) ✓
 
 # ── 4. Rollout loop, same six lines as everyone else ────────────────────────
-with waddle.rollout(task="clear the tray") as ep:
+with waddle_sdk.rollout(task="clear the tray") as ep:
     while not ep.done:
         obs = {"qpos": dev.read_state().q}
         a   = ep.gate(policy(obs), obs)
         dev.write(bus.pack_joint_target(a.q))
 
 # ── 5. They train in their own stack — export, don't capture ────────────────
-waddle.corpus.load("ourbot-alpha").to_lerobot("exports/ourbot_alpha")   # or raw MCAP
+waddle_sdk.corpus.load("ourbot-alpha").to_lerobot("exports/ourbot_alpha")   # or raw MCAP
 ```
 
 What C exercised: fully opaque transport behind the five verbs, tap-based cameras with no vendor assumptions, teleop unlocked purely by a URDF (Waddle-side IK — the closed retargeting service earning its keep), a custom scripted reset slotted ahead of teleop fallback, `waddle doctor` as the onboarding path for weird stacks, and clean export into their own training pipeline. Note what they *didn't* get without calibration: no 3D overlays, no geometric tripwires — the lattice, not a cliff.
 
 ### 4.4 Company D — SO-101s + stock LeRobot, two RGB cameras
 
-The beginner case must be near-zero effort, so it gets the adapter treatment: Waddle already knows the SO-101 (URDF, motor layout, gripper) and already knows LeRobot's `Robot` interface, so `waddle.lerobot.wrap()` builds the descriptors, taps the cameras from the LeRobot config, and gates `send_action` — one line around their existing object.
+The beginner case must be near-zero effort, so it gets the adapter treatment: Waddle already knows the SO-101 (URDF, motor layout, gripper) and already knows LeRobot's `Robot` interface, so `waddle_sdk.lerobot.wrap()` builds the descriptors, taps the cameras from the LeRobot config, and gates `send_action` — one line around their existing object.
 
 ```python
 """Company D: SO-101 follower + stock LeRobot + SmolVLA, minimal footprint."""
@@ -874,7 +874,7 @@ from lerobot.robots.so101_follower import SO101Follower, SO101FollowerConfig
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 
-import waddle
+import waddle_sdk
 
 # ── 1. Standard LeRobot setup, straight from the docs ──────────────────────
 cfg = SO101FollowerConfig(
@@ -886,25 +886,25 @@ robot = SO101Follower(cfg); robot.connect()
 policy = SmolVLAPolicy.from_pretrained("lerobot/smolvla_base")
 
 # ── 2. One line. The adapter reads cfg: cameras, motors, gripper, URDF. ─────
-waddle.init(project="so101-first-evals", api_key="wd_live_…")
-robot = waddle.lerobot.wrap(robot,
-    judges=[waddle.judges.VLM(rubric="red cube inside the white bowl")])
+waddle_sdk.init(project="so101-first-evals", api_key="wd_live_…")
+robot = waddle_sdk.lerobot.wrap(robot,
+    judges=[waddle_sdk.judges.VLM(rubric="red cube inside the white bowl")])
 # defaults filled in: interventions=[Teleop(so101 profile), CodeAsPolicy()],
 # resets=[CodeAsPolicy(scene="tabletop")], tripwires from SO-101 joint limits.
 
 # ── 3. Their loop is character-for-character the LeRobot tutorial loop ──────
 for i in range(50):
-    with waddle.rollout(task="put the red cube in the bowl") as ep:
+    with waddle_sdk.rollout(task="put the red cube in the bowl") as ep:
         while not ep.done:
             obs    = robot.get_observation()        # wrapped: frames auto-tapped + logged
             action = policy.select_action(obs)
             robot.send_action(action)               # wrapped: gate() runs inside
-print(waddle.corpus.load("so101-first-evals").summary())
+print(waddle_sdk.corpus.load("so101-first-evals").summary())
 #  50 episodes · SR 62% → 71% after interventions · 9 teleop claims · 50 auto-resets
 
 # ── 4. First taste of the flywheel, three lines ─────────────────────────────
-ds = waddle.corpus.smooth_handoffs(waddle.corpus.load("so101-first-evals"), blend_s=0.3)
-waddle.optimize.filtered_bc(ds, base="lerobot/smolvla_base",
+ds = waddle_sdk.corpus.smooth_handoffs(waddle_sdk.corpus.load("so101-first-evals"), blend_s=0.3)
+waddle_sdk.optimize.filtered_bc(ds, base="lerobot/smolvla_base",
                             out="hf://them/smolvla_so101_v2")
 ```
 
@@ -914,7 +914,7 @@ And for LeRobot users on **async inference** (policy on a GPU box, robot client 
 # GPU box (unchanged):     lerobot policy server on :8080
 # Laptop, was:             robot_client → gpu-box:8080
 $ waddle proxy --upstream grpc://gpu-box:8080 --listen :9000 \
-               --config waddle.yaml            # project, task, judges, api key
+               --config waddle_sdk.yaml            # project, task, judges, api key
 # Laptop, now:             robot_client → laptop:9000
 ```
 
@@ -935,7 +935,7 @@ An honest attempt to break the design, attack by attack, with verdicts.
 
 **"Waddle sits at policy rate, so it can't help at servo rate."** Correct: `gate()` at 30–100 Hz is fine; a 500 Hz–1 kHz torque loop is not a place for a Python SDK, and Waddle should say so explicitly rather than discover it in a customer's incident report. Impedance-controlled contact-rich tasks where the failure *is* at servo rate (a bad force spike inside one chunk) will be caught only by local tripwires or after the fact. Verdict: declared scope limit. The relay's C++ tripwire evaluator can later move down the stack; the SDK never should.
 
-**"Resets are the weakest promise."** The hardest attack, because it targets the value prop rather than the API. Code-as-policy scene reset on *arbitrary* scenes is unsolved — your in-house results are promising, but "we reset anything" is not yet true, and a failed reset silently corrupts every downstream eval statistic (episodes start from invalid states and the SR numbers lie). Mitigations built into the design: reset strategies are an ordered list with teleop and scripted fallbacks; the reset pipeline ends with a *reset verification* judgment (same VLM machinery) before `waddle.rollout()` yields; and reset failures are surfaced as first-class events, not swallowed. Verdict: the architecture is honest about it, but sales must be too — sell "unattended for tabletop families we've certified, human-fallback elsewhere," and let the certified-scene list grow.
+**"Resets are the weakest promise."** The hardest attack, because it targets the value prop rather than the API. Code-as-policy scene reset on *arbitrary* scenes is unsolved — your in-house results are promising, but "we reset anything" is not yet true, and a failed reset silently corrupts every downstream eval statistic (episodes start from invalid states and the SR numbers lie). Mitigations built into the design: reset strategies are an ordered list with teleop and scripted fallbacks; the reset pipeline ends with a *reset verification* judgment (same VLM machinery) before `waddle_sdk.rollout()` yields; and reset failures are surfaced as first-class events, not swallowed. Verdict: the architecture is honest about it, but sales must be too — sell "unattended for tabletop families we've certified, human-fallback elsewhere," and let the certified-scene list grow.
 
 ### 5.2 Attacks on the runtime
 
@@ -976,7 +976,7 @@ A second red-team, run against the design *as it now stands* — the component l
 
 **"You resolved the capability collision and created a grant collision."** True. The glossary defines **grant** as a permission the integrator extends to Waddle; but the wire-frozen work plane uses `work_grant` for a different act — the lobby *granting a claim* to a worker. So "grant" now carries a noun sense (declared permission) and a verb sense (awarding a claim), both live in the same codebase. Verdict: livable but must be pinned before it spreads — the noun sense is canonical; `work_grant` is read as the verb ("to grant a claim") and is explicitly *not* an instance of the glossary's Grant. If ambiguity ever bites in practice, the escape hatch is renaming the protocol message (`Grant` → `StandingGrant`) rather than touching wire-visible RPCs. Recorded as amendment N1.
 
-**"Retake is a statistics loophole."** The sharpest new attack. Retake — terminate the episode, open a new one under the held claim — was adopted from production because operators genuinely need it. But it creates two integrity holes. First, *outcome accounting*: if retaken episodes silently vanish, success rate is biased upward (the worst attempts get laundered into retakes); if they count as failures, an operator's judgment call moves the customer's headline metric. Second, *reset validity*: the new episode's "reset" was performed ad hoc by the intervenor mid-claim, bypassing the reset-verification judgment that `waddle.rollout()` otherwise guarantees — quietly weakening the very invariant the first pass identified as protecting all downstream eval statistics. Verdict: real defect. Fix (amendment N2): a retaken episode closes with the distinct terminal outcome `aborted_retake`, reported as its own line in every summary (never folded into SR's denominator silently — the Corpus reports SR both including and excluding retakes); and the successor episode must still pass reset verification before entering RUNNING, or be permanently flagged `reset_unverified` in its sidecar.
+**"Retake is a statistics loophole."** The sharpest new attack. Retake — terminate the episode, open a new one under the held claim — was adopted from production because operators genuinely need it. But it creates two integrity holes. First, *outcome accounting*: if retaken episodes silently vanish, success rate is biased upward (the worst attempts get laundered into retakes); if they count as failures, an operator's judgment call moves the customer's headline metric. Second, *reset validity*: the new episode's "reset" was performed ad hoc by the intervenor mid-claim, bypassing the reset-verification judgment that `waddle_sdk.rollout()` otherwise guarantees — quietly weakening the very invariant the first pass identified as protecting all downstream eval statistics. Verdict: real defect. Fix (amendment N2): a retaken episode closes with the distinct terminal outcome `aborted_retake`, reported as its own line in every summary (never folded into SR's denominator silently — the Corpus reports SR both including and excluding retakes); and the successor episode must still pass reset verification before entering RUNNING, or be permanently flagged `reset_unverified` in its sidecar.
 
 **"The glossary has near-synonyms, and it's frozen 'forever' pre-product-market-fit."** *Supervised rollout* and *episode* are one concept viewed from two heights, and freezing vocabulary before a single external customer has used it risks enshrining words that turn out to confuse. Verdict: mostly accepted — the freeze is what makes internal/external unification worth anything, and v0 explicitly permits additive evolution via feature flags. But trim now while it's free: *supervised rollout* is demoted to prose (a description of an episode run with supervision), not a defended glossary entry.
 
@@ -996,7 +996,7 @@ A second red-team, run against the design *as it now stands* — the component l
 
 **"The SDK-tier lease is a polite fiction."** The glossary honestly assigns lease enforcement to the hardware owner — and in a Tier-1 Python integration, the "owner" is a convention: nothing physically stops the customer's loop from calling their own transport during bypass mode, producing the dual-writer scenario the lease exists to prevent. The broker enforces single-writer for real; a `Control(send=callable)` integration cannot. Verdict: the design is honest but under-explicit. Amendment N7: grant negotiation records the **lease enforcement point** per integration — *enforced* (broker, ROS mux with exclusive topic ownership, proxy owning the only socket) vs *advisory* (in-process callables) — the backend's intervention planner treats advisory-lease integrations more conservatively (prefer `HOLD_FIRST`), and `waddle doctor` gains a NOOP-compliance test that verifies the customer's loop actually stands down during a simulated bypass.
 
-**"The recording modes and the flywheel contradict each other."** `waddle.optimize.filtered_bc` needs (observation, action) pairs; in `SidecarOnly` mode no observations persist anywhere, and in `Reference` mode they persist somewhere Waddle can't reach without a resolver. A customer sold "the flywheel" who chose `SidecarOnly` bought a toolkit that cannot run. Verdict: tension is real, resolution is documentation plus one guard. Amendment N8: `waddle.corpus` transforms and `waddle.optimize` recipes declare their data requirements and fail at load time with a mode-specific message ("this project records SidecarOnly; filtered_bc requires Local or Reference-with-resolver"); sales collateral maps modes to product tiers explicitly — SidecarOnly is the metrics/ops tier, not the data tier.
+**"The recording modes and the flywheel contradict each other."** `waddle_sdk.optimize.filtered_bc` needs (observation, action) pairs; in `SidecarOnly` mode no observations persist anywhere, and in `Reference` mode they persist somewhere Waddle can't reach without a resolver. A customer sold "the flywheel" who chose `SidecarOnly` bought a toolkit that cannot run. Verdict: tension is real, resolution is documentation plus one guard. Amendment N8: `waddle_sdk.corpus` transforms and `waddle_sdk.optimize` recipes declare their data requirements and fail at load time with a mode-specific message ("this project records SidecarOnly; filtered_bc requires Local or Reference-with-resolver"); sales collateral maps modes to product tiers explicitly — SidecarOnly is the metrics/ops tier, not the data tier.
 
 **"Monitor-only customers create liability without authority."** The grant lattice's proudest feature — revenue from observe-only integrations — means Waddle will sometimes *watch a failure it has no grant to prevent*, and detection itself creates exposure: "your supervisor saw the collision developing and the page arrived late." Observability vendors carry missed-alert risk; Waddle carries it about physical events. Verdict: accepted risk requiring contract language, not architecture — detection SLOs are explicitly best-effort with stated latency envelopes, alerts are advisory, and the envelope/tripwire vocabulary (Waddle requests, the owner enforces) exists precisely to keep this legible in a courtroom. The marketing rule from §5.2 hardens into policy: Waddle is never described as a safety system, *including in monitor-only mode*.
 
@@ -1012,7 +1012,7 @@ A second red-team, run against the design *as it now stands* — the component l
 
 Step back and count what v0.6 specifies: a protocol with a conformance program, a ten-crate Rust core, three language frontends plus a ROS runtime target, two shipping binaries (one an appliance), three recording modes, a plugin system with three slots, a codec ecosystem with a version treadmill, a post-training toolkit, and a rename of the existing codebase. Every piece is individually justified, and together they describe roughly two years of platform engineering standing between today and the first dollar of SDK revenue — the classic failure mode of infrastructure-brained founders. The design's own best defense is the sequencing principle it already contains (proxy-first, ABI-unstable-until-consumed, certified-scene honesty), but the doc has never stated a v1 cut, so here is the proposed one, adversarially minimal:
 
-**v1 ships:** `waddle-protocol` v0 (schemas + glossary + fixtures, no conformance *program*), `waddle-core` sufficient for the proxy, **`waddle-proxy` with exactly two codecs** (LeRobot-async, openpi), `waddle-sdk` Tier-1/Tier-2 for Python only, action spaces `JointPosition` + `EEDelta` + `Composite` + `Opaque`, `Local` recording only, Waddle teleop + `Scripted` resets + the VLM judge, `waddle doctor`, and `waddle.corpus` with export + `smooth_handoffs`. **v1 explicitly defers:** `waddle-cpp`, `waddle_ros`, the relay as a customer-installable product (it runs only in Waddle-operated deployments, where it's the productizing bridge), `Reference`/`SidecarOnly` modes, `BaseTwist`/velocity spaces, the codec plugin API, `hil_serl`/`rlpd` as products, and the CLI plugin merge. Every deferral has a named trigger (a paying customer who needs it), which converts this section from a wish-list haircut into a decision procedure.
+**v1 ships:** `waddle-protocol` v0 (schemas + glossary + fixtures, no conformance *program*), `waddle-core` sufficient for the proxy, **`waddle-proxy` with exactly two codecs** (LeRobot-async, openpi), `waddle-sdk` Tier-1/Tier-2 for Python only, action spaces `JointPosition` + `EEDelta` + `Composite` + `Opaque`, `Local` recording only, Waddle teleop + `Scripted` resets + the VLM judge, `waddle doctor`, and `waddle_sdk.corpus` with export + `smooth_handoffs`. **v1 explicitly defers:** `waddle-cpp`, `waddle_ros`, the relay as a customer-installable product (it runs only in Waddle-operated deployments, where it's the productizing bridge), `Reference`/`SidecarOnly` modes, `BaseTwist`/velocity spaces, the codec plugin API, `hil_serl`/`rlpd` as products, and the CLI plugin merge. Every deferral has a named trigger (a paying customer who needs it), which converts this section from a wish-list haircut into a decision procedure.
 
 ### 6.6 Normative amendments adopted from this pass
 
@@ -1050,7 +1050,7 @@ The previous pass attacked the design; this one attacks the *fixes*. Amendments 
 
 **"N7's NOOP-compliance test commits the sin the pass diagnosed: a doctor-time test of a runtime property."** A loop that stands down in a simulated bypass can still double-write during a real panic — exception handlers, watchdog restarts, and human floor improvisation are different code paths from the rehearsed one. Verdict: the test is evidence, not enforcement, and advisory means advisory. Amendment **N14**: add *runtime* dual-write detection — during any bypass on an advisory-lease integration, the intervenor knows exactly what it commanded, so sustained divergence between commanded trajectory and proprioception means either the envelope clamped it or someone else is writing; on detection, freeze via `hold()`, alert, and record the event with the divergence trace. This converts the dual-writer scenario from silent corruption into a loud, diagnosable incident, which is the most an advisory lease can honestly offer.
 
-**"N4's independently-shipping codecs opened a supply-chain hole in the action write path."** A codec loadable by the proxy at startup, on its own release cadence, is a plugin sitting between a policy server and a robot — the highest-consequence position in the system for a malicious or merely buggy artifact. Verdict: fixable with boring rigor. Amendment **N15**: codecs are signed and their versions pinned in `waddle.yaml` (no floating "latest" in the write path); load-time certification is mandatory in addition to the existing per-session round-trip check; and the codec *trait* gets its own stability declaration — N5 deferred C-ABI stability, but the trait is a de facto ABI for out-of-tree codecs and cannot inherit that deferral once third parties write against it.
+**"N4's independently-shipping codecs opened a supply-chain hole in the action write path."** A codec loadable by the proxy at startup, on its own release cadence, is a plugin sitting between a policy server and a robot — the highest-consequence position in the system for a malicious or merely buggy artifact. Verdict: fixable with boring rigor. Amendment **N15**: codecs are signed and their versions pinned in `waddle_sdk.yaml` (no floating "latest" in the write path); load-time certification is mandatory in addition to the existing per-session round-trip check; and the codec *trait* gets its own stability declaration — N5 deferred C-ABI stability, but the trait is a de facto ABI for out-of-tree codecs and cannot inherit that deferral once third parties write against it.
 
 **"N3's published timing envelopes contradict your own liability posture."** §6.3 hardened "detection is best-effort, never a safety system" into policy; N3 then proposes publishing per-frontend numbers like hold-latency envelopes — exactly the kind of specific figure that reads as a warranty in a deposition. Verdict: tension, not contradiction, resolvable by framing. Amendment **N16**: envelopes are published as *observed bench measurements* under stated conditions with explicit non-warranty language; safety-adjacent numbers (`hold`, `estop`) are additionally reported only per-deployment by `waddle doctor` — the binding number is always the one measured on the customer's rig, never the one in the brochure.
 
@@ -1095,17 +1095,17 @@ Context: the internal monorepo (also named `waddle`) already implements a substa
 
 ### A.1 The one real rename: the Python package and CLI
 
-The public SDK takes `import waddle` and the `waddle` console script. Therefore:
+The public SDK takes `import waddle_sdk` and the `waddle` console script. Therefore:
 
 - **Package:** internal `waddle` → **`waddle_cell`**. The monorepo itself keeps the umbrella name `waddle` — repos are containers and never collide with import names. "Cell" is chosen because (a) it is the industry-standard unit for exactly what this package deploys — one robot + sensors + fixtures + safety envelope + controller (workcell in the ISO 10218 integration sense; eval cells in the AutoEval sense); (b) the codebase already voted for it (`cell_id`, broker client identities `cell-<cell_id>`, `cell_world`); (c) it scales with the business — a Waddle-operated deployment is N cells, and `cell_id` is already the key. Rejected alternatives: `waddle_bridge` (names the repo after one module, and semantically inverts the hierarchy — the broker outranks the bridge); `waddle_backend` (positional, and the position belongs to the cloud control plane the moment it exists; also miscues web-service instincts about a process that owns a 200 Hz e-stop poll).
-- **CLI:** merge rather than rename. The open SDK owns the `waddle` console script and discovers subcommands via an entry-point group (e.g. `[project.entry-points."waddle.commands"]`). The cell package registers under a `cell` prefix: `waddle cell ui`, `waddle cell ui-dev`, `waddle cell serve`, `waddle cell bridges`. During migration, ship a transitional `waddle-cell` alias binary and leave shims on the old subcommands that print the new invocation.
+- **CLI:** merge rather than rename. The open SDK owns the `waddle` console script and discovers subcommands via an entry-point group (e.g. `[project.entry-points."waddle_sdk.commands"]`). The cell package registers under a `cell` prefix: `waddle cell ui`, `waddle cell ui-dev`, `waddle cell serve`, `waddle cell bridges`. During migration, ship a transitional `waddle-cell` alias binary and leave shims on the old subcommands that print the new invocation.
 - **Env vars:** the SDK claims the bare `WADDLE_*` namespace; cell-private variables move to `WADDLE_CELL_*` (`WADDLE_BRIDGE_HOST/PORT` → `WADDLE_CELL_BRIDGE_HOST/PORT`). Exception: `WADDLE_EVENTS_URL` is consumed by foreign-env tasks through the stdlib-only client — keep it working with a deprecation alias for one release cycle before flipping.
 - **On-disk names** (`bridge_registry`, `tasks.db`, `events.jsonl`, `inbox.db`, `calib/<camera>.json`, `int-<hex>` episode ids) are internal artifacts with no public collision: **unchanged**. The public sidecar schema adopts `episode_id` as an opaque string, so `int-<hex>` ids flow through as-is.
 
 ### A.2 What keeps its name (most things)
 
 - **`bridge` and `broker`** stay as the process names inside `waddle_cell` (`waddle_cell.ui_server`, `waddle_cell.broker`). They are good names for a load-bearing split — the broker enforces, the bridge requests and grants — and that split is precisely the envelope-vs-orchestration principle §2.3 exports. They simply never appear in public artifacts or docs (reserved-word policy, §2.8); externally, the bridge's productized descendant is the *relay* + *control plane*.
-- **EventBus, TaskManager, Corpus, Inbox, CapabilityLibrary, Orchestrator**: unchanged as component names. `Corpus` is now *also* the public name of the data product (§2.6, `waddle.corpus`) — the internal component and the product concept share one word by design. `CapabilityLibrary` keeps exclusive rights to the word "capability" (robot skills); see A.3.
+- **EventBus, TaskManager, Corpus, Inbox, CapabilityLibrary, Orchestrator**: unchanged as component names. `Corpus` is now *also* the public name of the data product (§2.6, `waddle_sdk.corpus`) — the internal component and the product concept share one word by design. `CapabilityLibrary` keeps exclusive rights to the word "capability" (robot skills); see A.3.
 - **LiveKit work-plane RPC names** (`work_claim`, `work_answer`, `work_release`, `work_grant`) and **broker lease RPCs** (`handoff_lease`): unchanged — they already match the public glossary (see A.3), and they are wire-visible to deployed terminals. Same for participant identities (`ui-bridge`, `cell-<cell_id>`): these are identities, not names; keep them stable.
 - **`waddle-companion`**: keeps its PyPI name. One phrasing change in docs going forward: call it the *phone companion*, not the *phone relay*, to avoid overloading "relay" now that `waddle-relay` is a product.
 - **Teleop terminal** (`policy/teleop/web/`): stays in the monorepo for now; it was never inside the Python package, so the `waddle_cell` rename doesn't touch it. Flag: it deploys on a different cadence (Vercel) and is the seed of the operator-network client — likely its own repo when the SDK product matures.
@@ -1114,7 +1114,7 @@ The public SDK takes `import waddle` and the `waddle` console script. Therefore:
 
 As of v0.6 there is **no internal↔public vocabulary mapping to maintain** — §2.8's glossary is the single dictionary for the cell codebase, the protocol, the SDKs, and customer docs. The unification resolved as follows.
 
-**Public adopts the production (bridge/broker) terms** wherever both had a word for the same concept: **claim** (from `work_claim` — the lobby is a claim broker), **lease** and lease handoff (from the broker's single-writer lease and `handoff_lease`; the protocol FSM adopts the broker's battle-tested semantics wholesale), **envelope** (the `Broker._handle_command` gate chain is the reference implementation; publicly the envelope belongs to whoever owns hardware), the **intervention lifecycle** with **engage/settle/release/retake** (from `InterventionLifecycle` — retake, a new episode under a held claim, was a state the greenfield FSM missed and is now normative in §2.4), **supervised rollout** (the public `waddle.rollout()` unit takes the internal name), **grant** (generalizing `work_grant`, the grant pages, and the authorization language — the bridge "requests and grants" — into the protocol's permission concept), and **Corpus** (the internal episode-index component name becomes the public data product and the `waddle.corpus` API).
+**Public adopts the production (bridge/broker) terms** wherever both had a word for the same concept: **claim** (from `work_claim` — the lobby is a claim broker), **lease** and lease handoff (from the broker's single-writer lease and `handoff_lease`; the protocol FSM adopts the broker's battle-tested semantics wholesale), **envelope** (the `Broker._handle_command` gate chain is the reference implementation; publicly the envelope belongs to whoever owns hardware), the **intervention lifecycle** with **engage/settle/release/retake** (from `InterventionLifecycle` — retake, a new episode under a held claim, was a state the greenfield FSM missed and is now normative in §2.4), **supervised rollout** (the public `waddle_sdk.rollout()` unit takes the internal name), **grant** (generalizing `work_grant`, the grant pages, and the authorization language — the bridge "requests and grants" — into the protocol's permission concept), and **Corpus** (the internal episode-index component name becomes the public data product and the `waddle_sdk.corpus` API).
 
 **Internal adopts the new protocol terms** where the production system had a concept without a name: **tripwire** becomes the canonical internal word for the caller-side softeners (wall-slide clamp, hold-on-unreachable, the 0.5 s WAN deadman — advisory, hold-requesting, "the broker's gate chain is the floor"); **provenance** becomes the general form of the `operator_initiated` stamp (per-action origin + authorization semantics; "may bypass approval, never the envelope" is now a protocol invariant); **gate**, **sidecar**, and **episode** as specified in §2.8. The input-driven `TakeoverCoordinator` (rising-edge engage, ~0.75 s idle release) keeps its class name and is documented as the reference implementation of an *engagement-initiated claim* — the Company-B leader-arm semantics of §4.2.
 

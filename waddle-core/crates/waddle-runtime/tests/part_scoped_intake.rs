@@ -695,7 +695,7 @@ fn bypass_dispatch_sends_and_records_a_part_scoped_row() {
 
     let pump_rows: Vec<pb::ActionChunk> = actions_topic(dir.path(), id.as_str())
         .into_iter()
-        .filter(|c| c.source_id == "waddle.bypass-pump")
+        .filter(|c| c.source_id == "waddle_sdk.bypass-pump")
         .collect();
     assert!(
         !pump_rows.is_empty(),

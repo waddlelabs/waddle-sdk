@@ -18,7 +18,7 @@ and FSM.md disagree, FSM.md wins; where a word is in question,
 
 A **grant** is a permission you extend to Waddle. In the Python SDK you never
 write a grant down: it is derived from which verbs you register on
-`waddle.Control`, one grant per callable. Register `send` and you have said
+`waddle_sdk.Control`, one grant per callable. Register `send` and you have said
 "something other than my policy may command this arm"; leave it out and you
 have said the opposite, on the wire, to everyone.
 
@@ -62,7 +62,7 @@ the observation and action pair, checks local tripwires, consults claim state
 and hands your action back unchanged:
 
 ```python
-with waddle.rollout(task="fold the towel") as ep:
+with waddle_sdk.rollout(task="fold the towel") as ep:
     while not ep.done:
         obs = get_obs()
         action = policy(obs)
@@ -87,25 +87,25 @@ value of `gate()` changing, not by an exception or a callback.
 
 An intervention begins when the plane grants a claim on a RUNNING episode and
 engages it (FSM.md E7). What happens in the moments around the handoff is
-decided by the `handoff=` policy you declared at `waddle.init`, and it is the
+decided by the `handoff=` policy you declared at `waddle_sdk.init`, and it is the
 one lifecycle decision that is genuinely yours to make.
 
-`waddle.Handoff.HOLD_FIRST` is the default and the conservative choice. Waddle
+`waddle_sdk.Handoff.HOLD_FIRST` is the default and the conservative choice. Waddle
 calls the `hold` verb you registered and requires a successful result
 **before** the lease moves, so the intervenor starts from rest. This is why
 `hold` is not optional once a session has a visible engage path, which means a
 wired media plane or a registered `hold` or `send`: the engage would have
 nothing to call. Such a session declaring this policy with no `hold` verb is
-refused at `waddle.init`, naming the verb, rather than stalling at the first
+refused at `waddle_sdk.init`, naming the verb, rather than stalling at the first
 clutch press with nothing to diagnose.
 
-`waddle.Handoff.IMMEDIATE(blend_ms=...)` drops the executing chunk and
+`waddle_sdk.Handoff.IMMEDIATE(blend_ms=...)` drops the executing chunk and
 cross-fades from the last commanded point into the intervenor's stream over
 the blend window, using the interpolation your action space declares.
 Provenance flips to the intervenor at blend start, not at blend end: the whole
 window is theirs in the record.
 
-`waddle.Handoff.CHUNK_BOUNDARY(max_wait_ms=...)` lets the executing chunk
+`waddle_sdk.Handoff.CHUNK_BOUNDARY(max_wait_ms=...)` lets the executing chunk
 finish first, capped by the wait you declare.
 
 Whichever you declare, the lease handoff itself is atomic and mints a fresh
@@ -118,7 +118,7 @@ handed `None`.
 Two shapes of substitute deserve their own sentence, because both are arrays
 that are not the width you expect. A **gripper-only** action arrives as an
 empty array with `ep.last_gate.gripper` set: that means "hold the arm where it
-is, move the gripper", in your declared gripper units. On a `waddle.Composite`
+is, move the gripper", in your declared gripper units. On a `waddle_sdk.Composite`
 declaration (a bimanual cell, say) a substitute arrives as a **dict keyed by
 declared part**, `{"right": ndarray}` for an action addressing one arm, or
 every declared part for a whole-robot one. The parts absent from that dict are
@@ -150,7 +150,7 @@ have carried rides the direct dispatch instead, the addressed part included.
 
 Bypass is also why `send` is required on any session with a live intervention
 path, independently of your handoff policy. The rule is stated once in
-waddle-core and enforced at `waddle.init`.
+waddle-core and enforced at `waddle_sdk.init`.
 
 ### Release, and retake
 
@@ -172,21 +172,21 @@ place in this lifecycle where the SDK surface is thinner than the protocol.
 Your `ep.done` flips true when the successor replaces your episode, so your
 `with` block exits cleanly and does not abort anything. The SDK does not hand
 you a handle to the successor, and because a session runs one active episode
-at a time, calling `waddle.rollout()` again while that successor is live
+at a time, calling `waddle_sdk.rollout()` again while that successor is live
 raises `RuntimeError: an episode is already active (one active episode per
 session)`. Your next attempt begins once the successor closes.
 
 ## Before the episode: pre-reset and the reset window
 
-`waddle.rollout()` blocks until the scene is reset and, under the default
+`waddle_sdk.rollout()` blocks until the scene is reset and, under the default
 blocking verification mode, until the reset is verified. That call never
 yields an invalid scene; if every configured strategy is exhausted it raises
 `RuntimeError` instead.
 
 A pre-reset is either a **scripted hook** you pass as a callable, run locally
 in your own process, or a **remote reset window** declared as
-`waddle.TeleopReset(prompt, timeout_s=...)` or
-`waddle.AgentReset(prompt, timeout_s=...)`. A hook borrows nothing: your
+`waddle_sdk.TeleopReset(prompt, timeout_s=...)` or
+`waddle_sdk.AgentReset(prompt, timeout_s=...)`. A hook borrows nothing: your
 process resets your scene and the lease never moves.
 
 A window is a bounded period in which somebody else resets the scene through
@@ -207,10 +207,10 @@ passthrough, and only then does the reset result apply as if it had come from
 a local hook (FSM.md E21). Your loop is holding the lease again before the
 episode ever reaches READY, let alone RUNNING. If the window instead runs out
 its timer, the lease still hands back and the claim still releases; the
-episode aborts, and `waddle.rollout()` raises (FSM.md E22).
+episode aborts, and `waddle_sdk.rollout()` raises (FSM.md E22).
 
 Two honest limits. A declared window needs a connected supervision plane to
-grant and complete it, so `waddle.init(transport=waddle.Grpc(url, token))` is
+grant and complete it, so `waddle_sdk.init(transport=waddle_sdk.Grpc(url, token))` is
 not optional here: with no plane declared the window opens and can only run
 out its timeout. And a remote window can only be overridden per episode if the
 session declared a remote reset for some phase at `init`, because the feature
@@ -240,7 +240,7 @@ A post-reset can be a remote window too, with the same shape as the pre-reset
 one and the same ordering guarantee at the end: when a reset claimant holds
 the lease, the handback completes **before** the episode transitions to
 TERMINAL (FSM.md E15). By the time the episode is over, the lease is back with
-your loop. Your next `waddle.rollout()` waits for the cleanup to finish rather
+your loop. Your next `waddle_sdk.rollout()` waits for the cleanup to finish rather
 than racing it.
 
 One asymmetry worth knowing: a retake skips POST_RESET entirely (FSM.md E18).
@@ -249,7 +249,7 @@ with the intervenor across the boundary.
 
 ## Agent-invited episodes: handing over the whole rollout
 
-`waddle.agent("clear the table and stack the cups")` opens an episode that is
+`waddle_sdk.agent("clear the table and stack the cups")` opens an episode that is
 **agent-invited**: you have asked Waddle to drive this one, and the call blocks
 until the episode reaches an outcome. An agent here is a hosted actor, never a
 component of Waddle; the word means the thing that claims and drives, and
@@ -260,7 +260,7 @@ An agent-invited episode is an ordinary episode with exactly two differences
 take an episode you asked an agent for. And until an agent engages, your own
 `gate()` ticks never dispatch: they return `None`, recorded with reason
 `AGENT_EPISODE`. In practice you are not ticking anyway, because your thread is
-blocked inside `waddle.agent()`, which is precisely why the call blocks instead
+blocked inside `waddle_sdk.agent()`, which is precisely why the call blocks instead
 of handing you an episode handle it would be wrong to use.
 
 That blocked thread is what makes the engaged agent's actions arrive through
@@ -293,10 +293,10 @@ outcome is never rewritten by a late message.
 ## A session that never lends the lease
 
 Not every session should be able to hand the robot to anyone. The `monitor`
-posture in [`waddle.robots`](../sdk/README.md#postures) registers your `estop`
+posture in [`waddle_sdk.robots`](../sdk/README.md#postures) registers your `estop`
 alone: no `send`, so no send grant is declared and the plane has nothing to
 plan an intervention against; no `hold`, and no media plane, so there is no
-engage path in the session at all. `waddle.agent()` on such a session refuses
+engage path in the session at all. `waddle_sdk.agent()` on such a session refuses
 up front with the missing verb named. Watching is undiminished, since
 proprioception, low-rate stills and the local archive do not need any of that.
 
@@ -317,7 +317,7 @@ lease: it takes effect at the next planning decision, and it is always visible
 as an event (FSM.md §7).
 
 **Advisory enforcement is the honest default.** `lease_enforcement="advisory"`,
-the default at `waddle.init`, records that nothing physically prevents your
+the default at `waddle_sdk.init`, records that nothing physically prevents your
 loop from writing during a takeover, because the write path is in-process
 callables you own. The alternative, `"enforced"`, is for integrations where a
 mux or proxy physically owns the only write path. Under advisory enforcement

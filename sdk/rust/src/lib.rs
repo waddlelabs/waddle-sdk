@@ -1,4 +1,4 @@
-//! `waddle._core` — the PyO3 shim over `waddle-runtime`.
+//! `waddle_sdk._core` — the PyO3 shim over `waddle-runtime`.
 //!
 //! Hollow frontend: this module marshals between Python and core; every
 //! claim/lease/handoff/timeline decision is made in waddle-core exactly

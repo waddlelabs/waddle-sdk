@@ -1,8 +1,8 @@
 """Two-distribution packaging, from the Python side.
 
 `waddle-sdk` and its `waddle-sdk-teleop` companion are one source tree
-built twice; `waddle._native` decides which of the two compiled cores this
-process runs on, and `waddle.init` keys its refusals off what that core was
+built twice; `waddle_sdk._native` decides which of the two compiled cores this
+process runs on, and `waddle_sdk.init` keys its refusals off what that core was
 BUILT with (`FEATURES`) rather than trying an import and hoping. These
 tests pin that: the two projects' metadata held to each other, the default
 build's features, the selection rules, and the refusals — plus one smoke
@@ -22,9 +22,9 @@ from pathlib import Path
 
 import pytest
 
-import waddle
-import waddle._core as _core
-import waddle._native as _native
+import waddle_sdk
+import waddle_sdk._core as _core
+import waddle_sdk._native as _native
 
 try:  # 3.11+
     import tomllib
@@ -42,31 +42,31 @@ def _pyproject(*parts: str) -> dict:
 @pytest.fixture(autouse=True)
 def _clean_session():
     yield
-    waddle.shutdown()
+    waddle_sdk.shutdown()
 
 
-def _robot() -> waddle.Robot:
-    return waddle.Robot(
+def _robot() -> waddle_sdk.Robot:
+    return waddle_sdk.Robot(
         name="pytest-features-bot",
         robot_id="py-features-01",
         cell_id="cell-py-features",
-        action_space=waddle.JointSpace(joints=["j0", "j1", "j2"], rate_hz=50),
+        action_space=waddle_sdk.JointSpace(joints=["j0", "j1", "j2"], rate_hz=50),
     )
 
 
-def _control() -> waddle.Control:
-    return waddle.Control(
+def _control() -> waddle_sdk.Control:
+    return waddle_sdk.Control(
         send=lambda chunk: None, hold=lambda: None, resume=lambda: None
     )
 
 
-def _camera_robot() -> waddle.Robot:
-    return waddle.Robot(
+def _camera_robot() -> waddle_sdk.Robot:
+    return waddle_sdk.Robot(
         name="pytest-features-cam",
         robot_id="py-features-cam-01",
         cell_id="cell-py-features",
-        action_space=waddle.JointSpace(joints=["j0", "j1", "j2"], rate_hz=50),
-        cameras={"overhead": waddle.Camera(width=4, height=4, fps=30)},
+        action_space=waddle_sdk.JointSpace(joints=["j0", "j1", "j2"], rate_hz=50),
+        cameras={"overhead": waddle_sdk.Camera(width=4, height=4, fps=30)},
     )
 
 
@@ -98,8 +98,8 @@ def test_version_is_the_cores_own():
     """One Cargo.toml, one version: the Python surface and the shim ship
     together, and the teleop companion is built from the same manifest —
     which is what makes `_native`'s version check meaningful."""
-    assert waddle.__version__ == _core.__version__
-    assert isinstance(waddle.__version__, str) and waddle.__version__
+    assert waddle_sdk.__version__ == _core.__version__
+    assert isinstance(waddle_sdk.__version__, str) and waddle_sdk.__version__
 
 
 # --- The two projects' metadata, held to each other ------------------------
@@ -116,7 +116,7 @@ def test_the_teleop_extra_pins_this_builds_version():
     prevent, so the pin is checked here rather than left to whoever
     remembers to edit two files."""
     extras = _pyproject("pyproject.toml")["project"]["optional-dependencies"]
-    assert extras["teleop"] == [f"waddle-sdk-teleop=={waddle.__version__}"]
+    assert extras["teleop"] == [f"waddle-sdk-teleop=={waddle_sdk.__version__}"]
 
 
 def test_both_distributions_are_one_build_of_one_manifest():
@@ -193,12 +193,12 @@ def test_select_core_honors_the_opt_out(monkeypatch):
 
 
 def test_bundled_core_stays_reachable_by_name():
-    """`import waddle._core` must keep meaning the BUNDLED module whatever
+    """`import waddle_sdk._core` must keep meaning the BUNDLED module whatever
     `_native` selected — the selection changes which core the package
     *uses*, never what a submodule name resolves to."""
-    from waddle import _core as by_name
+    from waddle_sdk import _core as by_name
 
-    assert by_name is sys.modules["waddle._core"]
+    assert by_name is sys.modules["waddle_sdk._core"]
 
 
 # --- Refusals, keyed on what the core was built with -----------------------
@@ -207,11 +207,11 @@ def test_bundled_core_stays_reachable_by_name():
 def test_media_without_livekit_names_the_teleop_extra(monkeypatch):
     monkeypatch.setattr(_native, "FEATURES", frozenset({"grpc"}))
     with pytest.raises(RuntimeError, match=r"waddle-sdk\[teleop\]") as excinfo:
-        waddle.init(
+        waddle_sdk.init(
             "py-features-media",
             _camera_robot(),
             _control(),
-            media=waddle.LiveKit(url="wss://example.invalid", token="tok"),
+            media=waddle_sdk.LiveKit(url="wss://example.invalid", token="tok"),
         )
     assert "not compiled" in str(excinfo.value)
 
@@ -219,33 +219,33 @@ def test_media_without_livekit_names_the_teleop_extra(monkeypatch):
 def test_transport_without_grpc_names_the_from_source_build(monkeypatch):
     monkeypatch.setattr(_native, "FEATURES", frozenset())
     with pytest.raises(RuntimeError, match="grpc") as excinfo:
-        waddle.init(
+        waddle_sdk.init(
             "py-features-transport",
             _robot(),
             _control(),
-            transport=waddle.Grpc("http://127.0.0.1:9"),
+            transport=waddle_sdk.Grpc("http://127.0.0.1:9"),
         )
     assert "maturin develop --features grpc" in str(excinfo.value)
 
 
 def test_transport_and_testing_are_mutually_exclusive():
     with pytest.raises(ValueError, match="transport and _testing"):
-        waddle.init(
+        waddle_sdk.init(
             "py-features-both",
             _robot(),
             _control(),
-            transport=waddle.Grpc("http://127.0.0.1:9"),
+            transport=waddle_sdk.Grpc("http://127.0.0.1:9"),
             _testing=True,
         )
 
 
 def test_transport_declaration_validates_its_shape():
     with pytest.raises(ValueError, match="Grpc.url"):
-        waddle.Grpc("")
+        waddle_sdk.Grpc("")
     with pytest.raises(ValueError, match="Grpc.token"):
-        waddle.Grpc("http://127.0.0.1:9", token="")
+        waddle_sdk.Grpc("http://127.0.0.1:9", token="")
     with pytest.raises(TypeError, match="transport must be"):
-        waddle.init(
+        waddle_sdk.init(
             "py-features-shape",
             _robot(),
             _control(),
@@ -300,12 +300,12 @@ def test_grpc_session_dials_the_plane_and_then_survives_losing_it(tmp_path):
     port = plane.getsockname()[1]
 
     try:
-        session = waddle.init(
+        session = waddle_sdk.init(
             "py-grpc-offline",
             _robot(),
             _control(),
             recording_dir=tmp_path,
-            transport=waddle.Grpc(f"http://127.0.0.1:{port}", token="not-a-real-token"),
+            transport=waddle_sdk.Grpc(f"http://127.0.0.1:{port}", token="not-a-real-token"),
         )
         assert session is not None
 
@@ -324,14 +324,14 @@ def test_grpc_session_dials_the_plane_and_then_survives_losing_it(tmp_path):
     finally:
         plane.close()
 
-    with waddle.rollout(task="the plane is not home") as ep:
+    with waddle_sdk.rollout(task="the plane is not home") as ep:
         action = [0.1, 0.2, 0.3]
         assert ep.gate(action, [0.0, 0.0, 0.0]) is action
         episode_id = ep.id
         ep.terminate("success")
 
     started = time.monotonic()
-    waddle.shutdown()
+    waddle_sdk.shutdown()
     elapsed = time.monotonic() - started
     assert elapsed < 10.0, f"shutdown stalled on the transport backoff ({elapsed:.1f}s)"
     assert (tmp_path / f"{episode_id}.sidecar.json").exists()

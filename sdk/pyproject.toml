@@ -17,7 +17,7 @@ dynamic = ["version"]
 # transport, shipped as its own wheel because libwebrtc is ~690 MB of build
 # that has no business in an install which only supervises a policy. The pin
 # is EXACT: the two wheels are one build of one Cargo.toml, and
-# `waddle._native` refuses a mismatched pair at import rather than loading a
+# `waddle_sdk._native` refuses a mismatched pair at import rather than loading a
 # core built from other sources.
 #
 # This literal is the ONE version in this project that maturin does not
@@ -63,7 +63,7 @@ dev = [
 [tool.maturin]
 manifest-path = "rust/Cargo.toml"
 python-source = "python"
-module-name = "waddle._core"
+module-name = "waddle_sdk._core"
 # Keep extension-module OUT of Cargo.toml so plain cargo clippy/check work.
 # `grpc` is in the DEFAULT build: a supervision layer whose default install
 # cannot reach the supervision plane would be a strange thing to ship, and

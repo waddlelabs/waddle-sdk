@@ -39,7 +39,7 @@ fn all_golden_sidecars_parse_and_round_trip_semantically() {
         let envelope: serde_json::Value = serde_json::from_str(&raw).unwrap();
         assert_eq!(
             envelope["format"],
-            "waddle.fixture/v0",
+            "waddle_sdk.fixture/v0",
             "{}: bad envelope format",
             path.display()
         );

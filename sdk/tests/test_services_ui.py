@@ -10,9 +10,9 @@ from dataclasses import dataclass
 import numpy as np
 import pytest
 
-import waddle
-from waddle import _services
-from waddle._ui import UIHandle
+import waddle_sdk
+from waddle_sdk import _services
+from waddle_sdk._ui import UIHandle
 
 
 @dataclass(frozen=True)
@@ -23,16 +23,16 @@ class _Stamp:
 
 class _ManagedRig:
     def __init__(self) -> None:
-        self.robot = waddle.Robot(
+        self.robot = waddle_sdk.Robot(
             name="rgbd",
-            action_space=waddle.JointSpace(joints=["j0"]),
+            action_space=waddle_sdk.JointSpace(joints=["j0"]),
             cameras={
-                "wrist": waddle.Camera(
+                "wrist": waddle_sdk.Camera(
                     width=2,
                     height=2,
                     fps=10,
                     frame_id="cam_wrist",
-                    intrinsics=waddle.Intrinsics(
+                    intrinsics=waddle_sdk.Intrinsics(
                         fx=100,
                         fy=100,
                         cx=0,
@@ -42,7 +42,7 @@ class _ManagedRig:
                 )
             },
         )
-        self.sample = waddle.CameraSample(
+        self.sample = waddle_sdk.CameraSample(
             stamp=_Stamp(),
             frame_sequence=7,
             rgb=np.arange(12, dtype=np.uint8).reshape(2, 2, 3),
@@ -273,7 +273,7 @@ def test_rgbd_click_is_exactly_correlated_and_sends_no_pixel_arrays():
     ]
     assert all(not isinstance(value, np.ndarray) for value in native.measurements[0])
 
-    managed.sample = waddle.CameraSample(
+    managed.sample = waddle_sdk.CameraSample(
         stamp=_Stamp(session_ns=92),
         frame_sequence=8,
         rgb=np.zeros((2, 2, 3), dtype=np.uint8),

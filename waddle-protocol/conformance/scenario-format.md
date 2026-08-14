@@ -1,4 +1,4 @@
-# Behavioral scenario format — `waddle.behavior/v0`
+# Behavioral scenario format — `waddle_sdk.behavior/v0`
 
 **Normative.** Every file in `fixtures/behaviors/` follows this schema, and every
 conformance runner implements exactly this schema. If a runner and this document
@@ -12,7 +12,7 @@ conforming implementation must produce identical results on every run.
 
 ```json
 {
-  "format": "waddle.behavior/v0",
+  "format": "waddle_sdk.behavior/v0",
   "name": "snake_case_scenario_name",
   "description": "one-line human description",
   "target": "fsm",

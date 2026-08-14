@@ -2,7 +2,7 @@
 you exactly the same one.
 
 `rig.session(...)` is composition sugar over pieces that are each usable
-alone: the arms, the verbs, `waddle.init`, the console recovery, the
+alone: the arms, the verbs, `waddle_sdk.init`, the console recovery, the
 reporting pump, the hold a finished mission takes on live hardware, and the
 shutdown. This file gates three things about it.
 
@@ -10,7 +10,7 @@ shutdown. This file gates three things about it.
   not by a `finally:` the customer remembered to write — the footgun test
   below raises inside the body and then reads the recording back.
 * **It is sugar, not a wall.** The hand-wired composition — `yam.declaration`,
-  drivers, `base.Arm`, `waddle.Control`, a plain `waddle.init`, `RobotPump` —
+  drivers, `base.Arm`, `waddle_sdk.Control`, a plain `waddle_sdk.init`, `RobotPump` —
   opens a session byte-identical to the one `rig.session()` opens: same
   registered robot JSON, same everything else `create_session` is handed. And
   a customer's own `send` callable still REPLACES the shipped envelope when it
@@ -38,13 +38,13 @@ import pytest
 from mcap.reader import make_reader
 from mcap_protobuf.decoder import DecoderFactory
 
-import waddle
-import waddle._testing
-from waddle.robots import base, yam
+import waddle_sdk
+import waddle_sdk._testing
+from waddle_sdk.robots import base, yam
 
-#: The compiled core, captured before any test shims `waddle.core` (the
-#: golden below records what `waddle.init` hands it).
-_CORE = waddle.core
+#: The compiled core, captured before any test shims `waddle_sdk.core` (the
+#: golden below records what `waddle_sdk.init` hands it).
+_CORE = waddle_sdk.core
 
 #: Bounded only so a broken build fails instead of hanging; every wait below
 #: ends on an observation, never on the clock.
@@ -63,7 +63,7 @@ OFFER_INTERVAL_S = 0.1
 @pytest.fixture(autouse=True)
 def _clean_session():
     yield
-    waddle.shutdown()
+    waddle_sdk.shutdown()
 
 
 @pytest.fixture(autouse=True)
@@ -219,7 +219,7 @@ class _Offer:
         now = time.monotonic()
         if now >= self._next:
             session, values, part = self._push
-            waddle._testing.push_chunk(session, values, part=part)
+            waddle_sdk._testing.push_chunk(session, values, part=part)
             self._next = now + OFFER_INTERVAL_S
 
 
@@ -290,7 +290,7 @@ def test_the_session_opens_the_arms_and_keeps_every_part_reporting(tmp_path):
         assert s.core is not None
         assert (s.accepted, s.rejected) == (0, 0)
         ticks = _count_ticks(s.arms)
-        with waddle.rollout(task="hold still while the parts report") as ep:
+        with waddle_sdk.rollout(task="hold still while the parts report") as ep:
             episode_id = ep.id
             _until(
                 lambda: all(n[0] >= 2 for n in ticks.values()),
@@ -304,7 +304,7 @@ def test_the_session_opens_the_arms_and_keeps_every_part_reporting(tmp_path):
 def test_the_program_only_gates_and_applies(tmp_path):
     rig = _bimanual()
     with rig.session("yam-drive", recording_dir=tmp_path) as s:
-        with waddle.rollout(task="one commanded step") as ep:
+        with waddle_sdk.rollout(task="one commanded step") as ep:
             position = np.concatenate(
                 [s.arms[p].state()[0] for p in ("left_arm", "right_arm")]
             )
@@ -333,7 +333,7 @@ def test_an_exception_inside_the_body_still_finalizes_the_recording(tmp_path):
         with rig.session("yam-footgun", recording_dir=tmp_path) as s:
             for part, arm in s.arms.items():
                 _watch(arm, "close", lambda part=part: closed.append(part))
-            with waddle.rollout(task="raise in the middle of a rollout") as ep:
+            with waddle_sdk.rollout(task="raise in the middle of a rollout") as ep:
                 episode.append(ep.id)
                 raise RuntimeError("the policy blew up")
 
@@ -348,7 +348,7 @@ def test_an_exception_inside_the_body_still_finalizes_the_recording(tmp_path):
     # holding a half-written file.
     _observations(tmp_path / f"{episode_id}.mcap")
     assert sorted(closed) == ["left_arm", "right_arm"]
-    assert waddle._session is None, "the session was left open by an unwinding exit"
+    assert waddle_sdk._session is None, "the session was left open by an unwinding exit"
 
 
 def test_the_recording_directory_a_program_names_is_the_one_it_gets(tmp_path):
@@ -362,7 +362,7 @@ def test_the_recording_directory_a_program_names_is_the_one_it_gets(tmp_path):
 
     rig = _bimanual()
     with rig.session("yam-recordings", recording_dir=recordings):
-        with waddle.rollout(task="land in a directory nobody made") as ep:
+        with waddle_sdk.rollout(task="land in a directory nobody made") as ep:
             episode_id = ep.id
             ep.terminate("success")
 
@@ -407,18 +407,18 @@ def test_a_customers_own_send_is_the_whole_envelope(tmp_path):
         "yam-own-envelope", recording_dir=tmp_path, _testing=True, send=my_send
     ) as s:
         assert s.control.send is my_send
-        with waddle.rollout(task="a teleoperator drives") as ep:
+        with waddle_sdk.rollout(task="a teleoperator drives") as ep:
             # One tick of the program's own loop drives the episode to
             # RUNNING; after it the loop stalls, which is the BYPASS path — the
             # one that reaches the registered `send` verb.
             ep.gate(np.zeros(2 * yam.JOINT_COUNT))
-            waddle._testing.engage(s.core, "claim-envelope", "teleop")
+            waddle_sdk._testing.engage(s.core, "claim-envelope", "teleop")
             _until(
                 lambda: chunks,
                 "the customer's own send never received the intervention",
                 tick=_Offer(s.core, np.full(yam.JOINT_COUNT, 0.05), "left_arm"),
             )
-            waddle._testing.release(s.core, "claim-envelope")
+            waddle_sdk._testing.release(s.core, "claim-envelope")
             ep.terminate("success")
 
         assert (s.accepted, s.rejected) == (0, 0), (
@@ -490,7 +490,7 @@ def test_an_interrupted_mission_is_not_asked_to_park_itself(tmp_path):
 
     assert not watchdog.held.is_set(), "an interrupted mission held for a gesture"
     assert order == ["closed:left_arm", "closed:right_arm"]
-    assert waddle._session is None
+    assert waddle_sdk._session is None
 
 
 # --------------------------------------------------------------------------
@@ -585,7 +585,7 @@ def test_a_session_that_cannot_open_closes_the_arms_it_opened(tmp_path):
     path and refuses a session that offers no verb to follow it.
 
     The refusal names the VERB, not the posture, and nothing in
-    `waddle.robots` rephrases it — an engage-path rule has exactly one home,
+    `waddle_sdk.robots` rephrases it — an engage-path rule has exactly one home,
     and the posture's own documentation is where that cost is written down.
     The refusal is still what the caller sees."""
     closed: list[str] = []
@@ -596,7 +596,7 @@ def test_a_session_that_cannot_open_closes_the_arms_it_opened(tmp_path):
             pytest.fail("the session opened with no way to actuate")
 
     assert closed == ["closed:left_arm", "closed:right_arm"]
-    assert waddle._session is None
+    assert waddle_sdk._session is None
 
 
 def test_a_monitor_session_records_without_a_plane(tmp_path):
@@ -613,7 +613,7 @@ def test_a_monitor_session_records_without_a_plane(tmp_path):
         # other. Something has to make the gesture.
         watchdog = _ParkWatchdog(s.park)
         ticks = _count_ticks(s.arms)
-        with waddle.rollout(task="watch only") as ep:
+        with waddle_sdk.rollout(task="watch only") as ep:
             episode_id = ep.id
             _until(
                 lambda: all(n[0] >= 1 for n in ticks.values()),
@@ -648,7 +648,7 @@ def _shape(kwargs: dict) -> dict:
 
 
 def _record_sessions(monkeypatch) -> list[dict]:
-    """Capture every argument `waddle.init` hands the core."""
+    """Capture every argument `waddle_sdk.init` hands the core."""
     calls: list[dict] = []
 
     class _Recorder:
@@ -656,13 +656,13 @@ def _record_sessions(monkeypatch) -> list[dict]:
             calls.append(dict(kwargs))
             return _CORE.create_session(**kwargs)
 
-    monkeypatch.setattr(waddle, "core", _Recorder())
+    monkeypatch.setattr(waddle_sdk, "core", _Recorder())
     return calls
 
 
 def _one_commanded_step(arms) -> dict[str, tuple[int, int]]:
     """The same script on either composition."""
-    with waddle.rollout(task="one commanded step") as ep:
+    with waddle_sdk.rollout(task="one commanded step") as ep:
         position = np.concatenate(
             [arms[p].state()[0] for p in ("left_arm", "right_arm")]
         )
@@ -678,7 +678,7 @@ def test_the_hand_wired_composition_is_the_session_the_rig_opens(
 ):
     """THE AMENDMENT, item 7. Every block is a first-class product and the
     session is sugar over them — so a program that wires `yam.declaration()`,
-    its own drivers, `base.Arm`, `waddle.Control`, `waddle.init`, the console
+    its own drivers, `base.Arm`, `waddle_sdk.Control`, `waddle_sdk.init`, the console
     recovery and a `RobotPump` by hand must get the SAME session, down to the
     bytes of the robot JSON that registers it.
 
@@ -719,12 +719,12 @@ def test_the_hand_wired_composition_is_the_session_the_rig_opens(
             home_values=home,
             rate_hz=yam.DEFAULT_RATE_HZ,
         )
-    verbs = waddle.Control(
+    verbs = waddle_sdk.Control(
         send=base.chunk_sender(arms),
         hold=lambda: base.hold_all(arms),
         estop=lambda: base.estop_all(arms),
     )
-    session = waddle.init(
+    session = waddle_sdk.init(
         "yam-golden",
         robot,
         verbs,
@@ -745,7 +745,7 @@ def test_the_hand_wired_composition_is_the_session_the_rig_opens(
         if console is not None:
             console.retire()
         pump.stop()
-        waddle.shutdown()
+        waddle_sdk.shutdown()
         base.close_all(arms)
 
     # --- the same thing, as sugar -----------------------------------------
@@ -772,7 +772,7 @@ def test_the_hand_wired_composition_is_the_session_the_rig_opens(
 
 
 def test_the_parts_keep_reporting_while_the_caller_is_blocked_in_agent(tmp_path):
-    """`waddle.agent()` blocks the calling thread for the whole run, so the
+    """`waddle_sdk.agent()` blocks the calling thread for the whole run, so the
     robot's own loop has to be somewhere else — and a customer who has to
     remember to start it is a customer whose agent run reports nothing. The
     session owns it."""
@@ -782,7 +782,7 @@ def test_the_parts_keep_reporting_while_the_caller_is_blocked_in_agent(tmp_path)
 
     def run() -> None:
         try:
-            box["result"] = waddle.agent("stack the cups", timeout_s=60.0)
+            box["result"] = waddle_sdk.agent("stack the cups", timeout_s=60.0)
         except BaseException as exc:  # re-raised on the main thread below
             box["error"] = exc
 
@@ -798,14 +798,14 @@ def test_the_parts_keep_reporting_while_the_caller_is_blocked_in_agent(tmp_path)
             _until(
                 engaged.is_set,
                 "the agent's claim never engaged",
-                tick=lambda: waddle._testing.engage(s.core, "agent-claim", "agent"),
+                tick=lambda: waddle_sdk._testing.engage(s.core, "agent-claim", "agent"),
             )
             before = {part: n[0] for part, n in ticks.items()}
             _until(
                 lambda: all(n[0] > before[part] for part, n in ticks.items()),
                 "the parts stopped reporting while the caller was blocked",
             )
-            waddle._testing.mark_done(s.core, "success", "the agent is done")
+            waddle_sdk._testing.mark_done(s.core, "success", "the agent is done")
         finally:
             caller.join(timeout=PATIENCE_S)
 

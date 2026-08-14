@@ -67,8 +67,8 @@ pub(crate) fn spawn_outcome_pump(
 /// The wire `source_id` the bypass pump's own dispatches are recorded
 /// under. `ActionChunk.seq` is "monotone per stream" and the pump is a
 /// SECOND stream into the same episode alongside the caller's gate
-/// (`waddle.gate`), so it gets its own name and its own seq space.
-pub(crate) const BYPASS_PUMP_SOURCE: &str = "waddle.bypass-pump";
+/// (`waddle_sdk.gate`), so it gets its own name and its own seq space.
+pub(crate) const BYPASS_PUMP_SOURCE: &str = "waddle_sdk.bypass-pump";
 
 /// One action the bypass pump drove straight to the declared `send` verb —
 /// the moment an intervenor's action actually reaches the robot WITHOUT

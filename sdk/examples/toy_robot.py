@@ -10,7 +10,7 @@ self-contained; swap :class:`ToyArm` for your real driver and nothing else
 about the Waddle side changes.
 
 It runs in three configurations, and the difference is entirely in what you
-pass to :func:`waddle.init`:
+pass to :func:`waddle_sdk.init`:
 
 **Offline (no configuration at all).** Everything below runs: the loop
 gates every action, the arm moves, and each episode lands on disk as a
@@ -28,7 +28,7 @@ bounded exception to "no pixels on the control plane" — which is what lets
 a Waddle-hosted agent see the scene with no media plane wired at all.
 
 **Agent** (``WADDLE_TOY_MODE=agent``, with a transport). After one warm-up
-rollout the program calls :func:`waddle.agent` — "Waddle, drive this one" —
+rollout the program calls :func:`waddle_sdk.agent` — "Waddle, drive this one" —
 and blocks while a hosted agent claims the episode and drives the arm
 through the same ``send`` verb. It prints the result and exits 0 on
 success.
@@ -78,14 +78,14 @@ from pathlib import Path
 
 import numpy as np
 
-import waddle
-from waddle.robots import base
+import waddle_sdk
+from waddle_sdk.robots import base
 
 # --------------------------------------------------------------------------
 # The robot: one source of truth for the kinematics.
 #
 # `_CHAIN` below is the ONLY place link geometry and joint limits are
-# written down. The URDF Waddle records, the `waddle.Joint` limits it plans
+# written down. The URDF Waddle records, the `waddle_sdk.Joint` limits it plans
 # against, and the simulator's own integrator all derive from it — so they
 # cannot drift apart, which is the failure this shape exists to prevent.
 # --------------------------------------------------------------------------
@@ -366,16 +366,16 @@ class ToyArm:
         return frame
 
 
-def robot_description() -> waddle.Robot:
+def robot_description() -> waddle_sdk.Robot:
     """Everything Waddle needs to know about the machine. Declaration only:
     no behavior is decided here."""
-    return waddle.Robot(
+    return waddle_sdk.Robot(
         name="waddle-toy-arm",
         robot_id="toy-01",
         cell_id="toy-cell",
-        action_space=waddle.JointSpace(
+        action_space=waddle_sdk.JointSpace(
             joints=[
-                waddle.Joint(
+                waddle_sdk.Joint(
                     name=link.name,
                     min_position=link.lower,
                     max_position=link.upper,
@@ -386,23 +386,23 @@ def robot_description() -> waddle.Robot:
             ],
             rate_hz=CONTROL_HZ,
             # One action per tick, replaced as soon as the next arrives.
-            chunking=waddle.Chunking(horizon=1, replan="immediate", interp="hold"),
+            chunking=waddle_sdk.Chunking(horizon=1, replan="immediate", interp="hold"),
             # NOT 0/1: a claimant's normalized command is mapped onto these
             # declared metres before it reaches `send`.
-            gripper=waddle.Gripper.parallel(open=GRIPPER_OPEN_M, closed=GRIPPER_CLOSED_M),
+            gripper=waddle_sdk.Gripper.parallel(open=GRIPPER_OPEN_M, closed=GRIPPER_CLOSED_M),
         ),
         cameras={
-            CAMERA_NAME: waddle.Camera(
+            CAMERA_NAME: waddle_sdk.Camera(
                 width=CAMERA_W,
                 height=CAMERA_H,
                 fps=CONTROL_HZ,
                 encoding="rgb8",
                 frame_id=_CAMERA_FRAME,
-                stream_policy=waddle.StreamPolicy(
+                stream_policy=waddle_sdk.StreamPolicy(
                     # A low-rate video track for a human teleoperator — live
                     # only when a media plane is wired (the `[teleop]`
                     # extra); inert otherwise.
-                    uplink=waddle.Uplink(fps=10, encoding="rgb8", max_kbps=1500),
+                    uplink=waddle_sdk.Uplink(fps=10, encoding="rgb8", max_kbps=1500),
                     # 2 stills/second onto the CONTROL plane, so a hosted
                     # agent can see the scene with no media plane at all.
                     # Bounded by this declaration, and by nothing else.
@@ -415,7 +415,7 @@ def robot_description() -> waddle.Robot:
         # tool. The tool's own pose moves every tick and is reported as
         # proprioception, not declared here.
         frames=(
-            waddle.FrameTransform(
+            waddle_sdk.FrameTransform(
                 parent=_TOOL_FRAME, child=_CAMERA_FRAME, position=(0.02, 0.0, 0.01)
             ),
         ),
@@ -444,7 +444,7 @@ def robot_tick(session, arm: ToyArm, dt: float) -> None:
 
     This is deliberately separate from the gate tick, because in agent mode
     it has to keep running on a background thread while the main thread is
-    blocked inside ``waddle.agent()`` — the arm still moves, and the agent
+    blocked inside ``waddle_sdk.agent()`` — the arm still moves, and the agent
     still needs to see it."""
     arm.step(dt)
     # A camera declared with nowhere to send (no media plane, no stills on a
@@ -472,7 +472,7 @@ def run_rollout(session, arm: ToyArm, number: int, task: str, seconds: float) ->
     period = 1.0 / CONTROL_HZ
     ticks = max(1, int(seconds * CONTROL_HZ))
     action = _HOME
-    with waddle.rollout(task=task) as ep:
+    with waddle_sdk.rollout(task=task) as ep:
         status(f"rollout {number} start id={ep.id} task={task!r}")
         deadline = time.monotonic()
         for tick in range(ticks):
@@ -556,11 +556,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
     if args.mode == "agent" and not args.transport:
-        # `waddle.agent()` refuses a session that declared no transport
+        # `waddle_sdk.agent()` refuses a session that declared no transport
         # anyway (there would be nobody to ask) — this only moves that same
         # refusal to before the warm-up rollout, so the program does not do
         # a minute of work and then discover it. The rule itself lives in
-        # `waddle.agent`; this example does not restate it.
+        # `waddle_sdk.agent`; this example does not restate it.
         status("agent mode needs a supervision plane: set WADDLE_TOY_TRANSPORT=<grpc url>")
         return 2
 
@@ -569,7 +569,7 @@ def main(argv: list[str] | None = None) -> int:
     def send(chunk) -> None:
         """Waddle drives the robot through this, from its own dispatch
         thread, whenever something has the lease: a teleoperator, a reset
-        agent, or the hosted agent :func:`waddle.agent` invites. The chunk's
+        agent, or the hosted agent :func:`waddle_sdk.agent` invites. The chunk's
         gripper value already arrives in the metres this robot declared."""
         for values, gripper, _offset_ns in chunk.steps:
             # A real controller would schedule each step at its own
@@ -589,15 +589,15 @@ def main(argv: list[str] | None = None) -> int:
             return False
         return True
 
-    control = waddle.Control(send=send, hold=arm.hold, estop=arm.estop)
+    control = waddle_sdk.Control(send=send, hold=arm.hold, estop=arm.estop)
 
     recording_dir = Path(args.recording_dir).expanduser()
     recording_dir.mkdir(parents=True, exist_ok=True)
 
-    transport = waddle.Grpc(args.transport, args.token) if args.transport else None
-    media = waddle.LiveKit(args.media, args.media_token) if args.media else None
+    transport = waddle_sdk.Grpc(args.transport, args.token) if args.transport else None
+    media = waddle_sdk.LiveKit(args.media, args.media_token) if args.media else None
 
-    session = waddle.init(
+    session = waddle_sdk.init(
         "waddle-toy-robot",
         robot_description(),
         control,
@@ -620,7 +620,7 @@ def main(argv: list[str] | None = None) -> int:
         status("interrupted")
         return 0
     finally:
-        waddle.shutdown()
+        waddle_sdk.shutdown()
         status("shutdown")
 
 
@@ -638,12 +638,12 @@ def run_agent_mode(session, arm: ToyArm, args: argparse.Namespace) -> int:
     episode to Waddle."""
     run_rollout(session, arm, 1, "warm-up before the agent run", args.episode_seconds)
 
-    # `waddle.agent()` blocks this thread for the whole run, so the robot's
+    # `waddle_sdk.agent()` blocks this thread for the whole run, so the robot's
     # own loop moves to a background thread: the arm keeps integrating the
     # agent's commands, and the camera keeps feeding the stills the agent
     # perceives through.
     #
-    # The loop is the SDK's (`waddle.robots.base.RobotPump`) and the tick is
+    # The loop is the SDK's (`waddle_sdk.robots.base.RobotPump`) and the tick is
     # this program's: the pump knows nothing about arms, so a robot with its
     # own housekeeping hands it its own callable. Writing the deadline loop
     # here instead is how two copies of it start drifting.
@@ -653,7 +653,7 @@ def run_agent_mode(session, arm: ToyArm, args: argparse.Namespace) -> int:
     pump.start()
     status(f"agent invite prompt={args.prompt!r} timeout_s={args.agent_timeout}")
     try:
-        result = waddle.agent(args.prompt, timeout_s=args.agent_timeout)
+        result = waddle_sdk.agent(args.prompt, timeout_s=args.agent_timeout)
     finally:
         pump.stop()
 

@@ -15,7 +15,7 @@ real machine.
 
 It shows, in one place:
 
-- a full [`Robot`](../python/waddle/descriptors.py) declaration — per-joint
+- a full [`Robot`](../python/waddle_sdk/descriptors.py) declaration — per-joint
   limits, a parallel gripper declared in **metres** (`0.0` open, `0.04`
   closed, deliberately not 0/1), a generated 6-joint URDF, and a camera
   with a `StreamPolicy`;
@@ -31,7 +31,7 @@ It shows, in one place:
 - a scripted `pre_reset` hook, run before every episode — which declines,
   rather than vouching for a scene it did not reset, while the simulated
   e-stop is latched (only a human clears that, never the reset flow);
-- `waddle.agent(prompt)` — handing a whole episode to Waddle.
+- `waddle_sdk.agent(prompt)` — handing a whole episode to Waddle.
 
 ### Run it offline
 
@@ -96,7 +96,7 @@ WADDLE_TOY_PROMPT="pick up the block" \
 uv run python examples/toy_robot.py
 ```
 
-After one warm-up rollout the program calls `waddle.agent(prompt)`, which
+After one warm-up rollout the program calls `waddle_sdk.agent(prompt)`, which
 opens an episode Waddle drives and blocks until it ends. The robot's own
 20 Hz loop moves to a background thread for the duration — the arm still
 integrates the agent's commands and the camera still feeds the stills the
@@ -172,25 +172,25 @@ teleoperator or a Waddle-hosted agent can address either arm by name:
 ```python
 rig = yam.bimanual(workspace=WORKSPACE_M, gripper_limits=GRIPPER_LIMITS_MOTOR_RAD,
                    cross_arm=CROSS_ARM, sim=True)
-with rig.session("waddle-yam-bimanual", transport=waddle.Grpc(url, token)) as session:
-    result = waddle.agent("move each arm to its taught home, one at a time")
+with rig.session("waddle-yam-bimanual", transport=waddle_sdk.Grpc(url, token)) as session:
+    result = waddle_sdk.agent("move each arm to its taught home, one at a time")
 ```
 
 That is the whole program. What `toy_robot.py` writes out by hand —
 the declaration, the `send`/`hold`/`estop` verbs, the owner's per-command
 envelope, the e-stop latch, the reporting loop, the scene reset, the hold a
 finished mission takes on live hardware — is what
-[`waddle.robots.yam`](../python/waddle/robots/yam.py) already carries for
+[`waddle_sdk.robots.yam`](../python/waddle_sdk/robots/yam.py) already carries for
 this rig. None of it is hidden: `rig.robot()`, `rig.arms()`,
 `rig.control(arms)`, `rig.pump(session, arms)` are the same pieces
 separately, and a program that wants its own loop or its own envelope takes
-them and calls `waddle.init` itself.
+them and calls `waddle_sdk.init` itself.
 
 The example uses `rig.session(...)` because a `with` block owns its whole
 lifetime. A service or notebook that already has a shutdown boundary can use
 the equivalent process-owned form; this opens the arms and any structural
 camera drivers, starts their pumps, and closes all of them at
-`waddle.shutdown()`:
+`waddle_sdk.shutdown()`:
 
 ```python
 rig = yam.bimanual(
@@ -199,16 +199,16 @@ rig = yam.bimanual(
     cross_arm=CROSS_ARM,
     sim=True,
 )
-waddle.init(
+waddle_sdk.init(
     "waddle-yam-bimanual",
     rig=rig,
-    transport=waddle.Grpc(url, token),
+    transport=waddle_sdk.Grpc(url, token),
 )
 try:
-    dashboard = waddle.ui()
-    result = waddle.agent("move each arm to its taught home, one at a time")
+    dashboard = waddle_sdk.ui()
+    result = waddle_sdk.agent("move each arm to its taught home, one at a time")
 finally:
-    waddle.shutdown()
+    waddle_sdk.shutdown()
 ```
 
 In that UI, local jog remains disabled until **Take Local Control** completes
@@ -228,7 +228,7 @@ WADDLE_YAM_TOKEN=<token> \
 ```
 
 The transport is not optional here, unlike in `toy_robot.py`: these five
-lines end in `waddle.agent()`, so with no `WADDLE_YAM_TRANSPORT` the program
+lines end in `waddle_sdk.agent()`, so with no `WADDLE_YAM_TRANSPORT` the program
 says what it needs and exits 2 before a session opens. (A rig itself needs no
 plane — `rig.session(...)` without one is a local recorder a program drives
 from its own loop — that is just not what this file does.)

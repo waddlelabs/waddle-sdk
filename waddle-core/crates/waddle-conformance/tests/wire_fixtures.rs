@@ -50,7 +50,7 @@ fn every_wire_fixture_parses_strictly_and_round_trips() {
             serde_json::from_str(&raw).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
         assert_eq!(
             envelope["format"],
-            "waddle.fixture/v0",
+            "waddle_sdk.fixture/v0",
             "{}: bad envelope format",
             path.display()
         );

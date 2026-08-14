@@ -1,7 +1,7 @@
 """The I2RT YAM: what one is, in numbers, and what you can build out of one.
 
 A robot module is facts plus a driver plus a factory, on top of
-:mod:`waddle.robots.base`, and this file is all three for the YAM:
+:mod:`waddle_sdk.robots.base`, and this file is all three for the YAM:
 
 * the FACTS — the six arm joints, their limits, the kinematic chain, the tool
   frame, the hand's stroke — and the :func:`forward_kinematics` they describe;
@@ -11,7 +11,7 @@ A robot module is facts plus a driver plus a factory, on top of
   hand-wired program can take on its own, and the rigs that pair it with
   drivers, the owner's envelope and a reporting loop.
 
-Every one of those stands alone: take the declaration and wire `waddle.init`
+Every one of those stands alone: take the declaration and wire `waddle_sdk.init`
 yourself, take the driver and put your own envelope in front of it, or take a
 rig and get all of it. Nothing here holds a lease or decides who may command
 anything — that is waddle-core's, whichever piece you take.
@@ -202,7 +202,7 @@ ARM_JOINT_LIMITS_RAD = (
 #:
 #: Waddle mandates no units here: ``GripperCommand.position`` is "in the
 #: declared ``GripperSpec``'s open/closed units", which is why
-#: :meth:`waddle.descriptors.Gripper.parallel` takes ``open`` and ``closed``
+#: :meth:`waddle_sdk.descriptors.Gripper.parallel` takes ``open`` and ``closed``
 #: at all. So a YAM declaration must state ``open=1.0, closed=0.0`` — do that
 #: and no conversion happens anywhere: the number a teleoperator's command
 #: carries is the number the motor takes. Move these units and the
@@ -335,7 +335,7 @@ def forward_kinematics(
     legal arm: it reports joint positions, its proprioception carries no
     ``ee_pose``, and the features that need one degrade by NAME rather than
     by producing a pose from nowhere. Hand this function to
-    :class:`~waddle.robots.base.Arm` (the YAM factories do) to have the pose.
+    :class:`~waddle_sdk.robots.base.Arm` (the YAM factories do) to have the pose.
 
     Takes the SIX arm joints, not the seven-row part vector: the seventh row
     is the gripper, and walking it into the chain would put the tool
@@ -443,7 +443,7 @@ class LiveDriver:
 
     Deliberately thin. What it reproduces is only what the vendor package
     requires, and the vendor package is imported LAZILY, inside ``__init__``:
-    importing :mod:`waddle.robots.yam` on a machine that has never seen a YAM
+    importing :mod:`waddle_sdk.robots.yam` on a machine that has never seen a YAM
     is an ordinary import, and only asking for a live arm requires the
     vendor's code to be there.
 
@@ -482,7 +482,7 @@ class LiveDriver:
     limp, and every episode after the stop reads SUCCESS. So the latch is set
     with the stop, every write is refused while it holds, and the one way out
     is :meth:`re_enable` — gains back, measured pose held — driven by a human
-    at the machine (`waddle.robots.base.start_console_recovery`), never by the
+    at the machine (`waddle_sdk.robots.base.start_console_recovery`), never by the
     wire and never by the next episode's reset.
 
     ``zero_gravity=True`` builds the arm compliant and hand-movable, and this
@@ -741,7 +741,7 @@ def declaration(
 
     Public and standing alone on purpose. The factories below build one of
     these, but a program that wants none of the rest of this module — its own
-    driver, its own loop, a plain ``waddle.init`` — should not have to reach
+    driver, its own loop, a plain ``waddle_sdk.init`` — should not have to reach
     into a rig to get the declaration, and should get exactly the one a
     factory would have registered.
 
@@ -1096,7 +1096,7 @@ def bimanual(
     ``sim`` is explicit and never inferred — nothing here try-imports the
     vendor package to decide what a program meant. ``posture`` picks which
     control verbs the session registers (see
-    `waddle.robots.base.POSTURES`), and on live hardware ``"monitor"``
+    `waddle_sdk.robots.base.POSTURES`), and on live hardware ``"monitor"``
     additionally opens the arms compliant, so nothing can command them at
     either end.
 

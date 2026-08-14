@@ -64,13 +64,23 @@ waddle-sdk/
                    sidecar,codecs,runtime,ffi,conformance}
     xtask/                   # cbindgen header gen etc. (publish = false)
   sdk/                       # the Python `waddle-sdk` frontend (PyO3 + maturin)
-    pyproject.toml           # maturin backend; module waddle._core; uv-managed
+    pyproject.toml           # maturin backend; module waddle_sdk._core; uv-managed
     rust/                    # the shim: its OWN cargo workspace (see build notes)
-    python/waddle/           # pure-Python surface: init (legacy robot/control
+    python/waddle_sdk/       # THE IMPORTABLE PACKAGE IS `waddle_sdk`, not
+                             #   `waddle`: the closed backend owns that name and
+                             #   the two share an env (waddle -> waddle-metal ->
+                             #   this SDK). Co-installed they produced a SILENT
+                             #   hybrid import, not an error. Never rename this
+                             #   back. What is NOT renamed: the
+                             #   `waddle.execution.v1` entry-point group (a
+                             #   cross-repo contract waddle-metal registers),
+                             #   `waddle.v0` (the wire namespace), and recorded
+                             #   names (`/waddle/observations`, `waddle.testing`).
+                             #   pure-Python surface: init (legacy robot/control
                              #   OR managed rig=), rollout/Control/agent,
                              #   generic task_metadata, paired Session.stamp,
                              #   durable task/calibration/artifact facades in
-                             #   _services.py, and waddle.ui(): one authenticated
+                             #   _services.py, and waddle_sdk.ui(): one authenticated
                              #   127.0.0.1 server per active session. _ui.py
                              #   owns HTTP security/presentation/path resolution
                              #   only; ui_assets/ is dependency-free HTML/CSS/JS;
@@ -99,7 +109,7 @@ waddle-sdk/
                              #   same pieces opens a byte-identical session
                              #   (tests/test_yam_session.py). That lifecycle
                              #   is shared by rig.session(...) and
-                             #   waddle.init(rig=...), whose process ownership
+                             #   waddle_sdk.init(rig=...), whose process ownership
                              #   makes shutdown() deterministic. Its two ends
                              #   are the point — hardware opens inside the
                              #   `with` (a half-open rig closes what it
@@ -162,7 +172,7 @@ waddle-sdk/
                              #   connected, and agent modes) and is what to
                              #   read to learn the surface; yam_bimanual.py
                              #   is five Waddle-facing lines over a robot
-                             #   module (waddle.robots.yam) and a table of
+                             #   module (waddle_sdk.robots.yam) and a table of
                              #   the site numbers that have no defaults.
                              #   Both are tested as the PROGRAMS they are —
                              #   subprocess runs, not imports — so a
@@ -230,7 +240,7 @@ top-level dirs; they are not built yet.
   - **Two distributions from one source tree** (the psycopg / psycopg-binary
     shape). Both are one build of `rust/Cargo.toml`, so they can never
     disagree on a version:
-    - `waddle-sdk` (`sdk/pyproject.toml`, module `waddle._core`):
+    - `waddle-sdk` (`sdk/pyproject.toml`, module `waddle_sdk._core`):
       `[tool.maturin] features = ["pyo3/extension-module", "grpc"]`. The gRPC
       control transport is in the DEFAULT build — a supervision layer whose
       default install cannot reach the supervision plane would be a strange
@@ -250,7 +260,7 @@ top-level dirs; they are not built yet.
       build that an install which only supervises a policy should not pay
       for; measured on this tree, 3.7 MB wheel / 9.8 MB `.so` against
       16.7 MB / 45.1 MB — ~4.5x.
-    - `python/waddle/_native.py` is the ONE place that picks a core: the
+    - `python/waddle_sdk/_native.py` is the ONE place that picks a core: the
       bundled one unless a version-matched `waddle_teleop._core` is installed
       and `WADDLE_NO_TELEOP != "1"` (a mismatch warns and falls back).
       `_native.FEATURES` (a frozenset re-exported from the SELECTED core) is
@@ -263,7 +273,7 @@ top-level dirs; they are not built yet.
       bump must edit it — otherwise the extra resolves to the previous
       release and `_native` silently falls back to a core with no LiveKit.
       `tests/test_features.py` fails until the pin equals
-      `waddle.__version__`. Build and publish the two wheels together — in CI,
+      `waddle_sdk.__version__`. Build and publish the two wheels together — in CI,
       not by hand: see **Release** below and `docs/RELEASING.md`.
   - Build the wheels with `uv build --wheel -o dist .` and `uv build --wheel
     -o dist teleop` (`dist/` is git-ignored). Both `[tool.maturin]` blocks
@@ -297,7 +307,7 @@ top-level dirs; they are not built yet.
     -datatrack 0.1.11): the newest published set does not compile
     (livekit-api 0.5.6 against livekit-protocol 0.7.12). Pin in BOTH locks,
     or the shim's `livekit` feature breaks while core's stays green.
-  - The built extensions (`python/waddle/_core*.so`,
+  - The built extensions (`python/waddle_sdk/_core*.so`,
     `teleop/python/waddle_teleop/_core*.so`) and `dist/` are build artifacts,
     never checked in.
 
@@ -341,7 +351,7 @@ there is no test/CI workflow yet, so the local gates above are still the gate.
   `waddle-core` exactly once (`waddle-fsm` is the behavioral conformance target). If a
   binding or frontend grows an `if` about claims, leases, handoffs, or timelines, that
   is a defect. The Python-specific review checklist lives in `sdk/README.md`.
-  `python/waddle/robots/` is owner-side code that ships in the frontend, and the same
+  `python/waddle_sdk/robots/` is owner-side code that ships in the frontend, and the same
   rule binds it: it enforces the OWNER's envelope (limits arithmetic on the owner's own
   numbers, refusing whole and never clamping) and asks nothing about who may command
   what. The part an action addresses is the core's answer — indexed, never validated.
