@@ -11,6 +11,14 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+### Fixed
+
+- Make the authenticated loopback UI load its assets and API relative to an
+  SSH/dev-machine reverse-proxy base path, preserve the proxy authentication
+  query when hiding the UI fragment token, and admit browser-attested
+  same-origin proxy POSTs without weakening the loopback Host or bearer-token
+  checks.
+
 ### Changed
 - **BREAKING (pre-release): the importable package is now `waddle_sdk`, not
   `waddle`.** `pip install waddle-sdk` then `import waddle_sdk`; the

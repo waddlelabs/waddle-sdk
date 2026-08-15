@@ -158,13 +158,22 @@ class _Handler(BaseHTTPRequestHandler):
             self._reject(HTTPStatus.FORBIDDEN, "invalid loopback Host")
             return False
         origin = self.headers.get("Origin")
-        if mutation and origin != self.server.origin:
-            self._reject(HTTPStatus.FORBIDDEN, "invalid loopback Origin")
-            return False
-        if origin is not None and origin != self.server.origin:
-            self._reject(HTTPStatus.FORBIDDEN, "invalid loopback Origin")
-            return False
         fetch_site = self.headers.get("Sec-Fetch-Site")
+        # A browser reaching this loopback server through an SSH/dev-machine
+        # reverse proxy sees the proxy as its origin while the proxy rewrites
+        # Host to the loopback listener. Sec-Fetch-Site is a forbidden browser
+        # header, so "same-origin" is the browser's own assertion that the UI
+        # page and this request share that external proxy origin. The bearer
+        # token and exact upstream loopback Host remain mandatory below.
+        origin_ok = origin == self.server.origin or (
+            origin is not None and fetch_site == "same-origin"
+        )
+        if mutation and not origin_ok:
+            self._reject(HTTPStatus.FORBIDDEN, "invalid loopback Origin")
+            return False
+        if origin is not None and not origin_ok:
+            self._reject(HTTPStatus.FORBIDDEN, "invalid loopback Origin")
+            return False
         if fetch_site not in (None, "none", "same-origin"):
             self._reject(HTTPStatus.FORBIDDEN, "cross-site request refused")
             return False

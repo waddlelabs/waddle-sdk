@@ -2,7 +2,11 @@
 
 const fragment = new URLSearchParams(location.hash.slice(1));
 const token = fragment.get("token") || "";
-history.replaceState(null, "", location.pathname);
+const baseUrl = new URL(location.href);
+baseUrl.hash = "";
+baseUrl.search = "";
+if (!baseUrl.pathname.endsWith("/")) baseUrl.pathname += "/";
+history.replaceState(null, "", `${location.pathname}${location.search}`);
 const headers = {"X-Waddle-Token": token, "X-Waddle-Request": "1"};
 let state = null;
 let deadman = null;
@@ -15,7 +19,7 @@ let activeTaskKey = null;
 async function api(path, options = {}) {
   const request = {...options, headers: {...headers, ...(options.headers || {})}};
   if (request.body !== undefined) request.headers["Content-Type"] = "application/json";
-  const response = await fetch(path, request);
+  const response = await fetch(new URL(path.replace(/^\/+/, ""), baseUrl), request);
   if (!response.ok) {
     let detail = `${response.status} ${response.statusText}`;
     try { detail = (await response.json()).error || detail; } catch (_) {}

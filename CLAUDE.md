@@ -83,8 +83,12 @@ waddle-sdk/
                              #   _services.py, and waddle_sdk.ui(): one authenticated
                              #   127.0.0.1 server per active session. _ui.py
                              #   owns HTTP security/presentation/path resolution
-                             #   only; ui_assets/ is dependency-free HTML/CSS/JS;
-                             #   e-stop, exclusive core-owned handoff, jog/
+                             #   only; ui_assets/ is dependency-free HTML/CSS/JS
+                             #   and every asset/API URL is relative so SSH/dev-
+                             #   machine reverse-proxy prefixes survive. Proxy
+                             #   POSTs still require the exact upstream loopback
+                             #   Host, fragment bearer, and browser-owned same-
+                             #   origin fetch metadata. E-stop, core-owned handoff, jog/
                              #   deadman, status and connection-scoped service
                              #   state are native. Optional local execution is
                              #   discovered only from waddle.execution.v1 entry

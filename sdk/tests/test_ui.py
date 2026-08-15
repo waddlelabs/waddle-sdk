@@ -45,6 +45,7 @@ def _open(
     token: str | None = None,
     origin: str | None = None,
     host: str | None = None,
+    fetch_site: str | None = None,
 ):
     parsed = urllib.parse.urlsplit(handle.url)
     secret = urllib.parse.parse_qs(parsed.fragment)["token"][0]
@@ -54,6 +55,8 @@ def _open(
     }
     if host is not None:
         headers["Host"] = host
+    if fetch_site is not None:
+        headers["Sec-Fetch-Site"] = fetch_site
     if method == "POST":
         headers["Origin"] = (
             f"{parsed.scheme}://{parsed.netloc}" if origin is None else origin
@@ -115,12 +118,63 @@ def test_loopback_security_headers_auth_host_origin_and_shutdown():
         )
     assert wrong_origin.value.code == 403
 
+    # A browser-facing SSH/dev-machine reverse proxy rewrites Host to the
+    # loopback listener but preserves its own browser Origin. Browser-owned
+    # same-origin fetch metadata admits that path; token and Host checks still
+    # apply exactly as they do for direct requests.
+    with _open(
+        handle,
+        "/api/config",
+        method="POST",
+        value={
+            "joint_step_rad": 0.02,
+            "linear_step_m": 0.01,
+            "angular_step_rad": 0.03,
+        },
+        origin="http://localhost:7436",
+        fetch_site="same-origin",
+    ) as response:
+        assert json.load(response)["increments"]["joint_step_rad"] == 0.02
+    with pytest.raises(urllib.error.HTTPError) as cross_site:
+        _open(
+            handle,
+            "/api/config",
+            method="POST",
+            value={
+                "joint_step_rad": 0.02,
+                "linear_step_m": 0.01,
+                "angular_step_rad": 0.03,
+            },
+            origin="http://example.test",
+            fetch_site="cross-site",
+        )
+    assert cross_site.value.code == 403
+
     with _open(handle, "/api/state") as response:
         state = json.load(response)
     assert state["episode_state"] == session.status()["episode_state"]
     assert state["local_controls_available"] is True
     waddle_sdk.shutdown()
     assert handle.closed
+
+
+def test_ui_assets_keep_forwarded_base_path_and_query():
+    waddle_sdk.init("ui", _robot(), waddle_sdk.Control())
+    handle = waddle_sdk.ui()
+    parsed = urllib.parse.urlsplit(handle.url)
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    with urllib.request.urlopen(f"{origin}/", timeout=5) as response:
+        index = response.read().decode()
+    with urllib.request.urlopen(f"{origin}/app.js", timeout=5) as response:
+        script = response.read().decode()
+
+    assert 'href="app.css"' in index
+    assert 'src="app.js"' in index
+    assert 'href="/app.css"' not in index
+    assert 'src="/app.js"' not in index
+    assert 'const baseUrl = new URL(location.href);' in script
+    assert '`${location.pathname}${location.search}`' in script
+    assert 'new URL(path.replace(/^\\/+/, ""), baseUrl)' in script
 
 
 def test_estop_is_a_local_requested_operation_and_latest_camera_is_raw_rgb():
