@@ -823,7 +823,8 @@ def _checked_gripper_limits(pair: Sequence[float], where: str) -> tuple[float, f
 
     Required even in sim, and validated the same way there, so the program
     text is identical across the sim->live flip; only the live driver reads
-    the values."""
+    the values.  Preserve the semantic order: motor direction determines
+    whether ``closed`` is numerically above or below ``open``."""
     try:
         values = tuple(float(v) for v in pair)
     except TypeError:
@@ -835,10 +836,10 @@ def _checked_gripper_limits(pair: Sequence[float], where: str) -> tuple[float, f
             "pair is not yours, and pinning it is what skips the connect-time "
             "auto-calibration that drives the jaws"
         )
-    if not values[0] < values[1]:
+    if values[0] == values[1]:
         raise ValueError(
-            f"{where} gripper_limits={pair!r}: closed ({values[0]}) must be below "
-            f"open ({values[1]})"
+            f"{where} gripper_limits={pair!r}: closed and open must differ; "
+            "keep the measured [closed, open] order even when it is descending"
         )
     return values
 

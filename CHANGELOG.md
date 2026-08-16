@@ -13,6 +13,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Preserve a YAM unit's semantic `[closed, open]` I2RT gripper-limit order,
+  including descending motor-radian pairs, so validated site measurements
+  cannot invert open and close commands.
 - Made `RuntimeFault` a normal mutable exception so Python traceback and
   context-manager machinery can attach `__traceback__` while preserving its
   typed fault fields.

@@ -52,7 +52,7 @@ parts:
       open_m: 0.095
       closed_action: 0.0
       open_action: 1.0
-    options: {gripper_limits: [0.1, 1.7]}
+    options: {gripper_limits: [1.7, 0.1]}
 cameras:
   overhead:
     driver: waddle_sdk.cameras.realsense
@@ -77,7 +77,9 @@ chat configuration, API keys, lease modes, or Metal workspace paths.
 opening in metres onto one declared action row. It is visible through
 `Site.describe()` but is never forwarded into the driver factory. Adapter
 construction facts such as a YAM unit's measured motor limits remain under
-`options`.
+`options`. YAM limits retain I2RT's semantic `[closed, open]` order; depending
+on that unit's motor direction, the measured pair may be descending and must
+not be sorted.
 
 `static_keepouts` accepts strict axis-aligned `box` and `sphere` records with
 an ID, collision frame, optional part filter, and non-negative margin.

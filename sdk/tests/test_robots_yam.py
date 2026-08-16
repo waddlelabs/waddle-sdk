@@ -59,7 +59,7 @@ def _episode(session, *, task: str):
 # --------------------------------------------------------------------------
 
 WORKSPACE_BOX_M = ((0.05, -0.45, 0.05), (0.60, 0.45, 0.70))
-GRIPPER_LIMITS_MOTOR_RAD = (0.1, 1.7)
+GRIPPER_LIMITS_MOTOR_RAD = (1.7, 0.1)
 CROSS_ARM_XYZ = (0.0, -0.60, 0.0)
 CROSS_ARM_RPY = (0.0, 0.0, -0.15)
 
@@ -297,7 +297,7 @@ def test_a_single_live_arm_without_a_channel_is_refused_by_argument_name():
 
 @pytest.mark.parametrize(
     "limits",
-    [(1.7, 0.1), (0.5, 0.5), (0.1,), (0.1, 1.7, 2.0), (0.1, float("nan")), 0.5],
+    [(0.5, 0.5), (0.1,), (0.1, 1.7, 2.0), (0.1, float("nan")), 0.5],
 )
 def test_a_malformed_gripper_limit_pair_is_refused_even_in_sim(limits):
     """Required in sim too, so the program text is identical across the
@@ -936,11 +936,13 @@ def test_a_site_may_measure_one_hand_differently_from_the_other(vendor):
     at the bench — so an arm may carry its own."""
     rig = _bimanual(
         sim=False,
-        left=yam.ArmSite(channel="can_left", gripper_limits=(0.2, 1.5)),
+        left=yam.ArmSite(channel="can_left", gripper_limits=(1.5, 0.2)),
         right=yam.ArmSite(channel="can_right"),
     )
     rig.arms()
-    assert np.allclose(vendor.calls[0]["gripper_limits_override"], (0.2, 1.5))
+    # I2RT consumes semantic [closed, open] order. This unit's motor direction
+    # makes that pair descend, so sorting it would reverse the hand controls.
+    assert np.allclose(vendor.calls[0]["gripper_limits_override"], (1.5, 0.2))
     assert np.allclose(
         vendor.calls[1]["gripper_limits_override"], GRIPPER_LIMITS_MOTOR_RAD
     )

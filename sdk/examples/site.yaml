@@ -16,7 +16,7 @@ parts:
       open_action: 1.0
     options:
       sim: true
-      gripper_limits: [0.1, 1.7]
+      gripper_limits: [1.7, 0.1]
 cameras: {}
 frames: {}
 calibration:
