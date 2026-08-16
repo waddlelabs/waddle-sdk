@@ -64,7 +64,20 @@
         "posture": {"enum": ["monitor", "supervised"]},
         "connection": {"type": "object", "additionalProperties": {"$ref": "#/$defs/configValue"}},
         "joint_limits": {"anyOf": [{"type": "object", "additionalProperties": {"type": "array", "prefixItems": [{"type": "number"}, {"type": "number"}], "items": false}}, {"type": "array", "items": {"type": "array", "prefixItems": [{"type": "number"}, {"type": "number"}], "items": false}}]},
+        "gripper": {"$ref": "#/$defs/gripper"},
         "options": {"type": "object", "additionalProperties": {"$ref": "#/$defs/configValue"}}
+      }
+    },
+    "gripper": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["joint", "closed_m", "open_m", "closed_action", "open_action"],
+      "properties": {
+        "joint": {"type": "string", "minLength": 1},
+        "closed_m": {"type": "number"},
+        "open_m": {"type": "number"},
+        "closed_action": {"type": "number"},
+        "open_action": {"type": "number"}
       }
     },
     "stream": {

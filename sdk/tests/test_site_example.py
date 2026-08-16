@@ -15,6 +15,13 @@ def test_example_manifest_is_strict_and_uses_simulation():
     site = waddle_sdk.load_site(SDK / "examples" / "site.yaml")
     assert site.id == "simulated-yam"
     assert site.manifest["parts"]["arm"]["options"]["sim"] is True
+    assert site.manifest["parts"]["arm"]["gripper"] == {
+        "joint": "gripper",
+        "closed_m": 0.0,
+        "open_m": 0.095,
+        "closed_action": 0.0,
+        "open_action": 1.0,
+    }
     assert "graph" not in site.manifest
     assert "skills" not in site.manifest
 

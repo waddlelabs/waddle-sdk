@@ -66,6 +66,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Add a strict driver-neutral `parts.*.gripper` Site mapping from physical jaw
+  opening metres to a declared action row. The mapping is public runtime
+  metadata and is not forwarded into adapter factories, so YAM manifests can
+  support Metal `grip()` without passing an unknown `gripper` keyword to the
+  hardware constructor.
 - Open `SiteSession.describe()` responses now include the canonical robot action descriptor so Metal can map named part commands onto the complete SDK action vector using public data.
 - Add the canonical `waddle-sdk connect` process and `waddle.v0.connector.binding` registration. An authorization-only probe authenticates the exact customer/project/workspace tuple and must negotiate the binding feature before SiteSession invokes any arm or camera builder; reconnect clears and re-establishes that authorization, while authorization probes cannot negotiate hosted runs. Registered runtimes emit 500 ms v0 heartbeats so API-key revocation becomes a transport partition and requests the existing core-owned hold/abort path.
 

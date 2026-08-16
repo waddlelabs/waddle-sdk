@@ -8,17 +8,22 @@ parts:
     posture: supervised
     connection: {}
     joint_limits: {}
+    gripper:
+      joint: gripper
+      closed_m: 0.0
+      open_m: 0.095
+      closed_action: 0.0
+      open_action: 1.0
     options:
       sim: true
-      workspace:
-        - [0.05, -0.45, 0.05]
-        - [0.60, 0.45, 0.70]
       gripper_limits: [0.1, 1.7]
 cameras: {}
 frames: {}
 calibration:
   artifacts: calib/
-workspace_bounds: {}
+workspace_bounds:
+  min: [0.05, -0.45, 0.05]
+  max: [0.60, 0.45, 0.70]
 envelope:
   static_keepouts: []
   self_collision: {}

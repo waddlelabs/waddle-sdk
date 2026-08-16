@@ -46,6 +46,13 @@ parts:
     posture: supervised
     connection: {channel: can_left}
     joint_limits: {}
+    gripper:
+      joint: gripper
+      closed_m: 0.0
+      open_m: 0.095
+      closed_action: 0.0
+      open_action: 1.0
+    options: {gripper_limits: [0.1, 1.7]}
 cameras:
   overhead:
     driver: waddle_sdk.cameras.realsense
@@ -65,6 +72,12 @@ portable, normalized, and confined beneath the manifest directory. Values with
 credential-like names must be `{secret: NAME}` and are resolved only while the
 site is being opened. A site manifest cannot contain graphs, skills, models,
 chat configuration, API keys, lease modes, or Metal workspace paths.
+
+`parts.*.gripper` is driver-neutral control metadata: it maps a physical jaw
+opening in metres onto one declared action row. It is visible through
+`Site.describe()` but is never forwarded into the driver factory. Adapter
+construction facts such as a YAM unit's measured motor limits remain under
+`options`.
 
 `static_keepouts` accepts strict axis-aligned `box` and `sphere` records with
 an ID, collision frame, optional part filter, and non-negative margin.

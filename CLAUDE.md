@@ -74,6 +74,10 @@ waddle-sdk/
                              #   the canonical robot action descriptor so Metal can map
                              #   named parts; schemas/
                              #   carries the strict `waddle.site/v1` schema.
+                             #   A part-level `gripper` record is driver-neutral
+                             #   public metadata mapping physical jaw metres to
+                             #   one declared action row; unlike `options`, it
+                             #   is never forwarded to the adapter factory.
                              #   Root exports exactly Site/SiteSession/Run, load_site,
                              #   Grpc/LiveKit, Outcome, and manifest errors.
                              #   transport.py holds pure transport declarations;

@@ -93,6 +93,34 @@ def test_manifest_is_strict_and_paths_are_site_relative(tmp_path):
         waddle_sdk.load_site(escaping)
 
 
+def test_driver_neutral_gripper_mapping_is_strict_and_not_a_factory_option(tmp_path):
+    path = _write_site(tmp_path)
+    path.write_text(
+        path.read_text().replace(
+            "joint_limits: {}",
+            (
+                "joint_limits: {}\n"
+                "    gripper: {joint: j1, closed_m: 0.0, open_m: 0.095, "
+                "closed_action: -1.0, open_action: 1.0}"
+            ),
+            1,
+        ),
+        encoding="utf-8",
+    )
+    site = waddle_sdk.load_site(path)
+    assert site.describe()["parts"]["arm"]["gripper"]["open_m"] == 0.095
+
+    with site.open(console=False, _testing=True):
+        assert site_fixtures.opened["arms"] == 1
+
+    path.write_text(
+        path.read_text().replace("open_action: 1.0", "open_action: 1.0, surprise: true"),
+        encoding="utf-8",
+    )
+    with pytest.raises(waddle_sdk.ManifestValidationError, match="surprise"):
+        waddle_sdk.load_site(path)
+
+
 def test_static_keepout_rejects_complete_action_before_driver_write(tmp_path):
     path = _write_site(tmp_path)
     path.write_text(
