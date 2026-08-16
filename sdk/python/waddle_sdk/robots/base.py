@@ -575,8 +575,9 @@ class Arm:
         declared rate it bounds the unit to ``cap * rate_hz`` per second.
     ``workspace``
         ``((min_x, min_y, min_z), (max_x, max_y, max_z))`` in metres, applied
-        to the forward kinematics of a command before it is accepted. Optional
-        — and it requires ``fk``, since a box is a statement about a TCP.
+        to the forward kinematics of a command and every adapter-supplied
+        conservative collision sphere before it is accepted. Optional — and it
+        requires ``fk``, since a box is at minimum a statement about a TCP.
     ``fk``
         ``q -> (position, rotation)`` for the first ``arm_dof`` rows, in this
         part's own base frame. OPT-IN: an arm built without it is legal and
@@ -648,6 +649,21 @@ class Arm:
                 "and this part declared no `fk` to produce one — pass forward "
                 "kinematics, or drop the box (joint limits and step caps still "
                 "apply)"
+            )
+        if self.workspace is not None:
+            workspace = np.asarray(self.workspace, dtype=float)
+            if (
+                workspace.shape != (2, 3)
+                or not np.all(np.isfinite(workspace))
+                or np.any(workspace[0] > workspace[1])
+            ):
+                raise ValueError(
+                    f"part {self.part!r}: workspace needs finite min/max xyz rows "
+                    "with min <= max"
+                )
+            self.workspace = (
+                tuple(float(value) for value in workspace[0]),
+                tuple(float(value) for value in workspace[1]),
             )
         if self.arm_dof is None:
             self.arm_dof = width
@@ -877,6 +893,25 @@ class Arm:
                     f"tcp {list(np.round(tcp, 4))} outside the declared workspace box "
                     f"{list(np.round(lo_box, 3))}..{list(np.round(hi_box, 3))}"
                 )
+            if self.collision_spheres is not None:
+                try:
+                    bodies = self.collision_snapshot(target)
+                except Exception as error:  # noqa: BLE001 -- fail closed
+                    return (
+                        "collision geometry unavailable for workspace check: "
+                        f"{type(error).__name__}: {error}"
+                    )
+                if not bodies:
+                    return "collision geometry provider returned no robot bodies"
+                for body in bodies:
+                    center = np.asarray(body.center_m, dtype=float)
+                    lower_overshoot = lo_box - (center - body.radius_m)
+                    upper_overshoot = (center + body.radius_m) - hi_box
+                    if np.any(lower_overshoot > 0.0) or np.any(upper_overshoot > 0.0):
+                        return (
+                            f"body {body.name!r} outside the declared workspace box "
+                            f"{list(np.round(lo_box, 3))}..{list(np.round(hi_box, 3))}"
+                        )
         collision_reason = self._static_collision_reason(target)
         if collision_reason is not None:
             return collision_reason

@@ -93,11 +93,13 @@ waddle-sdk/
                              #   all commands cross the core gate and the
                              #   owner envelope, and local RGB-D depth stays
                              #   process-local for calibration deprojection.
+                             #   Workspace bounds cover both the TCP and every
+                             #   adapter-supplied conservative body sphere.
                              #   Static box/sphere keep-outs and named-body
                              #   self/cross-part collision checks are SDK-owned:
                              #   adapters supply conservative CollisionSphere
                              #   geometry in one declared frame; missing or
-                             #   incompatible geometry fails closed.
+                             #   incompatible configured geometry fails closed.
                              #   `_native.py` picks the compiled core.
                              #   The SDK-local UI and hosted task/artifact
                              #   facades are deleted; those product surfaces
@@ -113,7 +115,8 @@ waddle-sdk/
                              #   their declared module:factory targets lazily.
                              #   base.py is the vendor-neutral Driver/SimDriver,
                              #   Arm envelope (including CollisionSphere-backed
-                             #   keep-out/self-collision arithmetic), recovery,
+                             #   body-workspace, keep-out and self-collision
+                             #   arithmetic), recovery,
                              #   pump, Rig and RigSession
                              #   layer. SiteSession composes RigSession._open
                              #   with the internal native-session builder;

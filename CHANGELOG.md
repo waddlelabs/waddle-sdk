@@ -22,6 +22,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 ### Changed
 
 - **BREAKING:** make `Site`, `SiteSession`, `Run`, `load_site`, transport selection, outcomes, and manifest errors the only root API. Site sessions use a private non-global builder with fixed hold-first, core-enforced safety wiring.
+- Apply configured workspace bounds to the TCP and every adapter-supplied
+  conservative collision sphere. Commands are rejected whole instead of
+  clamped, and 28 one-for-one historical body-boundary cases pin both this
+  replacement and the deliberate removal of Waddle-specific face-ignore,
+  recovery, end-effector-only, and split-body envelope knobs.
 - Set the SDK and native shim release version to 0.1.0 and keep the teleop companion pin exact.
 - **BREAKING (pre-release): the importable package is now `waddle_sdk`, not
   `waddle`.** `pip install waddle-sdk` then `import waddle_sdk`; the
