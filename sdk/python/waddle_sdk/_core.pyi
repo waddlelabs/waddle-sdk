@@ -99,6 +99,7 @@ class Session:
     def stamp(self) -> SessionStamp: ...
     def status(self) -> dict[str, Any]: ...
     def request_estop(self) -> str: ...
+    def request_hold(self, reason: str) -> str: ...
     def handoff_remote_to_local(self) -> tuple[bool, str, str]: ...
     def jog(
         self,
@@ -143,6 +144,11 @@ class Session:
         point_xyz: Sequence[float],
         depth_m: float | None = None,
     ) -> None: ...
+    def calibration_measurement_requests(
+        self,
+        after_cursor: int = 0,
+        timeout_ms: int = 0,
+    ) -> list[dict[str, Any]]: ...
     def calibration_updates(
         self,
         calibration_id: str,
@@ -246,6 +252,10 @@ def create_session(
     reset_verification: str = "blocking",
     transport_url: str | None = None,
     transport_token: str | None = None,
+    connector_customer_id: str | None = None,
+    connector_project_id: str | None = None,
+    connector_workspace_id: str | None = None,
+    connector_authorization_only: bool = False,
     media_url: str | None = None,
     media_token: str | None = None,
 ) -> Session: ...

@@ -1,137 +1,105 @@
 # waddle-sdk
 
-The open half of **Waddle** — a supervision layer for real-world robot policy
-rollouts. Waddle attaches to your existing stack (robot, cameras, policy server,
-control loop) and owns everything *around* the policy's decisions: watching,
-intervening, resetting, judging, and improving.
+The open, hardware-owning layer of Waddle. The SDK loads a strict site
+manifest, opens robot and camera drivers, enforces the owner envelope, and
+records timestamped raw evidence. Claims, leases, gating, clocks, and recording
+semantics live once in the Rust core. The public lifecycle has no lease or handoff
+selector: handoff is fixed to hold-first and enforcement placement is derived from
+the selected integration.
 
-> Weights & Biases instrumented your training loop; Waddle instruments your
-> deployment loop.
+The dependency direction is deliberately one-way:
 
-This monorepo hosts the open artifacts:
-
-| Artifact | Status | What it is |
-|---|---|---|
-| [`waddle-protocol/`](waddle-protocol/) | v0 | The standard: protobuf schemas, the episode/claim/lease FSM spec, the sidecar schema, conformance fixtures. Implementable without waddle-core — that is the point. |
-| [`waddle-core/`](waddle-core/) | 0.1 | The Rust reference implementation: episode/claim/lease FSMs, the gate, tripwires, sidecar + MCAP recording, codecs, control-plane client. Emits the `libwaddle` C ABI. |
-| [`sdk/`](sdk/) | 0.1 | The Python frontend (`waddle-sdk`): the six-line rollout loop, local recording, the connected surface, and the opt-in robot modules (`waddle_sdk.robots`). A hollow frontend — every decision lives in waddle-core. |
-| `waddle-proxy`, `waddle-cpp`, `waddle_ros` | planned | Further hollow frontends over waddle-core, per the design doc's artifact family. |
-
-The design rationale (including three adversarial stress-test passes) lives at
-[`waddle-protocol/docs/rationale/waddle_api_design_doc.md`](waddle-protocol/docs/rationale/waddle_api_design_doc.md).
-The normative docs are
-[`GLOSSARY.md`](waddle-protocol/docs/GLOSSARY.md),
-[`FSM.md`](waddle-protocol/docs/FSM.md), and
-[`VERSIONING.md`](waddle-protocol/docs/VERSIONING.md).
-
-## Build quickstart
-
-```bash
-cd waddle-core
-cargo test --workspace          # builds protos via protox — no system protoc needed
-
-cd ../sdk
-uv sync --dev && uv run pytest  # the Python frontend: build + test
+```text
+closed Waddle -> waddle-metal -> waddle-sdk -> hardware/cameras/simulators
 ```
 
-The Python package ships as two distributions from this one source tree —
-`pip install waddle-sdk` carries the control-plane transport, and
-`pip install 'waddle-sdk[teleop]'` adds the LiveKit media plane on top. See
-[`sdk/README.md`](sdk/README.md).
+The SDK never imports or discovers Metal or closed Waddle. Local callers use
+the Python library; remote SDK-only sites use the existing `waddle.v0` control
+protocol. `waddle.v0.hosted.runs` lets an authorized host start one ordinary
+episode on an idle remote SDK without creating another authority path. The
+`waddle-sdk connect` command first authenticates the exact hosted binding with a
+hardware-free registration; arms and cameras open only after the host accepts it.
 
-For a running program rather than a snippet,
-[`sdk/examples/toy_robot.py`](sdk/examples/) is a whole robot integration in
-one file — a simulated 6-dof arm with a camera, the rollout loop, and
-`waddle_sdk.agent()`. It needs no hardware and no plane:
-
-```bash
-cd sdk && uv run python examples/toy_robot.py
-```
-
-For what supervision actually does to your loop,
-[`docs/lease-lifecycle.md`](docs/lease-lifecycle.md) follows the lease (the
-single-writer right to command the robot) through a whole session from the
-customer's side: who holds it during a rollout, an intervention, a reset window
-and an agent-driven episode, what `gate()` returns while they do, and what the
-SDK does not provide. Generic episode correlation stays deliberately outside
-that authority model: pass string `task_metadata` to `waddle_sdk.rollout()` or
-`waddle_sdk.agent()`, and use `session.stamp()` for an atomically paired
-session/Unix timestamp.
-
-## If the SDK already knows your robot
-
-That whole integration is a factory call. `waddle_sdk.robots.<vendor>` carries a
-machine's model facts, its driver and the owner's per-command envelope; the
-first vendor module is the I2RT YAM, and two of them supervised is five
-lines:
+## Primary Python API
 
 ```python
 import waddle_sdk
-from waddle_sdk.robots import yam
 
-rig = yam.bimanual(workspace=WORKSPACE_M, gripper_limits=(0.1, 1.7), sim=True)
-with rig.session("towels", transport=waddle_sdk.Grpc(url, token)) as session:
-    dashboard = waddle_sdk.ui()  # authenticated 127.0.0.1 UI for this live session
-    result = waddle_sdk.agent("stack the cups")
+site = waddle_sdk.load_site("site.yaml")
+with site.open(transport=waddle_sdk.Grpc(url, token)) as session:
+    with session.run(task={"id": "inspect"}, actor={"id": "metal"}) as run:
+        observation = run.observe()
+        result = run.step(action, observation)
+        if not result.dispatched:
+            run.hold(result.detail or "command withheld")
+    session.estop("emergency")
 ```
 
-Long-lived processes can give the same lifecycle to the module-level API.
-`waddle_sdk.init(rig=rig)` is mutually exclusive with the legacy
-`waddle_sdk.init(project, robot, control)` form and makes `waddle_sdk.shutdown()`
-close every opened arm, camera, capture/reporting pump, core thread, and
-recording:
+`site.yaml` is `waddle.site/v1`: unknown fields fail, paths are confined to the
+manifest directory, and credentials must be named secret references. Hardware
+opens only on entry to `site.open()` and every half-open resource is closed on
+failure. Static box/sphere keep-outs and named body self/cross-part collision
+rules are enforced by the SDK over conservative geometry supplied by each
+driver adapter; configured missing or frame-incompatible geometry fails closed.
+A runnable connector emits bounded native heartbeats; credential revocation
+closes the transport, requests the core-owned hold verb, and aborts any active
+hosted run. Driver-extension APIs live under `waddle_sdk.robots`,
+`waddle_sdk.cameras`, and `waddle_sdk.descriptors`; they are not part of the
+small root surface.
 
-```python
-session = waddle_sdk.init("towels", rig=rig, transport=waddle_sdk.Grpc(url, token))
-try:
-    dashboard = waddle_sdk.ui()
-    result = waddle_sdk.agent("stack the cups")
-finally:
-    waddle_sdk.shutdown()
+SDK-only customer sites connect with:
+
+```bash
+waddle-sdk connect --site site.yaml \
+  --customer CUSTOMER_ID --project PROJECT_ID --workspace WORKSPACE_ID
 ```
 
-RGB-D camera drivers are structural and optional. Install
-`waddle-sdk[orbbec]`, `waddle-sdk[realsense]`, or the aggregate
-`waddle-sdk[cameras]`; each composes with `[teleop]`. Captures receive one
-paired session/Unix stamp, RGB follows the existing recording/media path, and
-aligned depth remains local so calibration sends only a bounded 3-D point.
+The API key comes from `WADDLE_API_KEY` or a secret prompt. The default target is
+`https://connect.waddle.dev:443` and can be overridden by
+`WADDLE_CONNECTOR_TARGET` or `--target`.
 
-`waddle_sdk.ui()` has no standalone command: it runs inside the initialized SDK
-process so state, e-stop, jog/deadman, camera frames and local recordings never
-leave the customer machine. Only its optional chat crosses the existing
-control stream to the active invited host; when chat is unavailable, every
-local endpoint remains usable. The printed fragment-bearing URL is a per-run
-bearer secret. Lifecycle, loopback security and motion semantics are detailed
-in [`sdk/README.md`](sdk/README.md#in-process-browser-ui-waddleui).
+See [`sdk/README.md`](sdk/README.md) for the manifest and driver contracts.
 
-The same page exposes named durable hosted-task conversations, live output,
-interjection/interrupt, local RGB-D calibration, reviewed workspace delivery,
-and a generic Hosted/Local execution selector. Local motion first asks
-waddle-core to finish any remote claim's E8 release and lease handback; only
-then does an ordinary site-operator jog traverse core intake and the customer's
-`Control.send`. Local execution packages are loaded only through the
-versioned `waddle.execution.v1` entry-point contract after the user selects
-one—the public SDK has no private-runtime import.
+## Repository
 
-`WORKSPACE_M` and the gripper's `[closed, open]` motor radians are SITE facts
-and have no defaults — measure them at your own bench. What a YAM *is* (joint
-limits, the chain, the tool frame) is a model fact that ships in the module,
-gated against the vendor's own model. Driving metal — `sim=False`, plus each
-arm's CAN interface — also needs I2RT's own package, which is deliberately not
-a dependency of this SDK and cannot be an extra of it (it is not published on
-PyPI), so it is a documented command, pinned to the commit every fact in the
-module is stated against:
+| Artifact | Role |
+|---|---|
+| [`waddle-protocol/`](waddle-protocol/) | Append-only `waddle.v0` schemas, normative FSM/versioning docs, and golden fixtures |
+| [`waddle-core/`](waddle-core/) | Reference authority, gate, clock, recording, media, and control-plane implementation |
+| [`sdk/`](sdk/) | Python Site/SiteSession/Run facade plus opt-in driver subpackages |
+
+The normative documents are [`GLOSSARY.md`](waddle-protocol/docs/GLOSSARY.md),
+[`FSM.md`](waddle-protocol/docs/FSM.md), and
+[`VERSIONING.md`](waddle-protocol/docs/VERSIONING.md).
+
+## Build and test
+
+```bash
+cd waddle-core
+cargo test --workspace
+
+cd ../sdk
+uv sync --dev
+uv run pytest
+```
+
+The default `waddle-sdk` wheel carries gRPC.
+`pip install "waddle-sdk[teleop]"` adds the Linux-x86_64 LiveKit companion.
+Camera adapters are lazy extras: `[orbbec]`, `[realsense]`, or `[cameras]`.
+Physical adapters are lazy too: `[xarm]`, `[alicia]`, `[alicia-d]`, or the
+combined `[robots]`; the Synria vendor SDKs currently require Python 3.11+
+while the base SDK remains Python 3.10+.
+MuJoCo simulation is independently lazy behind `[mujoco]`.
+
+Driving an I2RT YAM also requires the vendor package pinned to the model facts
+shipped in this tree:
 
 ```bash
 pip install "i2rt @ git+https://github.com/i2rt-robotics/i2rt@570ef66681ff12bd8298aba34084307cfecc9f05"
 ```
 
-The runnable program is [`sdk/examples/yam_bimanual.py`](sdk/examples/); the
-layering, the postures, the envelope-ownership doctrine and the template for
-writing your own vendor module are in
-[`sdk/README.md`](sdk/README.md#robot-modules-waddlerobots).
-
-Contributors and agents: read [`CLAUDE.md`](CLAUDE.md) first.
+Contributors and agents must read [`CLAUDE.md`](CLAUDE.md) before changing the
+repository.
 
 ## License
 

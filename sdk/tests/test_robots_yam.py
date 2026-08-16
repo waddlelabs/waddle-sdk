@@ -24,6 +24,8 @@ the golden below.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+
 import json
 import sys
 import types
@@ -35,13 +37,21 @@ from mcap.reader import make_reader
 from mcap_protobuf.decoder import DecoderFactory
 
 import waddle_sdk
+from waddle_sdk import descriptors
+from waddle_sdk._session import Control, _derive_grants, create_core_session
 from waddle_sdk.robots import base, yam
 
 
-@pytest.fixture(autouse=True)
-def _clean_session():
-    yield
-    waddle_sdk.shutdown()
+@contextmanager
+def _episode(session, *, task: str):
+    episode = session.start_episode(task)
+    try:
+        yield episode
+    finally:
+        if not episode.done:
+            episode.terminate("abort")
+
+
 
 
 # --------------------------------------------------------------------------
@@ -80,7 +90,7 @@ def _arm_rig(**overrides) -> base.Rig:
 
 
 def _grants(rig: base.Rig) -> list[dict]:
-    return waddle_sdk._derive_grants(rig.control(rig.arms()), rig.robot().action_space)
+    return _derive_grants(rig.control(rig.arms()), rig.robot().action_space)
 
 
 def _observations(mcap_path):
@@ -130,10 +140,10 @@ SUBSTRATE_LEFT_BASE_FRAME = "yam_left_base"
 SUBSTRATE_RIGHT_BASE_FRAME = "yam_right_base"
 
 
-def _substrate_part_space() -> waddle_sdk.JointSpace:
-    return waddle_sdk.JointSpace(
+def _substrate_part_space() -> descriptors.JointSpace:
+    return descriptors.JointSpace(
         joints=[
-            waddle_sdk.Joint(
+            descriptors.Joint(
                 name=name,
                 min_position=lo,
                 max_position=hi,
@@ -145,23 +155,23 @@ def _substrate_part_space() -> waddle_sdk.JointSpace:
             )
         ],
         rate_hz=SUBSTRATE_RATE_HZ,
-        chunking=waddle_sdk.Chunking(horizon=1, replan="immediate", interp="hold"),
+        chunking=descriptors.Chunking(horizon=1, replan="immediate", interp="hold"),
     )
 
 
-def _substrate_declaration() -> waddle_sdk.Robot:
-    return waddle_sdk.Robot(
+def _substrate_declaration() -> descriptors.Robot:
+    return descriptors.Robot(
         name="waddle-yam-bimanual",
         robot_id="yam-bimanual-01",
         cell_id="yam-cell",
-        action_space=waddle_sdk.Composite(
+        action_space=descriptors.Composite(
             left_arm=_substrate_part_space(),
             right_arm=_substrate_part_space(),
             rate_hz=SUBSTRATE_RATE_HZ,
-            chunking=waddle_sdk.Chunking(horizon=1, replan="immediate", interp="hold"),
+            chunking=descriptors.Chunking(horizon=1, replan="immediate", interp="hold"),
         ),
         frames=(
-            waddle_sdk.FrameTransform(
+            descriptors.FrameTransform(
                 parent=SUBSTRATE_LEFT_BASE_FRAME,
                 child=SUBSTRATE_RIGHT_BASE_FRAME,
                 position=CROSS_ARM_XYZ,
@@ -171,7 +181,7 @@ def _substrate_declaration() -> waddle_sdk.Robot:
     )
 
 
-def _as_json(robot: waddle_sdk.Robot, grants: list[dict]) -> dict:
+def _as_json(robot: descriptors.Robot, grants: list[dict]) -> dict:
     return json.loads(json.dumps(robot._compile(grants)))
 
 
@@ -432,7 +442,7 @@ def test_a_monitor_rig_registers_only_the_owners_stop():
     rig = _bimanual(posture="monitor")
     verbs = rig.control(rig.arms())
     assert verbs.send is None and verbs.hold is None
-    assert waddle_sdk._derive_grants(verbs, rig.robot().action_space) == [
+    assert _derive_grants(verbs, rig.robot().action_space) == [
         {"verb": "VERB_ESTOP"}
     ]
 
@@ -457,8 +467,8 @@ def test_the_sim_factory_drives_its_twins_through_the_envelope(tmp_path):
     arms = rig.arms()
     assert set(arms) == {"left_arm", "right_arm"}
 
-    waddle_sdk.init("yam-sim-smoke", rig.robot(), rig.control(arms), recording_dir=tmp_path)
-    with waddle_sdk.rollout(task="nudge both arms") as ep:
+    session = create_core_session("yam-sim-smoke", rig.robot(), rig.control(arms), recording_dir=tmp_path)
+    with _episode(session, task="nudge both arms") as ep:
         position = np.concatenate(
             [arms[p].state()[0] for p in ("left_arm", "right_arm")]
         )
@@ -467,6 +477,8 @@ def test_the_sim_factory_drives_its_twins_through_the_envelope(tmp_path):
         assert decided is not None
         base.apply_decision(arms, decided)
         ep.terminate("success")
+
+    session.shutdown()
 
     assert arms["left_arm"].accepted == 1 and arms["left_arm"].rejected == 0
     assert arms["right_arm"].accepted == 1
@@ -504,15 +516,15 @@ def _report_one_tick(rig: base.Rig, tmp_path, project: str):
     proprio samples. No pump and no thread — the tick is called directly, so
     nothing here waits on a clock."""
     arms = rig.arms()
-    session = waddle_sdk.init(
+    session = create_core_session(
         project, rig.robot(), rig.control(arms), recording_dir=tmp_path
     )
     tick = base.proprio_tick(session, arms)
-    with waddle_sdk.rollout(task="report once") as ep:
+    with _episode(session, task="report once") as ep:
         episode_id = ep.id
         tick(1.0 / rig.rate_hz)
         ep.terminate("success")
-    waddle_sdk.shutdown()
+    session.shutdown()
     return [o.proprio for o in _observations(tmp_path / f"{episode_id}.mcap")]
 
 

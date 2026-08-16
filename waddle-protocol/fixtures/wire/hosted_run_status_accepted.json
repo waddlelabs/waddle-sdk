@@ -1,0 +1,14 @@
+{
+  "format": "waddle_sdk.fixture/v0",
+  "type": "waddle.v0.HostedRunStatus",
+  "description": "The connection-scoped admission result for an accepted hosted run; later lifecycle uses ordinary episode messages.",
+  "message": {
+    "requestId": "hosted-01J9RUN0001",
+    "kind": "HOSTED_RUN_STATUS_KIND_ACCEPTED",
+    "episodeId": "episode-01J9",
+    "detail": {
+      "code": "accepted",
+      "message": "the SDK opened the episode"
+    }
+  }
+}

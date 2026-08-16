@@ -1,0 +1,27 @@
+api_version: waddle.site/v1
+kind: Site
+metadata:
+  id: simulated-yam
+parts:
+  arm:
+    driver: waddle_sdk.robots.yam:arm
+    posture: supervised
+    connection: {}
+    joint_limits: {}
+    options:
+      sim: true
+      workspace:
+        - [0.05, -0.45, 0.05]
+        - [0.60, 0.45, 0.70]
+      gripper_limits: [0.1, 1.7]
+cameras: {}
+frames: {}
+calibration:
+  artifacts: calib/
+workspace_bounds: {}
+envelope:
+  static_keepouts: []
+  self_collision: {}
+recording:
+  root: recordings/
+  format: mcap

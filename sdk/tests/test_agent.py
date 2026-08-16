@@ -17,25 +17,27 @@ import time
 import pytest
 
 import waddle_sdk
+from waddle_sdk import descriptors
+from waddle_sdk._session import Control, _derive_grants, create_core_session
 import waddle_sdk._core as _core
 
 
-def _robot() -> waddle_sdk.Robot:
-    return waddle_sdk.Robot(
+def _robot() -> descriptors.Robot:
+    return descriptors.Robot(
         name="pytest-agent-bot",
         robot_id="py-agent-01",
         cell_id="cell-py-agent",
-        action_space=waddle_sdk.JointSpace(joints=["j0", "j1", "j2"], rate_hz=50),
+        action_space=descriptors.JointSpace(joints=["j0", "j1", "j2"], rate_hz=50),
     )
 
 
 def _session(**kwargs) -> _core.Session:
-    control = waddle_sdk.Control(
+    control = Control(
         send=lambda chunk: None, hold=lambda: None, resume=lambda: None
     )
     robot = _robot()
     robot_json = json.dumps(
-        robot._compile(waddle_sdk._derive_grants(control, robot.action_space))
+        robot._compile(_derive_grants(control, robot.action_space))
     )
     return _core.create_session(
         project="pytest-agent",

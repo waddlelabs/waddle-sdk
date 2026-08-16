@@ -37,9 +37,11 @@ fn all_golden_sidecars_parse_and_round_trip_semantically() {
     for path in paths {
         let raw = std::fs::read_to_string(&path).unwrap();
         let envelope: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        assert_eq!(
-            envelope["format"],
-            "waddle_sdk.fixture/v0",
+        assert!(
+            matches!(
+                envelope["format"].as_str(),
+                Some("waddle_sdk.fixture/v0" | "waddle.fixture/v0")
+            ),
             "{}: bad envelope format",
             path.display()
         );

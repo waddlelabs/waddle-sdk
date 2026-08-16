@@ -51,6 +51,41 @@ use crate::verbs::{ControlRegistry, VerbDispatch, VerbOutcome};
 /// flag.
 pub(crate) const AGENT_FLAG: &str = "waddle.v0.agent";
 
+/// Exact hosted identity carried during SDK connector registration.
+///
+/// This is declaration only: authentication remains the plane's decision.
+/// The SDK reads only whether the current connection accepted the binding
+/// feature; it never reconstructs authorization locally.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConnectorBinding {
+    pub customer_id: String,
+    pub project_id: String,
+    pub workspace_id: String,
+    pub authorization_only: bool,
+}
+
+impl ConnectorBinding {
+    #[must_use]
+    pub fn new(
+        customer_id: impl Into<String>,
+        project_id: impl Into<String>,
+        workspace_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            customer_id: customer_id.into(),
+            project_id: project_id.into(),
+            workspace_id: workspace_id.into(),
+            authorization_only: false,
+        }
+    }
+
+    #[must_use]
+    pub fn authorization_only(mut self, value: bool) -> Self {
+        self.authorization_only = value;
+        self
+    }
+}
+
 /// How resets run until the closed reset planner is wired: a callable
 /// returning (ok, verified). The default reports ok+verified — honest only
 /// for scenes reset by hand between episodes; integrations override it.
@@ -355,6 +390,7 @@ pub struct SessionBuilder {
     control: ControlRegistry,
     recording_dir: Option<PathBuf>,
     transport: Option<Arc<dyn ControlTransport>>,
+    connector_binding: Option<ConnectorBinding>,
     media: Option<Arc<dyn MediaPlane>>,
     tripwires: Vec<Tripwire>,
     handoff: HandoffPolicy,
@@ -383,6 +419,7 @@ impl SessionBuilder {
             control: ControlRegistry::default(),
             recording_dir: None,
             transport: None,
+            connector_binding: None,
             media: None,
             tripwires: Vec::new(),
             handoff: HandoffPolicy::HoldFirst,
@@ -421,6 +458,13 @@ impl SessionBuilder {
     #[must_use]
     pub fn transport(mut self, transport: Arc<dyn ControlTransport>) -> Self {
         self.transport = Some(transport);
+        self
+    }
+
+    /// Bind this transport to one hosted customer/project/workspace tuple.
+    #[must_use]
+    pub fn connector_binding(mut self, binding: ConnectorBinding) -> Self {
+        self.connector_binding = Some(binding);
         self
     }
 
@@ -716,6 +760,16 @@ impl SessionBuilder {
             waddle_controlplane::flags::CALIBRATION_MEASUREMENTS.to_owned(),
             waddle_controlplane::flags::WORKSPACE_ARTIFACTS.to_owned(),
         ];
+        if !self
+            .connector_binding
+            .as_ref()
+            .is_some_and(|binding| binding.authorization_only)
+        {
+            feature_flags.push(waddle_controlplane::flags::HOSTED_RUNS.to_owned());
+        }
+        if self.connector_binding.is_some() {
+            feature_flags.push(waddle_controlplane::flags::CONNECTOR_BINDING.to_owned());
+        }
         if self.post_reset.is_some() {
             feature_flags.push("waddle.v0.reset.phases".to_owned());
         }
@@ -744,8 +798,10 @@ impl SessionBuilder {
         }
 
         let plane = self.transport.map(|t| {
+            let binding = self.connector_binding.as_ref();
             let register = pb::RegisterRequest {
-                project: self.project.clone(),
+                project: binding
+                    .map_or_else(|| self.project.clone(), |value| value.project_id.clone()),
                 client: Some(pb::ClientInfo {
                     implementation: "waddle-core".into(),
                     version: env!("CARGO_PKG_VERSION").into(),
@@ -755,6 +811,9 @@ impl SessionBuilder {
                 clock_anchor: Some(clock.anchor().to_pb()),
                 feature_flags,
                 session_nonce: session_id.to_string(),
+                customer_id: binding.map_or_else(String::new, |value| value.customer_id.clone()),
+                workspace_id: binding.map_or_else(String::new, |value| value.workspace_id.clone()),
+                authorization_only: binding.is_some_and(|value| value.authorization_only),
             };
             Arc::new(ControlPlaneClient::spawn(t, ClientConfig::new(register)))
         });
@@ -777,6 +836,8 @@ impl SessionBuilder {
         // straight to `send` is recorded by the reducer, which owns the
         // episode's MCAP writer (the pump owns no episode state at all).
         let (dispatch_tx, dispatch_rx) = std::sync::mpsc::channel::<pumps::DispatchedAction>();
+        let (hosted_run_tx, hosted_run_rx) = std::sync::mpsc::channel();
+        let (hosted_result_tx, hosted_result_rx) = std::sync::mpsc::channel();
         let record_slot: RecordSlot = Arc::new(parking_lot::Mutex::new(None));
         let task_slot: TaskSlot = Arc::new(parking_lot::Mutex::new(TaskContext::default()));
         // Tripwire ObsSource wiring: published by the reducer from
@@ -898,6 +959,8 @@ impl SessionBuilder {
                 chunk_intake.clone(),
                 chat.clone(),
                 plane_events.clone(),
+                hosted_run_tx,
+                hosted_result_rx,
             ));
         }
 
@@ -950,7 +1013,8 @@ impl SessionBuilder {
             ));
         }
 
-        Ok(Session {
+        let has_plane = plane.is_some();
+        let session = Session {
             inner: Arc::new(SessionInner {
                 clock,
                 gate_shared,
@@ -982,7 +1046,13 @@ impl SessionBuilder {
                 _verbs: verbs,
                 _plane: plane,
             }),
-        })
+        };
+        if has_plane {
+            let hosted_thread =
+                pumps::spawn_hosted_run_pump(session.clone(), hosted_run_rx, hosted_result_tx);
+            session.inner.threads.lock().push(hosted_thread);
+        }
+        Ok(session)
     }
 }
 
@@ -1183,6 +1253,56 @@ impl Session {
     /// unchanged (no per-episode override).
     pub fn start_episode(&self, task: &str) -> Result<Episode, RuntimeError> {
         self.start_episode_with(task, EpisodeOptions::default())
+    }
+    /// Adapter used only by the hosted-run worker: open through the ordinary
+    /// reset/recording path, then apply the FSM's ordinary explicit Start.
+    /// It creates no hosted authority state; every later claim and action uses
+    /// the same core machinery as a customer-started episode.
+    pub(crate) fn start_hosted_episode(
+        &self,
+        task_metadata: BTreeMap<String, String>,
+    ) -> Result<Episode, RuntimeError> {
+        if let Some(verb) = self.inner.agent_verb_gap {
+            return Err(RuntimeError::MissingVerb {
+                verb,
+                required_by: "a hosted run (a live remote engage path)",
+                remedy: "wire the robot's control before accepting hosted runs",
+            });
+        }
+        let episode = self.start_episode_with(
+            "hosted run",
+            EpisodeOptions {
+                task_metadata,
+                ..EpisodeOptions::default()
+            },
+        )?;
+        let id = episode.id().clone();
+        self.inject(SessionEvent::Start {
+            at: self.inner.clock.stamp_now().mono_ns(),
+        });
+        let status = self.inner.mirror.wait_until(|status| {
+            status.shutdown
+                || status.episode_id.as_ref() != Some(&id)
+                || matches!(
+                    status.episode_state,
+                    Some(Phase::Running | Phase::Intervention(_) | Phase::Terminal(_))
+                )
+        });
+        if status.shutdown {
+            return Err(RuntimeError::ShuttingDown);
+        }
+        if status.episode_id.as_ref() == Some(&id)
+            && matches!(
+                status.episode_state,
+                Some(Phase::Running | Phase::Intervention(_))
+            )
+        {
+            Ok(episode)
+        } else {
+            Err(RuntimeError::ResetFailed(
+                "hosted episode did not enter RUNNING".into(),
+            ))
+        }
     }
 
     /// Open an episode and block through the reset pipeline (the design
@@ -1514,6 +1634,25 @@ impl Session {
     #[must_use]
     pub fn status(&self) -> crate::mirror::Status {
         self.inner.mirror.read()
+    }
+
+    /// Request the registered energized HOLD path locally, ahead of ordinary
+    /// queued verb traffic. Authority remains core-owned and unchanged: this
+    /// invokes no owner callback on the caller thread, grants no claim, and
+    /// creates no alternate lease path. `reason` is validated at this seam;
+    /// v0 has no matching field on an unsolicited VerbResult, so it is not
+    /// fabricated into the timeline.
+    pub fn request_hold(&self, reason: &str) -> Result<(), RuntimeError> {
+        if reason.trim().is_empty() || reason.len() > 1024 {
+            return Err(RuntimeError::InvalidHoldRequest(
+                "reason must be non-empty and at most 1024 UTF-8 bytes".into(),
+            ));
+        }
+        if self.inner.mirror.read().shutdown {
+            return Err(RuntimeError::ShuttingDown);
+        }
+        self.inner._verbs.request_priority_hold();
+        Ok(())
     }
 
     /// Request the registered priority e-stop path locally. This queues no
@@ -1922,6 +2061,22 @@ impl Session {
             &self.inner.clock,
             calibration_id,
             after_sequence,
+            timeout.min(std::time::Duration::from_secs(30)),
+        )
+    }
+
+    /// Long-poll hosted Calibrate requests for local RGB-D resolution.
+    /// Requests are scoped to the connection that negotiated the feature;
+    /// disconnect clears the queue, so callers never service stale pixels.
+    #[must_use]
+    pub fn calibration_measurement_requests(
+        &self,
+        after_cursor: u64,
+        timeout: std::time::Duration,
+    ) -> Vec<(u64, pb::CalibrationMeasurementRequest)> {
+        self.inner.plane_events.wait_calibration_requests(
+            &self.inner.clock,
+            after_cursor,
             timeout.min(std::time::Duration::from_secs(30)),
         )
     }

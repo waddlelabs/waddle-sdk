@@ -1,6 +1,6 @@
 # Behavioral scenario format — `waddle_sdk.behavior/v0`
 
-**Normative.** Every file in `fixtures/behaviors/` follows this schema, and every
+**Normative.** New files in `fixtures/behaviors/` use this format. Append-only goldens that predate the package rename retain the `waddle.behavior/v0` envelope spelling; runners accept that spelling as the identical schema. Every
 conformance runner implements exactly this schema. If a runner and this document
 disagree, this document wins and the runner is wrong.
 

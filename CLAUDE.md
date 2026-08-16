@@ -67,60 +67,60 @@ waddle-sdk/
     pyproject.toml           # maturin backend; module waddle_sdk._core; uv-managed
     rust/                    # the shim: its OWN cargo workspace (see build notes)
     python/waddle_sdk/       # THE IMPORTABLE PACKAGE IS `waddle_sdk`, not
-                             #   `waddle`: the closed backend owns that name and
-                             #   the two share an env (waddle -> waddle-metal ->
-                             #   this SDK). Co-installed they produced a SILENT
-                             #   hybrid import, not an error. Never rename this
-                             #   back. What is NOT renamed: the
-                             #   `waddle.execution.v1` entry-point group (a
-                             #   cross-repo contract waddle-metal registers),
-                             #   `waddle.v0` (the wire namespace), and recorded
-                             #   names (`/waddle/observations`, `waddle.testing`).
-                             #   pure-Python surface: init (legacy robot/control
-                             #   OR managed rig=), rollout/Control/agent,
-                             #   generic task_metadata, paired Session.stamp,
-                             #   durable task/calibration/artifact facades in
-                             #   _services.py, and waddle_sdk.ui(): one authenticated
-                             #   127.0.0.1 server per active session. _ui.py
-                             #   owns HTTP security/presentation/path resolution
-                             #   only; ui_assets/ is dependency-free HTML/CSS/JS
-                             #   and every asset/API URL is relative so SSH/dev-
-                             #   machine reverse-proxy prefixes survive. Proxy
-                             #   POSTs still require the exact upstream loopback
-                             #   Host, fragment bearer, and browser-owned same-
-                             #   origin fetch metadata. E-stop, core-owned handoff, jog/
-                             #   deadman, status and connection-scoped service
-                             #   state are native. Optional local execution is
-                             #   discovered only from waddle.execution.v1 entry
-                             #   points after selection. No standalone
-                             #   `waddle ui` command.
-                             #   descriptors; _native.py picks the compiled core
+                             #   `waddle`: the closed backend owns that name.
+                             #   `site.py` is the primary Site/SiteSession/Run
+                             #   lifecycle; `runtime.py` owns the structural
+                             #   SDK port/DTOs consumed by Metal; an open describe() adds
+                             #   the canonical robot action descriptor so Metal can map
+                             #   named parts; schemas/
+                             #   carries the strict `waddle.site/v1` schema.
+                             #   Root exports exactly Site/SiteSession/Run, load_site,
+                             #   Grpc/LiveKit, Outcome, and manifest errors.
+                             #   transport.py holds pure transport declarations;
+                             #   _session.py is the private, non-global builder with
+                             #   fixed hold-first/enforced core wiring. There is no
+                             #   init/rollout/agent/shutdown or _testing module.
+                             #   cli.py owns the `waddle-sdk connect` process.
+                             #   Driver-extension APIs stay in descriptors/,
+                             #   robots/, and cameras/.
+                             #   Hardware opens only in SiteSession.__enter__; a
+                             #   bound Grpc connector first completes an
+                             #   authorization-only waddle.v0 registration
+                             #   and must negotiate connector.binding. After
+                             #   runnable registration, the native runtime emits
+                             #   500 ms v0 heartbeats; key revocation tears down
+                             #   the connection and reaches the core-owned hold.
+                             #   all commands cross the core gate and the
+                             #   owner envelope, and local RGB-D depth stays
+                             #   process-local for calibration deprojection.
+                             #   Static box/sphere keep-outs and named-body
+                             #   self/cross-part collision checks are SDK-owned:
+                             #   adapters supply conservative CollisionSphere
+                             #   geometry in one declared frame; missing or
+                             #   incompatible geometry fails closed.
+                             #   `_native.py` picks the compiled core.
+                             #   The SDK-local UI and hosted task/artifact
+                             #   facades are deleted; those product surfaces
+                             #   live in closed Waddle through Metal.
       cameras/               # structural CameraDriver plus immutable paired-
                              #   timestamp RGB/RGB-D samples; latest aligned
                              #   depth stays local for click deprojection.
                              #   Orbbec/RealSense adapters import vendor SDKs
-                             #   lazily behind [orbbec]/[realsense]/[cameras]
-      robots/                # opt-in robot modules (NOT imported by `import
-                             #   waddle`): base.py is the vendor-neutral half
-                             #   (Driver protocol, SimDriver twin, the Arm
-                             #   envelope seam, console recovery, RobotPump,
-                             #   CameraPump, Rig + its RigSession); a vendor
-                             #   module is
-                             #   facts + driver + factory on top of it.
-                             #   `rig.session(...)` is COMPOSITION ONLY, and
-                             #   the rule that keeps it honest is a test:
-                             #   the same program wired by hand out of the
-                             #   same pieces opens a byte-identical session
-                             #   (tests/test_yam_session.py). That lifecycle
-                             #   is shared by rig.session(...) and
-                             #   waddle_sdk.init(rig=...), whose process ownership
-                             #   makes shutdown() deterministic. Its two ends
-                             #   are the point — hardware opens inside the
-                             #   `with` (a half-open rig closes what it
-                             #   opened), and `__exit__` finalizes the
-                             #   recording whatever the body did, so that is
-                             #   never a customer's `finally:` again. The BAR
-                             #   that keeps base.py vendor-neutral is a test:
+                             #   lazily behind [orbbec]/[realsense]; USB does
+                             #   the same for OpenCV behind [usb]. [cameras]
+                             #   composes all three; mock is dependency-free.
+      robots/                # opt-in driver-extension modules; Site resolves
+                             #   their declared module:factory targets lazily.
+                             #   base.py is the vendor-neutral Driver/SimDriver,
+                             #   Arm envelope (including CollisionSphere-backed
+                             #   keep-out/self-collision arithmetic), recovery,
+                             #   pump, Rig and RigSession
+                             #   layer. SiteSession composes RigSession._open
+                             #   with the internal native-session builder;
+                             #   driver factory calls open no device. A half-open
+                             #   rig closes everything it opened and context
+                             #   exit finalizes recording before hardware close.
+                             #   The bar that keeps base.py vendor-neutral is a test:
                              #   tests/test_robots_base.py builds a whole toy
                              #   vendor module (facts + SimDriver + factory,
                              #   ~50 lines) and drives it end to end with
@@ -132,9 +132,27 @@ waddle-sdk/
                              #   what it prints. sdk/README.md is where
                              #   this subpackage is documented OUTWARD (the
                              #   layering, the envelope-ownership doctrine,
-                             #   the posture table), and the root README
-                             #   carries the five-line quickstart and the
-                             #   I2RT install command
+                             #   the posture table), and the root README carries the Site quickstart and
+                             #   the I2RT install command
+        mock.py              # dependency-free manifest-native simulated arm;
+                             # strict configurable limits/rate/home, planar FK,
+                             # conservative CollisionSphere geometry, and
+                             # Site/static-keepout tests.
+        xarm.py              # UFactory xArm 6/7: lazy xarm-python-sdk,
+                             #   position-mode joint + G2 action rows,
+                             #   controller-native safety setup, monitor,
+                             #   local e-stop/re-enable, and fake-vendor tests.
+        alicia.py            # Synria Alicia-M: lazy alicia-m-sdk, one PV
+                             #   frame for six joints + gripper, torque-off
+                             #   monitor/e-stop, model-derived limits.
+        alicia_d.py          # Synria Alicia-D: lazy alicia-d-sdk, blocking
+                             #   calls behind Driver, nonblocking commands,
+                             #   torque-off monitor/e-stop, model-derived
+                             #   limits. Alicia extras require Python 3.11+.
+        mujoco.py            # manifest-native joint-target simulation:
+                             #   lazy [mujoco], confined MJCF path, explicit
+                             #   scalar joint/actuator mapping, scratch-state
+                             #   FK/body spheres, local e-stop
         yam.py, yam_data/    # the I2RT YAM: constants-with-provenance, and
                              #   the vendor's own MIT model (URDF text, no
                              #   meshes) shipped beside them so
@@ -170,24 +188,14 @@ waddle-sdk/
                              #   customer program)
     teleop/                  # the `waddle-sdk-teleop` companion distribution:
                              #   same rust/Cargo.toml, + the livekit feature
-    examples/                # the two ends of the same session, + README:
-                             #   toy_robot.py writes a whole integration by
-                             #   hand (simulated 6-dof arm; offline,
-                             #   connected, and agent modes) and is what to
-                             #   read to learn the surface; yam_bimanual.py
-                             #   is five Waddle-facing lines over a robot
-                             #   module (waddle_sdk.robots.yam) and a table of
-                             #   the site numbers that have no defaults.
-                             #   Both are tested as the PROGRAMS they are —
-                             #   subprocess runs, not imports — so a
-                             #   signature they still call keeps working.
-                             #   toy_robot's background loop is the shipped
-                             #   base.RobotPump: one loop, not a second copy
-    tests/                   # pytest: descriptors + e2e (incl. MCAP read-back),
-                             #   the robots suites (base layer, YAM facts, YAM
-                             #   factories, rig session), UI loopback/security/
-                             #   manifest tests, and both examples run
-                             #   as the subprocess programs they are
+    examples/                # one strict simulated Site program:
+                             #   site.yaml + run_site.py + README. The program is
+                             #   subprocess-tested and exercises load/open/run/close.
+    tests/                   # pytest: Site/runtime contracts, descriptors, native
+                             #   transport/FSM behavior, camera lifecycle, owner
+                             #   envelope, YAM facts/factories, lazy adapters,
+                             #   packaging, and the shipped Site program. Legacy
+                             #   module-global API tests were deleted at cutover.
 ```
 
 Future artifacts (`waddle-proxy`, `waddle-cpp`, `waddle_ros`) will live in new
@@ -252,8 +260,15 @@ top-level dirs; they are not built yet.
       the dev extension is connected, not offline.
       Camera support is independently lazy: `[orbbec]` installs
       `pyorbbecsdk2`, `[realsense]` installs `pyrealsense2`, and
-      `[cameras]` composes both. The base wheel imports neither vendor SDK,
-      and all three extras compose with `[teleop]`. Metadata/install
+      `[usb]` installs OpenCV; `[cameras]` composes all three. Robot support is
+      likewise lazy: `[xarm]`, `[alicia]`, and `[alicia-d]` install their
+      vendor packages, while `[robots]` composes them. Alicia vendor packages
+      require Python 3.11+, expressed as dependency markers without narrowing
+      the base wheel's Python 3.10+ range; the explicit pre-release
+      `synria-robocore` constraint is necessary for deterministic resolution.
+      MuJoCo is separate behind `[mujoco]` and loads its MJCF only at Site.open().
+      The base wheel imports no vendor SDK, and the extras compose with
+      `[teleop]`. Metadata/install
       combinations are held by `tests/test_clean_installs.py`;
       hardware construction remains opt-in because importing an adapter never
       opens a device.
@@ -285,7 +300,7 @@ top-level dirs; they are not built yet.
     working tree, so without it a build after a test run ships that
     interpreter's bytecode and a build on a clean checkout does not.
     Non-Python PACKAGE DATA under `python-source` (today
-    `waddle/robots/yam_data/`: 16.1 KB of URDF text + licence + README, 5.6 KB
+    `waddle_sdk/robots/yam_data/`: 16.1 KB of URDF text + licence + README, 5.6 KB
     of it once deflated into the wheel — sdk/README.md quotes that same 16 KB
     to a customer, so the two move together) ships with no pyproject edit at
     all, and the code reads it through `importlib.resources` so a wheel, an

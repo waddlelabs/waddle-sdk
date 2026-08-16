@@ -110,6 +110,9 @@ impl ClientMsg {
                 Some(pb::gate_client_message::Msg::WorkspaceArtifactRequest(_)) => {
                     Some(crate::flags::WORKSPACE_ARTIFACTS)
                 }
+                Some(pb::gate_client_message::Msg::HostedRunStatus(_)) => {
+                    Some(crate::flags::HOSTED_RUNS)
+                }
                 _ => None,
             },
             _ => None,
@@ -416,6 +419,11 @@ mod tests {
                 pb::WorkspaceArtifactRequest::default(),
             )),
         });
+        let hosted = ClientMsg::Gate(pb::GateClientMessage {
+            msg: Some(pb::gate_client_message::Msg::HostedRunStatus(
+                pb::HostedRunStatus::default(),
+            )),
+        });
 
         assert_eq!(named.connection_scoped_flag(), Some(crate::flags::PARTS));
         assert_eq!(ack.connection_scoped_flag(), Some(crate::flags::ACKS));
@@ -432,6 +440,10 @@ mod tests {
             artifact.connection_scoped_flag(),
             Some(crate::flags::WORKSPACE_ARTIFACTS)
         );
+        assert_eq!(
+            hosted.connection_scoped_flag(),
+            Some(crate::flags::HOSTED_RUNS)
+        );
         assert_eq!(sole.connection_scoped_flag(), None);
         assert_eq!(event.connection_scoped_flag(), None);
 
@@ -444,6 +456,7 @@ mod tests {
             "cannot cross a connection"
         );
         assert!(!artifact.buffer_when_offline(), "cannot cross a connection");
+        assert!(!hosted.buffer_when_offline(), "cannot cross a connection");
         assert!(sole.buffer_when_offline(), "history, and core surface");
         assert!(event.buffer_when_offline(), "history, and core surface");
         // Withheld is not shed: none of this is droppable, so nothing here
@@ -456,6 +469,7 @@ mod tests {
             &task,
             &calibration,
             &artifact,
+            &hosted,
             &event,
         ] {
             assert!(!msg.is_droppable(), "{msg:?}");

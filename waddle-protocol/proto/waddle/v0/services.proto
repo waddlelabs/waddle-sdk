@@ -15,8 +15,8 @@
 //     EpisodeEvents, VerbResults, gate status, and flagged UI chat requests.
 //     Plane → SDK: claim directives,
 //     intervention action chunks, verb requests, grant changes, episode
-//     directives, and flagged UI chat events. Conformance scenarios assert
-//     emissions on exactly this stream.
+//     directives, flagged hosted-run requests, and flagged UI chat events.
+//     Conformance scenarios assert emissions on exactly this stream.
 //   - Heartbeat is bidi so grant demotions have a low-latency down-path
 //     independent of gate traffic.
 //   - RequestReset is server-streaming: resets are long-running, with phase
@@ -53,6 +53,14 @@ message RegisterRequest {
   // against them.
   repeated string feature_flags = 5;
   string session_nonce = 6;
+  // Exact hosted connector binding (flag waddle.v0.connector.binding).
+  // project remains field 1 for backwards compatibility and carries the
+  // binding's project_id whenever these fields are present.
+  string customer_id = 7;
+  string workspace_id = 8;
+  // A short-lived authorization probe. The plane authenticates the exact
+  // binding but MUST NOT expose the connection as a runnable SDK session.
+  bool authorization_only = 9;
 }
 
 message RegisterResponse {
@@ -209,9 +217,61 @@ message GateClientMessage {
     // Flag waddle.v0.workspace.artifacts: request a reviewed workspace
     // delivery. The archive itself never rides GateActions.
     WorkspaceArtifactRequest workspace_artifact_request = 8;
+    // Flag waddle.v0.hosted.runs: the SDK's connection-scoped admission
+    // answer to a HostedRunRequest. Never buffered or replayed.
+    HostedRunStatus hosted_run_status = 9;
   }
 }
 
+// ---------------------------------------------------------------------------
+// Plane-started episodes (flag waddle.v0.hosted.runs)
+// ---------------------------------------------------------------------------
+
+// Ask an idle SDK session to open one ordinary core-owned episode. The
+// request belongs to the connection that delivered it and is never replayed
+// automatically. request_id is an opaque idempotency key bounded to 128 UTF-8
+// bytes. task_metadata has the same bounds as AgentInviteEvent.task_metadata:
+// at most 64 non-empty keys, 128 bytes/key, 4096 bytes/value, and 16 KiB total.
+// timeout_ns is a positive relative lifetime for the accepted episode; expiry
+// requests HOLD and terminates it with ABORT through the ordinary FSM path.
+//
+// Duplicate request_ids within one SDK session return the first status
+// verbatim, even when their other fields differ. A duplicate never opens a
+// second episode. After reconnect a plane may retry explicitly to learn that
+// original result, but the transport never retries a request on its behalf.
+message HostedRunRequest {
+  string request_id = 1;
+  map<string, string> task_metadata = 2;
+  int64 timeout_ns = 3;
+}
+
+enum HostedRunStatusKind {
+  HOSTED_RUN_STATUS_KIND_UNSPECIFIED = 0;
+  HOSTED_RUN_STATUS_KIND_ACCEPTED = 1;
+  HOSTED_RUN_STATUS_KIND_REJECTED = 2;
+  HOSTED_RUN_STATUS_KIND_BUSY = 3;
+}
+
+// Machine-readable admission detail. code is a stable snake_case reason;
+// message is bounded public-safe prose; context contains bounded identifiers,
+// never secrets, traces, or transport credentials.
+message HostedRunDetail {
+  string code = 1;
+  string message = 2;
+  map<string, string> context = 3;
+}
+
+// One terminal admission answer, not episode lifecycle. ACCEPTED carries the
+// newly opened episode_id; BUSY carries the currently active episode_id when
+// one exists; REJECTED may omit it. Subsequent claim, action, completion,
+// recording, fault, and timeline traffic uses the existing waddle.v0 messages.
+// This message is connection-scoped and is never buffered or replayed.
+message HostedRunStatus {
+  string request_id = 1;
+  HostedRunStatusKind kind = 2;
+  string episode_id = 3;
+  HostedRunDetail detail = 4;
+}
 // Flag waddle.v0.agent.chat. Text is UTF-8 and bounded by the receiving
 // implementation to 4 KiB; request_id is an opaque caller correlation id
 // bounded to 128 UTF-8 bytes. A receiver MUST reject larger values rather
@@ -325,6 +385,19 @@ message CalibrationMeasurement {
   optional double depth_m = 8;
 }
 
+// Hosted Calibrate UI request for the customer SDK to resolve one pixel
+// against the exact retained RGB-D frame. The response is the existing
+// CalibrationMeasurement with the same calibration_id and sample_id. This
+// message is connection-scoped and is never buffered or replayed.
+message CalibrationMeasurementRequest {
+  string calibration_id = 1;
+  string sample_id = 2;
+  string camera = 3;
+  uint64 frame_seq = 4;
+  uint32 x = 5;
+  uint32 y = 6;
+}
+
 enum CalibrationUpdateKind {
   CALIBRATION_UPDATE_KIND_UNSPECIFIED = 0;
   CALIBRATION_UPDATE_KIND_ACCEPTED = 1;
@@ -436,6 +509,8 @@ message GateServerMessage {
     TaskSessionEvent task_session_event = 9; // flag waddle.v0.task.sessions
     CalibrationUpdate calibration_update = 10; // flag waddle.v0.calibration.measurements
     WorkspaceArtifactReady workspace_artifact_ready = 11; // flag waddle.v0.workspace.artifacts
+    HostedRunRequest hosted_run_request = 12; // flag waddle.v0.hosted.runs
+    CalibrationMeasurementRequest calibration_measurement_request = 13; // flag waddle.v0.calibration.measurements
   }
 }
 

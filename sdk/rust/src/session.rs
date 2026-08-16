@@ -24,8 +24,8 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList};
 use waddle_media::{DataTopic, LoopbackFarEnd, LoopbackMedia};
 use waddle_runtime::{
-    AgentOutcome, ControlRegistry, EePose, EpisodeOptions, EstopDecl, FrameData, JogAxis,
-    JogRequest, ProprioReport, Session, SessionStamp,
+    AgentOutcome, ConnectorBinding, ControlRegistry, EePose, EpisodeOptions, EstopDecl, FrameData,
+    JogAxis, JogRequest, ProprioReport, Session, SessionStamp,
 };
 use waddle_types::pb::v0 as pb;
 use waddle_types::{ActorKind, TerminalOutcome};
@@ -341,6 +341,11 @@ impl PySession {
                 .map(|tag| tag.provenance.to_string()),
         )?;
         out.set_item("plane_connected", status.plane_connected)?;
+        out.set_item("plane_registered", status.plane_registered)?;
+        out.set_item(
+            "connector_binding_negotiated",
+            status.connector_binding_negotiated,
+        )?;
         out.set_item("chat_negotiated", status.chat_negotiated)?;
         out.set_item("task_sessions_negotiated", status.task_sessions_negotiated)?;
         out.set_item(
@@ -380,6 +385,13 @@ impl PySession {
     /// Queue the core's priority e-stop path. Returns only "requested".
     fn request_estop(&self) -> PyResult<&'static str> {
         self.inner.request_estop().map_err(runtime_err)?;
+        Ok("requested")
+    }
+
+    /// Queue the core's priority energized-hold path. Returns only
+    /// "requested"; the registered owner callback runs on core dispatch.
+    fn request_hold(&self, reason: &str) -> PyResult<&'static str> {
+        self.inner.request_hold(reason).map_err(runtime_err)?;
         Ok("requested")
     }
 
@@ -599,6 +611,36 @@ impl PySession {
                 depth_m,
             })
             .map_err(runtime_err)
+    }
+
+    #[pyo3(signature = (after_cursor=0, timeout_ms=0))]
+    fn calibration_measurement_requests<'py>(
+        &self,
+        py: Python<'py>,
+        after_cursor: u64,
+        timeout_ms: u64,
+    ) -> PyResult<Vec<Bound<'py, PyDict>>> {
+        let session = self.inner.clone();
+        let requests = py.detach(move || {
+            session.calibration_measurement_requests(
+                after_cursor,
+                Duration::from_millis(timeout_ms.min(30_000)),
+            )
+        });
+        requests
+            .into_iter()
+            .map(|(cursor, request)| {
+                let item = PyDict::new(py);
+                item.set_item("cursor", cursor)?;
+                item.set_item("calibration_id", request.calibration_id)?;
+                item.set_item("sample_id", request.sample_id)?;
+                item.set_item("camera", request.camera)?;
+                item.set_item("frame_sequence", request.frame_seq)?;
+                item.set_item("x", request.x)?;
+                item.set_item("y", request.y)?;
+                Ok(item)
+            })
+            .collect()
     }
 
     #[pyo3(signature = (calibration_id, after_sequence=0, timeout_ms=0))]
@@ -1271,6 +1313,10 @@ impl PySession {
     reset_verification="blocking",
     transport_url=None,
     transport_token=None,
+    connector_customer_id=None,
+    connector_project_id=None,
+    connector_workspace_id=None,
+    connector_authorization_only=false,
     media_url=None,
     media_token=None,
 ))]
@@ -1301,6 +1347,10 @@ pub(crate) fn create_session(
     reset_verification: &str,
     transport_url: Option<&str>,
     transport_token: Option<&str>,
+    connector_customer_id: Option<&str>,
+    connector_project_id: Option<&str>,
+    connector_workspace_id: Option<&str>,
+    connector_authorization_only: bool,
     media_url: Option<&str>,
     media_token: Option<&str>,
 ) -> PyResult<PySession> {
@@ -1356,6 +1406,36 @@ pub(crate) fn create_session(
             "transport_token was given without transport_url",
         ));
     }
+    let connector_binding = match (
+        connector_customer_id,
+        connector_project_id,
+        connector_workspace_id,
+    ) {
+        (Some(customer), Some(project), Some(workspace))
+            if !customer.is_empty() && !project.is_empty() && !workspace.is_empty() =>
+        {
+            if transport_url.is_none() {
+                return Err(PyValueError::new_err(
+                    "connector binding requires transport_url",
+                ));
+            }
+            Some(
+                ConnectorBinding::new(customer, project, workspace)
+                    .authorization_only(connector_authorization_only),
+            )
+        }
+        (None, None, None) if !connector_authorization_only => None,
+        (None, None, None) => {
+            return Err(PyValueError::new_err(
+                "connector_authorization_only requires a complete connector binding",
+            ));
+        }
+        _ => {
+            return Err(PyValueError::new_err(
+                "connector_customer_id, connector_project_id, and connector_workspace_id must all be non-empty or all omitted",
+            ));
+        }
+    };
     if media_token.is_some() && media_url.is_none() {
         return Err(PyValueError::new_err(
             "media_token was given without media_url",
@@ -1436,6 +1516,9 @@ pub(crate) fn create_session(
     }
     if let Some(spec) = post_reset {
         builder = builder.post_reset(spec);
+    }
+    if let Some(binding) = connector_binding {
+        builder = builder.connector_binding(binding);
     }
     let mut testing_far = None;
     if testing_loopback {

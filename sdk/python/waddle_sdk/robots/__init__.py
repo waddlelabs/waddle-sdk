@@ -14,7 +14,7 @@ and timelines stay in waddle-core, exactly as they do for a program that
 writes its own driver.
 
 Every layer is usable alone, and that is the design rather than an accident:
-take the declaration and wire `waddle_sdk.init` yourself, bring your own driver,
+take the declaration and wire `the Site lifecycle` yourself, bring your own driver,
 bring your own envelope, or run your own loop. The rig factory each vendor
 module exposes is composition sugar over those pieces — never a wall around
 them.

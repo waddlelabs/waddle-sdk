@@ -212,6 +212,34 @@ informational on every state: recorded, never a transition. The invite
 emission and timer are episode-open effects (E23); nothing else about
 episode open changes.
 
+### 1.6 Hosted-run admission (flag `waddle.v0.hosted.runs`)
+
+`HostedRunRequest` is a connection-scoped admission command, not a second
+episode or authority machine. An ACCEPTED request opens one ordinary episode
+through E1's reset pipeline and applies the ordinary explicit `start` trigger
+in E6. From that point every claim, lease, action, completion, recording,
+fault, and transition is governed by the existing rows above. Task metadata
+is copied into the ordinary episode context and is never read by an authority
+guard.
+
+Only an idle SDK session can accept a new request. A concurrent episode yields
+BUSY; malformed metadata, a non-positive timeout, unavailable control verbs,
+reset failure, or shutdown yields REJECTED. Request IDs are idempotent for the
+SDK session lifetime: a duplicate returns the original `HostedRunStatus`
+verbatim even if the retry changes other fields, and never opens another
+episode. Implementations may bound retained IDs but MUST reject new IDs
+deterministically after that bound rather than evicting an old result and
+risking duplicate motion.
+
+The request and answer belong to the connection that negotiated the feature
+and are never buffered or automatically replayed. Loss of that connection, or
+expiry of the request's relative lifetime, requests the core-owned energized
+HOLD verb and terminates the accepted episode with ABORT through E10. A later
+connection never resumes or replays its motion. These are runtime admission
+and fail-closed routing rules, not new FSM guards; their wire examples are
+`hosted_run_request.json` and `hosted_run_status_accepted.json`, and the
+reference runtime assertions live in `waddle-runtime/tests/hosted_runs.rs`.
+
 ---
 
 ## 2. Claim lifecycle

@@ -31,6 +31,8 @@ struct State {
     task_events: VecDeque<pb::TaskSessionEvent>,
     last_calibration_sequence: HashMap<String, u64>,
     calibration_updates: VecDeque<pb::CalibrationUpdate>,
+    calibration_request_cursor: u64,
+    calibration_requests: VecDeque<(u64, pb::CalibrationMeasurementRequest)>,
     artifact_ready: VecDeque<pb::WorkspaceArtifactReady>,
 }
 
@@ -135,6 +137,24 @@ impl PlaneEvents {
         self.changed.notify_all();
     }
 
+    pub(crate) fn push_calibration_request(&self, request: pb::CalibrationMeasurementRequest) {
+        if request.calibration_id.is_empty()
+            || request.calibration_id.len() > 128
+            || request.sample_id.is_empty()
+            || request.sample_id.len() > 128
+            || request.camera.is_empty()
+            || request.camera.len() > 128
+        {
+            return;
+        }
+        let mut state = self.state.lock();
+        state.calibration_request_cursor = state.calibration_request_cursor.saturating_add(1);
+        let cursor = state.calibration_request_cursor;
+        state.calibration_requests.push_back((cursor, request));
+        trim(&mut state.calibration_requests);
+        self.changed.notify_all();
+    }
+
     pub(crate) fn push_artifact(&self, ready: pb::WorkspaceArtifactReady) {
         if ready.request_id.is_empty()
             || ready.detail.len() > EVENT_DETAIL_MAX_BYTES
@@ -169,6 +189,7 @@ impl PlaneEvents {
         while state.task_events.len() > EVENT_CAPACITY {
             state.task_events.pop_front();
         }
+        state.calibration_requests.clear();
         self.changed.notify_all();
     }
 
@@ -203,6 +224,22 @@ impl PlaneEvents {
                 .filter(|update| {
                     update.calibration_id == calibration_id && update.sequence > after_sequence
                 })
+                .cloned()
+                .collect()
+        })
+    }
+
+    pub(crate) fn wait_calibration_requests(
+        &self,
+        clock: &SessionClock,
+        after_cursor: u64,
+        timeout: Duration,
+    ) -> Vec<(u64, pb::CalibrationMeasurementRequest)> {
+        self.wait(clock, timeout, |state| {
+            state
+                .calibration_requests
+                .iter()
+                .filter(|(cursor, _request)| *cursor > after_cursor)
                 .cloned()
                 .collect()
         })
@@ -344,6 +381,29 @@ mod tests {
                 .wait_artifact(&SessionClock::capture(), "export", Duration::ZERO)
                 .len(),
             1
+        );
+    }
+
+    #[test]
+    fn calibration_requests_are_cursor_ordered_and_cleared_on_disconnect() {
+        let events = PlaneEvents::new();
+        events.push_calibration_request(pb::CalibrationMeasurementRequest {
+            calibration_id: "cal".into(),
+            sample_id: "one".into(),
+            camera: "wrist".into(),
+            frame_seq: 3,
+            x: 12,
+            y: 34,
+        });
+        let found = events.wait_calibration_requests(&SessionClock::capture(), 0, Duration::ZERO);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].0, 1);
+        assert_eq!(found[0].1.sample_id, "one");
+        events.unavailable("connection lost");
+        assert!(
+            events
+                .wait_calibration_requests(&SessionClock::capture(), 0, Duration::ZERO)
+                .is_empty()
         );
     }
 }

@@ -8,8 +8,11 @@ description = "Python frontend for Waddle: supervision for real-world robot poli
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.10"
-dependencies = ["numpy>=1.24"]
+dependencies = ["numpy>=1.24", "PyYAML>=6,<7", "jsonschema>=4.22,<5"]
 dynamic = ["version"]
+
+[project.scripts]
+waddle-sdk = "waddle_sdk.cli:main"
 
 [project.optional-dependencies]
 # The teleop companion distribution (`sdk/teleop/pyproject.toml`): the SAME
@@ -27,10 +30,29 @@ dynamic = ["version"]
 # `pip install 'waddle-sdk[teleop]'` silently yields no LiveKit.
 # `tests/test_features.py::test_the_teleop_extra_pins_this_builds_version`
 # fails until the two agree.
-teleop = ["waddle-sdk-teleop==0.0.0"]
+teleop = ["waddle-sdk-teleop==0.1.0"]
 orbbec = ["pyorbbecsdk2"]
 realsense = ["pyrealsense2"]
-cameras = ["pyorbbecsdk2", "pyrealsense2"]
+usb = ["opencv-python-headless>=4.8"]
+xarm = ["xarm-python-sdk>=1.16"]
+alicia = [
+    "alicia-m-sdk>=1.1.1rc1; python_version >= '3.11'",
+    "synria-robocore>=2.5.0rc3,<3; python_version >= '3.11'",
+    "synriard>=1.2.2; python_version >= '3.11'",
+]
+alicia-d = [
+    "alicia-d-sdk>=6.1.0; python_version >= '3.11'",
+    "synriard>=1.2.2; python_version >= '3.11'",
+]
+mujoco = ["mujoco>=3.1,<4"]
+cameras = ["pyorbbecsdk2", "pyrealsense2", "opencv-python-headless>=4.8"]
+robots = [
+    "xarm-python-sdk>=1.16",
+    "alicia-m-sdk>=1.1.1rc1; python_version >= '3.11'",
+    "alicia-d-sdk>=6.1.0; python_version >= '3.11'",
+    "synria-robocore>=2.5.0rc3,<3; python_version >= '3.11'",
+    "synriard>=1.2.2; python_version >= '3.11'",
+]
 
 [tool.uv.sources]
 # Dev-loop only (uv reads this; published wheel metadata never carries it):

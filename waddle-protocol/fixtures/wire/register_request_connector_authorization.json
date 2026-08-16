@@ -1,0 +1,16 @@
+{
+  "format": "waddle_sdk.fixture/v0",
+  "type": "waddle.v0.RegisterRequest",
+  "description": "An authorization-only SDK connector registration bound to one exact customer, project, and workspace before hardware opens.",
+  "message": {
+    "project": "project-1",
+    "featureFlags": [
+      "waddle.v0.core",
+      "waddle.v0.connector.binding"
+    ],
+    "sessionNonce": "01JCONNECTORNONCE",
+    "customerId": "customer-1",
+    "workspaceId": "workspace-1",
+    "authorizationOnly": true
+  }
+}

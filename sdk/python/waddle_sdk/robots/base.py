@@ -17,7 +17,7 @@ two things is here, once:
   e-stop latch. One reader per terminal, aimed at the arms of whoever started
   it and retired with them.
 * :class:`RobotPump` + :func:`proprio_tick` — the loop that keeps reporting
-  while the caller's thread is busy (blocked inside `waddle_sdk.agent()`, say).
+  while the caller's thread is busy (blocked inside `a Metal-hosted run`, say).
 * :func:`chunk_sender`, :func:`apply_decision`, :func:`split_by_part` — the
   `Control.send` verb over a set of arms, and the declared-layout arithmetic
   it routes with.
@@ -26,7 +26,7 @@ two things is here, once:
   starts the console recovery and the reporting loop, holds live arms until a
   human says they are parked, and finalizes the recording on the way out.
   Every piece it composes is usable alone, and a program that wires them by
-  hand gets the same session (`tests/test_yam_session.py` pins that).
+  hand gets the same session (`tests/test_site_api.py` pins that).
 
 **Waddle never provides the envelope; the owner does.** What this module
 ships is a parameterized default built out of the owner's own numbers —
@@ -55,33 +55,34 @@ from typing import Protocol, runtime_checkable
 
 import numpy as np
 
-from .. import Control, Handoff, _Handoff, init, shutdown
+from .._session import Control, create_core_session
 from ..cameras import CameraDriver, CameraFrame, CameraSample
 from ..descriptors import Camera as CameraDescription
 from ..descriptors import FrameTransform, Robot
 
 __all__ = [
-    "Arm",
     "CONSOLE_THREAD_NAME",
+    "PARK_WORD",
+    "PARK_WORDS",
+    "POSTURES",
+    "RESUME_WORDS",
+    "RIG_DEFAULT",
+    "TWIN_KIND",
+    "Arm",
     "CameraDriver",
     "CameraFrame",
     "CameraPump",
     "CameraSample",
+    "CollisionSphere",
     "ConsoleRecovery",
     "CrossArm",
     "Driver",
-    "PARK_WORD",
-    "PARK_WORDS",
-    "POSTURES",
     "ParkGate",
-    "RESUME_WORDS",
-    "RIG_DEFAULT",
     "RejectLog",
     "Rig",
     "RigSession",
     "RobotPump",
     "SimDriver",
-    "TWIN_KIND",
     "apply_console_gesture",
     "apply_decision",
     "chain_fk",
@@ -171,19 +172,35 @@ def quaternion_wxyz(r: np.ndarray) -> tuple[float, float, float, float]:
     trace = r[0, 0] + r[1, 1] + r[2, 2]
     if trace > 0.0:
         s = math.sqrt(trace + 1.0) * 2.0
-        return (0.25 * s, (r[2, 1] - r[1, 2]) / s,
-                (r[0, 2] - r[2, 0]) / s, (r[1, 0] - r[0, 1]) / s)
+        return (
+            0.25 * s,
+            (r[2, 1] - r[1, 2]) / s,
+            (r[0, 2] - r[2, 0]) / s,
+            (r[1, 0] - r[0, 1]) / s,
+        )
     if r[0, 0] > r[1, 1] and r[0, 0] > r[2, 2]:
         s = math.sqrt(1.0 + r[0, 0] - r[1, 1] - r[2, 2]) * 2.0
-        return ((r[2, 1] - r[1, 2]) / s, 0.25 * s,
-                (r[0, 1] + r[1, 0]) / s, (r[0, 2] + r[2, 0]) / s)
+        return (
+            (r[2, 1] - r[1, 2]) / s,
+            0.25 * s,
+            (r[0, 1] + r[1, 0]) / s,
+            (r[0, 2] + r[2, 0]) / s,
+        )
     if r[1, 1] > r[2, 2]:
         s = math.sqrt(1.0 + r[1, 1] - r[0, 0] - r[2, 2]) * 2.0
-        return ((r[0, 2] - r[2, 0]) / s, (r[0, 1] + r[1, 0]) / s,
-                0.25 * s, (r[1, 2] + r[2, 1]) / s)
+        return (
+            (r[0, 2] - r[2, 0]) / s,
+            (r[0, 1] + r[1, 0]) / s,
+            0.25 * s,
+            (r[1, 2] + r[2, 1]) / s,
+        )
     s = math.sqrt(1.0 + r[2, 2] - r[0, 0] - r[1, 1]) * 2.0
-    return ((r[1, 0] - r[0, 1]) / s, (r[0, 2] + r[2, 0]) / s,
-            (r[1, 2] + r[2, 1]) / s, 0.25 * s)
+    return (
+        (r[1, 0] - r[0, 1]) / s,
+        (r[0, 2] + r[2, 0]) / s,
+        (r[1, 2] + r[2, 1]) / s,
+        0.25 * s,
+    )
 
 
 @dataclass(frozen=True)
@@ -459,7 +476,9 @@ class RejectLog:
             self._suppressed += 1
             return
         tail = (
-            f" (+{self._suppressed} more since the last line)" if self._suppressed else ""
+            f" (+{self._suppressed} more since the last line)"
+            if self._suppressed
+            else ""
         )
         self._report(f"envelope reject {self._subject} {reason}{tail}")
         self._suppressed = 0
@@ -469,6 +488,73 @@ class RejectLog:
 # ---------------------------------------------------------------------------
 # The envelope: one seam, every command
 # ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class CollisionSphere:
+    """One conservative robot-body sphere in an arm's collision frame.
+
+    Vendor adapters derive these spheres deterministically from joint
+    positions and their shipped geometry. The SDK owns all intersection and
+    refusal logic; a driver supplies geometry only.
+    """
+
+    name: str
+    center_m: Sequence[float]
+    radius_m: float
+
+    def __post_init__(self) -> None:
+        center = tuple(float(value) for value in self.center_m)
+        radius = float(self.radius_m)
+        if not self.name:
+            raise ValueError("collision sphere name must be non-empty")
+        if len(center) != 3 or not np.all(np.isfinite(center)):
+            raise ValueError(
+                f"collision sphere {self.name!r} needs three finite center coordinates"
+            )
+        if not math.isfinite(radius) or radius <= 0.0:
+            raise ValueError(
+                f"collision sphere {self.name!r} radius_m must be finite and positive"
+            )
+        object.__setattr__(self, "center_m", center)
+        object.__setattr__(self, "radius_m", radius)
+
+
+def _collision_key(first: str, second: str) -> tuple[str, str]:
+    return tuple(sorted((first, second)))
+
+
+def _spheres_overlap(
+    first: CollisionSphere,
+    second: CollisionSphere,
+    *,
+    margin_m: float,
+) -> bool:
+    distance = float(
+        np.linalg.norm(
+            np.asarray(first.center_m, dtype=float)
+            - np.asarray(second.center_m, dtype=float)
+        )
+    )
+    return distance <= first.radius_m + second.radius_m + margin_m
+
+
+def _sphere_hits_keepout(
+    sphere: CollisionSphere,
+    keepout: Mapping[str, object],
+) -> bool:
+    center = np.asarray(sphere.center_m, dtype=float)
+    margin = float(keepout.get("margin_m", 0.0))
+    if keepout["kind"] == "sphere":
+        obstacle = np.asarray(keepout["center"], dtype=float)
+        radius = float(keepout["radius_m"])
+        return float(np.linalg.norm(center - obstacle)) <= (
+            sphere.radius_m + radius + margin
+        )
+    lower = np.asarray(keepout["min"], dtype=float)
+    upper = np.asarray(keepout["max"], dtype=float)
+    nearest = np.minimum(np.maximum(center, lower), upper)
+    return float(np.linalg.norm(center - nearest)) <= sphere.radius_m + margin
 
 
 @dataclass(kw_only=True)
@@ -496,6 +582,14 @@ class Arm:
         part's own base frame. OPT-IN: an arm built without it is legal and
         reports joint positions only — :meth:`ee_pose` answers ``None`` rather
         than inventing a frame, and no workspace box may be declared.
+    ``collision_spheres`` / ``collision_frame``
+        Deterministic conservative body geometry supplied by the driver
+        adapter. The callable maps arm joint positions to named spheres. The
+        SDK, not the vendor package, applies static keep-outs and self/body
+        collision policy to those spheres.
+    ``static_keepouts`` / ``self_collision_*``
+        SDK-owned hard-safety rules compiled from ``site.yaml``. Rules are
+        checked before any driver write and reject the complete command.
     ``home_values``
         Where a scene reset snaps a twin. ``None`` = this part has no home
         (which is the honest answer for most live units).
@@ -514,6 +608,14 @@ class Arm:
     workspace: Sequence[Sequence[float]] | None = None
     fk: Callable[[Sequence[float]], tuple[np.ndarray, np.ndarray]] | None = None
     arm_dof: int | None = None
+    collision_spheres: Callable[[Sequence[float]], Sequence[CollisionSphere]] | None = (
+        None
+    )
+    collision_frame: str = ""
+    static_keepouts: Sequence[Mapping[str, object]] = ()
+    self_collision_enabled: bool = False
+    self_collision_margin_m: float = 0.0
+    self_collision_ignore_pairs: Sequence[Sequence[str]] = ()
     home_values: Sequence[float] | None = None
     rate_hz: float | None = None
     report: Callable[[str], None] = status
@@ -557,6 +659,138 @@ class Arm:
         if self.home_values is not None:
             self.home_values = tuple(float(v) for v in self.home_values)
         self._reject = RejectLog(f"part={self.part}", report=self.report)
+        self._ignored_collision_pairs: frozenset[tuple[str, str]] = frozenset()
+        self._validate_static_safety()
+
+    def _body_name(self, name: str) -> str:
+        return f"{self.part}/{name}" if self.part and "/" not in name else name
+
+    def _validate_static_safety(self) -> None:
+        self.static_keepouts = tuple(dict(rule) for rule in self.static_keepouts)
+        margin = float(self.self_collision_margin_m)
+        if not math.isfinite(margin) or margin < 0.0:
+            raise ValueError(
+                f"part {self.part!r}: self-collision margin must be finite and non-negative"
+            )
+        self.self_collision_margin_m = margin
+        ignored: set[tuple[str, str]] = set()
+        for pair in self.self_collision_ignore_pairs:
+            if len(pair) != 2:
+                raise ValueError(
+                    f"part {self.part!r}: ignored collision pairs need exactly two bodies"
+                )
+            first, second = (self._body_name(str(value)) for value in pair)
+            if not first or not second or first == second:
+                raise ValueError(
+                    f"part {self.part!r}: ignored collision pairs need two distinct names"
+                )
+            ignored.add(_collision_key(first, second))
+        self.self_collision_ignore_pairs = tuple(tuple(pair) for pair in ignored)
+        self._ignored_collision_pairs = frozenset(ignored)
+        rules_active = bool(self.static_keepouts) or self.self_collision_enabled
+        if rules_active and self.collision_spheres is None:
+            raise ValueError(
+                f"part {self.part!r}: static hard safety requires the driver adapter "
+                "to provide collision_spheres"
+            )
+        if rules_active and not self.collision_frame:
+            raise ValueError(
+                f"part {self.part!r}: static hard safety requires a collision_frame"
+            )
+        for rule in self.static_keepouts:
+            if str(rule.get("frame") or "") != self.collision_frame:
+                raise ValueError(
+                    f"part {self.part!r}: keep-out {rule.get('id')!r} is in frame "
+                    f"{rule.get('frame')!r}, not collision frame {self.collision_frame!r}"
+                )
+
+    def configure_static_safety(
+        self,
+        *,
+        static_keepouts: Sequence[Mapping[str, object]],
+        self_collision: Mapping[str, object],
+    ) -> None:
+        """Compile one site's immutable hard-safety rules onto this arm."""
+
+        selected_keepouts = []
+        for rule in static_keepouts:
+            parts = tuple(str(value) for value in rule.get("parts", ()))
+            if not parts or self.part in parts:
+                selected_keepouts.append(rule)
+        collision_parts = tuple(str(value) for value in self_collision.get("parts", ()))
+        self.static_keepouts = tuple(selected_keepouts)
+        self.self_collision_enabled = bool(
+            self_collision.get("enabled", False)
+            and (not collision_parts or self.part in collision_parts)
+        )
+        self.self_collision_margin_m = float(self_collision.get("margin_m", 0.0))
+        self.self_collision_ignore_pairs = tuple(
+            tuple(str(value) for value in pair)
+            for pair in self_collision.get("ignore_pairs", ())
+        )
+        self._validate_static_safety()
+
+    def collision_snapshot(
+        self, target: Sequence[float]
+    ) -> tuple[CollisionSphere, ...]:
+        """Return validated, part-qualified body geometry for one target."""
+
+        if self.collision_spheres is None:
+            return ()
+        raw = tuple(self.collision_spheres(target[: self.arm_dof]))
+        spheres: list[CollisionSphere] = []
+        names: set[str] = set()
+        for item in raw:
+            if not isinstance(item, CollisionSphere):
+                raise TypeError(
+                    f"part {self.part!r}: collision_spheres returned "
+                    f"{type(item).__name__}, expected CollisionSphere"
+                )
+            name = self._body_name(item.name)
+            if name in names:
+                raise ValueError(
+                    f"part {self.part!r}: duplicate collision body name {name!r}"
+                )
+            names.add(name)
+            spheres.append(
+                CollisionSphere(
+                    name=name,
+                    center_m=item.center_m,
+                    radius_m=item.radius_m,
+                )
+            )
+        return tuple(spheres)
+
+    def _static_collision_reason(self, target: np.ndarray) -> str | None:
+        if not self.static_keepouts and not self.self_collision_enabled:
+            return None
+        try:
+            spheres = self.collision_snapshot(target)
+        except Exception as error:  # noqa: BLE001 -- malformed geometry is a refusal
+            return f"collision geometry unavailable: {type(error).__name__}: {error}"
+        if not spheres:
+            return "collision geometry provider returned no robot bodies"
+        for sphere in spheres:
+            for keepout in self.static_keepouts:
+                if _sphere_hits_keepout(sphere, keepout):
+                    return (
+                        f"body {sphere.name!r} intersects static keep-out "
+                        f"{keepout['id']!r}"
+                    )
+        if self.self_collision_enabled:
+            for index, first in enumerate(spheres):
+                for second in spheres[index + 1 :]:
+                    pair = _collision_key(first.name, second.name)
+                    if pair in self._ignored_collision_pairs:
+                        continue
+                    if _spheres_overlap(
+                        first, second, margin_m=self.self_collision_margin_m
+                    ):
+                        return (
+                            f"self-collision between bodies {first.name!r} and "
+                            f"{second.name!r}"
+                        )
+        return None
 
     # -- reads ------------------------------------------------------------
 
@@ -643,6 +877,9 @@ class Arm:
                     f"tcp {list(np.round(tcp, 4))} outside the declared workspace box "
                     f"{list(np.round(lo_box, 3))}..{list(np.round(hi_box, 3))}"
                 )
+        collision_reason = self._static_collision_reason(target)
+        if collision_reason is not None:
+            return collision_reason
         return None
 
     def command(self, values: Sequence[float]) -> bool:
@@ -734,23 +971,107 @@ def split_by_part(
     return rows
 
 
-def apply_decision(arms: Mapping[str, Arm], decided) -> None:
-    """Apply what the gate handed back, whatever shape it came in.
+def _cross_arm_collision_refusal(
+    prepared: Sequence[tuple[Arm, np.ndarray]],
+) -> tuple[Arm, str] | None:
+    enabled = [
+        (arm, target)
+        for arm, target in prepared
+        if target.size and arm.self_collision_enabled
+    ]
+    snapshots: list[tuple[Arm, tuple[CollisionSphere, ...]]] = []
+    for arm, target in enabled:
+        try:
+            spheres = arm.collision_snapshot(target)
+        except Exception as error:  # noqa: BLE001 -- malformed geometry is a refusal
+            return (
+                arm,
+                f"collision geometry unavailable: {type(error).__name__}: {error}",
+            )
+        if not spheres:
+            return (arm, "collision geometry provider returned no robot bodies")
+        snapshots.append((arm, spheres))
+    for index, (first_arm, first_spheres) in enumerate(snapshots):
+        for second_arm, second_spheres in snapshots[index + 1 :]:
+            if first_arm.collision_frame != second_arm.collision_frame:
+                return (
+                    first_arm,
+                    (
+                        "cross-part self-collision requires one shared collision frame; "
+                        f"{first_arm.part!r} uses {first_arm.collision_frame!r} and "
+                        f"{second_arm.part!r} uses {second_arm.collision_frame!r}"
+                    ),
+                )
+            ignored = (
+                first_arm._ignored_collision_pairs | second_arm._ignored_collision_pairs
+            )
+            margin = max(
+                first_arm.self_collision_margin_m,
+                second_arm.self_collision_margin_m,
+            )
+            for first in first_spheres:
+                for second in second_spheres:
+                    if _collision_key(first.name, second.name) in ignored:
+                        continue
+                    if _spheres_overlap(first, second, margin_m=margin):
+                        return (
+                            first_arm,
+                            (
+                                f"self-collision between bodies {first.name!r} and "
+                                f"{second.name!r}"
+                            ),
+                        )
+    return None
 
-    On a `Composite` declaration an intervention arrives keyed by part —
-    ``{"right_arm": ndarray}`` for a step that addresses one arm, "move this
-    part, hold the rest" — while a passthrough hands back the caller's own
-    whole-robot vector. One rule either way: turn it into rows per part, and
-    push each part's rows through that part's envelope.
 
-    The part is the core's answer, so it is indexed, not validated: the core
-    refuses an undeclared part long before this, and a name here that these
-    arms do not carry means the arms and the declaration disagree — a
-    construction bug in the program, surfaced as a failed verb rather than
-    swallowed."""
+def apply_decision(arms: Mapping[str, Arm], decided) -> bool:
+    """Apply one gate decision atomically across every addressed part.
+
+    The declared layout is resolved first, then every target is checked against
+    a fresh measurement before any driver receives a write.  One refusal holds
+    every addressed part and rejects the whole decision; a multi-part command
+    can therefore never move its first part before discovering that its second
+    part is outside the owner envelope.  The return value reports whether the
+    complete decision reached the drivers.
+    """
     rows = decided if isinstance(decided, dict) else split_by_part(arms, decided)
+    prepared: list[tuple[Arm, np.ndarray]] = []
+    refusal: tuple[Arm, str] | None = None
     for part, values in rows.items():
-        arms[part].command(values)
+        arm = arms[part]
+        target = np.asarray(values, dtype=float).reshape(-1)
+        if target.size == 0:
+            prepared.append((arm, target))
+            continue
+        if arm.estopped:
+            reason = (
+                "e-stopped — this part has no gains until the latch is cleared at "
+                "the machine, so nothing here would move it"
+            )
+        else:
+            current, _velocity = arm.state()
+            reason = arm.check(target, current)
+        prepared.append((arm, target))
+        if reason is not None and refusal is None:
+            refusal = (arm, reason)
+
+    if refusal is None:
+        refusal = _cross_arm_collision_refusal(prepared)
+
+    if refusal is not None:
+        failed, reason = refusal
+        failed.rejected += 1
+        failed._reject(reason)
+        for arm, _target in prepared:
+            arm.hold()
+        return False
+
+    for arm, target in prepared:
+        if target.size == 0:
+            continue
+        arm.driver.write(target)
+        arm.accepted += 1
+    return True
 
 
 def chunk_sender(
@@ -760,7 +1081,7 @@ def chunk_sender(
 
     Waddle drives them through the returned callable, from its own dispatch
     thread, whenever something holds the lease: a teleoperator, a reset agent,
-    or the hosted agent :func:`waddle_sdk.agent` invites.
+    or the hosted agent a hosted Metal run invites.
 
     A step may carry a GRIPPER value on the sidechannel, and this layer models
     a hand as a JOINT row — so there is nowhere to put one. Such a step is
@@ -1288,7 +1609,7 @@ def scene_reset(
 
     It is a default like everything else here — a rig with a scene of its own
     (a fixture to re-seed, a part feeder to advance) passes its own callable
-    to `waddle_sdk.init` instead."""
+    to `the Site lifecycle` instead."""
 
     def pre_reset(task: str) -> bool:
         report(f"pre_reset {task!r}")
@@ -1302,7 +1623,9 @@ def scene_reset(
             return False
         for part, arm in arms.items():
             if drives_metal(arm.driver):
-                report(f"pre_reset part={part}: no motion — the site operator is the reset")
+                report(
+                    f"pre_reset part={part}: no motion — the site operator is the reset"
+                )
                 continue
             if arm.home_values is None:
                 report(f"pre_reset part={part}: no home declared — nothing to snap to")
@@ -1325,7 +1648,7 @@ def proprio_tick(session, arms: Mapping[str, Arm]) -> Callable[[float], None]:
 
     Separate from the gate tick on purpose — this has to keep running on a
     background thread while the caller's thread is blocked inside
-    ``waddle_sdk.agent()``, because the machine still moves and the agent still
+    ``a Metal-hosted run``, because the machine still moves and the agent still
     needs to see it.
 
     ``joint_pos`` is passed explicitly for every part. A per-part sample
@@ -1343,7 +1666,9 @@ def proprio_tick(session, arms: Mapping[str, Arm]) -> Callable[[float], None]:
             position, velocity = arm.state()
             pose = arm.ee_pose()
             if pose is None:
-                session.report_proprio(part=part, joint_pos=position, joint_vel=velocity)
+                session.report_proprio(
+                    part=part, joint_pos=position, joint_vel=velocity
+                )
             else:
                 session.report_proprio(
                     part=part,
@@ -1364,7 +1689,7 @@ class RobotPump(threading.Thread):
     own tick. The usual one is :func:`proprio_tick`.
 
     It exists because the robot's own housekeeping cannot pause while the
-    caller's thread is elsewhere — blocked inside ``waddle_sdk.agent()``, or
+    caller's thread is elsewhere — blocked inside ``a Metal-hosted run``, or
     sitting in a monitor-only session with no rollout loop at all. ``stop()``
     joins."""
 
@@ -1535,7 +1860,7 @@ class _RigDefault:
 
 
 #: "Whatever this rig declares for that" — distinct from ``None``, which is
-#: `waddle_sdk.init`'s own "declare nothing for that phase". A `RigSession` uses
+#: `the Site lifecycle`'s own "declare nothing for that phase". A `RigSession` uses
 #: it for ``pre_reset``: the default is the rig's scene reset, and passing
 #: ``None`` is how a program declares no pre-reset at all.
 RIG_DEFAULT = _RigDefault()
@@ -1561,7 +1886,7 @@ RIG_DEFAULT = _RigDefault()
 #:
 #:     For the same reason a monitor session wires no MEDIA plane. The media
 #:     plane carries the teleoperator's stream as well as the video, so wiring
-#:     one IS an intervention path: `waddle_sdk.init(media=...)` — and
+#:     one IS an intervention path: `the Site lifecycle(media=...)` — and
 #:     ``_testing=True``, which is that same plane in process — refuses a
 #:     session with no ``send`` verb, naming the verb rather than the posture.
 #:     Watching is undiminished: ``transport=`` uplinks proprioception and each
@@ -1577,7 +1902,7 @@ RIG_DEFAULT = _RigDefault()
 #: A posture is NOT an authority decision and adds none: who may command a
 #: robot, when, and under what claim is waddle-core's, unchanged either way.
 #: Whether a rollout is agent-driven or windowed stays a call-site choice —
-#: `waddle_sdk.agent()` versus `waddle_sdk.rollout()` — never a construction one.
+#: `a Metal-hosted run` versus `a Site Run` — never a construction one.
 POSTURES = ("monitor", "supervised")
 
 
@@ -1590,11 +1915,11 @@ def control(
     estop_latency_bound_ms: float | None = None,
     report: Callable[[str], None] = status,
 ) -> Control:
-    """Build the `waddle_sdk.Control` over these arms for one posture.
+    """Build the `the driver-facing verb bundle` over these arms for one posture.
 
     ``posture`` is :data:`POSTURES`, which is also where what a ``monitor``
     session may and may not be wired to is written down — the choice reaches
-    `waddle_sdk.init` as which verbs exist, and nothing else here reads it.
+    `the Site lifecycle` as which verbs exist, and nothing else here reads it.
 
     ``send`` REPLACES the default envelope-crossing sender
     (:func:`chunk_sender`) — the whole envelope, since that callable is where
@@ -1641,13 +1966,13 @@ class Rig:
 
     Every piece is separately usable, which is the point of the layering:
 
-    * ``rig.robot()`` is the `waddle_sdk.Robot` — hand it to `waddle_sdk.init`
+    * ``rig.robot()`` is the `waddle_sdk.descriptors.Robot` — hand it to `the Site lifecycle`
       yourself and none of the rest of this module is involved;
     * ``rig.arms()`` builds the arms, each with the owner's envelope on it;
     * ``rig.control(arms)`` maps the posture onto verbs (and takes your own
       ``send=`` if the default envelope is not the arithmetic you want);
     * ``rig.pre_reset(arms)`` is the default scene reset — pass your own
-      callable to `waddle_sdk.init` instead if your scene has more to it;
+      callable to `the Site lifecycle` instead if your scene has more to it;
     * ``rig.pump(session, arms)`` is the reporting loop, and
       :class:`RobotPump` runs any tick you write instead."""
 
@@ -1664,7 +1989,7 @@ class Rig:
 
     def __post_init__(self) -> None:
         if not isinstance(self.declaration, Robot):
-            raise TypeError("Rig.declaration must be a waddle_sdk.Robot")
+            raise TypeError("Rig.declaration must be a waddle_sdk.descriptors.Robot")
         if self.posture not in POSTURES:
             raise ValueError(
                 f"posture={self.posture!r}: expected one of {', '.join(POSTURES)}"
@@ -1677,7 +2002,7 @@ class Rig:
     def robot(self) -> Robot:
         """The declaration this rig registers — the same object a vendor
         module's ``declaration()`` hands back for a hand-wired
-        `waddle_sdk.init`."""
+        `the Site lifecycle`."""
         return self.declaration
 
     def arms(self) -> dict[str, Arm]:
@@ -1778,7 +2103,7 @@ class Rig:
     def control(
         self, arms: Mapping[str, Arm], *, send: Callable[[object], None] | None = None
     ) -> Control:
-        """This rig's posture as `waddle_sdk.Control` verbs (see :func:`control`)."""
+        """This rig's posture as `the driver-facing verb bundle` verbs (see :func:`control`)."""
         return control(
             arms,
             posture=self.posture,
@@ -1804,8 +2129,6 @@ class Rig:
         transport=None,
         media=None,
         recording_dir=None,
-        handoff: _Handoff = Handoff.HOLD_FIRST,
-        lease_enforcement: str = "advisory",
         pre_reset=RIG_DEFAULT,
         post_reset=None,
         reset_verification: str = "blocking",
@@ -1816,10 +2139,10 @@ class Rig:
 
             rig = yam.bimanual(workspace=..., gripper_limits=..., sim=True)
             with rig.session("my-project", transport=waddle_sdk.Grpc(url, token)) as s:
-                result = waddle_sdk.agent("stack the cups")
+                result = a Metal-hosted run("stack the cups")
 
         Every keyword that is not this rig's own goes straight to
-        `waddle_sdk.init` and means exactly what it means there; ``send``
+        `the Site lifecycle` and means exactly what it means there; ``send``
         REPLACES the shipped envelope (see :func:`control`), and
         ``pre_reset`` defaults to this rig's own scene reset.
 
@@ -1839,8 +2162,6 @@ class Rig:
             transport=transport,
             media=media,
             recording_dir=recording_dir,
-            handoff=handoff,
-            lease_enforcement=lease_enforcement,
             pre_reset=pre_reset,
             post_reset=post_reset,
             reset_verification=reset_verification,
@@ -1850,7 +2171,7 @@ class Rig:
 
 
 class RigSession:
-    """The shared lifecycle behind ``rig.session`` and ``waddle_sdk.init(rig=)``.
+    """The shared lifecycle behind ``rig.session`` and ``the Site lifecycle``.
 
     Hardware opens inside :meth:`_open`; every later failure closes all opened
     arms and cameras. Normal close retires local recovery, stops capture and
@@ -1866,8 +2187,6 @@ class RigSession:
         transport=None,
         media=None,
         recording_dir=None,
-        handoff: _Handoff = Handoff.HOLD_FIRST,
-        lease_enforcement: str = "advisory",
         pre_reset=RIG_DEFAULT,
         post_reset=None,
         reset_verification: str = "blocking",
@@ -1881,8 +2200,6 @@ class RigSession:
             transport=transport,
             media=media,
             recording_dir=recording_dir,
-            handoff=handoff,
-            lease_enforcement=lease_enforcement,
             post_reset=post_reset,
             reset_verification=reset_verification,
             _testing=_testing,
@@ -1944,7 +2261,7 @@ class RigSession:
         return self._rig.resolve_pixel(name, x, y, frame_sequence=frame_sequence)
 
     def __enter__(self) -> RigSession:
-        return self._open(init, close_session=shutdown)
+        return self._open(create_core_session)
 
     def _open(
         self,
@@ -1954,8 +2271,8 @@ class RigSession:
     ) -> RigSession:
         """Open through one supplied core-session builder.
 
-        ``rig.session`` supplies the public ``waddle_sdk.init``/``shutdown`` pair.
-        Managed ``waddle_sdk.init(rig=...)`` supplies the unregistered core builder,
+        ``rig.session`` supplies the public ``the Site lifecycle``/``shutdown`` pair.
+        Managed ``the Site lifecycle(rig=...)`` supplies the unregistered core builder,
         so module ownership is registered only after every pump is alive.
         """
         with self._lifecycle_lock:

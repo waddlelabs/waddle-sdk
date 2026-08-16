@@ -68,6 +68,18 @@ fn optional_services_are_negotiated_correlated_and_bounded() {
                 ],
                 ..Default::default()
             }));
+            let _ = tx.send(ServerMsg::Gate(pb::GateServerMessage {
+                msg: Some(pb::gate_server_message::Msg::CalibrationMeasurementRequest(
+                    pb::CalibrationMeasurementRequest {
+                        calibration_id: "cal-1".into(),
+                        sample_id: "sample-1".into(),
+                        camera: "wrist".into(),
+                        frame_seq: 7,
+                        x: 10,
+                        y: 20,
+                    },
+                )),
+            }));
         }
         ClientMsg::Gate(gate) => match gate.msg {
             Some(pb::gate_client_message::Msg::TaskSessionRequest(request)) => {
@@ -127,6 +139,11 @@ fn optional_services_are_negotiated_correlated_and_bounded() {
         .build()
         .unwrap();
     wait_for_negotiation(&session);
+
+    let requests = session.calibration_measurement_requests(0, Duration::from_secs(1));
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].0, 1);
+    assert_eq!(requests[0].1.sample_id, "sample-1");
 
     session
         .submit_task_session(pb::TaskSessionRequest {

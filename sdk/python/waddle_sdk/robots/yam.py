@@ -11,7 +11,7 @@ A robot module is facts plus a driver plus a factory, on top of
   hand-wired program can take on its own, and the rigs that pair it with
   drivers, the owner's envelope and a reporting loop.
 
-Every one of those stands alone: take the declaration and wire `waddle_sdk.init`
+Every one of those stands alone: take the declaration and wire `the Site lifecycle`
 yourself, take the driver and put your own envelope in front of it, or take a
 rig and get all of it. Nothing here holds a lease or decides who may command
 anything — that is waddle-core's, whichever piece you take.
@@ -741,7 +741,7 @@ def declaration(
 
     Public and standing alone on purpose. The factories below build one of
     these, but a program that wants none of the rest of this module — its own
-    driver, its own loop, a plain ``waddle_sdk.init`` — should not have to reach
+    driver, its own loop, a plain ``the Site lifecycle`` — should not have to reach
     into a rig to get the declaration, and should get exactly the one a
     factory would have registered.
 

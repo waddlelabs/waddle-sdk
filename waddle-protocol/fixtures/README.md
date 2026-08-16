@@ -26,7 +26,9 @@ Every fixture file under `wire/` and `sidecars/` is a single JSON object:
 }
 ```
 
-- `format` — MUST be exactly `"waddle_sdk.fixture/v0"`.
+- `format` — new fixtures MUST use `"waddle_sdk.fixture/v0"`. The append-only
+  pre-rename spelling `"waddle.fixture/v0"` remains valid for existing goldens;
+  implementations MUST parse both with identical semantics.
 - `type` — the fully-qualified message name; MUST name a message in package
   `waddle.v0`. Files in `sidecars/` always carry `"waddle.v0.Sidecar"`.
 - `description` — required; states what the fixture pins. A deprecated golden

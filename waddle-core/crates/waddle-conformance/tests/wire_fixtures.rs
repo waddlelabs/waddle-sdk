@@ -48,11 +48,14 @@ fn every_wire_fixture_parses_strictly_and_round_trips() {
         let raw = std::fs::read_to_string(path).expect("fixture readable");
         let envelope: serde_json::Value =
             serde_json::from_str(&raw).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-        assert_eq!(
+        assert!(
+            matches!(
+                envelope["format"].as_str(),
+                Some("waddle_sdk.fixture/v0" | "waddle.fixture/v0")
+            ),
+            "{}: bad envelope format {:?}",
+            path.display(),
             envelope["format"],
-            "waddle_sdk.fixture/v0",
-            "{}: bad envelope format",
-            path.display()
         );
         let full_name = envelope["type"]
             .as_str()

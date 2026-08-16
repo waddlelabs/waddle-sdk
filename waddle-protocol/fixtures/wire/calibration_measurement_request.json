@@ -1,0 +1,13 @@
+{
+  "format": "waddle_sdk.fixture/v0",
+  "type": "waddle.v0.CalibrationMeasurementRequest",
+  "description": "A hosted Calibrate UI request for the customer SDK to resolve one retained RGB-D pixel locally.",
+  "message": {
+    "calibrationId": "cal-01J9",
+    "sampleId": "sample-0007",
+    "camera": "overhead",
+    "frameSeq": "42",
+    "x": 320,
+    "y": 240
+  }
+}

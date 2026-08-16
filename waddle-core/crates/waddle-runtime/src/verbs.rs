@@ -125,6 +125,7 @@ impl DispatchStats {
 pub struct VerbDispatch {
     tx: Sender<VerbRequest>,
     estop_flag: Arc<AtomicBool>,
+    priority_hold_flag: Arc<AtomicBool>,
     pub stats: Arc<DispatchStats>,
     thread: Option<JoinHandle<()>>,
     shutdown: Arc<AtomicBool>,
@@ -138,10 +139,12 @@ impl VerbDispatch {
     ) -> Self {
         let (tx, rx) = std::sync::mpsc::channel::<VerbRequest>();
         let estop_flag = Arc::new(AtomicBool::new(false));
+        let priority_hold_flag = Arc::new(AtomicBool::new(false));
         let stats = Arc::new(DispatchStats::default());
         let shutdown = Arc::new(AtomicBool::new(false));
 
         let flag = estop_flag.clone();
+        let hold_flag = priority_hold_flag.clone();
         let stats_thread = stats.clone();
         let shutdown_thread = shutdown.clone();
         let thread = std::thread::Builder::new()
@@ -153,6 +156,7 @@ impl VerbDispatch {
                     &rx,
                     &outcomes,
                     &flag,
+                    &hold_flag,
                     &stats_thread,
                     &shutdown_thread,
                 );
@@ -162,6 +166,7 @@ impl VerbDispatch {
         Self {
             tx,
             estop_flag,
+            priority_hold_flag,
             stats,
             thread: Some(thread),
             shutdown,
@@ -176,6 +181,12 @@ impl VerbDispatch {
             return;
         }
         let _ = self.tx.send(req);
+    }
+
+    /// Queue a local HOLD ahead of ordinary verb traffic. Unlike e-stop this
+    /// does not revoke authority; it is the core-owned energized hold path.
+    pub fn request_priority_hold(&self) {
+        self.priority_hold_flag.store(true, Ordering::SeqCst);
     }
 
     pub fn shutdown(mut self) {
@@ -202,12 +213,14 @@ impl Drop for VerbDispatch {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // independent dispatch lanes and observability sinks
 fn dispatch_loop<C: Clock>(
     registry: &ControlRegistry,
     clock: &C,
     rx: &Receiver<VerbRequest>,
     outcomes: &Sender<VerbOutcome>,
     estop_flag: &AtomicBool,
+    priority_hold_flag: &AtomicBool,
     stats: &DispatchStats,
     shutdown: &AtomicBool,
 ) {
@@ -218,6 +231,11 @@ fn dispatch_loop<C: Clock>(
         // Estop preempts anything queued.
         if estop_flag.swap(false, Ordering::SeqCst) {
             execute(registry, clock, &VerbRequest::Estop, outcomes, stats);
+            continue;
+        }
+        // An energized HOLD preempts ordinary traffic but never e-stop.
+        if priority_hold_flag.swap(false, Ordering::SeqCst) {
+            execute(registry, clock, &VerbRequest::Hold, outcomes, stats);
             continue;
         }
         match rx.recv_timeout(Duration::from_millis(5)) {
@@ -349,6 +367,63 @@ mod tests {
         assert!(
             estop_pos <= 1,
             "estop must preempt queued verbs, got order {seq:?}"
+        );
+        dispatch.shutdown();
+    }
+    #[test]
+    fn priority_hold_preempts_ordinary_traffic_but_not_estop() {
+        let order: Arc<Mutex<Vec<&'static str>>> = Arc::new(Mutex::new(Vec::new()));
+        let calls = Arc::new(AtomicU32::new(0));
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let release_rx = Arc::new(Mutex::new(release_rx));
+
+        let hold_order = order.clone();
+        let hold_calls = calls.clone();
+        let hold_release = release_rx.clone();
+        let home_order = order.clone();
+        let estop_order = order.clone();
+        let registry = ControlRegistry {
+            hold: Some(Arc::new(move || {
+                let nth = hold_calls.fetch_add(1, Ordering::SeqCst);
+                if nth == 0 {
+                    hold_order.lock().push("hold-queued");
+                    let _ = started_tx.send(());
+                    let _ = hold_release.lock().recv();
+                } else {
+                    hold_order.lock().push("hold-priority");
+                }
+                Ok(())
+            })),
+            home: Some(Arc::new(move || {
+                home_order.lock().push("home");
+                Ok(())
+            })),
+            estop: Some((
+                Arc::new(move || {
+                    estop_order.lock().push("estop");
+                    Ok(())
+                }),
+                EstopDecl::default(),
+            )),
+            ..Default::default()
+        };
+        let (out_tx, out_rx) = std::sync::mpsc::channel();
+        let dispatch = VerbDispatch::spawn(registry, FakeClock::default(), out_tx);
+
+        dispatch.request(VerbRequest::Hold);
+        started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        dispatch.request(VerbRequest::Home);
+        dispatch.request_priority_hold();
+        dispatch.request(VerbRequest::Estop);
+        let _ = release_tx.send(());
+
+        for _ in 0..4 {
+            let _ = out_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        }
+        assert_eq!(
+            *order.lock(),
+            ["hold-queued", "estop", "hold-priority", "home"]
         );
         dispatch.shutdown();
     }

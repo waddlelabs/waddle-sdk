@@ -41,3 +41,12 @@ pub const CALIBRATION_MEASUREMENTS: &str = "waddle.v0.calibration.measurements";
 
 /// Reviewed workspace export requests and one-time artifact metadata.
 pub const WORKSPACE_ARTIFACTS: &str = "waddle.v0.workspace.artifacts";
+
+/// Plane-started SDK episodes and their connection-scoped admission status.
+/// Explicit duplicate retries are idempotent; transport replay is forbidden.
+pub const HOSTED_RUNS: &str = "waddle.v0.hosted.runs";
+
+/// Exact customer/project/workspace connector registration. An
+/// `authorization_only` registration authenticates this binding without
+/// making a hardware-free probe eligible for hosted work.
+pub const CONNECTOR_BINDING: &str = "waddle.v0.connector.binding";

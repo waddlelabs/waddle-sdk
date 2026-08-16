@@ -1,20 +1,15 @@
-"""Drift guards for new public SDK documentation.
-
-These are deliberately exact where a customer copies code or an install
-command. API prose can evolve freely, but package extras, the optional
-integration boundary, and the managed-rig examples must move with code.
-"""
+"""Drift guards for the strict public SDK contract."""
 
 from __future__ import annotations
 
 import ast
 from pathlib import Path
 
-from waddle_sdk import _services
+import waddle_sdk
 
 try:
     import tomllib
-except ModuleNotFoundError:  # pragma: no cover - Python 3.10 only
+except ModuleNotFoundError:
     import tomli as tomllib  # type: ignore[no-redef]
 
 
@@ -23,29 +18,15 @@ README = (SDK / "README.md").read_text(encoding="utf-8")
 EXAMPLES = (SDK / "examples" / "README.md").read_text(encoding="utf-8")
 
 
-MANAGED_RIG_EXAMPLE = '''rig = yam.bimanual(
-    workspace=WORKSPACE_M,
-    gripper_limits=GRIPPER_LIMITS_MOTOR_RAD,
-    cross_arm=CROSS_ARM,
-    sim=True,
-)
-waddle_sdk.init(
-    "waddle-yam-bimanual",
-    rig=rig,
-    transport=waddle_sdk.Grpc(url, token),
-)
-try:
-    dashboard = waddle_sdk.ui()
-    result = waddle_sdk.agent("move each arm to its taught home, one at a time")
-finally:
-    waddle_sdk.shutdown()'''
-
-
-def test_examples_publish_the_process_owned_rig_lifecycle_verbatim():
-    assert MANAGED_RIG_EXAMPLE in EXAMPLES
-    ast.parse(MANAGED_RIG_EXAMPLE)
-    assert "Take Local Control" in EXAMPLES
-    assert "bounded 3-D measurement" in EXAMPLES
+def test_examples_publish_only_the_site_lifecycle():
+    program = (SDK / "examples" / "run_site.py").read_text(encoding="utf-8")
+    ast.parse(program)
+    assert "waddle_sdk.load_site(" in program
+    assert "with site.open(" in program
+    assert "with session.run(" in program
+    for removed in ("waddle_sdk.init(", "waddle_sdk.agent(", "waddle_sdk.ui()"):
+        assert removed not in program
+        assert removed not in EXAMPLES
 
 
 def test_camera_install_commands_are_held_to_package_metadata():
@@ -54,18 +35,53 @@ def test_camera_install_commands_are_held_to_package_metadata():
 
     assert extras["orbbec"] == ["pyorbbecsdk2"]
     assert extras["realsense"] == ["pyrealsense2"]
-    assert set(extras["cameras"]) == set(extras["orbbec"] + extras["realsense"])
-    for extra in ("orbbec", "realsense", "cameras"):
-        assert f"pip install 'waddle-sdk[{extra}]'" in README
-    assert "pip install 'waddle-sdk[cameras,teleop]'" in README
+    assert extras["usb"] == ["opencv-python-headless>=4.8"]
+    assert set(extras["cameras"]) == set(
+        extras["orbbec"] + extras["realsense"] + extras["usb"]
+    )
+    for extra in ("orbbec", "realsense", "usb", "cameras"):
+        assert f"waddle-sdk[{extra}]" in README
+    assert "waddle-sdk[cameras,teleop]" in README
 
 
-def test_readme_holds_the_public_service_and_integration_boundaries():
+def test_readme_holds_the_site_and_runtime_boundaries():
     prose = " ".join(README.split())
-    assert "waddle_sdk.init(rig=...)" in README
-    assert "waddle_sdk.task_session(name, task_session_id=...)" in README
-    assert "waddle_sdk.request_workspace_artifact(" in README
-    assert "Calibration clicks carry the frame sequence" in prose
-    assert "exclusive remote-to-local handoff" in prose
-    assert _services._EXECUTION_GROUP == "waddle.execution.v1"
-    assert _services._EXECUTION_GROUP in README
+    assert 'waddle_sdk.load_site("site.yaml")' in README
+    assert "SdkRuntimePort" in README
+    assert "Guided calibration orchestration belongs to Metal" in prose
+    assert "hold-first" in prose
+    assert "waddle.execution.v1" not in README
+    assert "waddle_sdk.ui()" not in README
+    assert "waddle_sdk.agent(" not in README
+    assert "waddle_sdk.init(" not in README
+    assert set(waddle_sdk.__all__) == {
+        "Grpc",
+        "LiveKit",
+        "ManifestError",
+        "ManifestPathError",
+        "ManifestSyntaxError",
+        "ManifestValidationError",
+        "Outcome",
+        "Run",
+        "Site",
+        "SiteSession",
+        "load_site",
+    }
+    for removed in (
+        "Control",
+        "Handoff",
+        "init",
+        "shutdown",
+        "rollout",
+        "agent",
+        "ui",
+        "task_session",
+        "calibration_click",
+        "calibration_updates",
+        "request_workspace_artifact",
+        "execution_backends",
+    ):
+        assert not hasattr(waddle_sdk, removed)
+    assert not (SDK / "python" / "waddle_sdk" / "_ui.py").exists()
+    assert not (SDK / "python" / "waddle_sdk" / "_services.py").exists()
+    assert not (SDK / "python" / "waddle_sdk" / "_testing.py").exists()

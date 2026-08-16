@@ -418,7 +418,7 @@ class StreamPolicy:
     high-bandwidth touches the control plane" (protocol flag
     ``waddle.v0.obs.stills``): published frames are sampled at this rate
     into low-rate JPEG stills that ride the control plane, so a
-    Waddle-hosted agent (:func:`waddle_sdk.agent`) can see the scene without a
+    Waddle-hosted agent (a hosted Metal run) can see the scene without a
     media plane wired at all. It is bounded by declaration and is never a
     video path — for live video to a human teleoperator, declare
     ``uplink`` and wire ``media=`` instead. ``None`` (the default) and
@@ -560,7 +560,7 @@ class TimeSeries:
 @dataclass(frozen=True)
 class Robot:
     """The robot declaration compiled to ``waddle.v0.RobotDescription``.
-    Grants are NOT declared here — ``waddle_sdk.init`` derives them from which
+    Grants are NOT declared here — ``the Site lifecycle`` derives them from which
     ``Control`` verbs are provided.
 
     ``kinematics_urdf`` accepts raw ``bytes`` (passed through as-is) or a

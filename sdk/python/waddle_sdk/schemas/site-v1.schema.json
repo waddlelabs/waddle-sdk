@@ -1,0 +1,205 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://waddle.dev/schemas/site-v1.schema.json",
+  "title": "Waddle Site v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["api_version", "kind", "metadata", "parts", "cameras", "frames", "calibration", "workspace_bounds", "envelope", "recording"],
+  "properties": {
+    "api_version": {"const": "waddle.site/v1"},
+    "kind": {"const": "Site"},
+    "metadata": {"$ref": "#/$defs/metadata"},
+    "parts": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {"$ref": "#/$defs/name"},
+      "additionalProperties": {"$ref": "#/$defs/part"}
+    },
+    "cameras": {
+      "type": "object",
+      "default": {},
+      "propertyNames": {"$ref": "#/$defs/name"},
+      "additionalProperties": {"$ref": "#/$defs/camera"}
+    },
+    "frames": {
+      "type": "object",
+      "default": {},
+      "propertyNames": {"$ref": "#/$defs/name"},
+      "additionalProperties": {"$ref": "#/$defs/frame"}
+    },
+    "calibration": {"$ref": "#/$defs/calibration"},
+    "workspace_bounds": {"$ref": "#/$defs/workspaceBounds"},
+    "envelope": {"$ref": "#/$defs/envelope"},
+    "recording": {"$ref": "#/$defs/recording"}
+  },
+  "$defs": {
+    "name": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"},
+    "vector3": {"type": "array", "prefixItems": [{"type": "number"}, {"type": "number"}, {"type": "number"}], "items": false},
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": {"id": {"$ref": "#/$defs/name"}}
+    },
+    "secretRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["secret"],
+      "properties": {"secret": {"type": "string", "minLength": 1, "maxLength": 128}}
+    },
+    "configValue": {
+      "anyOf": [
+        {"type": ["string", "number", "integer", "boolean", "null"]},
+        {"$ref": "#/$defs/secretRef"},
+        {"type": "array", "items": {"$ref": "#/$defs/configValue"}},
+        {"type": "object", "additionalProperties": {"$ref": "#/$defs/configValue"}}
+      ]
+    },
+    "part": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["driver", "posture", "connection"],
+      "properties": {
+        "driver": {"type": "string", "minLength": 3},
+        "posture": {"enum": ["monitor", "supervised"]},
+        "connection": {"type": "object", "additionalProperties": {"$ref": "#/$defs/configValue"}},
+        "joint_limits": {"anyOf": [{"type": "object", "additionalProperties": {"type": "array", "prefixItems": [{"type": "number"}, {"type": "number"}], "items": false}}, {"type": "array", "items": {"type": "array", "prefixItems": [{"type": "number"}, {"type": "number"}], "items": false}}]},
+        "options": {"type": "object", "additionalProperties": {"$ref": "#/$defs/configValue"}}
+      }
+    },
+    "stream": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["width", "height", "fps"],
+      "properties": {
+        "width": {"type": "integer", "minimum": 1},
+        "height": {"type": "integer", "minimum": 1},
+        "fps": {"type": "number", "exclusiveMinimum": 0},
+        "encoding": {"enum": ["rgb8", "bgr8", "jpeg"]},
+        "still_fps": {"type": "number", "minimum": 0}
+      }
+    },
+    "intrinsics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fx", "fy", "cx", "cy", "depth_scale_mm"],
+      "properties": {
+        "fx": {"type": "number", "exclusiveMinimum": 0},
+        "fy": {"type": "number", "exclusiveMinimum": 0},
+        "cx": {"type": "number"},
+        "cy": {"type": "number"},
+        "distortion": {"type": "array", "items": {"type": "number"}},
+        "depth_scale_mm": {"type": "number", "exclusiveMinimum": 0}
+      }
+    },
+    "camera": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["driver", "connection", "stream"],
+      "properties": {
+        "driver": {"type": "string", "minLength": 3},
+        "connection": {"type": "object", "additionalProperties": {"$ref": "#/$defs/configValue"}},
+        "stream": {"$ref": "#/$defs/stream"},
+        "frame_id": {"type": "string", "minLength": 1},
+        "intrinsics": {"$ref": "#/$defs/intrinsics"},
+        "options": {"type": "object", "additionalProperties": {"$ref": "#/$defs/configValue"}}
+      }
+    },
+    "frame": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["parent"],
+      "properties": {
+        "parent": {"type": "string", "minLength": 1},
+        "position": {"type": "array", "prefixItems": [{"type": "number"}, {"type": "number"}, {"type": "number"}], "items": false},
+        "quaternion_wxyz": {"type": "array", "prefixItems": [{"type": "number"}, {"type": "number"}, {"type": "number"}, {"type": "number"}], "items": false}
+      }
+    },
+    "calibration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifacts"],
+      "properties": {"artifacts": {"type": "string", "minLength": 1}}
+    },
+    "workspaceBounds": {
+      "type": "object",
+      "additionalProperties": false,
+      "dependentRequired": {"min": ["max"], "max": ["min"]},
+      "properties": {
+        "min": {"type": "array", "prefixItems": [{"type": "number"}, {"type": "number"}, {"type": "number"}], "items": false},
+        "max": {"type": "array", "prefixItems": [{"type": "number"}, {"type": "number"}, {"type": "number"}], "items": false}
+      }
+    },
+    "envelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["static_keepouts", "self_collision"],
+      "properties": {
+        "static_keepouts": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["id", "kind", "frame", "min", "max"],
+                "properties": {
+                  "id": {"$ref": "#/$defs/name"},
+                  "kind": {"const": "box"},
+                  "frame": {"$ref": "#/$defs/name"},
+                  "parts": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/name"}},
+                  "min": {"$ref": "#/$defs/vector3"},
+                  "max": {"$ref": "#/$defs/vector3"},
+                  "margin_m": {"type": "number", "minimum": 0}
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["id", "kind", "frame", "center", "radius_m"],
+                "properties": {
+                  "id": {"$ref": "#/$defs/name"},
+                  "kind": {"const": "sphere"},
+                  "frame": {"$ref": "#/$defs/name"},
+                  "parts": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/name"}},
+                  "center": {"$ref": "#/$defs/vector3"},
+                  "radius_m": {"type": "number", "exclusiveMinimum": 0},
+                  "margin_m": {"type": "number", "minimum": 0}
+                }
+              }
+            ]
+          }
+        },
+        "self_collision": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "parts": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/name"}},
+            "margin_m": {"type": "number", "minimum": 0},
+            "ignore_pairs": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "prefixItems": [
+                  {"type": "string", "minLength": 1, "maxLength": 257},
+                  {"type": "string", "minLength": 1, "maxLength": 257}
+                ],
+                "items": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "recording": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root", "format"],
+      "properties": {
+        "root": {"type": "string", "minLength": 1},
+        "format": {"const": "mcap"}
+      }
+    }
+  }
+}

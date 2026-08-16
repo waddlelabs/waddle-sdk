@@ -24,6 +24,8 @@ brings their own send callable keeps it.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+
 import io
 import sys
 import threading
@@ -36,13 +38,20 @@ from mcap.reader import make_reader
 from mcap_protobuf.decoder import DecoderFactory
 
 import waddle_sdk
+from waddle_sdk import descriptors
+from waddle_sdk._session import Control, _derive_grants, create_core_session
 from waddle_sdk.robots import base
 
 
-@pytest.fixture(autouse=True)
-def _clean_session():
-    yield
-    waddle_sdk.shutdown()
+@contextmanager
+def _episode(session, *, task: str):
+    episode = session.start_episode(task)
+    try:
+        yield episode
+    finally:
+        if not episode.done:
+            episode.terminate("abort")
+
 
 # How long a poll for another thread's work may run before the test gives up.
 # Never a deadline an assertion depends on: every wait below ends on an
@@ -69,6 +78,7 @@ def _readers() -> set[threading.Thread]:
         for t in threading.enumerate()
         if t.name == base.CONSOLE_THREAD_NAME and t.is_alive()
     }
+
 
 # One toy part: three rows, the last one a gripper in normalized units. Wide
 # enough to have a layout, narrow enough to read in a failure message.
@@ -256,7 +266,12 @@ def test_the_envelope_refuses_a_command_whole_and_says_which_check_refused_it(
     wrote, executed faithfully."""
     lines: list[str] = []
     driver = _CountingDriver()
-    arm = _arm(driver, lines=lines, fk=_flat_fk, workspace=((-0.02, -1.0, -1.0), (0.02, 1.0, 1.0)))
+    arm = _arm(
+        driver,
+        lines=lines,
+        fk=_flat_fk,
+        workspace=((-0.02, -1.0, -1.0), (0.02, 1.0, 1.0)),
+    )
 
     assert arm.command(target) is False
     assert driver.writes == [], "a refused command reaches no driver"
@@ -389,6 +404,52 @@ def test_an_arm_whose_tables_disagree_is_refused_at_construction():
         _arm(step_caps=(0.1, 0.1))
 
 
+def test_static_safety_fails_closed_without_driver_body_geometry():
+    with pytest.raises(ValueError, match="collision_spheres"):
+        _arm(
+            collision_frame="cell",
+            static_keepouts=(
+                {
+                    "id": "fixture",
+                    "kind": "sphere",
+                    "frame": "cell",
+                    "center": (0.0, 0.0, 0.0),
+                    "radius_m": 0.1,
+                },
+            ),
+        )
+
+
+def test_multipart_dispatch_rejects_cross_arm_body_collision_atomically():
+    arms = _two_arms()
+    arms["left"].collision_spheres = lambda q: (
+        base.CollisionSphere("tip", (float(q[0]), 0.0, 0.0), 0.04),
+    )
+    arms["right"].collision_spheres = lambda q: (
+        base.CollisionSphere("tip", (float(q[0]) - 0.05, 0.0, 0.0), 0.04),
+    )
+    for arm in arms.values():
+        arm.collision_frame = "cell"
+        arm.configure_static_safety(
+            static_keepouts=(),
+            self_collision={"enabled": True, "margin_m": 0.0},
+        )
+
+    accepted = base.apply_decision(
+        arms,
+        {
+            "left": np.array([0.05, 0.0, 1.0]),
+            "right": np.array([0.1, 0.0]),
+        },
+    )
+
+    assert accepted is False
+    assert arms["left"].driver.writes == []
+    assert arms["right"].driver.writes == []
+    assert arms["left"].driver.holds == 1
+    assert arms["right"].driver.holds == 1
+
+
 # ---------------------------------------------------------------------------
 # Bounded reporting
 # ---------------------------------------------------------------------------
@@ -400,7 +461,9 @@ def test_the_reject_log_prints_at_most_one_line_a_period_and_counts_the_rest():
     rides the next line."""
     now = 0.0
     lines: list[str] = []
-    log = base.RejectLog("part=toy", period_s=1.0, report=lines.append, clock=lambda: now)
+    log = base.RejectLog(
+        "part=toy", period_s=1.0, report=lines.append, clock=lambda: now
+    )
 
     log("first")
     for _ in range(5):
@@ -452,13 +515,40 @@ def test_a_whole_robot_vector_of_the_wrong_width_is_refused():
 
 
 def test_a_part_keyed_intervention_commands_only_the_part_it_names():
-    """"Move this part, hold the rest": the parts absent from the dict are
+    """ "Move this part, hold the rest": the parts absent from the dict are
     commanded nothing."""
     arms = _two_arms()
     base.apply_decision(arms, {"right": np.array([0.1, 0.1])})
 
     assert arms["left"].driver.writes == []
     assert len(arms["right"].driver.writes) == 1
+
+
+def test_multipart_dispatch_preflights_every_envelope_before_any_write():
+    arms = _two_arms()
+
+    accepted = base.apply_decision(
+        arms, {"left": np.array([0.05, 0.0, 1.0]), "right": np.array([0.9, 0.0])}
+    )
+
+    assert accepted is False
+    assert arms["left"].driver.writes == []
+    assert arms["right"].driver.writes == []
+    assert arms["left"].driver.holds == 1
+    assert arms["right"].driver.holds == 1
+
+
+def test_multipart_dispatch_preflights_the_owner_estop_latch():
+    arms = _two_arms()
+    arms["right"].estop()
+
+    accepted = base.apply_decision(
+        arms, {"left": np.array([0.05, 0.0, 1.0]), "right": np.array([0.1, 0.1])}
+    )
+
+    assert accepted is False
+    assert arms["left"].driver.writes == []
+    assert arms["right"].driver.writes == []
 
 
 def test_a_gripper_on_the_sidechannel_refuses_the_step_whole():
@@ -504,7 +594,10 @@ def test_every_arm_gets_the_stop_even_when_one_of_them_raises():
         def estop(self) -> None:
             raise RuntimeError("bus timeout")
 
-    arms = {"left": _arm(_Refuses(), part="left"), "right": _arm(_CountingDriver(), part="right")}
+    arms = {
+        "left": _arm(_Refuses(), part="left"),
+        "right": _arm(_CountingDriver(), part="right"),
+    }
     with pytest.raises(RuntimeError, match="left"):
         base.estop_all(arms, report=lambda line: None)
 
@@ -621,7 +714,7 @@ def test_a_finished_mission_on_live_units_says_what_closing_costs():
 def test_a_finished_mission_offers_the_gesture_only_when_something_reads_it(
     monkeypatch,
 ):
-    """"Is there a terminal" is not the question — "is anyone reading it" is.
+    """ "Is there a terminal" is not the question — "is anyone reading it" is.
 
     A program whose stdin belongs to something else (`rig.session(...,
     console=False)`, a REPL, a harness), or whose reader has already reached
@@ -714,14 +807,18 @@ def test_console_recovery_reads_the_gestures_typed_at_a_terminal(monkeypatch):
     arms = {"left": _arm(part="left")}
     arms["left"].estop()
 
-    console = base.start_console_recovery(arms, park=base.ParkGate(), report=lines.append)
+    console = base.start_console_recovery(
+        arms, park=base.ParkGate(), report=lines.append
+    )
     assert console is not None
     # The reader ends when its input does — an observable end, not a deadline.
     console.join(PATIENCE_S)
     assert not console.listening, "the reader ends with the input it was given"
 
     assert base.latched_parts(arms) == [], "the gesture reached the arms"
-    assert sum("type `resume`" in line for line in lines) == 1, "the banner is said once"
+    assert sum("type `resume`" in line for line in lines) == 1, (
+        "the banner is said once"
+    )
     assert any("resume part=left" in line for line in lines)
 
 
@@ -894,8 +991,10 @@ def test_the_proprio_tick_steps_every_part_and_reports_it():
         def report_proprio(self, **kwargs) -> None:
             reports.append(kwargs)
 
-    arms = {"left": _arm(part="left"), "right": _arm(part="right", fk=_flat_fk, arm_dof=2,
-                                                     base_frame="toy_base")}
+    arms = {
+        "left": _arm(part="left"),
+        "right": _arm(part="right", fk=_flat_fk, arm_dof=2, base_frame="toy_base"),
+    }
     arms["left"].command([0.1, 0.0, 1.0])
     base.proprio_tick(_Session(), arms)(1.0 / RATE_HZ)
 
@@ -996,8 +1095,10 @@ def test_a_monitor_posture_refuses_a_send_callable_instead_of_dropping_it():
 
 
 def test_the_registered_verbs_reach_every_arm():
-    arms = {"left": _arm(_CountingDriver(), part="left"),
-            "right": _arm(_CountingDriver(), part="right")}
+    arms = {
+        "left": _arm(_CountingDriver(), part="left"),
+        "right": _arm(_CountingDriver(), part="right"),
+    }
     verbs = base.control(arms, report=lambda line: None)
 
     verbs.hold()
@@ -1090,17 +1191,23 @@ def toy_driver() -> base.SimDriver:
 def toy_crane(*, posture: str = "supervised") -> base.Rig:
     """The whole of a second vendor module: declare the robot, say how to open
     it, hand back a rig."""
-    space = waddle_sdk.JointSpace(
+    space = waddle_sdk.descriptors.JointSpace(
         joints=[
-            waddle_sdk.Joint(name=name, min_position=lo, max_position=hi,
-                         max_effort=TOY_FACTS["max_effort_nm"])
+            waddle_sdk.descriptors.Joint(
+                name=name,
+                min_position=lo,
+                max_position=hi,
+                max_effort=TOY_FACTS["max_effort_nm"],
+            )
             for name, (lo, hi) in zip(TOY_FACTS["joints"], TOY_FACTS["limits"])
         ],
         rate_hz=TOY_FACTS["rate_hz"],
-        chunking=waddle_sdk.Chunking(horizon=1, replan="immediate", interp="hold"),
+        chunking=waddle_sdk.descriptors.Chunking(
+            horizon=1, replan="immediate", interp="hold"
+        ),
     )
 
-    def build_arms() -> dict[str, base.Arm]:      # the bus opens HERE
+    def build_arms() -> dict[str, base.Arm]:  # the bus opens HERE
         return {
             "": base.Arm(
                 part="",
@@ -1114,7 +1221,7 @@ def toy_crane(*, posture: str = "supervised") -> base.Rig:
         }
 
     return base.Rig(
-        declaration=waddle_sdk.Robot(
+        declaration=waddle_sdk.descriptors.Robot(
             name="toy-crane", robot_id="toy-crane-01", action_space=space
         ),
         build_arms=build_arms,
@@ -1198,20 +1305,20 @@ def test_a_monitor_rig_opens_a_session_that_offers_only_the_owners_stop(tmp_path
     rig = toy_crane(posture="monitor")
     arms = rig.arms()
     verbs = rig.control(arms)
-    assert waddle_sdk._derive_grants(verbs, rig.robot().action_space) == [
-        {"verb": "VERB_ESTOP"}
-    ]
+    assert _derive_grants(verbs, rig.robot().action_space) == [{"verb": "VERB_ESTOP"}]
 
-    waddle_sdk.init("monitor-smoke", rig.robot(), verbs, recording_dir=tmp_path)
+    session = create_core_session(
+        "monitor-smoke", rig.robot(), verbs, recording_dir=tmp_path
+    )
     try:
-        with waddle_sdk.rollout(task="watch the crane") as ep:
+        with _episode(session, task="watch the crane") as ep:
             position = arms[""].state()[0]
             decided = ep.gate(position + np.array([0.05, 0.0, 0.0]), position)
             assert decided is not None, "the program's own action still passes through"
             base.apply_decision(arms, decided)
             ep.terminate("success")
     finally:
-        waddle_sdk.shutdown()
+        session.shutdown()
 
     assert arms[""].accepted == 1 and arms[""].rejected == 0
 
@@ -1233,7 +1340,9 @@ def test_a_monitor_session_may_not_wire_a_media_plane():
     an engage-path rule to phrase the message more kindly."""
     rig = toy_crane(posture="monitor")
     with pytest.raises(RuntimeError, match="hold"):
-        waddle_sdk.init("monitor-media", rig.robot(), rig.control(rig.arms()), _testing=True)
+        create_core_session(
+            "monitor-media", rig.robot(), rig.control(rig.arms()), _testing=True
+        )
 
 
 def test_a_second_vendor_rides_the_base_layer_end_to_end(tmp_path):
@@ -1248,7 +1357,7 @@ def test_a_second_vendor_rides_the_base_layer_end_to_end(tmp_path):
     lands as joint positions with no TCP rather than a pose nobody declared."""
     rig = toy_crane()
     arms = rig.arms()
-    session = waddle_sdk.init(
+    session = create_core_session(
         "toy-vendor-smoke",
         rig.robot(),
         rig.control(arms),
@@ -1273,7 +1382,7 @@ def test_a_second_vendor_rides_the_base_layer_end_to_end(tmp_path):
     pump = base.RobotPump(tick, rig.rate_hz)
     pump.start()
     try:
-        with waddle_sdk.rollout(task="raise the boom") as ep:
+        with _episode(session, task="raise the boom") as ep:
             episode_id = ep.id
             in_episode.set()
             for _ in range(10):
@@ -1287,7 +1396,7 @@ def test_a_second_vendor_rides_the_base_layer_end_to_end(tmp_path):
             ep.terminate("success")
     finally:
         pump.stop()
-        waddle_sdk.shutdown()
+        session.shutdown()
         for arm in arms.values():
             arm.close()
 

@@ -13,13 +13,16 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
-- Make the authenticated loopback UI load its assets and API relative to an
-  SSH/dev-machine reverse-proxy base path, preserve the proxy authentication
-  query when hiding the UI fragment token, and admit browser-attested
-  same-origin proxy POSTs without weakening the loopback Host or bearer-token
-  checks.
+- Made `RuntimeFault` a normal mutable exception so Python traceback and
+  context-manager machinery can attach `__traceback__` while preserving its
+  typed fault fields.
+- Serialize the frozen top-level site manifest correctly from `Site.describe()` instead of passing `mappingproxy` to the JSON encoder.
+- Accept append-only legacy `waddle.fixture/v0` wire and `waddle.behavior/v0` scenario envelope spellings in conformance readers while new goldens use the current `waddle_sdk.*/v0` spellings.
 
 ### Changed
+
+- **BREAKING:** make `Site`, `SiteSession`, `Run`, `load_site`, transport selection, outcomes, and manifest errors the only root API. Site sessions use a private non-global builder with fixed hold-first, core-enforced safety wiring.
+- Set the SDK and native shim release version to 0.1.0 and keep the teleop companion pin exact.
 - **BREAKING (pre-release): the importable package is now `waddle_sdk`, not
   `waddle`.** `pip install waddle-sdk` then `import waddle_sdk`; the
   distribution name is unchanged. The extension module is `waddle_sdk._core`.
@@ -38,16 +41,37 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   empty `docs/changelogs/`, so no installed user is broken.
 
   What did NOT move, deliberately:
-  - `waddle.execution.v1` — the entry-point group is a cross-repo contract
-    (`waddle-metal` registers it and asserts it in tests). A string
-    identifier, not an import; it never participated in the collision.
+  - `waddle.execution.v1` did not move during the package rename because it was a string contract, not an import. The 0.1.0 Site cutover below subsequently removes that upward-discovery contract.
   - `waddle.v0` / a future `waddle.v1` — the wire protocol namespace.
   - MCAP topic names (`/waddle/observations`, `/waddle/actions`) and the
     `waddle.testing` source id. A recorded name that changes with a package
     rename splits one stream in two across the rename boundary.
   - `waddle-sdk-teleop` and its `waddle_teleop._core` module, already distinct.
 
+### Removed
+
+- Physically delete module-global `init`, `rollout`, `agent`, and
+  `shutdown`, public `Control`/handoff/reset declarations, the private
+  global-session test helper, their legacy-only tests, and the old
+  `toy_robot.py`/`yam_bimanual.py` programs. A subprocess-tested simulated
+  `site.yaml` example now exercises the sole Site lifecycle.
+- Delete the SDK-local authenticated web UI, its bundled assets, and the hosted task/artifact/execution facades. Guided calibration and product task state now live exclusively in closed Waddle and Metal; SDK retains only local RGB-D measurement plumbing.
+
+- Remove lease-enforcement and handoff choice from the primary Site API; both remain native implementation details.
+
 ### Added
+
+- Open `SiteSession.describe()` responses now include the canonical robot action descriptor so Metal can map named part commands onto the complete SDK action vector using public data.
+- Add the canonical `waddle-sdk connect` process and `waddle.v0.connector.binding` registration. An authorization-only probe authenticates the exact customer/project/workspace tuple and must negotiate the binding feature before SiteSession invokes any arm or camera builder; reconnect clears and re-establishes that authorization, while authorization probes cannot negotiate hosted runs. Registered runtimes emit 500 ms v0 heartbeats so API-key revocation becomes a transport partition and requests the existing core-owned hold/abort path.
+
+- Add strict Draft 2020-12 `waddle.site/v1` loading with confined relative paths, named secret references, lazy driver construction, deterministic half-open cleanup, local RGB-D measurements, and an SDK-owned structural runtime port shared by local and remote Metal adapters.
+- Add deterministic SDK-owned static hard safety: strict box/sphere keep-outs, named conservative `CollisionSphere` body geometry from driver adapters, within-arm and cross-part self-collision with explicit adjacent-body exclusions, shared-frame validation, and reject-whole/fail-closed dispatch before any driver write.
+- Extract the dependency-free deterministic mock RGB-D camera and lazy OpenCV USB/UVC adapter into the SDK, including BGR-to-RGB conversion, half-open cleanup, idempotent close, fake-vendor tests, a `usb` extra, and USB composition in `cameras`.
+- Add a dependency-free manifest-native mock/sim arm with configurable limits, rate, step caps and home, planar forward kinematics, conservative body geometry, and full Site/keep-out lifecycle coverage.
+- Extract lazy manifest-native UFactory xArm 6/7, Synria Alicia-M, and Synria Alicia-D drivers with model-derived joint limits, unified joint/gripper actions, monitor posture, half-open cleanup, controller-local stop/re-enable behavior, controller-native xArm safety configuration, fake-vendor lifecycle tests, and isolated optional-dependency install coverage. Alicia extras are correctly limited to the vendor SDKs' Python 3.11+ support without narrowing the base SDK's Python 3.10+ range.
+- Extract a lazy manifest-native MuJoCo joint-target driver with confined model paths, explicit joint/actuator mappings, compiled-model limit checks, deterministic stepping, local e-stop, and scratch-model FK/conservative body geometry for SDK hard-safety preflight. The isolated `mujoco` extra is covered by a fake-runtime install and lifecycle suite.
+- Add `waddle.v0.hosted.runs` with append-only protobuf arms, connection-scoped negotiation, bounded session-lifetime request idempotency, ordinary core episode creation, structured admission status, timeout/disconnect HOLD+ABORT behavior, and no reconnect motion replay.
+- Add whole-command owner-envelope preflight so a multi-part command cannot move an earlier part before a later part refuses.
 - **managed rigs and lazy RGB-D cameras**: `waddle_sdk.init()` now accepts a
   mutually exclusive `rig=` form while preserving the existing
   `robot`/`control` API. The shared `RigSession` opens arms and cameras
@@ -71,8 +95,7 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   reference but never archive bytes. The Python SDK provides typed facades and
   the authenticated UI adds named sessions, live history, interjection,
   interrupt, cameras, calibration, recordings, and Hosted/Local selection.
-  Optional local runtimes are discovered lazily through the versioned
-  `waddle.execution.v1` entry-point group.
+  That local-runtime discovery was subsequently removed by the Site cutover; Metal now consumes the SDK-owned `SdkRuntimePort` directly.
 - **exclusive remote-to-local control handoff**: waddle-core now owns the
   operation that releases an active remote claim through normative E8, waits
   for lease handback and RUNNING/no-claim mirrors, and only then permits a

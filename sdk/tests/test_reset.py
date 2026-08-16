@@ -16,22 +16,24 @@ import time
 import pytest
 
 import waddle_sdk
+from waddle_sdk import descriptors
+from waddle_sdk._session import Control, _derive_grants
 import waddle_sdk._core as _core
 
 
-def _robot(n_joints: int = 3) -> waddle_sdk.Robot:
-    return waddle_sdk.Robot(
+def _robot(n_joints: int = 3) -> descriptors.Robot:
+    return descriptors.Robot(
         name="pytest-reset-bot",
         robot_id="py-reset-01",
         cell_id="cell-py-reset",
-        action_space=waddle_sdk.JointSpace(
+        action_space=descriptors.JointSpace(
             joints=[f"j{i}" for i in range(n_joints)], rate_hz=50
         ),
     )
 
 
-def _control() -> waddle_sdk.Control:
-    return waddle_sdk.Control(send=lambda chunk: None, hold=lambda: None, resume=lambda: None)
+def _control() -> Control:
+    return Control(send=lambda chunk: None, hold=lambda: None, resume=lambda: None)
 
 
 def _session(testing_loopback: bool = False, **reset_kwargs) -> _core.Session:
@@ -39,7 +41,7 @@ def _session(testing_loopback: bool = False, **reset_kwargs) -> _core.Session:
     which does not thread reset kwargs through yet)."""
     control = _control()
     robot = _robot()
-    robot_json = json.dumps(robot._compile(waddle_sdk._derive_grants(control, robot.action_space)))
+    robot_json = json.dumps(robot._compile(_derive_grants(control, robot.action_space)))
     return _core.create_session(
         project="pytest-reset",
         robot_json=robot_json,

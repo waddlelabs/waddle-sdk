@@ -13,7 +13,6 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import sys
 import venv
 import zipfile
 from collections.abc import Iterable, Mapping
@@ -56,10 +55,12 @@ def _build_wheel(
     metadata.extend(f"Requires-Dist: {requirement}" for requirement in requirements)
     for extra, dependencies in (extras or {}).items():
         metadata.append(f"Provides-Extra: {extra}")
-        metadata.extend(
-            f'Requires-Dist: {dependency} ; extra == "{extra}"'
-            for dependency in dependencies
-        )
+        for dependency in dependencies:
+            requirement, separator, marker = dependency.partition(";")
+            condition = f'extra == "{extra}"'
+            if separator:
+                condition = f"({marker.strip()}) and {condition}"
+            metadata.append(f"Requires-Dist: {requirement.strip()} ; {condition}")
     wheel = wheelhouse / f"{normalized}-{version}-py3-none-any.whl"
     with zipfile.ZipFile(wheel, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for name, data in files.items():
@@ -109,7 +110,22 @@ def wheelhouse(tmp_path_factory: pytest.TempPathFactory) -> Path:
         directory,
         "numpy",
         "2.0.0",
-        files={"numpy/__init__.py": b'__version__ = "2.0.0"\n'},
+        files={
+            "numpy/__init__.py": b'__version__ = "2.0.0"\n',
+            "numpy/typing.py": b"NDArray = object\n",
+        },
+    )
+    _build_wheel(
+        directory,
+        "PyYAML",
+        "6.0.0",
+        files={"yaml/__init__.py": b""},
+    )
+    _build_wheel(
+        directory,
+        "jsonschema",
+        "4.22.0",
+        files={"jsonschema/__init__.py": b""},
     )
     _build_wheel(
         directory,
@@ -133,13 +149,74 @@ def wheelhouse(tmp_path_factory: pytest.TempPathFactory) -> Path:
     )
     _build_wheel(
         directory,
+        "opencv-python-headless",
+        "4.8.0",
+        files={
+            "cv2/__init__.py": b'raise RuntimeError("cv2 must remain lazily imported")\n'
+        },
+    )
+    _build_wheel(
+        directory,
+        "mujoco",
+        "3.1.0",
+        files={
+            "mujoco/__init__.py": (
+                b'raise RuntimeError("mujoco must remain lazily imported")\n'
+            )
+        },
+    )
+    _build_wheel(
+        directory,
+        "xarm-python-sdk",
+        "1.16.0",
+        files={
+            "xarm/__init__.py": b"",
+            "xarm/wrapper.py": (
+                b'raise RuntimeError("xarm must remain lazily imported")\n'
+            ),
+        },
+    )
+    _build_wheel(
+        directory,
+        "alicia-m-sdk",
+        "1.1.1rc2",
+        files={
+            "alicia_m_sdk/__init__.py": (
+                b'raise RuntimeError("alicia_m_sdk must remain lazily imported")\n'
+            )
+        },
+    )
+    _build_wheel(
+        directory,
+        "alicia-d-sdk",
+        "6.1.0",
+        files={
+            "alicia_d_sdk/__init__.py": (
+                b'raise RuntimeError("alicia_d_sdk must remain lazily imported")\n'
+            )
+        },
+    )
+    _build_wheel(
+        directory,
+        "synriard",
+        "1.2.2",
+        files={"synriard/__init__.py": b""},
+    )
+    _build_wheel(
+        directory,
+        "synria-robocore",
+        "2.5.0rc4",
+        files={"synria_robocore/__init__.py": b""},
+    )
+    _build_wheel(
+        directory,
         "waddle-sdk-teleop",
         VERSION,
         requirements=("numpy>=1.24",),
         files={
             "waddle_teleop/__init__.py": b"",
             "waddle_teleop/_core.py": (
-                f'__version__ = {VERSION!r}\n'
+                f"__version__ = {VERSION!r}\n"
                 'FEATURES = frozenset({"grpc", "livekit"})\n'
                 "class SessionStamp:\n"
                 "    pass\n"
@@ -153,7 +230,33 @@ CASES = (
     ("base", "", frozenset()),
     ("orbbec", "orbbec", frozenset({"pyorbbecsdk2"})),
     ("realsense", "realsense", frozenset({"pyrealsense2"})),
-    ("cameras", "cameras", frozenset({"pyorbbecsdk2", "pyrealsense2"})),
+    ("usb", "usb", frozenset({"opencv-python-headless"})),
+    ("mujoco", "mujoco", frozenset({"mujoco"})),
+    ("xarm", "xarm", frozenset({"xarm-python-sdk"})),
+    (
+        "alicia",
+        "alicia",
+        frozenset({"alicia-m-sdk", "synria-robocore", "synriard"}),
+    ),
+    ("alicia-d", "alicia-d", frozenset({"alicia-d-sdk", "synriard"})),
+    (
+        "robots",
+        "robots",
+        frozenset(
+            {
+                "xarm-python-sdk",
+                "alicia-m-sdk",
+                "alicia-d-sdk",
+                "synria-robocore",
+                "synriard",
+            }
+        ),
+    ),
+    (
+        "cameras",
+        "cameras",
+        frozenset({"opencv-python-headless", "pyorbbecsdk2", "pyrealsense2"}),
+    ),
     ("teleop", "teleop", frozenset({"waddle-sdk-teleop"})),
     (
         "teleop-orbbec",
@@ -166,9 +269,21 @@ CASES = (
         frozenset({"waddle-sdk-teleop", "pyrealsense2"}),
     ),
     (
+        "teleop-usb",
+        "teleop,usb",
+        frozenset({"opencv-python-headless", "waddle-sdk-teleop"}),
+    ),
+    (
         "teleop-cameras",
         "teleop,cameras",
-        frozenset({"waddle-sdk-teleop", "pyorbbecsdk2", "pyrealsense2"}),
+        frozenset(
+            {
+                "opencv-python-headless",
+                "waddle-sdk-teleop",
+                "pyorbbecsdk2",
+                "pyrealsense2",
+            }
+        ),
     ),
 )
 
@@ -205,13 +320,15 @@ def test_clean_install_extra_matrix(
         text=True,
     )
 
-    probe = r'''
+    probe = r"""
 import importlib.metadata
 import json
 import sys
 
 import waddle_sdk
-from waddle_sdk.cameras import orbbec, realsense
+from waddle_sdk.cameras import mock, orbbec, realsense, usb
+from waddle_sdk.robots import alicia, alicia_d, mujoco
+from waddle_sdk.robots import xarm as xarm_adapter
 
 names = {
     dist.metadata["Name"].lower()
@@ -225,10 +342,10 @@ print(json.dumps({
     "requirements": importlib.metadata.requires("waddle-sdk"),
     "vendor_modules": sorted(
         name for name in sys.modules
-        if name in {"pyorbbecsdk", "pyrealsense2"}
+        if name in {"alicia_d_sdk", "alicia_m_sdk", "cv2", "mujoco", "pyorbbecsdk", "pyrealsense2", "xarm"}
     ),
 }))
-'''
+"""
     completed = subprocess.run(
         [str(python), "-I", "-c", probe],
         check=True,
@@ -239,9 +356,21 @@ print(json.dumps({
     result = json.loads(completed.stdout)
     expected = {"waddle-sdk", "numpy", *optional}
     assert expected <= set(result["names"])
-    assert not ({"pyorbbecsdk2", "pyrealsense2", "waddle-sdk-teleop"} - optional) & set(
-        result["names"]
-    )
+    assert not (
+        {
+            "opencv-python-headless",
+            "mujoco",
+            "pyorbbecsdk2",
+            "pyrealsense2",
+            "waddle-sdk-teleop",
+            "xarm-python-sdk",
+            "alicia-m-sdk",
+            "alicia-d-sdk",
+            "synriard",
+            "synria-robocore",
+        }
+        - optional
+    ) & set(result["names"])
     assert result["vendor_modules"] == []
     assert result["requirements"]
     if "waddle-sdk-teleop" in optional:

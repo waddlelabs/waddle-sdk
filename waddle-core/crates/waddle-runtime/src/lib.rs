@@ -24,9 +24,9 @@ pub use media_uplink::{FrameData, FramePixels};
 pub use mirror::{AgentTaskKind, AgentTaskStatus, ResetProgressPhase, ResetProgressStatus, Status};
 pub use pumps::STALL_THRESHOLD_NS;
 pub use session::{
-    AgentOutcome, EePose, Episode, EpisodeOptions, ProprioReport, ResetHook, ResetSpec, Session,
-    SessionBuilder, SessionStamp, grant_and_engage, push_intervention_chunk, release_claim,
-    reset_window_complete, reset_window_engage,
+    AgentOutcome, ConnectorBinding, EePose, Episode, EpisodeOptions, ProprioReport, ResetHook,
+    ResetSpec, Session, SessionBuilder, SessionStamp, grant_and_engage, push_intervention_chunk,
+    release_claim, reset_window_complete, reset_window_engage,
 };
 // The invite payload `EpisodeOptions::agent_invite` carries is waddle-fsm's
 // own type (the FSM is the authority on what an invite is — hollow
@@ -46,6 +46,8 @@ pub enum RuntimeError {
     EpisodeActive,
     #[error("invalid task metadata: {0}")]
     InvalidTaskMetadata(String),
+    #[error("invalid hold request: {0}")]
+    InvalidHoldRequest(String),
     #[error("invalid chat request: {0}")]
     InvalidChat(String),
     #[error("chat unavailable: {0}")]

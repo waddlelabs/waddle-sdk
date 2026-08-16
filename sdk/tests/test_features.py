@@ -23,6 +23,8 @@ from pathlib import Path
 import pytest
 
 import waddle_sdk
+from waddle_sdk import descriptors
+from waddle_sdk._session import Control, _derive_grants, create_core_session
 import waddle_sdk._core as _core
 import waddle_sdk._native as _native
 
@@ -39,34 +41,30 @@ def _pyproject(*parts: str) -> dict:
         return tomllib.load(fh)
 
 
-@pytest.fixture(autouse=True)
-def _clean_session():
-    yield
-    waddle_sdk.shutdown()
 
 
-def _robot() -> waddle_sdk.Robot:
-    return waddle_sdk.Robot(
+def _robot() -> descriptors.Robot:
+    return descriptors.Robot(
         name="pytest-features-bot",
         robot_id="py-features-01",
         cell_id="cell-py-features",
-        action_space=waddle_sdk.JointSpace(joints=["j0", "j1", "j2"], rate_hz=50),
+        action_space=descriptors.JointSpace(joints=["j0", "j1", "j2"], rate_hz=50),
     )
 
 
-def _control() -> waddle_sdk.Control:
-    return waddle_sdk.Control(
+def _control() -> Control:
+    return Control(
         send=lambda chunk: None, hold=lambda: None, resume=lambda: None
     )
 
 
-def _camera_robot() -> waddle_sdk.Robot:
-    return waddle_sdk.Robot(
+def _camera_robot() -> descriptors.Robot:
+    return descriptors.Robot(
         name="pytest-features-cam",
         robot_id="py-features-cam-01",
         cell_id="cell-py-features",
-        action_space=waddle_sdk.JointSpace(joints=["j0", "j1", "j2"], rate_hz=50),
-        cameras={"overhead": waddle_sdk.Camera(width=4, height=4, fps=30)},
+        action_space=descriptors.JointSpace(joints=["j0", "j1", "j2"], rate_hz=50),
+        cameras={"overhead": descriptors.Camera(width=4, height=4, fps=30)},
     )
 
 
@@ -207,7 +205,7 @@ def test_bundled_core_stays_reachable_by_name():
 def test_media_without_livekit_names_the_teleop_extra(monkeypatch):
     monkeypatch.setattr(_native, "FEATURES", frozenset({"grpc"}))
     with pytest.raises(RuntimeError, match=r"waddle-sdk\[teleop\]") as excinfo:
-        waddle_sdk.init(
+        create_core_session(
             "py-features-media",
             _camera_robot(),
             _control(),
@@ -219,7 +217,7 @@ def test_media_without_livekit_names_the_teleop_extra(monkeypatch):
 def test_transport_without_grpc_names_the_from_source_build(monkeypatch):
     monkeypatch.setattr(_native, "FEATURES", frozenset())
     with pytest.raises(RuntimeError, match="grpc") as excinfo:
-        waddle_sdk.init(
+        create_core_session(
             "py-features-transport",
             _robot(),
             _control(),
@@ -230,7 +228,7 @@ def test_transport_without_grpc_names_the_from_source_build(monkeypatch):
 
 def test_transport_and_testing_are_mutually_exclusive():
     with pytest.raises(ValueError, match="transport and _testing"):
-        waddle_sdk.init(
+        create_core_session(
             "py-features-both",
             _robot(),
             _control(),
@@ -245,7 +243,7 @@ def test_transport_declaration_validates_its_shape():
     with pytest.raises(ValueError, match="Grpc.token"):
         waddle_sdk.Grpc("http://127.0.0.1:9", token="")
     with pytest.raises(TypeError, match="transport must be"):
-        waddle_sdk.init(
+        create_core_session(
             "py-features-shape",
             _robot(),
             _control(),
@@ -300,7 +298,7 @@ def test_grpc_session_dials_the_plane_and_then_survives_losing_it(tmp_path):
     port = plane.getsockname()[1]
 
     try:
-        session = waddle_sdk.init(
+        session = create_core_session(
             "py-grpc-offline",
             _robot(),
             _control(),
@@ -324,14 +322,18 @@ def test_grpc_session_dials_the_plane_and_then_survives_losing_it(tmp_path):
     finally:
         plane.close()
 
-    with waddle_sdk.rollout(task="the plane is not home") as ep:
+    ep = session.start_episode("the plane is not home")
+    try:
         action = [0.1, 0.2, 0.3]
         assert ep.gate(action, [0.0, 0.0, 0.0]) is action
         episode_id = ep.id
         ep.terminate("success")
+    finally:
+        if not ep.done:
+            ep.terminate("abort")
 
     started = time.monotonic()
-    waddle_sdk.shutdown()
+    session.shutdown()
     elapsed = time.monotonic() - started
     assert elapsed < 10.0, f"shutdown stalled on the transport backoff ({elapsed:.1f}s)"
     assert (tmp_path / f"{episode_id}.sidecar.json").exists()

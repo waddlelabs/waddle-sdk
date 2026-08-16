@@ -1,12 +1,13 @@
 //! The session's background pumps: verb outcomes → FSM events, bypass
 //! supervision (claimed-while-stalled), media intake, and plane directives.
 
+use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::mpsc::{Receiver, Sender};
+use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use waddle_controlplane::{ControlPlaneClient, PlaneEvent, ServerMsg};
+use waddle_controlplane::{ClientMsg, ControlPlaneClient, PlaneEvent, ServerMsg};
 use waddle_fsm::{GrantChangeDirective, Phase, RejectReason, SessionEvent};
 use waddle_gate::gate::{GateShared, OwnedAction};
 use waddle_gate::jitter::{ChunkMeta, StreamChannel, TimedAction};
@@ -28,13 +29,19 @@ use crate::mirror::{
 };
 use crate::plane_events::PlaneEvents;
 use crate::session::{
-    EpisodeResetSpecs, ResetOwnerSlot, ResetSpec, ResetSpecSlot, StreamProducer, TaskSlot,
+    Episode, EpisodeResetSpecs, ResetOwnerSlot, ResetSpec, ResetSpecSlot, Session, StreamProducer,
+    TaskSlot,
 };
 use crate::verbs::{VerbDispatch, VerbOutcome};
 
 /// How long the caller's loop may go quiet while claimed before bypass
 /// engages (the claimed-while-stalled contract).
 pub const STALL_THRESHOLD_NS: i64 = 500_000_000;
+
+/// Cadence for the existing v0 heartbeat stream. This is shorter than the
+/// FSM's two-second stale timeout, leaving several independent samples before
+/// a partition requests the customer-provided hold verb.
+const CONTROL_HEARTBEAT_INTERVAL_NS: i64 = 500_000_000;
 
 /// Verb outcomes → `SessionEvent::VerbResult`.
 pub(crate) fn spawn_outcome_pump(
@@ -62,6 +69,256 @@ pub(crate) fn spawn_outcome_pump(
             }
         })
         .expect("spawn verb-outcome pump")
+}
+
+/// One plane→SDK hosted-run command, tagged with the connection that
+/// delivered it. The tag prevents a late admission answer from crossing onto
+/// a later connection that happened to negotiate the same feature.
+pub(crate) enum HostedRunCommand {
+    Request {
+        connection_generation: u64,
+        request: pb::HostedRunRequest,
+    },
+    ConnectionLost {
+        connection_generation: u64,
+    },
+}
+
+/// One completed admission answer returned to the plane pump. The pump sends
+/// it only while the originating connection is still current.
+pub(crate) struct HostedRunResult {
+    connection_generation: u64,
+    status: pb::HostedRunStatus,
+}
+
+const HOSTED_RUN_CACHE_CAPACITY: usize = 1024;
+
+struct ActiveHostedRun {
+    connection_generation: u64,
+    deadline_ns: i64,
+    episode: Episode,
+}
+
+/// Plane-started episode lifecycle (flag `waddle.v0.hosted.runs`). This
+/// dedicated session-owned worker may block in the normal reset path without
+/// freezing GateActions intake. It retains the Episode handle for recording,
+/// enforces the request's relative lifetime, and fail-closes an accepted run
+/// on loss of the connection that started it.
+pub(crate) fn spawn_hosted_run_pump(
+    session: Session,
+    commands: Receiver<HostedRunCommand>,
+    results: Sender<HostedRunResult>,
+) -> JoinHandle<()> {
+    std::thread::Builder::new()
+        .name("waddle-hosted-runs".into())
+        .spawn(move || {
+            let mut completed: HashMap<String, pb::HostedRunStatus> = HashMap::new();
+            let mut active: Option<ActiveHostedRun> = None;
+            loop {
+                if session.status().shutdown {
+                    return;
+                }
+                if active.as_ref().is_some_and(|run| run.episode.done()) {
+                    active = None;
+                }
+                let timed_out = active
+                    .as_ref()
+                    .is_some_and(|run| session.stamp().session_ns >= run.deadline_ns);
+                if timed_out {
+                    stop_hosted_run(&session, &mut active, "hosted run timeout");
+                }
+
+                match commands.recv_timeout(Duration::from_millis(20)) {
+                    Ok(HostedRunCommand::Request {
+                        connection_generation,
+                        request,
+                    }) => {
+                        handle_hosted_run_request(
+                            &session,
+                            connection_generation,
+                            request,
+                            &mut completed,
+                            &mut active,
+                            &results,
+                        );
+                    }
+                    Ok(HostedRunCommand::ConnectionLost {
+                        connection_generation,
+                    }) => {
+                        if active
+                            .as_ref()
+                            .is_some_and(|run| run.connection_generation == connection_generation)
+                        {
+                            stop_hosted_run(&session, &mut active, "hosted run connection lost");
+                        }
+                    }
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
+                }
+            }
+        })
+        .expect("spawn hosted-run pump")
+}
+
+fn stop_hosted_run(session: &Session, active: &mut Option<ActiveHostedRun>, reason: &str) {
+    let Some(run) = active.take() else { return };
+    let _ = session.request_hold(reason);
+    run.episode
+        .terminate(waddle_types::TerminalOutcome::Abort, reason);
+}
+
+fn handle_hosted_run_request(
+    session: &Session,
+    connection_generation: u64,
+    request: pb::HostedRunRequest,
+    completed: &mut HashMap<String, pb::HostedRunStatus>,
+    active: &mut Option<ActiveHostedRun>,
+    results: &Sender<HostedRunResult>,
+) {
+    // An unusable correlation id cannot be answered without producing an
+    // invalid status of its own. Reject it silently at the wire boundary.
+    if request.request_id.is_empty() || request.request_id.len() > 128 {
+        return;
+    }
+    if let Some(status) = completed.get(&request.request_id) {
+        let _ = results.send(HostedRunResult {
+            connection_generation,
+            status: status.clone(),
+        });
+        return;
+    }
+    if completed.len() >= HOSTED_RUN_CACHE_CAPACITY {
+        // The session-lifetime idempotency cache is deliberately bounded.
+        // New ids beyond the cap receive the same deterministic rejection
+        // without being retained; already-cached ids above were answered
+        // first and therefore remain verbatim-idempotent.
+        let status = hosted_run_status(
+            &request.request_id,
+            pb::HostedRunStatusKind::Rejected,
+            "",
+            "capacity_exceeded",
+            "the hosted-run admission cache is full",
+        );
+        let _ = results.send(HostedRunResult {
+            connection_generation,
+            status,
+        });
+        return;
+    }
+
+    if active.as_ref().is_some_and(|run| run.episode.done()) {
+        *active = None;
+    }
+    let received_ns = session.stamp().session_ns;
+    let status = if request.timeout_ns <= 0 {
+        hosted_run_status(
+            &request.request_id,
+            pb::HostedRunStatusKind::Rejected,
+            "",
+            "invalid_timeout",
+            "timeout_ns must be positive",
+        )
+    } else if let Some(run) = active.as_ref() {
+        hosted_run_status(
+            &request.request_id,
+            pb::HostedRunStatusKind::Busy,
+            run.episode.id().as_str(),
+            "episode_active",
+            "the SDK session already has an active episode",
+        )
+    } else {
+        let metadata = request.task_metadata.into_iter().collect();
+        match session.start_hosted_episode(metadata) {
+            Ok(episode) => {
+                let status = hosted_run_status(
+                    &request.request_id,
+                    pb::HostedRunStatusKind::Accepted,
+                    episode.id().as_str(),
+                    "accepted",
+                    "the SDK opened the episode",
+                );
+                *active = Some(ActiveHostedRun {
+                    connection_generation,
+                    deadline_ns: received_ns.saturating_add(request.timeout_ns),
+                    episode,
+                });
+                status
+            }
+            Err(RuntimeError::EpisodeActive) => {
+                let episode_id = session
+                    .status()
+                    .episode_id
+                    .map_or_else(String::new, |id| id.to_string());
+                hosted_run_status(
+                    &request.request_id,
+                    pb::HostedRunStatusKind::Busy,
+                    &episode_id,
+                    "episode_active",
+                    "the SDK session already has an active episode",
+                )
+            }
+            Err(RuntimeError::InvalidTaskMetadata(_)) => hosted_run_status(
+                &request.request_id,
+                pb::HostedRunStatusKind::Rejected,
+                "",
+                "invalid_task_metadata",
+                "task_metadata exceeds the protocol bounds",
+            ),
+            Err(RuntimeError::MissingVerb { .. }) => hosted_run_status(
+                &request.request_id,
+                pb::HostedRunStatusKind::Rejected,
+                "",
+                "control_unavailable",
+                "the SDK session has no complete remote actuation path",
+            ),
+            Err(RuntimeError::ShuttingDown) => hosted_run_status(
+                &request.request_id,
+                pb::HostedRunStatusKind::Rejected,
+                "",
+                "shutting_down",
+                "the SDK session is shutting down",
+            ),
+            Err(RuntimeError::ResetFailed(_)) => hosted_run_status(
+                &request.request_id,
+                pb::HostedRunStatusKind::Rejected,
+                "",
+                "reset_failed",
+                "the SDK could not prepare the episode",
+            ),
+            Err(_) => hosted_run_status(
+                &request.request_id,
+                pb::HostedRunStatusKind::Rejected,
+                "",
+                "unavailable",
+                "the SDK could not open the episode",
+            ),
+        }
+    };
+
+    completed.insert(request.request_id, status.clone());
+    let _ = results.send(HostedRunResult {
+        connection_generation,
+        status,
+    });
+}
+
+fn hosted_run_status(
+    request_id: &str,
+    kind: pb::HostedRunStatusKind,
+    episode_id: &str,
+    code: &str,
+    message: &str,
+) -> pb::HostedRunStatus {
+    pb::HostedRunStatus {
+        request_id: request_id.to_owned(),
+        kind: kind as i32,
+        episode_id: episode_id.to_owned(),
+        detail: Some(pb::HostedRunDetail {
+            code: code.to_owned(),
+            message: message.to_owned(),
+            context: Default::default(),
+        }),
+    }
 }
 
 /// The wire `source_id` the bypass pump's own dispatches are recorded
@@ -583,6 +840,8 @@ pub(crate) fn spawn_plane_pump(
     chunk_intake: SharedChunkIntake,
     chat: Arc<ChatInbox>,
     plane_events: Arc<PlaneEvents>,
+    hosted_runs: Sender<HostedRunCommand>,
+    hosted_results: Receiver<HostedRunResult>,
 ) -> JoinHandle<()> {
     std::thread::Builder::new()
         .name("waddle-plane-pump".into())
@@ -595,10 +854,32 @@ pub(crate) fn spawn_plane_pump(
             // forgets it — per VERSIONING §3, a behavior the connection did
             // not accept is never emitted.
             let mut acks_negotiated = false;
+            let mut hosted_runs_negotiated = false;
+            let mut connection_generation = 0_u64;
+            let mut heartbeat_session_id: Option<String> = None;
+            let mut next_heartbeat_ns = 0_i64;
             loop {
+                forward_hosted_run_results(
+                    &plane,
+                    &hosted_results,
+                    connection_generation,
+                    hosted_runs_negotiated,
+                );
                 let status = mirror.read();
                 if status.shutdown {
                     return;
+                }
+                let heartbeat_at = clock.stamp_now().mono_ns();
+                if let Some(session_id) = heartbeat_session_id.as_ref()
+                    && heartbeat_at.0 >= next_heartbeat_ns
+                {
+                    plane.send(ClientMsg::Heartbeat(pb::HeartbeatPing {
+                        session_id: session_id.clone(),
+                        t_ns: heartbeat_at.0,
+                        ..Default::default()
+                    }));
+                    next_heartbeat_ns =
+                        heartbeat_at.0.saturating_add(CONTROL_HEARTBEAT_INTERVAL_NS);
                 }
                 let Some(event) = plane.recv_event_timeout(Duration::from_millis(20)) else {
                     continue;
@@ -606,8 +887,23 @@ pub(crate) fn spawn_plane_pump(
                 let at = clock.stamp_now().mono_ns();
                 match event {
                     PlaneEvent::Connected | PlaneEvent::Registered(_) => {
+                        if matches!(&event, PlaneEvent::Connected) {
+                            if connection_generation != 0 {
+                                let _ = hosted_runs.send(HostedRunCommand::ConnectionLost {
+                                    connection_generation,
+                                });
+                            }
+                            connection_generation = connection_generation.saturating_add(1);
+                        }
+
                         match &event {
                             PlaneEvent::Registered(resp) => {
+                                heartbeat_session_id = Some(resp.session_id.clone());
+                                next_heartbeat_ns = at.0;
+                                let connector_binding = resp
+                                    .accepted_feature_flags
+                                    .iter()
+                                    .any(|f| f == waddle_controlplane::flags::CONNECTOR_BINDING);
                                 acks_negotiated =
                                     resp.accepted_feature_flags.iter().any(|f| f == ACKS_FLAG);
                                 // Control-plane stills (flag
@@ -640,13 +936,20 @@ pub(crate) fn spawn_plane_pump(
                                     .accepted_feature_flags
                                     .iter()
                                     .any(|f| f == waddle_controlplane::flags::WORKSPACE_ARTIFACTS);
+                                hosted_runs_negotiated = resp
+                                    .accepted_feature_flags
+                                    .iter()
+                                    .any(|f| f == waddle_controlplane::flags::HOSTED_RUNS);
                                 mirror.update(|s| {
+                                    s.plane_registered = true;
+                                    s.connector_binding_negotiated = connector_binding;
                                     s.stills_negotiated = stills;
                                     s.parts_negotiated = parts;
                                     s.chat_negotiated = chat_on;
                                     s.task_sessions_negotiated = tasks_on;
                                     s.calibration_measurements_negotiated = calibration_on;
                                     s.workspace_artifacts_negotiated = artifacts_on;
+                                    s.hosted_runs_negotiated = hosted_runs_negotiated;
                                 });
                             }
                             // A connection exists but has not registered yet:
@@ -657,7 +960,11 @@ pub(crate) fn spawn_plane_pump(
                                 &chat,
                                 &plane_events,
                                 &mut acks_negotiated,
+                                &mut hosted_runs_negotiated,
                             ),
+                        }
+                        if matches!(&event, PlaneEvent::Connected) {
+                            heartbeat_session_id = None;
                         }
                         if !was_connected {
                             was_connected = true;
@@ -665,11 +972,16 @@ pub(crate) fn spawn_plane_pump(
                         }
                     }
                     PlaneEvent::Disconnected => {
+                        heartbeat_session_id = None;
+                        let _ = hosted_runs.send(HostedRunCommand::ConnectionLost {
+                            connection_generation,
+                        });
                         forget_negotiated_flags(
                             &mirror,
                             &chat,
                             &plane_events,
                             &mut acks_negotiated,
+                            &mut hosted_runs_negotiated,
                         );
                         if was_connected {
                             was_connected = false;
@@ -684,6 +996,9 @@ pub(crate) fn spawn_plane_pump(
                         &mirror,
                         &stream,
                         &action_space,
+                        hosted_runs_negotiated,
+                        connection_generation,
+                        &hosted_runs,
                         &chunk_intake,
                         &chat,
                         &plane_events,
@@ -696,6 +1011,29 @@ pub(crate) fn spawn_plane_pump(
 }
 
 /// Forget what the LAST connection accepted. A feature flag is accepted by
+fn forward_hosted_run_results(
+    plane: &ControlPlaneClient,
+    results: &Receiver<HostedRunResult>,
+    connection_generation: u64,
+    negotiated: bool,
+) {
+    loop {
+        match results.try_recv() {
+            Ok(result) if negotiated && result.connection_generation == connection_generation => {
+                plane.send(ClientMsg::Gate(pb::GateClientMessage {
+                    msg: Some(pb::gate_client_message::Msg::HostedRunStatus(result.status)),
+                }));
+            }
+            Ok(_) => {
+                // The originating connection is gone (or never accepted the
+                // feature). Admission answers are connection-scoped, so a
+                // later connection must retry explicitly by request_id.
+            }
+            Err(TryRecvError::Empty | TryRecvError::Disconnected) => return,
+        }
+    }
+}
+
 /// one connection, at its own Register, and the client re-registers on every
 /// reconnect — so the moment a connection ends (or a new one begins, before
 /// it has registered), the standing answers describe a plane this session
@@ -711,17 +1049,22 @@ fn forget_negotiated_flags(
     chat: &ChatInbox,
     plane_events: &PlaneEvents,
     acks_negotiated: &mut bool,
+    hosted_runs_negotiated: &mut bool,
 ) {
     *acks_negotiated = false;
+    *hosted_runs_negotiated = false;
     chat.unavailable("chat connection lost; local controls remain available");
     plane_events.unavailable("control-plane connection lost; local controls remain available");
     mirror.update(|s| {
+        s.plane_registered = false;
+        s.connector_binding_negotiated = false;
         s.stills_negotiated = false;
         s.parts_negotiated = false;
         s.chat_negotiated = false;
         s.task_sessions_negotiated = false;
         s.calibration_measurements_negotiated = false;
         s.workspace_artifacts_negotiated = false;
+        s.hosted_runs_negotiated = false;
     });
 }
 
@@ -1003,6 +1346,9 @@ fn forward_server_msg(
     mirror: &Mirror,
     stream: &StreamProducer,
     space: &ActionSpace,
+    hosted_runs_negotiated: bool,
+    connection_generation: u64,
+    hosted_runs: &Sender<HostedRunCommand>,
     intake: &SharedChunkIntake,
     chat: &ChatInbox,
     plane_events: &PlaneEvents,
@@ -1226,8 +1572,21 @@ fn forward_server_msg(
             Some(pb::gate_server_message::Msg::CalibrationUpdate(update)) => {
                 plane_events.push_calibration(update);
             }
+            Some(pb::gate_server_message::Msg::CalibrationMeasurementRequest(request))
+                if mirror.read().calibration_measurements_negotiated =>
+            {
+                plane_events.push_calibration_request(request);
+            }
             Some(pb::gate_server_message::Msg::WorkspaceArtifactReady(ready)) => {
                 plane_events.push_artifact(ready);
+            }
+            Some(pb::gate_server_message::Msg::HostedRunRequest(request))
+                if hosted_runs_negotiated =>
+            {
+                let _ = hosted_runs.send(HostedRunCommand::Request {
+                    connection_generation,
+                    request,
+                });
             }
             _ => {}
         },

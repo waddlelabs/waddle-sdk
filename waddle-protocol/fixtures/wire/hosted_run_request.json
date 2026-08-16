@@ -1,0 +1,13 @@
+{
+  "format": "waddle_sdk.fixture/v0",
+  "type": "waddle.v0.HostedRunRequest",
+  "description": "A connection-scoped idempotent request to open one ordinary episode on an idle remote SDK.",
+  "message": {
+    "requestId": "hosted-01J9RUN0001",
+    "taskMetadata": {
+      "task": "inspect the left fixture",
+      "trace_id": "trace-01J9"
+    },
+    "timeoutNs": "60000000000"
+  }
+}

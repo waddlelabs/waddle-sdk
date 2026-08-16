@@ -153,6 +153,10 @@ pub struct Status {
     /// The plane's most recent `AgentTaskUpdate`; see [`AgentTaskStatus`].
     pub agent_task: Option<AgentTaskStatus>,
     pub plane_connected: bool,
+    /// True only after the CURRENT connection completed Register.
+    pub plane_registered: bool,
+    /// The CURRENT connection accepted the exact connector binding feature.
+    pub connector_binding_negotiated: bool,
     /// The CURRENT connection accepted `waddle.v0.obs.stills` at Register.
     /// Set by the plane pump from that connection's own `RegisterResponse`
     /// and cleared at every connection boundary (see
@@ -187,6 +191,10 @@ pub struct Status {
     pub calibration_measurements_negotiated: bool,
     /// The CURRENT connection accepted signed-workspace artifact requests.
     pub workspace_artifacts_negotiated: bool,
+    /// The CURRENT connection accepted hosted run admission. This is
+    /// connection-scoped observability only; the hosted-run worker owns the
+    /// session-lifetime duplicate-request cache.
+    pub hosted_runs_negotiated: bool,
     pub shutdown: bool,
     /// Set once, at build time, when the session's `ControlRegistry` has no
     /// `estop` callable. Missing `estop` never fails the build (unlike

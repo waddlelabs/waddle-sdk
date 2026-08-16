@@ -144,6 +144,49 @@ mod tests {
     }
 
     #[test]
+    fn hosted_run_request_round_trips_on_server_arm_12() {
+        let msg = pb::GateServerMessage {
+            msg: Some(pb::gate_server_message::Msg::HostedRunRequest(
+                pb::HostedRunRequest {
+                    request_id: "run-12".into(),
+                    task_metadata: [("task".into(), "inspect".into())].into(),
+                    timeout_ns: 5_000_000_000,
+                },
+            )),
+        };
+        let bytes = msg.encode_to_vec();
+        assert_eq!(leading_field_number(&bytes), 12);
+        assert_eq!(
+            pb::GateServerMessage::decode(bytes.as_slice()).unwrap(),
+            msg
+        );
+    }
+
+    #[test]
+    fn hosted_run_status_round_trips_on_client_arm_9() {
+        let msg = pb::GateClientMessage {
+            msg: Some(pb::gate_client_message::Msg::HostedRunStatus(
+                pb::HostedRunStatus {
+                    request_id: "run-9".into(),
+                    kind: pb::HostedRunStatusKind::Accepted as i32,
+                    episode_id: "ep-9".into(),
+                    detail: Some(pb::HostedRunDetail {
+                        code: "accepted".into(),
+                        message: "opened".into(),
+                        context: Default::default(),
+                    }),
+                },
+            )),
+        };
+        let bytes = msg.encode_to_vec();
+        assert_eq!(leading_field_number(&bytes), 9);
+        assert_eq!(
+            pb::GateClientMessage::decode(bytes.as_slice()).unwrap(),
+            msg
+        );
+    }
+
+    #[test]
     fn observation_update_still_round_trips_on_arm_5() {
         let update = pb::ObservationUpdate {
             t_ns: 0,

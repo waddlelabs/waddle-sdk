@@ -8,11 +8,13 @@ import json
 import pytest
 
 import waddle_sdk
+from waddle_sdk import descriptors
+from waddle_sdk._session import Control, _derive_grants, create_core_session
 from waddle_sdk import _core
 
 
 def test_joint_space_reference_output():
-    space = waddle_sdk.JointSpace(joints=["j0", "j1", "j2"], rate_hz=50)
+    space = descriptors.JointSpace(joints=["j0", "j1", "j2"], rate_hz=50)
     assert space._compile_space() == {
         "jointPosition": {"joints": [{"name": "j0"}, {"name": "j1"}, {"name": "j2"}]},
         "rateHz": 50.0,
@@ -20,11 +22,11 @@ def test_joint_space_reference_output():
 
 
 def test_bimanual_composite_reference_output():
-    space = waddle_sdk.Composite(
-        left=waddle_sdk.JointSpace(joints=[f"l{i}" for i in range(7)]),
-        right=waddle_sdk.JointSpace(joints=[f"r{i}" for i in range(7)]),
+    space = descriptors.Composite(
+        left=descriptors.JointSpace(joints=[f"l{i}" for i in range(7)]),
+        right=descriptors.JointSpace(joints=[f"r{i}" for i in range(7)]),
         rate_hz=50,
-        chunking=waddle_sdk.Chunking(horizon=20, replan="IMMEDIATE", interp="linear"),
+        chunking=descriptors.Chunking(horizon=20, replan="IMMEDIATE", interp="linear"),
     )
     compiled = space._compile_space()
     assert compiled["rateHz"] == 50.0
@@ -42,29 +44,29 @@ def test_bimanual_composite_reference_output():
 
 
 def test_compiled_robot_round_trips_through_core_validation():
-    robot = waddle_sdk.Robot(
+    robot = descriptors.Robot(
         name="bimanual",
         robot_id="bot-1",
         cell_id="cell-a",
-        action_space=waddle_sdk.Composite(
-            left=waddle_sdk.JointSpace(joints=[f"l{i}" for i in range(7)]),
-            right=waddle_sdk.JointSpace(
+        action_space=descriptors.Composite(
+            left=descriptors.JointSpace(joints=[f"l{i}" for i in range(7)]),
+            right=descriptors.JointSpace(
                 joints=[f"r{i}" for i in range(7)],
-                gripper=waddle_sdk.Gripper.parallel(dim=-1, open=1.0),
+                gripper=descriptors.Gripper.parallel(dim=-1, open=1.0),
             ),
             rate_hz=50,
-            chunking=waddle_sdk.Chunking(horizon=20, replan="immediate", interp="linear"),
+            chunking=descriptors.Chunking(horizon=20, replan="immediate", interp="linear"),
         ),
-        cameras={"wrist": waddle_sdk.Camera(width=640, height=480, fps=30, encoding="rgb8")},
+        cameras={"wrist": descriptors.Camera(width=640, height=480, fps=30, encoding="rgb8")},
     )
-    control = waddle_sdk.Control(
+    control = Control(
         send=lambda chunk: None,
         hold=lambda: None,
         estop=lambda: None,
         estop_hardware=True,
         estop_latency_bound_ms=15,
     )
-    grants = waddle_sdk._derive_grants(control, robot.action_space)
+    grants = _derive_grants(control, robot.action_space)
     assert {"verb": "VERB_SEND", "sendInterfaces": ["SPACE_KIND_COMPOSITE"]} in grants
     assert {"verb": "VERB_HOLD"} in grants
     estop = next(g for g in grants if g["verb"] == "VERB_ESTOP")
@@ -79,7 +81,7 @@ def test_compiled_robot_round_trips_through_core_validation():
 
 
 def test_ee_delta_must_declare_conventions():
-    space = waddle_sdk.EEDelta(frame_id="base", rotation="rotvec", delta_frame="base")
+    space = descriptors.EEDelta(frame_id="base", rotation="rotvec", delta_frame="base")
     assert space._compile_kind() == {
         "eeDelta": {
             "frameId": "base",
@@ -88,18 +90,18 @@ def test_ee_delta_must_declare_conventions():
         }
     }
     with pytest.raises(ValueError, match="rotation"):
-        waddle_sdk.EEDelta(frame_id="base", rotation="spin", delta_frame="base")._compile_kind()
+        descriptors.EEDelta(frame_id="base", rotation="spin", delta_frame="base")._compile_kind()
 
 
 def test_invalid_declarations_raise():
     with pytest.raises(ValueError, match="radians"):
-        waddle_sdk.JointSpace(joints=["j0"], units="deg")
+        descriptors.JointSpace(joints=["j0"], units="deg")
     with pytest.raises(ValueError, match="at least one joint"):
-        waddle_sdk.JointSpace(joints=[])
+        descriptors.JointSpace(joints=[])
     with pytest.raises(ValueError, match="at least one part"):
-        waddle_sdk.Composite(rate_hz=50)
+        descriptors.Composite(rate_hz=50)
     with pytest.raises(ValueError, match="replan"):
-        waddle_sdk.Chunking(horizon=1, replan="never")._compile()
+        descriptors.Chunking(horizon=1, replan="never")._compile()
     with pytest.raises(ValueError):
         _core.validate_robot_json("{not json}")
     with pytest.raises(ValueError):
@@ -109,7 +111,7 @@ def test_invalid_declarations_raise():
 
 def test_control_rejects_send_dict():
     with pytest.raises(TypeError, match="ONE callable"):
-        waddle_sdk.Control(send={"joint_position": lambda chunk: None})
+        Control(send={"joint_position": lambda chunk: None})
 
 
 # ---------------------------------------------------------------------------
@@ -119,7 +121,7 @@ def test_control_rejects_send_dict():
 
 
 def test_camera_without_new_fields_compiles_unchanged():
-    cam = waddle_sdk.Camera(width=640, height=480, fps=30, encoding="rgb8")
+    cam = descriptors.Camera(width=640, height=480, fps=30, encoding="rgb8")
     assert cam._compile("wrist") == {
         "name": "wrist",
         "width": 640,
@@ -130,11 +132,11 @@ def test_camera_without_new_fields_compiles_unchanged():
 
 
 def test_robot_without_new_fields_compiles_unchanged():
-    robot = waddle_sdk.Robot(
+    robot = descriptors.Robot(
         name="bimanual",
         robot_id="bot-1",
         cell_id="cell-a",
-        action_space=waddle_sdk.JointSpace(joints=["j0"], rate_hz=50),
+        action_space=descriptors.JointSpace(joints=["j0"], rate_hz=50),
     )
     assert robot._compile([]) == {
         "name": "bimanual",
@@ -153,7 +155,7 @@ def test_robot_without_new_fields_compiles_unchanged():
 
 
 def test_intrinsics_compiled_json_keys():
-    intr = waddle_sdk.Intrinsics(
+    intr = descriptors.Intrinsics(
         fx=605.1,
         fy=605.2,
         cx=320.0,
@@ -174,7 +176,7 @@ def test_intrinsics_compiled_json_keys():
 
 
 def test_intrinsics_omits_default_distortion_model_and_empty_fields():
-    intr = waddle_sdk.Intrinsics(fx=1.0, fy=1.0, cx=1.0, cy=1.0)
+    intr = descriptors.Intrinsics(fx=1.0, fy=1.0, cx=1.0, cy=1.0)
     compiled = intr._compile()
     assert "model" not in compiled
     assert "distortion" not in compiled
@@ -183,17 +185,17 @@ def test_intrinsics_omits_default_distortion_model_and_empty_fields():
 
 def test_intrinsics_validates_positive_depth_scale():
     with pytest.raises(ValueError, match="depth_scale_mm"):
-        waddle_sdk.Intrinsics(fx=1.0, fy=1.0, cx=1.0, cy=1.0, depth_scale_mm=-1.0)
+        descriptors.Intrinsics(fx=1.0, fy=1.0, cx=1.0, cy=1.0, depth_scale_mm=-1.0)
 
 
 def test_camera_stream_policy_and_vendor_compiled_json_keys():
-    cam = waddle_sdk.Camera(
+    cam = descriptors.Camera(
         width=1280,
         height=720,
         fps=30,
-        stream_policy=waddle_sdk.StreamPolicy(
+        stream_policy=descriptors.StreamPolicy(
             local_full_rate=True,
-            uplink=waddle_sdk.Uplink(fps=15, encoding="h264", max_kbps=2000),
+            uplink=descriptors.Uplink(fps=15, encoding="h264", max_kbps=2000),
         ),
         vendor={"serial": "SN-1"},
     )
@@ -211,9 +213,9 @@ def test_camera_stream_policy_and_vendor_compiled_json_keys():
 
 def test_uplink_validates_positive_fps_and_kbps():
     with pytest.raises(ValueError, match="fps"):
-        waddle_sdk.Uplink(fps=-1.0, encoding="h264")
+        descriptors.Uplink(fps=-1.0, encoding="h264")
     with pytest.raises(ValueError, match="max_kbps"):
-        waddle_sdk.Uplink(fps=15.0, encoding="h264", max_kbps=0)
+        descriptors.Uplink(fps=15.0, encoding="h264", max_kbps=0)
 
 
 def test_stream_policy_still_fps_compiles_and_is_absent_by_default():
@@ -221,17 +223,17 @@ def test_stream_policy_still_fps_compiles_and_is_absent_by_default():
     # a distinct key from the media plane's `uplink.fps`, and absent
     # entirely unless declared — an undeclared camera must not start
     # putting pictures on the control plane.
-    assert waddle_sdk.StreamPolicy(local_full_rate=True)._compile() == {"localFullRate": True}
-    assert waddle_sdk.StreamPolicy(still_fps=2)._compile() == {"stillFps": 2.0}
-    both = waddle_sdk.StreamPolicy(
-        still_fps=2, uplink=waddle_sdk.Uplink(fps=15, encoding="rgb8")
+    assert descriptors.StreamPolicy(local_full_rate=True)._compile() == {"localFullRate": True}
+    assert descriptors.StreamPolicy(still_fps=2)._compile() == {"stillFps": 2.0}
+    both = descriptors.StreamPolicy(
+        still_fps=2, uplink=descriptors.Uplink(fps=15, encoding="rgb8")
     )._compile()
     assert both == {
         "stillFps": 2.0,
         "uplink": {"fps": 15.0, "encoding": "CAMERA_ENCODING_RGB8"},
     }
     with pytest.raises(ValueError, match="still_fps"):
-        waddle_sdk.StreamPolicy(still_fps=-1.0)
+        descriptors.StreamPolicy(still_fps=-1.0)
 
 
 def test_still_fps_survives_the_round_trip_into_core():
@@ -242,15 +244,15 @@ def test_still_fps_survives_the_round_trip_into_core():
     # nobody, and the first symptom would be a customer's connected session
     # sending no stills. `robot_json_roundtrip` hands back core's own
     # canonical JSON of what it understood.
-    robot = waddle_sdk.Robot(
+    robot = descriptors.Robot(
         name="stills-bot",
-        action_space=waddle_sdk.JointSpace(joints=["j0"], rate_hz=20),
+        action_space=descriptors.JointSpace(joints=["j0"], rate_hz=20),
         cameras={
-            "wrist": waddle_sdk.Camera(
+            "wrist": descriptors.Camera(
                 width=320,
                 height=240,
                 fps=20,
-                stream_policy=waddle_sdk.StreamPolicy(still_fps=2.0),
+                stream_policy=descriptors.StreamPolicy(still_fps=2.0),
             )
         },
     )
@@ -274,7 +276,7 @@ def test_frame_transform_pins_wxyz_order():
     # A quarter-turn about y: distinct w/x/y/z values so a transposition
     # (e.g. xyzw written into wxyz slots) is caught, not just a symmetric
     # identity quaternion.
-    ft = waddle_sdk.FrameTransform(
+    ft = descriptors.FrameTransform(
         parent="base_link",
         child="cam_overhead",
         position=(0.1, 0.2, 0.3),
@@ -293,20 +295,20 @@ def test_frame_transform_pins_wxyz_order():
 
 def test_frame_transform_shape_validation():
     with pytest.raises(ValueError, match="parent"):
-        waddle_sdk.FrameTransform(parent="", child="cam")
+        descriptors.FrameTransform(parent="", child="cam")
     with pytest.raises(ValueError, match="position"):
-        waddle_sdk.FrameTransform(parent="base", child="cam", position=(1.0, 2.0))
+        descriptors.FrameTransform(parent="base", child="cam", position=(1.0, 2.0))
     with pytest.raises(ValueError, match="quaternion"):
-        waddle_sdk.FrameTransform(parent="base", child="cam", quaternion=(1.0, 0.0, 0.0))
+        descriptors.FrameTransform(parent="base", child="cam", quaternion=(1.0, 0.0, 0.0))
 
 
 def test_robot_frames_compile_to_frame_graph():
-    robot = waddle_sdk.Robot(
+    robot = descriptors.Robot(
         name="arm",
-        action_space=waddle_sdk.JointSpace(joints=["j0"], rate_hz=50),
+        action_space=descriptors.JointSpace(joints=["j0"], rate_hz=50),
         frames=(
-            waddle_sdk.FrameTransform(parent="base_link", child="cam_overhead"),
-            waddle_sdk.FrameTransform(parent="base_link", child="cam_wrist"),
+            descriptors.FrameTransform(parent="base_link", child="cam_overhead"),
+            descriptors.FrameTransform(parent="base_link", child="cam_wrist"),
         ),
     )
     compiled = robot._compile([])
@@ -335,10 +337,10 @@ def test_robot_frames_compile_to_frame_graph():
 
 
 def test_joint_limits_compile_and_names_only_form_still_works():
-    space = waddle_sdk.JointSpace(
+    space = descriptors.JointSpace(
         joints=[
             "j0",  # names-only form, unchanged
-            waddle_sdk.Joint(name="j1", min_position=-1.5, max_position=1.5, max_velocity=2.0,
+            descriptors.Joint(name="j1", min_position=-1.5, max_position=1.5, max_velocity=2.0,
                          max_effort=10.0),
         ],
         rate_hz=50,
@@ -361,15 +363,15 @@ def test_joint_limits_compile_and_names_only_form_still_works():
 
 def test_joint_limits_validate_min_le_max_and_nonnegative_ceilings():
     with pytest.raises(ValueError, match="min_position"):
-        waddle_sdk.Joint(name="j0", min_position=1.0, max_position=0.5)
+        descriptors.Joint(name="j0", min_position=1.0, max_position=0.5)
     with pytest.raises(ValueError, match="max_velocity"):
-        waddle_sdk.Joint(name="j0", max_velocity=-1.0)
+        descriptors.Joint(name="j0", max_velocity=-1.0)
     with pytest.raises(ValueError, match="max_effort"):
-        waddle_sdk.Joint(name="j0", max_effort=-1.0)
+        descriptors.Joint(name="j0", max_effort=-1.0)
 
 
 def test_gripper_dexterous_compiles_joints():
-    gripper = waddle_sdk.Gripper.dexterous(["f0", waddle_sdk.Joint(name="f1", max_effort=3.0)])
+    gripper = descriptors.Gripper.dexterous(["f0", descriptors.Joint(name="f1", max_effort=3.0)])
     assert gripper._compile() == {
         "dexterous": {
             "joints": [
@@ -379,13 +381,13 @@ def test_gripper_dexterous_compiles_joints():
         }
     }
     with pytest.raises(ValueError, match="at least one joint"):
-        waddle_sdk.Gripper.dexterous([])
+        descriptors.Gripper.dexterous([])
 
 
 def test_robot_kinematics_urdf_bytes_passthrough():
-    robot = waddle_sdk.Robot(
+    robot = descriptors.Robot(
         name="arm",
-        action_space=waddle_sdk.JointSpace(joints=["j0"], rate_hz=50),
+        action_space=descriptors.JointSpace(joints=["j0"], rate_hz=50),
         kinematics_urdf=b"<robot name='arm'/>",
     )
     compiled = robot._compile([])
@@ -395,9 +397,9 @@ def test_robot_kinematics_urdf_bytes_passthrough():
 def test_robot_kinematics_urdf_path_is_read_at_compile_time(tmp_path):
     urdf_path = tmp_path / "arm.urdf"
     urdf_path.write_bytes(b"<robot name='arm-from-file'/>")
-    robot = waddle_sdk.Robot(
+    robot = descriptors.Robot(
         name="arm",
-        action_space=waddle_sdk.JointSpace(joints=["j0"], rate_hz=50),
+        action_space=descriptors.JointSpace(joints=["j0"], rate_hz=50),
         kinematics_urdf=urdf_path,
     )
     compiled = robot._compile([])
@@ -405,20 +407,20 @@ def test_robot_kinematics_urdf_path_is_read_at_compile_time(tmp_path):
         b"<robot name='arm-from-file'/>"
     ).decode("ascii")
     # str path works identically to a Path.
-    robot_str = waddle_sdk.Robot(
+    robot_str = descriptors.Robot(
         name="arm",
-        action_space=waddle_sdk.JointSpace(joints=["j0"], rate_hz=50),
+        action_space=descriptors.JointSpace(joints=["j0"], rate_hz=50),
         kinematics_urdf=str(urdf_path),
     )
     assert robot_str._compile([])["kinematicsUrdf"] == compiled["kinematicsUrdf"]
 
 
 def test_robot_series_compiles_time_series_description():
-    robot = waddle_sdk.Robot(
+    robot = descriptors.Robot(
         name="arm",
-        action_space=waddle_sdk.JointSpace(joints=["j0"], rate_hz=50),
+        action_space=descriptors.JointSpace(joints=["j0"], rate_hz=50),
         series={
-            "/robot/ft_wrist": waddle_sdk.TimeSeries(
+            "/robot/ft_wrist": descriptors.TimeSeries(
                 dtype="f64", shape=(6,), units="N,Nm", rate_hz=200.0
             ),
         },
@@ -440,47 +442,47 @@ def test_full_robot_round_trips_through_session_creation(tmp_path):
     dexterous gripper + series, all together, must build a real core
     session without error (session teardown so other tests aren't
     affected)."""
-    robot = waddle_sdk.Robot(
+    robot = descriptors.Robot(
         name="full-widened-bot",
         robot_id="bot-full",
         cell_id="cell-full",
-        action_space=waddle_sdk.Composite(
-            left=waddle_sdk.JointSpace(
+        action_space=descriptors.Composite(
+            left=descriptors.JointSpace(
                 joints=[
-                    waddle_sdk.Joint(name="l0", min_position=-3.0, max_position=3.0,
+                    descriptors.Joint(name="l0", min_position=-3.0, max_position=3.0,
                                  max_velocity=2.0, max_effort=50.0),
                     "l1",
                 ],
-                gripper=waddle_sdk.Gripper.dexterous(
-                    ["f0", waddle_sdk.Joint(name="f1", max_effort=1.0)]
+                gripper=descriptors.Gripper.dexterous(
+                    ["f0", descriptors.Joint(name="f1", max_effort=1.0)]
                 ),
             ),
             rate_hz=50,
         ),
         cameras={
-            "overhead": waddle_sdk.Camera(
+            "overhead": descriptors.Camera(
                 width=1280,
                 height=720,
                 fps=30,
                 frame_id="cam_overhead",
-                intrinsics=waddle_sdk.Intrinsics(
+                intrinsics=descriptors.Intrinsics(
                     fx=605.0, fy=605.0, cx=320.0, cy=240.0, depth_scale_mm=0.1
                 ),
-                stream_policy=waddle_sdk.StreamPolicy(
+                stream_policy=descriptors.StreamPolicy(
                     local_full_rate=True,
-                    uplink=waddle_sdk.Uplink(fps=15, encoding="h264", max_kbps=2000),
+                    uplink=descriptors.Uplink(fps=15, encoding="h264", max_kbps=2000),
                 ),
                 vendor={"serial": "SN-1"},
             ),
         },
         kinematics_urdf=b"<robot name='full-widened-bot'/>",
-        frames=(waddle_sdk.FrameTransform(parent="base_link", child="cam_overhead"),),
-        series={"/robot/ft_wrist": waddle_sdk.TimeSeries(shape=(6,), rate_hz=200.0)},
+        frames=(descriptors.FrameTransform(parent="base_link", child="cam_overhead"),),
+        series={"/robot/ft_wrist": descriptors.TimeSeries(shape=(6,), rate_hz=200.0)},
     )
-    control = waddle_sdk.Control(send=lambda chunk: None, hold=lambda: None, resume=lambda: None)
+    control = Control(send=lambda chunk: None, hold=lambda: None, resume=lambda: None)
     try:
-        waddle_sdk.init(
+        session = create_core_session(
             "py-descriptor-widening", robot, control, recording_dir=tmp_path
         )
     finally:
-        waddle_sdk.shutdown()
+        session.shutdown()
