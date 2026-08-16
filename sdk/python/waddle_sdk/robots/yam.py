@@ -505,6 +505,8 @@ class LiveDriver:
         channel: str,
         *,
         gripper_limits: Sequence[float],
+        arm_gain_scale: float = 1.0,
+        gripper_gain_scale: float = 1.0,
         zero_gravity: bool = False,
         report: Callable[[str], None] = base.status,
     ) -> None:
@@ -543,6 +545,7 @@ class LiveDriver:
                     "silently"
                 )
             self._default_kp, self._default_kd = self._snapshot_gains()
+            self._apply_gain_scales(arm_gain_scale, gripper_gain_scale)
         except BaseException:
             # The bus is already open by the time anything here can refuse, and
             # a constructor that raises hands its caller an exception instead of
@@ -586,6 +589,50 @@ class LiveDriver:
                 "re_enable will refuse to restore gains it never snapshotted"
             )
         return kp, kd
+
+    def _apply_gain_scales(
+        self, arm_gain_scale: float, gripper_gain_scale: float
+    ) -> None:
+        """Apply the site's two disjoint gain scales and retain them for recovery.
+
+        I2RT exposes one gain vector for the whole motor chain: the first six
+        rows are the arm and the last row is the hand.  Apply both changes in
+        one vendor call so neither can overwrite the other.  A requested
+        scale that cannot be applied is an open failure, not a site setting
+        that silently did nothing.
+        """
+        arm_scale = float(arm_gain_scale)
+        hand_scale = float(gripper_gain_scale)
+        for name, value in (
+            ("arm_gain_scale", arm_scale),
+            ("gripper_gain_scale", hand_scale),
+        ):
+            if not math.isfinite(value) or value <= 0.0:
+                raise ValueError(f"{name} must be finite and > 0, got {value!r}")
+        if self._zero_gravity or (arm_scale == 1.0 and hand_scale == 1.0):
+            return
+        if self._default_kp is None or self._default_kd is None:
+            raise RuntimeError(
+                f"{self.channel}: gain scaling was requested but I2RT reported no "
+                "kp/kd vectors"
+            )
+        kp = np.asarray(self._default_kp, dtype=float).copy()
+        kd = np.asarray(self._default_kd, dtype=float).copy()
+        if kp.ndim != 1 or kp.shape != kd.shape or kp.shape != (JOINT_COUNT,):
+            raise RuntimeError(
+                f"{self.channel}: gain vectors have shapes {kp.shape}/{kd.shape}; "
+                f"expected ({JOINT_COUNT},)"
+            )
+        kp[:ARM_JOINT_COUNT] *= arm_scale
+        kd[:ARM_JOINT_COUNT] *= arm_scale
+        kp[ARM_JOINT_COUNT] *= hand_scale
+        kd[ARM_JOINT_COUNT] *= hand_scale
+        self._robot.update_kp_kd(kp, kd)
+        self._default_kp, self._default_kd = kp, kd
+        self._report(
+            f"live {self.channel}: arm gains x{arm_scale:g}; gripper gains "
+            f"x{hand_scale:g}"
+        )
 
     @property
     def estopped(self) -> bool:
@@ -995,6 +1042,8 @@ def _build_arms(
     step_caps: Sequence[float],
     joint_limits: Sequence[Sequence[float]],
     rate_hz: float,
+    arm_gain_scale: float,
+    gripper_gain_scale: float,
     report: Callable[[str], None],
 ) -> Callable[[], dict[str, base.Arm]]:
     """How to open these arms. Called by `Rig.arms()`, never by the factory:
@@ -1026,6 +1075,8 @@ def _build_arms(
                     driver = LiveDriver(
                         site.channel,
                         gripper_limits=site.gripper_limits,
+                        arm_gain_scale=arm_gain_scale,
+                        gripper_gain_scale=gripper_gain_scale,
                         zero_gravity=zero_gravity,
                         report=report,
                     )
@@ -1074,6 +1125,8 @@ def bimanual(
     rate_hz: float = DEFAULT_RATE_HZ,
     max_joint_speed_rad_s: float = DEFAULT_MAX_JOINT_SPEED_RAD_S,
     max_gripper_speed_per_s: float = DEFAULT_MAX_GRIPPER_SPEED_PER_S,
+    arm_gain_scale: float = 1.0,
+    gripper_gain_scale: float = 1.0,
     name: str = "yam-bimanual",
     robot_id: str = "",
     cell_id: str = "",
@@ -1166,6 +1219,8 @@ def bimanual(
             step_caps=caps,
             joint_limits=joints,
             rate_hz=rate_hz,
+            arm_gain_scale=arm_gain_scale,
+            gripper_gain_scale=gripper_gain_scale,
             report=report,
         ),
         rate_hz=rate_hz,
@@ -1191,6 +1246,8 @@ def arm(
     rate_hz: float = DEFAULT_RATE_HZ,
     max_joint_speed_rad_s: float = DEFAULT_MAX_JOINT_SPEED_RAD_S,
     max_gripper_speed_per_s: float = DEFAULT_MAX_GRIPPER_SPEED_PER_S,
+    arm_gain_scale: float = 1.0,
+    gripper_gain_scale: float = 1.0,
     name: str = "yam",
     robot_id: str = "",
     cell_id: str = "",
@@ -1240,6 +1297,8 @@ def arm(
             step_caps=caps,
             joint_limits=joints,
             rate_hz=rate_hz,
+            arm_gain_scale=arm_gain_scale,
+            gripper_gain_scale=gripper_gain_scale,
             report=report,
         ),
         rate_hz=rate_hz,

@@ -812,6 +812,39 @@ def test_re_enable_restores_the_snapshotted_gains_and_holds_the_measured_pose(ve
     assert driver.estopped is False
 
 
+def test_site_gain_scales_apply_to_disjoint_motors_and_survive_re_enable(vendor):
+    lines: list[str] = []
+    driver = _live(
+        vendor,
+        arm_gain_scale=1.5,
+        gripper_gain_scale=0.1,
+        report=lines.append,
+    )
+    robot = vendor.robots[0]
+    expected_kp = np.array([15.0] * yam.ARM_JOINT_COUNT + [1.0])
+    expected_kd = np.array([1.5] * yam.ARM_JOINT_COUNT + [0.1])
+    assert len(robot.gains) == 1
+    assert np.allclose(robot.gains[0][0], expected_kp)
+    assert np.allclose(robot.gains[0][1], expected_kd)
+    assert any("arm gains x1.5" in line and "gripper gains x0.1" in line for line in lines)
+
+    driver.estop()
+    driver.re_enable()
+    assert len(robot.gains) == 2
+    assert np.allclose(robot.gains[1][0], expected_kp)
+    assert np.allclose(robot.gains[1][1], expected_kd)
+
+
+@pytest.mark.parametrize(
+    "name,value",
+    [("arm_gain_scale", 0.0), ("gripper_gain_scale", float("nan"))],
+)
+def test_invalid_gain_scales_fail_the_open_and_close_the_vendor_handle(vendor, name, value):
+    with pytest.raises(ValueError, match=name):
+        _live(vendor, **{name: value})
+    assert vendor.robots[0].closed == 1
+
+
 def test_re_enable_refuses_to_guess_gains_it_never_snapshotted(vendor):
     """A made-up kp is how a demo arm slams. Refusing leaves the latch set and
     the arm floating, which is the state the site operator can already see."""

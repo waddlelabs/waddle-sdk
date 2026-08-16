@@ -16,6 +16,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 - Preserve a YAM unit's semantic `[closed, open]` I2RT gripper-limit order,
   including descending motor-radian pairs, so validated site measurements
   cannot invert open and close commands.
+- Carry site-owned YAM arm and gripper gain scales into the extracted driver,
+  apply their disjoint motor rows atomically, and restore those scaled gains
+  after e-stop recovery instead of dropping legacy rig stiffness settings.
 - Made `RuntimeFault` a normal mutable exception so Python traceback and
   context-manager machinery can attach `__traceback__` while preserving its
   typed fault fields.

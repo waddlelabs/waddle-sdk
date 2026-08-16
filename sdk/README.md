@@ -52,7 +52,10 @@ parts:
       open_m: 0.095
       closed_action: 0.0
       open_action: 1.0
-    options: {gripper_limits: [1.7, 0.1]}
+    options:
+      gripper_limits: [1.7, 0.1]
+      arm_gain_scale: 1.0
+      gripper_gain_scale: 1.0
 cameras:
   overhead:
     driver: waddle_sdk.cameras.realsense
@@ -80,6 +83,9 @@ construction facts such as a YAM unit's measured motor limits remain under
 `options`. YAM limits retain I2RT's semantic `[closed, open]` order; depending
 on that unit's motor direction, the measured pair may be descending and must
 not be sorted.
+`arm_gain_scale` changes only the first six I2RT kp/kd rows;
+`gripper_gain_scale` changes only the seventh. Both default to the vendor's
+gains and, when configured, are restored unchanged after an e-stop recovery.
 
 `static_keepouts` accepts strict axis-aligned `box` and `sphere` records with
 an ID, collision frame, optional part filter, and non-negative margin.
