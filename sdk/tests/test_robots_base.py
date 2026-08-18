@@ -649,6 +649,22 @@ def test_the_send_verb_applies_a_step_the_envelope_admits():
     assert len(arms["right"].driver.writes) == 1
 
 
+def test_the_generic_send_verb_delivers_core_feedforward_to_a_custom_driver():
+    """The Python chunk boundary is vendor-neutral: any structural driver,
+    not only the shipped YAM adapter, receives the core-propagated hint."""
+    driver = _VelocityDriver()
+    send = base.chunk_sender({"toy": _arm(driver)})
+
+    class _Chunk:
+        steps = [(np.array([0.05, -0.05, 0.9]), None, 0)]
+        velocity_feedforwards = [np.array([0.2, -0.2, 0.0])]
+
+    send(_Chunk())
+    [(position, velocity)] = driver.state_writes
+    assert position.tolist() == pytest.approx([0.05, -0.05, 0.9])
+    assert velocity.tolist() == pytest.approx([0.2, -0.2, 0.0])
+
+
 # ---------------------------------------------------------------------------
 # The latch, and the human who clears it
 # ---------------------------------------------------------------------------

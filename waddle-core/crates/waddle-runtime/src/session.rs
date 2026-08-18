@@ -759,6 +759,7 @@ impl SessionBuilder {
             waddle_controlplane::flags::TASK_SESSIONS.to_owned(),
             waddle_controlplane::flags::CALIBRATION_MEASUREMENTS.to_owned(),
             waddle_controlplane::flags::WORKSPACE_ARTIFACTS.to_owned(),
+            waddle_controlplane::flags::MOTION_FEEDFORWARD.to_owned(),
         ];
         if !self
             .connector_binding
@@ -2457,6 +2458,7 @@ pub fn push_intervention_chunk(session: &Session, chunk: pb::ActionChunk) {
         &inner.stream_tx,
         &inner.action_space,
         pumps::part_policy(!inner.part_names.is_empty()),
+        waddle_types::VelocityFeedforwardPolicy::Honor,
         status.claim_generation,
         &mut intake,
     );

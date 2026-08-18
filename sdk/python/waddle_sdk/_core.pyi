@@ -30,6 +30,8 @@ class GateInfo:
     @property
     def gripper(self) -> float | None: ...
     @property
+    def velocity_feedforward(self) -> list[float] | None: ...
+    @property
     def part(self) -> str | None: ...
     def __repr__(self) -> str: ...
 
@@ -46,6 +48,12 @@ class Chunk:
         self,
     ) -> list[
         tuple[npt.NDArray[np.float64] | dict[str, npt.NDArray[np.float64]], float | None, int]
+    ]: ...
+    @property
+    def velocity_feedforwards(
+        self,
+    ) -> list[
+        npt.NDArray[np.float64] | dict[str, npt.NDArray[np.float64]] | None
     ]: ...
     @property
     def provenance(self) -> str: ...
@@ -217,6 +225,7 @@ class Session:
         part: str | None = None,
         gripper: float | None = None,
         offset_ns: int = 0,
+        velocity_feedforward: Sequence[float] | None = None,
     ) -> None: ...
     def _testing_reset_window_engage(self, claim_id: str, actor: str) -> None: ...
     def _testing_reset_window_complete(

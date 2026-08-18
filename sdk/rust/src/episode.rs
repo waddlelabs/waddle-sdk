@@ -33,6 +33,11 @@ pub(crate) struct GateInfo {
     /// The substitute/blend action's gripper command, when one rode along.
     #[pyo3(get)]
     gripper: Option<f64>,
+    /// Known trajectory velocity on an unchanged substituted target. An
+    /// actually interpolated blend clears it in the gate; an anchorless
+    /// blend may retain it because the target path is unchanged.
+    #[pyo3(get)]
+    velocity_feedforward: Option<Vec<f64>>,
     /// The declared PART a substitute/blend action addressed, when it
     /// addressed one (`Action.part`, flag `waddle.v0.parts`): the returned
     /// array is that part's rows, in that part's order — not the whole
@@ -51,8 +56,13 @@ pub(crate) struct GateInfo {
 impl GateInfo {
     fn __repr__(&self) -> String {
         format!(
-            "GateInfo(kind={:?}, provenance={:?}, progress={:?}, gripper={:?}, part={:?})",
-            self.kind, self.provenance, self.progress, self.gripper, self.part
+            "GateInfo(kind={:?}, provenance={:?}, progress={:?}, gripper={:?}, velocity_feedforward={:?}, part={:?})",
+            self.kind,
+            self.provenance,
+            self.progress,
+            self.gripper,
+            self.velocity_feedforward,
+            self.part
         )
     }
 }
@@ -153,6 +163,7 @@ impl PyEpisode {
                     provenance: Some(provenance.provenance.to_string()),
                     progress: None,
                     gripper: None,
+                    velocity_feedforward: None,
                     part: None,
                 },
             ),
@@ -163,6 +174,10 @@ impl PyEpisode {
                     provenance: Some(provenance.provenance.to_string()),
                     progress: None,
                     gripper: action.gripper,
+                    velocity_feedforward: action
+                        .velocity_feedforward
+                        .as_ref()
+                        .map(|values| values.to_vec()),
                     part: action.part.as_ref().map(ToString::to_string),
                 },
             ),
@@ -177,6 +192,10 @@ impl PyEpisode {
                     provenance: Some(provenance.provenance.to_string()),
                     progress: Some(progress),
                     gripper: action.gripper,
+                    velocity_feedforward: action
+                        .velocity_feedforward
+                        .as_ref()
+                        .map(|values| values.to_vec()),
                     part: action.part.as_ref().map(ToString::to_string),
                 },
             ),
@@ -187,6 +206,7 @@ impl PyEpisode {
                     provenance: Some(provenance.provenance.to_string()),
                     progress: None,
                     gripper: None,
+                    velocity_feedforward: None,
                     part: None,
                 },
             ),
@@ -197,6 +217,7 @@ impl PyEpisode {
                     provenance: None,
                     progress: None,
                     gripper: None,
+                    velocity_feedforward: None,
                     part: None,
                 },
             ),

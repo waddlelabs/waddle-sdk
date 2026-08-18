@@ -153,6 +153,7 @@ fn part_chunk(part: &str, value: f64) -> pb::ActionChunk {
             gripper: None,
             t_offset_ns: 0,
             part: part.into(),
+            joint_velocity_feedforward: None,
         }],
         seq: 1,
         source_id: "ffi-test".into(),

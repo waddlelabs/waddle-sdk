@@ -397,6 +397,16 @@ message a teleoperator's stream carries. Everything above applies to its steps
 unchanged; this subsection pins the four things that are the *intake's* and not
 the action's.
 
+With `waddle.v0.motion.feedforward`, an absolute joint-position step may also
+carry a same-shape joint-velocity feedforward vector. It follows the position
+through direct substitution and bypass dispatch; it never changes authority or
+the position target. An actually interpolated blend discards the hint because
+that path is not the sender's original trajectory; an anchorless blend passes
+the unchanged target and hint through. Without the flag the field is ignored and
+the position target executes unchanged. Fixture
+`agent_joint_velocity_feedforward_substitute` pins the generic propagation
+contract; adapter-specific tracking remains below this core seam.
+
 **Admission is an active claim, and only that.** A chunk is buffered whenever a
 claim is active — not when the gate has reached INTERVENTION, and not on any
 `GateMode` match at all, which is the same gate the teleoperator stream is

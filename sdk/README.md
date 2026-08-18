@@ -115,6 +115,11 @@ mismatch fails closed while the arms are opened.
 position action. Drivers without the optional `base.PositionVelocityDriver`
 extension receive the position normally, so the contract does not make
 velocity support a prerequisite for motion.
+Remote `waddle.v0` sessions negotiate `waddle.v0.motion.feedforward`; accepted
+peers preserve the hint through the core gate and raw recording, while older
+peers ignore it and execute the identical position target. This is a generic
+SDK capability: `from waddle_sdk.robots import PositionVelocityDriver` is the
+public structural extension point for any customer or vendor adapter.
 
 A connector first advertises `waddle.v0.connector.binding` in an
 `authorization_only` Register carrying the exact customer, project, and workspace.
@@ -177,6 +182,8 @@ may additionally implement
 `write_position_velocity(target, velocity_feedforward_rad_s) -> bool`.
 Returning false means the driver intentionally issued its position-only
 fallback. This is an optional extension and is not added to `base.Driver`.
+Both protocols are also exported directly from `waddle_sdk.robots` for custom
+packages; no inheritance or YAM dependency is required.
 
 The rest is a facts table, a driver and a factory. These are the exact lines
 `tests/test_robots_base.py` builds a whole toy vendor module out of and drives

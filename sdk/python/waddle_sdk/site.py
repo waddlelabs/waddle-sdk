@@ -898,16 +898,28 @@ class Run:
         part = None if gate is None else gate.part
         dispatched = decided is not None
         detail = ""
+        if kind != "pass":
+            # A non-pass action belongs to the core's selected stream, never
+            # to the caller. Clear the caller's hint even when the selected
+            # action has none, or one policy's velocity would ride another
+            # policy's position target.
+            velocity_feedforward = None
+        if gate is not None and gate.velocity_feedforward is not None:
+            velocity_feedforward = np.asarray(
+                gate.velocity_feedforward, dtype=np.float64
+            )
+            if isinstance(decided, dict):
+                velocity_feedforward = base.split_by_part(
+                    self._session._require().arms, velocity_feedforward
+                )
         if dispatched:
             dispatched = base.apply_decision(
                 self._session._require().arms,
                 decided,
-                # Feedforward describes the caller's exact position path. If
-                # the core substituted or blended another action, it no longer
-                # describes what will be dispatched and must be dropped.
-                velocity_feedforward_rad_s=(
-                    velocity_feedforward if kind == "pass" else None
-                ),
+                # The value now belongs to the exact action the core selected:
+                # caller on pass, selected stream on substitute/anchorless
+                # blend, absent on an actually interpolated blend.
+                velocity_feedforward_rad_s=velocity_feedforward,
             )
             if not dispatched:
                 kind = "owner_refusal"

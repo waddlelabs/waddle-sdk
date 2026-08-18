@@ -343,6 +343,10 @@ impl PySession {
         out.set_item("plane_connected", status.plane_connected)?;
         out.set_item("plane_registered", status.plane_registered)?;
         out.set_item(
+            "motion_feedforward_negotiated",
+            status.motion_feedforward_negotiated,
+        )?;
+        out.set_item(
             "connector_binding_negotiated",
             status.connector_binding_negotiated,
         )?;
@@ -1186,20 +1190,27 @@ impl PySession {
     /// and a `NoopMarker` carrying the gripper for the gripper-only shape.
     /// This hook marshals nothing itself — a second, hand-rolled encoder
     /// here could only disagree with the decoder, and did.
-    #[pyo3(signature = (values, part=None, gripper=None, offset_ns=0))]
+    #[pyo3(signature = (values, part=None, gripper=None, offset_ns=0, velocity_feedforward=None))]
     fn _testing_push_chunk(
         &self,
         values: Vec<f64>,
         part: Option<&str>,
         gripper: Option<f64>,
         offset_ns: i64,
+        velocity_feedforward: Option<Vec<f64>>,
     ) -> PyResult<()> {
         self.testing_far()?;
         let space = self.space.as_deref().ok_or_else(|| {
             PyRuntimeError::new_err("the session's robot declares no action space")
         })?;
-        let mut action = waddle_types::action::unflatten_action(&values, gripper, part, space)
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        let mut action = waddle_types::action::unflatten_action_with_velocity_feedforward(
+            &values,
+            velocity_feedforward.as_deref(),
+            gripper,
+            part,
+            space,
+        )
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
         action.t_offset_ns = offset_ns;
         waddle_runtime::push_intervention_chunk(
             &self.inner,

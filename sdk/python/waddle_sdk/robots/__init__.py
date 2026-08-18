@@ -23,5 +23,6 @@ them.
 from __future__ import annotations
 
 from . import base
+from .base import Driver, PositionVelocityDriver
 
-__all__ = ["base"]
+__all__ = ["Driver", "PositionVelocityDriver", "base"]

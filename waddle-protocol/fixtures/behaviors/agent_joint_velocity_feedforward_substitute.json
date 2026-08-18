@@ -1,0 +1,35 @@
+{
+  "format": "waddle_sdk.behavior/v0",
+  "name": "agent_joint_velocity_feedforward_substitute",
+  "description": "Pins the negotiated generic motion contract: an agent joint-position step may carry a same-shape joint-velocity feedforward hint, and a direct gate substitution preserves it byte-for-byte. The hint belongs to the declared joint order and addressed part, is not a second target, and is available to every driver integration rather than to one vendor adapter.",
+  "target": "gate",
+  "requires_features": ["waddle.v0.core", "waddle.v0.agent", "waddle.v0.parts", "waddle.v0.motion.feedforward"],
+  "setup": {
+    "robot_fixture": "../wire/robot_description_bimanual_composite.json",
+    "lease_enforcement": "LEASE_ENFORCEMENT_ENFORCED",
+    "handoff": { "holdFirst": {} },
+    "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING"
+  },
+  "steps": [
+    { "inject": { "kind": "episode_open", "episode_id": "ep-vff-0001", "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING" } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "reset_result", "result": { "ok": true, "strategy": "scripted_home", "verification": { "mode": "RESET_VERIFICATION_MODE_BLOCKING", "verified": true, "judgeId": "judge-reset", "judgeVersion": "2.1.0", "score": 0.97, "tNs": "100000000" } } } },
+    { "advance_ns": "100000000" },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "200000000" } },
+    { "expect_output": { "kind": "pass" } },
+
+    { "inject": { "kind": "claim_granted", "claim": { "claimId": "claim-vff-0001", "episodeId": "ep-vff-0001", "actor": { "kind": "ACTOR_KIND_AGENT", "id": "agent-waddle-1" }, "sourceName": "waddle-agent", "selfInitiated": false, "tGrantedNs": "200000000", "handoff": { "holdFirst": {} }, "spaces": ["SPACE_KIND_JOINT_POSITION"] } } },
+    { "inject": { "kind": "engage", "claim_id": "claim-vff-0001", "initiator": "ACTOR_KIND_AGENT" } },
+    { "advance_ns": "50000000" },
+    { "inject": { "kind": "verb_result", "result": { "ok": true, "detail": "hold complete", "tNs": "250000000" } } },
+    { "expect_state": { "episode.state": "EPISODE_STATE_INTERVENTION", "gate.mode": "GATE_MODE_INTERVENTION" } },
+
+    { "advance_ns": "50000000" },
+    { "inject": { "kind": "intervention_chunk", "chunk": { "seq": "1", "sourceId": "agent-waddle-1", "tEmittedNs": "300000000", "tObsNs": "300000000", "horizonNs": "100000000", "provenance": { "kind": "PROVENANCE_KIND_AGENT", "actor": { "kind": "ACTOR_KIND_AGENT", "id": "agent-waddle-1" } }, "actions": [
+      { "tOffsetNs": "0", "part": "right", "jointPosition": { "values": [-0.12, -0.38, 0.31, -1.18, -0.06, 0.91, 0.20] }, "jointVelocityFeedforward": { "values": [0.0, 0.24, 0.18, 0.0, 0.0, 0.0, 0.0] } }
+    ] } } },
+    { "inject": { "kind": "gate_tick", "obs_t_ns": "300000000" } },
+    { "expect_output": { "kind": "substitute", "part": "right", "velocity_feedforward": [0.0, 0.24, 0.18, 0.0, 0.0, 0.0, 0.0], "provenance": { "kind": "PROVENANCE_KIND_AGENT" } } },
+    { "expect_no_emission": { "event": { "fault": {} }, "within_ns": "0" } }
+  ]
+}

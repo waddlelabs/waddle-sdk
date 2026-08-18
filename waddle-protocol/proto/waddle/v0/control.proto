@@ -156,6 +156,13 @@ message Action {
   // Composite/multi-part routing when this Action addresses a single part
   // outside a CompositeAction; "" = the sole/default part.
   string part = 11;
+  // Optional actuator feedforward for an absolute joint-position target.
+  // Same declared row order and scope as `target`; on a Composite target it
+  // is the top-level declaration-order vector. This is a tracking hint, not
+  // a second target, and is honored only with
+  // `waddle.v0.motion.feedforward`. A peer without that negotiated feature
+  // ignores it and executes the position target unchanged.
+  JointVector joint_velocity_feedforward = 12;
 }
 
 // Mirror of Composite: named parts, depth pinned to 1 in v0.

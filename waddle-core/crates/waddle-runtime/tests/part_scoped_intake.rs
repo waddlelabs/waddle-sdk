@@ -279,6 +279,7 @@ fn part_action(part: &str, values: Vec<f64>, offset_ns: i64) -> pb::Action {
         gripper: None,
         t_offset_ns: offset_ns,
         part: part.into(),
+        joint_velocity_feedforward: None,
     }
 }
 

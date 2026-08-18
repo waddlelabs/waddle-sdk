@@ -105,8 +105,10 @@ impl UnitVerb for PyUnit {
     }
 }
 
-/// One dispatched chunk crossing into Python: `steps` is a list of
-/// `(values, gripper, offset_ns)` tuples.
+/// One dispatched chunk crossing into Python: `steps` keeps its historical
+/// `(values, gripper, offset_ns)` tuples and `velocity_feedforwards` is an
+/// aligned optional payload list. Existing customer callbacks therefore
+/// keep working without understanding the append-only capability.
 ///
 /// `values` is a float64 ndarray of the declared action space's width, with
 /// two departures from that width, both of them a step saying something the
@@ -124,6 +126,8 @@ impl UnitVerb for PyUnit {
 pub(crate) struct PyChunk {
     #[pyo3(get)]
     steps: Py<PyList>,
+    #[pyo3(get)]
+    velocity_feedforwards: Py<PyList>,
     #[pyo3(get)]
     provenance: String,
     #[pyo3(get)]
@@ -145,6 +149,7 @@ impl SendVerb for PySend {
         Python::try_attach(|py| {
             let build_and_call = || -> PyResult<()> {
                 let steps = PyList::empty(py);
+                let velocity_feedforwards = PyList::empty(py);
                 for step in &chunk.steps {
                     let values: Bound<'_, PyAny> = match &self.parts {
                         Some(layout) => layout
@@ -153,11 +158,24 @@ impl SendVerb for PySend {
                         None => PyArray1::from_slice(py, &step.values).into_any(),
                     };
                     steps.append((values, step.gripper, step.offset_ns))?;
+                    match &step.velocity_feedforward {
+                        Some(velocity) => {
+                            let payload: Bound<'_, PyAny> = match &self.parts {
+                                Some(layout) => layout
+                                    .by_part(py, velocity, step.part.as_deref())?
+                                    .into_any(),
+                                None => PyArray1::from_slice(py, velocity).into_any(),
+                            };
+                            velocity_feedforwards.append(payload)?;
+                        }
+                        None => velocity_feedforwards.append(py.None())?,
+                    }
                 }
                 let pychunk = Bound::new(
                     py,
                     PyChunk {
                         steps: steps.unbind(),
+                        velocity_feedforwards: velocity_feedforwards.unbind(),
                         provenance: chunk.provenance.provenance.to_string(),
                         seq: chunk.seq,
                     },

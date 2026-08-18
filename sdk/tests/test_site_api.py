@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import textwrap
+import time
 
 import pytest
 
@@ -268,6 +269,49 @@ def test_run_carries_a_known_velocity_only_for_the_unchanged_gate_action(tmp_pat
     [(position, velocity)] = site_fixtures.velocity_commands
     assert position.tolist() == pytest.approx([0.1, -0.1])
     assert velocity.tolist() == pytest.approx([0.5, -0.5])
+
+
+def test_substitution_uses_the_selected_streams_velocity_never_the_callers(tmp_path):
+    site = waddle_sdk.load_site(_write_site(tmp_path))
+    with site.open(console=False, _testing=True) as session:
+        with session.run(task="selected ramp", actor="test") as run:
+            run.step([0.0, 0.0], run.observe())  # READY -> RUNNING
+            core = session._managed.core
+            core._testing_engage("claim-feedforward", "agent")
+            deadline = time.monotonic() + 5.0
+            while core.status()["gate_mode"] != "Intervention":
+                assert time.monotonic() < deadline, "claim never engaged"
+                time.sleep(0.005)
+
+            core._testing_push_chunk(
+                [0.1, -0.1], velocity_feedforward=[0.25, -0.25]
+            )
+            caller = JointPositionCommand(
+                [0.02, -0.02], velocity_feedforward_rad_s=[0.9, -0.9]
+            )
+            deadline = time.monotonic() + 5.0
+            while True:
+                selected = run.step(caller, run.observe())
+                if selected.gate == "substitute":
+                    break
+                assert time.monotonic() < deadline, "chunk never substituted"
+                time.sleep(0.005)
+
+            [(position, velocity)] = site_fixtures.velocity_commands
+            assert position.tolist() == pytest.approx([0.1, -0.1])
+            assert velocity.tolist() == pytest.approx([0.25, -0.25])
+
+            core._testing_push_chunk([0.12, -0.12])
+            deadline = time.monotonic() + 5.0
+            while True:
+                selected = run.step(caller, run.observe())
+                if selected.gate == "substitute":
+                    break
+                assert time.monotonic() < deadline, "position-only chunk never substituted"
+                time.sleep(0.005)
+            assert len(site_fixtures.velocity_commands) == 1, (
+                "the caller's feedforward crossed onto the selected stream's position"
+            )
 
 
 def test_joint_position_command_rejects_malformed_velocity_hints():

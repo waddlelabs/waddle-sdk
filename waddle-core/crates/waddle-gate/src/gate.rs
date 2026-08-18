@@ -21,6 +21,10 @@ use crate::stats::TickStats;
 #[derive(Debug, Clone, PartialEq)]
 pub struct OwnedAction {
     pub values: ActionValues,
+    /// Optional known velocity for the exact position trajectory in
+    /// `values`. Same inline storage/width; no allocation is introduced on
+    /// the gate fast path for ordinary robot widths.
+    pub velocity_feedforward: Option<ActionValues>,
     pub gripper: Option<f64>,
     /// The one declared part this action commands (`waddle_types::Step::part`,
     /// `Action.part` on the wire), or `None` for the whole declared space.
@@ -228,6 +232,7 @@ impl<C: Clock> Gate<C> {
             PlanMode::Passthrough => {
                 let action = OwnedAction {
                     values: ActionValues::from_slice(values),
+                    velocity_feedforward: None,
                     gripper,
                     // The caller's own action always commands the whole
                     // declared space; only an intervention action addresses
@@ -401,6 +406,7 @@ mod tests {
             received,
             action: OwnedAction {
                 values: smallvec![value; 7],
+                velocity_feedforward: None,
                 gripper: None,
                 part: Some(Arc::from(part)),
             },
@@ -483,6 +489,7 @@ mod tests {
             received: MonoNs(1_000),
             action: OwnedAction {
                 values: smallvec![9.0],
+                velocity_feedforward: None,
                 gripper: None,
                 part: None,
             },
@@ -523,6 +530,7 @@ mod tests {
             received: MonoNs(1_000),
             action: OwnedAction {
                 values: smallvec![10.0],
+                velocity_feedforward: None,
                 gripper: None,
                 part: None,
             },

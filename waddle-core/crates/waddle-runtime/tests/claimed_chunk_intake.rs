@@ -174,7 +174,10 @@ fn tx_transport() -> (Arc<InMemoryTransport>, TxCell) {
     let cell2 = cell.clone();
     let transport = InMemoryTransport::new(move |msg, tx| {
         if let ClientMsg::Register(_) = &msg {
-            let _ = tx.send(ServerMsg::Registered(pb::RegisterResponse::default()));
+            let _ = tx.send(ServerMsg::Registered(pb::RegisterResponse {
+                accepted_feature_flags: vec![waddle_controlplane::flags::MOTION_FEEDFORWARD.into()],
+                ..Default::default()
+            }));
             *cell2.lock() = Some(tx.clone());
         }
     });
@@ -201,6 +204,7 @@ fn twist_step(x: f64, offset_ns: i64) -> pb::Action {
         gripper: None,
         t_offset_ns: offset_ns,
         part: String::new(),
+        joint_velocity_feedforward: None,
     }
 }
 
@@ -212,6 +216,7 @@ fn joint_action(values: Vec<f64>) -> pb::Action {
         gripper: None,
         t_offset_ns: 0,
         part: String::new(),
+        joint_velocity_feedforward: None,
     }
 }
 
@@ -234,6 +239,7 @@ fn gripper_step(position: Option<f64>, offset_ns: i64) -> pb::Action {
         }),
         t_offset_ns: offset_ns,
         part: String::new(),
+        joint_velocity_feedforward: None,
     }
 }
 
@@ -339,6 +345,76 @@ fn claimed_mode_agent_chunk_substitutes_five_steps_via_callers_gate() {
         agent_action_records >= 5,
         "expected the agent-chunk substitutions on /waddle/actions, got {agent_action_records}"
     );
+}
+
+#[test]
+fn negotiated_joint_velocity_feedforward_reaches_gate_and_recording() {
+    let dir = tempfile::tempdir().unwrap();
+    let send_log: SendLog = Arc::new(Mutex::new(Vec::new()));
+    let (transport, tx_cell) = tx_transport();
+    let session = Session::builder("e2e-velocity-feedforward")
+        .robot(joint_robot())
+        .control(registry(&send_log))
+        .recording_dir(dir.path())
+        .transport(transport)
+        .build()
+        .unwrap();
+
+    let mut ep = session.start_episode("velocity-feedforward").unwrap();
+    let id = ep.id().clone();
+    let _ = ep.gate(&[0.0; 3], None, None);
+    wait_for(&session, |status| {
+        matches!(status.episode_state, Some(Phase::Running)) && status.motion_feedforward_negotiated
+    });
+    grant_and_engage(
+        &session,
+        "claim-velocity-feedforward",
+        "agent-plane",
+        ActorKind::Agent,
+    );
+    wait_for(&session, |status| {
+        status.gate_mode == Some(GateMode::Intervention)
+    });
+
+    let mut action = joint_action(vec![0.1, 0.2, 0.3]);
+    action.joint_velocity_feedforward = Some(pb::JointVector {
+        values: vec![0.4, 0.5, 0.6],
+    });
+    send_chunk(&wait_for_tx(&tx_cell), vec![action], 1, 0);
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let GateOutput::Substitute { action, .. } = ep.gate(&[0.0; 3], None, None) {
+            assert_eq!(
+                action.velocity_feedforward.as_deref(),
+                Some(&[0.4, 0.5, 0.6][..])
+            );
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "feedforward step never substituted"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+
+    ep.terminate(TerminalOutcome::Success, "done");
+    session.shutdown();
+    let buf = std::fs::read(dir.path().join(format!("{id}.mcap"))).unwrap();
+    let recorded = mcap::MessageStream::new(&buf)
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|message| message.channel.topic == waddle_sidecar::mcaprec::ACTIONS_TOPIC)
+        .filter_map(|message| {
+            <pb::ActionChunk as prost::Message>::decode(message.data.as_ref()).ok()
+        })
+        .flat_map(|chunk| chunk.actions)
+        .any(|action| {
+            action
+                .joint_velocity_feedforward
+                .is_some_and(|vector| vector.values == [0.4, 0.5, 0.6])
+        });
+    assert!(recorded, "raw action recording must preserve feedforward");
 }
 
 /// `REPLAN_POLICY_IMMEDIATE` (declared on the robot's `ChunkingSemantics`):

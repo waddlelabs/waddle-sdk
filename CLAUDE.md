@@ -99,6 +99,12 @@ waddle-sdk/
                              #   all commands cross the core gate and the
                              #   owner envelope, and local RGB-D depth stays
                              #   process-local for calibration deprojection.
+                             #   `waddle.v0.motion.feedforward` preserves a
+                             #   same-shape optional joint-velocity hint through
+                             #   remote intake, gate substitution/bypass, raw
+                             #   recording and Python dispatch. `robots` exports
+                             #   the structural PositionVelocityDriver protocol;
+                             #   position-only drivers retain the same target.
                              #   Workspace bounds cover both the TCP and every
                              #   adapter-supplied conservative body sphere.
                              #   Static box/sphere keep-outs and named-body

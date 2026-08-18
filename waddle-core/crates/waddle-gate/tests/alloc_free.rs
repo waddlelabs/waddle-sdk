@@ -254,15 +254,16 @@ fn every_plan_arm_is_allocation_free() {
     }
 }
 
-/// A part-tagged intervention action costs the claimed tick nothing.
+/// Part routing and an inline velocity hint cost the claimed tick nothing.
 ///
 /// The tick that substitutes one clones it twice — into the record ring and
 /// into the blend anchor, the third copy being moved into the returned
 /// `GateOutput` — so an owned `String` on `OwnedAction::part` would be a
 /// malloc/free pair per clone on the customer's real-time thread, which is
 /// the same defect `ProvenanceTag`'s `Arc`-shared fields exist to avoid.
-/// `Arc<str>` minted once at the intake makes each clone an atomic
-/// increment.
+/// `Arc<str>` minted once at the intake makes each tag clone an atomic
+/// increment; `ActionValues` keeps a feedforward vector through 16 dims
+/// inline just like the position row.
 ///
 /// Unlike the arms above this drives CLAIMED with a PENDING action, so the
 /// jitter buffer's per-channel reorder map (a `BTreeMap`) is exercised too —
@@ -270,7 +271,7 @@ fn every_plan_arm_is_allocation_free() {
 /// therefore differential: the identical loop runs untagged and then tagged,
 /// and the tag must not add a single allocation.
 #[test]
-fn a_part_tagged_claimed_tick_allocates_no_more_than_an_untagged_one() {
+fn shared_optional_metadata_keeps_claimed_ticks_allocation_free() {
     use std::sync::Arc;
     use waddle_gate::gate::{GateShared, OwnedAction};
     use waddle_gate::plan::PlanMode;
@@ -305,7 +306,8 @@ fn a_part_tagged_claimed_tick_allocates_no_more_than_an_untagged_one() {
     // One tick: an intervention action comes due and substitutes.
     let mut tick = |gate: &mut Gate<FakeClock>,
                     records_rx: &mut rtrb::Consumer<waddle_gate::GateRecord>,
-                    part: Option<Arc<str>>| {
+                    part: Option<Arc<str>>,
+                    velocity: bool| {
         seq += 1;
         clock.advance(1_000);
         now = MonoNs(now.0 + 1_000);
@@ -317,6 +319,7 @@ fn a_part_tagged_claimed_tick_allocates_no_more_than_an_untagged_one() {
                 received: now,
                 action: OwnedAction {
                     values: smallvec::smallvec![0.5; 7],
+                    velocity_feedforward: velocity.then(|| smallvec::smallvec![0.2; 7]),
                     gripper: Some(0.5),
                     part,
                 },
@@ -324,7 +327,10 @@ fn a_part_tagged_claimed_tick_allocates_no_more_than_an_untagged_one() {
             })
             .expect("ring has room: one push, one pop per tick");
         match gate.gate(&caller_action, Some(0.5), Some(&obs)) {
-            GateOutput::Substitute { action, .. } => assert_eq!(action.part, expected),
+            GateOutput::Substitute { action, .. } => {
+                assert_eq!(action.part, expected);
+                assert_eq!(action.velocity_feedforward.is_some(), velocity);
+            }
             other => panic!("expected a substitute, got {other:?}"),
         }
         while records_rx.pop().is_ok() {}
@@ -334,21 +340,28 @@ fn a_part_tagged_claimed_tick_allocates_no_more_than_an_untagged_one() {
     // Warm both shapes before measuring either (the reorder map grows on
     // first use, and neither loop is the thing being compared then).
     for _ in 0..1_000 {
-        tick(&mut gate, &mut records_rx, None);
-        tick(&mut gate, &mut records_rx, Some(tag.clone()));
+        tick(&mut gate, &mut records_rx, None, false);
+        tick(&mut gate, &mut records_rx, Some(tag.clone()), false);
+        tick(&mut gate, &mut records_rx, None, true);
     }
 
     let before = allocations();
     for _ in 0..CALLS {
-        tick(&mut gate, &mut records_rx, None);
+        tick(&mut gate, &mut records_rx, None, false);
     }
     let untagged = allocations() - before;
 
     let before = allocations();
     for _ in 0..CALLS {
-        tick(&mut gate, &mut records_rx, Some(tag.clone()));
+        tick(&mut gate, &mut records_rx, Some(tag.clone()), false);
     }
     let tagged = allocations() - before;
+
+    let before = allocations();
+    for _ in 0..CALLS {
+        tick(&mut gate, &mut records_rx, None, true);
+    }
+    let velocity = allocations() - before;
 
     assert_eq!(
         tagged, untagged,
@@ -360,6 +373,11 @@ fn a_part_tagged_claimed_tick_allocates_no_more_than_an_untagged_one() {
         untagged, 0,
         "the claimed substitute path itself started allocating ({untagged} times over {CALLS} \
          ticks) — the differential above no longer proves anything on its own"
+    );
+    assert_eq!(
+        velocity, untagged,
+        "an inline velocity feedforward allocated {velocity} times over {CALLS} ticks against \
+         {untagged} without it"
     );
 }
 

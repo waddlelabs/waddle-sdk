@@ -354,6 +354,7 @@ mod tests {
             action: OwnedAction {
                 #[allow(clippy::cast_precision_loss)]
                 values: smallvec![seq as f64],
+                velocity_feedforward: None,
                 gripper: None,
                 part: None,
             },
@@ -377,6 +378,7 @@ mod tests {
             received: MonoNs(received),
             action: OwnedAction {
                 values: smallvec![value],
+                velocity_feedforward: None,
                 gripper: None,
                 part: None,
             },

@@ -181,6 +181,10 @@ pub struct Status {
     /// `ClientMsg::connection_scoped_flag`'s, which keeps a named-part
     /// sample out of the offline buffer entirely.
     pub parts_negotiated: bool,
+    /// The CURRENT connection accepted optional joint-position velocity
+    /// feedforward. Cleared at every connection boundary; plane action
+    /// intake ignores the append-only field unless this is true.
+    pub motion_feedforward_negotiated: bool,
     /// The CURRENT connection accepted `waddle.v0.agent.chat` at Register.
     /// Chat is connection-scoped, so this is cleared at every boundary and
     /// is status only: it never participates in an authority decision.

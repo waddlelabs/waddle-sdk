@@ -28,6 +28,11 @@ pub const STILLS: &str = "waddle.v0.obs.stills";
 /// uplink.
 pub const PARTS: &str = "waddle.v0.parts";
 
+/// Optional known joint-velocity feedforward alongside an absolute
+/// joint-position action. The position target remains executable when the
+/// flag is not accepted.
+pub const MOTION_FEEDFORWARD: &str = "waddle.v0.motion.feedforward";
+
 /// Authenticated UI chat with the session's active invited host. Requests
 /// belong to the connection that accepted them and are never replayed.
 pub const CHAT: &str = "waddle.v0.agent.chat";

@@ -17,7 +17,7 @@ use waddle_types::pb::v0 as pb;
 use waddle_types::time::Clock;
 use waddle_types::{
     ActionChunk, ActionSpace, ActorKind, ActorRef, ClaimId, EpisodeId, GateMode, GrantStatus,
-    MonoNs, PartPolicy, Step, TypesError, VerbRequest,
+    MonoNs, PartPolicy, Step, TypesError, VelocityFeedforwardPolicy, VerbRequest,
 };
 
 use crate::RuntimeError;
@@ -379,6 +379,7 @@ fn dispatch_due_intervention(
         });
         let OwnedAction {
             values,
+            velocity_feedforward,
             gripper,
             part,
         } = action;
@@ -386,6 +387,7 @@ fn dispatch_due_intervention(
             steps: vec![Step {
                 offset_ns: 0,
                 values,
+                velocity_feedforward,
                 gripper,
                 // The part the intervenor addressed, carried through to the
                 // declared `send`: this pump is the ONLY path to the robot
@@ -816,6 +818,7 @@ fn flatten_packet(packet: &pb::TeleopStreamPacket) -> Option<OwnedAction> {
     // nothing.
     (!values.is_empty()).then_some(OwnedAction {
         values,
+        velocity_feedforward: None,
         gripper,
         part: None,
     })
@@ -921,6 +924,10 @@ pub(crate) fn spawn_plane_pump(
                                 // living in this thread's locals.
                                 let parts =
                                     resp.accepted_feature_flags.iter().any(|f| f == PARTS_FLAG);
+                                let motion_feedforward = resp
+                                    .accepted_feature_flags
+                                    .iter()
+                                    .any(|f| f == MOTION_FEEDFORWARD_FLAG);
                                 let chat_on = resp
                                     .accepted_feature_flags
                                     .iter()
@@ -945,6 +952,7 @@ pub(crate) fn spawn_plane_pump(
                                     s.connector_binding_negotiated = connector_binding;
                                     s.stills_negotiated = stills;
                                     s.parts_negotiated = parts;
+                                    s.motion_feedforward_negotiated = motion_feedforward;
                                     s.chat_negotiated = chat_on;
                                     s.task_sessions_negotiated = tasks_on;
                                     s.calibration_measurements_negotiated = calibration_on;
@@ -1060,6 +1068,7 @@ fn forget_negotiated_flags(
         s.connector_binding_negotiated = false;
         s.stills_negotiated = false;
         s.parts_negotiated = false;
+        s.motion_feedforward_negotiated = false;
         s.chat_negotiated = false;
         s.task_sessions_negotiated = false;
         s.calibration_measurements_negotiated = false;
@@ -1102,6 +1111,7 @@ fn ack_group(
 /// value a reader of the recording keys on, so it is named once here.
 const AGENT_CHUNK_SOURCE: &str = "agent-chunk";
 
+pub(crate) use waddle_controlplane::flags::MOTION_FEEDFORWARD as MOTION_FEEDFORWARD_FLAG;
 /// Part-addressed control (docs/VERSIONING.md registry): the flag under
 /// which `Action.part` is honored at the intervention-chunk intake below,
 /// and a named `ProprioSample.part` is emitted on the observation uplink.
@@ -1109,6 +1119,14 @@ const AGENT_CHUNK_SOURCE: &str = "agent-chunk";
 /// `session.rs` declares it at Register (iff the declared space is
 /// `Composite`) and the reducer reads the negotiated answer off the mirror.
 pub(crate) use waddle_controlplane::flags::PARTS as PARTS_FLAG;
+
+pub(crate) fn velocity_feedforward_policy(negotiated: bool) -> VelocityFeedforwardPolicy {
+    if negotiated {
+        VelocityFeedforwardPolicy::Honor
+    } else {
+        VelocityFeedforwardPolicy::Ignore
+    }
+}
 
 /// A once-per-claim-window latch. [`Self::raise`] answers true only the
 /// first time it is asked within one window, and a different window
@@ -1234,6 +1252,7 @@ pub(crate) fn intake_intervention_chunk(
     stream: &StreamProducer,
     space: &ActionSpace,
     parts: PartPolicy,
+    velocity_feedforward: VelocityFeedforwardPolicy,
     claim_generation: u64,
     state: &mut ChunkIntakeState,
 ) {
@@ -1242,7 +1261,8 @@ pub(crate) fn intake_intervention_chunk(
         faults,
     } = state;
     let total = chunk.actions.len();
-    match ActionChunk::from_pb(chunk, space, parts) {
+    match ActionChunk::from_pb_with_velocity_feedforward(chunk, space, parts, velocity_feedforward)
+    {
         Ok(flattened) => {
             let action_chunk = flattened.chunk;
             let meta = ChunkMeta {
@@ -1259,6 +1279,7 @@ pub(crate) fn intake_intervention_chunk(
                         received: MonoNs(at.0.saturating_add(step.offset_ns)),
                         action: OwnedAction {
                             values: step.values.clone(),
+                            velocity_feedforward: step.velocity_feedforward.clone(),
                             gripper: step.gripper,
                             // `Some` only under `PartPolicy::Honor`,
                             // where `flatten_action` minted the tag
@@ -1522,6 +1543,7 @@ fn forward_server_msg(
                     // part-scoped one is refused, deterministically, once
                     // per claim window.
                     part_policy(status.parts_negotiated),
+                    velocity_feedforward_policy(status.motion_feedforward_negotiated),
                     status.claim_generation,
                     &mut intake.lock(),
                 );

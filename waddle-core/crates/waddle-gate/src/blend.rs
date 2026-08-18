@@ -115,6 +115,9 @@ pub fn blend_step(
         .collect();
     Some(OwnedAction {
         values,
+        // A blended path is not the producer's original trajectory, so its
+        // velocity hint no longer describes the dispatched action.
+        velocity_feedforward: None,
         gripper: match (from.gripper, to.gripper) {
             (Some(a), Some(b)) => Some(a * (1.0 - w) + b * w),
             (_, b @ Some(_)) => b,
@@ -143,6 +146,7 @@ mod tests {
     fn action(vals: &[f64]) -> OwnedAction {
         OwnedAction {
             values: SmallVec::from_slice(vals),
+            velocity_feedforward: None,
             gripper: None,
             part: None,
         }
@@ -214,6 +218,15 @@ mod tests {
                 .values[0],
             1.0
         );
+    }
+
+    #[test]
+    fn an_interpolated_path_drops_the_producers_velocity_hint() {
+        let from = action(&[0.0, 0.0]);
+        let mut to = action(&[1.0, 1.0]);
+        to.velocity_feedforward = Some(SmallVec::from_slice(&[0.2, 0.3]));
+        let blended = blend_step(Some(&from), &to, 0.5, Interp::Linear).unwrap();
+        assert!(blended.velocity_feedforward.is_none());
     }
 
     /// Dims-validation defense in depth: a dims mismatch must never zip-truncate
@@ -303,6 +316,7 @@ mod tests {
     fn with_nothing_commanded_yet_a_part_scoped_gripper_is_its_own_endpoint() {
         let to = OwnedAction {
             values: SmallVec::new(),
+            velocity_feedforward: None,
             gripper: Some(0.04),
             part: Some(std::sync::Arc::from("left")),
         };
@@ -320,11 +334,13 @@ mod tests {
     fn a_gripper_only_action_survives_the_blend_window() {
         let from = OwnedAction {
             values: SmallVec::from_slice(&[0.0, 0.0, 0.0]),
+            velocity_feedforward: None,
             gripper: Some(0.0),
             part: None,
         };
         let to = OwnedAction {
             values: SmallVec::new(),
+            velocity_feedforward: None,
             gripper: Some(0.04),
             part: None,
         };
@@ -353,6 +369,7 @@ mod tests {
         };
         let to = OwnedAction {
             values: SmallVec::new(),
+            velocity_feedforward: None,
             gripper: Some(0.04),
             part: Some(std::sync::Arc::from("left")),
         };
@@ -383,6 +400,7 @@ mod tests {
         };
         let to = OwnedAction {
             values: SmallVec::new(),
+            velocity_feedforward: None,
             gripper: Some(0.04),
             part: Some(std::sync::Arc::from("right")),
         };

@@ -36,6 +36,10 @@ pub struct Step {
     /// last; only the gripper channel is written. Every other step carries
     /// exactly the declared space's width.
     pub values: ActionValues,
+    /// Optional known velocity of this exact joint-position trajectory.
+    /// It is a tracking hint, never a second target. Same width/order/scope
+    /// as `values`; absent for non-position actions and pre-flag peers.
+    pub velocity_feedforward: Option<ActionValues>,
     /// Gripper command in declared units, when present.
     pub gripper: Option<f64>,
     /// The one declared part this step addresses (`Action.part`), or `None`
@@ -73,6 +77,17 @@ pub enum PartPolicy {
     /// Ignore `Action.part` — the pre-flag meaning, in which every action is
     /// read against the whole declared space (so a part-scoped one is
     /// refused on any real multi-part robot, deterministically).
+    Ignore,
+}
+
+/// Whether an intake honors `Action.joint_velocity_feedforward`.
+///
+/// Negotiation belongs to the caller: this module only implements the two
+/// wire meanings. `Ignore` is the pre-flag behavior and preserves the
+/// position target byte-for-byte.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum VelocityFeedforwardPolicy {
+    Honor,
     Ignore,
 }
 
@@ -131,6 +146,22 @@ impl ActionChunk {
         space: &ActionSpace,
         parts: PartPolicy,
     ) -> Result<FlattenedChunk, TypesError> {
+        Self::from_pb_with_velocity_feedforward(
+            chunk,
+            space,
+            parts,
+            VelocityFeedforwardPolicy::Ignore,
+        )
+    }
+
+    /// Validate and flatten a chunk with the caller's connection-scoped
+    /// velocity-feedforward negotiation answer.
+    pub fn from_pb_with_velocity_feedforward(
+        chunk: &pb::ActionChunk,
+        space: &ActionSpace,
+        parts: PartPolicy,
+        velocity_feedforward: VelocityFeedforwardPolicy,
+    ) -> Result<FlattenedChunk, TypesError> {
         let dims = space.dims().ok_or(TypesError::OpaqueNotExecutable)?;
         let provenance = chunk
             .provenance
@@ -142,7 +173,12 @@ impl ActionChunk {
         let mut steps = Vec::with_capacity(chunk.actions.len());
         let mut inert = Vec::new();
         for (index, action) in chunk.actions.iter().enumerate() {
-            match flatten_action(action, space, parts) {
+            match flatten_action_with_velocity_feedforward(
+                action,
+                space,
+                parts,
+                velocity_feedforward,
+            ) {
                 Ok(step) => steps.push(step),
                 Err(TypesError::NoopNotExecutable) => inert.push(index),
                 Err(err) => return Err(err),
@@ -187,6 +223,23 @@ pub fn flatten_action(
     space: &ActionSpace,
     parts: PartPolicy,
 ) -> Result<Step, TypesError> {
+    flatten_action_with_velocity_feedforward(
+        action,
+        space,
+        parts,
+        VelocityFeedforwardPolicy::Ignore,
+    )
+}
+
+/// Flatten one wire action with the connection's negotiated feedforward
+/// meaning. The legacy wrapper above deliberately ignores the append-only
+/// field so every existing caller retains pre-flag behavior.
+pub fn flatten_action_with_velocity_feedforward(
+    action: &pb::Action,
+    space: &ActionSpace,
+    parts: PartPolicy,
+    velocity_policy: VelocityFeedforwardPolicy,
+) -> Result<Step, TypesError> {
     let part = addressed_part(action, parts);
     let space = match part {
         Some(name) => declared_part(space, name)?,
@@ -198,10 +251,19 @@ pub fn flatten_action(
     let part = part.map(Arc::from);
 
     if matches!(&action.target, Some(pb::action::Target::Noop(_))) {
+        if velocity_policy == VelocityFeedforwardPolicy::Honor
+            && action.joint_velocity_feedforward.is_some()
+        {
+            return Err(TypesError::InvalidValue {
+                field: "Action.joint_velocity_feedforward",
+                reason: "a noop/gripper-only action has no joint-position trajectory",
+            });
+        }
         return match gripper {
             Some(_) => Ok(Step {
                 offset_ns: action.t_offset_ns,
                 values: ActionValues::new(),
+                velocity_feedforward: None,
                 gripper,
                 part,
             }),
@@ -231,12 +293,48 @@ pub fn flatten_action(
         });
     }
 
+    let velocity_feedforward = match (velocity_policy, action.joint_velocity_feedforward.as_ref()) {
+        (VelocityFeedforwardPolicy::Ignore, _) | (_, None) => None,
+        (VelocityFeedforwardPolicy::Honor, Some(velocity)) => {
+            if !supports_velocity_feedforward(space) {
+                return Err(TypesError::InvalidValue {
+                    field: "Action.joint_velocity_feedforward",
+                    reason: "feedforward requires a joint-position target",
+                });
+            }
+            if velocity.values.len() != expected {
+                return Err(TypesError::DimensionMismatch {
+                    expected,
+                    got: velocity.values.len(),
+                });
+            }
+            if !velocity.values.iter().all(|value| value.is_finite()) {
+                return Err(TypesError::InvalidValue {
+                    field: "Action.joint_velocity_feedforward",
+                    reason: "feedforward values must be finite",
+                });
+            }
+            Some(ActionValues::from_slice(&velocity.values))
+        }
+    };
+
     Ok(Step {
         offset_ns: action.t_offset_ns,
         values,
+        velocity_feedforward,
         gripper,
         part,
     })
+}
+
+fn supports_velocity_feedforward(space: &ActionSpace) -> bool {
+    match &space.spec {
+        SpaceSpec::JointPosition { .. } => true,
+        SpaceSpec::Composite { parts } => parts
+            .iter()
+            .all(|(_name, part)| supports_velocity_feedforward(part)),
+        _ => false,
+    }
 }
 
 /// The declared part this action addresses, or `None` for the whole space.
@@ -371,6 +469,17 @@ pub fn unflatten_action(
     part: Option<&str>,
     space: &ActionSpace,
 ) -> Result<pb::Action, TypesError> {
+    unflatten_action_with_velocity_feedforward(values, None, gripper, part, space)
+}
+
+/// Rebuild a wire action plus an optional known trajectory velocity.
+pub fn unflatten_action_with_velocity_feedforward(
+    values: &[f64],
+    velocity_feedforward: Option<&[f64]>,
+    gripper: Option<f64>,
+    part: Option<&str>,
+    space: &ActionSpace,
+) -> Result<pb::Action, TypesError> {
     let part = part.filter(|name| !name.is_empty());
     let space = match part {
         Some(name) => declared_part(space, name)?,
@@ -379,6 +488,12 @@ pub fn unflatten_action(
     let expected = space.dims().ok_or(TypesError::OpaqueNotExecutable)?;
     let part = part.unwrap_or_default().to_owned();
     if values.is_empty() && gripper.is_some() {
+        if velocity_feedforward.is_some() {
+            return Err(TypesError::InvalidValue {
+                field: "Action.joint_velocity_feedforward",
+                reason: "a gripper-only action has no joint-position trajectory",
+            });
+        }
         return Ok(pb::Action {
             target: Some(pb::action::Target::Noop(pb::NoopMarker::default())),
             gripper: gripper.map(|position| pb::GripperCommand {
@@ -395,6 +510,26 @@ pub fn unflatten_action(
             got: values.len(),
         });
     }
+    if let Some(velocity) = velocity_feedforward {
+        if !supports_velocity_feedforward(space) {
+            return Err(TypesError::InvalidValue {
+                field: "Action.joint_velocity_feedforward",
+                reason: "feedforward requires a joint-position target",
+            });
+        }
+        if velocity.len() != expected {
+            return Err(TypesError::DimensionMismatch {
+                expected,
+                got: velocity.len(),
+            });
+        }
+        if !velocity.iter().all(|value| value.is_finite()) {
+            return Err(TypesError::InvalidValue {
+                field: "Action.joint_velocity_feedforward",
+                reason: "feedforward values must be finite",
+            });
+        }
+    }
     let mut cursor = values;
     let mut action = unflatten_target(&mut cursor, space)?;
     debug_assert!(cursor.is_empty(), "dims() must equal the consumed width");
@@ -403,6 +538,9 @@ pub fn unflatten_action(
         effort: None,
     });
     action.part = part;
+    action.joint_velocity_feedforward = velocity_feedforward.map(|values| pb::JointVector {
+        values: values.to_vec(),
+    });
     Ok(action)
 }
 
@@ -1085,6 +1223,112 @@ mod tests {
             Err(TypesError::DimensionMismatch {
                 expected: 3,
                 got: 2
+            })
+        ));
+    }
+
+    #[test]
+    fn negotiated_velocity_feedforward_round_trips_with_joint_position() {
+        let space = ActionSpace::from_pb(&joint_space(3)).unwrap();
+        let mut action = part_action(vec![0.1, 0.2, 0.3]);
+        action.joint_velocity_feedforward = Some(pb::JointVector {
+            values: vec![0.4, 0.5, 0.6],
+        });
+        let step = flatten_action_with_velocity_feedforward(
+            &action,
+            &space,
+            PartPolicy::Ignore,
+            VelocityFeedforwardPolicy::Honor,
+        )
+        .unwrap();
+        assert_eq!(
+            step.velocity_feedforward.as_deref(),
+            Some(&[0.4, 0.5, 0.6][..])
+        );
+        assert_eq!(
+            unflatten_action_with_velocity_feedforward(
+                &step.values,
+                step.velocity_feedforward.as_deref(),
+                None,
+                None,
+                &space,
+            )
+            .unwrap(),
+            action
+        );
+    }
+
+    #[test]
+    fn pre_flag_peer_ignores_velocity_feedforward_without_changing_target() {
+        let space = ActionSpace::from_pb(&joint_space(3)).unwrap();
+        let mut action = part_action(vec![0.1, 0.2, 0.3]);
+        action.joint_velocity_feedforward = Some(pb::JointVector {
+            values: vec![f64::NAN],
+        });
+        let step = flatten_action_with_velocity_feedforward(
+            &action,
+            &space,
+            PartPolicy::Ignore,
+            VelocityFeedforwardPolicy::Ignore,
+        )
+        .unwrap();
+        assert_eq!(step.values.as_slice(), &[0.1, 0.2, 0.3]);
+        assert!(step.velocity_feedforward.is_none());
+    }
+
+    #[test]
+    fn negotiated_velocity_feedforward_refuses_wrong_shape_or_target_kind() {
+        let joint_space = ActionSpace::from_pb(&joint_space(3)).unwrap();
+        let mut wrong_width = part_action(vec![0.1, 0.2, 0.3]);
+        wrong_width.joint_velocity_feedforward = Some(pb::JointVector {
+            values: vec![0.4, 0.5],
+        });
+        assert!(matches!(
+            flatten_action_with_velocity_feedforward(
+                &wrong_width,
+                &joint_space,
+                PartPolicy::Ignore,
+                VelocityFeedforwardPolicy::Honor,
+            ),
+            Err(TypesError::DimensionMismatch {
+                expected: 3,
+                got: 2
+            })
+        ));
+
+        let velocity_space = ActionSpace::from_pb(&pb::ActionSpace {
+            space: Some(pb::action_space::Space::JointVelocity(pb::JointVelocity {
+                joints: (0..3)
+                    .map(|i| pb::JointDescriptor {
+                        name: format!("j{i}"),
+                        ..Default::default()
+                    })
+                    .collect(),
+            })),
+            rate_hz: 50.0,
+            chunking: None,
+            gripper: None,
+        })
+        .unwrap();
+        let action = pb::Action {
+            target: Some(pb::action::Target::JointVelocity(pb::JointVector {
+                values: vec![0.1, 0.2, 0.3],
+            })),
+            joint_velocity_feedforward: Some(pb::JointVector {
+                values: vec![0.4, 0.5, 0.6],
+            }),
+            ..Default::default()
+        };
+        assert!(matches!(
+            flatten_action_with_velocity_feedforward(
+                &action,
+                &velocity_space,
+                PartPolicy::Ignore,
+                VelocityFeedforwardPolicy::Honor,
+            ),
+            Err(TypesError::InvalidValue {
+                field: "Action.joint_velocity_feedforward",
+                ..
             })
         ));
     }

@@ -16,6 +16,8 @@ const LEGACY_FORMAT: &str = "waddle.behavior/v0";
 /// it twice: once to decide the scenario is runnable at all, and once as the
 /// negotiated answer an intake asks for `Action.part`.
 pub const PARTS_FEATURE: &str = "waddle.v0.parts";
+/// Optional joint-velocity feedforward on a position trajectory.
+pub const MOTION_FEEDFORWARD_FEATURE: &str = "waddle.v0.motion.feedforward";
 /// Feature flags this runner implements; scenarios requiring anything else
 /// are skipped, not failed (scenario-format.md).
 pub const SUPPORTED_FEATURES: &[&str] = &[
@@ -24,6 +26,7 @@ pub const SUPPORTED_FEATURES: &[&str] = &[
     "waddle.v0.reset.remote",
     "waddle.v0.agent",
     PARTS_FEATURE,
+    MOTION_FEEDFORWARD_FEATURE,
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

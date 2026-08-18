@@ -1197,7 +1197,12 @@ def chunk_sender(
     sidechannel = RejectLog("step", report=report)
 
     def send(chunk) -> None:
-        for values, gripper, _offset_ns in chunk.steps:
+        velocities = getattr(
+            chunk, "velocity_feedforwards", [None] * len(chunk.steps)
+        )
+        for (values, gripper, _offset_ns), velocity in zip(
+            chunk.steps, velocities, strict=True
+        ):
             if gripper is not None:
                 sidechannel(
                     f"carries gripper={gripper} on the sidechannel, and this robot "
@@ -1206,7 +1211,11 @@ def chunk_sender(
                     "without its hand"
                 )
                 continue
-            apply_decision(arms, values)
+            apply_decision(
+                arms,
+                values,
+                velocity_feedforward_rad_s=velocity,
+            )
 
     return send
 

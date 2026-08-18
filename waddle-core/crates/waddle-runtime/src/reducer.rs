@@ -19,7 +19,7 @@ use waddle_types::pb::v0 as pb;
 use waddle_types::time::Clock;
 use waddle_types::{
     ActionSpace, EpisodeId, GateMode, HandoffPolicy, LeaseId, MonoNs, ProvenanceTag, VerbRequest,
-    unflatten_action,
+    unflatten_action_with_velocity_feedforward,
 };
 
 use crate::ack::Injected;
@@ -675,8 +675,13 @@ impl Reducer {
     /// `ActionChunk.seq` is monotone per stream and the caller's gate is a
     /// different stream into the same episode.
     fn write_dispatched(&mut self, dispatched: &DispatchedAction) {
-        let action = match unflatten_action(
+        let action = match waddle_types::unflatten_action_with_velocity_feedforward(
             &dispatched.action.values,
+            dispatched
+                .action
+                .velocity_feedforward
+                .as_ref()
+                .map(AsRef::as_ref),
             dispatched.action.gripper,
             // The part the dispatched action addressed. Without it a
             // part-width row cannot decode against the whole declared space
@@ -823,8 +828,9 @@ impl Reducer {
                 // action, which always commands the whole declared space):
                 // the row is rebuilt against THAT part's space and carries
                 // the name, or the recording claims the whole robot moved.
-                match unflatten_action(
+                match unflatten_action_with_velocity_feedforward(
                     &action.values,
+                    action.velocity_feedforward.as_deref(),
                     action.gripper,
                     action.part.as_deref(),
                     &self.space,

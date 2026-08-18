@@ -13,6 +13,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Promote known-trajectory joint-velocity feedforward from a YAM-local
+  optimization to the generic SDK contract. The append-only negotiated
+  `waddle.v0.motion.feedforward` field now survives remote intake, core gate
+  substitution and bypass, raw recording, PyO3 dispatch, and the structural
+  custom-driver extension; pre-flag and position-only peers execute the
+  unchanged position target.
 - Restore the extracted YAM's known-trajectory velocity feedforward through
   the typed SDK runtime command and optional driver-extension seam. Cap the
   arm hint, force zero gripper velocity, preserve position-only I2RT fallback,

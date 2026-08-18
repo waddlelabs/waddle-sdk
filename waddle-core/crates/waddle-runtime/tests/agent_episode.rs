@@ -223,6 +223,7 @@ fn base_twist_chunk(x: f64, seq: u64) -> ServerMsg {
                     gripper: None,
                     t_offset_ns: 0,
                     part: String::new(),
+                    joint_velocity_feedforward: None,
                 }],
                 horizon_ns: 0,
                 t_emitted_ns: 0,

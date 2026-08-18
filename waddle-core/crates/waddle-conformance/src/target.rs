@@ -24,7 +24,7 @@ use waddle_gate::{
     OwnedAction, PlanMode, StreamChannel, TimedAction,
 };
 use waddle_ingest::FakeClock;
-use waddle_types::action::ActionValues;
+use waddle_types::action::{ActionValues, VelocityFeedforwardPolicy};
 use waddle_types::{
     ActionChunk, ActionSpace, ActorKind, ActorRef, ClaimId, EpisodeId, GateMode, GrantStatus,
     Interp, LeaseEnforcement, LeaseId, MonoNs, PartPolicy, ProvenanceTag, ReplanPolicy, SpaceSpec,
@@ -35,7 +35,10 @@ use crate::emissions::{
     Codec, EmissionEntry, effect_to_value, gate_mode_name, grant_status_name,
     intervention_phase_name, verb_name,
 };
-use crate::scenario::{PARTS_FEATURE, Scenario, TargetKind, parse_ns, parse_verification_mode};
+use crate::scenario::{
+    MOTION_FEEDFORWARD_FEATURE, PARTS_FEATURE, Scenario, TargetKind, parse_ns,
+    parse_verification_mode,
+};
 use crate::{ConformanceError, scenario_err};
 
 /// No `gate_tick` within this window while claimed ⇒ the caller loop has
@@ -173,6 +176,8 @@ struct GateParts {
     /// ([`part_policy`]) — the answer every intervention intake reads for
     /// `Action.part`.
     parts: PartPolicy,
+    /// Connection-scoped meaning of `Action.joint_velocity_feedforward`.
+    velocity_feedforward: VelocityFeedforwardPolicy,
     interp: Interp,
     last_output: Option<GateOutput>,
     /// The Noop reason of the most recent tick, captured from the plan mode
@@ -281,6 +286,7 @@ impl Target {
                     _records: records,
                     space,
                     parts: part_policy(scenario),
+                    velocity_feedforward: velocity_feedforward_policy(scenario),
                     interp,
                     last_output: None,
                     last_noop_reason: None,
@@ -615,6 +621,7 @@ impl Target {
                     // could not say which arm moved.
                     "part": action.part.as_deref().unwrap_or(""),
                     "dims": action.values.len(),
+                    "velocity_feedforward": action.velocity_feedforward.as_ref().map(|v| v.to_vec()),
                 }),
             });
         }
@@ -1081,6 +1088,7 @@ impl Target {
                         received: MonoNs(now),
                         action: OwnedAction {
                             values: ActionValues::from_slice(&values),
+                            velocity_feedforward: None,
                             gripper,
                             // As in production: a teleop packet is not
                             // part-addressed (`flatten_packet`).
@@ -1168,7 +1176,13 @@ impl Target {
             // got it run at all; one that does not gets the pre-flag
             // reading, whatever the robot declares.
             let parts = gp.parts;
-            match ActionChunk::from_pb(&chunk, space, parts) {
+            let velocity_feedforward = gp.velocity_feedforward;
+            match ActionChunk::from_pb_with_velocity_feedforward(
+                &chunk,
+                space,
+                parts,
+                velocity_feedforward,
+            ) {
                 Ok(flattened) => {
                     let meta = ChunkMeta {
                         chunk_seq: flattened.chunk.seq,
@@ -1183,6 +1197,7 @@ impl Target {
                                 received: MonoNs(now.saturating_add(step.offset_ns)),
                                 action: OwnedAction {
                                     values: step.values.clone(),
+                                    velocity_feedforward: step.velocity_feedforward.clone(),
                                     gripper: step.gripper,
                                     // `Some` only under `PartPolicy::Honor`,
                                     // where the flattener minted the tag from
@@ -1492,6 +1507,7 @@ impl Target {
             GateOutput::Substitute { action, provenance } => json!({
                 "kind": "substitute",
                 "part": action.part.as_deref().unwrap_or(""),
+                "velocity_feedforward": action.velocity_feedforward.as_ref().map(|v| v.to_vec()),
                 "provenance": self.provenance_json(provenance)?,
             }),
             GateOutput::Blend {
@@ -1501,6 +1517,7 @@ impl Target {
             } => json!({
                 "kind": "blend",
                 "part": action.part.as_deref().unwrap_or(""),
+                "velocity_feedforward": action.velocity_feedforward.as_ref().map(|v| v.to_vec()),
                 "progress": progress,
                 "provenance": self.provenance_json(provenance)?,
             }),
@@ -1580,6 +1597,18 @@ fn part_policy(scenario: &Scenario) -> PartPolicy {
         PartPolicy::Honor
     } else {
         PartPolicy::Ignore
+    }
+}
+
+fn velocity_feedforward_policy(scenario: &Scenario) -> VelocityFeedforwardPolicy {
+    if scenario
+        .requires_features
+        .iter()
+        .any(|f| f == MOTION_FEEDFORWARD_FEATURE)
+    {
+        VelocityFeedforwardPolicy::Honor
+    } else {
+        VelocityFeedforwardPolicy::Ignore
     }
 }
 

@@ -84,7 +84,7 @@ as unknown:
 | `gate_tick` | `action?`: `waddle.v0.Action`, `obs_t_ns?` | gate | one caller-loop tick through `gate()` |
 | `chunk_arrival` | `chunk`: `waddle.v0.ActionChunk` | gate | a policy chunk arrives |
 | `teleop_action` | `packet`: `waddle.v0.TeleopStreamPacket` | gate | an intervention-stream action arrives |
-| `intervention_chunk` | `chunk`: `waddle.v0.ActionChunk` | gate | an intervention chunk arrives from the control plane (`GateServerMessage.intervention_chunk`) under an engaged claim; its steps enter the intervention stream at their `tOffsetNs` (needs `waddle.v0.agent` — a Waddle-hosted agent is v0's producer of this arm). A step's non-empty `Action.part` is honored only when the scenario lists `waddle.v0.parts`; without it the step is read against the whole declared space (the pre-flag meaning `docs/VERSIONING.md`'s registry row defines), which is a behavior a scenario may pin |
+| `intervention_chunk` | `chunk`: `waddle.v0.ActionChunk` | gate | an intervention chunk arrives from the control plane (`GateServerMessage.intervention_chunk`) under an engaged claim; its steps enter the intervention stream at their `tOffsetNs` (needs `waddle.v0.agent` — a Waddle-hosted agent is v0's producer of this arm). A step's non-empty `Action.part` is honored only when the scenario lists `waddle.v0.parts`; without it the step is read against the whole declared space. `Action.jointVelocityFeedforward` is honored only with `waddle.v0.motion.feedforward`; before negotiation it is ignored and the position target is unchanged. Both pre-flag meanings are behaviors a scenario may pin. |
 | `claim_request` | fields of `waddle.v0.ClaimEpisodeRequest` | fsm, gate | an actor asks to claim |
 | `claim_granted` | `claim`: `waddle.v0.Claim` | fsm, gate | the claim was granted |
 | `claim_released` | `claim_id` | fsm, gate | the claim was released |
@@ -174,6 +174,12 @@ flag can produce one; `""` is the sole/default part and is core, so it may be
 pinned on any connection — on an unflagged one it is the assertion that no
 tag was minted. As everywhere else, an absent key is unconstrained.
 
+`velocity_feedforward` asserts the returned joint-velocity hint as a numeric
+array, or `null` when no hint survives. A non-null value needs
+`waddle.v0.motion.feedforward`. An actually interpolated blend reports `null`:
+changing the path makes the sender's old velocity untruthful. An anchorless
+blend passes the target through unchanged and may retain its hint.
+
 ### `expect_send` (gate target only)
 
 ```json
@@ -191,6 +197,9 @@ which an intervention action reaches the robot without passing through
 `gate()`, so without this a part-addressed command dispatched during a stalled
 caller loop would be unassertable. As everywhere else, an absent key is
 unconstrained.
+
+`velocity_feedforward` has the same meaning and feature requirement as on
+`expect_output`, and pins preservation through direct bypass dispatch.
 
 ## Match values
 

@@ -41,6 +41,7 @@ pub(crate) fn chunk_from_rows(
             target: Some(pb::action::Target::JointPosition(pb::JointVector {
                 values,
             })),
+            joint_velocity_feedforward: None,
         })
         .collect();
     pb::ActionChunk {
