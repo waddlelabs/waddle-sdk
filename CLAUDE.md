@@ -192,7 +192,10 @@ waddle-sdk/
                              #   module never needs it. `yam.declaration()` is
                              #   public and byte-equal to what the factories
                              #   register (golden test vs the rig's own
-                             #   customer program)
+                             #   customer program). LiveDriver also works
+                             #   around the pinned vendor close race by joining
+                             #   its unretained CAN writer before the vendor
+                             #   closes python-can's SocketCAN descriptor.
     teleop/                  # the `waddle-sdk-teleop` companion distribution:
                              #   same rust/Cargo.toml, + the livekit feature
     examples/                # one strict simulated Site program:

@@ -13,6 +13,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Quiesce and join the pinned I2RT YAM CAN writer before vendor shutdown
+  closes its SocketCAN descriptor, preventing a final negative-fd write race.
 - Preserve a YAM unit's semantic `[closed, open]` I2RT gripper-limit order,
   including descending motor-radian pairs, so validated site measurements
   cannot invert open and close commands.

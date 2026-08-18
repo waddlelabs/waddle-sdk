@@ -739,7 +739,56 @@ class LiveDriver:
 
     def close(self) -> None:
         with self._lock:
+            self._quiesce_pinned_i2rt_control_thread()
             self._robot.close()
+
+    def _quiesce_pinned_i2rt_control_thread(self) -> None:
+        """Join I2RT's CAN writer before its ``close()`` shuts the socket.
+
+        The pinned I2RT ``MotorChainRobot.close()`` joins its own server thread,
+        then calls ``DMChainCanInterface.close()``.  That second close clears
+        ``running`` and immediately closes python-can without joining the CAN
+        writer it started, because the vendor object does not retain the
+        ``Thread`` it created.  On real YAM shutdown the writer can therefore
+        enter one final send against file descriptor -1.
+
+        Preserve the vendor close itself, but perform its two stop operations
+        in the safe order first.  This is intentionally structural and
+        best-effort so a different vendor implementation still receives its
+        ordinary public ``close()`` below.  The exact pinned implementation is
+        characterized by the regression test beside the other fake-vendor
+        lifecycle cases.
+        """
+        robot = self._robot
+        stop_event = getattr(robot, "_stop_event", None)
+        server_thread = getattr(robot, "_server_thread", None)
+        motor_chain = getattr(robot, "motor_chain", None)
+        if (
+            stop_event is None
+            or not callable(getattr(stop_event, "set", None))
+            or not isinstance(server_thread, threading.Thread)
+            or motor_chain is None
+            or not hasattr(motor_chain, "running")
+        ):
+            return
+
+        stop_event.set()
+        server_thread.join()
+
+        control_thread = None
+        for thread in threading.enumerate():
+            target = getattr(thread, "_target", None)
+            if (
+                getattr(target, "__self__", None) is motor_chain
+                and getattr(target, "__name__", "")
+                == "_set_torques_and_update_state"
+            ):
+                control_thread = thread
+                break
+
+        motor_chain.running = False
+        if control_thread is not None:
+            control_thread.join()
 
 
 # ---------------------------------------------------------------------------

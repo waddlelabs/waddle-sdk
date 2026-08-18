@@ -28,6 +28,8 @@ from contextlib import contextmanager
 
 import json
 import sys
+import threading
+import time
 import types
 from pathlib import Path
 
@@ -568,10 +570,36 @@ def test_a_workspace_box_without_forward_kinematics_is_refused():
 # --------------------------------------------------------------------------
 
 
+class _PinnedI2rtMotorChain:
+    """The pinned vendor close race, without importing or opening python-can."""
+
+    def __init__(self) -> None:
+        self.running = True
+        self.closed_while_running = False
+        self._thread = threading.Thread(target=self._set_torques_and_update_state)
+        self._thread.start()
+
+    def _set_torques_and_update_state(self) -> None:
+        while self.running:
+            time.sleep(0.001)
+
+    def close(self) -> None:
+        # This is the pinned DMChainCanInterface ordering: clear the loop flag,
+        # then close its socket without joining the thread it started.
+        self.running = False
+        self.closed_while_running = self._thread.is_alive()
+
+
 class _FakeYamRobot:
     """The four vendor calls this driver makes, and nothing else."""
 
-    def __init__(self, *, dofs: int = 7, info: dict | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        dofs: int = 7,
+        info: dict | None = None,
+        pinned_i2rt_close: bool = False,
+    ) -> None:
         self.dofs = dofs
         self.info = {"kp": [10.0] * 7, "kd": [1.0] * 7} if info is None else info
         self.commands: list[np.ndarray] = []
@@ -584,6 +612,14 @@ class _FakeYamRobot:
             "gripper_pos": [0.5],
         }
         self.zero_torque_raises = False
+        if pinned_i2rt_close:
+            self.motor_chain = _PinnedI2rtMotorChain()
+            self._stop_event = threading.Event()
+            self._server_thread = threading.Thread(target=self._serve)
+            self._server_thread.start()
+
+    def _serve(self) -> None:
+        self._stop_event.wait()
 
     def num_dofs(self) -> int:
         return self.dofs
@@ -606,6 +642,10 @@ class _FakeYamRobot:
         self.gains.append((kp, kd))
 
     def close(self) -> None:
+        if hasattr(self, "_stop_event"):
+            self._stop_event.set()
+            self._server_thread.join()
+            self.motor_chain.close()
         self.closed += 1
 
 
@@ -872,6 +912,25 @@ def test_a_live_arm_has_no_home_and_integrates_itself(vendor):
     assert driver.step(0.1) is None
     driver.close()
     assert vendor.robots[0].closed == 1
+
+
+def test_live_close_joins_pinned_i2rt_can_writer_before_socket_close(vendor):
+    """The pinned vendor forgets to retain or join its CAN control thread.
+
+    Closing its socket first races one last motor send against fd=-1.  The SDK
+    locates that exact bound worker, stops and joins it, then leaves the
+    vendor's public close to finish the normal zero-torque teardown.
+    """
+    vendor.next_kwargs = {"pinned_i2rt_close": True}
+    driver = _live(vendor)
+    robot = vendor.robots[0]
+
+    driver.close()
+
+    assert robot.closed == 1
+    assert robot.motor_chain.closed_while_running is False
+    assert robot._server_thread.is_alive() is False
+    assert robot.motor_chain._thread.is_alive() is False
 
 
 def test_the_live_factory_opens_the_channels_it_was_given(vendor):
