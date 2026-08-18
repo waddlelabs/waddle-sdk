@@ -13,6 +13,13 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Preserve live camera calibration across the SDK/Metal extraction. Camera
+  drivers may implement the optional `CameraCalibrationDriver.intrinsics()`
+  extension; `RigSession` folds those active-stream facts into the registered
+  robot declaration before transport starts while explicit `site.yaml`
+  intrinsics remain authoritative. RealSense now publishes its aligned color
+  profile and depth scale, enabling local RGB-D localization without
+  hard-coded device numbers.
 - Add an explicit Python/native binding API handshake for both SDK wheel
   flavors. A stale local extension built from another commit now fails before
   hardware opens (or makes the teleop selector fall back with a warning)

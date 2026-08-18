@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from .. import SessionStamp
     from ..descriptors import Intrinsics
 
-__all__ = ["CameraDriver", "CameraFrame", "CameraSample"]
+__all__ = ["CameraCalibrationDriver", "CameraDriver", "CameraFrame", "CameraSample"]
 
 
 def _frozen_rgb(value: object) -> np.ndarray:
@@ -73,6 +73,19 @@ class CameraDriver(Protocol):
     def capture(self) -> CameraFrame: ...
 
     def close(self) -> None: ...
+
+
+@runtime_checkable
+class CameraCalibrationDriver(Protocol):
+    """Optional live calibration extension for camera drivers.
+
+    A driver that can read the active stream profile exposes its rectified
+    color intrinsics here.  The SDK folds those facts into the registered
+    camera declaration before transport starts.  Drivers without this
+    extension remain valid and use the explicit ``site.yaml`` intrinsics.
+    """
+
+    def intrinsics(self) -> Intrinsics: ...
 
 
 @dataclass(frozen=True, eq=False)

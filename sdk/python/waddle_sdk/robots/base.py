@@ -50,15 +50,15 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Protocol, runtime_checkable
 
 import numpy as np
 
 from .._session import Control, create_core_session
-from ..cameras import CameraDriver, CameraFrame, CameraSample
+from ..cameras import CameraCalibrationDriver, CameraDriver, CameraFrame, CameraSample
 from ..descriptors import Camera as CameraDescription
-from ..descriptors import FrameTransform, Robot
+from ..descriptors import FrameTransform, Intrinsics, Robot
 
 __all__ = [
     "CONSOLE_THREAD_NAME",
@@ -2325,6 +2325,7 @@ class RigSession:
         self.arms: dict[str, Arm] = {}
         self.cameras: dict[str, CameraDriver] = {}
         self.camera_pumps: dict[str, CameraPump] = {}
+        self._robot: Robot | None = None
         self.core = None
         self.control: Control | None = None
         self.park = ParkGate()
@@ -2334,7 +2335,7 @@ class RigSession:
     @property
     def robot(self) -> Robot:
         """The declaration this session registered."""
-        return self._rig.robot()
+        return self._robot or self._rig.robot()
 
     @property
     def accepted(self) -> int:
@@ -2368,7 +2369,20 @@ class RigSession:
         *,
         frame_sequence: int | None = None,
     ) -> tuple[float, float, float]:
-        return self._rig.resolve_pixel(name, x, y, frame_sequence=frame_sequence)
+        description = self.robot.cameras.get(name)
+        if description is None:
+            raise ValueError(f"camera {name!r} is not declared by this rig")
+        if description.intrinsics is None:
+            raise ValueError(f"camera {name!r} declares no intrinsics")
+        sample = self.camera_sample(name)
+        if sample is None:
+            raise RuntimeError(f"camera {name!r} has not captured a sample")
+        if frame_sequence is not None and sample.frame_sequence != frame_sequence:
+            raise RuntimeError(
+                f"camera {name!r} frame {frame_sequence} is no longer retained; "
+                f"latest is {sample.frame_sequence}"
+            )
+        return sample.point_at(x, y, description.intrinsics)
 
     def __enter__(self) -> RigSession:
         return self._open(create_core_session)
@@ -2392,6 +2406,29 @@ class RigSession:
         try:
             self.arms = self._rig.arms()
             self.cameras = self._rig.cameras()
+            declarations = dict(self._rig.robot().cameras)
+            changed = False
+            for name, description in declarations.items():
+                if description.intrinsics is not None:
+                    continue
+                driver = self.cameras.get(name)
+                if not isinstance(driver, CameraCalibrationDriver):
+                    continue
+                try:
+                    intrinsics = driver.intrinsics()
+                except RuntimeError:
+                    continue
+                if not isinstance(intrinsics, Intrinsics):
+                    raise TypeError(
+                        f"camera {name!r} intrinsics() must return "
+                        "waddle_sdk.descriptors.Intrinsics"
+                    )
+                declarations[name] = replace(description, intrinsics=intrinsics)
+                changed = True
+            declared = self._rig.robot()
+            self._robot = (
+                replace(declared, cameras=declarations) if changed else declared
+            )
             self.control = self._rig.control(self.arms, send=self._send)
             pre_reset = (
                 self._rig.pre_reset(self.arms)
@@ -2400,7 +2437,7 @@ class RigSession:
             )
             self.core = open_session(
                 self._project,
-                self._rig.robot(),
+                self.robot,
                 self.control,
                 pre_reset=pre_reset,
                 **self._init_kwargs,

@@ -136,7 +136,22 @@ class _RsPipeline:
         self.stops = 0
 
     def start(self, _config):
-        return SimpleNamespace(get_device=lambda: self.device)
+        intrinsics = SimpleNamespace(
+            fx=612.0,
+            fy=613.0,
+            ppx=321.0,
+            ppy=239.0,
+            coeffs=[0.0, 0.0, 0.0, 0.0, 0.0],
+        )
+        stream = SimpleNamespace(
+            as_video_stream_profile=lambda: SimpleNamespace(
+                get_intrinsics=lambda: intrinsics
+            )
+        )
+        return SimpleNamespace(
+            get_device=lambda: self.device,
+            get_stream=lambda _stream: stream,
+        )
 
     def try_wait_for_frames(self, _timeout_ms: int):
         return self.behavior["confirm"], _RsFrames()
@@ -208,6 +223,11 @@ def test_realsense_resets_a_pipeline_that_opens_without_frames(monkeypatch):
     assert frame.rgb.shape == (2, 3, 3)
     assert frame.depth is not None and frame.depth.shape == (2, 3)
     assert driver.depth_scale_mm == pytest.approx(1.0)
+    assert driver.intrinsics().fx == pytest.approx(612.0)
+    assert driver.intrinsics().fy == pytest.approx(613.0)
+    assert driver.intrinsics().cx == pytest.approx(321.0)
+    assert driver.intrinsics().cy == pytest.approx(239.0)
+    assert driver.intrinsics().depth_scale_mm == pytest.approx(1.0)
 
 
 def test_realsense_rebuilds_after_a_later_capture_timeout(monkeypatch):

@@ -79,7 +79,11 @@ def _robot() -> descriptors.Robot:
 
 
 def _rig(
-    closed: list[str], camera: _BlockingCamera, *, camera_name: str = "overhead"
+    closed: list[str],
+    camera: _BlockingCamera,
+    *,
+    camera_name: str = "overhead",
+    declaration: descriptors.Robot | None = None,
 ) -> base.Rig:
     def build_arms() -> dict[str, base.Arm]:
         return {
@@ -94,7 +98,7 @@ def _rig(
         }
 
     return base.Rig(
-        declaration=_robot(),
+        declaration=declaration or _robot(),
         build_arms=build_arms,
         build_cameras=lambda: {camera_name: camera},
         rate_hz=RATE_HZ,
@@ -119,6 +123,39 @@ def test_rig_session_owns_pumps_and_closes_a_blocked_camera():
 
     managed.close()
     assert closed == ["camera", "arm"]
+
+
+def test_rig_session_registers_optional_live_camera_intrinsics():
+    closed: list[str] = []
+
+    class CalibratedCamera(_BlockingCamera):
+        def intrinsics(self) -> descriptors.Intrinsics:
+            return descriptors.Intrinsics(
+                fx=612.0,
+                fy=613.0,
+                cx=321.0,
+                cy=239.0,
+                depth_scale_mm=1.0,
+            )
+
+    camera = CalibratedCamera(closed)
+    declared = _robot()
+    declared = descriptors.Robot(
+        name=declared.name,
+        action_space=declared.action_space,
+        cameras={"overhead": descriptors.Camera(width=2, height=2, fps=RATE_HZ)},
+    )
+    managed = _rig(closed, camera, declaration=declared).session(
+        "project", console=False
+    )
+
+    with managed:
+        intrinsics = managed.robot.cameras["overhead"].intrinsics
+        assert intrinsics is not None
+        assert (intrinsics.fx, intrinsics.fy) == (612.0, 613.0)
+        compiled = managed.robot._compile([])["cameras"][0]["intrinsics"]
+        assert compiled["fx"] == 612.0
+        assert compiled["depthScaleMm"] == 1.0
 
 
 def test_partial_camera_open_failure_closes_camera_then_arm():

@@ -19,6 +19,7 @@ from typing import Any
 
 import numpy as np
 
+from ..descriptors import Intrinsics
 from .base import CameraFrame
 
 __all__ = ["RealSenseDriver"]
@@ -81,6 +82,7 @@ class RealSenseDriver:
         self._recover_lock = threading.Lock()
         self._closed = False
         self.depth_scale_mm = 0.0
+        self._intrinsics: Intrinsics | None = None
         with self._recover_lock:
             self._open_with_recovery()
 
@@ -139,6 +141,31 @@ class RealSenseDriver:
         self.depth_scale_mm = (
             float(profile.get_device().first_depth_sensor().get_depth_scale()) * 1000.0
         )
+        try:
+            active = profile.get_stream(self._rs.stream.color)
+            video = active.as_video_stream_profile()
+            raw = video.get_intrinsics()
+            coefficients = tuple(float(value) for value in getattr(raw, "coeffs", ()))
+            self._intrinsics = Intrinsics(
+                fx=float(raw.fx),
+                fy=float(raw.fy),
+                cx=float(raw.ppx),
+                cy=float(raw.ppy),
+                distortion=coefficients,
+                depth_scale_mm=self.depth_scale_mm,
+            )
+        except (AttributeError, TypeError, ValueError):
+            # Older/fake vendor profiles may not expose calibration.  The
+            # optional extension then remains unavailable and site.yaml is
+            # still the authoritative fallback.
+            self._intrinsics = None
+
+    def intrinsics(self) -> Intrinsics:
+        """Return intrinsics for the aligned RGB/depth grid in active use."""
+
+        if self._intrinsics is None:
+            raise RuntimeError("the active RealSense profile exposes no intrinsics")
+        return self._intrinsics
 
     def _confirm_streaming(self) -> bool:
         if self._pipeline is None:
