@@ -15,6 +15,7 @@ from __future__ import annotations
 import importlib
 import threading
 import time
+from collections.abc import Callable
 from typing import Any
 
 import numpy as np
@@ -83,6 +84,7 @@ class RealSenseDriver:
         self._closed = False
         self.depth_scale_mm = 0.0
         self._intrinsics: Intrinsics | None = None
+        self._active_intrinsics: Any = None
         with self._recover_lock:
             self._open_with_recovery()
 
@@ -102,6 +104,7 @@ class RealSenseDriver:
     def _stop_pipeline(self) -> None:
         pipeline, self._pipeline = self._pipeline, None
         self._align = None
+        self._active_intrinsics = None
         if pipeline is not None:
             try:
                 pipeline.stop()
@@ -145,6 +148,7 @@ class RealSenseDriver:
             active = profile.get_stream(self._rs.stream.color)
             video = active.as_video_stream_profile()
             raw = video.get_intrinsics()
+            self._active_intrinsics = raw
             coefficients = tuple(float(value) for value in getattr(raw, "coeffs", ()))
             self._intrinsics = Intrinsics(
                 fx=float(raw.fx),
@@ -159,6 +163,23 @@ class RealSenseDriver:
             # optional extension then remains unavailable and site.yaml is
             # still the authoritative fallback.
             self._intrinsics = None
+
+    def _point_resolver(
+        self,
+    ) -> Callable[[int, int, float], tuple[float, float, float]]:
+        intrinsics = self._active_intrinsics
+        if intrinsics is None:
+            raise RuntimeError("the active RealSense profile exposes no intrinsics")
+
+        def resolve(x: int, y: int, depth_m: float) -> tuple[float, float, float]:
+            point = self._rs.rs2_deproject_pixel_to_point(
+                intrinsics,
+                [float(x), float(y)],
+                float(depth_m),
+            )
+            return float(point[0]), float(point[1]), float(point[2])
+
+        return resolve
 
     def intrinsics(self) -> Intrinsics:
         """Return intrinsics for the aligned RGB/depth grid in active use."""
@@ -220,6 +241,7 @@ class RealSenseDriver:
         return CameraFrame(
             rgb=np.asanyarray(color.get_data()),
             depth=np.asanyarray(depth.get_data()),
+            point_resolver=self._point_resolver(),
         )
 
     def capture(self) -> CameraFrame:

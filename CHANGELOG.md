@@ -20,6 +20,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   intrinsics remain authoritative. RealSense now publishes its aligned color
   profile and depth scale, enabling local RGB-D localization without
   hard-coded device numbers.
+- Preserve vendor-correct local pixel deprojection for distorted RGB-D streams.
+  `CameraFrame`/`CameraSample` now carry an optional, local-only point resolver;
+  RealSense attaches librealsense deprojection for its active aligned profile, the
+  camera pump preserves it with the paired timestamp/depth sample, and the generic
+  pinhole fallback still refuses non-zero distortion when a driver supplies no resolver.
 - Add an explicit Python/native binding API handshake for both SDK wheel
   flavors. A stale local extension built from another commit now fails before
   hardware opens (or makes the teleop selector fall back with a warning)

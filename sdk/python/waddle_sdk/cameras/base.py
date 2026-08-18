@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import numpy as np
@@ -54,11 +55,20 @@ class CameraFrame:
 
     rgb: np.ndarray
     depth: np.ndarray | None = None
+    point_resolver: Callable[[int, int, float], tuple[float, float, float]] | None = (
+        field(
+            default=None,
+            repr=False,
+            compare=False,
+        )
+    )
 
     def __post_init__(self) -> None:
         rgb = _frozen_rgb(self.rgb)
         object.__setattr__(self, "rgb", rgb)
         object.__setattr__(self, "depth", _frozen_depth(self.depth, rgb.shape))
+        if self.point_resolver is not None and not callable(self.point_resolver):
+            raise TypeError("camera point_resolver must be callable")
 
 
 @runtime_checkable
@@ -79,8 +89,8 @@ class CameraDriver(Protocol):
 class CameraCalibrationDriver(Protocol):
     """Optional live calibration extension for camera drivers.
 
-    A driver that can read the active stream profile exposes its rectified
-    color intrinsics here.  The SDK folds those facts into the registered
+    A driver that can read the active stream profile exposes its aligned color
+    intrinsics here.  The SDK folds those facts into the registered
     camera declaration before transport starts.  Drivers without this
     extension remain valid and use the explicit ``site.yaml`` intrinsics.
     """
@@ -101,6 +111,13 @@ class CameraSample:
     rgb: np.ndarray
     depth: np.ndarray | None = None
     frame_sequence: int = 0
+    point_resolver: Callable[[int, int, float], tuple[float, float, float]] | None = (
+        field(
+            default=None,
+            repr=False,
+            compare=False,
+        )
+    )
 
     def __post_init__(self) -> None:
         session_ns = getattr(self.stamp, "session_ns", None)
@@ -113,7 +130,9 @@ class CameraSample:
             or not isinstance(unix_ns, int)
             or unix_ns <= 0
         ):
-            raise TypeError("CameraSample.stamp must be a paired waddle_sdk.SessionStamp")
+            raise TypeError(
+                "CameraSample.stamp must be a paired waddle_sdk.SessionStamp"
+            )
         if (
             isinstance(self.frame_sequence, bool)
             or not isinstance(self.frame_sequence, int)
@@ -125,6 +144,8 @@ class CameraSample:
         rgb = _frozen_rgb(self.rgb)
         object.__setattr__(self, "rgb", rgb)
         object.__setattr__(self, "depth", _frozen_depth(self.depth, rgb.shape))
+        if self.point_resolver is not None and not callable(self.point_resolver):
+            raise TypeError("camera point_resolver must be callable")
 
     @property
     def session_ns(self) -> int:
@@ -144,9 +165,9 @@ class CameraSample:
         bounded calibration-measurement message, but this method itself sends
         nothing.
 
-        The local resolver implements the pinhole model.  Non-zero distortion
-        requires a vendor-specific deprojection and is refused rather than
-        silently treated as rectified.
+        The local fallback implements the pinhole model. A driver may attach a
+        vendor-owned resolver to the captured frame for non-zero distortion;
+        otherwise distorted samples are refused rather than treated as rectified.
         """
 
         if self.depth is None:
@@ -174,14 +195,22 @@ class CameraSample:
             raise ValueError("camera intrinsics and depth scale must be finite")
         if fx <= 0.0 or fy <= 0.0 or scale_mm <= 0.0:
             raise ValueError("camera fx, fy, and depth_scale_mm must be > 0")
-        if any(value != 0.0 for value in distortion):
+        if self.point_resolver is None and any(value != 0.0 for value in distortion):
             raise ValueError(
                 "local pixel resolution requires rectified depth; non-zero distortion "
                 "needs the camera vendor's deprojection"
             )
-
         raw_depth = int(self.depth[y, x])
         if raw_depth == 0:
             raise ValueError(f"pixel ({x}, {y}) has no valid depth")
         z = raw_depth * scale_mm / 1000.0
+        if self.point_resolver is not None:
+            point = tuple(float(value) for value in self.point_resolver(x, y, z))
+            if len(point) != 3 or not all(math.isfinite(value) for value in point):
+                raise ValueError("camera point resolver returned a malformed xyz point")
+            if point[2] <= 0.0 or not math.isclose(
+                point[2], z, rel_tol=1e-3, abs_tol=1e-6
+            ):
+                raise ValueError("camera point resolver returned inconsistent depth")
+            return point
         return ((x - cx) * z / fx, (y - cy) * z / fy, z)

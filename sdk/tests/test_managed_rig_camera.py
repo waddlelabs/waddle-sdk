@@ -200,7 +200,15 @@ def test_capture_keeps_correlated_depth_local_and_resolves_pixels():
 
     source_rgb = np.arange(12, dtype=np.uint8).reshape(2, 2, 3)
     source_depth = np.array([[1000, 1500], [1750, 2000]], dtype=np.uint16)
-    frame = CameraFrame(rgb=source_rgb, depth=source_depth)
+    frame = CameraFrame(
+        rgb=source_rgb,
+        depth=source_depth,
+        point_resolver=lambda x, y, depth_m: (
+            x * depth_m / 100.0,
+            y * depth_m / 100.0,
+            depth_m,
+        ),
+    )
     source_rgb[:] = 0
     source_depth[:] = 0
 
@@ -258,6 +266,32 @@ def test_camera_sample_refuses_unresolvable_depth():
                 depth_scale_mm=1.0,
             ),
         )
+
+
+def test_camera_sample_uses_driver_resolver_for_distorted_depth():
+    calls: list[tuple[int, int, float]] = []
+
+    def resolve(x: int, y: int, depth_m: float) -> tuple[float, float, float]:
+        calls.append((x, y, depth_m))
+        return (0.12, -0.03, depth_m)
+
+    sample = CameraSample(
+        stamp=_Stamp(session_ns=1, unix_ns=2),
+        rgb=np.zeros((2, 2, 3), dtype=np.uint8),
+        depth=np.array([[0, 0], [0, 750]], dtype=np.uint16),
+        point_resolver=resolve,
+    )
+    intrinsics = descriptors.Intrinsics(
+        fx=100.0,
+        fy=100.0,
+        cx=0.0,
+        cy=0.0,
+        distortion=(0.1,),
+        depth_scale_mm=1.0,
+    )
+
+    assert sample.point_at(1, 1, intrinsics) == pytest.approx((0.12, -0.03, 0.75))
+    assert calls == [(1, 1, 0.75)]
 
 
 def test_vendor_adapters_are_lazy_and_name_their_install_extras(monkeypatch):

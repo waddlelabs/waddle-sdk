@@ -200,6 +200,10 @@ class _RsVendor:
     def align(self, _stream):
         return SimpleNamespace(process=lambda frames: frames)
 
+    @staticmethod
+    def rs2_deproject_pixel_to_point(_intrinsics, pixel, depth_m):
+        return [float(pixel[0]) * depth_m, float(pixel[1]) * depth_m, depth_m]
+
 
 def _fast_realsense(monkeypatch, vendor: _RsVendor) -> None:
     monkeypatch.setattr(realsense, "_vendor_module", lambda: vendor)
@@ -228,6 +232,8 @@ def test_realsense_resets_a_pipeline_that_opens_without_frames(monkeypatch):
     assert driver.intrinsics().cx == pytest.approx(321.0)
     assert driver.intrinsics().cy == pytest.approx(239.0)
     assert driver.intrinsics().depth_scale_mm == pytest.approx(1.0)
+    assert frame.point_resolver is not None
+    assert frame.point_resolver(1, 2, 0.5) == pytest.approx((0.5, 1.0, 0.5))
 
 
 def test_realsense_rebuilds_after_a_later_capture_timeout(monkeypatch):

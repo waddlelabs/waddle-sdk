@@ -1105,9 +1105,7 @@ def apply_decision(
     elif isinstance(velocity_feedforward_rad_s, Mapping):
         velocity_rows = velocity_feedforward_rad_s
     elif isinstance(decided, dict):
-        raise TypeError(
-            "a part-keyed decision needs part-keyed velocity feedforward"
-        )
+        raise TypeError("a part-keyed decision needs part-keyed velocity feedforward")
     else:
         velocity_rows = split_by_part(arms, velocity_feedforward_rad_s)
 
@@ -1197,9 +1195,7 @@ def chunk_sender(
     sidechannel = RejectLog("step", report=report)
 
     def send(chunk) -> None:
-        velocities = getattr(
-            chunk, "velocity_feedforwards", [None] * len(chunk.steps)
-        )
+        velocities = getattr(chunk, "velocity_feedforwards", [None] * len(chunk.steps))
         for (values, gripper, _offset_ns), velocity in zip(
             chunk.steps, velocities, strict=True
         ):
@@ -1916,6 +1912,7 @@ class CameraPump(threading.Thread):
                     rgb=frame.rgb,
                     depth=frame.depth,
                     frame_sequence=self._next_sequence,
+                    point_resolver=frame.point_resolver,
                 )
                 expected = (self._description.height, self._description.width)
                 if sample.rgb.shape[:2] != expected:

@@ -125,6 +125,11 @@ waddle-sdk/
                              #   RigSession folds into the declaration before
                              #   core registration. Explicit site.yaml values
                              #   win; cameras without the extension are valid.
+                             #   CameraFrame/CameraSample may also carry an
+                             #   optional LOCAL-ONLY vendor point resolver;
+                             #   RealSense uses librealsense for distorted
+                             #   aligned pixels, while the generic pinhole
+                             #   fallback refuses non-zero distortion.
                              #   Orbbec/RealSense adapters import vendor SDKs
                              #   lazily behind [orbbec]/[realsense]; USB does
                              #   the same for OpenCV behind [usb]. [cameras]
@@ -133,7 +138,8 @@ waddle-sdk/
                              #   proves frame flow, resets one wedged device
                              #   once, rebuilds after a later timeout, and
                              #   reports the active color-grid intrinsics plus
-                             #   depth scale through that optional extension.
+                             #   depth scale through that optional extension
+                             #   and attaches its matching deprojection path.
       robots/                # opt-in driver-extension modules; Site resolves
                              #   their declared module:factory targets lazily.
                              #   base.py is the vendor-neutral Driver/SimDriver,
