@@ -309,9 +309,12 @@ top-level dirs; they are not built yet.
       for; measured on this tree, 3.7 MB wheel / 9.8 MB `.so` against
       16.7 MB / 45.1 MB — ~4.5x.
     - `python/waddle_sdk/_native.py` is the ONE place that picks a core: the
-      bundled one unless a version-matched `waddle_teleop._core` is installed
+      bundled one unless a version- and `BINDING_API_VERSION`-matched
+      `waddle_teleop._core` is installed
       and `WADDLE_NO_TELEOP != "1"` (a mismatch warns and falls back).
-      `_native.FEATURES` (a frozenset re-exported from the SELECTED core) is
+      A stale bundled core fails at import before hardware opens; a stale
+      teleop core warns and falls back to the bundled core. `_native.FEATURES`
+      (a frozenset re-exported from the SELECTED core) is
       the only feature detection the Python layer may do — never a
       try-import, and never `_core.FEATURES`, which on a `[teleop]` install
       describes the bundled core the process is not using.

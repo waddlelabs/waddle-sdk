@@ -14,6 +14,7 @@ import numpy as np
 import numpy.typing as npt
 
 __version__: str
+BINDING_API_VERSION: Final[int]
 
 # Which connected transports this build carries ("grpc", "livekit"); empty
 # for a from-source build with no features. The only feature detection the

@@ -12,6 +12,15 @@ mod episode;
 mod session;
 mod verbs;
 
+/// Python/native binding contract, independent of the release version.
+///
+/// Development builds of the default and teleop distributions can share a
+/// semantic version while coming from different commits. Bump this whenever
+/// Python starts requiring a newly exposed native attribute or method, so
+/// `_native.py` refuses a stale extension at import instead of discovering
+/// the mismatch during robot motion.
+const BINDING_API_VERSION: u32 = 2;
+
 /// Which connected transports this extension was compiled with — the ONLY
 /// feature-detection surface the Python layer may branch on (it decides
 /// which kwargs it can honor and what to say when it cannot; everything
@@ -65,6 +74,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(validate_robot_json, m)?)?;
     m.add_function(wrap_pyfunction!(robot_json_roundtrip, m)?)?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
+    m.add("BINDING_API_VERSION", BINDING_API_VERSION)?;
     m.add("FEATURES", PyFrozenSet::new(m.py(), built_features())?)?;
     Ok(())
 }

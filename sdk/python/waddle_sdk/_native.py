@@ -36,6 +36,18 @@ import warnings
 from typing import TYPE_CHECKING
 
 
+# This Python surface consumes GateInfo.velocity_feedforward and the matching
+# chunk/action additions. A semantic package version cannot distinguish two
+# local wheels built from different commits, so the native shim carries this
+# deliberately small compatibility epoch as well.
+_REQUIRED_BINDING_API_VERSION = 2
+
+
+def _binding_api(module: object) -> int | None:
+    value = getattr(module, "BINDING_API_VERSION", None)
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
 def _select_core():
     """Return the core module this process should use (see the rules in the
     module docstring). Called exactly once, at import.
@@ -47,6 +59,15 @@ def _select_core():
     one ever builds a session, so the cost is a few pages of memory and
     nothing is shared between them."""
     from . import _core as bundled
+
+    bundled_api = _binding_api(bundled)
+    if bundled_api != _REQUIRED_BINDING_API_VERSION:
+        raise RuntimeError(
+            "waddle-sdk Python/native binding mismatch: bundled core exposes "
+            f"binding API {bundled_api!r}, but Python requires "
+            f"{_REQUIRED_BINDING_API_VERSION}. Reinstall or rebuild waddle-sdk "
+            "from one checkout before opening hardware."
+        )
 
     try:
         from waddle_teleop import _core as teleop
@@ -60,6 +81,18 @@ def _select_core():
             f"{bundled.__version__}: ignoring it and running on the bundled core, "
             f"so LiveKit media stays unavailable. Install the matched pair with "
             f"pip install 'waddle-sdk[teleop]=={bundled.__version__}'",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return bundled
+    teleop_api = _binding_api(teleop)
+    if teleop_api != _REQUIRED_BINDING_API_VERSION:
+        warnings.warn(
+            "waddle-sdk-teleop native binding does not match this Python "
+            f"surface (teleop API {teleop_api!r}, required "
+            f"{_REQUIRED_BINDING_API_VERSION}); ignoring it and using the "
+            "bundled core, so LiveKit media stays unavailable. Reinstall or "
+            "rebuild both wheels from one checkout.",
             RuntimeWarning,
             stacklevel=2,
         )

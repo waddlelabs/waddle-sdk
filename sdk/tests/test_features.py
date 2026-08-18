@@ -100,6 +100,11 @@ def test_version_is_the_cores_own():
     assert isinstance(waddle_sdk.__version__, str) and waddle_sdk.__version__
 
 
+def test_python_and_selected_native_core_share_the_binding_api():
+    assert _core.BINDING_API_VERSION == _native._REQUIRED_BINDING_API_VERSION
+    assert _native.core.BINDING_API_VERSION == _native._REQUIRED_BINDING_API_VERSION
+
+
 # --- The two projects' metadata, held to each other ------------------------
 
 
@@ -145,6 +150,7 @@ def test_both_distributions_are_one_build_of_one_manifest():
 def _fake_teleop_core(version: str) -> types.ModuleType:
     module = types.ModuleType("waddle_teleop._core")
     module.__version__ = version
+    module.BINDING_API_VERSION = _native._REQUIRED_BINDING_API_VERSION
     module.FEATURES = frozenset({"grpc", "livekit"})
     return module
 
@@ -181,6 +187,14 @@ def test_select_core_falls_back_on_a_version_mismatch(monkeypatch):
     message = str(record[0].message)
     assert "9.9.9" in message and _core.__version__ in message
     assert "pip install" in message
+
+
+def test_select_core_falls_back_on_a_binding_api_mismatch(monkeypatch):
+    teleop = _fake_teleop_core(_core.__version__)
+    teleop.BINDING_API_VERSION -= 1
+    _install_fake_teleop(monkeypatch, teleop)
+    with pytest.warns(RuntimeWarning, match="native binding"):
+        assert _native._select_core() is _core
 
 
 def test_select_core_honors_the_opt_out(monkeypatch):

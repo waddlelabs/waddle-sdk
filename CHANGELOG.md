@@ -13,6 +13,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Add an explicit Python/native binding API handshake for both SDK wheel
+  flavors. A stale local extension built from another commit now fails before
+  hardware opens (or makes the teleop selector fall back with a warning)
+  instead of surfacing as a missing `GateInfo` attribute during motion.
 - Redact gRPC and LiveKit bearer tokens from transport object representations
   so connection-scoped credentials cannot leak through incidental logging.
 - Restore the extracted RealSense adapter's wedged-device recovery: prove that
