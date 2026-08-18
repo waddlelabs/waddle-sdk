@@ -123,6 +123,9 @@ waddle-sdk/
                              #   lazily behind [orbbec]/[realsense]; USB does
                              #   the same for OpenCV behind [usb]. [cameras]
                              #   composes all three; mock is dependency-free.
+                             #   RealSense owns one process-lifetime context,
+                             #   proves frame flow, resets one wedged device
+                             #   once, and rebuilds after a later timeout.
       robots/                # opt-in driver-extension modules; Site resolves
                              #   their declared module:factory targets lazily.
                              #   base.py is the vendor-neutral Driver/SimDriver,

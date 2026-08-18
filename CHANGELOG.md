@@ -13,6 +13,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Restore the extracted RealSense adapter's wedged-device recovery: prove that
+  a newly opened pipeline actually delivers frames, hardware-reset and retry
+  once when it does not, rebuild once after a later capture timeout, and keep
+  one process-lifetime librealsense context so its USB watcher is not torn down
+  mid-session. Fake-vendor tests pin reset, recovery, and bounded failure.
 - Promote known-trajectory joint-velocity feedforward from a YAM-local
   optimization to the generic SDK contract. The append-only negotiated
   `waddle.v0.motion.feedforward` field now survives remote intake, core gate
