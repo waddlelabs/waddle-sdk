@@ -440,6 +440,9 @@ there is no test/CI workflow yet, so the local gates above are still the gate.
   `waddle_ingest::SessionClock` mints it in production code (clippy
   `disallowed-methods` enforces; `FakeClock` for tests). Do not weaken this: it exists
   because of a production data-corruption postmortem.
+  A composite SDK `Observation` takes its outer `Stamp` after snapshotting parts
+  and camera samples, so a concurrently published camera frame cannot appear to
+  come from the observation envelope's future.
 - **Proto evolution is append-only.** Never reuse or renumber a field or enum value;
   removed fields become `reserved` (number AND name). Times/durations are `int64`
   nanoseconds (`_ns`; wall twins `_unix_ns`; operator-clock `_client_ns`, never

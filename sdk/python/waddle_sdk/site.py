@@ -725,7 +725,6 @@ class SiteSession:
 
     def observe(self) -> Observation:
         managed = self._require()
-        stamp = managed.core.stamp()
         parts: dict[str, PartObservation] = {}
         for name, arm in managed.arms.items():
             position, velocity = arm.state()
@@ -743,6 +742,10 @@ class SiteSession:
             for name in managed.robot.cameras
             if (sample := managed.camera_sample(name)) is not None
         }
+        # Stamp the composite envelope after taking its constituent snapshots.
+        # Camera pumps update concurrently; stamping first can make a frame
+        # captured during assembly appear to come from the observation's future.
+        stamp = managed.core.stamp()
         return Observation(stamp.session_ns, stamp.unix_ns, parts, cameras)
 
     def submit(self, action, observation=None) -> SubmitResult:

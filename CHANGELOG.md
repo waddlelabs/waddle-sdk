@@ -13,6 +13,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Stamp each composite SDK observation after snapshotting its robot parts and
+  concurrently published camera samples. Fresh camera frames can no longer appear a
+  few milliseconds newer than their enclosing observation and be falsely rejected by
+  Metal as stale.
+
 - Preserve live camera calibration across the SDK/Metal extraction. Camera
   drivers may implement the optional `CameraCalibrationDriver.intrinsics()`
   extension; `RigSession` folds those active-stream facts into the registered

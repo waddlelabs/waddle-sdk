@@ -216,6 +216,36 @@ def test_hardware_opens_only_inside_context_and_closes_once(tmp_path):
     assert site_fixtures.closed == {"arms": 1, "cameras": 1}
 
 
+def test_observation_envelope_is_stamped_after_camera_snapshot(tmp_path):
+    site = waddle_sdk.load_site(_write_site(tmp_path))
+    with site.open(console=False, _testing=True) as session:
+        managed = session._managed
+        assert managed.wait_camera("overhead", timeout_s=2.0) is not None
+        events: list[str] = []
+        core = managed.core
+
+        class _CoreOrderProbe:
+            def stamp(self):
+                events.append("stamp")
+                return core.stamp()
+
+            def __getattr__(self, name):
+                return getattr(core, name)
+
+        camera_sample = managed.camera_sample
+
+        def observed_camera(name):
+            events.append(f"camera:{name}")
+            return camera_sample(name)
+
+        managed.core = _CoreOrderProbe()
+        managed.camera_sample = observed_camera
+        observation = session.observe()
+
+        assert events == ["camera:overhead", "stamp"]
+        assert observation.session_ns >= observation.cameras["overhead"].session_ns
+
+
 def test_local_calibration_measurement_does_not_require_remote_feature(tmp_path):
     site = waddle_sdk.load_site(_write_site(tmp_path))
     with site.open(console=False, _testing=True) as session:
