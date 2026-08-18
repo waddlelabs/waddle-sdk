@@ -55,7 +55,7 @@ waddle-sdk connect --site site.yaml \
 ```
 
 The API key comes from `WADDLE_API_KEY` or a secret prompt. The default target is
-`https://connect.waddle.dev:443` and can be overridden by
+`https://api.waddlelabs.ai:443` and can be overridden by
 `WADDLE_CONNECTOR_TARGET` or `--target`.
 
 See [`sdk/README.md`](sdk/README.md) for the manifest and driver contracts.

@@ -13,7 +13,7 @@ Run it from the sdk directory:
 The same program can select a remote waddle.v0 control transport:
 
     transport = waddle_sdk.Grpc(
-        "https://connect.waddle.dev:443",
+        "https://api.waddlelabs.ai:443",
         token,
         customer_id="customer",
         project_id="project",

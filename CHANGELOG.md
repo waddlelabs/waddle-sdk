@@ -27,6 +27,7 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Changed
 
+- Point the default hosted connector target at `api.waddlelabs.ai:443`.
 - **BREAKING:** make `Site`, `SiteSession`, `Run`, `load_site`, transport selection, outcomes, and manifest errors the only root API. Site sessions use a private non-global builder with fixed hold-first, core-enforced safety wiring.
 - Apply configured workspace bounds to the TCP and every adapter-supplied
   conservative collision sphere. Commands are rejected whole instead of

@@ -26,7 +26,7 @@ def _parser() -> argparse.ArgumentParser:
     connect.add_argument(
         "--target",
         default=os.environ.get(
-            "WADDLE_CONNECTOR_TARGET", "https://connect.waddle.dev:443"
+            "WADDLE_CONNECTOR_TARGET", "https://api.waddlelabs.ai:443"
         ),
         help="hosted waddle.v0 endpoint",
     )
