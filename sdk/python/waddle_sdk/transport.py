@@ -6,7 +6,7 @@ feature negotiation, reconnect behavior, and connection-scoped safety.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -18,7 +18,7 @@ class Grpc:
     """
 
     url: str
-    token: str | None = None
+    token: str | None = field(default=None, repr=False)
     customer_id: str | None = None
     project_id: str | None = None
     workspace_id: str | None = None
@@ -52,7 +52,7 @@ class LiveKit:
     """
 
     url: str
-    token: str
+    token: str = field(repr=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.url, str) or not self.url:

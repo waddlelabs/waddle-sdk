@@ -13,6 +13,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Redact gRPC and LiveKit bearer tokens from transport object representations
+  so connection-scoped credentials cannot leak through incidental logging.
 - Restore the extracted RealSense adapter's wedged-device recovery: prove that
   a newly opened pipeline actually delivers frames, hardware-reset and retry
   once when it does not, rebuild once after a later capture timeout, and keep
