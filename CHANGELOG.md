@@ -13,6 +13,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Restore the extracted YAM's known-trajectory velocity feedforward through
+  the typed SDK runtime command and optional driver-extension seam. Cap the
+  arm hint, force zero gripper velocity, preserve position-only I2RT fallback,
+  and never synthesize velocity from noisy measurements or IK setpoints.
 - Quiesce and join the pinned I2RT YAM CAN writer before vendor shutdown
   closes its SocketCAN descriptor, preventing a final negative-fd write race.
 - Preserve a YAM unit's semantic `[closed, open]` I2RT gripper-limit order,

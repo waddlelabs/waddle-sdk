@@ -78,6 +78,7 @@ __all__ = [
     "CrossArm",
     "Driver",
     "ParkGate",
+    "PositionVelocityDriver",
     "RejectLog",
     "Rig",
     "RigSession",
@@ -316,6 +317,27 @@ class Driver(Protocol):
     def home(self, values: Sequence[float]) -> bool: ...
 
     def close(self) -> None: ...
+
+
+@runtime_checkable
+class PositionVelocityDriver(Protocol):
+    """Optional driver extension for a known joint-velocity feedforward.
+
+    The ordinary :class:`Driver` contract remains position-only so existing
+    hardware integrations keep working unchanged.  A driver implementing
+    this extension receives the already-admitted position target plus a
+    trajectory producer's known velocity.  It returns ``True`` when the
+    hardware accepted both and ``False`` when it deliberately degraded to a
+    position-only command.
+
+    This is never permission to estimate velocity from measurements or a
+    noisy IK stream.  The producer either knows the commanded trajectory
+    velocity and supplies it, or the ordinary ``write(target)`` path is used.
+    """
+
+    def write_position_velocity(
+        self, target: np.ndarray, velocity_feedforward_rad_s: np.ndarray
+    ) -> bool: ...
 
 
 class SimDriver:
@@ -1059,7 +1081,14 @@ def _cross_arm_collision_refusal(
     return None
 
 
-def apply_decision(arms: Mapping[str, Arm], decided) -> bool:
+def apply_decision(
+    arms: Mapping[str, Arm],
+    decided,
+    *,
+    velocity_feedforward_rad_s: (
+        Mapping[str, Sequence[float]] | Sequence[float] | None
+    ) = None,
+) -> bool:
     """Apply one gate decision atomically across every addressed part.
 
     The declared layout is resolved first, then every target is checked against
@@ -1070,13 +1099,45 @@ def apply_decision(arms: Mapping[str, Arm], decided) -> bool:
     complete decision reached the drivers.
     """
     rows = decided if isinstance(decided, dict) else split_by_part(arms, decided)
-    prepared: list[tuple[Arm, np.ndarray]] = []
+    velocity_rows: Mapping[str, Sequence[float]]
+    if velocity_feedforward_rad_s is None:
+        velocity_rows = {}
+    elif isinstance(velocity_feedforward_rad_s, Mapping):
+        velocity_rows = velocity_feedforward_rad_s
+    elif isinstance(decided, dict):
+        raise TypeError(
+            "a part-keyed decision needs part-keyed velocity feedforward"
+        )
+    else:
+        velocity_rows = split_by_part(arms, velocity_feedforward_rad_s)
+
+    unknown_velocity_parts = set(velocity_rows) - set(rows)
+    if unknown_velocity_parts:
+        raise ValueError(
+            "velocity feedforward names parts absent from the decision: "
+            + ", ".join(sorted(unknown_velocity_parts))
+        )
+
+    prepared: list[tuple[Arm, np.ndarray, np.ndarray | None]] = []
     refusal: tuple[Arm, str] | None = None
     for part, values in rows.items():
         arm = arms[part]
         target = np.asarray(values, dtype=float).reshape(-1)
+        raw_velocity = velocity_rows.get(part)
+        velocity = (
+            None
+            if raw_velocity is None
+            else np.asarray(raw_velocity, dtype=float).reshape(-1)
+        )
+        if velocity is not None and (
+            velocity.size != target.size or not np.all(np.isfinite(velocity))
+        ):
+            raise ValueError(
+                f"part {part!r} velocity feedforward must contain {target.size} "
+                "finite values"
+            )
         if target.size == 0:
-            prepared.append((arm, target))
+            prepared.append((arm, target, velocity))
             continue
         if arm.estopped:
             reason = (
@@ -1086,25 +1147,30 @@ def apply_decision(arms: Mapping[str, Arm], decided) -> bool:
         else:
             current, _velocity = arm.state()
             reason = arm.check(target, current)
-        prepared.append((arm, target))
+        prepared.append((arm, target, velocity))
         if reason is not None and refusal is None:
             refusal = (arm, reason)
 
     if refusal is None:
-        refusal = _cross_arm_collision_refusal(prepared)
+        refusal = _cross_arm_collision_refusal(
+            [(arm, target) for arm, target, _velocity in prepared]
+        )
 
     if refusal is not None:
         failed, reason = refusal
         failed.rejected += 1
         failed._reject(reason)
-        for arm, _target in prepared:
+        for arm, _target, _velocity in prepared:
             arm.hold()
         return False
 
-    for arm, target in prepared:
+    for arm, target, velocity in prepared:
         if target.size == 0:
             continue
-        arm.driver.write(target)
+        if velocity is not None and isinstance(arm.driver, PositionVelocityDriver):
+            arm.driver.write_position_velocity(target, velocity)
+        else:
+            arm.driver.write(target)
         arm.accepted += 1
     return True
 

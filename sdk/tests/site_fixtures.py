@@ -13,6 +13,7 @@ from waddle_sdk.robots import base
 
 opened = {"arms": 0, "cameras": 0}
 closed = {"arms": 0, "cameras": 0}
+velocity_commands: list[tuple[np.ndarray, np.ndarray]] = []
 
 
 class _Driver(base.SimDriver):
@@ -27,6 +28,16 @@ class _Driver(base.SimDriver):
 
     def close(self) -> None:
         closed["arms"] += 1
+
+    def write_position_velocity(self, target, velocity_feedforward_rad_s) -> bool:
+        velocity_commands.append(
+            (
+                np.asarray(target, dtype=float).copy(),
+                np.asarray(velocity_feedforward_rad_s, dtype=float).copy(),
+            )
+        )
+        super().write(target)
+        return True
 
 
 class _Camera:
@@ -53,6 +64,7 @@ def reset() -> None:
     for values in (opened, closed):
         values["arms"] = 0
         values["cameras"] = 0
+    velocity_commands.clear()
 
 
 def _collision_spheres(q):

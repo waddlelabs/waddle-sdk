@@ -599,10 +599,12 @@ class _FakeYamRobot:
         dofs: int = 7,
         info: dict | None = None,
         pinned_i2rt_close: bool = False,
+        supports_joint_state: bool = True,
     ) -> None:
         self.dofs = dofs
         self.info = {"kp": [10.0] * 7, "kd": [1.0] * 7} if info is None else info
         self.commands: list[np.ndarray] = []
+        self.state_commands: list[dict[str, np.ndarray]] = []
         self.gains: list[tuple] = []
         self.zeroed = 0
         self.closed = 0
@@ -617,6 +619,8 @@ class _FakeYamRobot:
             self._stop_event = threading.Event()
             self._server_thread = threading.Thread(target=self._serve)
             self._server_thread.start()
+        if not supports_joint_state:
+            self.command_joint_state = None
 
     def _serve(self) -> None:
         self._stop_event.wait()
@@ -632,6 +636,14 @@ class _FakeYamRobot:
 
     def command_joint_pos(self, values) -> None:
         self.commands.append(np.asarray(values, dtype=float))
+
+    def command_joint_state(self, state) -> None:
+        self.state_commands.append(
+            {
+                str(key): np.asarray(value, dtype=float)
+                for key, value in state.items()
+            }
+        )
 
     def zero_torque_mode(self) -> None:
         self.zeroed += 1
@@ -772,6 +784,75 @@ def test_the_live_driver_reads_the_hand_as_the_seventh_row(vendor):
     assert position.shape == (yam.JOINT_COUNT,)
     assert position[yam.ARM_JOINT_COUNT] == 0.5
     assert velocity.shape == (yam.JOINT_COUNT,)
+
+
+def test_a_known_velocity_uses_i2rt_joint_state_and_stops_the_hand(vendor):
+    """One-for-one port of the historical YAM feedforward write contract."""
+    driver = _live(vendor)
+    target = np.array([0.1] * yam.ARM_JOINT_COUNT + [0.5])
+    velocity = np.array([0.2] * yam.ARM_JOINT_COUNT + [9.0])
+
+    applied = driver.write_position_velocity(target, velocity)
+
+    robot = vendor.robots[0]
+    assert applied is True
+    assert robot.commands == []
+    [state] = robot.state_commands
+    assert state["pos"] == pytest.approx(target)
+    assert state["vel"][: yam.ARM_JOINT_COUNT] == pytest.approx([0.2] * 6)
+    assert state["vel"][-1] == 0.0
+    assert "kp" not in state and "kd" not in state
+
+
+def test_feedforward_velocity_is_bounded_before_i2rt_receives_it(vendor):
+    driver = _live(vendor, max_feedforward_vel_rad_s=1.5)
+    target = np.array([0.1] * yam.ARM_JOINT_COUNT + [0.5])
+    velocity = np.array([99.0, -99.0, 0.5, 0.0, 0.0, 0.0, 0.0])
+
+    driver.write_position_velocity(target, velocity)
+
+    [state] = vendor.robots[0].state_commands
+    assert state["vel"] == pytest.approx([1.5, -1.5, 0.5, 0.0, 0.0, 0.0, 0.0])
+
+
+def test_i2rt_without_joint_state_degrades_to_position_only(vendor):
+    vendor.next_kwargs = {"supports_joint_state": False}
+    lines: list[str] = []
+    driver = _live(vendor, report=lines.append)
+    target = np.array([0.1] * yam.ARM_JOINT_COUNT + [0.5])
+
+    applied = driver.write_position_velocity(target, np.zeros(yam.JOINT_COUNT))
+
+    robot = vendor.robots[0]
+    assert applied is False
+    assert len(robot.commands) == 1
+    assert robot.state_commands == []
+    assert any("degrading to position-only" in line for line in lines)
+
+
+def test_feedforward_can_be_disabled_without_disabling_motion(vendor):
+    driver = _live(vendor, velocity_feedforward=False)
+    target = np.array([0.1] * yam.ARM_JOINT_COUNT + [0.5])
+
+    applied = driver.write_position_velocity(
+        target, np.full(yam.JOINT_COUNT, 0.2)
+    )
+
+    robot = vendor.robots[0]
+    assert applied is False
+    assert len(robot.commands) == 1
+    assert robot.state_commands == []
+
+
+def test_a_position_only_write_never_invents_velocity(vendor):
+    """The SDK must not differentiate a noisy IK/setpoint stream."""
+    driver = _live(vendor)
+    driver.write(np.array([0.1] * yam.ARM_JOINT_COUNT + [0.5]))
+    driver.write(np.array([0.102] * yam.ARM_JOINT_COUNT + [0.5]))
+
+    robot = vendor.robots[0]
+    assert len(robot.commands) == 2
+    assert robot.state_commands == []
 
 
 def test_an_absent_velocity_reads_as_zero_and_an_absent_position_is_a_fault(vendor):

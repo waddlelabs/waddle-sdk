@@ -56,6 +56,8 @@ parts:
       gripper_limits: [1.7, 0.1]
       arm_gain_scale: 1.0
       gripper_gain_scale: 1.0
+      velocity_feedforward: true
+      max_feedforward_vel_rad_s: 3.0
 cameras:
   overhead:
     driver: waddle_sdk.cameras.realsense
@@ -86,6 +88,13 @@ not be sorted.
 `arm_gain_scale` changes only the first six I2RT kp/kd rows;
 `gripper_gain_scale` changes only the seventh. Both default to the vendor's
 gains and, when configured, are restored unchanged after an e-stop recovery.
+When Metal supplies a trajectory's known joint velocity, the YAM adapter uses
+I2RT `command_joint_state` for simultaneous position/velocity control. It
+never differentiates measurements or an IK stream to invent velocity, always
+sets the gripper's velocity to zero, and degrades to `command_joint_pos` on an
+I2RT build without that method. `velocity_feedforward: false` selects the same
+position-only degradation explicitly; `max_feedforward_vel_rad_s` bounds the
+motor hint independently of the declared motion speed.
 
 `static_keepouts` accepts strict axis-aligned `box` and `sphere` records with
 an ID, collision frame, optional part filter, and non-negative margin.
@@ -102,6 +111,10 @@ mismatch fails closed while the arms are opened.
 `describe`, `begin_run`, `observe`, `submit`, `hold`, `estop`, cursor-based
 `events`, and calibration measurements. Its DTOs and structured faults are in
 `waddle_sdk.runtime`. Authority and time stay native-core owned.
+`JointPositionCommand` adds an optional known velocity feedforward to a
+position action. Drivers without the optional `base.PositionVelocityDriver`
+extension receive the position normally, so the contract does not make
+velocity support a prerequisite for motion.
 
 A connector first advertises `waddle.v0.connector.binding` in an
 `authorization_only` Register carrying the exact customer, project, and workspace.
@@ -159,6 +172,11 @@ on its ancestry. `kind` is your driver's own word for itself, and this layer
 reads it in ONE direction: `"sim"` alone selects the harmless branch of the
 two questions it asks (does closing this drop all torque, is homing it a
 motion nobody is watching), and every other word is treated as metal.
+Drivers that can atomically command a position and a known trajectory velocity
+may additionally implement
+`write_position_velocity(target, velocity_feedforward_rad_s) -> bool`.
+Returning false means the driver intentionally issued its position-only
+fallback. This is an optional extension and is not added to `base.Driver`.
 
 The rest is a facts table, a driver and a factory. These are the exact lines
 `tests/test_robots_base.py` builds a whole toy vendor module out of and drives

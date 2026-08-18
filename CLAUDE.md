@@ -70,7 +70,9 @@ waddle-sdk/
                              #   `waddle`: the closed backend owns that name.
                              #   `site.py` is the primary Site/SiteSession/Run
                              #   lifecycle; `runtime.py` owns the structural
-                             #   SDK port/DTOs consumed by Metal; an open describe() adds
+                             #   SDK port/DTOs consumed by Metal, including
+                             #   JointPositionCommand's optional known-trajectory
+                             #   velocity feedforward; an open describe() adds
                              #   the canonical robot action descriptor so Metal can map
                              #   named parts; schemas/
                              #   carries the strict `waddle.site/v1` schema.
@@ -118,6 +120,8 @@ waddle-sdk/
       robots/                # opt-in driver-extension modules; Site resolves
                              #   their declared module:factory targets lazily.
                              #   base.py is the vendor-neutral Driver/SimDriver,
+                             #   plus an optional PositionVelocityDriver
+                             #   extension that degrades to Driver.write,
                              #   Arm envelope (including CollisionSphere-backed
                              #   body-workspace, keep-out and self-collision
                              #   arithmetic), recovery,
@@ -192,7 +196,13 @@ waddle-sdk/
                              #   module never needs it. `yam.declaration()` is
                              #   public and byte-equal to what the factories
                              #   register (golden test vs the rig's own
-                             #   customer program). LiveDriver also works
+                             #   customer program). LiveDriver uses I2RT
+                             #   command_joint_state for a caller's
+                             #   known bounded arm velocity (never one derived
+                             #   from measurements/IK), zeros the hand velocity,
+                             #   and falls back to command_joint_pos when the
+                             #   pinned vendor surface lacks that capability.
+                             #   LiveDriver also works
                              #   around the pinned vendor close race by joining
                              #   its unretained CAN writer before the vendor
                              #   closes python-can's SocketCAN descriptor.

@@ -99,6 +99,7 @@ __all__ = [
     "CHAIN_ORIGIN_RPY_RAD",
     "CHAIN_ORIGIN_XYZ_M",
     "DEFAULT_MAX_GRIPPER_SPEED_PER_S",
+    "DEFAULT_MAX_FEEDFORWARD_VEL_RAD_S",
     "DEFAULT_MAX_JOINT_SPEED_RAD_S",
     "DEFAULT_RATE_HZ",
     "DEFAULT_SIM_HOME",
@@ -378,6 +379,12 @@ DEFAULT_MAX_JOINT_SPEED_RAD_S = 1.0
 #: to stop.
 DEFAULT_MAX_GRIPPER_SPEED_PER_S = 2.5
 
+#: Ceiling on a supplied arm velocity feedforward.  This is a motor command
+#: applied before position error is measured, so a bad value is less
+#: self-correcting than an ordinary position target.  Metal's declared ramps
+#: are normally far below it; the bound is the adapter's last line of defense.
+DEFAULT_MAX_FEEDFORWARD_VEL_RAD_S = 3.0
+
 #: Where a TWIN starts, per arm, in that arm's own seven-row joint vector.
 #: Two distinct rows on purpose: two twins that started identical would be
 #: told apart only by their names, and which arm is which is the whole
@@ -507,6 +514,8 @@ class LiveDriver:
         gripper_limits: Sequence[float],
         arm_gain_scale: float = 1.0,
         gripper_gain_scale: float = 1.0,
+        velocity_feedforward: bool = True,
+        max_feedforward_vel_rad_s: float = DEFAULT_MAX_FEEDFORWARD_VEL_RAD_S,
         zero_gravity: bool = False,
         report: Callable[[str], None] = base.status,
     ) -> None:
@@ -530,6 +539,16 @@ class LiveDriver:
         self._report = report
         self._lock = threading.Lock()
         self._estopped = False
+        self._velocity_feedforward = bool(velocity_feedforward)
+        self._max_feedforward_vel_rad_s = float(max_feedforward_vel_rad_s)
+        if (
+            not math.isfinite(self._max_feedforward_vel_rad_s)
+            or self._max_feedforward_vel_rad_s <= 0.0
+        ):
+            raise ValueError(
+                "max_feedforward_vel_rad_s must be finite and > 0, got "
+                f"{max_feedforward_vel_rad_s!r}"
+            )
         self._robot = get_yam_robot(
             channel=channel,
             gripper_type=GripperType.LINEAR_4310,
@@ -546,6 +565,24 @@ class LiveDriver:
                 )
             self._default_kp, self._default_kd = self._snapshot_gains()
             self._apply_gain_scales(arm_gain_scale, gripper_gain_scale)
+            self._can_command_state = callable(
+                getattr(self._robot, "command_joint_state", None)
+            )
+            if not self._velocity_feedforward:
+                self._report(
+                    f"live {self.channel}: velocity feedforward disabled; "
+                    "position-only commands"
+                )
+            elif not self._can_command_state:
+                self._report(
+                    f"live {self.channel}: I2RT has no command_joint_state; "
+                    "velocity feedforward unavailable, degrading to position-only"
+                )
+            else:
+                self._report(
+                    f"live {self.channel}: velocity feedforward available via "
+                    "command_joint_state"
+                )
         except BaseException:
             # The bus is already open by the time anything here can refuse, and
             # a constructor that raises hands its caller an exception instead of
@@ -682,6 +719,50 @@ class LiveDriver:
                     "moves nothing. Clear the latch at the machine."
                 )
             self._robot.command_joint_pos(np.asarray(target, dtype=float))
+
+    def write_position_velocity(
+        self,
+        target: np.ndarray,
+        velocity_feedforward_rad_s: np.ndarray,
+    ) -> bool:
+        """Latch position plus a known arm velocity when I2RT supports it.
+
+        Older or alternate I2RT builds may omit ``command_joint_state``.  In
+        that case this method performs the ordinary position write and
+        returns ``False``; motion remains available, only the tracking aid is
+        absent.  The hand is always commanded with zero velocity because it
+        is a position latch which may be holding an object, not a trajectory
+        axis to push through its target.
+        """
+        if self._zero_gravity:
+            raise RuntimeError(
+                f"{self.channel}: this arm was opened in zero-gravity mode "
+                "(compliant, hand movable) and this driver commands nothing"
+            )
+        position = np.asarray(target, dtype=float).reshape(-1)
+        velocity = np.asarray(velocity_feedforward_rad_s, dtype=float).reshape(-1)
+        if position.size != JOINT_COUNT or velocity.size != JOINT_COUNT:
+            raise ValueError(
+                f"{self.channel}: position/velocity command widths must both be "
+                f"{JOINT_COUNT}, got {position.size}/{velocity.size}"
+            )
+        with self._lock:
+            if self._estopped:
+                raise RuntimeError(
+                    f"{self.channel}: e-stopped — zero_torque_mode() left this arm "
+                    "with no gains, so a command here would latch a setpoint that "
+                    "moves nothing. Clear the latch at the machine."
+                )
+            if not self._velocity_feedforward or not self._can_command_state:
+                self._robot.command_joint_pos(position)
+                return False
+            cap = self._max_feedforward_vel_rad_s
+            bounded = np.zeros(JOINT_COUNT, dtype=float)
+            bounded[:ARM_JOINT_COUNT] = np.clip(
+                velocity[:ARM_JOINT_COUNT], -cap, cap
+            )
+            self._robot.command_joint_state({"pos": position, "vel": bounded})
+            return True
 
     def hold(self) -> None:
         if self._zero_gravity:
@@ -1093,6 +1174,8 @@ def _build_arms(
     rate_hz: float,
     arm_gain_scale: float,
     gripper_gain_scale: float,
+    velocity_feedforward: bool,
+    max_feedforward_vel_rad_s: float,
     report: Callable[[str], None],
 ) -> Callable[[], dict[str, base.Arm]]:
     """How to open these arms. Called by `Rig.arms()`, never by the factory:
@@ -1126,6 +1209,8 @@ def _build_arms(
                         gripper_limits=site.gripper_limits,
                         arm_gain_scale=arm_gain_scale,
                         gripper_gain_scale=gripper_gain_scale,
+                        velocity_feedforward=velocity_feedforward,
+                        max_feedforward_vel_rad_s=max_feedforward_vel_rad_s,
                         zero_gravity=zero_gravity,
                         report=report,
                     )
@@ -1176,6 +1261,8 @@ def bimanual(
     max_gripper_speed_per_s: float = DEFAULT_MAX_GRIPPER_SPEED_PER_S,
     arm_gain_scale: float = 1.0,
     gripper_gain_scale: float = 1.0,
+    velocity_feedforward: bool = True,
+    max_feedforward_vel_rad_s: float = DEFAULT_MAX_FEEDFORWARD_VEL_RAD_S,
     name: str = "yam-bimanual",
     robot_id: str = "",
     cell_id: str = "",
@@ -1270,6 +1357,8 @@ def bimanual(
             rate_hz=rate_hz,
             arm_gain_scale=arm_gain_scale,
             gripper_gain_scale=gripper_gain_scale,
+            velocity_feedforward=velocity_feedforward,
+            max_feedforward_vel_rad_s=max_feedforward_vel_rad_s,
             report=report,
         ),
         rate_hz=rate_hz,
@@ -1297,6 +1386,8 @@ def arm(
     max_gripper_speed_per_s: float = DEFAULT_MAX_GRIPPER_SPEED_PER_S,
     arm_gain_scale: float = 1.0,
     gripper_gain_scale: float = 1.0,
+    velocity_feedforward: bool = True,
+    max_feedforward_vel_rad_s: float = DEFAULT_MAX_FEEDFORWARD_VEL_RAD_S,
     name: str = "yam",
     robot_id: str = "",
     cell_id: str = "",
@@ -1348,6 +1439,8 @@ def arm(
             rate_hz=rate_hz,
             arm_gain_scale=arm_gain_scale,
             gripper_gain_scale=gripper_gain_scale,
+            velocity_feedforward=velocity_feedforward,
+            max_feedforward_vel_rad_s=max_feedforward_vel_rad_s,
             report=report,
         ),
         rate_hz=rate_hz,

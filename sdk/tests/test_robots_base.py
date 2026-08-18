@@ -173,6 +173,23 @@ class _LiveLikeDriver(_CountingDriver):
         return False
 
 
+class _VelocityDriver(_CountingDriver):
+    """The optional velocity-aware extension, independent of Driver."""
+
+    def __init__(self, home=HOME) -> None:
+        super().__init__(home)
+        self.state_writes: list[tuple[np.ndarray, np.ndarray]] = []
+
+    def write_position_velocity(self, target, velocity_feedforward_rad_s) -> bool:
+        self.state_writes.append(
+            (
+                np.asarray(target, dtype=float),
+                np.asarray(velocity_feedforward_rad_s, dtype=float),
+            )
+        )
+        return True
+
+
 # ---------------------------------------------------------------------------
 # The driver protocol
 # ---------------------------------------------------------------------------
@@ -186,6 +203,11 @@ def test_a_driver_written_by_hand_satisfies_the_driver_protocol():
     """Swappable drivers are the point of the protocol: a customer's own
     object is admitted on its members, never on its ancestry."""
     assert isinstance(_CountingDriver(), base.Driver)
+
+
+def test_velocity_feedforward_is_an_optional_driver_extension():
+    assert not isinstance(_CountingDriver(), base.PositionVelocityDriver)
+    assert isinstance(_VelocityDriver(), base.PositionVelocityDriver)
 
 
 def test_an_object_missing_a_verb_is_not_a_driver():
@@ -522,6 +544,53 @@ def test_a_part_keyed_intervention_commands_only_the_part_it_names():
 
     assert arms["left"].driver.writes == []
     assert len(arms["right"].driver.writes) == 1
+
+
+def test_a_known_velocity_reaches_a_capable_driver_after_envelope_preflight():
+    driver = _VelocityDriver()
+    arm = _arm(driver)
+
+    accepted = base.apply_decision(
+        {"toy": arm},
+        [0.05, -0.05, 0.9],
+        velocity_feedforward_rad_s=[0.2, -0.2, 0.0],
+    )
+
+    assert accepted is True
+    assert driver.writes == []
+    [(position, velocity)] = driver.state_writes
+    assert position.tolist() == pytest.approx([0.05, -0.05, 0.9])
+    assert velocity.tolist() == pytest.approx([0.2, -0.2, 0.0])
+
+
+def test_a_known_velocity_degrades_to_position_only_for_an_ordinary_driver():
+    driver = _CountingDriver()
+    arm = _arm(driver)
+
+    accepted = base.apply_decision(
+        {"toy": arm},
+        [0.05, -0.05, 0.9],
+        velocity_feedforward_rad_s=[0.2, -0.2, 0.0],
+    )
+
+    assert accepted is True
+    assert len(driver.writes) == 1
+
+
+def test_velocity_feedforward_never_bypasses_an_owner_refusal():
+    driver = _VelocityDriver()
+    arm = _arm(driver)
+
+    accepted = base.apply_decision(
+        {"toy": arm},
+        [0.5, 0.0, 1.0],
+        velocity_feedforward_rad_s=[0.2, 0.0, 0.0],
+    )
+
+    assert accepted is False
+    assert driver.state_writes == []
+    assert driver.writes == []
+    assert driver.holds == 1
 
 
 def test_multipart_dispatch_preflights_every_envelope_before_any_write():

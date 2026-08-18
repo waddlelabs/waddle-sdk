@@ -10,7 +10,7 @@ from __future__ import annotations
 import enum
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Protocol, TypeAlias, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, runtime_checkable
 
 import numpy as np
 import numpy.typing as npt
@@ -19,6 +19,58 @@ from .cameras import CameraSample
 
 JSONScalar: TypeAlias = str | int | float | bool | None
 JSONValue: TypeAlias = JSONScalar | list["JSONValue"] | dict[str, "JSONValue"]
+
+
+@dataclass(frozen=True)
+class JointPositionCommand:
+    """One joint-position action plus an optional known velocity hint.
+
+    ``velocity_feedforward_rad_s`` is actuator feedforward, not a second
+    motion target.  A trajectory producer may set it only when it knows the
+    commanded path's velocity; SDK drivers that do not implement the optional
+    velocity-aware extension execute ``positions`` normally.  In particular,
+    nobody differentiates measured positions or an IK stream to invent this
+    value.
+    """
+
+    positions: tuple[float, ...]
+    velocity_feedforward_rad_s: tuple[float, ...] | None = None
+
+    def __init__(
+        self,
+        positions: Sequence[float] | npt.NDArray[np.float64],
+        velocity_feedforward_rad_s: (
+            Sequence[float] | npt.NDArray[np.float64] | None
+        ) = None,
+    ) -> None:
+        position_values = tuple(float(value) for value in positions)
+        if not position_values or not all(np.isfinite(position_values)):
+            raise ValueError("positions must be a non-empty finite joint vector")
+        velocity_values = (
+            None
+            if velocity_feedforward_rad_s is None
+            else tuple(float(value) for value in velocity_feedforward_rad_s)
+        )
+        if velocity_values is not None:
+            if len(velocity_values) != len(position_values):
+                raise ValueError(
+                    "velocity_feedforward_rad_s must have the same width as positions"
+                )
+            if not all(np.isfinite(velocity_values)):
+                raise ValueError("velocity_feedforward_rad_s must contain finite values")
+        object.__setattr__(self, "positions", position_values)
+        object.__setattr__(self, "velocity_feedforward_rad_s", velocity_values)
+
+
+if TYPE_CHECKING:
+    Action: TypeAlias = (
+        Sequence[float] | npt.NDArray[np.float64] | JointPositionCommand
+    )
+else:
+    # Keep clean imports compatible with numpy's minimal runtime surface.
+    # Protocol annotations are postponed; only static consumers need the
+    # expanded union.
+    Action: TypeAlias = object
 
 
 class FaultCode(str, enum.Enum):
@@ -93,7 +145,7 @@ class RunPort(Protocol):
 
     def step(
         self,
-        action: Sequence[float] | npt.NDArray[np.float64],
+        action: Action,
         observation: Observation | Sequence[float] | npt.NDArray[np.float64] | None = None,
     ) -> SubmitResult: ...
 
@@ -117,7 +169,7 @@ class SdkRuntimePort(Protocol):
 
     def submit(
         self,
-        action: Sequence[float] | npt.NDArray[np.float64],
+        action: Action,
         observation: Observation | Sequence[float] | npt.NDArray[np.float64] | None = None,
     ) -> SubmitResult: ...
 
@@ -140,7 +192,9 @@ class SdkRuntimePort(Protocol):
 
 
 __all__ = [
+    "Action",
     "FaultCode",
+    "JointPositionCommand",
     "JSONValue",
     "Observation",
     "PartObservation",

@@ -9,7 +9,7 @@ import pytest
 import site_fixtures
 import waddle_sdk
 import waddle_sdk.site as site_api
-from waddle_sdk.runtime import SdkRuntimePort
+from waddle_sdk.runtime import JointPositionCommand, SdkRuntimePort
 
 
 def _write_site(tmp_path, extra: str = ""):
@@ -253,6 +253,28 @@ def test_run_routes_gate_decision_through_owner_envelope(tmp_path):
         events = session.events()
         assert [event.cursor for event in events] == list(range(1, len(events) + 1))
         assert any(event.kind == "run.step" for event in events)
+
+
+def test_run_carries_a_known_velocity_only_for_the_unchanged_gate_action(tmp_path):
+    site = waddle_sdk.load_site(_write_site(tmp_path))
+    with site.open(console=False, _testing=True) as session:
+        with session.run(task="known ramp", actor="test") as run:
+            command = JointPositionCommand(
+                [0.1, -0.1], velocity_feedforward_rad_s=[0.5, -0.5]
+            )
+            result = run.step(command, run.observe())
+
+    assert result.dispatched is True
+    [(position, velocity)] = site_fixtures.velocity_commands
+    assert position.tolist() == pytest.approx([0.1, -0.1])
+    assert velocity.tolist() == pytest.approx([0.5, -0.5])
+
+
+def test_joint_position_command_rejects_malformed_velocity_hints():
+    with pytest.raises(ValueError, match="same width"):
+        JointPositionCommand([0.1, 0.2], velocity_feedforward_rad_s=[0.3])
+    with pytest.raises(ValueError, match="finite"):
+        JointPositionCommand([0.1, 0.2], velocity_feedforward_rad_s=[0.3, float("nan")])
 
 
 def test_root_exports_only_primary_surface():

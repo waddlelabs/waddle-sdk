@@ -24,6 +24,7 @@ from .robots import base
 from .robots.site import PartConfig
 from .runtime import (
     FaultCode,
+    JointPositionCommand,
     JSONValue,
     Observation,
     PartObservation,
@@ -879,18 +880,35 @@ class Run:
             raise RuntimeFault(FaultCode.NOT_OPEN, "run has not started")
         if self._episode.done:
             raise RuntimeFault(FaultCode.CONFLICT, "run is already terminal")
+        velocity_feedforward = None
+        gate_action = action
+        if isinstance(action, JointPositionCommand):
+            gate_action = np.asarray(action.positions, dtype=np.float64)
+            if action.velocity_feedforward_rad_s is not None:
+                velocity_feedforward = np.asarray(
+                    action.velocity_feedforward_rad_s, dtype=np.float64
+                )
         if isinstance(observation, Observation):
             obs = observation.gate_vector()
         else:
             obs = observation
-        decided = self._episode.gate(action, obs)
+        decided = self._episode.gate(gate_action, obs)
         gate = self._episode.last_gate
         kind = "pass" if gate is None else str(gate.kind)
         part = None if gate is None else gate.part
         dispatched = decided is not None
         detail = ""
         if dispatched:
-            dispatched = base.apply_decision(self._session._require().arms, decided)
+            dispatched = base.apply_decision(
+                self._session._require().arms,
+                decided,
+                # Feedforward describes the caller's exact position path. If
+                # the core substituted or blended another action, it no longer
+                # describes what will be dispatched and must be dropped.
+                velocity_feedforward_rad_s=(
+                    velocity_feedforward if kind == "pass" else None
+                ),
+            )
             if not dispatched:
                 kind = "owner_refusal"
                 detail = "the owner envelope refused the complete action"
