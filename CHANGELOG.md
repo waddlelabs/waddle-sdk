@@ -72,12 +72,14 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Changed
 
+- Change the default hosted connector target to
+  `https://connect.waddlelabs.ai:443`; `api.waddlelabs.ai` is the hosted
+  browser UI endpoint.
 - Add an optional, strict hardware-neutral gripper geometry fact set to
   `site.yaml`: the TCP-frame closing axis, TCP-to-pinch offset in metres, and
   canonical pointing-down `wxyz` orientation. The three fields are declared
   together and validated for finite/unit geometry so Metal can compose generic
   grasp skills without embedding a YAM or other vendor-specific convention.
-- Point the default hosted connector target at `api.waddlelabs.ai:443`.
 - **BREAKING:** make `Site`, `SiteSession`, `Run`, `load_site`, transport selection, outcomes, and manifest errors the only root API. Site sessions use a private non-global builder with fixed hold-first, core-enforced safety wiring.
 - Apply configured workspace bounds to the TCP and every adapter-supplied
   conservative collision sphere. Commands are rejected whole instead of
@@ -123,6 +125,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Add `waddle_sdk.discovery`, a non-opening, vendor-neutral hardware scan for
+  configuration frontends. It reports immutable Linux CAN/serial/camera
+  evidence, isolates optional provider failures, and supports custom adapter
+  scanners through the `waddle_sdk.hardware_discovery` entry-point group.
 - Add a strict driver-neutral `parts.*.gripper` Site mapping from physical jaw
   opening metres to a declared action row. The mapping is public runtime
   metadata and is not forwarded into adapter factories, so YAM manifests can

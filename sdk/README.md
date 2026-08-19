@@ -34,6 +34,21 @@ contracts live in their subpackages. The older module-global lifecycle, local
 web UI, hosted task/artifact facades, and execution-backend discovery are not
 part of the public surface.
 
+## Hardware discovery for configuration frontends
+
+`waddle_sdk.discovery.discover_hardware()` performs a non-opening scan for
+Linux CAN/serial transports and camera devices. It returns immutable evidence;
+it never constructs a driver, opens a robot bus, starts a camera pipeline, or
+guesses that a generic CAN device is a particular robot. Configuration tools
+must ask the site operator to choose the adapter and provide owner-envelope
+measurements that cannot be discovered safely.
+
+Custom adapters may publish a callable in the
+`waddle_sdk.hardware_discovery` entry-point group. The callable returns
+`HardwareCandidate` rows and is isolated from other providers if its optional
+vendor probe fails. This extension API intentionally remains in its subpackage
+and is not added to the small SDK root exports.
+
 ## `site.yaml`
 
 ```yaml

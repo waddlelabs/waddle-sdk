@@ -148,6 +148,12 @@ waddle-sdk/
                              #   reports the active color-grid intrinsics plus
                              #   depth scale through that optional extension
                              #   and attaches its matching deprojection path.
+      discovery.py           # non-opening configuration evidence for CAN,
+                             #   serial and camera devices; immutable rows,
+                             #   isolated custom scanners via the
+                             #   waddle_sdk.hardware_discovery entry-point
+                             #   group. Never constructs a driver or guesses
+                             #   which robot is attached to a generic bus.
       robots/                # opt-in driver-extension modules; Site resolves
                              #   their declared module:factory targets lazily.
                              #   base.py is the vendor-neutral Driver/SimDriver,
