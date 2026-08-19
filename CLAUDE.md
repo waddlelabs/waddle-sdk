@@ -78,7 +78,11 @@ waddle-sdk/
                              #   carries the strict `waddle.site/v1` schema.
                              #   A part-level `gripper` record is driver-neutral
                              #   public metadata mapping physical jaw metres to
-                             #   one declared action row. Its optional complete
+                             #   one declared action row; the open runtime's
+                             #   action descriptor carries that row's actual
+                             #   max velocity, not the arm-joint value, so Metal
+                             #   can rate-bound gripper streams without knowing
+                             #   the hardware vendor. Its optional complete
                              #   grasp-geometry fact set declares the TCP-frame
                              #   closing axis, pinch offset, and canonical
                              #   pointing-down wxyz orientation for generic
@@ -211,7 +215,10 @@ waddle-sdk/
                              #   installer, comments included: it may name
                              #   only what a wheel-holder can open (gated).
                              #   Also the LiveDriver + the bimanual()/arm()
-                             #   factories. GOTCHA: driving metal needs the
+                             #   factories. Their declaration publishes separate
+                             #   arm and gripper velocity rows matching the same
+                             #   profile the owner envelope enforces. GOTCHA:
+                             #   driving metal needs the
                              #   vendor package, which is NOT a dependency and
                              #   cannot be an extra (not on PyPI; direct refs
                              #   are rejected there) — it is the documented

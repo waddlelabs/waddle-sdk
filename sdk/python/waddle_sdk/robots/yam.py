@@ -880,19 +880,25 @@ class LiveDriver:
 def _part_space(
     rate_hz: float,
     max_joint_speed_rad_s: float,
+    max_gripper_speed_per_s: float,
     joint_limits: Sequence[Sequence[float]] = JOINT_LIMITS,
 ) -> JointSpace:
     """One arm: six joints plus the gripper row, at the declared rate."""
+    max_velocities = (max_joint_speed_rad_s,) * ARM_JOINT_COUNT + (
+        max_gripper_speed_per_s,
+    )
     return JointSpace(
         joints=[
             Joint(
                 name=name,
                 min_position=lo,
                 max_position=hi,
-                max_velocity=max_joint_speed_rad_s,
+                max_velocity=max_velocity,
                 max_effort=MAX_JOINT_EFFORT_NM,
             )
-            for name, (lo, hi) in zip(JOINT_NAMES, joint_limits, strict=True)
+            for name, (lo, hi), max_velocity in zip(
+                JOINT_NAMES, joint_limits, max_velocities, strict=True
+            )
         ],
         rate_hz=rate_hz,
         # One action per tick, replaced as soon as the next arrives.
@@ -908,6 +914,7 @@ def declaration(
     cell_id: str = "",
     rate_hz: float = DEFAULT_RATE_HZ,
     max_joint_speed_rad_s: float = DEFAULT_MAX_JOINT_SPEED_RAD_S,
+    max_gripper_speed_per_s: float = DEFAULT_MAX_GRIPPER_SPEED_PER_S,
     joint_limits: Sequence[Sequence[float]] = JOINT_LIMITS,
     base_frame: str = BASE_FRAME,
     declare_urdf: bool | None = None,
@@ -933,6 +940,10 @@ def declaration(
         (see :func:`bimanual`): what the declaration carries and what the
         envelope enforces are then the same numbers, which is the only way a
         teleoperator or an agent is shown the range this rig really has.
+    ``max_joint_speed_rad_s`` / ``max_gripper_speed_per_s``
+        The distinct per-second bounds carried on their corresponding action
+        rows. Factories pass these same values to the owner envelope, allowing a
+        hardware-neutral consumer to stream inside the public declaration.
     ``declare_urdf``
         Whether to carry the shipped model as ``kinematics_urdf``. Defaults to
         "yes if this declaration describes ONE chain". A URDF field describes
@@ -952,12 +963,22 @@ def declaration(
             rate_hz=rate_hz,
             chunking=Chunking(horizon=1, replan="immediate", interp="hold"),
             **{
-                part: _part_space(rate_hz, max_joint_speed_rad_s, joint_limits)
+                part: _part_space(
+                    rate_hz,
+                    max_joint_speed_rad_s,
+                    max_gripper_speed_per_s,
+                    joint_limits,
+                )
                 for part in part_names
             },
         )
     else:
-        action_space = _part_space(rate_hz, max_joint_speed_rad_s, joint_limits)
+        action_space = _part_space(
+            rate_hz,
+            max_joint_speed_rad_s,
+            max_gripper_speed_per_s,
+            joint_limits,
+        )
 
     one_chain = len(part_names) <= 1
     if declare_urdf is None:
@@ -1342,6 +1363,7 @@ def bimanual(
             cell_id=cell_id,
             rate_hz=rate_hz,
             max_joint_speed_rad_s=max_joint_speed_rad_s,
+            max_gripper_speed_per_s=max_gripper_speed_per_s,
             joint_limits=joints,
             frames=frames,
             cameras=cameras,
@@ -1423,6 +1445,7 @@ def arm(
             cell_id=cell_id,
             rate_hz=rate_hz,
             max_joint_speed_rad_s=max_joint_speed_rad_s,
+            max_gripper_speed_per_s=max_gripper_speed_per_s,
             joint_limits=joints,
             base_frame=site.base_frame,
             declare_urdf=declare_urdf,

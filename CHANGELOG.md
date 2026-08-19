@@ -13,6 +13,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Publish the YAM gripper row's actual owner-envelope velocity in the public
+  action descriptor instead of copying the arm-joint speed onto all seven rows.
+  Hardware-neutral consumers can now stream jaw targets within the same declared
+  cadence/velocity bound the SDK enforces, including custom non-YAM integrations
+  that provide their own descriptor.
 - Stamp each composite SDK observation after snapshotting its robot parts and
   concurrently published camera samples. Fresh camera frames can no longer appear a
   few milliseconds newer than their enclosing observation and be falsely rejected by

@@ -137,23 +137,30 @@ SUBSTRATE_JOINT_LIMITS = (
 
 SUBSTRATE_RATE_HZ = 10.0
 SUBSTRATE_MAX_JOINT_SPEED_RAD_S = 1.0
+SUBSTRATE_MAX_GRIPPER_SPEED_PER_S = 2.5
 SUBSTRATE_MAX_JOINT_EFFORT_NM = 10.0
 SUBSTRATE_LEFT_BASE_FRAME = "yam_left_base"
 SUBSTRATE_RIGHT_BASE_FRAME = "yam_right_base"
 
 
 def _substrate_part_space() -> descriptors.JointSpace:
+    velocities = (SUBSTRATE_MAX_JOINT_SPEED_RAD_S,) * 6 + (
+        SUBSTRATE_MAX_GRIPPER_SPEED_PER_S,
+    )
     return descriptors.JointSpace(
         joints=[
             descriptors.Joint(
                 name=name,
                 min_position=lo,
                 max_position=hi,
-                max_velocity=SUBSTRATE_MAX_JOINT_SPEED_RAD_S,
+                max_velocity=max_velocity,
                 max_effort=SUBSTRATE_MAX_JOINT_EFFORT_NM,
             )
-            for name, (lo, hi) in zip(
-                SUBSTRATE_JOINT_NAMES, SUBSTRATE_JOINT_LIMITS, strict=True
+            for name, (lo, hi), max_velocity in zip(
+                SUBSTRATE_JOINT_NAMES,
+                SUBSTRATE_JOINT_LIMITS,
+                velocities,
+                strict=True,
             )
         ],
         rate_hz=SUBSTRATE_RATE_HZ,

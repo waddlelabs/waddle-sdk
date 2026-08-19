@@ -272,6 +272,20 @@ def test_the_gripper_row_is_the_vendors_normalized_range():
     assert spec.get("closedValue", 0.0) == closed
 
 
+def test_the_declared_gripper_velocity_matches_the_owner_envelope_profile():
+    """Consumers stream against the same per-second limit the owner enforces."""
+
+    compiled = yam.declaration(
+        rate_hz=10.0,
+        max_joint_speed_rad_s=0.7,
+        max_gripper_speed_per_s=0.2,
+    )._compile([])
+    rows = compiled["actionSpace"]["jointPosition"]["joints"]
+    velocities = {row["name"]: row["maxVelocity"] for row in rows}
+    assert all(velocities[name] == 0.7 for name in yam.ARM_JOINT_NAMES)
+    assert velocities[yam.GRIPPER_JOINT_NAME] == 0.2
+
+
 # ---------------------------------------------------------------------------
 # The chain — not intervals, so these must match
 # ---------------------------------------------------------------------------
