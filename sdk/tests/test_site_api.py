@@ -122,6 +122,44 @@ def test_driver_neutral_gripper_mapping_is_strict_and_not_a_factory_option(tmp_p
         waddle_sdk.load_site(path)
 
 
+def test_gripper_grasp_geometry_is_hardware_neutral_and_complete(tmp_path):
+    path = _write_site(tmp_path)
+    path.write_text(
+        path.read_text().replace(
+            "joint_limits: {}",
+            (
+                "joint_limits: {}\n"
+                "    gripper:\n"
+                "      joint: j1\n"
+                "      closed_m: 0.0\n"
+                "      open_m: 0.095\n"
+                "      closed_action: -1.0\n"
+                "      open_action: 1.0\n"
+                "      closing_axis_tcp: [0.0, 1.0, 0.0]\n"
+                "      pinch_offset_tcp_m: [0.044, 0.0, -0.0049]\n"
+                "      pointing_down_wxyz: [0.0, 0.0, 1.0, 0.0]"
+            ),
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    geometry = waddle_sdk.load_site(path).describe()["parts"]["arm"]["gripper"]
+    assert geometry["closing_axis_tcp"] == [0.0, 1.0, 0.0]
+    assert geometry["pinch_offset_tcp_m"] == [0.044, 0.0, -0.0049]
+    assert geometry["pointing_down_wxyz"] == [0.0, 0.0, 1.0, 0.0]
+
+    path.write_text(
+        path.read_text().replace(
+            "      pinch_offset_tcp_m: [0.044, 0.0, -0.0049]\n",
+            "",
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(waddle_sdk.ManifestValidationError, match="geometry is incomplete"):
+        waddle_sdk.load_site(path)
+
+
 def test_static_keepout_rejects_complete_action_before_driver_write(tmp_path):
     path = _write_site(tmp_path)
     path.write_text(

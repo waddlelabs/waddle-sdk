@@ -67,6 +67,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Changed
 
+- Add an optional, strict hardware-neutral gripper geometry fact set to
+  `site.yaml`: the TCP-frame closing axis, TCP-to-pinch offset in metres, and
+  canonical pointing-down `wxyz` orientation. The three fields are declared
+  together and validated for finite/unit geometry so Metal can compose generic
+  grasp skills without embedding a YAM or other vendor-specific convention.
 - Point the default hosted connector target at `api.waddlelabs.ai:443`.
 - **BREAKING:** make `Site`, `SiteSession`, `Run`, `load_site`, transport selection, outcomes, and manifest errors the only root API. Site sessions use a private non-global builder with fixed hold-first, core-enforced safety wiring.
 - Apply configured workspace bounds to the TCP and every adapter-supplied

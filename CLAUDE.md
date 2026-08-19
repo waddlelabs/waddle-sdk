@@ -78,8 +78,12 @@ waddle-sdk/
                              #   carries the strict `waddle.site/v1` schema.
                              #   A part-level `gripper` record is driver-neutral
                              #   public metadata mapping physical jaw metres to
-                             #   one declared action row; unlike `options`, it
-                             #   is never forwarded to the adapter factory.
+                             #   one declared action row. Its optional complete
+                             #   grasp-geometry fact set declares the TCP-frame
+                             #   closing axis, pinch offset, and canonical
+                             #   pointing-down wxyz orientation for generic
+                             #   Metal skills; unlike `options`, none of this is
+                             #   forwarded to the adapter factory.
                              #   Root exports exactly Site/SiteSession/Run, load_site,
                              #   Grpc/LiveKit, Outcome, and manifest errors.
                              #   transport.py holds pure transport declarations;

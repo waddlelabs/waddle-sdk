@@ -142,6 +142,48 @@ def _validate_static_envelope(document: Mapping[str, Any]) -> None:
             )
 
 
+def _validate_gripper_geometry(document: Mapping[str, Any]) -> None:
+    """Validate the optional hardware-neutral grasp geometry as one fact set."""
+
+    geometry_fields = (
+        "closing_axis_tcp",
+        "pinch_offset_tcp_m",
+        "pointing_down_wxyz",
+    )
+    for part_name, part in document["parts"].items():
+        gripper = part.get("gripper")
+        if not isinstance(gripper, Mapping):
+            continue
+        present = tuple(name for name in geometry_fields if name in gripper)
+        if present and len(present) != len(geometry_fields):
+            missing = sorted(set(geometry_fields) - set(present))
+            raise ManifestValidationError(
+                f"parts.{part_name}.gripper: grasp geometry is incomplete; "
+                f"missing {missing!r}"
+            )
+        if not present:
+            continue
+        closing_axis = np.asarray(gripper["closing_axis_tcp"], dtype=float)
+        pinch_offset = np.asarray(gripper["pinch_offset_tcp_m"], dtype=float)
+        pointing_down = np.asarray(gripper["pointing_down_wxyz"], dtype=float)
+        if not (
+            np.all(np.isfinite(closing_axis))
+            and np.all(np.isfinite(pinch_offset))
+            and np.all(np.isfinite(pointing_down))
+        ):
+            raise ManifestValidationError(
+                f"parts.{part_name}.gripper: grasp geometry must be finite"
+            )
+        if not np.isclose(float(np.linalg.norm(closing_axis)), 1.0, atol=1e-6):
+            raise ManifestValidationError(
+                f"parts.{part_name}.gripper.closing_axis_tcp must be a unit vector"
+            )
+        if not np.isclose(float(np.linalg.norm(pointing_down)), 1.0, atol=1e-6):
+            raise ManifestValidationError(
+                f"parts.{part_name}.gripper.pointing_down_wxyz must be a unit quaternion"
+            )
+
+
 def _site_path(root: Path, value: object, field_name: str) -> Path:
     if not isinstance(value, str) or not value:
         raise ManifestPathError(f"{field_name} must be a non-empty relative path")
@@ -982,6 +1024,7 @@ def load_site(path: str | Path) -> Site:
     document = _validate(_load_document(manifest_path))
     _validate_secret_references(document)
     _validate_static_envelope(document)
+    _validate_gripper_geometry(document)
     root = manifest_path.parent
     calibration_root = _site_path(
         root,

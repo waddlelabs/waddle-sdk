@@ -52,6 +52,9 @@ parts:
       open_m: 0.095
       closed_action: 0.0
       open_action: 1.0
+      closing_axis_tcp: [0.0, 1.0, 0.0]
+      pinch_offset_tcp_m: [0.044, 0.0, -0.0049]
+      pointing_down_wxyz: [0.0, 0.0, 1.0, 0.0]
     options:
       gripper_limits: [1.7, 0.1]
       arm_gain_scale: 1.0
@@ -82,7 +85,15 @@ chat configuration, API keys, lease modes, or Metal workspace paths.
 opening in metres onto one declared action row. It is visible through
 `Site.describe()` but is never forwarded into the driver factory. Adapter
 construction facts such as a YAM unit's measured motor limits remain under
-`options`. YAM limits retain I2RT's semantic `[closed, open]` order; depending
+`options`. A site that enables generic Cartesian grasping declares all three
+optional grasp-geometry fields together: the unit TCP-frame closing axis, the
+TCP-to-pad-contact offset in metres, and the canonical pointing-down quaternion
+in wire-order `wxyz`. Omitting the set leaves joint/gripper control available
+without claiming that a higher layer knows how this hand grasps. The YAM values
+above preserve the geometry and quaternion conventions derived from its reviewed
+model; another hand must publish its own facts rather than copying them.
+
+YAM limits retain I2RT's semantic `[closed, open]` order; depending
 on that unit's motor direction, the measured pair may be descending and must
 not be sorted.
 `arm_gain_scale` changes only the first six I2RT kp/kd rows;
