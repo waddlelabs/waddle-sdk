@@ -33,13 +33,14 @@ def test_camera_install_commands_are_held_to_package_metadata():
     with (SDK / "pyproject.toml").open("rb") as stream:
         extras = tomllib.load(stream)["project"]["optional-dependencies"]
 
+    assert extras["depthai"] == ["depthai>=3,<4"]
     assert extras["orbbec"] == ["pyorbbecsdk2"]
     assert extras["realsense"] == ["pyrealsense2"]
     assert extras["usb"] == ["opencv-python-headless>=4.8"]
     assert set(extras["cameras"]) == set(
-        extras["orbbec"] + extras["realsense"] + extras["usb"]
+        extras["depthai"] + extras["orbbec"] + extras["realsense"] + extras["usb"]
     )
-    for extra in ("orbbec", "realsense", "usb", "cameras"):
+    for extra in ("depthai", "orbbec", "realsense", "usb", "cameras"):
         assert f"waddle-sdk[{extra}]" in README
     assert "waddle-sdk[cameras,teleop]" in README
 

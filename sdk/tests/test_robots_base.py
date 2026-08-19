@@ -1093,6 +1093,31 @@ def test_the_proprio_tick_steps_every_part_and_reports_it():
     assert len(by_part["right"]["ee_pose"]) == 7
 
 
+def test_the_proprio_tick_uses_one_driver_read_for_joint_and_tcp_reports():
+    """A live bus supplies one coherent sample per pump period. FK must reuse
+    that sample rather than asking the hardware for an immediate second frame."""
+
+    class _ReadCountingDriver(_CountingDriver):
+        def __init__(self) -> None:
+            super().__init__()
+            self.reads = 0
+
+        def read(self):
+            self.reads += 1
+            return super().read()
+
+    driver = _ReadCountingDriver()
+    arm = _arm(driver, fk=_flat_fk, arm_dof=2)
+
+    class _Session:
+        def report_proprio(self, **_kwargs) -> None:
+            pass
+
+    base.proprio_tick(_Session(), {"right": arm})(1.0 / RATE_HZ)
+
+    assert driver.reads == 1
+
+
 # ---------------------------------------------------------------------------
 # Kinematics helpers
 # ---------------------------------------------------------------------------

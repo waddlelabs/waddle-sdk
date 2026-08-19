@@ -13,11 +13,30 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Discard the first two synchronized DepthAI RGB-D groups before exposing a
+  camera sample. OAK stereo depth can be almost entirely invalid immediately
+  after pipeline start; Metal and calibration now receive a settled aligned
+  depth frame instead of that transient startup output.
+- Make OpenArm live startup and e-stop recovery preload a zero-gain
+  measured-pose MIT frame before enabling, repeat the torque-free frame while
+  all motor enable frames settle, and ramp smoothly around a newly measured
+  pose at every step. Engaging the bus no longer asks an arm to return to an
+  earlier sample or permits a retained controller target to re-engage.
+- Drive OpenArm grippers through the vendor's dedicated torque-limited
+  `POS_FORCE` component instead of generic MIT packets. Live gripper commands
+  now use explicit bounded speed/current settings, a dedicated gripper enable
+  after the aggregate eight-motor burst, and the same zero-to-full startup
+  ramp. A dropped tail enable frame can no longer leave a state-reporting hand
+  torque-disabled and unresponsive to valid position commands.
 - Publish the YAM gripper row's actual owner-envelope velocity in the public
   action descriptor instead of copying the arm-joint speed onto all seven rows.
   Hardware-neutral consumers can now stream jaw targets within the same declared
   cadence/velocity bound the SDK enforces, including custom non-YAM integrations
   that provide their own descriptor.
+- Reuse one coherent physical state sample for each part's joint and TCP
+  telemetry in the robot pump. CAN-backed drivers are no longer read twice in
+  one pump period merely because forward kinematics is enabled.
+
 - Stamp each composite SDK observation after snapshotting its robot parts and
   concurrently published camera samples. Fresh camera frames can no longer appear a
   few milliseconds newer than their enclosing observation and be falsely rejected by
@@ -122,6 +141,22 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 - Remove lease-enforcement and handoff choice from the primary Site API; both remain native implementation details.
 
 ### Added
+
+- Add a manifest-native OpenArm v1 adapter for one or two seven-axis arms:
+  pinned model facts and joint ordering, site-owned mount and gripper endpoint
+  calibration, common-frame FK and conservative collision spheres, lazy
+  SocketCAN construction, fresh-state sequencing, parameter-ack draining, no redundant arm-mode writes, settled measured-pose enable,
+  latched position/known-velocity MIT command pumping, monitor posture, compliant e-stop,
+  re-enable, explicitly handless seven-joint live parts, deterministic cleanup,
+  and fake-vendor plus full Site composition
+  tests. The non-PyPI `openarm_can` dependency is pinned and installed
+  separately.
+- Add a lazy DepthAI 3/OAK RGB-D adapter behind `[depthai]`, composed into
+  `[cameras]`: stable MXID selection, RGB-aligned stereo depth, active EEPROM
+  intrinsics, CAM_A RGB units plus stereo-only CAM_B/C color units (CAM_B is
+  the aligned RGB grid on the latter), millimetre depth scale, synchronized
+  samples, deterministic
+  half-open cleanup, isolated-install coverage, and fake-device tests.
 
 - Add a strict driver-neutral `parts.*.gripper` Site mapping from physical jaw
   opening metres to a declared action row. The mapping is public runtime

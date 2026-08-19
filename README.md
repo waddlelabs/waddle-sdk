@@ -85,17 +85,19 @@ uv run pytest
 
 The default `waddle-sdk` wheel carries gRPC.
 `pip install "waddle-sdk[teleop]"` adds the Linux-x86_64 LiveKit companion.
-Camera adapters are lazy extras: `[orbbec]`, `[realsense]`, or `[cameras]`.
-Physical adapters are lazy too: `[xarm]`, `[alicia]`, `[alicia-d]`, or the
+Camera adapters are lazy extras: `[depthai]`, `[orbbec]`, `[realsense]`, or
+`[cameras]`. Physical adapters are lazy too: `[xarm]`, `[alicia]`,
+`[alicia-d]`, or the
 combined `[robots]`; the Synria vendor SDKs currently require Python 3.11+
 while the base SDK remains Python 3.10+.
 MuJoCo simulation is independently lazy behind `[mujoco]`.
 
-Driving an I2RT YAM also requires the vendor package pinned to the model facts
-shipped in this tree:
+Driving an I2RT YAM or OpenArm also requires its non-PyPI vendor package,
+pinned to the model facts shipped in this tree:
 
 ```bash
 pip install "i2rt @ git+https://github.com/i2rt-robotics/i2rt@570ef66681ff12bd8298aba34084307cfecc9f05"
+pip install "openarm-can @ git+https://github.com/enactic/openarm_can.git@98666042b5e9cd5b55d0bd1d7fc3aa5c42caae4d#subdirectory=python"
 ```
 
 Contributors and agents must read [`CLAUDE.md`](CLAUDE.md) before changing the

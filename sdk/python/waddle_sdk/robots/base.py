@@ -1770,7 +1770,14 @@ def proprio_tick(session, arms: Mapping[str, Arm]) -> Callable[[float], None]:
         for part, arm in arms.items():
             arm.step(dt)
             position, velocity = arm.state()
-            pose = arm.ee_pose()
+            # A physical state sample feeds both joint telemetry and FK. Calling
+            # ``arm.ee_pose()`` here would immediately read the hardware again;
+            # CAN-backed drivers may correctly time out waiting for a second full
+            # state frame that was never due in this pump period.
+            pose = None
+            if arm.fk is not None:
+                translation, rotation = arm.fk(position[: arm.arm_dof])
+                pose = np.array([*translation, *quaternion_wxyz(rotation)])
             if pose is None:
                 session.report_proprio(
                     part=part, joint_pos=position, joint_vel=velocity

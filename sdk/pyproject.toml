@@ -31,6 +31,7 @@ waddle-sdk = "waddle_sdk.cli:main"
 # `tests/test_features.py::test_the_teleop_extra_pins_this_builds_version`
 # fails until the two agree.
 teleop = ["waddle-sdk-teleop==0.1.0"]
+depthai = ["depthai>=3,<4"]
 orbbec = ["pyorbbecsdk2"]
 realsense = ["pyrealsense2"]
 usb = ["opencv-python-headless>=4.8"]
@@ -45,7 +46,7 @@ alicia-d = [
     "synriard>=1.2.2; python_version >= '3.11'",
 ]
 mujoco = ["mujoco>=3.1,<4"]
-cameras = ["pyorbbecsdk2", "pyrealsense2", "opencv-python-headless>=4.8"]
+cameras = ["depthai>=3,<4", "pyorbbecsdk2", "pyrealsense2", "opencv-python-headless>=4.8"]
 robots = [
     "xarm-python-sdk>=1.16",
     "alicia-m-sdk>=1.1.1rc1; python_version >= '3.11'",

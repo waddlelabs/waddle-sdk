@@ -129,6 +129,14 @@ def wheelhouse(tmp_path_factory: pytest.TempPathFactory) -> Path:
     )
     _build_wheel(
         directory,
+        "depthai",
+        "3.9.0",
+        files={
+            "depthai.py": b'raise RuntimeError("depthai must remain lazily imported")\n'
+        },
+    )
+    _build_wheel(
+        directory,
         "pyorbbecsdk2",
         "0.0.0",
         files={
@@ -229,6 +237,7 @@ def wheelhouse(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 CASES = (
     ("base", "", frozenset()),
+    ("depthai", "depthai", frozenset({"depthai"})),
     ("orbbec", "orbbec", frozenset({"pyorbbecsdk2"})),
     ("realsense", "realsense", frozenset({"pyrealsense2"})),
     ("usb", "usb", frozenset({"opencv-python-headless"})),
@@ -256,9 +265,16 @@ CASES = (
     (
         "cameras",
         "cameras",
-        frozenset({"opencv-python-headless", "pyorbbecsdk2", "pyrealsense2"}),
+        frozenset(
+            {"depthai", "opencv-python-headless", "pyorbbecsdk2", "pyrealsense2"}
+        ),
     ),
     ("teleop", "teleop", frozenset({"waddle-sdk-teleop"})),
+    (
+        "teleop-depthai",
+        "teleop,depthai",
+        frozenset({"depthai", "waddle-sdk-teleop"}),
+    ),
     (
         "teleop-orbbec",
         "teleop,orbbec",
@@ -279,6 +295,7 @@ CASES = (
         "teleop,cameras",
         frozenset(
             {
+                "depthai",
                 "opencv-python-headless",
                 "waddle-sdk-teleop",
                 "pyorbbecsdk2",
@@ -327,7 +344,7 @@ import json
 import sys
 
 import waddle_sdk
-from waddle_sdk.cameras import mock, orbbec, realsense, usb
+from waddle_sdk.cameras import depthai, mock, orbbec, realsense, usb
 from waddle_sdk.robots import alicia, alicia_d, mujoco
 from waddle_sdk.robots import xarm as xarm_adapter
 
@@ -343,7 +360,7 @@ print(json.dumps({
     "requirements": importlib.metadata.requires("waddle-sdk"),
     "vendor_modules": sorted(
         name for name in sys.modules
-        if name in {"alicia_d_sdk", "alicia_m_sdk", "cv2", "mujoco", "pyorbbecsdk", "pyrealsense2", "xarm"}
+        if name in {"depthai", "alicia_d_sdk", "alicia_m_sdk", "cv2", "mujoco", "pyorbbecsdk", "pyrealsense2", "xarm"}
     ),
 }))
 """
@@ -359,6 +376,7 @@ print(json.dumps({
     assert expected <= set(result["names"])
     assert not (
         {
+            "depthai",
             "opencv-python-headless",
             "mujoco",
             "pyorbbecsdk2",

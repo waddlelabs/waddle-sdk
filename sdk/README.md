@@ -156,10 +156,10 @@ hosted UI, not to an SDK-local web server.
 
 A vendor module is facts plus a lazy driver factory over the vendor-neutral
 `robots.base` layer. Factory construction opens no bus and starts no thread;
-`Site.open()` owns the actual lifecycle. The built-in YAM, xArm 6/7,
-Alicia-M, Alicia-D, MuJoCo, and camera adapters import vendor SDKs lazily, so ordinary
-imports require no hardware packages. The three manifest-native physical
-families expose a single joint space with a normalized 0..1 gripper row;
+`Site.open()` owns the actual lifecycle. The built-in YAM, OpenArm v1, xArm 6/7, Alicia-M, Alicia-D, MuJoCo, and camera
+adapters import vendor SDKs lazily, so ordinary imports require no hardware
+packages. OpenArm exposes seven arm radians plus one raw gripper-motor row and
+requires measured gripper endpoints and mounting transforms as site facts.
 Metal owns IK and planning above this boundary.
 For no-hardware work, `waddle_sdk.robots.mock:arm` is a manifest-native
 configurable simulated arm with planar FK and conservative body geometry.
@@ -305,10 +305,11 @@ came from. An unsourced number is one nothing checks.
 
 ```bash
 pip install waddle-sdk                    # control plane included
+pip install 'waddle-sdk[depthai]'         # + lazy DepthAI/OAK RGB-D adapter
 pip install 'waddle-sdk[orbbec]'          # + lazy Orbbec RGB-D adapter
 pip install 'waddle-sdk[realsense]'       # + lazy RealSense RGB-D adapter
 pip install 'waddle-sdk[usb]'             # + lazy OpenCV USB/UVC adapter
-pip install 'waddle-sdk[cameras]'         # + Orbbec, RealSense, and USB
+pip install 'waddle-sdk[cameras]'         # + DepthAI, Orbbec, RealSense, and USB
 pip install 'waddle-sdk[xarm]'            # + UFactory xArm SDK
 pip install 'waddle-sdk[alicia]'          # + Alicia-M SDK (Python 3.11+)
 pip install 'waddle-sdk[alicia-d]'        # + Alicia-D SDK (Python 3.11+)
@@ -331,14 +332,20 @@ two versions disagree (a half-upgraded environment), and honours
 
 ### Third-party content in the wheel
 
-This repo is Apache-2.0 and the wheel carries one deliberate exception:
-`waddle/robots/yam_data/` is a vendored snapshot of I2RT's YAM robot
+This repo is Apache-2.0 and the wheel carries reviewed third-party model data.
+`waddle_sdk/robots/yam_data/` is a vendored snapshot of I2RT's YAM robot
 description, shipped under its own MIT licence (`yam_data/LICENSE`, verbatim
 from the source repo) and pinned to the upstream commit its README names. It
 is data rather than code, text only — the STL meshes are not shipped — and it
 earns its 16 KB twice: `waddle_sdk.robots.yam` hands it to a single-arm
 declaration as `kinematics_urdf`, and `tests/test_yam_facts.py` compares every
 constant in that module against the vendor's own numbers in it.
+
+`waddle_sdk/robots/openarm_data/` carries the Apache-2.0 OpenArm v1 YAML and
+parallel-gripper xacro inputs pinned in its README. The OpenArm tests gate the
+seven-joint ordering, model facts, gains, limits, hand origin, and TCP offset
+against those wheel-shipped bytes. Live use additionally needs the pinned
+`openarm-can` source install printed by the adapter when it is absent.
 
 ## Development
 

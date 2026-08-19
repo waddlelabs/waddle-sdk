@@ -138,10 +138,17 @@ waddle-sdk/
                              #   RealSense uses librealsense for distorted
                              #   aligned pixels, while the generic pinhole
                              #   fallback refuses non-zero distortion.
-                             #   Orbbec/RealSense adapters import vendor SDKs
-                             #   lazily behind [orbbec]/[realsense]; USB does
-                             #   the same for OpenCV behind [usb]. [cameras]
-                             #   composes all three; mock is dependency-free.
+                             #   DepthAI/Orbbec/RealSense adapters import vendor
+                             #   SDKs lazily behind [depthai]/[orbbec]/[realsense];
+                             #   USB does the same for OpenCV behind [usb].
+                             #   [cameras] composes all four; mock is
+                             #   dependency-free. DepthAI requires a stable MXID,
+                             #   aligns stereo depth to an undistorted color grid,
+                             #   and reports active EEPROM intrinsics. It supports
+                             #   both CAM_A RGB OAKs and color stereo-only CAM_B/C
+                             #   units, using CAM_B as that unit's RGB grid, and
+                             #   drops two transient RGB-D groups while stereo
+                             #   settles before exposing the first sample.
                              #   RealSense owns one process-lifetime context,
                              #   proves frame flow, resets one wedged device
                              #   once, rebuilds after a later timeout, and
@@ -156,7 +163,8 @@ waddle-sdk/
                              #   Arm envelope (including CollisionSphere-backed
                              #   body-workspace, keep-out and self-collision
                              #   arithmetic), recovery,
-                             #   pump, Rig and RigSession
+                             #   pump (one physical state sample per part/tick
+                             #   feeds both joint telemetry and FK), Rig and RigSession
                              #   layer. SiteSession composes RigSession._open
                              #   with the internal native-session builder;
                              #   driver factory calls open no device. A half-open
@@ -180,6 +188,19 @@ waddle-sdk/
                              # strict configurable limits/rate/home, planar FK,
                              # conservative CollisionSphere geometry, and
                              # Site/static-keepout tests.
+        openarm.py,          # OpenArm v1: seven arm rows plus one raw gripper
+        openarm_data/        #   motor row, pinned source facts, common-frame
+                             #   FK and conservative spheres, bimanual/direct
+                             #   manifest factories, lazy openarm_can with fresh
+                             #   state sequencing, parameter-ack draining, no redundant
+                             #   explicit seven-row MIT mode, zero-gain
+                             #   pre-enable measured target followed by a live-pose gain ramp,
+                             #   latched PV MIT arm pumping, torque-limited POS_FORCE
+                             #   gripper control with a dedicated enable after
+                             #   the aggregate motor burst, and compliant
+                             #   e-stop. Mounts and
+                             #   installed gripper endpoints are required site facts; an
+                             #   explicitly absent hand is a seven-joint live part.
         xarm.py              # UFactory xArm 6/7: lazy xarm-python-sdk,
                              #   position-mode joint + G2 action rows,
                              #   controller-native safety setup, monitor,
@@ -247,7 +268,8 @@ waddle-sdk/
                              #   subprocess-tested and exercises load/open/run/close.
     tests/                   # pytest: Site/runtime contracts, descriptors, native
                              #   transport/FSM behavior, camera lifecycle, owner
-                             #   envelope, YAM facts/factories, lazy adapters,
+                             #   envelope, YAM/OpenArm facts and factories,
+                             #   DepthAI/vendor-camera lifecycle, lazy adapters,
                              #   packaging, and the shipped Site program. Legacy
                              #   module-global API tests were deleted at cutover.
 ```
@@ -312,11 +334,14 @@ top-level dirs; they are not built yet.
       default install cannot reach the supervision plane would be a strange
       thing to ship — and therefore in `uv sync` / `maturin develop` too, so
       the dev extension is connected, not offline.
-      Camera support is independently lazy: `[orbbec]` installs
-      `pyorbbecsdk2`, `[realsense]` installs `pyrealsense2`, and
-      `[usb]` installs OpenCV; `[cameras]` composes all three. Robot support is
+      Camera support is independently lazy: `[depthai]` installs DepthAI 3,
+      `[orbbec]` installs `pyorbbecsdk2`, `[realsense]` installs
+      `pyrealsense2`, and `[usb]` installs OpenCV; `[cameras]` composes
+      all four. Robot support is
       likewise lazy: `[xarm]`, `[alicia]`, and `[alicia-d]` install their
-      vendor packages, while `[robots]` composes them. Alicia vendor packages
+      vendor packages, while `[robots]` composes them. YAM and OpenArm are
+      built in but their non-PyPI vendor packages are separate pinned installs.
+      Alicia vendor packages
       require Python 3.11+, expressed as dependency markers without narrowing
       the base wheel's Python 3.10+ range; the explicit pre-release
       `synria-robocore` constraint is necessary for deterministic resolution.

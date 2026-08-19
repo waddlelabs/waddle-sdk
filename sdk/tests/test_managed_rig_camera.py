@@ -296,14 +296,18 @@ def test_camera_sample_uses_driver_resolver_for_distorted_depth():
 
 def test_vendor_adapters_are_lazy_and_name_their_install_extras(monkeypatch):
     before = set(sys.modules)
-    from waddle_sdk.cameras import orbbec, realsense
+    from waddle_sdk.cameras import depthai, orbbec, realsense
 
+    assert "depthai" not in set(sys.modules) - before
     assert "pyorbbecsdk" not in set(sys.modules) - before
     assert "pyrealsense2" not in set(sys.modules) - before
 
     def absent(name: str):
         raise ModuleNotFoundError(name=name)
 
+    monkeypatch.setattr(depthai.importlib, "import_module", absent)
+    with pytest.raises(RuntimeError, match=r"waddle-sdk\[depthai\]"):
+        depthai.DepthaiDriver(mxid="oak-test")
     monkeypatch.setattr(orbbec.importlib, "import_module", absent)
     with pytest.raises(RuntimeError, match=r"waddle-sdk\[orbbec\]"):
         orbbec.OrbbecDriver()
@@ -322,10 +326,11 @@ def test_camera_extra_metadata_is_orthogonal_to_teleop():
     extras = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"][
         "optional-dependencies"
     ]
+    assert extras["depthai"] == ["depthai>=3,<4"]
     assert extras["orbbec"] == ["pyorbbecsdk2"]
     assert extras["realsense"] == ["pyrealsense2"]
     assert extras["usb"] == ["opencv-python-headless>=4.8"]
     assert set(extras["cameras"]) == set(
-        extras["orbbec"] + extras["realsense"] + extras["usb"]
+        extras["depthai"] + extras["orbbec"] + extras["realsense"] + extras["usb"]
     )
     assert extras["teleop"] == [f"waddle-sdk-teleop=={waddle_sdk.__version__}"]
