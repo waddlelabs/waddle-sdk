@@ -52,6 +52,10 @@ waddle-sdk/
                              #   customer's side (grant/claim/lease/envelope,
                              #   who holds the robot in every phase); cites
                              #   FSM.md rather than restating it
+    hardware-backends.md     #   the customer porting contract: minimal
+                             #   Robot/Rig/Driver/camera surface, optional
+                             #   SDK FK/geometry facets, support/grant fallback,
+                             #   and per-scope embodiment identity
     changelogs/              #   stowed changelogs of released versions
   waddle-protocol/           # THE STANDARD: schemas + fixtures + normative docs
     proto/waddle/v0/         # descriptors, control, episode, sidecar, services, media
@@ -70,7 +74,18 @@ waddle-sdk/
                              #   `waddle`: the closed backend owns that name.
                              #   `site.py` is the primary Site/SiteSession/Run
                              #   lifecycle; `runtime.py` owns the structural
-                             #   SDK port/DTOs consumed by Metal, including
+                             #   SDK port/DTOs consumed by Metal, including an
+                             #   immutable `waddle.sdk.support/v1` matrix and
+                             #   independent optional support/FK/body-geometry
+                             #   ports. SiteSession derives those facts from
+                             #   opened Arm/camera implementations, publishes
+                             #   the exact registered action space and grants,
+                             #   gives the complete site and each robot/camera
+                             #   scope separate stable public embodiment digests
+                             #   (robot/composite identity includes each opened
+                             #   part's declared base frame),
+                             #   and never infers persistent depth support from
+                             #   one transient RGB-D sample. It also carries
                              #   JointPositionCommand's optional known-trajectory
                              #   velocity feedforward; an open describe() adds
                              #   the canonical robot action descriptor so Metal can map

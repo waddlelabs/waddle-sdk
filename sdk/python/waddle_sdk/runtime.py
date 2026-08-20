@@ -10,6 +10,7 @@ from __future__ import annotations
 import enum
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, runtime_checkable
 
 import numpy as np
@@ -19,6 +20,183 @@ from .cameras import CameraSample
 
 JSONScalar: TypeAlias = str | int | float | bool | None
 JSONValue: TypeAlias = JSONScalar | list["JSONValue"] | dict[str, "JSONValue"]
+SUPPORT_CONTRACT_VERSION = "waddle.sdk.support/v1"
+
+
+def _validate_sha256_digest(value: str) -> None:
+    if len(value) != 64 or any(char not in "0123456789abcdef" for char in value):
+        raise ValueError("embodiment digest must be a lowercase sha256 hex digest")
+
+
+def _freeze_json(value: object) -> object:
+    """Take an immutable snapshot of one JSON-shaped value."""
+    if isinstance(value, Mapping):
+        return MappingProxyType(
+            {str(key): _freeze_json(item) for key, item in value.items()}
+        )
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_json(item) for item in value)
+    return value
+
+
+def _thaw_json(value: object) -> JSONValue:
+    """Return an ordinary JSON-shaped copy of an immutable snapshot."""
+    if isinstance(value, Mapping):
+        return {str(key): _thaw_json(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw_json(item) for item in value]
+    return value  # type: ignore[return-value]
+
+
+class SupportFact(str, enum.Enum):
+    """One SDK implementation or declaration fact used by Metal.
+
+    These are support facts, not robot skill capabilities. A fact can satisfy
+    one prerequisite of a Metal capability, but it never grants permission or
+    says that a complete skill is available.
+    """
+
+    JOINT_POSITION_OBSERVATION = "observation.joint_position"
+    JOINT_VELOCITY_OBSERVATION = "observation.joint_velocity"
+    EE_POSE_OBSERVATION = "observation.ee_pose"
+    JOINT_POSITION_ACTION = "action.joint_position"
+    VELOCITY_FEEDFORWARD = "actuation.velocity_feedforward"
+    FORWARD_KINEMATICS = "kinematics.fk"
+    BODY_SPHERES = "geometry.body_spheres"
+    WORKSPACE_BOUNDS = "geometry.workspace_bounds"
+    URDF_MODEL = "model.urdf"
+    BASE_FRAME = "frame.base"
+    POSITION_LIMITS = "limits.position"
+    VELOCITY_LIMITS = "limits.velocity"
+    GRIPPER_MAPPING = "gripper.mapping"
+    GRIPPER_GEOMETRY = "gripper.geometry"
+    CAMERA_RGB = "camera.rgb"
+    CAMERA_INTRINSICS = "camera.intrinsics"
+    SEND_GRANT = "grant.send"
+    HOLD_GRANT = "grant.hold"
+    RESUME_GRANT = "grant.resume"
+    HOME_GRANT = "grant.home"
+    ESTOP_GRANT = "grant.estop"
+
+
+@dataclass(frozen=True)
+class SupportRow:
+    """Immutable support facts for one named robot part or camera."""
+
+    scope: str
+    embodiment_digest: str
+    facts: tuple[SupportFact, ...]
+
+    def __post_init__(self) -> None:
+        if not (self.scope.startswith("robot:") or self.scope.startswith("camera:")):
+            raise ValueError("support scope must start with 'robot:' or 'camera:'")
+        if not self.scope.split(":", 1)[1]:
+            raise ValueError("support scope must name a robot part or camera")
+        _validate_sha256_digest(self.embodiment_digest)
+        facts = tuple(
+            sorted(
+                {SupportFact(fact) for fact in self.facts},
+                key=lambda fact: fact.value,
+            )
+        )
+        object.__setattr__(self, "facts", facts)
+
+    def as_dict(self) -> dict[str, JSONValue]:
+        return {
+            "scope": self.scope,
+            "embodimentDigest": self.embodiment_digest,
+            "facts": [fact.value for fact in self.facts],
+        }
+
+
+@dataclass(frozen=True)
+class SupportMatrix:
+    """The SDK support envelope for one opened hardware session.
+
+    ``action_space`` and ``grants`` are immutable snapshots of the exact
+    declaration registered with the native core. ``rows`` only report facts;
+    they cannot widen either the action space or its permissions.
+    """
+
+    contract_version: str
+    embodiment_digest: str
+    action_space: Mapping[str, object]
+    grants: tuple[Mapping[str, object], ...]
+    rows: tuple[SupportRow, ...]
+
+    def __post_init__(self) -> None:
+        if self.contract_version != SUPPORT_CONTRACT_VERSION:
+            raise ValueError("unsupported SDK support contract version")
+        _validate_sha256_digest(self.embodiment_digest)
+        action_space = _freeze_json(self.action_space)
+        if not isinstance(action_space, Mapping):
+            raise TypeError("action_space must be a JSON object")
+        grants = tuple(_freeze_json(grant) for grant in self.grants)
+        if not all(isinstance(grant, Mapping) for grant in grants):
+            raise TypeError("every grant must be a JSON object")
+        rows = tuple(self.rows)
+        if len({row.scope for row in rows}) != len(rows):
+            raise ValueError("support row scopes must be unique")
+        object.__setattr__(self, "action_space", action_space)
+        object.__setattr__(self, "grants", grants)
+        object.__setattr__(self, "rows", rows)
+
+    def as_dict(self) -> dict[str, JSONValue]:
+        return {
+            "contractVersion": self.contract_version,
+            "embodimentDigest": self.embodiment_digest,
+            "actionSpace": _thaw_json(self.action_space),
+            "grants": [_thaw_json(grant) for grant in self.grants],
+            "rows": [row.as_dict() for row in self.rows],
+        }
+
+
+@dataclass(frozen=True)
+class Pose:
+    """A frame-tagged Cartesian pose using the SDK's pinned wxyz order."""
+
+    position_m: tuple[float, float, float]
+    quaternion_wxyz: tuple[float, float, float, float]
+    frame_id: str
+
+    def __post_init__(self) -> None:
+        position = tuple(float(value) for value in self.position_m)
+        quaternion = tuple(float(value) for value in self.quaternion_wxyz)
+        if len(position) != 3 or not all(np.isfinite(position)):
+            raise ValueError("position_m must contain three finite values")
+        if len(quaternion) != 4 or not all(np.isfinite(quaternion)):
+            raise ValueError("quaternion_wxyz must contain four finite values")
+        if not self.frame_id:
+            raise ValueError("Pose must declare frame_id")
+        norm = float(np.linalg.norm(quaternion))
+        if not np.isclose(norm, 1.0, rtol=1e-6, atol=1e-8):
+            raise ValueError("quaternion_wxyz must be a unit quaternion")
+        object.__setattr__(self, "position_m", position)
+        object.__setattr__(self, "quaternion_wxyz", quaternion)
+
+
+@dataclass(frozen=True)
+class BodySphere:
+    """One conservative named body sphere in one declared frame."""
+
+    name: str
+    center_m: tuple[float, float, float]
+    radius_m: float
+    frame_id: str
+
+    def __post_init__(self) -> None:
+        center = tuple(float(value) for value in self.center_m)
+        radius = float(self.radius_m)
+        if not self.name:
+            raise ValueError("BodySphere must declare name")
+        if len(center) != 3 or not all(np.isfinite(center)):
+            raise ValueError("center_m must contain three finite values")
+        if not np.isfinite(radius) or radius <= 0.0:
+            raise ValueError("radius_m must be finite and positive")
+        if not self.frame_id:
+            raise ValueError("BodySphere must declare frame_id")
+        object.__setattr__(self, "center_m", center)
+        object.__setattr__(self, "radius_m", radius)
 
 
 @dataclass(frozen=True)
@@ -191,16 +369,50 @@ class SdkRuntimePort(Protocol):
     ) -> Mapping[str, JSONValue]: ...
 
 
+@runtime_checkable
+class SdkSupportPort(Protocol):
+    """Optional SDK facet exposing a conservative support matrix."""
+
+    def support(self) -> SupportMatrix: ...
+
+
+@runtime_checkable
+class SdkKinematicsPort(Protocol):
+    """Optional SDK facet for hardware-specific forward kinematics."""
+
+    def forward_kinematics(
+        self, part: str, joint_position: Sequence[float] | npt.NDArray[np.float64]
+    ) -> Pose: ...
+
+
+@runtime_checkable
+class SdkGeometryPort(Protocol):
+    """Optional SDK facet for configuration-dependent conservative geometry."""
+
+    def body_geometry(
+        self, part: str, joint_position: Sequence[float] | npt.NDArray[np.float64]
+    ) -> tuple[BodySphere, ...]: ...
+
+
 __all__ = [
     "Action",
+    "BodySphere",
     "FaultCode",
     "JointPositionCommand",
     "JSONValue",
     "Observation",
     "PartObservation",
+    "Pose",
     "RunPort",
+    "SdkGeometryPort",
+    "SdkKinematicsPort",
     "RuntimeEvent",
     "RuntimeFault",
     "SdkRuntimePort",
+    "SdkSupportPort",
     "SubmitResult",
+    "SUPPORT_CONTRACT_VERSION",
+    "SupportFact",
+    "SupportMatrix",
+    "SupportRow",
 ]

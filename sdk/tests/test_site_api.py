@@ -5,12 +5,24 @@ from __future__ import annotations
 import textwrap
 import time
 
+import numpy as np
 import pytest
 
 import site_fixtures
 import waddle_sdk
 import waddle_sdk.site as site_api
-from waddle_sdk.runtime import JointPositionCommand, SdkRuntimePort
+from waddle_sdk.runtime import (
+    FaultCode,
+    JointPositionCommand,
+    RuntimeFault,
+    SdkGeometryPort,
+    SdkKinematicsPort,
+    SdkRuntimePort,
+    SdkSupportPort,
+    SupportFact,
+    SupportMatrix,
+    SupportRow,
+)
 
 
 def _write_site(tmp_path, extra: str = ""):
@@ -252,6 +264,153 @@ def test_hardware_opens_only_inside_context_and_closes_once(tmp_path):
         ]
 
     assert site_fixtures.closed == {"arms": 1, "cameras": 1}
+
+
+def test_open_session_exposes_immutable_support_and_optional_sdk_facets(tmp_path):
+    site = waddle_sdk.load_site(_write_site(tmp_path))
+    with site.open(console=False, _testing=True) as session:
+        assert isinstance(session, SdkSupportPort)
+        assert isinstance(session, SdkKinematicsPort)
+        assert isinstance(session, SdkGeometryPort)
+
+        matrix = session.support()
+        description = session.describe()
+        assert description["support"] == matrix.as_dict()
+        assert description["support"]["contractVersion"] == "waddle.sdk.support/v1"
+        assert description["support"]["actionSpace"] == description["robot"][
+            "actionSpace"
+        ]
+        assert description["support"]["grants"] == description["robot"]["grants"]
+        assert len(description["support"]["embodimentDigest"]) == 64
+
+        rows = {row.scope: row for row in matrix.rows}
+        arm_facts = set(rows["robot:arm"].facts)
+        assert SupportFact.JOINT_POSITION_OBSERVATION in arm_facts
+        assert SupportFact.JOINT_VELOCITY_OBSERVATION in arm_facts
+        assert SupportFact.JOINT_POSITION_ACTION in arm_facts
+        assert SupportFact.SEND_GRANT in arm_facts
+        assert SupportFact.HOLD_GRANT in arm_facts
+        assert SupportFact.ESTOP_GRANT in arm_facts
+        assert SupportFact.VELOCITY_FEEDFORWARD in arm_facts
+        assert SupportFact.BODY_SPHERES in arm_facts
+        assert SupportFact.FORWARD_KINEMATICS not in arm_facts
+
+        camera_facts = set(rows["camera:overhead"].facts)
+        assert camera_facts == {
+            SupportFact.CAMERA_RGB,
+            SupportFact.CAMERA_INTRINSICS,
+        }
+        assert all("camera.depth" not in fact.value for fact in camera_facts)
+
+        spheres = session.body_geometry("arm", [0.0, 0.0])
+        assert [sphere.name for sphere in spheres] == ["arm/link_0", "arm/link_1"]
+        assert all(sphere.frame_id == "cell" for sphere in spheres)
+
+        with pytest.raises(TypeError):
+            matrix.action_space["rateHz"] = 50.0
+        with pytest.raises(RuntimeFault) as fault:
+            session.forward_kinematics("arm", [0.0, 0.0])
+        assert fault.value.code is FaultCode.UNSUPPORTED
+
+        arm = session._managed.arms["arm"]
+        arm.base_frame = "cell"
+        base_frame_matrix = session.support()
+        original_rows = {row.scope: row for row in matrix.rows}
+        base_frame_rows = {row.scope: row for row in base_frame_matrix.rows}
+        assert base_frame_matrix.embodiment_digest != matrix.embodiment_digest
+        assert (
+            base_frame_rows["robot:arm"].embodiment_digest
+            != original_rows["robot:arm"].embodiment_digest
+        )
+        assert (
+            base_frame_rows["camera:overhead"].embodiment_digest
+            == original_rows["camera:overhead"].embodiment_digest
+        )
+
+        arm.fk = lambda _q: (
+            np.array([0.1, 0.2, 0.3]),
+            np.eye(3),
+        )
+        pose = session.forward_kinematics("arm", [0.0, 0.0])
+        assert pose.position_m == (0.1, 0.2, 0.3)
+        assert pose.quaternion_wxyz == (1.0, 0.0, 0.0, 0.0)
+        assert pose.frame_id == "cell"
+        assert SupportFact.FORWARD_KINEMATICS in {
+            fact
+            for row in session.support().rows
+            if row.scope == "robot:arm"
+            for fact in row.facts
+        }
+
+
+@pytest.mark.parametrize("invalid", ["A" * 64, "a" * 63, "g" * 64])
+def test_support_dtos_require_exact_lowercase_sha256(invalid: str):
+    valid = "a" * 64
+    with pytest.raises(ValueError, match="lowercase sha256"):
+        SupportRow(scope="robot:arm", embodiment_digest=invalid, facts=())
+
+    row = SupportRow(scope="robot:arm", embodiment_digest=valid, facts=())
+    with pytest.raises(ValueError, match="lowercase sha256"):
+        SupportMatrix(
+            contract_version="waddle.sdk.support/v1",
+            embodiment_digest=invalid,
+            action_space={},
+            grants=(),
+            rows=(row,),
+        )
+
+
+def test_support_digests_are_scoped_to_relevant_public_embodiment(tmp_path):
+    def digests(path):
+        with waddle_sdk.load_site(path).open(
+            console=False, _testing=True
+        ) as session:
+            matrix = session.support()
+            return matrix.embodiment_digest, {
+                row.scope: row.embodiment_digest for row in matrix.rows
+            }
+
+    baseline_root = tmp_path / "baseline"
+    baseline_root.mkdir()
+    baseline = _write_site(baseline_root)
+
+    camera_root = tmp_path / "camera-change"
+    camera_root.mkdir()
+    camera_change = _write_site(camera_root)
+    camera_change.write_text(
+        camera_change.read_text()
+        .replace("fps: 20}", "fps: 21}")
+        .replace("frame_id: overhead_optical", "frame_id: overhead_new"),
+        encoding="utf-8",
+    )
+
+    gripper_root = tmp_path / "gripper-change"
+    gripper_root.mkdir()
+    gripper_change = _write_site(gripper_root)
+    gripper_change.write_text(
+        gripper_change.read_text().replace(
+            "joint_limits: {}",
+            (
+                "joint_limits: {}\n"
+                "    gripper: {joint: j1, closed_m: 0.0, open_m: 0.095, "
+                "closed_action: -1.0, open_action: 1.0}"
+            ),
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    baseline_matrix, baseline_rows = digests(baseline)
+    camera_matrix, camera_rows = digests(camera_change)
+    gripper_matrix, gripper_rows = digests(gripper_change)
+
+    assert camera_matrix != baseline_matrix
+    assert camera_rows["camera:overhead"] != baseline_rows["camera:overhead"]
+    assert camera_rows["robot:arm"] == baseline_rows["robot:arm"]
+
+    assert gripper_matrix != baseline_matrix
+    assert gripper_rows["robot:arm"] != baseline_rows["robot:arm"]
+    assert gripper_rows["camera:overhead"] == baseline_rows["camera:overhead"]
 
 
 def test_observation_envelope_is_stamped_after_camera_snapshot(tmp_path):

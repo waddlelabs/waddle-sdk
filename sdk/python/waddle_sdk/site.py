@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib
 import inspect
 import json
@@ -17,20 +18,26 @@ from typing import Any
 import numpy as np
 
 from . import descriptors
-from ._session import Control, create_core_session
+from ._session import Control, _derive_grants, create_core_session
 from .cameras import CameraDriver
 from .cameras.site import CameraConfig
 from .robots import base
 from .robots.site import PartConfig
 from .runtime import (
+    BodySphere,
     FaultCode,
     JointPositionCommand,
     JSONValue,
     Observation,
     PartObservation,
+    Pose,
     RuntimeEvent,
     RuntimeFault,
     SubmitResult,
+    SUPPORT_CONTRACT_VERSION,
+    SupportFact,
+    SupportMatrix,
+    SupportRow,
 )
 from .transport import Grpc
 
@@ -754,8 +761,369 @@ class SiteSession:
         managed = self._managed
         if managed is not None:
             description["runtime"] = dict(managed.core.status())
-            description["robot"] = managed.robot._compile([])
+            description["robot"] = self._registered_robot_description(managed)
+            description["support"] = self.support().as_dict()
         return description
+
+    def _registered_robot_description(
+        self, managed: base.RigSession
+    ) -> dict[str, JSONValue]:
+        control = managed.control
+        if control is None:
+            raise RuntimeFault(
+                FaultCode.NOT_OPEN,
+                "the opened session has not registered its control verbs",
+            )
+        return managed.robot._compile(
+            _derive_grants(control, managed.robot.action_space)
+        )
+
+    @staticmethod
+    def _digest(payload: Mapping[str, object]) -> str:
+        canonical = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        ).encode("utf-8")
+        return hashlib.sha256(canonical).hexdigest()
+
+    def _composite_embodiment_digest(
+        self,
+        robot: Mapping[str, JSONValue],
+        base_frames: Mapping[str, str],
+    ) -> str:
+        parts = self.site.manifest["parts"]
+        grippers = {
+            str(name): dict(part["gripper"])
+            for name, part in parts.items()
+            if "gripper" in part
+        }
+        payload = {
+            "contractVersion": SUPPORT_CONTRACT_VERSION,
+            "actionSpace": robot["actionSpace"],
+            "kinematicsUrdf": robot.get("kinematicsUrdf"),
+            "frames": robot.get("frames"),
+            "grippers": grippers,
+            "cameras": robot.get("cameras", []),
+            "baseFrames": dict(sorted(base_frames.items())),
+        }
+        return self._digest(payload)
+
+    @staticmethod
+    def _relevant_frames(
+        robot: Mapping[str, JSONValue], action_space: Mapping[str, JSONValue]
+    ) -> dict[str, JSONValue]:
+        action_frames: set[str] = set()
+
+        def collect(value: object) -> None:
+            if isinstance(value, Mapping):
+                for key, item in value.items():
+                    if key == "frameId" and isinstance(item, str) and item:
+                        action_frames.add(item)
+                    else:
+                        collect(item)
+            elif isinstance(value, list):
+                for item in value:
+                    collect(item)
+
+        collect(action_space)
+        if not action_frames:
+            return {}
+        graph = robot.get("frames")
+        if not isinstance(graph, Mapping):
+            return {}
+        transforms = graph.get("transforms", [])
+        if not isinstance(transforms, list):
+            return {}
+        relevant_ids: set[int] = set()
+        frontier = set(action_frames)
+        while frontier:
+            child = frontier.pop()
+            for index, transform in enumerate(transforms):
+                if (
+                    not isinstance(transform, Mapping)
+                    or transform.get("child") != child
+                ):
+                    continue
+                if index in relevant_ids:
+                    continue
+                relevant_ids.add(index)
+                parent = transform.get("parent")
+                if isinstance(parent, str) and parent:
+                    frontier.add(parent)
+        relevant = [
+            transform
+            for index, transform in enumerate(transforms)
+            if index in relevant_ids
+        ]
+        return {"transforms": relevant} if relevant else {}
+
+    def _robot_embodiment_digest(
+        self,
+        *,
+        robot: Mapping[str, JSONValue],
+        action_space: Mapping[str, JSONValue],
+        gripper: Mapping[str, object] | None,
+        base_frame: str,
+    ) -> str:
+        return self._digest(
+            {
+                "contractVersion": SUPPORT_CONTRACT_VERSION,
+                "actionSpace": action_space,
+                "kinematicsUrdf": robot.get("kinematicsUrdf"),
+                "frames": self._relevant_frames(robot, action_space),
+                "gripper": None if gripper is None else dict(gripper),
+                "baseFrame": base_frame,
+            }
+        )
+
+    def _camera_embodiment_digest(
+        self, camera: Mapping[str, JSONValue]
+    ) -> str:
+        return self._digest(
+            {
+                "contractVersion": SUPPORT_CONTRACT_VERSION,
+                "camera": camera,
+            }
+        )
+
+    @staticmethod
+    def _grant_facts(grants: Sequence[Mapping[str, JSONValue]]) -> set[SupportFact]:
+        by_verb = {
+            "VERB_SEND": SupportFact.SEND_GRANT,
+            "VERB_HOLD": SupportFact.HOLD_GRANT,
+            "VERB_RESUME": SupportFact.RESUME_GRANT,
+            "VERB_HOME": SupportFact.HOME_GRANT,
+            "VERB_ESTOP": SupportFact.ESTOP_GRANT,
+        }
+        return {
+            fact
+            for grant in grants
+            if (fact := by_verb.get(str(grant.get("verb", "")))) is not None
+        }
+
+    @staticmethod
+    def _part_space_descriptions(
+        action_space: Mapping[str, JSONValue],
+        part_names: Sequence[str],
+    ) -> dict[str, Mapping[str, JSONValue]]:
+        composite = action_space.get("composite")
+        if isinstance(composite, Mapping):
+            raw_parts = composite.get("parts", [])
+            if isinstance(raw_parts, list):
+                return {
+                    str(row["name"]): row["space"]
+                    for row in raw_parts
+                    if isinstance(row, Mapping)
+                    and isinstance(row.get("name"), str)
+                    and isinstance(row.get("space"), Mapping)
+                }
+        if len(part_names) == 1:
+            return {str(part_names[0]): action_space}
+        return {}
+
+    def support(self) -> SupportMatrix:
+        """Return conservative support facts for this opened hardware session.
+
+        Facts refine the registered action space and grants; they never widen
+        either one. In particular, camera depth is not advertised because v0
+        has no stable aligned-depth declaration.
+        """
+        managed = self._require()
+        robot = self._registered_robot_description(managed)
+        action_space = robot["actionSpace"]
+        grants = robot.get("grants", [])
+        if not isinstance(action_space, Mapping) or not isinstance(grants, list):
+            raise RuntimeFault(
+                FaultCode.INTERNAL,
+                "the registered robot description has malformed support inputs",
+            )
+        base_frames = {name: arm.base_frame for name, arm in managed.arms.items()}
+        digest = self._composite_embodiment_digest(robot, base_frames)
+        grant_facts = self._grant_facts(grants)
+        part_spaces = self._part_space_descriptions(
+            action_space, tuple(managed.arms)
+        )
+        manifest_parts = self.site.manifest["parts"]
+        rows: list[SupportRow] = []
+        for name, arm in managed.arms.items():
+            facts = {
+                SupportFact.JOINT_POSITION_OBSERVATION,
+                SupportFact.JOINT_VELOCITY_OBSERVATION,
+                *grant_facts,
+            }
+            part_space = part_spaces.get(name, {})
+            joint_position = part_space.get("jointPosition")
+            if isinstance(joint_position, Mapping):
+                facts.add(SupportFact.JOINT_POSITION_ACTION)
+                joints = joint_position.get("joints", [])
+                if isinstance(joints, list) and joints:
+                    if all(
+                        isinstance(joint, Mapping)
+                        and "minPosition" in joint
+                        and "maxPosition" in joint
+                        for joint in joints
+                    ):
+                        facts.add(SupportFact.POSITION_LIMITS)
+                    if all(
+                        isinstance(joint, Mapping) and "maxVelocity" in joint
+                        for joint in joints
+                    ):
+                        facts.add(SupportFact.VELOCITY_LIMITS)
+            if isinstance(arm.driver, base.PositionVelocityDriver):
+                facts.add(SupportFact.VELOCITY_FEEDFORWARD)
+            if arm.fk is not None:
+                facts.update(
+                    (SupportFact.EE_POSE_OBSERVATION, SupportFact.FORWARD_KINEMATICS)
+                )
+            if arm.base_frame:
+                facts.add(SupportFact.BASE_FRAME)
+            if arm.collision_spheres is not None and arm.collision_frame:
+                facts.add(SupportFact.BODY_SPHERES)
+            if arm.workspace is not None:
+                facts.add(SupportFact.WORKSPACE_BOUNDS)
+            if "kinematicsUrdf" in robot:
+                facts.add(SupportFact.URDF_MODEL)
+            manifest_part = manifest_parts.get(name, {})
+            gripper = (
+                manifest_part.get("gripper")
+                if isinstance(manifest_part, Mapping)
+                else None
+            )
+            if isinstance(gripper, Mapping):
+                facts.add(SupportFact.GRIPPER_MAPPING)
+                geometry_fields = (
+                    "closing_axis_tcp",
+                    "pinch_offset_tcp_m",
+                    "pointing_down_wxyz",
+                )
+                if all(field in gripper for field in geometry_fields):
+                    facts.add(SupportFact.GRIPPER_GEOMETRY)
+            rows.append(
+                SupportRow(
+                    scope=f"robot:{name}",
+                    embodiment_digest=self._robot_embodiment_digest(
+                        robot=robot,
+                        action_space=part_space,
+                        gripper=gripper if isinstance(gripper, Mapping) else None,
+                        base_frame=arm.base_frame,
+                    ),
+                    facts=tuple(facts),
+                )
+            )
+
+        public_cameras = {
+            str(camera["name"]): camera
+            for camera in robot.get("cameras", [])
+            if isinstance(camera, Mapping) and isinstance(camera.get("name"), str)
+        }
+        for name, description in managed.robot.cameras.items():
+            facts = {SupportFact.CAMERA_RGB}
+            if description.intrinsics is not None:
+                facts.add(SupportFact.CAMERA_INTRINSICS)
+            public_camera = public_cameras.get(name)
+            if public_camera is None:
+                raise RuntimeFault(
+                    FaultCode.INTERNAL,
+                    f"camera {name!r} is missing from the registered description",
+                )
+            rows.append(
+                SupportRow(
+                    scope=f"camera:{name}",
+                    embodiment_digest=self._camera_embodiment_digest(public_camera),
+                    facts=tuple(facts),
+                )
+            )
+        return SupportMatrix(
+            contract_version=SUPPORT_CONTRACT_VERSION,
+            embodiment_digest=digest,
+            action_space=action_space,
+            grants=tuple(grants),
+            rows=tuple(rows),
+        )
+
+    @staticmethod
+    def _joint_vector(arm: base.Arm, values: Sequence[float]) -> np.ndarray:
+        try:
+            vector = np.asarray(values, dtype=float).reshape(-1)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeFault(
+                FaultCode.INVALID_REQUEST,
+                "joint_position must be a finite declared-width vector",
+            ) from exc
+        if vector.size != len(arm.joint_names) or not np.all(np.isfinite(vector)):
+            raise RuntimeFault(
+                FaultCode.INVALID_REQUEST,
+                "joint_position must be a finite declared-width vector",
+                context={"expected_width": len(arm.joint_names)},
+            )
+        return vector
+
+    def forward_kinematics(
+        self, part: str, joint_position: Sequence[float]
+    ) -> Pose:
+        """Evaluate an opened part's hardware-specific FK implementation."""
+        managed = self._require()
+        arm = managed.arms.get(part)
+        if arm is None:
+            raise RuntimeFault(FaultCode.NOT_FOUND, f"part {part!r} is not declared")
+        if arm.fk is None or not arm.base_frame:
+            raise RuntimeFault(
+                FaultCode.UNSUPPORTED,
+                f"part {part!r} provides no frame-tagged forward kinematics",
+            )
+        vector = self._joint_vector(arm, joint_position)
+        try:
+            position, rotation = arm.fk(vector[: arm.arm_dof])
+            position_values = np.asarray(position, dtype=float)
+            rotation_values = np.asarray(rotation, dtype=float)
+            if position_values.shape != (3,) or rotation_values.shape != (3, 3):
+                raise ValueError("expected xyz and a 3x3 rotation matrix")
+            quaternion = base.quaternion_wxyz(rotation_values)
+            return Pose(
+                position_m=tuple(float(value) for value in position_values),
+                quaternion_wxyz=tuple(float(value) for value in quaternion),
+                frame_id=arm.base_frame,
+            )
+        except RuntimeFault:
+            raise
+        except Exception as exc:
+            raise RuntimeFault(
+                FaultCode.INTERNAL,
+                f"part {part!r} forward kinematics failed: "
+                f"{type(exc).__name__}: {exc}",
+            ) from exc
+
+    def body_geometry(
+        self, part: str, joint_position: Sequence[float]
+    ) -> tuple[BodySphere, ...]:
+        """Evaluate an opened part's conservative named body geometry."""
+        managed = self._require()
+        arm = managed.arms.get(part)
+        if arm is None:
+            raise RuntimeFault(FaultCode.NOT_FOUND, f"part {part!r} is not declared")
+        if arm.collision_spheres is None or not arm.collision_frame:
+            raise RuntimeFault(
+                FaultCode.UNSUPPORTED,
+                f"part {part!r} provides no frame-tagged body geometry",
+            )
+        vector = self._joint_vector(arm, joint_position)
+        try:
+            return tuple(
+                BodySphere(
+                    name=sphere.name,
+                    center_m=tuple(float(value) for value in sphere.center_m),
+                    radius_m=sphere.radius_m,
+                    frame_id=arm.collision_frame,
+                )
+                for sphere in arm.collision_snapshot(vector)
+            )
+        except Exception as exc:
+            raise RuntimeFault(
+                FaultCode.INTERNAL,
+                f"part {part!r} body geometry failed: {type(exc).__name__}: {exc}",
+            ) from exc
 
     def run(self, *, task, actor) -> "Run":
         return Run(self, task=task, actor=actor)

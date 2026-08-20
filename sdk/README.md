@@ -141,6 +141,29 @@ mismatch fails closed while the arms are opened.
 position action. Drivers without the optional `base.PositionVelocityDriver`
 extension receive the position normally, so the contract does not make
 velocity support a prerequisite for motion.
+
+An opened local `SiteSession` also implements three additive, structural
+facets: `SdkSupportPort`, `SdkKinematicsPort`, and `SdkGeometryPort`. The
+support port returns an immutable `SupportMatrix` and `describe()` publishes
+the same data under `support` using `waddle.sdk.support/v1`. Its rows report
+SDK support facts, not robot skill capabilities: Metal intersects them with
+the exact registered action space and grants before enabling a skill. A
+hardware-specific FK or body-geometry implementation can therefore refine one
+facet without manufacturing motion permission or making unrelated tools fail.
+The matrix digest identifies the complete public site embodiment, while every
+row has its own scope digest: a robot row binds only that part's action space,
+declared base frame, portable model/action-frame ancestry, and gripper declaration;
+a camera row binds only that camera's public declaration. Grants, live status, connection data,
+and unit/site identity are excluded, so changing an unrelated camera cannot
+invalidate a hardware-specific robot implementation match.
+Existing vendor modules need no extra adapter surface: `Arm.fk` and
+`Arm.collision_spheres` back the optional runtime facets automatically. Missing
+facets remain honestly absent so Metal can select a generic implementation
+whose declared prerequisites are present or mark only the dependent skill
+unavailable. Camera rows intentionally do not advertise aligned depth until a
+stable depth declaration exists; observing one transient RGB-D sample is not a
+persistent hardware fact.
+
 Remote `waddle.v0` sessions negotiate `waddle.v0.motion.feedforward`; accepted
 peers preserve the hint through the core gate and raw recording, while older
 peers ignore it and execute the identical position target. This is a generic
@@ -195,6 +218,9 @@ Each RGB/RGB-D sample receives one paired monotonic/Unix stamp, RGB follows the
 recording/media path, and aligned depth remains in the SDK process.
 
 ### Write your own vendor module
+
+For the complete porting boundary, optional runtime facets, fallback behavior, and
+omission matrix, see [Porting a hardware or simulator backend](../docs/hardware-backends.md).
 
 A driver is any object with the ten members of `base.Driver` (`kind`,
 `estopped`, `read`, `write`, `hold`, `estop`, `re_enable`, `step`, `home`,

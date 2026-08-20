@@ -11,6 +11,22 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+### Added
+
+- Add immutable `waddle.sdk.support/v1` support matrices plus independent
+  structural SDK ports for hardware-specific forward kinematics and conservative
+  body geometry. Open `SiteSession` descriptions now carry the exact registered
+  action space and grants alongside per-part and per-camera support facts, allowing
+  Metal to choose a compatible generic fallback without widening permissions or
+  disabling unrelated skills. Scope-specific embodiment digests keep exact custom
+  implementation matching stable across unrelated camera/robot changes while the
+  matrix digest continues to identify the complete public site embodiment. Robot
+  and composite digests bind each opened part's declared base frame, and SDK DTOs
+  reject any digest outside exact lowercase `[0-9a-f]{64}`.
+- Add a customer hardware/simulator porting guide that defines the tested minimal
+  declaration, factory, driver, camera, optional kinematics/geometry, fallback, and
+  embodiment-identity surfaces without introducing a Metal or Waddle dependency.
+
 ### Fixed
 
 - Publish the YAM gripper row's actual owner-envelope velocity in the public
