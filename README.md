@@ -56,7 +56,9 @@ waddle-sdk connect --site site.yaml \
 
 The API key comes from `WADDLE_API_KEY` or a secret prompt. The default target is
 `https://connect.waddlelabs.ai:443` and can be overridden by
-`WADDLE_CONNECTOR_TARGET` or `--target`.
+`WADDLE_CONNECTOR_TARGET` or `--target`. Once the complete site is open, that same API
+key derives one short-lived `https://api.waddlelabs.ai/ui?token=wui_...` invitation,
+which the command prints. The long-lived API key never enters the URL or browser.
 
 See [Porting a hardware or simulator backend](docs/hardware-backends.md) for the
 minimal external integration surface and [`sdk/README.md`](sdk/README.md) for the

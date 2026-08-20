@@ -109,7 +109,13 @@ waddle-sdk/
                              #   _session.py is the private, non-global builder with
                              #   fixed hold-first/enforced core wiring. There is no
                              #   init/rollout/agent/shutdown or _testing module.
-                             #   cli.py owns the `waddle-sdk connect` process.
+                             #   cli.py owns the `waddle-sdk connect` process;
+                             #   after the complete site opens it reuses the
+                             #   exact-binding WADDLE_API_KEY once against the
+                             #   hosted HTTP invitation endpoint and prints the
+                             #   derived short-lived UI URL. The key itself never
+                             #   enters a URL/browser, the request never retries,
+                             #   and invitation failure leaves the site connected.
                              #   Driver-extension APIs stay in descriptors/,
                              #   robots/, and cameras/.
                              #   Hardware opens only in SiteSession.__enter__; a

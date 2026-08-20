@@ -13,6 +13,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Reuse the SDK-only connector's exact-binding `WADDLE_API_KEY` to request and print one
+  short-lived hosted UI invitation after the complete site opens. The API key never
+  enters a browser URL; response identity and relative URL shape are strict, the request
+  is never retried, and invitation failure does not stop or close the connected site.
+
 - Add immutable `waddle.sdk.support/v1` support matrices plus independent
   structural SDK ports for hardware-specific forward kinematics and conservative
   body geometry. Open `SiteSession` descriptions now carry the exact registered

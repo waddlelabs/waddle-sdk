@@ -107,3 +107,4 @@ def test_connector_default_uses_connection_preserving_hostname(monkeypatch) -> N
         ]
     )
     assert args.target == "https://connect.waddlelabs.ai:443"
+    assert args.api_url == "https://api.waddlelabs.ai"

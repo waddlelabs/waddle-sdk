@@ -6,10 +6,16 @@ import argparse
 import getpass
 import os
 import signal
+import sys
 import threading
 from collections.abc import Sequence
 
 from . import Grpc, load_site
+from ._hosted_ui import (
+    UiInvitationConfig,
+    UiInvitationError,
+    WaddleUiInvitationClient,
+)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -36,6 +42,12 @@ def _parser() -> argparse.ArgumentParser:
         default=15.0,
         help="seconds to authenticate before refusing to open hardware",
     )
+    connect.add_argument(
+        "--api-url",
+        default=os.environ.get("WADDLE_API_URL", "https://api.waddlelabs.ai"),
+        help="hosted Waddle HTTP API used to derive the browser invitation",
+    )
+    connect.add_argument("--insecure", action="store_true", help=argparse.SUPPRESS)
     return parser
 
 
@@ -50,12 +62,23 @@ def _api_key() -> str:
 
 def _connect(args: argparse.Namespace) -> int:
     site = load_site(args.site)
+    api_key = _api_key()
     transport = Grpc(
         args.target,
-        _api_key(),
+        api_key,
         customer_id=args.customer,
         project_id=args.project,
         workspace_id=args.workspace,
+    )
+    invitation_client = WaddleUiInvitationClient(
+        UiInvitationConfig(
+            api_url=args.api_url,
+            api_key=api_key,
+            customer_id=args.customer,
+            project_id=args.project,
+            workspace_id=args.workspace,
+            allow_insecure=args.insecure,
+        )
     )
     stop = threading.Event()
 
@@ -73,6 +96,12 @@ def _connect(args: argparse.Namespace) -> int:
             f"{args.customer}/{args.project}/{args.workspace}",
             flush=True,
         )
+        try:
+            url = invitation_client.issue()
+        except UiInvitationError as error:
+            print(f"UI: unavailable ({error})", file=sys.stderr, flush=True)
+        else:
+            print(f"UI: {url}", flush=True)
         while not stop.wait(0.5):
             pass
     return 0
