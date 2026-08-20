@@ -13,7 +13,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
-- Reuse the SDK-only connector's exact-binding `WADDLE_API_KEY` to request and print one
+- Reuse the SDK-only connector's customer/project `WADDLE_API_KEY` plus
+  `site.metadata.id` to request and print one
   short-lived hosted UI invitation after the complete site opens. The API key never
   enters a browser URL; response identity and relative URL shape are strict, the request
   is never retried, and invitation failure does not stop or close the connected site.
@@ -98,6 +99,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Changed
 
+- Remove redundant customer, project, and workspace flags from `waddle-sdk connect`.
+  The hosted binding preflight derives customer/project from the opaque API key and uses
+  `site.metadata.id` as the SDK-only hosted workspace identity before hardware opens;
+  the resolved full binding remains internal to transport authorization and routing.
 - Change the default hosted connector target to
   `https://connect.waddlelabs.ai:443`; `api.waddlelabs.ai` is the hosted
   browser UI endpoint.

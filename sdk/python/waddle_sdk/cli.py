@@ -26,9 +26,6 @@ def _parser() -> argparse.ArgumentParser:
         help="connect one site to its authorized hosted workspace",
     )
     connect.add_argument("--site", required=True)
-    connect.add_argument("--customer", required=True)
-    connect.add_argument("--project", required=True)
-    connect.add_argument("--workspace", required=True)
     connect.add_argument(
         "--target",
         default=os.environ.get(
@@ -63,22 +60,21 @@ def _api_key() -> str:
 def _connect(args: argparse.Namespace) -> int:
     site = load_site(args.site)
     api_key = _api_key()
-    transport = Grpc(
-        args.target,
-        api_key,
-        customer_id=args.customer,
-        project_id=args.project,
-        workspace_id=args.workspace,
-    )
     invitation_client = WaddleUiInvitationClient(
         UiInvitationConfig(
             api_url=args.api_url,
             api_key=api_key,
-            customer_id=args.customer,
-            project_id=args.project,
-            workspace_id=args.workspace,
+            workspace_id=site.id,
             allow_insecure=args.insecure,
         )
+    )
+    binding = invitation_client.resolve_binding()
+    transport = Grpc(
+        args.target,
+        api_key,
+        customer_id=binding.customer_id,
+        project_id=binding.project_id,
+        workspace_id=binding.workspace_id,
     )
     stop = threading.Event()
 
@@ -93,7 +89,7 @@ def _connect(args: argparse.Namespace) -> int:
     ):
         print(
             f"connected site {site.id!r} to "
-            f"{args.customer}/{args.project}/{args.workspace}",
+            f"{binding.customer_id}/{binding.project_id}/{binding.workspace_id}",
             flush=True,
         )
         try:

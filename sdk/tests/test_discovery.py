@@ -93,18 +93,6 @@ def test_connector_default_uses_connection_preserving_hostname(monkeypatch) -> N
     from waddle_sdk.cli import _parser
 
     monkeypatch.delenv("WADDLE_CONNECTOR_TARGET", raising=False)
-    args = _parser().parse_args(
-        [
-            "connect",
-            "--site",
-            "site.yaml",
-            "--customer",
-            "customer",
-            "--project",
-            "project",
-            "--workspace",
-            "workspace",
-        ]
-    )
+    args = _parser().parse_args(["connect", "--site", "site.yaml"])
     assert args.target == "https://connect.waddlelabs.ai:443"
     assert args.api_url == "https://api.waddlelabs.ai"

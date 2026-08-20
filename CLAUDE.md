@@ -110,9 +110,11 @@ waddle-sdk/
                              #   fixed hold-first/enforced core wiring. There is no
                              #   init/rollout/agent/shutdown or _testing module.
                              #   cli.py owns the `waddle-sdk connect` process;
-                             #   after the complete site opens it reuses the
-                             #   exact-binding WADDLE_API_KEY once against the
-                             #   hosted HTTP invitation endpoint and prints the
+                             #   it reads workspace identity from site.metadata.id
+                             #   and combines that with customer/project provenance
+                             #   resolved from WADDLE_API_KEY before hardware opens.
+                             #   After the complete site opens it reuses the key once
+                             #   against the hosted HTTP invitation endpoint and prints the
                              #   derived short-lived UI URL. The key itself never
                              #   enters a URL/browser, the request never retries,
                              #   and invitation failure leaves the site connected.

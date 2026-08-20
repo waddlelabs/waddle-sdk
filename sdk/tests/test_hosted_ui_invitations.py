@@ -11,7 +11,9 @@ from typing import Any, Self
 import pytest
 from waddle_sdk import cli
 from waddle_sdk._hosted_ui import (
+    BINDING_PROTOCOL_VERSION,
     PROTOCOL_VERSION,
+    HostedBinding,
     UiInvitationConfig,
     UiInvitationError,
     WaddleUiInvitationClient,
@@ -30,15 +32,13 @@ def _client() -> WaddleUiInvitationClient:
     return WaddleUiInvitationClient(
         UiInvitationConfig(
             api_url="https://api.waddlelabs.ai",
-            api_key="workspace-key",
-            customer_id="customer",
-            project_id="project",
+            api_key="project-key",
             workspace_id="workspace",
         )
     )
 
 
-def test_sdk_invitation_client_reuses_exact_binding_api_key(
+def test_sdk_project_key_resolves_site_binding_and_issues_invitation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     seen: dict[str, Any] = {}
@@ -51,6 +51,20 @@ def test_sdk_invitation_client_reuses_exact_binding_api_key(
             payload=payload,
             timeout=timeout,
         )
+        if request.full_url.endswith("/v1/connector/binding"):
+            return _Response(
+                json.dumps(
+                    {
+                        "protocol_version": BINDING_PROTOCOL_VERSION,
+                        "request_id": payload["request_id"],
+                        "binding": {
+                            "customer_id": "customer",
+                            "project_id": "project",
+                            "workspace_id": "workspace",
+                        },
+                    }
+                ).encode()
+            )
         return _Response(
             json.dumps(
                 {
@@ -63,14 +77,12 @@ def test_sdk_invitation_client_reuses_exact_binding_api_key(
 
     monkeypatch.setattr(urllib.request, "urlopen", urlopen)
 
-    assert _client().issue() == "https://api.waddlelabs.ai/ui?token=wui_sdk-only"
+    client = _client()
+    assert client.resolve_binding() == HostedBinding("customer", "project", "workspace")
+    assert client.issue() == "https://api.waddlelabs.ai/ui?token=wui_sdk-only"
     assert seen["url"] == "https://api.waddlelabs.ai/v1/ui/invitations"
-    assert seen["authorization"] == "Bearer workspace-key"
-    assert seen["payload"]["binding"] == {
-        "customer_id": "customer",
-        "project_id": "project",
-        "workspace_id": "workspace",
-    }
+    assert seen["authorization"] == "Bearer project-key"
+    assert seen["payload"]["workspace_id"] == "workspace"
     assert seen["timeout"] == 15.0
 
 
@@ -79,18 +91,14 @@ def test_sdk_invitation_client_is_secret_safe_and_never_retries(
 ) -> None:
     config = UiInvitationConfig(
         api_url="https://api.waddlelabs.ai",
-        api_key="workspace-key",
-        customer_id="customer",
-        project_id="project",
+        api_key="project-key",
         workspace_id="workspace",
     )
-    assert "workspace-key" not in repr(config)
+    assert "project-key" not in repr(config)
     with pytest.raises(ValueError, match="absolute https"):
         UiInvitationConfig(
             api_url="http://api.waddlelabs.ai",
-            api_key="workspace-key",
-            customer_id="customer",
-            project_id="project",
+            api_key="project-key",
             workspace_id="workspace",
         )
 
@@ -105,6 +113,12 @@ def test_sdk_invitation_client_is_secret_safe_and_never_retries(
     monkeypatch.setattr(urllib.request, "urlopen", urlopen)
     with pytest.raises(UiInvitationError) as captured:
         WaddleUiInvitationClient(config).issue()
+    assert calls == 1
+    assert "secret transport detail" not in str(captured.value)
+
+    calls = 0
+    with pytest.raises(UiInvitationError) as captured:
+        WaddleUiInvitationClient(config).resolve_binding()
     assert calls == 1
     assert "secret transport detail" not in str(captured.value)
 
@@ -123,8 +137,11 @@ def test_sdk_connect_prints_derived_ui_url_after_site_open(
 
     class Invitation:
         def __init__(self, config: UiInvitationConfig) -> None:
-            assert config.api_key == "workspace-key"
-            assert config.workspace_id == "workspace"
+            assert config.api_key == "project-key"
+            assert config.workspace_id == "site"
+
+        def resolve_binding(self) -> HostedBinding:
+            return HostedBinding("customer", "project", "site")
 
         def issue(self) -> str:
             return "https://api.waddlelabs.ai/ui?token=wui_sdk-only"
@@ -141,18 +158,12 @@ def test_sdk_connect_prints_derived_ui_url_after_site_open(
     monkeypatch.setattr(cli, "WaddleUiInvitationClient", Invitation)
     monkeypatch.setattr(cli.threading, "Event", Stop)
     monkeypatch.setattr(cli.signal, "signal", lambda *_args: None)
-    monkeypatch.setenv("WADDLE_API_KEY", "workspace-key")
+    monkeypatch.setenv("WADDLE_API_KEY", "project-key")
     args = cli._parser().parse_args(
         [
             "connect",
             "--site",
             str(tmp_path / "site.yaml"),
-            "--customer",
-            "customer",
-            "--project",
-            "project",
-            "--workspace",
-            "workspace",
         ]
     )
 
@@ -160,7 +171,7 @@ def test_sdk_connect_prints_derived_ui_url_after_site_open(
 
     output = capsys.readouterr()
     assert output.out.splitlines() == [
-        "connected site 'site' to customer/project/workspace",
+        "connected site 'site' to customer/project/site",
         "UI: https://api.waddlelabs.ai/ui?token=wui_sdk-only",
     ]
     assert output.err == ""

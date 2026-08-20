@@ -17,8 +17,9 @@ The SDK never imports or discovers Metal or closed Waddle. Local callers use
 the Python library; remote SDK-only sites use the existing `waddle.v0` control
 protocol. `waddle.v0.hosted.runs` lets an authorized host start one ordinary
 episode on an idle remote SDK without creating another authority path. The
-`waddle-sdk connect` command first authenticates the exact hosted binding with a
-hardware-free registration; arms and cameras open only after the host accepts it.
+`waddle-sdk connect` sends `site.metadata.id` with a customer/project API key to
+resolve the authoritative hosted binding, then completes a hardware-free transport
+registration; arms and cameras open only after the host accepts it.
 
 ## Primary Python API
 
@@ -50,11 +51,12 @@ small root surface.
 SDK-only customer sites connect with:
 
 ```bash
-waddle-sdk connect --site site.yaml \
-  --customer CUSTOMER_ID --project PROJECT_ID --workspace WORKSPACE_ID
+waddle-sdk connect --site site.yaml
 ```
 
-The API key comes from `WADDLE_API_KEY` or a secret prompt. The default target is
+The API key comes from `WADDLE_API_KEY` or a secret prompt and carries the
+customer/project provenance. SDK-only deployments do not have a separate workspace
+argument: `site.metadata.id` is their hosted workspace identity. The default target is
 `https://connect.waddlelabs.ai:443` and can be overridden by
 `WADDLE_CONNECTOR_TARGET` or `--target`. Once the complete site is open, that same API
 key derives one short-lived `https://api.waddlelabs.ai/ui?token=wui_...` invitation,
