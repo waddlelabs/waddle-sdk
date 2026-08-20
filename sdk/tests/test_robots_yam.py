@@ -763,15 +763,31 @@ def test_the_published_quickstart_quotes_that_command_verbatim():
 
 
 def test_the_live_driver_pins_the_gripper_range_instead_of_calibrating(vendor):
-    """Constructing with no override runs a physical auto-calibration that
-    DRIVES THE JAWS on every connect. This module never auto-ranges a hand:
-    the bench-measured pair is passed every time."""
+    """An explicit bench measurement skips the vendor's physical auto-range."""
     driver = _live(vendor)
     assert isinstance(driver, base.Driver)
     (call,) = vendor.calls
     assert call["channel"] == "can_left"
     assert call["zero_gravity_mode"] is False
     assert np.allclose(call["gripper_limits_override"], GRIPPER_LIMITS_MOTOR_RAD)
+
+
+def test_the_live_driver_can_delegate_gripper_auto_range_to_i2rt(vendor):
+    """No override means the vendor calibrates its hand when hardware opens."""
+    driver = _live(vendor, gripper_limits=None)
+    assert isinstance(driver, base.Driver)
+    (call,) = vendor.calls
+    assert call["channel"] == "can_left"
+    assert call["gripper_limits_override"] is None
+
+
+def test_yam_factories_do_not_require_motor_measurements_in_sim():
+    """The same manifest may omit the live-only override in simulation."""
+    arm = yam.arm(workspace=WORKSPACE_BOX_M, sim=True)
+    bimanual = yam.bimanual(workspace=WORKSPACE_BOX_M, sim=True)
+
+    assert set(arm.arms()) == {""}
+    assert set(bimanual.arms()) == {yam.LEFT_PART, yam.RIGHT_PART}
 
 
 def test_an_arm_that_reports_other_joints_is_refused_not_adapted_to(vendor):

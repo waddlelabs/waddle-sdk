@@ -110,7 +110,12 @@ model; another hand must publish its own facts rather than copying them.
 
 YAM limits retain I2RT's semantic `[closed, open]` order; depending
 on that unit's motor direction, the measured pair may be descending and must
-not be sorted.
+not be sorted. The `gripper_limits` option is an override, not a required
+measurement: omit it to let I2RT perform its normal jaw auto-range when the
+live hardware opens. That calibration moves the jaws at connection time;
+supplying a measured pair skips it. The driver-neutral `gripper` record remains
+independent and describes normalized actions and physical jaw geometry to
+higher layers.
 `arm_gain_scale` changes only the first six I2RT kp/kd rows;
 `gripper_gain_scale` changes only the seventh. Both default to the vendor's
 gains and, when configured, are restored unchanged after an e-stop recovery.

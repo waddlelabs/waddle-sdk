@@ -257,6 +257,10 @@ waddle-sdk/
                              #   from measurements/IK), zeros the hand velocity,
                              #   and falls back to command_joint_pos when the
                              #   pinned vendor surface lacks that capability.
+                             #   Per-unit gripper motor limits are an optional
+                             #   override; when absent, hardware open delegates
+                             #   to I2RT's jaw-moving auto-range. Simulation
+                             #   needs no motor measurement.
                              #   LiveDriver also works
                              #   around the pinned vendor close race by joining
                              #   its unretained CAN writer before the vendor

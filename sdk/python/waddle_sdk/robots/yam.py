@@ -455,10 +455,11 @@ class LiveDriver:
     vendor's code to be there.
 
     * ``get_yam_robot(channel, gripper_type, zero_gravity_mode,
-      gripper_limits_override)`` — the override is PINNED from the site's own
-      measurement, which is what skips the connect-time auto-calibration that
-      physically drives the jaws (~0.5 N·m, up to 2 s per direction) on every
-      connect. Nothing here auto-ranges a hand.
+      gripper_limits_override)`` — a site may PIN its own bench measurement as
+      the override. When it omits one, the vendor performs its ordinary
+      connect-time auto-calibration, which physically drives the jaws (~0.5
+      N·m, up to 2 s per direction). This is a visible hardware-open action,
+      never initializer-time discovery.
     * ``robot.command_joint_pos(vec)`` takes the FULL vector: six arm joints
       in radians plus the gripper normalized 0..1. It is non-blocking — it
       latches a setpoint into the vendor's own ~1 kHz server thread, which
@@ -511,7 +512,7 @@ class LiveDriver:
         self,
         channel: str,
         *,
-        gripper_limits: Sequence[float],
+        gripper_limits: Sequence[float] | None = None,
         arm_gain_scale: float = 1.0,
         gripper_gain_scale: float = 1.0,
         velocity_feedforward: bool = True,
@@ -549,11 +550,19 @@ class LiveDriver:
                 "max_feedforward_vel_rad_s must be finite and > 0, got "
                 f"{max_feedforward_vel_rad_s!r}"
             )
+        gripper_limits_override = (
+            None
+            if gripper_limits is None
+            else np.asarray(
+                _checked_gripper_limits(gripper_limits, f"channel={channel}"),
+                dtype=float,
+            )
+        )
         self._robot = get_yam_robot(
             channel=channel,
             gripper_type=GripperType.LINEAR_4310,
             zero_gravity_mode=self._zero_gravity,
-            gripper_limits_override=np.asarray(gripper_limits, dtype=float),
+            gripper_limits_override=gripper_limits_override,
         )
         try:
             dofs = int(self._robot.num_dofs())
@@ -1149,7 +1158,7 @@ def _resolved_site(
     where: str,
     sim: bool,
     base_frame: str,
-    gripper_limits: tuple[float, float],
+    gripper_limits: tuple[float, float] | None,
     sim_home: Sequence[float],
 ) -> ArmSite:
     """One arm's site facts with every rig-level default filled in, and the
@@ -1267,7 +1276,7 @@ def _build_arms(
 def bimanual(
     *,
     workspace: Sequence[Sequence[float]] | None,
-    gripper_limits: Sequence[float],
+    gripper_limits: Sequence[float] | None = None,
     cross_arm: CrossArm | None = None,
     left: ArmSite | None = None,
     right: ArmSite | None = None,
@@ -1297,10 +1306,11 @@ def bimanual(
     Declaration only: this opens no bus and starts no thread. ``rig.arms()``
     is where the hardware opens.
 
-    The required arguments are the ones nothing can default: ``workspace`` (a
-    box in each arm's own base frame — pass ``None`` explicitly to declare
-    none) and ``gripper_limits`` (the bench-measured ``[closed, open]`` motor
-    radians). ``cross_arm`` is optional and its absence is meaningful: with no
+    ``workspace`` has no implied owner envelope: pass the measured box, or
+    ``None`` explicitly to declare none. ``gripper_limits`` optionally pins a
+    bench-measured ``[closed, open]`` pair in motor radians; omitting it lets
+    I2RT auto-range each live hand when the hardware opens. ``cross_arm`` is
+    optional and its absence is meaningful: with no
     declared edge, a pose expressed in the other arm's frame refuses loudly
     downstream rather than resolving through an identity nobody measured.
 
@@ -1324,7 +1334,11 @@ def bimanual(
     silent. Whatever is declared here is both what the envelope enforces and
     what the declaration carries to the plane.
     """
-    limits = _checked_gripper_limits(gripper_limits, "bimanual")
+    limits = (
+        None
+        if gripper_limits is None
+        else _checked_gripper_limits(gripper_limits, "bimanual")
+    )
     joints = _checked_joint_limits(joint_limits, "bimanual", report=report)
     box = _checked_workspace(workspace, report=report)
     caps = _step_caps(rate_hz, max_joint_speed_rad_s, max_gripper_speed_per_s)
@@ -1393,7 +1407,7 @@ def bimanual(
 def arm(
     *,
     workspace: Sequence[Sequence[float]] | None,
-    gripper_limits: Sequence[float],
+    gripper_limits: Sequence[float] | None = None,
     channel: str | None = None,
     sim: bool = False,
     posture: str = "supervised",
@@ -1426,7 +1440,11 @@ def arm(
     that this rig has one arm, so its site facts are arguments rather than an
     :class:`ArmSite`.
     """
-    limits = _checked_gripper_limits(gripper_limits, "arm")
+    limits = (
+        None
+        if gripper_limits is None
+        else _checked_gripper_limits(gripper_limits, "arm")
+    )
     joints = _checked_joint_limits(joint_limits, "arm", report=report)
     box = _checked_workspace(workspace, report=report)
     caps = _step_caps(rate_hz, max_joint_speed_rad_s, max_gripper_speed_per_s)

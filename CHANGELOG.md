@@ -29,6 +29,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Restore the YAM vendor's connect-time gripper auto-range when a site omits
+  the optional `gripper_limits` motor-radian override. Explicit per-unit
+  measurements still skip jaw motion and retain semantic `[closed, open]`
+  order; simulation no longer requires a live-only motor measurement.
+
 - Publish the YAM gripper row's actual owner-envelope velocity in the public
   action descriptor instead of copying the arm-joint speed onto all seven rows.
   Hardware-neutral consumers can now stream jaw targets within the same declared
