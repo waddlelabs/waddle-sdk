@@ -98,8 +98,8 @@ __all__ = [
     "CHAIN_AXIS",
     "CHAIN_ORIGIN_RPY_RAD",
     "CHAIN_ORIGIN_XYZ_M",
-    "DEFAULT_MAX_GRIPPER_SPEED_PER_S",
     "DEFAULT_MAX_FEEDFORWARD_VEL_RAD_S",
+    "DEFAULT_MAX_GRIPPER_SPEED_PER_S",
     "DEFAULT_MAX_JOINT_SPEED_RAD_S",
     "DEFAULT_RATE_HZ",
     "DEFAULT_SIM_HOME",
@@ -128,6 +128,7 @@ __all__ = [
     "bimanual",
     "declaration",
     "forward_kinematics",
+    "safety_presets",
     "urdf_text",
 ]
 
@@ -395,6 +396,37 @@ DEFAULT_SIM_HOME = (
     (0.20, 1.00, 1.00, 0.10, -0.50, 0.05, 0.00),
     (-0.20, 1.10, 0.90, -0.10, -0.40, -0.05, 0.20),
 )
+
+
+def safety_presets(*, factory: str, options: Mapping[str, object]):
+    """Return configuration-only YAM workspace starting points.
+
+    The tabletop box is the conservative single-arm starter shipped in the SDK
+    example.  It is expressed in each selected arm's base frame.  Mount height,
+    table geometry, tooling, payload, and neighboring arms remain site facts and
+    therefore require explicit review in the initializer.
+    """
+
+    del options
+    if factory not in {"arm", "bimanual"}:
+        return ()
+    from .safety import SafetyPreset
+
+    return (
+        SafetyPreset(
+            identifier="yam-tabletop",
+            label="YAM tabletop starter",
+            workspace_bounds={
+                "min": [0.05, -0.45, 0.05],
+                "max": [0.60, 0.45, 0.70],
+            },
+            review=(
+                "Measure the mounted base, table plane, tool length, and neighboring "
+                "arm clearance before accepting these per-base-frame bounds."
+            ),
+        ),
+    )
+
 
 #: The part names a bimanual rig declares. Declaration order IS the layout of
 #: the concatenated action vector, so ``left_arm`` occupies rows 0..6 and

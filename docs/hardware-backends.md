@@ -84,6 +84,39 @@ per-command travel caps, optional workspace, and configured static collision rul
 The complete target is accepted or refused; it is never clamped into a command the
 caller did not write.
 
+### Optional initializer safety presets
+
+A robot module may expose a configuration-only `safety_presets` function beside its
+factory:
+
+```python
+from waddle_sdk.robots import SafetyPreset
+
+def safety_presets(*, factory, options):
+    if factory != "arm":
+        return ()
+    return (
+        SafetyPreset(
+            identifier="openarm-bench",
+            label="OpenArm bench starter",
+            workspace_bounds={
+                "min": [-0.4, -0.4, 0.0],
+                "max": [0.4, 0.4, 0.6],
+            },
+            review="Measure the mounting and bench before use.",
+        ),
+    )
+```
+
+`waddle_sdk.robots.safety_presets_for_driver()` imports that module without opening
+hardware and returns immutable presets plus isolated warnings. A preset may suggest
+workspace bounds, fixed keep-outs, and self-collision configuration. Initializers copy
+the selected values into `site.yaml`; neither the identifier nor a new authority mode
+reaches runtime. The site owner must still review the actual mounting, floor/table,
+tooling, payload, and neighboring equipment. Adapters without enforceable FK or body
+geometry should omit rules they cannot enforce rather than advertising optimistic
+bounds.
+
 ### Optional position/velocity feedforward
 
 A driver may additionally satisfy
@@ -207,7 +240,9 @@ An SDK-only customer package needs only:
 - its structural `Driver` and optional `PositionVelocityDriver` implementation;
 - optional `Arm.fk` and `Arm.collision_spheres` callbacks;
 - optional camera factories and `CameraDriver` implementations; and
-- its measured owner-envelope values and site configuration.
+- its measured owner-envelope values and site configuration; and
+- optionally, configuration-only safety presets that give initializers reviewed
+  hardware-aware starting values without opening a device.
 
 That package can run locally, connect an SDK site, enforce the owner envelope, and
 record episodes with no Metal or Waddle import. If the customer later installs Metal,

@@ -11,7 +11,31 @@ from .. import descriptors
 from . import base
 from .site import PartConfig
 
-__all__ = ["arm"]
+__all__ = ["arm", "safety_presets"]
+
+
+def safety_presets(*, factory: str, options: Mapping[str, object]):
+    """Return a complete planar reach box for the dependency-free twin."""
+
+    if factory != "arm":
+        return ()
+    count = int(options.get("joint_count", 6))
+    link_length_m = float(options.get("link_length_m", 0.1))
+    body_radius_m = float(options.get("body_radius_m", 0.02))
+    reach = count * link_length_m + body_radius_m
+    from .safety import SafetyPreset
+
+    return (
+        SafetyPreset(
+            identifier="mock-planar-reach",
+            label="Simulation reach envelope",
+            workspace_bounds={
+                "min": [-reach, -reach, -body_radius_m],
+                "max": [reach, reach, body_radius_m],
+            },
+            review="Derived from the configured planar link count, length, and body radius.",
+        ),
+    )
 
 
 def _limits(

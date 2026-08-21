@@ -191,6 +191,13 @@ waddle-sdk/
                              #   driver factory calls open no device. A half-open
                              #   rig closes everything it opened and context
                              #   exit finalizes recording before hardware close.
+                             #   safety.py defines immutable, non-opening owner-
+                             #   envelope presets discovered beside each driver
+                             #   target. Initializers copy selected values into
+                             #   site.yaml; preset choice never reaches runtime
+                             #   or replaces explicit site review. Custom adapter
+                             #   modules may publish the same optional
+                             #   safety_presets(factory=, options=) extension.
                              #   The bar that keeps base.py vendor-neutral is a test:
                              #   tests/test_robots_base.py builds a whole toy
                              #   vendor module (facts + SimDriver + factory,
@@ -207,7 +214,8 @@ waddle-sdk/
                              #   the I2RT install command
         mock.py              # dependency-free manifest-native simulated arm;
                              # strict configurable limits/rate/home, planar FK,
-                             # conservative CollisionSphere geometry, and
+                             # conservative CollisionSphere geometry, a derived
+                             # planar-reach safety preset, and
                              # Site/static-keepout tests.
         xarm.py              # UFactory xArm 6/7: lazy xarm-python-sdk,
                              #   position-mode joint + G2 action rows,
@@ -273,6 +281,10 @@ waddle-sdk/
                              #   around the pinned vendor close race by joining
                              #   its unretained CAN writer before the vendor
                              #   closes python-can's SocketCAN descriptor.
+                             #   It also publishes the SDK example's tabletop
+                             #   workspace as a non-opening initializer preset;
+                             #   mounting/table/tool clearance still requires
+                             #   explicit site review.
     teleop/                  # the `waddle-sdk-teleop` companion distribution:
                              #   same rust/Cargo.toml, + the livekit feature
     examples/                # one strict simulated Site program:

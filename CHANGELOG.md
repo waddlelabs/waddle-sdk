@@ -13,6 +13,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Add immutable, non-opening robot safety presets for initializer use. Built-in YAM
+  and mock adapters publish reviewed workspace starting points, custom adapter modules
+  can implement the same `safety_presets(factory=, options=)` extension, and failures
+  degrade to warnings. Presets are copied as ordinary owner-envelope values and never
+  replace explicit site review or runtime enforcement prerequisites.
+
 - Reuse the SDK-only connector's customer/project `WADDLE_API_KEY` plus
   `site.metadata.id` to request and print one
   short-lived hosted UI invitation after the complete site opens. The API key never
