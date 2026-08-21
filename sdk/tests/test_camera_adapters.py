@@ -45,7 +45,7 @@ def test_usb_adapter_is_lazy_converts_bgr_and_closes_once(monkeypatch):
     capture = _Capture()
     monkeypatch.setattr(usb, "_vendor_module", lambda: _cv2(capture))
 
-    driver = usb.USBDriver(device="/dev/video-test", width=2, height=1, fps=20)
+    driver = usb.USBDriver(device="/dev/video-test", width=2, height=1, fps=20.0)
     assert isinstance(driver, CameraDriver)
     frame = driver.capture()
     assert frame.rgb.tolist() == [[[3, 2, 1], [6, 5, 4]]]
@@ -215,7 +215,7 @@ def test_realsense_resets_a_pipeline_that_opens_without_frames(monkeypatch):
     vendor = _RsVendor([{"confirm": False}, {"confirm": True}])
     _fast_realsense(monkeypatch, vendor)
 
-    driver = realsense.RealSenseDriver(serial="rs-test", width=3, height=2, fps=30)
+    driver = realsense.RealSenseDriver(serial="rs-test", width=3, height=2, fps=30.0)
     frame = driver.capture()
     driver.close()
     driver.close()
@@ -227,6 +227,7 @@ def test_realsense_resets_a_pipeline_that_opens_without_frames(monkeypatch):
     assert frame.rgb.shape == (2, 3, 3)
     assert frame.depth is not None and frame.depth.shape == (2, 3)
     assert driver.depth_scale_mm == pytest.approx(1.0)
+    assert driver._fps == 30
     assert driver.intrinsics().fx == pytest.approx(612.0)
     assert driver.intrinsics().fy == pytest.approx(613.0)
     assert driver.intrinsics().cx == pytest.approx(321.0)
@@ -234,6 +235,14 @@ def test_realsense_resets_a_pipeline_that_opens_without_frames(monkeypatch):
     assert driver.intrinsics().depth_scale_mm == pytest.approx(1.0)
     assert frame.point_resolver is not None
     assert frame.point_resolver(1, 2, 0.5) == pytest.approx((0.5, 1.0, 0.5))
+
+
+def test_builtin_camera_adapters_reject_fractional_frame_rates(monkeypatch):
+    vendor = _RsVendor([{"confirm": True}])
+    _fast_realsense(monkeypatch, vendor)
+
+    with pytest.raises(ValueError, match="positive whole number"):
+        realsense.RealSenseDriver(serial="rs-test", fps=29.97)
 
 
 def test_realsense_rebuilds_after_a_later_capture_timeout(monkeypatch):

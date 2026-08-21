@@ -8,7 +8,7 @@ from typing import Any
 
 import numpy as np
 
-from .base import CameraFrame
+from .base import CameraFrame, _integral_fps
 
 __all__ = ["USBDriver"]
 
@@ -35,6 +35,7 @@ class USBDriver:
         height: int = 480,
         fps: int = 30,
     ) -> None:
+        fps = _integral_fps(fps)
         cv2 = _vendor_module()
         capture = cv2.VideoCapture(device)
         if not capture.isOpened():
@@ -42,7 +43,7 @@ class USBDriver:
             raise RuntimeError(f"USB camera failed to open device {device!r}")
         capture.set(cv2.CAP_PROP_FRAME_WIDTH, int(width))
         capture.set(cv2.CAP_PROP_FRAME_HEIGHT, int(height))
-        capture.set(cv2.CAP_PROP_FPS, int(fps))
+        capture.set(cv2.CAP_PROP_FPS, fps)
         self._cv2: Any = cv2
         self._capture: Any | None = capture
         self._lock = threading.Lock()

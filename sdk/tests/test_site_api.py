@@ -106,6 +106,23 @@ def test_manifest_is_strict_and_paths_are_site_relative(tmp_path):
         waddle_sdk.load_site(escaping)
 
 
+def test_camera_factory_internal_type_error_is_not_mislabeled_as_signature(tmp_path):
+    path = _write_site(tmp_path)
+    path.write_text(
+        path.read_text().replace(
+            "driver: site_fixtures:camera",
+            "driver: site_fixtures:camera_internal_type_error",
+        ),
+        encoding="utf-8",
+    )
+
+    with (
+        pytest.raises(TypeError, match="vendor rejected the selected stream"),
+        waddle_sdk.load_site(path).open(console=False, _testing=True),
+    ):
+        pass
+
+
 def test_driver_neutral_gripper_mapping_is_strict_and_not_a_factory_option(tmp_path):
     path = _write_site(tmp_path)
     path.write_text(

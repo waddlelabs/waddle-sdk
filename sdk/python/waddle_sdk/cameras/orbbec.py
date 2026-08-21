@@ -12,7 +12,7 @@ import threading
 
 import numpy as np
 
-from .base import CameraFrame
+from .base import CameraFrame, _integral_fps
 
 __all__ = ["OrbbecDriver"]
 
@@ -44,6 +44,7 @@ class OrbbecDriver:
         height: int = 480,
         fps: int = 30,
     ) -> None:
+        fps = _integral_fps(fps)
         sdk = _vendor_module()
         pipeline = sdk.Pipeline()
         config = sdk.Config()

@@ -16,6 +16,20 @@ if TYPE_CHECKING:
 __all__ = ["CameraCalibrationDriver", "CameraDriver", "CameraFrame", "CameraSample"]
 
 
+def _integral_fps(value: object) -> int:
+    """Return the whole-frame rate required by built-in camera vendor APIs."""
+
+    if isinstance(value, bool):
+        raise TypeError("camera fps must be a positive whole number")
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as error:
+        raise TypeError("camera fps must be a positive whole number") from error
+    if not math.isfinite(number) or number <= 0.0 or not number.is_integer():
+        raise ValueError("camera fps must be a positive whole number")
+    return int(number)
+
+
 def _frozen_rgb(value: object) -> np.ndarray:
     array = np.asarray(value)
     if array.dtype != np.uint8 or array.ndim != 3 or array.shape[2] != 3:

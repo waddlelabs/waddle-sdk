@@ -21,7 +21,7 @@ from typing import Any
 import numpy as np
 
 from ..descriptors import Intrinsics
-from .base import CameraFrame
+from .base import CameraFrame, _integral_fps
 
 __all__ = ["RealSenseDriver"]
 
@@ -76,7 +76,7 @@ class RealSenseDriver:
         self._rs = _vendor_module()
         self._width = width
         self._height = height
-        self._fps = fps
+        self._fps = _integral_fps(fps)
         self._serial = serial
         self._pipeline: Any = None
         self._align: Any = None

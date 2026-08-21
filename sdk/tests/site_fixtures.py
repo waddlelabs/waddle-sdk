@@ -112,3 +112,8 @@ def camera(*, config):
     assert config.stream["width"] == 2
     opened["cameras"] += 1
     return _Camera()
+
+
+def camera_internal_type_error(*, width, height, fps):
+    del width, height, fps
+    raise TypeError("vendor rejected the selected stream")

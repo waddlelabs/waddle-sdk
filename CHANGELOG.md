@@ -17,6 +17,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   during hardware discovery. Raw USB-interface sysfs serials are now retained only as
   non-executable evidence, preventing `waddle-metal init` from generating freshly
   invalid `site.yaml` camera connections.
+- Normalize integral YAML camera rates such as `30.0` for built-in vendor APIs that
+  require integer FPS, and stop misclassifying exceptions raised inside camera
+  constructors as factory-signature mismatches.
 
 ### Added
 

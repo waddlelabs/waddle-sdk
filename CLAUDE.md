@@ -171,6 +171,9 @@ waddle-sdk/
                              #   reports the active color-grid intrinsics plus
                              #   depth scale through that optional extension
                              #   and attaches its matching deprojection path.
+                             #   Built-in vendor adapters normalize validated
+                             #   whole-number YAML rates such as 30.0 to the
+                             #   integer form their APIs require.
       discovery.py           # non-opening configuration evidence for CAN,
                              #   serial and camera devices; immutable rows,
                              #   isolated custom scanners via the

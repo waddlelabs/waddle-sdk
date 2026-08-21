@@ -353,11 +353,12 @@ def _call_camera_factory(target, config: CameraConfig) -> CameraDriver:
             "fps": config.stream["fps"],
         }
         try:
-            result = target(**kwargs)
+            inspect.signature(target).bind(**kwargs)
         except TypeError as exc:
             raise ManifestValidationError(
                 f"camera {config.name!r} driver arguments do not match its factory: {exc}"
             ) from exc
+        result = target(**kwargs)
     if not isinstance(result, CameraDriver):
         raise ManifestValidationError(
             f"camera {config.name!r} driver must provide capture() and close()"
