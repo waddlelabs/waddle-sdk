@@ -635,6 +635,7 @@ impl SessionBuilder {
         let media_wired = media_for_cameras.is_some();
         let stills_wired = self.transport.is_some();
         let mut camera_uplinks: HashMap<String, Arc<CameraUplink>> = HashMap::new();
+        let mut depth_uplinks: HashMap<String, Arc<CameraUplink>> = HashMap::new();
         let mut declares_stills = false;
         for cam in &robot_pb.cameras {
             let stills = media_uplink::declares_stills(cam);
@@ -642,6 +643,10 @@ impl SessionBuilder {
             if media_wired || (stills && stills_wired) {
                 let uplink = media_uplink::build_camera_uplink(cam, media_wired)?;
                 camera_uplinks.insert(cam.name.clone(), Arc::new(uplink));
+            }
+            if media_wired {
+                let uplink = media_uplink::build_depth_uplink(cam)?;
+                depth_uplinks.insert(cam.name.clone(), Arc::new(uplink));
             }
         }
 
@@ -938,11 +943,16 @@ impl SessionBuilder {
         // control plane (bounded-rate stills), or both;
         // `Session::publish_frame` feeds it through the per-camera queues
         // built above.
-        if !camera_uplinks.is_empty() {
+        if !camera_uplinks.is_empty() || !depth_uplinks.is_empty() {
+            let uplinks = camera_uplinks
+                .values()
+                .chain(depth_uplinks.values())
+                .cloned()
+                .collect();
             threads.push(media_uplink::spawn_media_uplink(
                 media_for_cameras,
                 plane.clone(),
-                camera_uplinks.values().cloned().collect(),
+                uplinks,
                 mirror.clone(),
             ));
         }
@@ -1044,6 +1054,7 @@ impl SessionBuilder {
                 tripwire_shutdown,
                 declared_cameras,
                 camera_uplinks,
+                depth_uplinks,
                 _verbs: verbs,
                 _plane: plane,
             }),
@@ -1203,6 +1214,10 @@ struct SessionInner {
     /// configured). `publish_frame` feeds these; absent means "declared, but
     /// nothing to publish into" (a cheap no-op, never an error).
     camera_uplinks: HashMap<String, Arc<CameraUplink>>,
+    /// Media-only colorized depth-preview tracks, keyed by the declared
+    /// camera name. These are separate from the RGB/stills uplinks so depth
+    /// can never be mistaken for a metric control-plane still.
+    depth_uplinks: HashMap<String, Arc<CameraUplink>>,
     _verbs: Arc<VerbDispatch>,
     _plane: Option<Arc<ControlPlaneClient>>,
 }
@@ -2140,8 +2155,8 @@ impl Session {
     /// camera's declaration, applies the declared uplink fps throttle (a
     /// wait-free timestamp check — a too-soon frame is silently dropped,
     /// never an error, never counted in [`Self::camera_frames_dropped`]),
-    /// and otherwise only enqueues the frame onto a small per-camera bounded
-    /// queue. The (lazy, once-per-camera) `publish_track` call and the
+    /// and otherwise only enqueues the frame onto a small per-track bounded
+    /// queue. The (lazy, once-per-track) `publish_track` call and the
     /// actual encode/`push_frame` run off this thread, on the dedicated
     /// `waddle-media-uplink` pump.
     ///
@@ -2171,6 +2186,38 @@ impl Session {
     /// silent per-frame failure discovered later. See
     /// `crate::media_uplink`'s module docs for the full mapping.
     pub fn publish_frame(&self, camera: &str, frame: FrameData) -> Result<(), RuntimeError> {
+        self.validate_camera_frame(camera, &frame)?;
+        let Some(uplink) = self.inner.camera_uplinks.get(camera) else {
+            // Declared and validated, but neither leg has somewhere to go
+            // (no media plane wired, no declared stills with a transport).
+            return Ok(());
+        };
+        let now_ns = self.inner.clock.stamp_now().mono_ns().0;
+        media_uplink::admit_and_enqueue(uplink, now_ns, frame);
+        Ok(())
+    }
+
+    /// Publish an RGB8 visualization of a declared camera's aligned metric
+    /// depth as the append-only `<camera>/depth` media track. Raw depth is
+    /// not accepted here and remains available to SDK/Metal perception; this
+    /// method is solely the browser-compatible operator presentation seam.
+    pub fn publish_depth_preview(
+        &self,
+        camera: &str,
+        frame: FrameData,
+    ) -> Result<(), RuntimeError> {
+        self.validate_camera_frame(camera, &frame)?;
+        let Some(uplink) = self.inner.depth_uplinks.get(camera) else {
+            // A declared camera with no media plane has nowhere to present a
+            // preview. Match publish_frame's cheap no-op behavior.
+            return Ok(());
+        };
+        let now_ns = self.inner.clock.stamp_now().mono_ns().0;
+        media_uplink::admit_and_enqueue(uplink, now_ns, frame);
+        Ok(())
+    }
+
+    fn validate_camera_frame(&self, camera: &str, frame: &FrameData) -> Result<(), RuntimeError> {
         let Some(&(width, height)) = self.inner.declared_cameras.get(camera) else {
             return Err(RuntimeError::UnknownCamera(camera.to_owned()));
         };
@@ -2182,13 +2229,6 @@ impl Session {
                 layout: "RGB8 at the camera's declared resolution",
             }));
         }
-        let Some(uplink) = self.inner.camera_uplinks.get(camera) else {
-            // Declared and validated, but neither leg has somewhere to go
-            // (no media plane wired, no declared stills with a transport).
-            return Ok(());
-        };
-        let now_ns = self.inner.clock.stamp_now().mono_ns().0;
-        media_uplink::admit_and_enqueue(uplink, now_ns, frame);
         Ok(())
     }
 

@@ -169,7 +169,9 @@ keywords), opens the device only when the site opens, and returns a structural
 `CameraCalibrationDriver.intrinsics()` is an optional structural extension for a
 driver that can report its active aligned color-grid intrinsics. Explicit
 `site.yaml` intrinsics win. A `CameraFrame` may also attach a local point resolver for
-vendor-correct distorted-depth deprojection; raw depth remains process-local.
+vendor-correct distorted-depth deprojection. Raw metric depth remains process-local;
+when a media plane is configured, the camera pump derives a deterministic RGB8
+operator preview from that same paired sample and publishes it as `<camera>/depth`.
 
 The current support contract deliberately does not publish `camera.depth`: one
 transient RGB-D sample is not a stable hardware declaration. RGB acquisition remains

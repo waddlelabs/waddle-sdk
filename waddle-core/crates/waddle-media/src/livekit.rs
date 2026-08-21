@@ -117,7 +117,9 @@ impl LiveKitConfig {
     #[must_use]
     pub fn with_robot_cameras(self, robot: &pb::RobotDescription) -> Self {
         robot.cameras.iter().fold(self, |config, cam| {
-            config.with_track_resolution(&cam.name, cam.width, cam.height)
+            config
+                .with_track_resolution(&cam.name, cam.width, cam.height)
+                .with_track_resolution(&crate::depth_track_name(&cam.name), cam.width, cam.height)
         })
     }
 }
@@ -490,7 +492,17 @@ mod tests {
             Some((320, 240)),
             "EVERY declared camera, not just the first"
         );
-        assert_eq!(config.track_resolutions.len(), robot.cameras.len());
+        assert_eq!(
+            config.track_resolutions.get("overhead/depth").copied(),
+            Some((1280, 720)),
+            "the paired depth-preview track must never fall back to VGA"
+        );
+        assert_eq!(
+            config.track_resolutions.get("wrist/depth").copied(),
+            Some((320, 240)),
+            "every camera's depth-preview track keeps the camera dimensions"
+        );
+        assert_eq!(config.track_resolutions.len(), robot.cameras.len() * 2);
         assert!(
             !config
                 .track_resolutions

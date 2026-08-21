@@ -190,8 +190,11 @@ class _RecordingSession:
     def publish_frame(self, camera: str, rgb: np.ndarray) -> None:
         self.published.append((camera, rgb))
 
+    def publish_depth_preview(self, camera: str, preview: np.ndarray) -> None:
+        self.published.append((f"{camera}/depth", preview))
 
-def test_capture_keeps_correlated_depth_local_and_resolves_pixels():
+
+def test_capture_keeps_metric_depth_local_and_publishes_paired_preview():
     closed: list[str] = []
     driver = _BlockingCamera(closed)
     rig = _rig(closed, driver)
@@ -231,11 +234,17 @@ def test_capture_keeps_correlated_depth_local_and_resolves_pixels():
     )
     assert rig.resolve_pixel("overhead", 1, 1) == pytest.approx((0.02, 0.02, 2.0))
 
-    assert len(session.published) == 1
+    assert len(session.published) == 2
     camera_name, published = session.published[0]
     assert camera_name == "overhead"
     assert published is sample.rgb
-    assert published.ndim == 3  # publish_frame receives RGB, never the depth plane
+    assert published.ndim == 3
+    depth_name, preview = session.published[1]
+    assert depth_name == "overhead/depth"
+    assert preview.shape == (2, 2, 3)
+    assert preview.dtype == np.uint8
+    assert preview.flags.c_contiguous
+    assert not np.array_equal(preview[0, 0], preview[1, 1])
     assert closed == ["camera"]
 
 

@@ -23,6 +23,17 @@ use waddle_types::pb::v0 as pb;
 mod encode;
 pub use encode::{JpegEncoder, VideoEncoding, make_encoder, rgb8_to_i420};
 
+/// LiveKit video-track name for a camera's operator-facing depth preview.
+///
+/// The camera's existing track name remains the RGB track for v0 compatibility;
+/// depth is an append-only sibling track. The payload is RGB8 visualization data
+/// suitable for an ordinary browser video element, while metric Z16 depth stays
+/// available through the SDK/Metal RGB-D sample contract.
+#[must_use]
+pub fn depth_track_name(camera: &str) -> String {
+    format!("{camera}/depth")
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum MediaError {
     #[error("unknown track {0:?}")]

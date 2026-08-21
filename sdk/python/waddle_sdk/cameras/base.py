@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import numpy as np
@@ -14,6 +15,39 @@ if TYPE_CHECKING:
     from ..descriptors import Intrinsics
 
 __all__ = ["CameraCalibrationDriver", "CameraDriver", "CameraFrame", "CameraSample"]
+
+_DEPTH_PREVIEW_NEAR_M = 0.15
+_DEPTH_PREVIEW_FAR_M = 3.0
+
+
+def _depth_color_ramp(normalized: np.ndarray) -> np.ndarray:
+    x = np.clip(normalized, 0.0, 1.0)
+    return np.stack(
+        (
+            np.clip(1.5 - np.abs(4.0 * x - 3.0), 0.0, 1.0),
+            np.clip(1.5 - np.abs(4.0 * x - 2.0), 0.0, 1.0),
+            np.clip(1.5 - np.abs(4.0 * x - 1.0), 0.0, 1.0),
+        ),
+        axis=-1,
+    )
+
+
+@lru_cache(maxsize=16)
+def _metric_depth_preview_lut(depth_scale_mm: float) -> np.ndarray:
+    """Build one small immutable Z16→RGB lookup table per camera scale."""
+
+    raw = np.arange(1 << 16, dtype=np.float32)
+    metres = raw * np.float32(depth_scale_mm / 1000.0)
+    normalized = (metres - _DEPTH_PREVIEW_NEAR_M) / (
+        _DEPTH_PREVIEW_FAR_M - _DEPTH_PREVIEW_NEAR_M
+    )
+    table = np.ascontiguousarray(
+        np.rint(_depth_color_ramp(normalized) * 255.0),
+        dtype=np.uint8,
+    )
+    table[0] = 0
+    table.setflags(write=False)
+    return table
 
 
 def _integral_fps(value: object) -> int:
@@ -56,6 +90,54 @@ def _frozen_depth(
         array = np.array(array, dtype=np.uint16, order="C", copy=True)
         array.setflags(write=False)
     return array
+
+
+def _depth_preview_rgb(
+    depth: np.ndarray,
+    depth_scale_mm: float | None,
+) -> np.ndarray:
+    """Colorize one metric Z16 plane for an ordinary browser video track.
+
+    This never replaces or mutates the raw aligned depth sample. When the
+    active camera declares its unit scale, colors use a stable 0.15–3.0 m
+    range (near blue, far red) so successive frames remain comparable. A
+    custom RGB-D driver without scale metadata degrades to robust per-frame
+    percentiles; zero/no-return pixels are always black.
+    """
+
+    valid = depth != 0
+    if not bool(np.any(valid)):
+        return np.zeros((*depth.shape, 3), dtype=np.uint8)
+
+    scale = None
+    if depth_scale_mm is not None:
+        try:
+            candidate = float(depth_scale_mm)
+        except (TypeError, ValueError):
+            candidate = math.nan
+        if math.isfinite(candidate) and candidate > 0.0:
+            scale = candidate
+
+    values = depth.astype(np.float32, copy=False)
+    if scale is not None:
+        # Advanced indexing allocates only the final H×W×3 preview. The
+        # expensive color-ramp arithmetic is paid once per camera unit scale,
+        # not once per captured frame on the camera thread.
+        return np.ascontiguousarray(_metric_depth_preview_lut(scale)[depth])
+    else:
+        present = values[valid]
+        near, far = np.percentile(present, (2.0, 98.0))
+        if not math.isfinite(float(near)) or not math.isfinite(float(far)):
+            near, far = float(np.min(present)), float(np.max(present))
+        if far <= near:
+            normalized = np.full(depth.shape, 0.5, dtype=np.float32)
+        else:
+            normalized = (values - np.float32(near)) / np.float32(far - near)
+
+    preview = _depth_color_ramp(normalized)
+    colored = np.ascontiguousarray(np.rint(preview * 255.0), dtype=np.uint8)
+    colored[~valid] = 0
+    return colored
 
 
 @dataclass(frozen=True, eq=False)
@@ -118,7 +200,8 @@ class CameraSample:
 
     ``stamp`` is minted once by ``Session.stamp()`` immediately after capture;
     its session-monotonic and Unix twins therefore remain an atomic pair.
-    Depth is aligned to RGB and remains local to the owning rig.
+    Raw metric depth is aligned to RGB and remains local to the owning rig.
+    A derived RGB8 visualization may independently ride the media plane.
     """
 
     stamp: SessionStamp

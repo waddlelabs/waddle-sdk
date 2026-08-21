@@ -57,6 +57,7 @@ import numpy as np
 
 from .._session import Control, create_core_session
 from ..cameras import CameraCalibrationDriver, CameraDriver, CameraFrame, CameraSample
+from ..cameras.base import _depth_preview_rgb
 from ..descriptors import Camera as CameraDescription
 from ..descriptors import FrameTransform, Intrinsics, Robot
 
@@ -1869,9 +1870,10 @@ class _LatestCameraSamples:
 class CameraPump(threading.Thread):
     """Capture one declared camera into a latest-only, timestamped local slot.
 
-    RGB is also passed to ``Session.publish_frame`` for the existing recording,
-    still and media paths. Pixel-aligned depth never crosses that method and is
-    retained only in :class:`CameraSample` for local resolution.
+    RGB is passed to ``Session.publish_frame`` for the existing still and media
+    paths. Pixel-aligned metric depth remains in :class:`CameraSample` for local
+    geometry/perception, while a deterministic RGB8 visualization of that exact
+    paired plane is published on the media-only ``<camera>/depth`` track.
     """
 
     def __init__(
@@ -1923,6 +1925,15 @@ class CameraPump(threading.Thread):
                     )
                 self._latest.publish(self._camera_name, sample)
                 self._session.publish_frame(self._camera_name, sample.rgb)
+                if sample.depth is not None:
+                    intrinsics = self._description.intrinsics
+                    self._session.publish_depth_preview(
+                        self._camera_name,
+                        _depth_preview_rgb(
+                            sample.depth,
+                            None if intrinsics is None else intrinsics.depth_scale_mm,
+                        ),
+                    )
             except Exception as exc:  # noqa: BLE001 — vendor capture can throw anything
                 if not self._stopping.is_set():
                     self._report(

@@ -290,6 +290,66 @@ fn first_publish_frame_lazily_publishes_the_track_exactly_once() {
     session.shutdown();
 }
 
+#[test]
+fn depth_preview_is_an_independent_lazy_sibling_track() {
+    let (media, far) = LoopbackMedia::new();
+    let session = Session::builder("media-depth-track")
+        .robot(robot(vec![camera("overhead", None)]))
+        .control(registry())
+        .media(media)
+        .build()
+        .unwrap();
+
+    session.publish_frame("overhead", frame_4x4(7)).unwrap();
+    session
+        .publish_depth_preview("overhead", frame_4x4(19))
+        .unwrap();
+
+    assert!(
+        wait_until(|| far.frames().len() == 2, Duration::from_secs(2)),
+        "the RGB and depth-preview queues did not both drain"
+    );
+    let frames = far.frames();
+    assert!(
+        frames.iter().any(|(name, frame)| {
+            name == "overhead" && frame.data.iter().all(|value| *value == 7)
+        })
+    );
+    assert!(frames.iter().any(|(name, frame)| {
+        name == "overhead/depth" && frame.data.iter().all(|value| *value == 19)
+    }));
+    let mut tracks = far.published_tracks();
+    tracks.sort();
+    assert_eq!(tracks, vec!["overhead", "overhead/depth"]);
+    session.shutdown();
+}
+
+#[test]
+fn depth_preview_reuses_camera_declaration_validation() {
+    let (media, _far) = LoopbackMedia::new();
+    let session = Session::builder("media-depth-validation")
+        .robot(robot(vec![camera("overhead", None)]))
+        .control(registry())
+        .media(media)
+        .build()
+        .unwrap();
+
+    let undeclared = session
+        .publish_depth_preview("back", frame_4x4(1))
+        .expect_err("depth cannot invent an undeclared camera");
+    assert!(matches!(undeclared, RuntimeError::UnknownCamera(ref name) if name == "back"));
+
+    let bad_shape = FrameData::rgb8(8, 8, vec![0; 8 * 8 * 3]);
+    let malformed = session
+        .publish_depth_preview("overhead", bad_shape)
+        .expect_err("depth preview dimensions must match RGB/declaration dimensions");
+    assert!(matches!(
+        malformed,
+        RuntimeError::Media(MediaError::BadFrame { .. })
+    ));
+    session.shutdown();
+}
+
 // --- fps throttle ------------------------------------------------------------
 
 #[test]

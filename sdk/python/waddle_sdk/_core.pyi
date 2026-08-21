@@ -203,6 +203,9 @@ class Session:
         post_reset_timeout_ns: int = 600_000_000_000,
     ) -> AgentResult: ...
     def publish_frame(self, camera: str, frame: npt.NDArray[np.uint8]) -> None: ...
+    def publish_depth_preview(
+        self, camera: str, frame: npt.NDArray[np.uint8]
+    ) -> None: ...
     def report_proprio(
         self,
         joint_vel: npt.NDArray[np.float64] | Sequence[float] | None = None,

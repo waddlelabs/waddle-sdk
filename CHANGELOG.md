@@ -13,6 +13,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Carry aligned depth through the operator media seam instead of dropping it after
+  camera capture. The SDK preserves raw Z16 samples for local metric perception and
+  publishes a synchronized, deterministic RGB8 depth preview on `<camera>/depth`,
+  with the same declaration validation, resolution, uplink cadence, bounded queue,
+  and lazy LiveKit lifecycle as the camera's existing RGB track.
+
 - Resolve RealSense camera selectors through non-streaming librealsense enumeration
   during hardware discovery. Raw USB-interface sysfs serials are now retained only as
   non-executable evidence, preventing `waddle-metal init` from generating freshly

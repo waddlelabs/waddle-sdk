@@ -1,11 +1,11 @@
-//! Frame ingestion: `Session::publish_frame`'s uplink seam.
+//! RGB and colorized-depth frame ingestion for the media uplink seam.
 //!
 //! `publish_frame` runs on the CUSTOMER's thread and must stay cheap: it
 //! validates the camera + frame shape against the robot's declaration,
 //! applies the declared uplink fps throttle (a wait-free atomic-timestamp
 //! check — dropping a too-soon frame is the policy working, not a fault),
-//! and otherwise only copies the frame onto a small bounded per-camera
-//! queue. Everything expensive — the (lazy, once-per-camera) `publish_track`
+//! and otherwise only copies the frame onto a small bounded per-track
+//! queue. Everything expensive — the (lazy, once-per-track) `publish_track`
 //! call and the actual encode/`push_frame` — runs off that thread, on the
 //! single dedicated `waddle-media-uplink` pump this module spawns.
 //!
@@ -63,7 +63,7 @@
 //! the customer's **bandwidth-intent**, not a promise of that literal byte
 //! format landing on the wire: every encoding this pump can actually wire
 //! onto a track — `CAMERA_ENCODING_UNSPECIFIED`/`RGB8`/`BGR8`/`JPEG` (and
-//! `Z16` — depth is out of scope for this rgb8-only seam) — resolves to raw
+//! `Z16` — metric Z16 itself remains outside this RGB8 presentation seam) — resolves to raw
 //! passthrough, and the transport (`LiveKitMedia::push_frame`, or
 //! `LoopbackMedia` in tests) converts to whatever the track needs
 //! (`rgb8_to_i420`) and its own codec does the real compression. The one
@@ -428,6 +428,24 @@ pub(crate) fn build_camera_uplink(
         fps,
         encoding,
         resolve_still_fps(cam.stream.as_ref()),
+    ))
+}
+
+/// Build the media-only sibling track used to present aligned depth in an
+/// ordinary browser video element. It deliberately has no control-plane
+/// stills tee: raw metric depth is served through the typed RGB-D/perception
+/// seam, while this track is only the colorized operator preview.
+pub(crate) fn build_depth_uplink(
+    cam: &pb::CameraDescription,
+) -> Result<CameraUplink, RuntimeError> {
+    let uplink = cam.stream.as_ref().and_then(|s| s.uplink.as_ref());
+    let (fps, encoding) = resolve_policy(&cam.name, uplink)?;
+    Ok(CameraUplink::new(
+        waddle_media::depth_track_name(&cam.name),
+        true,
+        fps,
+        encoding,
+        0.0,
     ))
 }
 

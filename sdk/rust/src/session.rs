@@ -1000,6 +1000,42 @@ impl PySession {
         Ok(())
     }
 
+    /// Publish one browser-compatible RGB8 visualization of a camera's
+    /// aligned depth plane. The core validates it against the same declared
+    /// camera dimensions and routes it onto the append-only
+    /// `<camera>/depth` media track; metric depth never passes through this
+    /// preview-only method.
+    fn publish_depth_preview(&self, camera: &str, frame: &Bound<'_, PyAny>) -> PyResult<()> {
+        let arr = frame.cast::<PyArray3<u8>>().map_err(|_| {
+            PyTypeError::new_err(
+                "depth preview must be a numpy uint8 ndarray shaped (height, width, 3)",
+            )
+        })?;
+        let ro = arr.readonly();
+        let shape = ro.shape();
+        if shape.len() != 3 || shape[2] != 3 {
+            return Err(PyTypeError::new_err(format!(
+                "depth preview must be shaped (height, width, 3); got {shape:?}"
+            )));
+        }
+        if !ro.is_c_contiguous() {
+            return Err(PyTypeError::new_err(
+                "depth preview must be a C-contiguous (row-major) numpy array; call \
+                 numpy.ascontiguousarray(frame) first",
+            ));
+        }
+        let slice = ro
+            .as_slice()
+            .map_err(|_| PyTypeError::new_err("depth preview must be a contiguous numpy array"))?;
+        let (height, width) = (shape[0] as u32, shape[1] as u32);
+        self.inner
+            .publish_depth_preview(
+                camera,
+                FrameData::rgb8(width, height, Bytes::copy_from_slice(slice)),
+            )
+            .map_err(runtime_err)
+    }
+
     /// Report a richer proprioceptive sample than the bare `joint_pos`
     /// every `gate(action, obs)` call already records. Every argument
     /// PATCHES the core's latest known sample — omit one (or pass `None`)

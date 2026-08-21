@@ -217,7 +217,7 @@ def wheelhouse(tmp_path_factory: pytest.TempPathFactory) -> Path:
             "waddle_teleop/__init__.py": b"",
             "waddle_teleop/_core.py": (
                 f"__version__ = {VERSION!r}\n"
-                "BINDING_API_VERSION = 2\n"
+                "BINDING_API_VERSION = 3\n"
                 'FEATURES = frozenset({"grpc", "livekit"})\n'
                 "class SessionStamp:\n"
                 "    pass\n"

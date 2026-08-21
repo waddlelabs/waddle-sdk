@@ -128,8 +128,11 @@ waddle-sdk/
                              #   500 ms v0 heartbeats; key revocation tears down
                              #   the connection and reaches the core-owned hold.
                              #   all commands cross the core gate and the
-                             #   owner envelope, and local RGB-D depth stays
-                             #   process-local for calibration deprojection.
+                             #   owner envelope. Raw RGB-D depth stays
+                             #   process-local for calibration/perception,
+                             #   while a deterministic colorized preview of
+                             #   every captured depth plane rides the paired
+                             #   `<camera>/depth` LiveKit track.
                              #   `waddle.v0.motion.feedforward` preserves a
                              #   same-shape optional joint-velocity hint through
                              #   remote intake, gate substitution/bypass, raw
@@ -148,8 +151,11 @@ waddle-sdk/
                              #   facades are deleted; those product surfaces
                              #   live in closed Waddle through Metal.
       cameras/               # structural CameraDriver plus immutable paired-
-                             #   timestamp RGB/RGB-D samples; latest aligned
-                             #   depth stays local for click deprojection.
+                             #   timestamp RGB/RGB-D samples; latest raw aligned
+                             #   depth stays local for click deprojection and
+                             #   metric perception. CameraPump publishes RGB
+                             #   on the legacy camera track and a stable
+                             #   colorized preview on `<camera>/depth`.
                              #   CameraCalibrationDriver is an OPTIONAL
                              #   extension: a live driver may report the
                              #   intrinsics of its active aligned stream, which

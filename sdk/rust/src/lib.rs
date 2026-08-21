@@ -19,7 +19,7 @@ mod verbs;
 /// Python starts requiring a newly exposed native attribute or method, so
 /// `_native.py` refuses a stale extension at import instead of discovering
 /// the mismatch during robot motion.
-const BINDING_API_VERSION: u32 = 2;
+const BINDING_API_VERSION: u32 = 3;
 
 /// Which connected transports this extension was compiled with — the ONLY
 /// feature-detection surface the Python layer may branch on (it decides
