@@ -175,8 +175,13 @@ waddle-sdk/
                              #   serial and camera devices; immutable rows,
                              #   isolated custom scanners via the
                              #   waddle_sdk.hardware_discovery entry-point
-                             #   group. Never constructs a driver or guesses
-                             #   which robot is attached to a generic bus.
+                             #   group. RealSense selectors use non-streaming
+                             #   librealsense enumeration when its optional
+                             #   package is present; raw sysfs USB serials are
+                             #   non-executable evidence because they may not
+                             #   be valid enable_device identities. Never
+                             #   constructs a driver or guesses which robot is
+                             #   attached to a generic bus.
       robots/                # opt-in driver-extension modules; Site resolves
                              #   their declared module:factory targets lazily.
                              #   base.py is the vendor-neutral Driver/SimDriver,

@@ -18,6 +18,7 @@ from __future__ import annotations
 import os
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from importlib import import_module
 from importlib.metadata import entry_points
 from pathlib import Path
 from types import MappingProxyType
@@ -50,7 +51,9 @@ class HardwareCandidate:
 
     def __post_init__(self) -> None:
         if not self.identifier or not self.label:
-            raise ValueError("hardware candidate identifier and label must be non-empty")
+            raise ValueError(
+                "hardware candidate identifier and label must be non-empty"
+            )
         if self.kind not in {"camera", "robot", "transport"}:
             raise ValueError(f"unsupported hardware candidate kind {self.kind!r}")
         if self.confidence not in {"confirmed", "possible"}:
@@ -92,7 +95,55 @@ def _device_fact(device: Path, name: str) -> str | None:
     return None
 
 
-def _linux_candidates(*, sys_root: Path, dev_root: Path) -> tuple[HardwareCandidate, ...]:
+def _realsense_vendor_candidates(
+    module: Any | None = None,
+) -> tuple[HardwareCandidate, ...]:
+    """Enumerate driver-valid RealSense identities without starting a stream."""
+
+    if module is None:
+        try:
+            module = import_module("pyrealsense2")
+        except ImportError:
+            return ()
+    rows: list[HardwareCandidate] = []
+    for device in module.context().query_devices():
+        serial = str(device.get_info(module.camera_info.serial_number)).strip()
+        if not serial:
+            continue
+        try:
+            name = str(device.get_info(module.camera_info.name)).strip()
+        except (AttributeError, RuntimeError):
+            name = "Intel RealSense"
+        try:
+            product = str(device.get_info(module.camera_info.product_id)).strip()
+        except (AttributeError, RuntimeError):
+            product = ""
+        rows.append(
+            HardwareCandidate(
+                identifier=f"linux-camera:realsense:{serial}",
+                kind="camera",
+                label=f"{name or 'Intel RealSense'} {serial}",
+                driver="waddle_sdk.cameras.realsense",
+                connection={"serial": serial},
+                metadata={
+                    "device": "",
+                    "family": "realsense",
+                    "name": name or "Intel RealSense",
+                    "product_id": product,
+                    "serial": serial,
+                    "vendor_id": "8086",
+                },
+            )
+        )
+    return tuple(rows)
+
+
+def _linux_candidates(
+    *,
+    sys_root: Path,
+    dev_root: Path,
+    realsense_resolved: bool = False,
+) -> tuple[HardwareCandidate, ...]:
     candidates: list[HardwareCandidate] = []
 
     network = sys_root / "class" / "net"
@@ -129,10 +180,19 @@ def _linux_candidates(*, sys_root: Path, dev_root: Path) -> tuple[HardwareCandid
         product = (_device_fact(node / "device", "idProduct") or "").lower()
         lowered = name.lower()
         if "realsense" in lowered or vendor == "8086":
+            if realsense_resolved:
+                continue
             family = "realsense"
-            driver = "waddle_sdk.cameras.realsense"
-            connection: Mapping[str, Any] = {"serial": serial} if serial else {}
-            label = f"Intel RealSense {serial or name}"
+            # A USB interface's sysfs serial is not necessarily the serial that
+            # librealsense accepts in config.enable_device(). Keep it as evidence,
+            # but never turn it into an executable driver selector.
+            driver = None
+            connection: Mapping[str, Any] = {}
+            label = (
+                f"Intel RealSense USB device {serial or name} (SDK serial unresolved)"
+            )
+            metadata_serial = ""
+            confidence: Confidence = "possible"
         elif any(marker in lowered for marker in ("orbbec", "astra", "gemini")):
             family = "orbbec"
             driver = "waddle_sdk.cameras.orbbec"
@@ -140,11 +200,15 @@ def _linux_candidates(*, sys_root: Path, dev_root: Path) -> tuple[HardwareCandid
             # retain a discovered serial as evidence only.
             connection = {}
             label = f"Orbbec {serial or name}"
+            metadata_serial = serial or ""
+            confidence = "confirmed"
         else:
             family = "uvc"
             driver = "waddle_sdk.cameras.usb"
             connection = {"device": str(dev_root / node.name)}
             label = f"USB camera {name} ({node.name})"
+            metadata_serial = serial or ""
+            confidence = "possible"
         physical = serial or str((node / "device").resolve(strict=False))
         identity = f"linux-camera:{family}:{physical}"
         if identity in seen_cameras:
@@ -162,10 +226,11 @@ def _linux_candidates(*, sys_root: Path, dev_root: Path) -> tuple[HardwareCandid
                     "family": family,
                     "name": name,
                     "product_id": product,
-                    "serial": serial or "",
+                    "serial": metadata_serial,
+                    "usb_serial_evidence": serial or "",
                     "vendor_id": vendor,
                 },
-                confidence="confirmed" if family != "uvc" else "possible",
+                confidence=confidence,
             )
         )
 
@@ -194,7 +259,9 @@ def _plugin_providers() -> tuple[tuple[str, HardwareDiscoveryProvider], ...]:
     for entry in selected:
         loaded = entry.load()
         if not callable(loaded):
-            raise TypeError(f"hardware discovery entry point {entry.name!r} is not callable")
+            raise TypeError(
+                f"hardware discovery entry point {entry.name!r} is not callable"
+            )
         providers.append((entry.name, loaded))
     return tuple(providers)
 
@@ -203,6 +270,7 @@ def discover_hardware(
     *,
     providers: Sequence[HardwareDiscoveryProvider] = (),
     include_plugins: bool = True,
+    include_vendor_enumeration: bool = True,
     sys_root: str | Path = "/sys",
     dev_root: str | Path = "/dev",
 ) -> DiscoveryReport:
@@ -211,9 +279,20 @@ def discover_hardware(
     warnings: list[str] = []
     found: list[HardwareCandidate] = []
     if os.name == "posix":
+        realsense: tuple[HardwareCandidate, ...] = ()
+        if include_vendor_enumeration:
+            try:
+                realsense = _realsense_vendor_candidates()
+            except Exception as error:  # noqa: BLE001 -- optional vendor discovery
+                warnings.append(f"RealSense discovery: {type(error).__name__}: {error}")
         found.extend(
-            _linux_candidates(sys_root=Path(sys_root), dev_root=Path(dev_root))
+            _linux_candidates(
+                sys_root=Path(sys_root),
+                dev_root=Path(dev_root),
+                realsense_resolved=bool(realsense),
+            )
         )
+        found.extend(realsense)
 
     named_providers: list[tuple[str, HardwareDiscoveryProvider]] = [
         (getattr(provider, "__name__", type(provider).__name__), provider)
@@ -223,7 +302,9 @@ def discover_hardware(
         try:
             named_providers.extend(_plugin_providers())
         except (ImportError, TypeError) as error:
-            warnings.append(f"hardware discovery plugins: {type(error).__name__}: {error}")
+            warnings.append(
+                f"hardware discovery plugins: {type(error).__name__}: {error}"
+            )
 
     for name, provider in named_providers:
         try:
@@ -239,7 +320,9 @@ def discover_hardware(
     unique: dict[str, HardwareCandidate] = {}
     for candidate in found:
         if candidate.identifier in unique:
-            warnings.append(f"duplicate hardware candidate {candidate.identifier!r} ignored")
+            warnings.append(
+                f"duplicate hardware candidate {candidate.identifier!r} ignored"
+            )
             continue
         unique[candidate.identifier] = candidate
     ordered = tuple(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from waddle_sdk import discovery
 from waddle_sdk.discovery import HardwareCandidate, discover_hardware
 
 
@@ -30,6 +31,7 @@ def test_linux_scan_reports_transports_and_deduplicated_cameras_without_opening(
 
     report = discover_hardware(
         include_plugins=False,
+        include_vendor_enumeration=False,
         sys_root=sys_root,
         dev_root=dev_root,
     )
@@ -37,8 +39,11 @@ def test_linux_scan_reports_transports_and_deduplicated_cameras_without_opening(
 
     assert by_id["linux-can:can0"].connection == {"channel": "can0"}
     realsense = by_id["linux-camera:realsense:12345"]
-    assert realsense.driver == "waddle_sdk.cameras.realsense"
-    assert realsense.connection == {"serial": "12345"}
+    assert realsense.driver is None
+    assert realsense.connection == {}
+    assert realsense.metadata["serial"] == ""
+    assert realsense.metadata["usb_serial_evidence"] == "12345"
+    assert realsense.confidence == "possible"
     assert len([row for row in report.candidates if "realsense" in row.identifier]) == 1
     assert any(row.driver == "waddle_sdk.cameras.usb" for row in report.candidates)
     assert any(row.identifier == "linux-serial:ttyACM0" for row in report.candidates)
@@ -67,6 +72,7 @@ def test_custom_provider_candidates_are_immutable_and_failures_are_isolated(
     report = discover_hardware(
         providers=(openarm, broken),
         include_plugins=False,
+        include_vendor_enumeration=False,
         sys_root=tmp_path / "missing-sys",
         dev_root=tmp_path / "missing-dev",
     )
@@ -76,17 +82,49 @@ def test_custom_provider_candidates_are_immutable_and_failures_are_isolated(
     assert "vendor probe unavailable" in report.warnings[0]
 
 
-def test_duplicate_candidate_identifiers_are_reported_not_overwritten(tmp_path: Path) -> None:
+def test_duplicate_candidate_identifiers_are_reported_not_overwritten(
+    tmp_path: Path,
+) -> None:
     first = HardwareCandidate("same", "transport", "first")
     second = HardwareCandidate("same", "transport", "second")
     report = discover_hardware(
         providers=(lambda: (first,), lambda: (second,)),
         include_plugins=False,
+        include_vendor_enumeration=False,
         sys_root=tmp_path / "missing-sys",
         dev_root=tmp_path / "missing-dev",
     )
     assert report.candidates == (first,)
     assert report.warnings == ("duplicate hardware candidate 'same' ignored",)
+
+
+def test_vendor_realsense_serial_replaces_non_driver_sysfs_identity(
+    tmp_path: Path, monkeypatch
+) -> None:
+    sys_root = tmp_path / "sys"
+    dev_root = tmp_path / "dev"
+    dev_root.mkdir()
+    _write(sys_root / "class/video4linux/video0/name", "Intel RealSense D435\n")
+    _write(sys_root / "class/video4linux/video0/device/serial", "usb-interface-id\n")
+    _write(sys_root / "class/video4linux/video0/device/idVendor", "8086\n")
+    exact = HardwareCandidate(
+        identifier="linux-camera:realsense:207522070634",
+        kind="camera",
+        label="RealSense D435 207522070634",
+        driver="waddle_sdk.cameras.realsense",
+        connection={"serial": "207522070634"},
+        metadata={"family": "realsense", "serial": "207522070634"},
+    )
+    monkeypatch.setattr(discovery, "_realsense_vendor_candidates", lambda: (exact,))
+
+    report = discover_hardware(
+        include_plugins=False,
+        sys_root=sys_root,
+        dev_root=dev_root,
+    )
+
+    cameras = [row for row in report.candidates if row.kind == "camera"]
+    assert cameras == [exact]
 
 
 def test_connector_default_uses_connection_preserving_hostname(monkeypatch) -> None:

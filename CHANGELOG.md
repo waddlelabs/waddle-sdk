@@ -11,6 +11,13 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+### Fixed
+
+- Resolve RealSense camera selectors through non-streaming librealsense enumeration
+  during hardware discovery. Raw USB-interface sysfs serials are now retained only as
+  non-executable evidence, preventing `waddle-metal init` from generating freshly
+  invalid `site.yaml` camera connections.
+
 ### Added
 
 - Add immutable, non-opening robot safety presets for initializer use. Built-in YAM
