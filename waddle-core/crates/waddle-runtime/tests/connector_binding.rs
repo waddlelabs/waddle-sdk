@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
-use waddle_controlplane::{ClientMsg, InMemoryTransport, ServerMsg};
+use waddle_controlplane::{ClientMsg, InMemoryTransport, RegistrationRejection, ServerMsg};
 use waddle_runtime::{ConnectorBinding, Session};
 use waddle_types::pb::v0 as pb;
 
@@ -62,6 +62,11 @@ fn authorization_probe_carries_exact_binding_and_renegotiates_after_disconnect()
             let _ = tx.send(ServerMsg::Registered(pb::RegisterResponse {
                 session_id: "connector-session".into(),
                 accepted_feature_flags,
+                detail: if nth == 0 {
+                    r#"{"code":"upgrade_recommended","connector":"waddle-sdk","current_version":"0.2.0","enforcement_deadline":"2026-08-23T12:00:00Z","minimum_version":"0.2.0","recommended_version":"0.3.0","schema":"waddle.connector-compatibility/v1"}"#.into()
+                } else {
+                    String::new()
+                },
                 ..Default::default()
             }));
         }
@@ -85,6 +90,13 @@ fn authorization_probe_carries_exact_binding_and_renegotiates_after_disconnect()
     wait_for(&session, |status| {
         status.plane_registered && status.connector_binding_negotiated
     });
+    assert!(
+        session
+            .status()
+            .connector_registration_detail
+            .contains("upgrade_recommended")
+    );
+    assert_eq!(session.status().connector_registration_error_code, None);
     wait_for(&session, |_| heartbeats.load(Ordering::SeqCst) > 0);
     let first = registrations.lock()[0].clone();
     assert_eq!(first.customer_id, "customer-1");
@@ -117,5 +129,41 @@ fn authorization_probe_carries_exact_binding_and_renegotiates_after_disconnect()
             && !status.connector_binding_negotiated
     });
     assert!(registrations.lock().len() >= 2);
+    session.shutdown();
+}
+
+#[test]
+fn typed_registration_rejection_is_latched_without_becoming_runnable() {
+    let transport = InMemoryTransport::new(move |msg, tx| {
+        if matches!(msg, ClientMsg::Register(_)) {
+            let _ = tx.send(ServerMsg::RegistrationRejected(RegistrationRejection {
+                code: "upgrade_required".into(),
+                detail:
+                    r#"{"code":"upgrade_required","schema":"waddle.connector-compatibility/v1"}"#
+                        .into(),
+            }));
+        }
+    });
+    let session = Session::builder("local-site-id")
+        .robot(robot())
+        .connector_binding(
+            ConnectorBinding::new("customer-1", "project-1", "workspace-1")
+                .authorization_only(true),
+        )
+        .transport(transport)
+        .build()
+        .unwrap();
+
+    wait_for(&session, |status| {
+        status.connector_registration_error_code.as_deref() == Some("upgrade_required")
+    });
+    let status = session.status();
+    assert!(!status.plane_registered);
+    assert!(!status.connector_binding_negotiated);
+    assert!(
+        status
+            .connector_registration_detail
+            .contains("upgrade_required")
+    );
     session.shutdown();
 }

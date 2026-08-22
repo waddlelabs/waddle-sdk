@@ -24,7 +24,7 @@ use waddle_types::pb::v0 as pb;
 
 use crate::backoff::Backoff;
 use crate::buffer::OfflineBuffer;
-use crate::transport::{ClientMsg, ControlTransport, ServerMsg};
+use crate::transport::{ClientMsg, ControlTransport, RegistrationRejection, ServerMsg};
 
 /// Events surfaced to the runtime's reducer.
 #[derive(Debug, Clone, PartialEq)]
@@ -34,6 +34,9 @@ pub enum PlaneEvent {
     /// succeeded, so this is never authority or recovery by itself.
     Connected,
     Registered(pb::RegisterResponse),
+    /// Register failed with a stable transport-supplied code. The connection
+    /// is still discarded and no buffered or live traffic is replayed.
+    RegistrationRejected(RegistrationRejection),
     Server(ServerMsg),
     Disconnected,
     /// The offline buffer dropped its oldest entries (loud, never silent).
@@ -200,6 +203,22 @@ fn run(
             );
             continue 'reconnect;
         };
+        let registered = match registered {
+            RegistrationOutcome::Accepted(response) => response,
+            RegistrationOutcome::Rejected(rejection) => {
+                let _ = events_tx.send(PlaneEvent::RegistrationRejected(rejection));
+                let _ = events_tx.send(PlaneEvent::Disconnected);
+                backoff_after_disconnect(
+                    &config,
+                    &mut attempt,
+                    shutdown,
+                    cmd_rx,
+                    &mut buffer,
+                    events_tx,
+                );
+                continue 'reconnect;
+            }
+        };
         accepted.clone_from(&registered.accepted_feature_flags);
         let connector_binding_required = !config.register.customer_id.is_empty()
             || !config.register.workspace_id.is_empty()
@@ -357,7 +376,7 @@ fn await_registration(
     buffer: &mut OfflineBuffer<ClientMsg>,
     shutdown: &AtomicBool,
     poll: Duration,
-) -> Option<pb::RegisterResponse> {
+) -> Option<RegistrationOutcome> {
     loop {
         if shutdown.load(Ordering::SeqCst) {
             return None;
@@ -368,7 +387,12 @@ fn await_registration(
         // connection that has not accepted them.
         buffer_pending(cmd_rx, buffer);
         match conn.try_recv() {
-            Ok(Some(ServerMsg::Registered(response))) => return Some(response),
+            Ok(Some(ServerMsg::Registered(response))) => {
+                return Some(RegistrationOutcome::Accepted(response));
+            }
+            Ok(Some(ServerMsg::RegistrationRejected(rejection))) => {
+                return Some(RegistrationOutcome::Rejected(rejection));
+            }
             // No server down-path is legal before Register completes. Treat
             // one as a broken connection rather than executing a directive
             // whose binding has not been authenticated.
@@ -376,6 +400,11 @@ fn await_registration(
             Ok(None) => std::thread::sleep(poll),
         }
     }
+}
+
+enum RegistrationOutcome {
+    Accepted(pb::RegisterResponse),
+    Rejected(RegistrationRejection),
 }
 
 fn backoff_after_disconnect(
@@ -493,7 +522,10 @@ mod tests {
         let response =
             await_registration(&conn, &cmd_rx, &mut buffer, &shutdown, Duration::ZERO).unwrap();
 
-        assert_eq!(response.session_id, "registered");
+        assert!(matches!(
+            response,
+            RegistrationOutcome::Accepted(response) if response.session_id == "registered"
+        ));
         assert!(
             wire_rx.try_recv().is_err(),
             "history must not reach the transport before registration"

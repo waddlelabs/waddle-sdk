@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import textwrap
 import time
 
 import numpy as np
 import pytest
-
 import site_fixtures
 import waddle_sdk
 import waddle_sdk.site as site_api
@@ -567,6 +567,8 @@ def test_joint_position_command_rejects_malformed_velocity_hints():
 
 def test_root_exports_only_primary_surface():
     assert set(waddle_sdk.__all__) == {
+        "ConnectorCompatibilityWarning",
+        "ConnectorRegistrationError",
         "Grpc",
         "LiveKit",
         "ManifestError",
@@ -585,9 +587,18 @@ def test_root_exports_only_primary_surface():
 
 
 class _AuthorizationProbe:
-    def __init__(self, *, accepted: bool, refused: bool = False):
+    def __init__(
+        self,
+        *,
+        accepted: bool,
+        refused: bool = False,
+        detail: str = "",
+        error_code: str | None = None,
+    ):
         self.accepted = accepted
         self.refused = refused
+        self.detail = detail
+        self.error_code = error_code
         self.closed = False
 
     def status(self):
@@ -596,6 +607,8 @@ class _AuthorizationProbe:
             "plane_registered": not self.refused,
             "connector_binding_negotiated": self.accepted,
             "connector_binding_refused": self.refused,
+            "connector_registration_detail": self.detail,
+            "connector_registration_error_code": self.error_code,
         }
 
     def shutdown(self):
@@ -658,3 +671,78 @@ def test_connector_authorizes_before_opening_hardware(tmp_path, monkeypatch):
         assert site_fixtures.opened == {"arms": 1, "cameras": 1}
 
     assert site_fixtures.closed == {"arms": 1, "cameras": 1}
+
+
+def _compatibility_detail(code: str) -> str:
+    return json.dumps(
+        {
+            "schema": "waddle.connector-compatibility/v1",
+            "code": code,
+            "connector": "waddle-sdk",
+            "current_version": "0.2.0",
+            "minimum_version": "0.2.0" if code == "upgrade_recommended" else "0.3.0",
+            "recommended_version": "0.3.0",
+            "enforcement_deadline": "2026-08-23T12:00:00Z",
+            # Neither server-authored commands nor unknown fields are echoed.
+            "upgrade_command": "printf secret-from-server",
+            "secret": "do-not-print-me",
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def test_connector_compatibility_warning_is_bounded_and_allow_listed(
+    tmp_path, monkeypatch
+):
+    original = site_api.create_core_session
+    probe = _AuthorizationProbe(
+        accepted=True,
+        detail=_compatibility_detail("upgrade_recommended"),
+    )
+
+    def create(*args, **kwargs):
+        transport = kwargs.get("transport")
+        if transport is not None and transport.authorization_only:
+            return probe
+        kwargs["transport"] = None
+        kwargs["_testing"] = True
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(site_api, "create_core_session", create)
+    site = waddle_sdk.load_site(_write_site(tmp_path))
+
+    with (
+        pytest.warns(waddle_sdk.ConnectorCompatibilityWarning) as captured,
+        site.open(transport=_connector_transport(), console=False),
+    ):
+        pass
+
+    message = str(captured[0].message)
+    assert "will be rejected after 2026-08-23T12:00:00Z" in message
+    assert "python -m pip install --upgrade waddle-sdk==0.3.0" in message
+    assert "secret-from-server" not in message
+    assert "do-not-print-me" not in message
+    assert len(message) <= 512
+
+
+def test_upgrade_required_is_typed_and_never_opens_hardware(tmp_path, monkeypatch):
+    probe = _AuthorizationProbe(
+        accepted=False,
+        detail=_compatibility_detail("upgrade_required"),
+        error_code="upgrade_required",
+    )
+    monkeypatch.setattr(site_api, "create_core_session", lambda *a, **k: probe)
+    site = waddle_sdk.load_site(_write_site(tmp_path))
+
+    with (
+        pytest.raises(waddle_sdk.ConnectorRegistrationError) as captured,
+        site.open(transport=_connector_transport(), console=False),
+    ):
+        pass
+
+    assert captured.value.code == "upgrade_required"
+    assert "minimum 0.3.0" in captured.value.detail
+    assert "secret-from-server" not in str(captured.value)
+    assert probe.closed
+    assert site_fixtures.opened == {"arms": 0, "cameras": 0}

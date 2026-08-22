@@ -49,6 +49,7 @@ use tonic::transport::{Channel, ClientTlsConfig, Endpoint};
 use waddle_types::pb::v0 as pb;
 
 use crate::PlaneError;
+use crate::RegistrationRejection;
 use crate::inflight::{DEFAULT_INFLIGHT_CAP, Inflight, InflightLimit};
 use crate::transport::{ClientMsg, ControlConn, ControlTransport, ServerMsg};
 
@@ -71,6 +72,14 @@ pub const WORKSPACE_ID_METADATA: &str = "x-waddle-workspace-id";
 /// Non-secret per-connection correlation metadata. It equals
 /// `RegisterRequest.session_nonce` and rotates on every reconnect.
 pub const SESSION_NONCE_METADATA: &str = "x-waddle-session-nonce";
+/// Stable public registration-refusal code returned in gRPC trailers.
+pub const ERROR_CODE_METADATA: &str = "x-waddle-error-code";
+/// Structured, non-secret connector compatibility detail returned in gRPC
+/// trailers. It is bounded again before crossing into the runtime.
+pub const CONNECTOR_COMPATIBILITY_METADATA: &str = "x-waddle-connector-compatibility";
+
+const REGISTRATION_CODE_MAX_BYTES: usize = 64;
+const REGISTRATION_DETAIL_MAX_BYTES: usize = 2_048;
 
 /// Endpoint connect timeout: bounds how long the client thread blocks inside
 /// a single `connect()` attempt (the client's backoff owns retry pacing).
@@ -548,7 +557,25 @@ fn dispatch(
             });
             queue(tx, &outbound.obs_limit, o, droppable)
         }
-        ClientMsg::Register(r) => unary!(register, r, ServerMsg::Registered),
+        ClientMsg::Register(r) => {
+            let mut c = client.clone();
+            let out = out.clone();
+            let fatal = fatal.clone();
+            tokio::spawn(async move {
+                match c.register(r).await {
+                    Ok(resp) => {
+                        let _ = out.send(ServerMsg::Registered(resp.into_inner()));
+                    }
+                    Err(status) => {
+                        let _ = out.send(ServerMsg::RegistrationRejected(registration_rejection(
+                            &status,
+                        )));
+                        let _ = fatal.send(());
+                    }
+                }
+            });
+            true
+        }
         ClientMsg::Negotiate(r) => unary!(negotiate, r, ServerMsg::Negotiated),
         ClientMsg::ClaimEpisode(r) => unary!(claim_episode, r, ServerMsg::ClaimResponse),
         ClientMsg::HandoffLease(r) => unary!(handoff_lease, r, ServerMsg::LeaseResponse),
@@ -585,4 +612,44 @@ fn dispatch(
             true
         }
     }
+}
+
+fn registration_rejection(status: &tonic::Status) -> RegistrationRejection {
+    let metadata_code = status
+        .metadata()
+        .get(ERROR_CODE_METADATA)
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| {
+            !value.is_empty()
+                && value.len() <= REGISTRATION_CODE_MAX_BYTES
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+        })
+        .unwrap_or("registration_failed");
+    let code = match (status.code(), metadata_code) {
+        (tonic::Code::FailedPrecondition, "upgrade_required") => "upgrade_required",
+        (tonic::Code::InvalidArgument, "invalid_connector_version") => "invalid_connector_version",
+        _ => "registration_failed",
+    }
+    .to_owned();
+    let detail = if code == "upgrade_required" {
+        status
+            .metadata()
+            .get(CONNECTOR_COMPATIBILITY_METADATA)
+            .and_then(|value| value.to_str().ok())
+            .map(|value| bounded_utf8(value, REGISTRATION_DETAIL_MAX_BYTES))
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+    RegistrationRejection { code, detail }
+}
+
+fn bounded_utf8(value: &str, max_bytes: usize) -> String {
+    let mut end = value.len().min(max_bytes);
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value[..end].to_owned()
 }

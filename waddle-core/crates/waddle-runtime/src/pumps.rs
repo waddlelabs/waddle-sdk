@@ -910,6 +910,7 @@ pub(crate) fn spawn_plane_pump(
                         );
                     }
                     PlaneEvent::Registered(resp) => {
+                        let registration_detail = bounded_registration_detail(&resp.detail);
                         let connector_binding = resp
                             .accepted_feature_flags
                             .iter()
@@ -923,7 +924,11 @@ pub(crate) fn spawn_plane_pump(
                                 &mut acks_negotiated,
                                 &mut hosted_runs_negotiated,
                             );
-                            mirror.update(|s| s.connector_binding_refused = true);
+                            mirror.update(|s| {
+                                s.connector_binding_refused = true;
+                                s.connector_registration_detail = registration_detail;
+                                s.connector_registration_error_code = None;
+                            });
                             // An initial runnable registration refusal and a
                             // refusal after reconnect are both partitions.
                             // Do not wait for the following socket close to
@@ -980,6 +985,8 @@ pub(crate) fn spawn_plane_pump(
                             s.plane_registered = true;
                             s.connector_binding_negotiated = connector_binding;
                             s.connector_binding_refused = false;
+                            s.connector_registration_detail = registration_detail;
+                            s.connector_registration_error_code = None;
                             s.stills_negotiated = stills;
                             s.parts_negotiated = parts;
                             s.motion_feedforward_negotiated = motion_feedforward;
@@ -992,6 +999,25 @@ pub(crate) fn spawn_plane_pump(
                         if !was_connected {
                             was_connected = true;
                             let _ = inject.send(SessionEvent::PartitionEnd { at }.into());
+                        }
+                    }
+                    PlaneEvent::RegistrationRejected(rejection) => {
+                        heartbeat_session_id = None;
+                        forget_negotiated_flags(
+                            &mirror,
+                            &chat,
+                            &plane_events,
+                            &mut acks_negotiated,
+                            &mut hosted_runs_negotiated,
+                        );
+                        mirror.update(|s| {
+                            s.connector_registration_error_code = Some(rejection.code);
+                            s.connector_registration_detail =
+                                bounded_registration_detail(&rejection.detail);
+                        });
+                        if was_connected {
+                            was_connected = false;
+                            let _ = inject.send(SessionEvent::PartitionStart { at }.into());
                         }
                     }
                     PlaneEvent::Disconnected => {
@@ -1031,6 +1057,16 @@ pub(crate) fn spawn_plane_pump(
             }
         })
         .expect("spawn plane pump")
+}
+
+const CONNECTOR_REGISTRATION_DETAIL_MAX_BYTES: usize = 2_048;
+
+fn bounded_registration_detail(value: &str) -> String {
+    let mut end = value.len().min(CONNECTOR_REGISTRATION_DETAIL_MAX_BYTES);
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value[..end].to_owned()
 }
 
 /// Forward a hosted-run admission answer only to the connection that asked.

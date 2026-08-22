@@ -16,11 +16,12 @@ use parking_lot::Mutex;
 use tokio::sync::mpsc as tokio_mpsc;
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::{TcpListenerStream, UnboundedReceiverStream};
-use tonic::{Request, Response, Status, Streaming};
+use tonic::metadata::MetadataMap;
+use tonic::{Code, Request, Response, Status, Streaming};
 use waddle_controlplane::grpc::proto::control_plane_server::{ControlPlane, ControlPlaneServer};
 use waddle_controlplane::grpc::{
-    CUSTOMER_ID_METADATA, GrpcConfig, GrpcTransport, PROJECT_ID_METADATA, SESSION_NONCE_METADATA,
-    WORKSPACE_ID_METADATA,
+    CONNECTOR_COMPATIBILITY_METADATA, CUSTOMER_ID_METADATA, ERROR_CODE_METADATA, GrpcConfig,
+    GrpcTransport, PROJECT_ID_METADATA, SESSION_NONCE_METADATA, WORKSPACE_ID_METADATA,
 };
 use waddle_controlplane::{
     Backoff, ClientConfig, ClientMsg, ControlPlaneClient, ControlTransport, PlaneEvent, ServerMsg,
@@ -43,6 +44,8 @@ struct PlaneState {
     /// When set, `StreamObservations` accepts the RPC but never answers
     /// (a stalled — not dead — plane).
     stall_obs: AtomicBool,
+    /// Reject Register with the public typed compatibility trailers.
+    reject_register: AtomicBool,
     /// Push handle for plane → client gate messages (set when GateActions opens).
     gate_push: Mutex<Option<tokio_mpsc::UnboundedSender<Result<pb::GateServerMessage, Status>>>>,
 }
@@ -101,6 +104,17 @@ impl ControlPlane for TestPlane {
             .register_nonces
             .lock()
             .push(request.get_ref().session_nonce.clone());
+        if self.state.reject_register.load(Ordering::SeqCst) {
+            let detail = r#"{"code":"upgrade_required","connector":"waddle-sdk","current_version":"0.2.0","enforcement_deadline":"2026-08-23T12:00:00Z","minimum_version":"0.3.0","recommended_version":"0.3.0","schema":"waddle.connector-compatibility/v1"}"#;
+            let mut metadata = MetadataMap::new();
+            metadata.insert(ERROR_CODE_METADATA, "upgrade_required".parse().unwrap());
+            metadata.insert(CONNECTOR_COMPATIBILITY_METADATA, detail.parse().unwrap());
+            return Err(Status::with_metadata(
+                Code::FailedPrecondition,
+                "registration rejected",
+                metadata,
+            ));
+        }
         Ok(Response::new(pb::RegisterResponse {
             session_id: "s-grpc".into(),
             // A plane that means to receive stills has to say so: the client
@@ -375,6 +389,42 @@ fn partial_exact_binding_fails_before_dial() {
         .connect(&registration)
         .expect_err("a partial exact binding must fail closed");
     assert!(format!("{error}").contains("all present and non-empty"));
+}
+
+#[test]
+fn register_refusal_preserves_typed_compatibility_detail_before_disconnect() {
+    let state = Arc::new(PlaneState::default());
+    state.reject_register.store(true, Ordering::SeqCst);
+    let server = TestServer::start(state, 0);
+    let transport = GrpcTransport::new(grpc_config(server.addr));
+    let client = ControlPlaneClient::spawn(transport, client_config());
+
+    wait_for("Connected event", || {
+        matches!(
+            client.recv_event_timeout(Duration::from_secs(1)),
+            Some(PlaneEvent::Connected)
+        )
+    });
+    let mut rejection = None;
+    wait_for("typed Register rejection", || {
+        match client.recv_event_timeout(Duration::from_secs(1)) {
+            Some(PlaneEvent::RegistrationRejected(value)) => {
+                rejection = Some(value);
+                true
+            }
+            Some(_) => false,
+            None => false,
+        }
+    });
+    let rejection = rejection.expect("rejection event");
+    assert_eq!(rejection.code, "upgrade_required");
+    assert!(
+        rejection
+            .detail
+            .contains("waddle.connector-compatibility/v1")
+    );
+    assert!(!rejection.detail.contains("registration rejected"));
+    client.shutdown();
 }
 
 #[test]

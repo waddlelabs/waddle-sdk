@@ -162,6 +162,15 @@ pub struct Status {
     /// accepts it so a hardware-free authorization probe cannot miss a brief
     /// response immediately followed by transport teardown/backoff.
     pub connector_binding_refused: bool,
+    /// Bounded structured detail from the latest successful Register or
+    /// typed Register refusal. Connector compatibility notices are parsed
+    /// by the public SDK from this opaque transport payload; core never
+    /// interprets version policy or turns it into authority.
+    pub connector_registration_detail: String,
+    /// Stable refusal code from the latest failed Register. Latched until a
+    /// later successful registration so a short rejection cannot disappear
+    /// during reconnect backoff before a hold-first probe observes it.
+    pub connector_registration_error_code: Option<String>,
     /// The CURRENT connection accepted `waddle.v0.obs.stills` at Register.
     /// Set by the plane pump from that connection's own `RegisterResponse`
     /// and cleared at every connection boundary (see

@@ -143,12 +143,26 @@ impl ClientMsg {
 #[allow(clippy::large_enum_variant)] // moved once per message, never stored in bulk
 pub enum ServerMsg {
     Registered(pb::RegisterResponse),
+    /// Register was rejected before this connection became runnable. The
+    /// code is a bounded stable snake-case identifier supplied in transport
+    /// metadata; detail is bounded structured compatibility JSON when the
+    /// server supplied that public contract, never an arbitrary stack trace.
+    RegistrationRejected(RegistrationRejection),
     Negotiated(pb::NegotiateResponse),
     Gate(pb::GateServerMessage),
     HeartbeatAck(pb::HeartbeatAck),
     ClaimResponse(pb::ClaimEpisodeResponse),
     LeaseResponse(pb::HandoffLeaseResponse),
     ResetProgress(pb::ResetProgress),
+}
+
+/// A typed Register refusal surfaced by a transport before it closes the
+/// failed connection. This is deliberately transport-neutral so the runtime
+/// can preserve a stable refusal code through its hold-first connector probe.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RegistrationRejection {
+    pub code: String,
+    pub detail: String,
 }
 
 /// One live connection: send fails when the connection is gone.

@@ -44,9 +44,13 @@ rules are enforced by the SDK over conservative geometry supplied by each
 driver adapter; configured missing or frame-incompatible geometry fails closed.
 A connector's exact customer/project/workspace binding and a fresh per-connection
 nonce accompany every gRPC method; Register is the barrier before any other message
-can flow. A runnable connector emits bounded native heartbeats; credential revocation
-closes the transport, requests the core-owned hold verb, and aborts any active
-hosted run. Driver-extension APIs live under `waddle_sdk.robots`,
+can flow. Before a published connector-version deadline, an authenticated host may
+return a bounded public upgrade recommendation; the SDK prints an allow-listed warning
+and constructs the `pip` command locally. After the deadline, `upgrade_required` is a
+typed Register refusal before hardware opens, and the SDK never updates customer
+software itself. A runnable connector emits bounded native heartbeats; credential
+revocation closes the transport, requests the core-owned hold verb, and aborts any
+active hosted run. Driver-extension APIs live under `waddle_sdk.robots`,
 `waddle_sdk.cameras`, and `waddle_sdk.descriptors`; they are not part of the
 small root surface.
 

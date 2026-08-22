@@ -36,6 +36,13 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Surface the public connector compatibility window without weakening the Register
+  barrier. Successful pre-deadline registrations produce a bounded, allow-listed SDK
+  warning with a locally constructed upgrade command; post-deadline
+  `upgrade_required` trailers remain a typed refusal observable before hardware opens.
+  Unknown server text, credentials, tenant identity, and remote update behavior never
+  enter the warning path.
+
 - Add immutable, non-opening robot safety presets for initializer use. Built-in YAM
   and mock adapters publish reviewed workspace starting points, custom adapter modules
   can implement the same `safety_presets(factory=, options=)` extension, and failures

@@ -104,7 +104,8 @@ waddle-sdk/
                              #   Metal skills; unlike `options`, none of this is
                              #   forwarded to the adapter factory.
                              #   Root exports exactly Site/SiteSession/Run, load_site,
-                             #   Grpc/LiveKit, Outcome, and manifest errors.
+                             #   Grpc/LiveKit, Outcome, manifest errors, and the
+                             #   typed connector compatibility warning/refusal.
                              #   transport.py holds pure transport declarations;
                              #   _session.py is the private, non-global builder with
                              #   fixed hold-first/enforced core wiring. There is no
@@ -125,8 +126,12 @@ waddle-sdk/
                              #   authorization-only waddle.v0 registration
                              #   and must negotiate connector.binding. Every RPC
                              #   carries its exact binding and a fresh connection
-                             #   nonce; Register is a barrier before traffic. After
-                             #   runnable registration, the native runtime emits
+                             #   nonce; Register is a barrier before traffic. A
+                             #   successful pre-deadline Register lets the SDK render
+                             #   only allow-listed fields from bounded compatibility
+                             #   JSON; upgrade_required remains a typed, hold-first
+                             #   refusal and no customer software is changed remotely.
+                             #   After runnable registration, the native runtime emits
                              #   500 ms v0 heartbeats; key revocation tears down
                              #   the connection and reaches the core-owned hold.
                              #   all commands cross the core gate and the

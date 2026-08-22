@@ -6,8 +6,10 @@ import hashlib
 import importlib
 import inspect
 import json
+import re
 import threading
 import time
+import warnings
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from importlib.resources import files
@@ -24,6 +26,7 @@ from .cameras.site import CameraConfig
 from .robots import base
 from .robots.site import PartConfig
 from .runtime import (
+    SUPPORT_CONTRACT_VERSION,
     BodySphere,
     FaultCode,
     JointPositionCommand,
@@ -34,7 +37,6 @@ from .runtime import (
     RuntimeEvent,
     RuntimeFault,
     SubmitResult,
-    SUPPORT_CONTRACT_VERSION,
     SupportFact,
     SupportMatrix,
     SupportRow,
@@ -42,6 +44,102 @@ from .runtime import (
 from .transport import Grpc
 
 SITE_API_VERSION = "waddle.site/v1"
+
+_CONNECTOR_COMPATIBILITY_SCHEMA = "waddle.connector-compatibility/v1"
+_CONNECTOR_COMPATIBILITY_DETAIL_MAX_BYTES = 2_048
+_CONNECTOR_COMPATIBILITY_MESSAGE_MAX_CHARS = 512
+_SEMVER = re.compile(
+    r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
+    r"(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
+    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
+)
+_UTC_DEADLINE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
+
+
+class ConnectorCompatibilityWarning(UserWarning):
+    """The connected host recommends an SDK upgrade before a deadline."""
+
+
+class ConnectorRegistrationError(RuntimeError):
+    """A connector Register barrier failed with a stable public code."""
+
+    def __init__(self, code: str, detail: str):
+        self.code = code
+        self.detail = detail
+        super().__init__(f"{code}: {detail}")
+
+
+def _strict_semver(value: object) -> bool:
+    if (
+        not isinstance(value, str)
+        or len(value) > 64
+        or _SEMVER.fullmatch(value) is None
+    ):
+        return False
+    without_build = value.split("+", 1)[0]
+    if "-" not in without_build:
+        return True
+    prerelease = without_build.split("-", 1)[1]
+    return all(
+        not (
+            identifier.isdigit() and len(identifier) > 1 and identifier.startswith("0")
+        )
+        for identifier in prerelease.split(".")
+    )
+
+
+def _connector_compatibility_message(detail: object, *, code: str) -> str | None:
+    """Render allow-listed compatibility JSON without echoing server text."""
+    if code not in {"upgrade_recommended", "upgrade_required"}:
+        return None
+    if not isinstance(detail, str):
+        return None
+    if len(detail.encode("utf-8")) > _CONNECTOR_COMPATIBILITY_DETAIL_MAX_BYTES:
+        return None
+    try:
+        payload = json.loads(detail)
+    except (TypeError, ValueError):
+        return None
+    if (
+        not isinstance(payload, Mapping)
+        or payload.get("schema") != _CONNECTOR_COMPATIBILITY_SCHEMA
+        or payload.get("connector") != "waddle-sdk"
+        or payload.get("code") != code
+    ):
+        return None
+
+    versions: dict[str, str] = {}
+    for name in ("current_version", "minimum_version", "recommended_version"):
+        value = payload.get(name)
+        if not _strict_semver(value):
+            return None
+        assert isinstance(value, str)
+        versions[name] = value
+    deadline = payload.get("enforcement_deadline")
+    if (
+        not isinstance(deadline, str)
+        or len(deadline) > 32
+        or _UTC_DEADLINE.fullmatch(deadline) is None
+    ):
+        return None
+
+    upgrade = (
+        f"python -m pip install --upgrade waddle-sdk=={versions['recommended_version']}"
+    )
+    if code == "upgrade_recommended":
+        message = (
+            f"Waddle SDK {versions['current_version']} will be rejected after "
+            f"{deadline}; minimum {versions['minimum_version']}, recommended "
+            f"{versions['recommended_version']}. Upgrade: {upgrade}"
+        )
+    else:
+        message = (
+            f"Waddle SDK {versions['current_version']} is no longer accepted; "
+            f"minimum {versions['minimum_version']}, recommended "
+            f"{versions['recommended_version']} (enforcement began {deadline}). "
+            f"Upgrade: {upgrade}"
+        )
+    return message[:_CONNECTOR_COMPATIBILITY_MESSAGE_MAX_CHARS]
 
 
 class ManifestError(ValueError):
@@ -642,6 +740,23 @@ class SiteSession:
         try:
             while time.monotonic() < deadline:
                 status = dict(probe.status())
+                error_code = status.get("connector_registration_error_code")
+                if isinstance(error_code, str) and error_code:
+                    safe_code = (
+                        error_code
+                        if len(error_code) <= 64
+                        and re.fullmatch(r"[a-z0-9_]+", error_code) is not None
+                        else "registration_failed"
+                    )
+                    detail = _connector_compatibility_message(
+                        status.get("connector_registration_detail"),
+                        code=safe_code,
+                    )
+                    if detail is None:
+                        detail = (
+                            "connector registration was rejected before hardware opened"
+                        )
+                    raise ConnectorRegistrationError(safe_code, detail)
                 if status.get("connector_binding_refused"):
                     raise RuntimeError(
                         "the host registered without accepting waddle.v0.connector.binding; refusing to open hardware"
@@ -650,6 +765,16 @@ class SiteSession:
                     if not status.get("connector_binding_negotiated"):
                         raise RuntimeError(
                             "the host registered without accepting waddle.v0.connector.binding; refusing to open hardware"
+                        )
+                    notice = _connector_compatibility_message(
+                        status.get("connector_registration_detail"),
+                        code="upgrade_recommended",
+                    )
+                    if notice is not None:
+                        warnings.warn(
+                            notice,
+                            ConnectorCompatibilityWarning,
+                            stacklevel=3,
                         )
                     return
                 time.sleep(0.02)
@@ -1419,6 +1544,8 @@ def load_site(path: str | Path) -> Site:
 
 
 __all__ = [
+    "ConnectorCompatibilityWarning",
+    "ConnectorRegistrationError",
     "ManifestError",
     "ManifestPathError",
     "ManifestSyntaxError",

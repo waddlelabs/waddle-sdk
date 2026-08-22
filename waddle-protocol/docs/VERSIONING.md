@@ -56,6 +56,33 @@ Mechanics (normative):
   `waddle.v0.<area>[.<detail>]`. Adding a registry entry is a reviewed PR to
   this file.
 
+### 3.1 Connector release compatibility
+
+Connector software releases are distinct from protocol feature negotiation.
+Before a dated minimum-version enforcement, a server MAY put one compact JSON
+object in a successful `RegisterResponse.detail`:
+
+```json
+{"code":"upgrade_recommended","connector":"waddle-sdk","current_version":"0.2.0","enforcement_deadline":"2026-08-23T12:00:00Z","minimum_version":"0.2.0","recommended_version":"0.3.0","schema":"waddle.connector-compatibility/v1","upgrade_command":"python -m pip install --upgrade waddle-sdk==0.3.0"}
+```
+
+All values are public operational metadata; the object MUST NOT contain a
+credential or tenant identity and MUST be at most 2 KiB of UTF-8. Versions are
+strict SemVer and the deadline is UTC RFC 3339. SDKs MUST treat every field as
+untrusted display input: recognize the exact schema/code/connector tuple,
+allow-list and bound values, and construct any displayed upgrade command
+locally rather than executing or echoing server text. Unknown or malformed
+detail is ignored.
+
+At or after the deadline, a below-minimum Register is refused with gRPC
+`FAILED_PRECONDITION`, trailer `x-waddle-error-code: upgrade_required`, and the
+same bounded JSON under trailer `x-waddle-connector-compatibility` with code
+`upgrade_required`. A malformed/non-SemVer connector version is
+`INVALID_ARGUMENT` with code `invalid_connector_version`. These refusals occur
+at the Register barrier: the SDK requests/retains hold as applicable, opens no
+hardware during an authorization-only probe, sends no later RPC, and never
+replays motion. Servers never mutate connector software remotely.
+
 ### Initial registry (v0)
 
 | Flag | Gates |

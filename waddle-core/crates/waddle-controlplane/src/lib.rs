@@ -33,7 +33,9 @@ pub use buffer::OfflineBuffer;
 pub use client::{ClientConfig, ControlPlaneClient, PlaneEvent};
 pub use heartbeat::{HeartbeatTracker, HostLoad};
 pub use inflight::{DEFAULT_INFLIGHT_CAP, Inflight, InflightLimit};
-pub use transport::{ClientMsg, ControlConn, ControlTransport, InMemoryTransport, ServerMsg};
+pub use transport::{
+    ClientMsg, ControlConn, ControlTransport, InMemoryTransport, RegistrationRejection, ServerMsg,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum PlaneError {

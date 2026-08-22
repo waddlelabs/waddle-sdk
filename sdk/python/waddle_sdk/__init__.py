@@ -14,6 +14,8 @@ import enum
 
 from ._native import core
 from .site import (
+    ConnectorCompatibilityWarning,
+    ConnectorRegistrationError,
     ManifestError,
     ManifestPathError,
     ManifestSyntaxError,
@@ -37,6 +39,8 @@ class Outcome(str, enum.Enum):
 
 
 __all__ = [
+    "ConnectorCompatibilityWarning",
+    "ConnectorRegistrationError",
     "Grpc",
     "LiveKit",
     "ManifestError",
