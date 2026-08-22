@@ -18,7 +18,10 @@ use tokio_stream::StreamExt;
 use tokio_stream::wrappers::{TcpListenerStream, UnboundedReceiverStream};
 use tonic::{Request, Response, Status, Streaming};
 use waddle_controlplane::grpc::proto::control_plane_server::{ControlPlane, ControlPlaneServer};
-use waddle_controlplane::grpc::{GrpcConfig, GrpcTransport};
+use waddle_controlplane::grpc::{
+    CUSTOMER_ID_METADATA, GrpcConfig, GrpcTransport, PROJECT_ID_METADATA, SESSION_NONCE_METADATA,
+    WORKSPACE_ID_METADATA,
+};
 use waddle_controlplane::{
     Backoff, ClientConfig, ClientMsg, ControlPlaneClient, ControlTransport, PlaneEvent, ServerMsg,
 };
@@ -31,8 +34,10 @@ use waddle_types::pb::v0 as pb;
 #[derive(Default)]
 struct PlaneState {
     registers: Mutex<u32>,
+    register_nonces: Mutex<Vec<String>>,
     /// The `authorization` metadata seen on Register calls.
     auth_seen: Mutex<Vec<Option<String>>>,
+    rpc_metadata: Mutex<Vec<RpcMetadataSeen>>,
     seen_gate: Mutex<Vec<pb::GateClientMessage>>,
     seen_obs: Mutex<Vec<pb::ObservationUpdate>>,
     /// When set, `StreamObservations` accepts the RPC but never answers
@@ -40,6 +45,35 @@ struct PlaneState {
     stall_obs: AtomicBool,
     /// Push handle for plane → client gate messages (set when GateActions opens).
     gate_push: Mutex<Option<tokio_mpsc::UnboundedSender<Result<pb::GateServerMessage, Status>>>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RpcMetadataSeen {
+    rpc: &'static str,
+    authorization: Option<String>,
+    customer_id: Option<String>,
+    project_id: Option<String>,
+    workspace_id: Option<String>,
+    session_nonce: Option<String>,
+}
+
+fn metadata_string<T>(request: &Request<T>, name: &'static str) -> Option<String> {
+    request
+        .metadata()
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(String::from)
+}
+
+fn record_rpc<T>(state: &PlaneState, rpc: &'static str, request: &Request<T>) {
+    state.rpc_metadata.lock().push(RpcMetadataSeen {
+        rpc,
+        authorization: metadata_string(request, "authorization"),
+        customer_id: metadata_string(request, CUSTOMER_ID_METADATA),
+        project_id: metadata_string(request, PROJECT_ID_METADATA),
+        workspace_id: metadata_string(request, WORKSPACE_ID_METADATA),
+        session_nonce: metadata_string(request, SESSION_NONCE_METADATA),
+    });
 }
 
 struct TestPlane {
@@ -55,6 +89,7 @@ impl ControlPlane for TestPlane {
         request: Request<pb::RegisterRequest>,
     ) -> Result<Response<pb::RegisterResponse>, Status> {
         *self.state.registers.lock() += 1;
+        record_rpc(&self.state, "Register", &request);
         self.state.auth_seen.lock().push(
             request
                 .metadata()
@@ -62,6 +97,10 @@ impl ControlPlane for TestPlane {
                 .and_then(|v| v.to_str().ok())
                 .map(String::from),
         );
+        self.state
+            .register_nonces
+            .lock()
+            .push(request.get_ref().session_nonce.clone());
         Ok(Response::new(pb::RegisterResponse {
             session_id: "s-grpc".into(),
             // A plane that means to receive stills has to say so: the client
@@ -69,16 +108,20 @@ impl ControlPlane for TestPlane {
             // accept its flag (`ClientMsg::connection_scoped_flag`), so
             // without this the shedding test below would have nothing to
             // shed.
-            accepted_feature_flags: vec![waddle_controlplane::flags::STILLS.to_owned()],
+            accepted_feature_flags: vec![
+                waddle_controlplane::flags::STILLS.to_owned(),
+                waddle_controlplane::flags::CONNECTOR_BINDING.to_owned(),
+            ],
             ..Default::default()
         }))
     }
 
     async fn negotiate(
         &self,
-        _request: Request<pb::NegotiateRequest>,
+        request: Request<pb::NegotiateRequest>,
     ) -> Result<Response<pb::NegotiateResponse>, Status> {
-        Err(Status::unimplemented("not part of this test plane"))
+        record_rpc(&self.state, "Negotiate", &request);
+        Ok(Response::new(pb::NegotiateResponse::default()))
     }
 
     type StreamObservationsStream = ServerStream<pb::ObservationAck>;
@@ -87,6 +130,7 @@ impl ControlPlane for TestPlane {
         &self,
         request: Request<Streaming<pb::ObservationUpdate>>,
     ) -> Result<Response<Self::StreamObservationsStream>, Status> {
+        record_rpc(&self.state, "StreamObservations", &request);
         if self.state.stall_obs.load(Ordering::SeqCst) {
             std::future::pending::<()>().await;
         }
@@ -108,6 +152,7 @@ impl ControlPlane for TestPlane {
         &self,
         request: Request<Streaming<pb::GateClientMessage>>,
     ) -> Result<Response<Self::GateActionsStream>, Status> {
+        record_rpc(&self.state, "GateActions", &request);
         let state = self.state.clone();
         let mut inbound = request.into_inner();
         let (tx, rx) = tokio_mpsc::unbounded_channel();
@@ -122,8 +167,9 @@ impl ControlPlane for TestPlane {
 
     async fn claim_episode(
         &self,
-        _request: Request<pb::ClaimEpisodeRequest>,
+        request: Request<pb::ClaimEpisodeRequest>,
     ) -> Result<Response<pb::ClaimEpisodeResponse>, Status> {
+        record_rpc(&self.state, "ClaimEpisode", &request);
         Ok(Response::new(pb::ClaimEpisodeResponse {
             granted: true,
             ..Default::default()
@@ -132,17 +178,19 @@ impl ControlPlane for TestPlane {
 
     async fn handoff_lease(
         &self,
-        _request: Request<pb::HandoffLeaseRequest>,
+        request: Request<pb::HandoffLeaseRequest>,
     ) -> Result<Response<pb::HandoffLeaseResponse>, Status> {
-        Err(Status::unimplemented("not part of this test plane"))
+        record_rpc(&self.state, "HandoffLease", &request);
+        Ok(Response::new(pb::HandoffLeaseResponse::default()))
     }
 
     type RequestResetStream = ServerStream<pb::ResetProgress>;
 
     async fn request_reset(
         &self,
-        _request: Request<pb::ResetRequest>,
+        request: Request<pb::ResetRequest>,
     ) -> Result<Response<Self::RequestResetStream>, Status> {
+        record_rpc(&self.state, "RequestReset", &request);
         // Two-phase progress ending in DONE, then the stream closes normally.
         let (tx, rx) = tokio_mpsc::unbounded_channel();
         let _ = tx.send(Ok(pb::ResetProgress {
@@ -162,6 +210,7 @@ impl ControlPlane for TestPlane {
         &self,
         request: Request<Streaming<pb::HeartbeatPing>>,
     ) -> Result<Response<Self::HeartbeatStream>, Status> {
+        record_rpc(&self.state, "Heartbeat", &request);
         let mut inbound = request.into_inner();
         let (tx, rx) = tokio_mpsc::unbounded_channel();
         tokio::spawn(async move {
@@ -256,7 +305,9 @@ impl Drop for TestServer {
 
 fn client_config() -> ClientConfig {
     let mut cfg = ClientConfig::new(pb::RegisterRequest {
-        project: "p-grpc".into(),
+        project: "project-grpc".into(),
+        customer_id: "customer-grpc".into(),
+        workspace_id: "workspace-grpc".into(),
         ..Default::default()
     });
     cfg.backoff = Backoff {
@@ -264,6 +315,10 @@ fn client_config() -> ClientConfig {
         plateau_ns: 40_000_000,
     };
     cfg
+}
+
+fn grpc_config(addr: SocketAddr) -> GrpcConfig {
+    GrpcConfig::new(format!("http://{addr}"))
 }
 
 #[allow(clippy::disallowed_methods)] // wall-clock deadlines are test-only
@@ -298,9 +353,28 @@ fn expect_connected_and_registered(client: &ControlPlaneClient) {
 fn connect_to_unreachable_server_fails_cleanly() {
     // TEST-NET-1 address: nothing listens there; connect_timeout bounds it.
     let transport = GrpcTransport::new(GrpcConfig::new("http://127.0.0.1:9"));
-    let err = transport.connect().expect_err("must fail");
+    let registration = pb::RegisterRequest {
+        session_nonce: "00000000000040008000000000000000".into(),
+        ..Default::default()
+    };
+    let err = transport.connect(&registration).expect_err("must fail");
     let msg = format!("{err}");
     assert!(msg.contains("transport"), "unexpected error: {msg}");
+}
+
+#[test]
+fn partial_exact_binding_fails_before_dial() {
+    let transport = GrpcTransport::new(GrpcConfig::new("http://127.0.0.1:9"));
+    let registration = pb::RegisterRequest {
+        project: "project-grpc".into(),
+        customer_id: "customer-grpc".into(),
+        session_nonce: "00000000000040008000000000000000".into(),
+        ..Default::default()
+    };
+    let error = transport
+        .connect(&registration)
+        .expect_err("a partial exact binding must fail closed");
+    assert!(format!("{error}").contains("all present and non-empty"));
 }
 
 #[test]
@@ -309,7 +383,7 @@ fn stalled_observation_stream_open_does_not_freeze_the_pump() {
     state.stall_obs.store(true, Ordering::SeqCst);
     let server = TestServer::start(state.clone(), 0);
 
-    let transport = GrpcTransport::new(GrpcConfig::new(format!("http://{}", server.addr)));
+    let transport = GrpcTransport::new(grpc_config(server.addr));
     let client = ControlPlaneClient::spawn(transport, client_config());
     expect_connected_and_registered(&client);
 
@@ -358,6 +432,64 @@ fn stalled_observation_stream_open_does_not_freeze_the_pump() {
     client.shutdown();
 }
 
+#[test]
+fn every_rpc_carries_the_same_exact_binding_and_session_nonce() {
+    let state = Arc::new(PlaneState::default());
+    let server = TestServer::start(state.clone(), 0);
+    let transport = GrpcTransport::new(grpc_config(server.addr).with_token("secret-token"));
+    let client = ControlPlaneClient::spawn(transport, client_config());
+    expect_connected_and_registered(&client);
+
+    client.send(ClientMsg::Negotiate(pb::NegotiateRequest::default()));
+    client.send(ClientMsg::Observation(pb::ObservationUpdate::default()));
+    client.send(ClientMsg::Gate(pb::GateClientMessage::default()));
+    client.send(ClientMsg::Heartbeat(pb::HeartbeatPing::default()));
+    client.send(ClientMsg::ClaimEpisode(pb::ClaimEpisodeRequest::default()));
+    client.send(ClientMsg::HandoffLease(pb::HandoffLeaseRequest::default()));
+    client.send(ClientMsg::RequestReset(pb::ResetRequest::default()));
+
+    let expected_rpcs = [
+        "Register",
+        "Negotiate",
+        "StreamObservations",
+        "GateActions",
+        "ClaimEpisode",
+        "HandoffLease",
+        "RequestReset",
+        "Heartbeat",
+    ];
+    wait_for("all eight RPCs reached the plane", || {
+        let seen = state.rpc_metadata.lock();
+        expected_rpcs
+            .iter()
+            .all(|rpc| seen.iter().any(|metadata| metadata.rpc == *rpc))
+    });
+
+    let register_nonce = state
+        .register_nonces
+        .lock()
+        .first()
+        .cloned()
+        .expect("Register request nonce");
+    let seen = state.rpc_metadata.lock();
+    for rpc in expected_rpcs {
+        let metadata = seen
+            .iter()
+            .find(|metadata| metadata.rpc == rpc)
+            .unwrap_or_else(|| panic!("missing metadata for {rpc}"));
+        assert_eq!(
+            metadata.authorization.as_deref(),
+            Some("Bearer secret-token")
+        );
+        assert_eq!(metadata.customer_id.as_deref(), Some("customer-grpc"));
+        assert_eq!(metadata.project_id.as_deref(), Some("project-grpc"));
+        assert_eq!(metadata.workspace_id.as_deref(), Some("workspace-grpc"));
+        assert_eq!(metadata.session_nonce.as_deref(), Some(&*register_nonce));
+    }
+
+    client.shutdown();
+}
+
 /// A plane that is CONNECTED but not draining must not turn bounded-rate
 /// perception into unbounded memory: nothing errors in that state (so the
 /// client never sees `Disconnected`, and its offline classification never
@@ -374,7 +506,7 @@ fn stalled_observation_stream_sheds_stills_instead_of_queueing_them() {
     state.stall_obs.store(true, Ordering::SeqCst);
     let server = TestServer::start(state.clone(), 0);
 
-    let transport = GrpcTransport::new(GrpcConfig::new(format!("http://{}", server.addr)));
+    let transport = GrpcTransport::new(grpc_config(server.addr));
     let client = ControlPlaneClient::spawn(transport.clone(), client_config());
     expect_connected_and_registered(&client);
 
@@ -421,8 +553,7 @@ fn registers_round_trips_and_replays_after_server_restart() {
     let server = TestServer::start(state.clone(), 0);
     let addr = server.addr;
 
-    let transport =
-        GrpcTransport::new(GrpcConfig::new(format!("http://{addr}")).with_token("secret-token"));
+    let transport = GrpcTransport::new(grpc_config(addr).with_token("secret-token"));
     let client = ControlPlaneClient::spawn(transport, client_config());
 
     // Connect → auto-Register arrives (with the bearer token as metadata).
@@ -488,6 +619,15 @@ fn registers_round_trips_and_replays_after_server_restart() {
     let _server2 = TestServer::start(state.clone(), addr.port());
     expect_connected_and_registered(&client);
     wait_for("second register", || *state.registers.lock() >= 2);
+    let nonces = state.register_nonces.lock().clone();
+    assert_eq!(nonces.len(), 2);
+    assert_ne!(nonces[0], nonces[1], "every reconnect rotates its nonce");
+    assert!(nonces.iter().all(|nonce| {
+        nonce.len() == 32
+            && nonce
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    }));
     wait_for("buffered observation replayed", || {
         state.seen_obs.lock().first() == Some(&obs)
     });

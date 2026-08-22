@@ -30,8 +30,10 @@
 //! stream h2 has stopped polling, and the shed count is readable via
 //! [`GrpcTransport::droppable_dropped`]. History is never shed.
 //!
-//! Authentication is transport metadata per services.proto: a configured
-//! token rides every RPC as `authorization: Bearer <token>`.
+//! Authentication and correlation are transport metadata per services.proto:
+//! a configured token rides every RPC as `authorization: Bearer <token>`;
+//! connector transports also carry one exact customer/project/workspace
+//! binding and the per-connection session nonce on every RPC.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -59,6 +61,16 @@ pub mod proto {
 }
 
 use proto::control_plane_client::ControlPlaneClient as GeneratedClient;
+
+/// Non-secret exact-binding metadata required together on every connector
+/// RPC. The bearer credential remains project-scoped; these values select
+/// the exact authorized workspace within that project.
+pub const CUSTOMER_ID_METADATA: &str = "x-waddle-customer-id";
+pub const PROJECT_ID_METADATA: &str = "x-waddle-project-id";
+pub const WORKSPACE_ID_METADATA: &str = "x-waddle-workspace-id";
+/// Non-secret per-connection correlation metadata. It equals
+/// `RegisterRequest.session_nonce` and rotates on every reconnect.
+pub const SESSION_NONCE_METADATA: &str = "x-waddle-session-nonce";
 
 /// Endpoint connect timeout: bounds how long the client thread blocks inside
 /// a single `connect()` attempt (the client's backoff owns retry pacing).
@@ -133,8 +145,9 @@ pub fn connect(config: GrpcConfig) -> Arc<dyn ControlTransport> {
 }
 
 impl ControlTransport for GrpcTransport {
-    fn connect(&self) -> Result<ControlConn, PlaneError> {
+    fn connect(&self, registration: &pb::RegisterRequest) -> Result<ControlConn, PlaneError> {
         let config = self.config.clone();
+        let registration = registration.clone();
         let dropped = self.dropped.clone();
         let (client_tx, cmd_std_rx) = std::sync::mpsc::channel::<ClientMsg>();
         let (server_tx, client_rx) = std::sync::mpsc::channel::<ServerMsg>();
@@ -154,7 +167,14 @@ impl ControlTransport for GrpcTransport {
                         return;
                     }
                 };
-                rt.block_on(run_conn(config, dropped, cmd_std_rx, server_tx, &ready_tx));
+                rt.block_on(run_conn(
+                    config,
+                    registration,
+                    dropped,
+                    cmd_std_rx,
+                    server_tx,
+                    &ready_tx,
+                ));
                 // Dropping the runtime here cancels every in-flight task and
                 // drops their `ServerMsg` senders: the client's rx severs.
             })
@@ -173,25 +193,47 @@ impl ControlTransport for GrpcTransport {
     }
 }
 
-/// Per-RPC bearer-token metadata.
+/// Per-RPC bearer-token, exact-binding, and connection-correlation metadata.
 #[derive(Clone)]
-struct BearerAuth {
-    header: Option<MetadataValue<Ascii>>,
+struct RpcMetadata {
+    authorization: Option<MetadataValue<Ascii>>,
+    customer_id: Option<MetadataValue<Ascii>>,
+    project_id: Option<MetadataValue<Ascii>>,
+    workspace_id: Option<MetadataValue<Ascii>>,
+    session_nonce: MetadataValue<Ascii>,
 }
 
-impl tonic::service::Interceptor for BearerAuth {
+impl tonic::service::Interceptor for RpcMetadata {
     fn call(
         &mut self,
         mut request: tonic::Request<()>,
     ) -> Result<tonic::Request<()>, tonic::Status> {
-        if let Some(h) = &self.header {
+        if let Some(h) = &self.authorization {
             request.metadata_mut().insert("authorization", h.clone());
         }
+        if let Some(value) = &self.customer_id {
+            request
+                .metadata_mut()
+                .insert(CUSTOMER_ID_METADATA, value.clone());
+        }
+        if let Some(value) = &self.project_id {
+            request
+                .metadata_mut()
+                .insert(PROJECT_ID_METADATA, value.clone());
+        }
+        if let Some(value) = &self.workspace_id {
+            request
+                .metadata_mut()
+                .insert(WORKSPACE_ID_METADATA, value.clone());
+        }
+        request
+            .metadata_mut()
+            .insert(SESSION_NONCE_METADATA, self.session_nonce.clone());
         Ok(request)
     }
 }
 
-type Client = GeneratedClient<InterceptedService<Channel, BearerAuth>>;
+type Client = GeneratedClient<InterceptedService<Channel, RpcMetadata>>;
 
 fn build_endpoint(config: &GrpcConfig) -> Result<Endpoint, PlaneError> {
     let mut endpoint = Endpoint::from_shared(config.url.clone())
@@ -209,6 +251,7 @@ fn build_endpoint(config: &GrpcConfig) -> Result<Endpoint, PlaneError> {
 /// then pump until anything breaks or the client drops the conn.
 async fn run_conn(
     config: GrpcConfig,
+    registration: pb::RegisterRequest,
     dropped: Arc<AtomicU64>,
     cmd_std_rx: StdReceiver<ClientMsg>,
     out: StdSender<ServerMsg>,
@@ -218,7 +261,7 @@ async fn run_conn(
         let _ = ready.send(Err(e));
     };
 
-    let header = match &config.token {
+    let authorization = match &config.token {
         Some(t) => match MetadataValue::try_from(format!("Bearer {t}")) {
             Ok(h) => Some(h),
             Err(e) => {
@@ -226,6 +269,60 @@ async fn run_conn(
             }
         },
         None => None,
+    };
+    let metadata_value = |name: &str, value: &str| {
+        MetadataValue::try_from(value)
+            .map_err(|e| PlaneError::Transport(format!("invalid {name} metadata value: {e}")))
+    };
+    if registration.session_nonce.len() != 32
+        || !registration
+            .session_nonce
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        || registration.session_nonce.as_bytes()[12] != b'4'
+        || !matches!(
+            registration.session_nonce.as_bytes()[16],
+            b'8' | b'9' | b'a' | b'b'
+        )
+    {
+        return fail(PlaneError::Transport(
+            "invalid x-waddle-session-nonce: expected UUID-v4 lowercase hex".into(),
+        ));
+    }
+    let session_nonce = match metadata_value(SESSION_NONCE_METADATA, &registration.session_nonce) {
+        Ok(value) => value,
+        Err(e) => return fail(e),
+    };
+    let binding_present = !registration.customer_id.is_empty()
+        || !registration.workspace_id.is_empty()
+        || registration.authorization_only;
+    let (customer_id, project_id, workspace_id) = if binding_present {
+        if registration.customer_id.is_empty()
+            || registration.project.is_empty()
+            || registration.workspace_id.is_empty()
+        {
+            return fail(PlaneError::Transport(
+                "exact connector binding metadata values must be all present and non-empty".into(),
+            ));
+        }
+        {
+            let customer = match metadata_value(CUSTOMER_ID_METADATA, &registration.customer_id) {
+                Ok(value) => value,
+                Err(e) => return fail(e),
+            };
+            let project = match metadata_value(PROJECT_ID_METADATA, &registration.project) {
+                Ok(value) => value,
+                Err(e) => return fail(e),
+            };
+            let workspace = match metadata_value(WORKSPACE_ID_METADATA, &registration.workspace_id)
+            {
+                Ok(value) => value,
+                Err(e) => return fail(e),
+            };
+            (Some(customer), Some(project), Some(workspace))
+        }
+    } else {
+        (None, None, None)
     };
     let endpoint = match build_endpoint(&config) {
         Ok(ep) => ep,
@@ -242,7 +339,16 @@ async fn run_conn(
             .connect()
             .await
             .map_err(|e| PlaneError::Transport(format!("connect: {e}")))?;
-        let mut client: Client = GeneratedClient::with_interceptor(channel, BearerAuth { header });
+        let mut client: Client = GeneratedClient::with_interceptor(
+            channel,
+            RpcMetadata {
+                authorization,
+                customer_id,
+                project_id,
+                workspace_id,
+                session_nonce,
+            },
+        );
 
         // The two eager long-lived streams: the plane's down-paths. Each is
         // polled through `Inflight::into_inner`, which is where a metered

@@ -22,7 +22,17 @@
 //   - RequestReset is server-streaming: resets are long-running, with phase
 //     progress ending in a verification record.
 //
-// Authentication is transport metadata (bearer tokens), not protocol surface.
+// Authentication and exact RPC correlation are transport metadata, not
+// message payloads. Every RPC carries `x-waddle-session-nonce`, equal to the
+// current RegisterRequest.session_nonce. A connector also carries all three
+// non-secret exact-binding headers on every RPC:
+// `x-waddle-customer-id`, `x-waddle-project-id`, and
+// `x-waddle-workspace-id`. They are all present or all absent, and when
+// present MUST equal RegisterRequest fields 7, 1, and 8 respectively. The
+// project credential remains `authorization: Bearer <token>` on every RPC.
+// A transport may establish long-lived RPC streams before Register returns,
+// but neither endpoint processes their messages until the matching Register
+// is accepted. A mismatched/missing tuple or nonce closes the connection.
 
 syntax = "proto3";
 
@@ -52,6 +62,8 @@ message RegisterRequest {
   // is per-connection: old SDKs never see undeclared features planned
   // against them.
   repeated string feature_flags = 5;
+  // Fresh UUID-v4 lowercase hex for this physical transport connection. It
+  // equals `x-waddle-session-nonce` on every RPC and rotates on reconnect.
   string session_nonce = 6;
   // Exact hosted connector binding (flag waddle.v0.connector.binding).
   // project remains field 1 for backwards compatibility and carries the
@@ -59,7 +71,8 @@ message RegisterRequest {
   string customer_id = 7;
   string workspace_id = 8;
   // A short-lived authorization probe. The plane authenticates the exact
-  // binding but MUST NOT expose the connection as a runnable SDK session.
+  // binding but MUST NOT expose the connection as a runnable SDK session or
+  // make this probe's incomplete hardware declaration authoritative.
   bool authorization_only = 9;
 }
 

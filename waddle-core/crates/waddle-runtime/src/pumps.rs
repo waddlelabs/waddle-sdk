@@ -845,6 +845,7 @@ pub(crate) fn spawn_plane_pump(
     plane_events: Arc<PlaneEvents>,
     hosted_runs: Sender<HostedRunCommand>,
     hosted_results: Receiver<HostedRunResult>,
+    connector_binding_required: bool,
 ) -> JoinHandle<()> {
     std::thread::Builder::new()
         .name("waddle-plane-pump".into())
@@ -889,91 +890,105 @@ pub(crate) fn spawn_plane_pump(
                 };
                 let at = clock.stamp_now().mono_ns();
                 match event {
-                    PlaneEvent::Connected | PlaneEvent::Registered(_) => {
-                        if matches!(&event, PlaneEvent::Connected) {
-                            if connection_generation != 0 {
-                                let _ = hosted_runs.send(HostedRunCommand::ConnectionLost {
-                                    connection_generation,
-                                });
-                            }
-                            connection_generation = connection_generation.saturating_add(1);
+                    PlaneEvent::Connected => {
+                        if connection_generation != 0 {
+                            let _ = hosted_runs.send(HostedRunCommand::ConnectionLost {
+                                connection_generation,
+                            });
                         }
-
-                        match &event {
-                            PlaneEvent::Registered(resp) => {
-                                heartbeat_session_id = Some(resp.session_id.clone());
-                                next_heartbeat_ns = at.0;
-                                let connector_binding = resp
-                                    .accepted_feature_flags
-                                    .iter()
-                                    .any(|f| f == waddle_controlplane::flags::CONNECTOR_BINDING);
-                                acks_negotiated =
-                                    resp.accepted_feature_flags.iter().any(|f| f == ACKS_FLAG);
-                                // Control-plane stills (flag
-                                // `waddle.v0.obs.stills`) are emitted by the
-                                // media uplink pump, not this one, so this
-                                // acceptance crosses threads on the mirror —
-                                // same per-connection refresh rule as
-                                // `acks_negotiated` above.
-                                let stills =
-                                    resp.accepted_feature_flags.iter().any(|f| f == STILLS_FLAG);
-                                // Part-addressed control (`waddle.v0.parts`)
-                                // is read HERE (the chunk intake below) and
-                                // by the reducer (the observation uplink), so
-                                // it too crosses on the mirror rather than
-                                // living in this thread's locals.
-                                let parts =
-                                    resp.accepted_feature_flags.iter().any(|f| f == PARTS_FLAG);
-                                let motion_feedforward = resp
-                                    .accepted_feature_flags
-                                    .iter()
-                                    .any(|f| f == MOTION_FEEDFORWARD_FLAG);
-                                let chat_on = resp
-                                    .accepted_feature_flags
-                                    .iter()
-                                    .any(|f| f == waddle_controlplane::flags::CHAT);
-                                let tasks_on = resp
-                                    .accepted_feature_flags
-                                    .iter()
-                                    .any(|f| f == waddle_controlplane::flags::TASK_SESSIONS);
-                                let calibration_on = resp.accepted_feature_flags.iter().any(|f| {
-                                    f == waddle_controlplane::flags::CALIBRATION_MEASUREMENTS
-                                });
-                                let artifacts_on = resp
-                                    .accepted_feature_flags
-                                    .iter()
-                                    .any(|f| f == waddle_controlplane::flags::WORKSPACE_ARTIFACTS);
-                                hosted_runs_negotiated = resp
-                                    .accepted_feature_flags
-                                    .iter()
-                                    .any(|f| f == waddle_controlplane::flags::HOSTED_RUNS);
-                                mirror.update(|s| {
-                                    s.plane_registered = true;
-                                    s.connector_binding_negotiated = connector_binding;
-                                    s.stills_negotiated = stills;
-                                    s.parts_negotiated = parts;
-                                    s.motion_feedforward_negotiated = motion_feedforward;
-                                    s.chat_negotiated = chat_on;
-                                    s.task_sessions_negotiated = tasks_on;
-                                    s.calibration_measurements_negotiated = calibration_on;
-                                    s.workspace_artifacts_negotiated = artifacts_on;
-                                    s.hosted_runs_negotiated = hosted_runs_negotiated;
-                                });
-                            }
-                            // A connection exists but has not registered yet:
-                            // it has accepted nothing, and the previous one's
-                            // answers are not its to inherit.
-                            _ => forget_negotiated_flags(
+                        connection_generation = connection_generation.saturating_add(1);
+                        heartbeat_session_id = None;
+                        // Physical transport establishment is not recovery.
+                        // Until Register succeeds, the new connection has no
+                        // authenticated binding and has accepted no flags.
+                        forget_negotiated_flags(
+                            &mirror,
+                            &chat,
+                            &plane_events,
+                            &mut acks_negotiated,
+                            &mut hosted_runs_negotiated,
+                        );
+                    }
+                    PlaneEvent::Registered(resp) => {
+                        let connector_binding = resp
+                            .accepted_feature_flags
+                            .iter()
+                            .any(|f| f == waddle_controlplane::flags::CONNECTOR_BINDING);
+                        if connector_binding_required && !connector_binding {
+                            heartbeat_session_id = None;
+                            forget_negotiated_flags(
                                 &mirror,
                                 &chat,
                                 &plane_events,
                                 &mut acks_negotiated,
                                 &mut hosted_runs_negotiated,
-                            ),
+                            );
+                            mirror.update(|s| s.connector_binding_refused = true);
+                            // An initial runnable registration refusal and a
+                            // refusal after reconnect are both partitions.
+                            // Do not wait for the following socket close to
+                            // start the stale-heartbeat hold deadline.
+                            if was_connected {
+                                was_connected = false;
+                                let _ = inject.send(SessionEvent::PartitionStart { at }.into());
+                            }
+                            continue;
                         }
-                        if matches!(&event, PlaneEvent::Connected) {
-                            heartbeat_session_id = None;
-                        }
+
+                        heartbeat_session_id = Some(resp.session_id.clone());
+                        next_heartbeat_ns = at.0;
+                        acks_negotiated =
+                            resp.accepted_feature_flags.iter().any(|f| f == ACKS_FLAG);
+                        // Control-plane stills (flag
+                        // `waddle.v0.obs.stills`) are emitted by the
+                        // media uplink pump, not this one, so this
+                        // acceptance crosses threads on the mirror —
+                        // same per-connection refresh rule as
+                        // `acks_negotiated` above.
+                        let stills = resp.accepted_feature_flags.iter().any(|f| f == STILLS_FLAG);
+                        // Part-addressed control (`waddle.v0.parts`)
+                        // is read HERE (the chunk intake below) and
+                        // by the reducer (the observation uplink), so
+                        // it too crosses on the mirror rather than
+                        // living in this thread's locals.
+                        let parts = resp.accepted_feature_flags.iter().any(|f| f == PARTS_FLAG);
+                        let motion_feedforward = resp
+                            .accepted_feature_flags
+                            .iter()
+                            .any(|f| f == MOTION_FEEDFORWARD_FLAG);
+                        let chat_on = resp
+                            .accepted_feature_flags
+                            .iter()
+                            .any(|f| f == waddle_controlplane::flags::CHAT);
+                        let tasks_on = resp
+                            .accepted_feature_flags
+                            .iter()
+                            .any(|f| f == waddle_controlplane::flags::TASK_SESSIONS);
+                        let calibration_on = resp
+                            .accepted_feature_flags
+                            .iter()
+                            .any(|f| f == waddle_controlplane::flags::CALIBRATION_MEASUREMENTS);
+                        let artifacts_on = resp
+                            .accepted_feature_flags
+                            .iter()
+                            .any(|f| f == waddle_controlplane::flags::WORKSPACE_ARTIFACTS);
+                        hosted_runs_negotiated = resp
+                            .accepted_feature_flags
+                            .iter()
+                            .any(|f| f == waddle_controlplane::flags::HOSTED_RUNS);
+                        mirror.update(|s| {
+                            s.plane_registered = true;
+                            s.connector_binding_negotiated = connector_binding;
+                            s.connector_binding_refused = false;
+                            s.stills_negotiated = stills;
+                            s.parts_negotiated = parts;
+                            s.motion_feedforward_negotiated = motion_feedforward;
+                            s.chat_negotiated = chat_on;
+                            s.task_sessions_negotiated = tasks_on;
+                            s.calibration_measurements_negotiated = calibration_on;
+                            s.workspace_artifacts_negotiated = artifacts_on;
+                            s.hosted_runs_negotiated = hosted_runs_negotiated;
+                        });
                         if !was_connected {
                             was_connected = true;
                             let _ = inject.send(SessionEvent::PartitionEnd { at }.into());
@@ -1018,7 +1033,7 @@ pub(crate) fn spawn_plane_pump(
         .expect("spawn plane pump")
 }
 
-/// Forget what the LAST connection accepted. A feature flag is accepted by
+/// Forward a hosted-run admission answer only to the connection that asked.
 fn forward_hosted_run_results(
     plane: &ControlPlaneClient,
     results: &Receiver<HostedRunResult>,
@@ -1042,6 +1057,7 @@ fn forward_hosted_run_results(
     }
 }
 
+/// Forget what the LAST connection accepted. A feature flag is accepted by
 /// one connection, at its own Register, and the client re-registers on every
 /// reconnect — so the moment a connection ends (or a new one begins, before
 /// it has registered), the standing answers describe a plane this session

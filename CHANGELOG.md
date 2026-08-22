@@ -13,6 +13,13 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Make connector registration a real authorization barrier. No buffered or live
+  control-plane traffic is sent before the exact binding is accepted; a failed initial
+  dial starts a partition and physical reconnect alone no longer ends its hold. Every
+  gRPC method now carries the same customer/project/workspace binding and fresh connection nonce,
+  reconnect rotates that nonce, a refused binding fails closed without replay, and
+  the SDK exposes the refusal before hardware can open.
+
 - Carry aligned depth through the operator media seam instead of dropping it after
   camera capture. The SDK preserves raw Z16 samples for local metric perception and
   publishes a synchronized, deterministic RGB8 depth preview on `<camera>/depth`,

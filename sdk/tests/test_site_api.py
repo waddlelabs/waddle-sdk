@@ -585,15 +585,17 @@ def test_root_exports_only_primary_surface():
 
 
 class _AuthorizationProbe:
-    def __init__(self, *, accepted: bool):
+    def __init__(self, *, accepted: bool, refused: bool = False):
         self.accepted = accepted
+        self.refused = refused
         self.closed = False
 
     def status(self):
         assert site_fixtures.opened == {"arms": 0, "cameras": 0}
         return {
-            "plane_registered": True,
+            "plane_registered": not self.refused,
             "connector_binding_negotiated": self.accepted,
+            "connector_binding_refused": self.refused,
         }
 
     def shutdown(self):
@@ -624,7 +626,7 @@ def test_connector_binding_is_all_or_none():
 
 
 def test_connector_refusal_never_opens_hardware(tmp_path, monkeypatch):
-    probe = _AuthorizationProbe(accepted=False)
+    probe = _AuthorizationProbe(accepted=False, refused=True)
     monkeypatch.setattr(site_api, "create_core_session", lambda *a, **k: probe)
     site = waddle_sdk.load_site(_write_site(tmp_path))
 

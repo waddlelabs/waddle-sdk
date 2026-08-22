@@ -28,6 +28,7 @@ waddle-types = { workspace = true }
 waddle-fsm = { workspace = true }
 thiserror = { workspace = true }
 parking_lot = { workspace = true }
+uuid = { workspace = true }
 tonic = { version = "0.14.6", default-features = false, features = [
     "codegen",
     "channel",

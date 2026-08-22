@@ -642,6 +642,10 @@ class SiteSession:
         try:
             while time.monotonic() < deadline:
                 status = dict(probe.status())
+                if status.get("connector_binding_refused"):
+                    raise RuntimeError(
+                        "the host registered without accepting waddle.v0.connector.binding; refusing to open hardware"
+                    )
                 if status.get("plane_registered"):
                     if not status.get("connector_binding_negotiated"):
                         raise RuntimeError(

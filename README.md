@@ -42,7 +42,9 @@ opens only on entry to `site.open()` and every half-open resource is closed on
 failure. Static box/sphere keep-outs and named body self/cross-part collision
 rules are enforced by the SDK over conservative geometry supplied by each
 driver adapter; configured missing or frame-incompatible geometry fails closed.
-A runnable connector emits bounded native heartbeats; credential revocation
+A connector's exact customer/project/workspace binding and a fresh per-connection
+nonce accompany every gRPC method; Register is the barrier before any other message
+can flow. A runnable connector emits bounded native heartbeats; credential revocation
 closes the transport, requests the core-owned hold verb, and aborts any active
 hosted run. Driver-extension APIs live under `waddle_sdk.robots`,
 `waddle_sdk.cameras`, and `waddle_sdk.descriptors`; they are not part of the

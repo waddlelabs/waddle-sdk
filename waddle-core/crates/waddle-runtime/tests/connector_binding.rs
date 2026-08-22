@@ -111,7 +111,10 @@ fn authorization_probe_carries_exact_binding_and_renegotiates_after_disconnect()
 
     transport.allow_connections();
     wait_for(&session, |status| {
-        status.plane_registered && !status.connector_binding_negotiated
+        status.connector_binding_refused
+            && !status.plane_connected
+            && !status.plane_registered
+            && !status.connector_binding_negotiated
     });
     assert!(registrations.lock().len() >= 2);
     session.shutdown();

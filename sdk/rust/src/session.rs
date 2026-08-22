@@ -350,6 +350,10 @@ impl PySession {
             "connector_binding_negotiated",
             status.connector_binding_negotiated,
         )?;
+        out.set_item(
+            "connector_binding_refused",
+            status.connector_binding_refused,
+        )?;
         out.set_item("chat_negotiated", status.chat_negotiated)?;
         out.set_item("task_sessions_negotiated", status.task_sessions_negotiated)?;
         out.set_item(

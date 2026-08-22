@@ -180,7 +180,11 @@ A connector first advertises `waddle.v0.connector.binding` in an
 The host must authenticate that tuple and accept the flag before `SiteSession`
 invokes any hardware builder; a refusal, old host, or timeout opens nothing. The
 probe does not advertise hosted runs. The runnable connection then registers the
-same tuple again, and every reconnect clears and renegotiates the answer. The runtime emits the existing v0
+same tuple again. Every gRPC method carries that exact binding and one fresh
+per-connection nonce as non-secret metadata; Register is an authorization barrier,
+so streams established during setup send no messages until the response accepts the
+binding. Every reconnect rotates the nonce, clears the old answer, and renegotiates it.
+The runtime emits the existing v0
 heartbeat every 500 ms after registration; a revoked key therefore severs the transport
 and reaches the core-owned partition/hosted-run hold path.
 

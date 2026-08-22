@@ -30,6 +30,8 @@ use crate::transport::{ClientMsg, ControlTransport, ServerMsg};
 #[derive(Debug, Clone, PartialEq)]
 #[allow(clippy::large_enum_variant)] // moved once per event, never stored in bulk
 pub enum PlaneEvent {
+    /// A physical transport connection exists. Registration has not yet
+    /// succeeded, so this is never authority or recovery by itself.
     Connected,
     Registered(pb::RegisterResponse),
     Server(ServerMsg),
@@ -133,16 +135,26 @@ fn run(
     let mut attempt: u32 = 0;
 
     'reconnect: while !shutdown.load(Ordering::SeqCst) {
-        let conn = match transport.connect() {
+        // One nonce identifies every independently opened RPC belonging to
+        // this physical connection. It is intentionally rotated before each
+        // dial, including a failed dial, and is also the value inside the
+        // Register barrier so a gateway can reject mismatched streams.
+        let session_nonce = uuid::Uuid::new_v4().simple().to_string();
+        let mut register = config.register.clone();
+        register.session_nonce.clone_from(&session_nonce);
+        let conn = match transport.connect(&register) {
             Ok(conn) => conn,
             Err(_) => {
+                // A failed initial dial is a partition too. The runtime must
+                // not retain its optimistic startup state indefinitely when
+                // the configured supervision plane cannot be reached.
+                let _ = events_tx.send(PlaneEvent::Disconnected);
                 let delay = config.backoff.delay_ns(attempt);
                 attempt = attempt.saturating_add(1);
                 backoff_draining(delay, shutdown, cmd_rx, &mut buffer, events_tx);
                 continue 'reconnect;
             }
         };
-        attempt = 0;
         // What THIS connection accepted, from its own `RegisterResponse`.
         // Empty until it answers — and a connection that has not answered has
         // accepted nothing, so a flag-scoped message offered in that window
@@ -150,20 +162,81 @@ fn run(
         let mut accepted: Vec<String> = Vec::new();
         let _ = events_tx.send(PlaneEvent::Connected);
 
-        // Register first, then replay the offline buffer strictly in order.
-        if conn
-            .tx
-            .send(ClientMsg::Register(config.register.clone()))
-            .is_err()
-        {
+        // Register is a barrier, not merely the first write. Nothing else
+        // may reach a fresh connection until the plane has authenticated
+        // this exact registration and returned the connection's feature
+        // answer. In particular, a project-scoped connector credential is
+        // not enough to route GateActions/observations to a workspace before
+        // Register's customer/project/workspace tuple has been accepted.
+        if conn.tx.send(ClientMsg::Register(register)).is_err() {
             let _ = events_tx.send(PlaneEvent::Disconnected);
+            backoff_after_disconnect(
+                &config,
+                &mut attempt,
+                shutdown,
+                cmd_rx,
+                &mut buffer,
+                events_tx,
+            );
             continue 'reconnect;
         }
-        for msg in buffer.drain() {
-            if conn.tx.send(msg).is_err() {
-                let _ = events_tx.send(PlaneEvent::Disconnected);
-                continue 'reconnect;
-            }
+
+        let before = buffer.dropped();
+        let registered = await_registration(&conn, cmd_rx, &mut buffer, shutdown, config.poll);
+        report_overflow(before, &buffer, events_tx);
+        if shutdown.load(Ordering::SeqCst) {
+            return;
+        }
+
+        let Some(registered) = registered else {
+            let _ = events_tx.send(PlaneEvent::Disconnected);
+            backoff_after_disconnect(
+                &config,
+                &mut attempt,
+                shutdown,
+                cmd_rx,
+                &mut buffer,
+                events_tx,
+            );
+            continue 'reconnect;
+        };
+        accepted.clone_from(&registered.accepted_feature_flags);
+        let connector_binding_required = !config.register.customer_id.is_empty()
+            || !config.register.workspace_id.is_empty()
+            || config.register.authorization_only;
+        let connector_binding_accepted = accepted
+            .iter()
+            .any(|flag| flag == crate::flags::CONNECTOR_BINDING);
+        // Surface the exact response so the runtime/SDK can fail the
+        // hardware-free authorization probe legibly. It still is not a
+        // usable connection when the binding flag was refused: no replay or
+        // live traffic follows it, and the transport is discarded below.
+        let _ = events_tx.send(PlaneEvent::Registered(registered));
+        if connector_binding_required && !connector_binding_accepted {
+            let _ = events_tx.send(PlaneEvent::Disconnected);
+            backoff_after_disconnect(
+                &config,
+                &mut attempt,
+                shutdown,
+                cmd_rx,
+                &mut buffer,
+                events_tx,
+            );
+            continue 'reconnect;
+        }
+
+        attempt = 0;
+        if !replay_buffer(&conn, &mut buffer) {
+            let _ = events_tx.send(PlaneEvent::Disconnected);
+            backoff_after_disconnect(
+                &config,
+                &mut attempt,
+                shutdown,
+                cmd_rx,
+                &mut buffer,
+                events_tx,
+            );
+            continue 'reconnect;
         }
 
         // Pump until the connection dies or shutdown.
@@ -205,9 +278,13 @@ fn run(
             }
             // Inbound.
             match conn.try_recv() {
-                Ok(Some(ServerMsg::Registered(r))) => {
-                    accepted.clone_from(&r.accepted_feature_flags);
-                    let _ = events_tx.send(PlaneEvent::Registered(r));
+                // One Register response belongs to the handshake above.
+                // A second response on the same connection is a protocol
+                // violation; forwarding it could replace a negotiated
+                // answer without a new connection boundary.
+                Ok(Some(ServerMsg::Registered(_))) => {
+                    let _ = events_tx.send(PlaneEvent::Disconnected);
+                    continue 'reconnect;
                 }
                 Ok(Some(msg)) => {
                     let _ = events_tx.send(PlaneEvent::Server(msg));
@@ -274,6 +351,77 @@ fn buffer_pending(cmd_rx: &Receiver<ClientMsg>, buffer: &mut OfflineBuffer<Clien
     }
 }
 
+fn await_registration(
+    conn: &crate::transport::ControlConn,
+    cmd_rx: &Receiver<ClientMsg>,
+    buffer: &mut OfflineBuffer<ClientMsg>,
+    shutdown: &AtomicBool,
+    poll: Duration,
+) -> Option<pb::RegisterResponse> {
+    loop {
+        if shutdown.load(Ordering::SeqCst) {
+            return None;
+        }
+        // Commands produced during the handshake are classified as offline:
+        // durable history stays bounded for replay, while liveness,
+        // perception, and connection-scoped requests never cross into a
+        // connection that has not accepted them.
+        buffer_pending(cmd_rx, buffer);
+        match conn.try_recv() {
+            Ok(Some(ServerMsg::Registered(response))) => return Some(response),
+            // No server down-path is legal before Register completes. Treat
+            // one as a broken connection rather than executing a directive
+            // whose binding has not been authenticated.
+            Ok(Some(_)) | Err(_) => return None,
+            Ok(None) => std::thread::sleep(poll),
+        }
+    }
+}
+
+fn backoff_after_disconnect(
+    config: &ClientConfig,
+    attempt: &mut u32,
+    shutdown: &AtomicBool,
+    cmd_rx: &Receiver<ClientMsg>,
+    buffer: &mut OfflineBuffer<ClientMsg>,
+    events_tx: &Sender<PlaneEvent>,
+) {
+    let delay = config.backoff.delay_ns(*attempt);
+    *attempt = attempt.saturating_add(1);
+    backoff_draining(delay, shutdown, cmd_rx, buffer, events_tx);
+}
+
+fn report_overflow(before: u64, buffer: &OfflineBuffer<ClientMsg>, events_tx: &Sender<PlaneEvent>) {
+    let dropped = buffer.dropped() - before;
+    if dropped > 0 {
+        let _ = events_tx.send(PlaneEvent::BufferOverflowed { dropped });
+    }
+}
+
+/// Replay the authenticated connection's durable backlog without losing the
+/// failed write or the unattempted suffix if the connection dies mid-replay.
+fn replay_buffer(
+    conn: &crate::transport::ControlConn,
+    buffer: &mut OfflineBuffer<ClientMsg>,
+) -> bool {
+    let pending: Vec<ClientMsg> = buffer.drain().collect();
+    let mut pending = pending.into_iter();
+    while let Some(msg) = pending.next() {
+        if let Err(failed) = conn.tx.send(msg) {
+            if failed.0.buffer_when_offline() {
+                buffer.push(failed.0);
+            }
+            for remaining in pending {
+                if remaining.buffer_when_offline() {
+                    buffer.push(remaining);
+                }
+            }
+            return false;
+        }
+    }
+    true
+}
+
 #[cfg(test)]
 #[allow(clippy::disallowed_methods)] // wall-clock deadlines are test-only
 mod tests {
@@ -317,6 +465,69 @@ mod tests {
             );
             std::thread::sleep(Duration::from_millis(1));
         }
+    }
+
+    #[test]
+    fn registration_is_a_barrier_for_buffered_history() {
+        let (wire_tx, wire_rx) = std::sync::mpsc::channel();
+        let (server_tx, client_rx) = std::sync::mpsc::channel();
+        let conn = crate::transport::ControlConn {
+            tx: wire_tx,
+            rx: client_rx,
+        };
+        let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
+        let history = ClientMsg::Observation(pb::ObservationUpdate {
+            t_ns: 41,
+            ..Default::default()
+        });
+        cmd_tx.send(history.clone()).unwrap();
+        server_tx
+            .send(ServerMsg::Registered(pb::RegisterResponse {
+                session_id: "registered".into(),
+                ..Default::default()
+            }))
+            .unwrap();
+
+        let mut buffer = OfflineBuffer::new(8);
+        let shutdown = AtomicBool::new(false);
+        let response =
+            await_registration(&conn, &cmd_rx, &mut buffer, &shutdown, Duration::ZERO).unwrap();
+
+        assert_eq!(response.session_id, "registered");
+        assert!(
+            wire_rx.try_recv().is_err(),
+            "history must not reach the transport before registration"
+        );
+        assert_eq!(buffer.len(), 1);
+        assert!(replay_buffer(&conn, &mut buffer));
+        assert_eq!(wire_rx.recv().unwrap(), history);
+    }
+
+    #[test]
+    fn a_pre_registration_directive_breaks_the_connection() {
+        let (wire_tx, _wire_rx) = std::sync::mpsc::channel();
+        let (server_tx, client_rx) = std::sync::mpsc::channel();
+        let conn = crate::transport::ControlConn {
+            tx: wire_tx,
+            rx: client_rx,
+        };
+        let (_cmd_tx, cmd_rx) = std::sync::mpsc::channel();
+        server_tx
+            .send(ServerMsg::Gate(pb::GateServerMessage::default()))
+            .unwrap();
+
+        let mut buffer = OfflineBuffer::new(8);
+        assert!(
+            await_registration(
+                &conn,
+                &cmd_rx,
+                &mut buffer,
+                &AtomicBool::new(false),
+                Duration::ZERO,
+            )
+            .is_none(),
+            "a server down-path is not authenticated before Register"
+        );
     }
 
     #[test]
@@ -367,7 +578,10 @@ mod tests {
     fn stills_offered_while_connects_fail_are_dropped_never_replayed() {
         let seen: Arc<Mutex<Vec<ClientMsg>>> = Arc::new(Mutex::new(Vec::new()));
         let seen2 = seen.clone();
-        let transport = InMemoryTransport::new(move |msg, _tx| {
+        let transport = InMemoryTransport::new(move |msg, tx| {
+            if matches!(&msg, ClientMsg::Register(_)) {
+                let _ = tx.send(ServerMsg::Registered(pb::RegisterResponse::default()));
+            }
             seen2.lock().push(msg);
         });
         // Unreachable from the start and until this test heals it — the
@@ -375,6 +589,11 @@ mod tests {
         // backoff step.
         transport.refuse_connections();
         let client = ControlPlaneClient::spawn(transport.clone(), test_config());
+        assert_eq!(
+            client.recv_event_timeout(Duration::from_secs(1)),
+            Some(PlaneEvent::Disconnected),
+            "an unreachable configured plane is a partition from startup"
+        );
 
         let still = ClientMsg::Observation(pb::ObservationUpdate {
             t_ns: 7,
@@ -429,9 +648,9 @@ mod tests {
     }
 
     /// The offline buffer is where a per-connection answer could outlive the
-    /// connection that gave it: it replays onto the NEXT connection, and it
-    /// replays right after Register, before that connection has said which
-    /// flags it accepts. So a named-part `ProprioSample` (flag
+    /// connection that gave it. The registration barrier now withholds all
+    /// replay until the next connection answers Register, but a named-part
+    /// `ProprioSample` (flag
     /// `waddle.v0.parts`) offered while the plane is unreachable never
     /// reaches it — VERSIONING §3 — while the same sample under the sole
     /// part is ordinary history and replays in full.
@@ -439,7 +658,10 @@ mod tests {
     fn named_part_observations_offered_while_offline_are_never_replayed() {
         let seen: Arc<Mutex<Vec<ClientMsg>>> = Arc::new(Mutex::new(Vec::new()));
         let seen2 = seen.clone();
-        let transport = InMemoryTransport::new(move |msg, _tx| {
+        let transport = InMemoryTransport::new(move |msg, tx| {
+            if matches!(&msg, ClientMsg::Register(_)) {
+                let _ = tx.send(ServerMsg::Registered(pb::RegisterResponse::default()));
+            }
             seen2.lock().push(msg);
         });
         transport.refuse_connections();
@@ -503,7 +725,10 @@ mod tests {
     fn partition_buffers_and_replays_in_order_after_reconnect() {
         let seen: Arc<Mutex<Vec<ClientMsg>>> = Arc::new(Mutex::new(Vec::new()));
         let seen2 = seen.clone();
-        let transport = InMemoryTransport::new(move |msg, _tx| {
+        let transport = InMemoryTransport::new(move |msg, tx| {
+            if matches!(&msg, ClientMsg::Register(_)) {
+                let _ = tx.send(ServerMsg::Registered(pb::RegisterResponse::default()));
+            }
             seen2.lock().push(msg);
         });
         let client = ControlPlaneClient::spawn(transport.clone(), test_config());

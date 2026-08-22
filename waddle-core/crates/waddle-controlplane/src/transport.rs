@@ -127,11 +127,11 @@ impl ClientMsg {
     /// both evict real episode history from that bounded buffer and hand the
     /// plane a stale world. Connection-scoped messages
     /// ([`Self::connection_scoped_flag`]): the buffer replays onto the NEXT
-    /// connection, which negotiates its own flags — and replays before that
-    /// connection's `RegisterResponse` has even arrived, so there is no
-    /// moment at which the question could be re-asked. Holding them back
-    /// until it arrives is not open either: history replays in order, and a
-    /// partial hold would reorder the stream it belongs to.
+    /// connection, which negotiates its own flags. Register is now a barrier
+    /// before replay, but that new answer cannot retroactively authorize a
+    /// message correlated to an old connection. Holding only some scoped
+    /// traffic for the next answer would also reorder the stream it belongs
+    /// to.
     #[must_use]
     pub fn buffer_when_offline(&self) -> bool {
         !self.is_droppable() && self.connection_scoped_flag().is_none()
@@ -170,7 +170,11 @@ impl ControlConn {
 }
 
 /// A transport opens connections; the client owns backoff, offline
-/// buffering, and replay.
+/// buffering, and replay. `registration` is the exact request the client will
+/// send as this connection's barrier; its `session_nonce` is a fresh UUID-v4
+/// hex value. A multiplexed transport MUST attach that nonce and any exact
+/// connector binding to every RPC so independently opened streams can be
+/// correlated with the one registration that authorizes them.
 ///
 /// Contract: a transport that buffers internally (anything that does not
 /// write synchronously inside its `ControlConn` consumer) MUST bound what it
@@ -179,7 +183,7 @@ impl ControlConn {
 /// draining never severs the channels, so an unbounded internal queue turns
 /// bounded-rate perception (stills) into unbounded memory growth.
 pub trait ControlTransport: Send + Sync + 'static {
-    fn connect(&self) -> Result<ControlConn, PlaneError>;
+    fn connect(&self, registration: &pb::RegisterRequest) -> Result<ControlConn, PlaneError>;
 }
 
 type ServerHandler = dyn Fn(ClientMsg, &Sender<ServerMsg>) + Send + Sync;
@@ -260,7 +264,7 @@ impl InMemoryTransport {
 }
 
 impl ControlTransport for InMemoryTransport {
-    fn connect(&self) -> Result<ControlConn, PlaneError> {
+    fn connect(&self, _registration: &pb::RegisterRequest) -> Result<ControlConn, PlaneError> {
         *self.connects.lock() += 1;
         {
             let mut fail = self.fail_next.lock();

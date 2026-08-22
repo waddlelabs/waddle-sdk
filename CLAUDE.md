@@ -123,7 +123,9 @@ waddle-sdk/
                              #   Hardware opens only in SiteSession.__enter__; a
                              #   bound Grpc connector first completes an
                              #   authorization-only waddle.v0 registration
-                             #   and must negotiate connector.binding. After
+                             #   and must negotiate connector.binding. Every RPC
+                             #   carries its exact binding and a fresh connection
+                             #   nonce; Register is a barrier before traffic. After
                              #   runnable registration, the native runtime emits
                              #   500 ms v0 heartbeats; key revocation tears down
                              #   the connection and reaches the core-owned hold.
@@ -589,8 +591,10 @@ there is no test/CI workflow yet, so the local gates above are still the gate.
   `ClientMsg::connection_scoped_flag` (waddle-controlplane, the ONE place that
   classifies this) keeps a flag-scoped message off any connection that did not
   accept its flag — filtered on the way out, and never buffered offline, since the
-  offline buffer replays onto the NEXT connection before it has said what it
-  accepts. Withholding such a message is not shedding history: the local recorder
+  offline buffer would otherwise replay onto the NEXT connection under a different
+  answer. Register is a barrier and history replays only after its response; scoped
+  messages still never cross the boundary because they belong to the old answer.
+  Withholding such a message is not shedding history: the local recorder
   keeps the full-rate archive.
 
 ## Working conventions

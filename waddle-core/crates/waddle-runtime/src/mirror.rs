@@ -157,6 +157,11 @@ pub struct Status {
     pub plane_registered: bool,
     /// The CURRENT connection accepted the exact connector binding feature.
     pub connector_binding_negotiated: bool,
+    /// A Register response explicitly refused the exact connector-binding
+    /// feature required by this session. Latched until a later registration
+    /// accepts it so a hardware-free authorization probe cannot miss a brief
+    /// response immediately followed by transport teardown/backoff.
+    pub connector_binding_refused: bool,
     /// The CURRENT connection accepted `waddle.v0.obs.stills` at Register.
     /// Set by the plane pump from that connection's own `RegisterResponse`
     /// and cleared at every connection boundary (see

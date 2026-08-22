@@ -803,6 +803,7 @@ impl SessionBuilder {
             feature_flags.push(pumps::PARTS_FLAG.to_owned());
         }
 
+        let connector_binding_required = self.connector_binding.is_some();
         let plane = self.transport.map(|t| {
             let binding = self.connector_binding.as_ref();
             let register = pb::RegisterRequest {
@@ -972,6 +973,7 @@ impl SessionBuilder {
                 plane_events.clone(),
                 hosted_run_tx,
                 hosted_result_rx,
+                connector_binding_required,
             ));
         }
 
