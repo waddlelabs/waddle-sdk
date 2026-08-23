@@ -2,8 +2,8 @@
 
 How a version of the Python frontend gets to PyPI. The pipeline is
 [`.github/workflows/release.yml`](../.github/workflows/release.yml); this page is the
-checklist around it, plus the one-time account setup that has to happen before the
-first release can work at all.
+checklist around it, plus the live trusted-publisher configuration that every release
+depends on.
 
 ## What ships
 
@@ -27,51 +27,32 @@ maturin could produce would be an archive nobody can build. Every supported inte
 is covered by one abi3 wheel per platform instead (pyo3 `abi3-py310`: a `cp310-abi3`
 wheel installs on 3.10+).
 
-## One-time PyPI setup (Vincent, before the first release)
+## PyPI trusted publisher configuration
 
-Neither project exists on PyPI yet. Both names get **claimed by the first CI publish**,
-via a *pending* trusted publisher — no placeholder upload, no API token, ever.
+Both projects already exist on PyPI: the successful `v0.0.0` release on 2026-08-05
+claimed `waddle-sdk` and `waddle-sdk-teleop` and converted their pending publishers into
+ordinary trusted publishers. The matching GitHub environments also already exist.
+There is no API token or publishing secret in this repository.
 
-1. Create a PyPI account at <https://pypi.org/account/register/> and enable 2FA
-   (PyPI requires it for uploads; a TOTP app plus the recovery codes stored somewhere
-   that is not this repo).
-2. Go to <https://pypi.org/manage/account/publishing/> — "Add a new **pending**
-   publisher", GitHub tab — and add it **twice**, once per project name, with exactly
-   these values:
+The live publisher identities must remain exactly:
 
-   | Field | First entry | Second entry |
-   | --- | --- | --- |
-   | PyPI Project Name | `waddle-sdk` | `waddle-sdk-teleop` |
-   | Owner | `waddlelabs` | `waddlelabs` |
-   | Repository name | `waddle-sdk` | `waddle-sdk` |
-   | Workflow name | `release.yml` | `release.yml` |
-   | Environment name | `pypi` | **`pypi-teleop`** |
+| Field | `waddle-sdk` | `waddle-sdk-teleop` |
+| --- | --- | --- |
+| Owner | `waddlelabs` | `waddlelabs` |
+| Repository name | `waddle-sdk` | `waddle-sdk` |
+| Workflow name | `release.yml` | `release.yml` |
+| Environment name | `pypi` | **`pypi-teleop`** |
 
-   Owner and repository are the GitHub coordinates —
-   `github.com/waddlelabs/waddle-sdk`. Workflow name is the *file* name, not the `name:`
-   inside it. Environment names are case-sensitive and must match the `environment:` on
-   the corresponding publish job.
+Owner and repository are the GitHub coordinates. Workflow name is the file name, not
+the workflow's display name, and environment names are case-sensitive. The environments
+differ because PyPI keys a publisher on the owner/repository/workflow/environment tuple;
+each publish job therefore keeps its own environment and downloads only its own
+distribution's prefixed artifacts. Renaming the workflow, repository, owner, or either
+environment requires updating the corresponding trusted publisher on PyPI before the
+next release.
 
-   **The two environments differ because they have to.** PyPI keys a pending trusted
-   publisher on the (owner, repository, workflow, environment) tuple and refuses a
-   second registration of the same tuple under a different project name — "A pending
-   trusted publisher matching this configuration has already been registered for a
-   different project name". So the two projects cannot both publish from `pypi`; and
-   since a GitHub job carries exactly one environment, that is also why
-   `.github/workflows/release.yml` has two publish jobs (`publish-sdk` → `pypi`,
-   `publish-teleop` → `pypi-teleop`) with artifact names prefixed per distribution, so
-   each job downloads only what its identity is allowed to upload.
-3. Optional, in GitHub: **Settings → Environments → New environment**, once for `pypi`
-   and once for `pypi-teleop`. The workflow works without them being pre-created, but
-   they are where a required reviewer / approval gate would go if releases should ever
-   pause for a human.
-4. Nothing else. There is no token to generate, no secret to add to the repo, and
-   nothing to paste anywhere.
-
-The first successful run converts each pending publisher into an ordinary trusted
-publisher attached to the now-existing project. If a `waddlelabs` PyPI **organization**
-is wanted later, create it and transfer both projects in — the trusted publisher config
-travels with the project, so the pipeline keeps working untouched.
+If a `waddlelabs` PyPI organization is wanted later, create it and transfer both
+projects in; the trusted publisher configuration travels with each project.
 
 ## Cutting a release
 
@@ -100,7 +81,9 @@ Everything below happens on `main`, with the tree clean and the full local gate 
    ```
 
    and the `waddle-core` workspace's own tests/clippy/fmt, including the feature-gated
-   passes.
+   passes. `.github/workflows/ci.yml` runs the complete gate on every push and pull
+   request; the release workflow calls that same reusable workflow before either wheel
+   build and before either publishing identity can run.
 
 3. **Stow the changelog.** Move the `[Unreleased]` content into
    `docs/changelogs/CHANGELOG-X.Y.Z.md`, reset root `CHANGELOG.md` to `[Unreleased]`
@@ -152,15 +135,10 @@ Everything below happens on `main`, with the tree clean and the full local gate 
 ## When something goes wrong
 
 - **The teleop job fails (usually auditwheel rejecting the libwebrtc-linked
-  extension).** Nothing teleop is published — it is not `continue-on-error`, because a
-  green job that uploaded no companion wheel would be a release claiming an extra it did
-  not ship. But note the shape the two-environment split forces: `publish-sdk` does not
-  wait on the teleop build, so **the default wheels still go out** and the release
-  becomes default-only on its own. Either fix the build (a newer `manylinux` container,
-  or `before-script-linux` installing what the C++ side wants) and re-release, or accept
-  it — and say so in the release notes, because `pip install 'waddle-sdk[teleop]'` then
-  resolves to the previous release, or to nothing at all on the first one. If a release
-  should instead be all-or-nothing, add `teleop-wheel` to `publish-sdk`'s `needs`.
+  extension).** Neither distribution is published: both publish jobs wait on the
+  complete default matrix and teleop wheel, and no leg uses `continue-on-error`. Fix the
+  build (a newer `manylinux` container, or `before-script-linux` installing what the C++
+  side wants) and rerun before publishing this version.
 - **A build platform fails.** The whole `wheels` matrix gates `publish-sdk`, so a
   failing leg stops the default publish. Fix it, or drop that leg from the matrix for
   this release and say so. Never publish a partial set silently.

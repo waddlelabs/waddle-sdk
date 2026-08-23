@@ -26,7 +26,7 @@ __pycache__/
 
 # maturin develop output (built extensions: the default core and the
 # teleop companion wheel's)
-sdk/python/waddle/_core*.so
+sdk/python/waddle_sdk/_core*.so
 sdk/teleop/python/waddle_teleop/_core*.so
 
 # Built wheels (`uv build --wheel -o dist .` / `-o dist teleop`)

@@ -18,6 +18,7 @@ build-backend = "maturin"
 name = "waddle-sdk-teleop"
 description = "LiveKit-enabled core for waddle-sdk (install via: pip install 'waddle-sdk[teleop]')"
 license = "Apache-2.0"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 # No dependency on `waddle-sdk` itself: the extra points this way, and a
 # dependency back would be a cycle. numpy is real, though — the compiled

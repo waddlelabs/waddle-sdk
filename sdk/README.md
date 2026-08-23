@@ -29,10 +29,11 @@ lifecycle exposes no lease or handoff selector: handoff is fixed to hold-first a
 enforcement placement is derived from the selected integration.
 
 The root package deliberately exports only `Site`, `SiteSession`, `Run`,
-`load_site`, `Grpc`, `LiveKit`, `Outcome`, and manifest errors. Driver-extension
-contracts live in their subpackages. The older module-global lifecycle, local
-web UI, hosted task/artifact facades, and execution-backend discovery are not
-part of the public surface.
+`load_site`, `Grpc`, `LiveKit`, `Outcome`, manifest errors,
+`ConnectorRegistrationError`, and `ConnectorCompatibilityWarning`.
+Driver-extension contracts live in their subpackages. The older module-global
+lifecycle, local web UI, hosted task/artifact facades, and execution-backend
+discovery are not part of the public surface.
 
 ## Hardware discovery for configuration frontends
 

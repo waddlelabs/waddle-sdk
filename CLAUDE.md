@@ -41,13 +41,14 @@ depend on it.
 waddle-sdk/
   CLAUDE.md, CHANGELOG.md, README.md, LICENSE (Apache-2.0), .gitignore
   .github/workflows/
-    release.yml              # the ONLY workflow: tag v* (or dispatch) builds
-                             #   both wheels and publishes them to PyPI
-                             #   (Trusted Publishing, no secrets). There is
-                             #   no test/CI workflow yet.
+    ci.yml                   # push/PR gate for Python + every Rust feature pass;
+                             #   reusable by the release workflow
+    release.yml              # tag v* (or dispatch) first calls the CI gate, then
+                             #   builds both wheels and publishes them atomically
+                             #   to PyPI (Trusted Publishing, no secrets)
   docs/                      # repo-level customer-facing docs:
-    RELEASING.md             #   the release checklist + the one-time PyPI
-                             #   account setup (pending trusted publishers)
+    RELEASING.md             #   the release checklist + the live PyPI/GitHub
+                             #   trusted-publisher identity configuration
     lease-lifecycle.md       #   the session/lease lifecycle from the
                              #   customer's side (grant/claim/lease/envelope,
                              #   who holds the robot in every phase); cites
@@ -69,6 +70,7 @@ waddle-sdk/
     xtask/                   # cbindgen header gen etc. (publish = false)
   sdk/                       # the Python `waddle-sdk` frontend (PyO3 + maturin)
     pyproject.toml           # maturin backend; module waddle_sdk._core; uv-managed
+    LICENSE                  # byte-equal packaging copy of the root Apache-2.0 text
     rust/                    # the shim: its OWN cargo workspace (see build notes)
     python/waddle_sdk/       # THE IMPORTABLE PACKAGE IS `waddle_sdk`, not
                              #   `waddle`: the closed backend owns that name.
@@ -307,7 +309,8 @@ waddle-sdk/
                              #   mounting/table/tool clearance still requires
                              #   explicit site review.
     teleop/                  # the `waddle-sdk-teleop` companion distribution:
-                             #   same rust/Cargo.toml, + the livekit feature
+                             #   same rust/Cargo.toml, + the livekit feature;
+                             #   carries its own byte-equal LICENSE packaging copy
     examples/                # one strict simulated Site program:
                              #   site.yaml + run_site.py + README. The program is
                              #   subprocess-tested and exercises load/open/run/close.
@@ -430,6 +433,10 @@ top-level dirs; they are not built yet.
     editable install and a checkout all work. Adding or moving such data is
     the one time to build a wheel and list it — that it landed, and that no
     bytecode or mesh came with it.
+    Each project root also carries a byte-equal copy of the repository
+    `LICENSE`, declared through PEP 639 `license-files = ["LICENSE"]`; the
+    packaging test holds both copies to the root, and a wheel inspection must
+    find it under `.dist-info/licenses/`.
   - A build without a feature REFUSES the matching `create_session` kwarg
     (`transport_url`/`transport_token`, `media_url`/`media_token`) rather
     than degrading to a silent offline session; the LiveKit refusal names the
@@ -455,12 +462,13 @@ top-level dirs; they are not built yet.
 
 ## Release
 
-`docs/RELEASING.md` is the checklist (including the one-time PyPI account setup);
-`.github/workflows/release.yml` is the pipeline, and the only workflow this repo has —
-there is no test/CI workflow yet, so the local gates above are still the gate.
+`docs/RELEASING.md` is the checklist (including the live PyPI publisher identities);
+`.github/workflows/ci.yml` runs the complete gate on pushes and pull requests and is
+reused by `.github/workflows/release.yml` before any release wheel builds. The local
+commands above remain the pre-commit gate and the fastest way to diagnose a failure.
 
 - **The trigger is a `v*` tag** (`workflow_dispatch` is the manual escape hatch).
-  Pushing `main` builds nothing.
+  Pushing `main` runs CI but does not build or publish release wheels.
 - **Wheels only, never an sdist** — for either project. Both `[tool.maturin]
   manifest-path`s point at `sdk/rust/Cargo.toml`, whose path deps into
   `../../waddle-core/crates/*` escape both pyproject directories, so an sdist would be
@@ -472,15 +480,14 @@ there is no test/CI workflow yet, so the local gates above are still the gate.
   wheel is audited elsewhere — so `pip install 'waddle-sdk[teleop]'` resolves there and
   nowhere else, and that is the honest thing to say in release notes. Every wheel is
   installed and imported before it is uploaded, asserting its `FEATURES`.
-- **No leg may be given `continue-on-error`.** A failing default leg blocks
-  `publish-sdk`, which needs the whole matrix. A failing teleop build blocks
-  `publish-teleop` only — the split below means the release then ships default-only on
-  its own, which must be said in the release notes (add `teleop-wheel` to
-  `publish-sdk`'s `needs` if a release should be all-or-nothing instead).
+- **No leg may be given `continue-on-error`.** Both publish jobs need the complete
+  default matrix and the teleop wheel, so a failure in either distribution publishes
+  neither. This all-or-nothing gate is required because the default wheel advertises
+  an exact version of the companion through its `[teleop]` extra.
 - **Publishing is Trusted Publishing (OIDC)**, no token or secret in this repo — and it
   is **two jobs, two GitHub environments**: `publish-sdk` → `pypi`, `publish-teleop` →
-  `pypi-teleop`. PyPI keys a pending trusted publisher on (owner, repo, workflow,
-  environment) and refuses that tuple twice, so the two projects cannot share one; a job
+  `pypi-teleop`. PyPI keys a trusted publisher on (owner, repo, workflow,
+  environment), so the two projects use distinct identities; a job
   carries exactly one environment, hence one job each, over artifacts named
   `sdk-wheels-*` / `teleop-wheels-*` so neither job can upload the other's wheel.
   A version bump edits **two** files (`sdk/rust/Cargo.toml` and the teleop pin in

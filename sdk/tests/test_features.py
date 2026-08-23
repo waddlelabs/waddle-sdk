@@ -144,6 +144,19 @@ def test_both_distributions_are_one_build_of_one_manifest():
     assert "livekit" not in default["features"]
 
 
+def test_both_distributions_package_the_repository_license():
+    root_license = (_SDK_DIR.parent / "LICENSE").read_bytes()
+    default_project = _pyproject("pyproject.toml")["project"]
+    companion_project = _pyproject("teleop", "pyproject.toml")["project"]
+
+    assert default_project["license"] == "Apache-2.0"
+    assert companion_project["license"] == "Apache-2.0"
+    assert default_project["license-files"] == ["LICENSE"]
+    assert companion_project["license-files"] == ["LICENSE"]
+    assert (_SDK_DIR / "LICENSE").read_bytes() == root_license
+    assert (_SDK_DIR / "teleop" / "LICENSE").read_bytes() == root_license
+
+
 # --- Choosing a core -------------------------------------------------------
 
 

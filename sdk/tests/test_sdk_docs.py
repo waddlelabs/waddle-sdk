@@ -6,6 +6,7 @@ import ast
 from pathlib import Path
 
 import waddle_sdk
+import yaml
 
 try:
     import tomllib
@@ -14,6 +15,7 @@ except ModuleNotFoundError:
 
 
 SDK = Path(__file__).resolve().parents[1]
+REPO = SDK.parent
 README = (SDK / "README.md").read_text(encoding="utf-8")
 EXAMPLES = (SDK / "examples" / "README.md").read_text(encoding="utf-8")
 
@@ -54,7 +56,11 @@ def test_readme_holds_the_site_and_runtime_boundaries():
     assert "waddle_sdk.ui()" not in README
     assert "waddle_sdk.agent(" not in README
     assert "waddle_sdk.init(" not in README
+    assert "ConnectorRegistrationError" in README
+    assert "ConnectorCompatibilityWarning" in README
     assert set(waddle_sdk.__all__) == {
+        "ConnectorCompatibilityWarning",
+        "ConnectorRegistrationError",
         "Grpc",
         "LiveKit",
         "ManifestError",
@@ -85,3 +91,34 @@ def test_readme_holds_the_site_and_runtime_boundaries():
     assert not (SDK / "python" / "waddle_sdk" / "_ui.py").exists()
     assert not (SDK / "python" / "waddle_sdk" / "_services.py").exists()
     assert not (SDK / "python" / "waddle_sdk" / "_testing.py").exists()
+
+
+def test_release_is_gated_and_the_distribution_pair_is_atomic():
+    ci_path = REPO / ".github" / "workflows" / "ci.yml"
+    release_path = REPO / ".github" / "workflows" / "release.yml"
+    ci = ci_path.read_text(encoding="utf-8")
+    release_text = release_path.read_text(encoding="utf-8")
+    jobs = yaml.safe_load(release_text)["jobs"]
+
+    assert jobs["quality"]["uses"] == "./.github/workflows/ci.yml"
+    assert jobs["wheels"]["needs"] == ["quality"]
+    assert jobs["teleop-wheel"]["needs"] == ["quality"]
+    assert jobs["publish-sdk"]["needs"] == ["wheels", "teleop-wheel"]
+    assert jobs["publish-teleop"]["needs"] == ["wheels", "teleop-wheel"]
+    assert "continue-on-error" not in str(jobs)
+
+    for gate in (
+        "uv run --no-sync pytest",
+        "cargo test --workspace --locked",
+        "cargo clippy --workspace --all-targets --locked -- -D warnings",
+        "cargo test -p waddle-controlplane --features tonic-transport --locked",
+        "cargo test -p waddle-media --features livekit --locked",
+        "cargo clippy -p waddle-runtime --features grpc,livekit --all-targets --locked -- -D warnings",
+    ):
+        assert gate in ci
+
+
+def test_generated_extension_ignore_uses_the_current_package_name():
+    ignore = (REPO / ".gitignore").read_text(encoding="utf-8")
+    assert "sdk/python/waddle_sdk/_core*.so" in ignore
+    assert "sdk/python/waddle/_core*.so" not in ignore

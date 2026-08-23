@@ -26,18 +26,18 @@
 #
 # CREDENTIALS: none. Publishing is PyPI Trusted Publishing (OIDC) — the
 # publish jobs hold `id-token: write` and a GitHub environment, and there is
-# no token or secret anywhere in this file. The publishers must be registered
-# on PyPI first (as *pending* publishers, before the projects exist); the
-# exact field values are in docs/RELEASING.md.
+# no token or secret anywhere in this file. Both publishers are live; their
+# exact identity fields are in docs/RELEASING.md.
 #
-# WHY TWO PUBLISH JOBS, AND TWO ENVIRONMENTS: PyPI keys a pending trusted
+# WHY TWO PUBLISH JOBS, AND TWO ENVIRONMENTS: PyPI keys a trusted
 # publisher on the (owner, repository, workflow, environment) tuple and
 # refuses to register the same tuple for a second project name. The two
 # projects therefore cannot share an environment — `waddle-sdk` publishes
 # from `pypi`, `waddle-sdk-teleop` from `pypi-teleop` — and since a job has
 # exactly one environment, that is one publish job each. Artifact names are
 # prefixed per distribution (`sdk-wheels-*` / `teleop-wheels-*`) so each job
-# downloads only what it is allowed to upload.
+# downloads only what it is allowed to upload. Both jobs nevertheless depend
+# on both complete builds, making the exact-pinned pair atomic.
 
 name: release
 
@@ -55,11 +55,18 @@ permissions:
   contents: read
 
 jobs:
+  # Run the same complete gate as every main push and pull request before
+  # spending matrix capacity or minting either publishing identity.
+  quality:
+    name: release gate
+    uses: ./.github/workflows/ci.yml
+
   # ---------------------------------------------------------------------
   # The default distribution: waddle-sdk (control transport, no LiveKit).
   # ---------------------------------------------------------------------
   wheels:
     name: waddle-sdk (${{ matrix.platform.name }})
+    needs: [quality]
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       # `publish-sdk` needs this whole job, so a failing leg already blocks
@@ -151,13 +158,10 @@ jobs:
   # NOT add `continue-on-error`: a green job that uploaded no companion wheel
   # would be a release claiming an extra it did not ship.
   #
-  # Note the consequence of the two-environment split below — `publish-sdk`
-  # does not wait on this job, so a failure here ships the release
-  # DEFAULT-ONLY rather than stopping it, and `pip install
-  # 'waddle-sdk[teleop]'` then resolves to the previous release, or to
-  # nothing at all on the first one. That has to be said out loud in the
-  # release notes. To make it all-or-nothing instead, add `teleop-wheel` to
-  # `publish-sdk`'s `needs`.
+  # Both publish jobs wait on this wheel and the complete default matrix.
+  # A failure therefore publishes neither distribution: the default wheel's
+  # exact `[teleop]` pin can never advertise a companion version that this
+  # release did not build successfully.
   #
   # manylinux_2_28 rather than the default wheel's `auto` (2014): libwebrtc's
   # prebuilt binaries want a modern C++ toolchain, and the 2_28 image has
@@ -167,6 +171,7 @@ jobs:
   # ---------------------------------------------------------------------
   teleop-wheel:
     name: waddle-sdk-teleop (linux-x86_64)
+    needs: [quality]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
@@ -207,14 +212,14 @@ jobs:
 
   # ---------------------------------------------------------------------
   # Publish, one job per distribution. They are separate because PyPI's
-  # pending trusted publishers are unique per (owner, repo, workflow,
+  # trusted publishers are unique per (owner, repo, workflow,
   # environment): the two projects cannot share the `pypi` environment, and a
   # job carries exactly one environment. Neither job checks out the repo or
   # holds any permission beyond minting its OIDC token.
   # ---------------------------------------------------------------------
   publish-sdk:
     name: publish waddle-sdk to PyPI
-    needs: [wheels]
+    needs: [wheels, teleop-wheel]
     runs-on: ubuntu-24.04
     # Half of the identity PyPI matches (with owner/repo/workflow); also
     # where a manual approval gate would go if this ever wants one.
@@ -268,7 +273,7 @@ jobs:
 
   publish-teleop:
     name: publish waddle-sdk-teleop to PyPI
-    needs: [teleop-wheel]
+    needs: [wheels, teleop-wheel]
     runs-on: ubuntu-24.04
     # A DIFFERENT environment from `publish-sdk` — see the header. It is part
     # of what PyPI matches, so renaming it here means editing the trusted
