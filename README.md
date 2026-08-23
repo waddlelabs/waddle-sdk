@@ -7,16 +7,6 @@ semantics live once in the Rust core. The public lifecycle has no lease or hando
 selector: handoff is fixed to hold-first and enforcement placement is derived from
 the selected integration.
 
-The dependency direction is deliberately one-way:
-
-```text
-closed Waddle -> waddle-metal -> waddle-sdk -> hardware/cameras/simulators
-```
-
-The SDK never imports or discovers Metal or closed Waddle. Local callers use
-the Python library; remote SDK-only sites use the existing `waddle.v0` control
-protocol. `waddle.v0.hosted.runs` lets an authorized host start one ordinary
-episode on an idle remote SDK without creating another authority path. The
 `waddle-sdk connect` sends `site.metadata.id` with a customer/project API key to
 resolve the authoritative hosted binding, then completes a hardware-free transport
 registration; arms and cameras open only after the host accepts it.
