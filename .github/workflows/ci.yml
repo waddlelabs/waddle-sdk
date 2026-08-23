@@ -60,6 +60,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Install LiveKit system headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libglib2.0-dev
+
       - name: Check core formatting
         working-directory: waddle-core
         run: cargo fmt --check

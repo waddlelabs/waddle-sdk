@@ -21,6 +21,10 @@ This file preserves the coordinated `0.1.0` release of the repository.
   path, so local `maturin develop` builds no longer dirty or contaminate a release tree.
 - Update the release guide from pre-launch setup notes to the live trusted-publisher
   identities verified by the successful `v0.0.0` release.
+- Keep the test suite importable on the supported Python 3.10 floor instead of using
+  the Python 3.11-only `typing.Self` spelling in a test helper.
+- Install the GLib development metadata required by `webrtc-sys` in CI before the
+  LiveKit test and clippy passes.
 
 - Make connector registration a real authorization barrier. No buffered or live
   control-plane traffic is sent before the exact binding is accepted; a failed initial

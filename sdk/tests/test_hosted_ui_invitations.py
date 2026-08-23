@@ -6,7 +6,7 @@ import urllib.error
 import urllib.request
 from contextlib import nullcontext
 from pathlib import Path
-from typing import Any, Self
+from typing import Any
 
 import pytest
 from waddle_sdk import cli
@@ -21,7 +21,7 @@ from waddle_sdk._hosted_ui import (
 
 
 class _Response(io.BytesIO):
-    def __enter__(self) -> Self:
+    def __enter__(self) -> _Response:
         return self
 
     def __exit__(self, *_args: object) -> None:

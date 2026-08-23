@@ -459,6 +459,9 @@ top-level dirs; they are not built yet.
   - The built extensions (`python/waddle_sdk/_core*.so`,
     `teleop/python/waddle_teleop/_core*.so`) and `dist/` are build artifacts,
     never checked in.
+  - Linux builds of the LiveKit feature need the `glib-2.0` pkg-config metadata;
+    CI installs Ubuntu's `libglib2.0-dev` before the feature-gated test and clippy
+    passes.
 
 ## Release
 
