@@ -18,6 +18,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Install LiveKit system headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libglib2.0-dev
+
       - uses: actions/setup-python@v6
         with:
           python-version: "3.10"

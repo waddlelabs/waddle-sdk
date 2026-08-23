@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import venv
 import zipfile
 from collections.abc import Iterable, Mapping
@@ -30,6 +31,9 @@ except ModuleNotFoundError:  # pragma: no cover - Python 3.10 only
 SDK = Path(__file__).resolve().parents[1]
 PACKAGE = SDK / "python" / "waddle_sdk"
 VERSION = waddle_sdk.__version__
+PYTHON_311_ONLY = frozenset(
+    {"alicia-m-sdk", "alicia-d-sdk", "synriard", "synria-robocore"}
+)
 
 
 def _wheel_name(distribution: str) -> str:
@@ -355,7 +359,11 @@ print(json.dumps({
         text=True,
     )
     result = json.loads(completed.stdout)
-    expected = {"waddle-sdk", "numpy", *optional}
+    effective_optional = optional
+    if sys.version_info < (3, 11):
+        effective_optional -= PYTHON_311_ONLY
+
+    expected = {"waddle-sdk", "numpy", *effective_optional}
     assert expected <= set(result["names"])
     assert not (
         {
@@ -370,11 +378,11 @@ print(json.dumps({
             "synriard",
             "synria-robocore",
         }
-        - optional
+        - effective_optional
     ) & set(result["names"])
     assert result["vendor_modules"] == []
     assert result["requirements"]
-    if "waddle-sdk-teleop" in optional:
+    if "waddle-sdk-teleop" in effective_optional:
         assert result["core"] == "waddle_teleop._core"
         assert result["features"] == ["grpc", "livekit"]
     else:

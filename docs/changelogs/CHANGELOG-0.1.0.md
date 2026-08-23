@@ -25,6 +25,8 @@ This file preserves the coordinated `0.1.0` release of the repository.
   the Python 3.11-only `typing.Self` spelling in a test helper.
 - Install the GLib development metadata required by `webrtc-sys` in CI before the
   LiveKit test and clippy passes.
+- Make the clean-install extras matrix honor Python-version markers, including the
+  Alicia integrations' intentional Python 3.11 floor when CI runs on Python 3.10.
 
 - Make connector registration a real authorization barrier. No buffered or live
   control-plane traffic is sent before the exact binding is accepted; a failed initial
