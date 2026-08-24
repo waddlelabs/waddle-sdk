@@ -129,6 +129,7 @@ class _CountingDriver:
 
     def __init__(self, home=HOME) -> None:
         self.holds = 0
+        self.reads = 0
         self.writes: list[np.ndarray] = []
         self._estopped = False
         self._q = np.array(home, dtype=float)
@@ -138,6 +139,7 @@ class _CountingDriver:
         return self._estopped
 
     def read(self):
+        self.reads += 1
         return self._q.copy(), np.zeros(self._q.size)
 
     def write(self, target) -> None:
@@ -411,6 +413,17 @@ def test_an_arm_with_forward_kinematics_reports_a_tcp_pose():
     pose = arm.ee_pose()
     assert pose is not None
     assert list(pose) == pytest.approx([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0])
+
+
+def test_an_arm_derives_pose_from_an_existing_joint_sample_without_reading_again():
+    driver = _CountingDriver()
+    arm = _arm(driver=driver, fk=_flat_fk, arm_dof=2)
+
+    position, _velocity = arm.state()
+    pose = arm.ee_pose(position)
+
+    assert pose is not None
+    assert driver.reads == 1
 
 
 def test_a_workspace_box_without_forward_kinematics_is_refused_at_construction():

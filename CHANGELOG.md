@@ -11,7 +11,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
-_No unreleased changes._
+### Fixed
+
+- Reuse each arm's sampled joint vector when deriving its end-effector pose for
+  composite observations and proprioception reports, avoiding a second vendor
+  observation RPC per arm and reducing the cold-start latency of hosted jog.
 
 ## Released changelogs
 

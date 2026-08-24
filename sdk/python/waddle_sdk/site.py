@@ -1268,7 +1268,7 @@ class SiteSession:
         parts: dict[str, PartObservation] = {}
         for name, arm in managed.arms.items():
             position, velocity = arm.state()
-            pose = arm.ee_pose()
+            pose = arm.ee_pose(position)
             parts[name] = PartObservation(
                 joint_position=np.asarray(position, dtype=np.float64),
                 joint_velocity=np.asarray(velocity, dtype=np.float64),

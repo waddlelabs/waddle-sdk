@@ -842,14 +842,20 @@ class Arm:
         driver's latch: the rest of a program asks the arm."""
         return bool(self.driver.estopped)
 
-    def ee_pose(self) -> np.ndarray | None:
+    def ee_pose(self, position: Sequence[float] | None = None) -> np.ndarray | None:
         """xyz + wxyz quaternion of this part's TCP in its OWN base frame —
         the seven values ``report_proprio`` takes — or ``None`` when this arm
-        declared no forward kinematics."""
+        declared no forward kinematics.
+
+        A caller assembling one coherent observation may pass the joint sample
+        it already read.  Omitting it retains the convenient standalone read.
+        """
         if self.fk is None:
             return None
-        position, _ = self.state()
-        translation, rotation = self.fk(position[: self.arm_dof])
+        sampled = (
+            self.state()[0] if position is None else np.asarray(position, dtype=float)
+        )
+        translation, rotation = self.fk(sampled[: self.arm_dof])
         return np.array([*translation, *quaternion_wxyz(rotation)])
 
     # -- the envelope -----------------------------------------------------
@@ -1771,7 +1777,7 @@ def proprio_tick(session, arms: Mapping[str, Arm]) -> Callable[[float], None]:
         for part, arm in arms.items():
             arm.step(dt)
             position, velocity = arm.state()
-            pose = arm.ee_pose()
+            pose = arm.ee_pose(position)
             if pose is None:
                 session.report_proprio(
                     part=part, joint_pos=position, joint_vel=velocity
