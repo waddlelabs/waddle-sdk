@@ -123,6 +123,40 @@ def test_sdk_invitation_client_is_secret_safe_and_never_retries(
     assert "secret transport detail" not in str(captured.value)
 
 
+def test_sdk_invitation_refusal_preserves_hosted_code_and_http_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = json.dumps(
+        {
+            "fault": {
+                "code": "workspace.binding_inactive",
+                "detail": "workspace binding is inactive\nreconnect after activation",
+            }
+        }
+    ).encode()
+
+    def urlopen(request: urllib.request.Request, *, timeout: float) -> _Response:
+        del timeout
+        raise urllib.error.HTTPError(
+            request.full_url,
+            409,
+            "Conflict",
+            {},
+            io.BytesIO(body),
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    with pytest.raises(UiInvitationError) as captured:
+        _client().resolve_binding()
+
+    assert captured.value.code == "workspace.binding_inactive"
+    assert captured.value.detail == (
+        "workspace binding is inactive reconnect after activation"
+    )
+    assert captured.value.context == {"http_status": 409}
+    assert str(captured.value).startswith("workspace.binding_inactive: ")
+
+
 def test_sdk_connect_prints_derived_ui_url_after_site_open(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

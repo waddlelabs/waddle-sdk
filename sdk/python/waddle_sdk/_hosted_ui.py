@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import urllib.error
 import urllib.request
 import uuid
@@ -18,6 +19,47 @@ MAX_RESPONSE_BYTES = 64 * 1024
 
 class UiInvitationError(RuntimeError):
     """A secret-safe hosted UI bootstrap failure."""
+
+    def __init__(
+        self,
+        detail: str,
+        *,
+        code: str = "hosted_ui.failed",
+        context: Mapping[str, object] | None = None,
+    ) -> None:
+        self.code = code
+        self.detail = detail
+        self.context = dict(context or {})
+        super().__init__(f"{code}: {detail}")
+
+
+_FAULT_CODE = re.compile(r"[a-z][a-z0-9_.-]{0,127}")
+
+
+def _refusal(
+    body: Mapping[str, object],
+    *,
+    fallback_code: str,
+    fallback_detail: str,
+    status: int,
+) -> UiInvitationError:
+    fault = body.get("fault")
+    code = fault.get("code") if isinstance(fault, Mapping) else None
+    detail = fault.get("detail") if isinstance(fault, Mapping) else None
+    safe_detail = (
+        " ".join(detail.split())[:512]
+        if isinstance(detail, str) and detail.strip()
+        else fallback_detail
+    )
+    return UiInvitationError(
+        safe_detail,
+        code=(
+            str(code)
+            if isinstance(code, str) and _FAULT_CODE.fullmatch(code)
+            else fallback_code
+        ),
+        context={"http_status": status},
+    )
 
 
 @dataclass(frozen=True)
@@ -108,13 +150,12 @@ class WaddleUiInvitationClient:
         except urllib.error.HTTPError as error:
             content = error.read(MAX_RESPONSE_BYTES + 1)
             body = self._json(content) if content else {}
-            fault = body.get("fault")
-            detail = (
-                str(fault.get("detail"))[:512]
-                if isinstance(fault, Mapping) and fault.get("detail")
-                else "hosted Waddle refused the UI invitation"
-            )
-            raise UiInvitationError(detail) from error
+            raise _refusal(
+                body,
+                fallback_code="hosted_ui.invitation_refused",
+                fallback_detail="hosted Waddle refused the UI invitation",
+                status=error.code,
+            ) from error
         except (OSError, TimeoutError, urllib.error.URLError) as error:
             raise UiInvitationError(
                 "hosted Waddle UI invitation service is unreachable"
@@ -174,13 +215,12 @@ class WaddleUiInvitationClient:
         except urllib.error.HTTPError as error:
             content = error.read(MAX_RESPONSE_BYTES + 1)
             body = self._json(content) if content else {}
-            fault = body.get("fault")
-            detail = (
-                str(fault.get("detail"))[:512]
-                if isinstance(fault, Mapping) and fault.get("detail")
-                else "hosted Waddle refused the connector binding"
-            )
-            raise UiInvitationError(detail) from error
+            raise _refusal(
+                body,
+                fallback_code="hosted_ui.binding_refused",
+                fallback_detail="hosted Waddle refused the connector binding",
+                status=error.code,
+            ) from error
         except (OSError, TimeoutError, urllib.error.URLError) as error:
             raise UiInvitationError(
                 "hosted Waddle binding service is unreachable"

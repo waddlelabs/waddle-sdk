@@ -263,15 +263,55 @@ class FaultCode(str, enum.Enum):
     INTERNAL = "internal"
 
 
+@dataclass(frozen=True)
+class RuntimeFaultCause:
+    """One structured lower-level cause safe to carry across SDK boundaries.
+
+    Implementations must not place credentials, customer paths, or raw vendor
+    exception text in any field.
+    """
+
+    code: str
+    detail: str
+    context: Mapping[str, JSONValue] = field(default_factory=dict)
+    causes: tuple[RuntimeFaultCause, ...] = ()
+
+    def as_dict(self) -> dict[str, JSONValue]:
+        return {
+            "code": self.code,
+            "detail": self.detail,
+            "context": dict(self.context),
+            "causes": [cause.as_dict() for cause in self.causes],
+        }
+
+
 @dataclass
 class RuntimeFault(Exception):
+    """A concise public runtime failure consumable by Metal.
+
+    ``detail``, ``context``, and ``causes`` cross process and tenant-aware
+    logging boundaries. Implementations must keep them free of credentials,
+    customer paths, and arbitrary vendor exception strings.
+    """
+
     code: FaultCode
     detail: str
     retryable: bool = False
     context: Mapping[str, JSONValue] = field(default_factory=dict)
+    causes: tuple[RuntimeFaultCause, ...] = ()
 
     def __str__(self) -> str:
         return f"{self.code.value}: {self.detail}"
+
+    def as_dict(self) -> dict[str, JSONValue]:
+        """Return the complete transport-safe fault without flattening causes."""
+        return {
+            "code": self.code.value,
+            "detail": self.detail,
+            "retryable": self.retryable,
+            "context": dict(self.context),
+            "causes": [cause.as_dict() for cause in self.causes],
+        }
 
 
 @dataclass(frozen=True)
@@ -408,6 +448,7 @@ __all__ = [
     "SdkKinematicsPort",
     "RuntimeEvent",
     "RuntimeFault",
+    "RuntimeFaultCause",
     "SdkRuntimePort",
     "SdkSupportPort",
     "SubmitResult",

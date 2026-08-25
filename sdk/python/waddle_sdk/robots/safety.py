@@ -128,7 +128,7 @@ def safety_presets_for_driver(
     except Exception as error:  # noqa: BLE001 -- optional extension is isolated
         return SafetyPresetReport(
             (),
-            (f"cannot inspect robot safety presets: {type(error).__name__}: {error}",),
+            (f"cannot inspect robot safety presets ({type(error).__name__})",),
         )
     provider = getattr(module, "safety_presets", None)
     if provider is None:
@@ -152,7 +152,7 @@ def safety_presets_for_driver(
     except Exception as error:  # noqa: BLE001 -- optional extension is isolated
         return SafetyPresetReport(
             (),
-            (f"robot safety presets failed: {type(error).__name__}: {error}",),
+            (f"robot safety preset provider failed ({type(error).__name__})",),
         )
     return SafetyPresetReport(rows)
 

@@ -284,7 +284,7 @@ def discover_hardware(
             try:
                 realsense = _realsense_vendor_candidates()
             except Exception as error:  # noqa: BLE001 -- optional vendor discovery
-                warnings.append(f"RealSense discovery: {type(error).__name__}: {error}")
+                warnings.append(f"RealSense discovery failed ({type(error).__name__})")
         found.extend(
             _linux_candidates(
                 sys_root=Path(sys_root),
@@ -303,7 +303,7 @@ def discover_hardware(
             named_providers.extend(_plugin_providers())
         except (ImportError, TypeError) as error:
             warnings.append(
-                f"hardware discovery plugins: {type(error).__name__}: {error}"
+                f"hardware discovery plugin loading failed ({type(error).__name__})"
             )
 
     for name, provider in named_providers:
@@ -314,7 +314,7 @@ def discover_hardware(
             found.extend(rows)
         except Exception as error:  # noqa: BLE001 -- optional integrations are isolated
             warnings.append(
-                f"hardware discovery provider {name!r}: {type(error).__name__}: {error}"
+                f"hardware discovery provider {name!r} failed ({type(error).__name__})"
             )
 
     unique: dict[str, HardwareCandidate] = {}

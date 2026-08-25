@@ -67,7 +67,7 @@ def test_custom_provider_candidates_are_immutable_and_failures_are_isolated(
         )
 
     def broken():
-        raise RuntimeError("vendor probe unavailable")
+        raise RuntimeError("token=vendor-probe-secret")
 
     report = discover_hardware(
         providers=(openarm, broken),
@@ -79,7 +79,10 @@ def test_custom_provider_candidates_are_immutable_and_failures_are_isolated(
     assert report.candidates[0].driver == "customer_openarm:arm"
     connection["ip"] = "changed"
     assert report.candidates[0].connection["ip"] == "192.0.2.10"
-    assert "vendor probe unavailable" in report.warnings[0]
+    assert report.warnings == (
+        "hardware discovery provider 'broken' failed (RuntimeError)",
+    )
+    assert "vendor-probe-secret" not in report.warnings[0]
 
 
 def test_duplicate_candidate_identifiers_are_reported_not_overwritten(

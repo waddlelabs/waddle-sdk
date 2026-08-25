@@ -69,6 +69,55 @@ class ConnectorRegistrationError(RuntimeError):
         super().__init__(f"{code}: {detail}")
 
 
+def _exception_type(error: BaseException) -> str:
+    """Return a bounded identifier without serializing an untrusted exception."""
+    name = re.sub(r"[^0-9A-Za-z_.-]", "_", type(error).__name__)
+    return name[:80] or "Exception"
+
+
+def _operation_fault(
+    operation: str,
+    error: Exception,
+    *,
+    code: FaultCode = FaultCode.INTERNAL,
+    context: Mapping[str, JSONValue] | None = None,
+) -> RuntimeFault:
+    """Classify an untyped implementation error at the public runtime boundary.
+
+    Arbitrary vendor exception strings can contain device paths, URLs, or
+    credentials.  Keep the original exception in Python's ``__cause__`` for
+    owner-side logs, but carry only its type plus SDK-owned operation/scope
+    fields over Metal's transport.
+    """
+    if isinstance(error, RuntimeFault):
+        return error
+    error_type = _exception_type(error)
+    safe_context: dict[str, JSONValue] = {
+        "operation": operation,
+        "error_type": error_type,
+    }
+    if context is not None:
+        safe_context.update(context)
+    if isinstance(error, OSError) and error.errno is not None:
+        safe_context["errno"] = int(error.errno)
+    return RuntimeFault(
+        code,
+        f"{operation} failed ({error_type})",
+        retryable=isinstance(error, TimeoutError),
+        context=safe_context,
+    )
+
+
+def _event_fault(
+    operation: str,
+    error: Exception,
+    *,
+    context: Mapping[str, JSONValue] | None = None,
+) -> dict[str, JSONValue]:
+    fault = _operation_fault(operation, error, context=context)
+    return fault.as_dict()
+
+
 def _strict_semver(value: object) -> bool:
     if (
         not isinstance(value, str)
@@ -844,7 +893,7 @@ class SiteSession:
                     return
                 self._event(
                     "calibration.request_poll_failed",
-                    {"detail": f"{type(error).__name__}: {error}"},
+                    _event_fault("poll calibration requests", error),
                 )
                 self._service_stop.wait(0.1)
                 continue
@@ -867,7 +916,14 @@ class SiteSession:
                         {
                             "calibration_id": str(row["calibration_id"]),
                             "sample_id": str(row["sample_id"]),
-                            "detail": f"{type(error).__name__}: {error}",
+                            **_event_fault(
+                                "submit calibration measurement",
+                                error,
+                                context={
+                                    "camera": str(row["camera"]),
+                                    "frame_sequence": int(row["frame_sequence"]),
+                                },
+                            ),
                         },
                     )
 
@@ -890,9 +946,14 @@ class SiteSession:
         description = dict(self.site.describe())
         managed = self._managed
         if managed is not None:
-            description["runtime"] = dict(managed.core.status())
-            description["robot"] = self._registered_robot_description(managed)
-            description["support"] = self.support().as_dict()
+            try:
+                description["runtime"] = dict(managed.core.status())
+                description["robot"] = self._registered_robot_description(managed)
+                description["support"] = self.support().as_dict()
+            except RuntimeFault:
+                raise
+            except Exception as exc:
+                raise _operation_fault("describe SDK runtime", exc) from exc
         return description
 
     def _registered_robot_description(
@@ -1219,10 +1280,10 @@ class SiteSession:
         except RuntimeFault:
             raise
         except Exception as exc:
-            raise RuntimeFault(
-                FaultCode.INTERNAL,
-                f"part {part!r} forward kinematics failed: "
-                f"{type(exc).__name__}: {exc}",
+            raise _operation_fault(
+                "forward kinematics",
+                exc,
+                context={"part": part},
             ) from exc
 
     def body_geometry(
@@ -1249,10 +1310,13 @@ class SiteSession:
                 )
                 for sphere in arm.collision_snapshot(vector)
             )
+        except RuntimeFault:
+            raise
         except Exception as exc:
-            raise RuntimeFault(
-                FaultCode.INTERNAL,
-                f"part {part!r} body geometry failed: {type(exc).__name__}: {exc}",
+            raise _operation_fault(
+                "body geometry",
+                exc,
+                context={"part": part},
             ) from exc
 
     def run(self, *, task, actor) -> "Run":
@@ -1267,8 +1331,17 @@ class SiteSession:
         managed = self._require()
         parts: dict[str, PartObservation] = {}
         for name, arm in managed.arms.items():
-            position, velocity = arm.state()
-            pose = arm.ee_pose(position)
+            try:
+                position, velocity = arm.state()
+                pose = arm.ee_pose(position)
+            except RuntimeFault:
+                raise
+            except Exception as exc:
+                raise _operation_fault(
+                    "observe robot part",
+                    exc,
+                    context={"part": name},
+                ) from exc
             parts[name] = PartObservation(
                 joint_position=np.asarray(position, dtype=np.float64),
                 joint_velocity=np.asarray(velocity, dtype=np.float64),
@@ -1285,7 +1358,12 @@ class SiteSession:
         # Stamp the composite envelope after taking its constituent snapshots.
         # Camera pumps update concurrently; stamping first can make a frame
         # captured during assembly appear to come from the observation's future.
-        stamp = managed.core.stamp()
+        try:
+            stamp = managed.core.stamp()
+        except RuntimeFault:
+            raise
+        except Exception as exc:
+            raise _operation_fault("stamp observation", exc) from exc
         return Observation(stamp.session_ns, stamp.unix_ns, parts, cameras)
 
     def submit(self, action, observation=None) -> SubmitResult:
@@ -1304,13 +1382,26 @@ class SiteSession:
                 FaultCode.UNSUPPORTED,
                 "the installed native core does not provide the core-owned hold path",
             ) from exc
+        except RuntimeFault:
+            raise
+        except (TypeError, ValueError) as exc:
+            raise _operation_fault(
+                "request hold", exc, code=FaultCode.INVALID_REQUEST
+            ) from exc
+        except Exception as exc:
+            raise _operation_fault("request hold", exc) from exc
         self._event("control.hold", {"reason": reason})
 
     def estop(self, reason: str) -> None:
         managed = self._require()
         if not isinstance(reason, str) or not reason:
             raise ValueError("e-stop reason must be a non-empty string")
-        managed.core.request_estop()
+        try:
+            managed.core.request_estop()
+        except RuntimeFault:
+            raise
+        except Exception as exc:
+            raise _operation_fault("request e-stop", exc) from exc
         self._event("control.estop", {"reason": reason})
 
     def events(self, after_cursor: int = 0) -> tuple[RuntimeEvent, ...]:
@@ -1332,23 +1423,62 @@ class SiteSession:
         y: int,
     ) -> Mapping[str, JSONValue]:
         managed = self._require()
+        if camera not in managed.robot.cameras:
+            raise RuntimeFault(
+                FaultCode.NOT_FOUND,
+                f"camera {camera!r} is not declared",
+                context={"camera": camera},
+            )
         sample = managed.camera_sample(camera)
         if sample is None:
             raise RuntimeFault(FaultCode.NOT_FOUND, f"camera {camera!r} has no sample")
-        point = managed.resolve_pixel(camera, x, y, frame_sequence=frame_sequence)
+        try:
+            point = managed.resolve_pixel(camera, x, y, frame_sequence=frame_sequence)
+        except RuntimeFault:
+            raise
+        except (TypeError, ValueError) as exc:
+            raise _operation_fault(
+                "resolve calibration pixel",
+                exc,
+                code=FaultCode.INVALID_REQUEST,
+                context={"camera": camera, "frame_sequence": frame_sequence},
+            ) from exc
+        except RuntimeError as exc:
+            raise _operation_fault(
+                "resolve calibration frame",
+                exc,
+                code=FaultCode.CONFLICT,
+                context={"camera": camera, "frame_sequence": frame_sequence},
+            ) from exc
         description = managed.robot.cameras[camera]
         frame_id = description.frame_id or camera
-        if managed.core.status().get("calibration_measurements_negotiated", False):
-            managed.core.calibration_measurement_submit(
-                calibration_id,
-                sample_id,
-                camera,
-                frame_sequence,
-                frame_id,
-                sample.session_ns,
-                point,
-                point[2],
-            )
+        try:
+            if managed.core.status().get("calibration_measurements_negotiated", False):
+                managed.core.calibration_measurement_submit(
+                    calibration_id,
+                    sample_id,
+                    camera,
+                    frame_sequence,
+                    frame_id,
+                    sample.session_ns,
+                    point,
+                    point[2],
+                )
+        except RuntimeFault:
+            raise
+        except (TypeError, ValueError) as exc:
+            raise _operation_fault(
+                "submit calibration measurement",
+                exc,
+                code=FaultCode.INVALID_REQUEST,
+                context={"camera": camera, "frame_sequence": frame_sequence},
+            ) from exc
+        except Exception as exc:
+            raise _operation_fault(
+                "submit calibration measurement",
+                exc,
+                context={"camera": camera, "frame_sequence": frame_sequence},
+            ) from exc
         result: dict[str, JSONValue] = {
             "calibration_id": calibration_id,
             "sample_id": sample_id,
@@ -1387,9 +1517,18 @@ class Run:
         managed = self._session._require()
         if self._session._active is not None:
             raise RuntimeFault(FaultCode.BUSY, "another run is active")
-        self._episode = managed.core.start_episode(
-            self._task, task_metadata=self._task_metadata
-        )
+        try:
+            self._episode = managed.core.start_episode(
+                self._task, task_metadata=self._task_metadata
+            )
+        except RuntimeFault:
+            raise
+        except (TypeError, ValueError) as exc:
+            raise _operation_fault(
+                "start run", exc, code=FaultCode.INVALID_REQUEST
+            ) from exc
+        except Exception as exc:
+            raise _operation_fault("start run", exc) from exc
         self._session._active = self
         self._session._event("run.started", {"run_id": self.id, "task": self._task})
         return self
@@ -1400,9 +1539,16 @@ class Run:
                 reason = (
                     "run exited before a terminal outcome"
                     if exc_type is None
-                    else f"unhandled {exc_type.__name__}: {exc}"
+                    else f"unhandled {_exception_type(exc)}"
                 )
-                self._episode.terminate("abort", reason)
+                try:
+                    self._episode.terminate("abort", reason)
+                except RuntimeFault:
+                    raise
+                except Exception as terminate_error:
+                    raise _operation_fault(
+                        "abort run", terminate_error
+                    ) from terminate_error
             if self._episode is not None:
                 self._session._event(
                     "run.finished",
@@ -1435,7 +1581,18 @@ class Run:
             obs = observation.gate_vector()
         else:
             obs = observation
-        decided = self._episode.gate(gate_action, obs)
+        try:
+            decided = self._episode.gate(gate_action, obs)
+        except RuntimeFault:
+            raise
+        except (TypeError, ValueError) as exc:
+            raise _operation_fault(
+                "validate run action",
+                exc,
+                code=FaultCode.INVALID_REQUEST,
+            ) from exc
+        except Exception as exc:
+            raise _operation_fault("gate run action", exc) from exc
         gate = self._episode.last_gate
         kind = "pass" if gate is None else str(gate.kind)
         part = None if gate is None else gate.part
@@ -1456,14 +1613,25 @@ class Run:
                     self._session._require().arms, velocity_feedforward
                 )
         if dispatched:
-            dispatched = base.apply_decision(
-                self._session._require().arms,
-                decided,
-                # The value now belongs to the exact action the core selected:
-                # caller on pass, selected stream on substitute/anchorless
-                # blend, absent on an actually interpolated blend.
-                velocity_feedforward_rad_s=velocity_feedforward,
-            )
+            try:
+                dispatched = base.apply_decision(
+                    self._session._require().arms,
+                    decided,
+                    # The value now belongs to the exact action the core selected:
+                    # caller on pass, selected stream on substitute/anchorless
+                    # blend, absent on an actually interpolated blend.
+                    velocity_feedforward_rad_s=velocity_feedforward,
+                )
+            except RuntimeFault:
+                raise
+            except (TypeError, ValueError) as exc:
+                raise _operation_fault(
+                    "validate dispatched action",
+                    exc,
+                    code=FaultCode.INVALID_REQUEST,
+                ) from exc
+            except Exception as exc:
+                raise _operation_fault("dispatch robot action", exc) from exc
             if not dispatched:
                 kind = "owner_refusal"
                 detail = "the owner envelope refused the complete action"
@@ -1484,7 +1652,12 @@ class Run:
             raise RuntimeFault(FaultCode.NOT_OPEN, "run has not started")
         if outcome not in {"success", "failure", "abort"}:
             raise ValueError("outcome must be success, failure, or abort")
-        self._episode.terminate(outcome, reason)
+        try:
+            self._episode.terminate(outcome, reason)
+        except RuntimeFault:
+            raise
+        except Exception as exc:
+            raise _operation_fault("finish run", exc) from exc
 
 
 def _task(task: object, actor: object) -> tuple[str, dict[str, str]]:

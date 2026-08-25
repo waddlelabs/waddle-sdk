@@ -77,7 +77,11 @@ waddle-sdk/
                              #   `site.py` is the primary Site/SiteSession/Run
                              #   lifecycle; `runtime.py` owns the structural
                              #   SDK port/DTOs consumed by Metal, including an
-                             #   immutable `waddle.sdk.support/v1` matrix and
+                             #   explicit transport-safe RuntimeFault cause chain;
+                             #   runtime boundaries retain raw vendor exceptions
+                             #   only as local Python causes and publish the failed
+                             #   operation/scope/category without arbitrary text,
+                             #   plus an immutable `waddle.sdk.support/v1` matrix and
                              #   independent optional support/FK/body-geometry
                              #   ports. SiteSession derives those facts from
                              #   opened Arm/camera implementations, publishes

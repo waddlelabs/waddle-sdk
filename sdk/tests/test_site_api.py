@@ -15,6 +15,7 @@ from waddle_sdk.runtime import (
     FaultCode,
     JointPositionCommand,
     RuntimeFault,
+    RuntimeFaultCause,
     SdkGeometryPort,
     SdkKinematicsPort,
     SdkRuntimePort,
@@ -458,6 +459,111 @@ def test_observation_envelope_is_stamped_after_camera_snapshot(tmp_path):
 
         assert events == ["camera:overhead", "stamp"]
         assert observation.session_ns >= observation.cameras["overhead"].session_ns
+
+
+def test_runtime_fault_serializes_structured_causes():
+    fault = RuntimeFault(
+        FaultCode.TRANSPORT_LOST,
+        "camera read failed",
+        retryable=True,
+        context={"camera": "overhead"},
+        causes=(
+            RuntimeFaultCause(
+                "camera.timeout",
+                "frame deadline elapsed",
+                {"timeout_ms": 500},
+            ),
+        ),
+    )
+
+    assert fault.as_dict() == {
+        "code": "transport_lost",
+        "detail": "camera read failed",
+        "retryable": True,
+        "context": {"camera": "overhead"},
+        "causes": [
+            {
+                "code": "camera.timeout",
+                "detail": "frame deadline elapsed",
+                "context": {"timeout_ms": 500},
+                "causes": [],
+            }
+        ],
+    }
+
+
+def test_observe_classifies_vendor_failure_without_exposing_exception_text(tmp_path):
+    site = waddle_sdk.load_site(_write_site(tmp_path))
+    with site.open(console=False, _testing=True) as session:
+        session._managed.pump.stop()
+        session._managed.pump = None
+        driver = session._managed.arms["arm"].driver
+
+        def fail_read():
+            raise RuntimeError("token=do-not-cross-the-runtime-boundary")
+
+        driver.read = fail_read
+        with pytest.raises(RuntimeFault) as caught:
+            session.observe()
+
+    fault = caught.value
+    assert fault.code is FaultCode.INTERNAL
+    assert fault.detail == "observe robot part failed (RuntimeError)"
+    assert fault.context == {
+        "operation": "observe robot part",
+        "error_type": "RuntimeError",
+        "part": "arm",
+    }
+    assert fault.causes == ()
+    assert "do-not-cross" not in json.dumps(fault.as_dict())
+    assert isinstance(fault.__cause__, RuntimeError)
+
+
+def test_observe_preserves_an_existing_structured_runtime_fault(tmp_path):
+    site = waddle_sdk.load_site(_write_site(tmp_path))
+    upstream = RuntimeFault(
+        FaultCode.TRANSPORT_LOST,
+        "encoder stream disconnected",
+        retryable=True,
+        context={"bus": "arm"},
+        causes=(RuntimeFaultCause("driver.timeout", "read deadline elapsed"),),
+    )
+    with site.open(console=False, _testing=True) as session:
+        session._managed.pump.stop()
+        session._managed.pump = None
+        driver = session._managed.arms["arm"].driver
+
+        def fail_read():
+            raise upstream
+
+        driver.read = fail_read
+        with pytest.raises(RuntimeFault) as caught:
+            session.observe()
+
+    assert caught.value is upstream
+
+
+def test_hold_classifies_native_validation_at_the_runtime_boundary(tmp_path):
+    site = waddle_sdk.load_site(_write_site(tmp_path))
+    with site.open(console=False, _testing=True) as session:
+        core = session._managed.core
+
+        class _CoreRefusal:
+            def request_hold(self, _reason):
+                raise ValueError("credential=do-not-serialize")
+
+            def __getattr__(self, name):
+                return getattr(core, name)
+
+        session._managed.core = _CoreRefusal()
+        with pytest.raises(RuntimeFault) as caught:
+            session.hold("site operator requested hold")
+
+    fault = caught.value
+    assert fault.code is FaultCode.INVALID_REQUEST
+    assert fault.detail == "request hold failed (ValueError)"
+    assert fault.context["operation"] == "request hold"
+    assert "do-not-serialize" not in json.dumps(fault.as_dict())
 
 
 def test_local_calibration_measurement_does_not_require_remote_feature(tmp_path):

@@ -806,7 +806,7 @@ class Arm:
         try:
             spheres = self.collision_snapshot(target)
         except Exception as error:  # noqa: BLE001 -- malformed geometry is a refusal
-            return f"collision geometry unavailable: {type(error).__name__}: {error}"
+            return f"collision geometry unavailable ({type(error).__name__})"
         if not spheres:
             return "collision geometry provider returned no robot bodies"
         for sphere in spheres:
@@ -927,8 +927,8 @@ class Arm:
                     bodies = self.collision_snapshot(target)
                 except Exception as error:  # noqa: BLE001 -- fail closed
                     return (
-                        "collision geometry unavailable for workspace check: "
-                        f"{type(error).__name__}: {error}"
+                        "collision geometry unavailable for workspace check "
+                        f"({type(error).__name__})"
                     )
                 if not bodies:
                     return "collision geometry provider returned no robot bodies"
@@ -1050,7 +1050,7 @@ def _cross_arm_collision_refusal(
         except Exception as error:  # noqa: BLE001 -- malformed geometry is a refusal
             return (
                 arm,
-                f"collision geometry unavailable: {type(error).__name__}: {error}",
+                f"collision geometry unavailable ({type(error).__name__})",
             )
         if not spheres:
             return (arm, "collision geometry provider returned no robot bodies")

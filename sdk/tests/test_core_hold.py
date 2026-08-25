@@ -39,9 +39,9 @@ def test_request_hold_dispatches_off_caller_thread_and_validates_reason():
         assert callback_threads == [callback_threads[0]]
         assert callback_threads[0] != caller_thread
 
-        with pytest.raises(RuntimeError, match="reason must be non-empty"):
+        with pytest.raises(ValueError, match="reason must be non-empty"):
             session.request_hold(" ")
-        with pytest.raises(RuntimeError, match="at most 1024"):
+        with pytest.raises(ValueError, match="at most 1024"):
             session.request_hold("x" * 1025)
     finally:
         session.shutdown()

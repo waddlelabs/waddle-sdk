@@ -77,7 +77,7 @@ def test_broken_optional_preset_provider_degrades_to_a_warning(
 
     def presets(*, factory: str, options: object) -> tuple[SafetyPreset, ...]:
         del factory, options
-        raise RuntimeError("configuration bug")
+        raise RuntimeError("password=configuration-secret")
 
     module.safety_presets = presets  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, module.__name__, module)
@@ -85,9 +85,8 @@ def test_broken_optional_preset_provider_degrades_to_a_warning(
     report = safety_presets_for_driver("broken_robot:arm")
 
     assert report.presets == ()
-    assert report.warnings == (
-        "robot safety presets failed: RuntimeError: configuration bug",
-    )
+    assert report.warnings == ("robot safety preset provider failed (RuntimeError)",)
+    assert "configuration-secret" not in report.warnings[0]
 
 
 def test_safety_preset_rejects_malformed_bounds() -> None:
