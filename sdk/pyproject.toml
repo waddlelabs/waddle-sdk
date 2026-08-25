@@ -31,7 +31,7 @@ waddle-sdk = "waddle_sdk.cli:main"
 # `pip install 'waddle-sdk[teleop]'` silently yields no LiveKit.
 # `tests/test_features.py::test_the_teleop_extra_pins_this_builds_version`
 # fails until the two agree.
-teleop = ["waddle-sdk-teleop==0.1.1"]
+teleop = ["waddle-sdk-teleop==0.1.2"]
 orbbec = ["pyorbbecsdk2"]
 realsense = ["pyrealsense2"]
 usb = ["opencv-python-headless>=4.8"]

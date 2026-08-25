@@ -3471,7 +3471,7 @@ dependencies = [
 
 [[package]]
 name = "waddle-sdk-shim"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "bytes",
  "numpy",
