@@ -16,6 +16,7 @@ class PartConfig:
     joint_limits: object
     workspace_bounds: Mapping[str, Any]
     envelope: Mapping[str, Any]
+    base_frame: str | None = None
     options: Mapping[str, Any] = field(default_factory=dict)
     site_root: Path = Path(".")
 

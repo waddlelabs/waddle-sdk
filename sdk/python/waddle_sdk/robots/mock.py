@@ -112,7 +112,14 @@ def arm(*, config: PartConfig) -> base.Rig:
         raise ValueError("mock link_length_m must be finite and positive")
     if not math.isfinite(body_radius_m) or body_radius_m <= 0.0:
         raise ValueError("mock body_radius_m must be finite and positive")
-    collision_frame = str(config.options.get("collision_frame", "site"))
+    legacy_frame = str(config.options.get("collision_frame", "site"))
+    if (
+        config.base_frame
+        and "collision_frame" in config.options
+        and config.base_frame != legacy_frame
+    ):
+        raise ValueError("mock base_frame conflicts with legacy options.collision_frame")
+    collision_frame = config.base_frame or legacy_frame
 
     def points(q: Sequence[float]) -> tuple[np.ndarray, ...]:
         return _planar_points(q, link_length_m=link_length_m)

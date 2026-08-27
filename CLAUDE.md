@@ -534,6 +534,12 @@ commands above remain the pre-commit gate and the fastest way to diagnose a fail
   A composite SDK `Observation` takes its outer `Stamp` after snapshotting parts
   and camera samples, so a concurrently published camera frame cannot appear to
   come from the observation envelope's future.
+- **Site topology is declarative and enforced.** `parts.*.base_frame` is passed through
+  `PartConfig` (or an explicit compatible factory keyword), and an opened arm must report
+  that exact frame. `cameras.*.mount` is either fixed `scene` or `wrist` with one existing
+  part and reaches custom camera adapters through `CameraConfig`. These fields describe
+  physical relationships only; the SDK does not infer transforms or promote a camera to
+  arm-owned because it was discovered beside an arm.
 - **Proto evolution is append-only.** Never reuse or renumber a field or enum value;
   removed fields become `reserved` (number AND name). Times/durations are `int64`
   nanoseconds (`_ns`; wall twins `_unix_ns`; operator-clock `_client_ns`, never

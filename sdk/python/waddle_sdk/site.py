@@ -12,6 +12,7 @@ import time
 import warnings
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
+from functools import partial
 from importlib.resources import files
 from pathlib import Path
 from types import MappingProxyType
@@ -22,7 +23,7 @@ import numpy as np
 from . import descriptors
 from ._session import Control, _derive_grants, create_core_session
 from .cameras import CameraDriver
-from .cameras.site import CameraConfig
+from .cameras.site import CameraConfig, CameraMount
 from .robots import base
 from .robots.site import PartConfig
 from .runtime import (
@@ -296,6 +297,21 @@ def _validate_static_envelope(document: Mapping[str, Any]) -> None:
             )
 
 
+def _validate_topology_declarations(document: Mapping[str, Any]) -> None:
+    """Validate references in explicit robot/camera topology metadata."""
+
+    part_names = set(document["parts"])
+    for camera_name, camera in document["cameras"].items():
+        mount = camera.get("mount")
+        if not isinstance(mount, Mapping) or mount.get("kind") != "wrist":
+            continue
+        owner = str(mount["part"])
+        if owner not in part_names:
+            raise ManifestValidationError(
+                f"cameras.{camera_name}.mount.part: unknown robot part {owner!r}"
+            )
+
+
 def _validate_gripper_geometry(document: Mapping[str, Any]) -> None:
     """Validate the optional hardware-neutral grasp geometry as one fact set."""
 
@@ -466,6 +482,17 @@ def _call_part_factory(target, config: PartConfig) -> base.Rig:
             **dict(config.connection),
             "posture": config.posture,
         }
+        if config.base_frame:
+            accepts_base_frame = "base_frame" in parameters or any(
+                parameter.kind is inspect.Parameter.VAR_KEYWORD
+                for parameter in parameters.values()
+            )
+            if not accepts_base_frame:
+                raise ManifestValidationError(
+                    f"part {config.name!r} declares base_frame {config.base_frame!r}, "
+                    "but its driver factory cannot receive that declaration"
+                )
+            kwargs["base_frame"] = config.base_frame
         if config.joint_limits:
             limits = config.joint_limits
             kwargs["joint_limits"] = (
@@ -542,6 +569,7 @@ def _camera_description(raw: Mapping[str, Any]) -> descriptors.Camera:
 def _combine_rigs(
     site_id: str,
     components: Mapping[str, base.Rig],
+    part_base_frames: Mapping[str, str | None],
     camera_descriptions: Mapping[str, descriptors.Camera],
     camera_factories: Mapping[str, Callable[[], CameraDriver]],
     frames: Sequence[descriptors.FrameTransform],
@@ -581,6 +609,13 @@ def _combine_rigs(
                     )
                 arm = next(iter(arms.values()))
                 arm.part = name
+                expected_base = part_base_frames.get(name)
+                if expected_base is not None and arm.base_frame != expected_base:
+                    arm.close()
+                    raise ManifestValidationError(
+                        f"part {name!r} driver returned base frame {arm.base_frame!r}, "
+                        f"not declared base_frame {expected_base!r}"
+                    )
                 try:
                     arm.configure_static_safety(
                         static_keepouts=envelope.get("static_keepouts", ()),
@@ -689,35 +724,42 @@ class Site:
         components: dict[str, base.Rig] = {}
         for name, part in raw["parts"].items():
             target = _driver_target(part["driver"])
-            config = PartConfig(
+            part_config = PartConfig(
                 name=name,
                 posture=part["posture"],
                 connection=part["connection"],
                 joint_limits=part.get("joint_limits", {}),
                 workspace_bounds=bounds,
                 envelope=envelope,
+                base_frame=part.get("base_frame"),
                 options=part.get("options", {}),
                 site_root=self.path.parent,
             )
-            components[name] = _call_part_factory(target, config)
+            components[name] = _call_part_factory(target, part_config)
 
         camera_descriptions: dict[str, descriptors.Camera] = {}
         camera_factories: dict[str, Callable[[], CameraDriver]] = {}
         for name, camera in raw.get("cameras", {}).items():
             target = _driver_target(camera["driver"], camera=True)
-            config = CameraConfig(
+            camera_config = CameraConfig(
                 name=name,
                 connection=camera["connection"],
                 stream=camera["stream"],
                 frame_id=camera.get("frame_id"),
                 intrinsics=camera.get("intrinsics"),
+                mount=(
+                    None
+                    if camera.get("mount") is None
+                    else CameraMount(
+                        kind=str(camera["mount"]["kind"]),
+                        part=camera["mount"].get("part"),
+                    )
+                ),
                 options=camera.get("options", {}),
                 site_root=self.path.parent,
             )
             camera_descriptions[name] = _camera_description(camera)
-            camera_factories[name] = lambda target=target, config=config: (
-                _call_camera_factory(target, config)
-            )
+            camera_factories[name] = partial(_call_camera_factory, target, camera_config)
 
         frame_descriptions = [
             descriptors.FrameTransform(
@@ -731,6 +773,10 @@ class Site:
         return _combine_rigs(
             self.id,
             components,
+            {
+                str(name): part.get("base_frame")
+                for name, part in raw["parts"].items()
+            },
             camera_descriptions,
             camera_factories,
             frame_descriptions,
@@ -1695,6 +1741,7 @@ def load_site(path: str | Path) -> Site:
     document = _validate(_load_document(manifest_path))
     _validate_secret_references(document)
     _validate_static_envelope(document)
+    _validate_topology_declarations(document)
     _validate_gripper_geometry(document)
     root = manifest_path.parent
     calibration_root = _site_path(

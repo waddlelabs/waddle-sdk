@@ -30,9 +30,11 @@ from .safety import (
     SafetyPresetReport,
     safety_presets_for_driver,
 )
+from .site import PartConfig
 
 __all__ = [
     "Driver",
+    "PartConfig",
     "PositionVelocityDriver",
     "SafetyPreset",
     "SafetyPresetProvider",

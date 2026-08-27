@@ -402,6 +402,7 @@ def arm(*, config: PartConfig) -> base.Rig:
                 joint_names=names,
                 joint_limits=limits,
                 step_caps=step_caps,
+                base_frame=config.base_frame or "",
                 arm_dof=dof,
                 rate_hz=rate_hz,
             )

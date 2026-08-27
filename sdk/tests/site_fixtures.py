@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import threading
-import time
+from dataclasses import replace
 
 import numpy as np
-
 from waddle_sdk import descriptors
 from waddle_sdk.cameras import CameraFrame
 from waddle_sdk.robots import base
@@ -89,6 +88,7 @@ def part(*, config) -> base.Rig:
                 joint_names=("j0", "j1"),
                 joint_limits=((-1.0, 1.0), (-1.0, 1.0)),
                 step_caps=(0.2, 0.2),
+                base_frame=config.base_frame or "",
                 collision_spheres=_collision_spheres,
                 collision_frame="cell",
                 rate_hz=20.0,
@@ -108,8 +108,15 @@ def part(*, config) -> base.Rig:
     )
 
 
+def part_wrong_base(*, config) -> base.Rig:
+    return part(config=replace(config, base_frame="wrong_base"))
+
+
 def camera(*, config):
     assert config.stream["width"] == 2
+    assert config.mount is not None
+    assert config.mount.kind == "scene"
+    assert config.mount.part is None
     opened["cameras"] += 1
     return _Camera()
 

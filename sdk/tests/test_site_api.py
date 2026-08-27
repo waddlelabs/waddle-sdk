@@ -39,6 +39,7 @@ def _write_site(tmp_path, extra: str = ""):
               arm:
                 driver: site_fixtures:part
                 posture: supervised
+                base_frame: cell
                 connection: {{}}
                 joint_limits: {{}}
             cameras:
@@ -47,6 +48,7 @@ def _write_site(tmp_path, extra: str = ""):
                 connection: {{}}
                 stream: {{width: 2, height: 2, fps: 20}}
                 frame_id: overhead_optical
+                mount: {{kind: scene}}
                 intrinsics:
                   fx: 100.0
                   fy: 100.0
@@ -81,6 +83,8 @@ def _reset_fixtures():
 def test_manifest_is_strict_and_paths_are_site_relative(tmp_path):
     site = waddle_sdk.load_site(_write_site(tmp_path))
     assert site.id == "test-cell"
+    assert site.describe()["parts"]["arm"]["base_frame"] == "cell"
+    assert site.describe()["cameras"]["overhead"]["mount"] == {"kind": "scene"}
     assert site.calibration_root == tmp_path / "calib"
     assert site.recording_root == tmp_path / "recordings"
 
@@ -105,6 +109,36 @@ def test_manifest_is_strict_and_paths_are_site_relative(tmp_path):
     )
     with pytest.raises(waddle_sdk.ManifestPathError, match="stay beneath"):
         waddle_sdk.load_site(escaping)
+
+
+def test_wrist_camera_mount_must_name_an_existing_part(tmp_path):
+    path = _write_site(tmp_path)
+    path.write_text(
+        path.read_text().replace(
+            "mount: {kind: scene}",
+            "mount: {kind: wrist, part: missing_arm}",
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(waddle_sdk.ManifestValidationError, match="unknown robot part"):
+        waddle_sdk.load_site(path)
+
+
+def test_part_driver_must_honor_declared_base_frame(tmp_path):
+    path = _write_site(tmp_path)
+    path.write_text(
+        path.read_text().replace(
+            "driver: site_fixtures:part",
+            "driver: site_fixtures:part_wrong_base",
+        )
+    )
+
+    with (
+        pytest.raises(waddle_sdk.ManifestValidationError, match="not declared base_frame"),
+        waddle_sdk.load_site(path).open(console=False, _testing=True),
+    ):
+        pass
 
 
 def test_camera_factory_internal_type_error_is_not_mislabeled_as_signature(tmp_path):
@@ -331,7 +365,7 @@ def test_open_session_exposes_immutable_support_and_optional_sdk_facets(tmp_path
         assert fault.value.code is FaultCode.UNSUPPORTED
 
         arm = session._managed.arms["arm"]
-        arm.base_frame = "cell"
+        arm.base_frame = "cell_changed"
         base_frame_matrix = session.support()
         original_rows = {row.scope: row for row in matrix.rows}
         base_frame_rows = {row.scope: row for row in base_frame_matrix.rows}
@@ -352,7 +386,7 @@ def test_open_session_exposes_immutable_support_and_optional_sdk_facets(tmp_path
         pose = session.forward_kinematics("arm", [0.0, 0.0])
         assert pose.position_m == (0.1, 0.2, 0.3)
         assert pose.quaternion_wxyz == (1.0, 0.0, 0.0, 0.0)
-        assert pose.frame_id == "cell"
+        assert pose.frame_id == "cell_changed"
         assert SupportFact.FORWARD_KINEMATICS in {
             fact
             for row in session.support().rows

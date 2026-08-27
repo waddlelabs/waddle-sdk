@@ -345,7 +345,14 @@ def arm(*, config: PartConfig) -> base.Rig:
     tool_site_raw = config.options.get("tool_site")
     tool_site = None if tool_site_raw is None else str(tool_site_raw)
     collision_bodies = tuple(config.options.get("collision_bodies", ()))
-    collision_frame = str(config.options.get("collision_frame", "world"))
+    legacy_frame = str(config.options.get("collision_frame", "world"))
+    if (
+        config.base_frame
+        and "collision_frame" in config.options
+        and config.base_frame != legacy_frame
+    ):
+        raise ValueError("MuJoCo base_frame conflicts with legacy options.collision_frame")
+    collision_frame = config.base_frame or legacy_frame
     workspace = config.workspace_bounds
     if workspace and tool_site is None:
         raise ValueError("MuJoCo workspace_bounds require options.tool_site")

@@ -63,6 +63,7 @@
       "properties": {
         "driver": {"type": "string", "minLength": 3},
         "posture": {"enum": ["monitor", "supervised"]},
+        "base_frame": {"$ref": "#/$defs/name"},
         "connection": {"type": "object", "additionalProperties": {"$ref": "#/$defs/configValue"}},
         "joint_limits": {"anyOf": [{"type": "object", "additionalProperties": {"type": "array", "prefixItems": [{"type": "number"}, {"type": "number"}], "items": false}}, {"type": "array", "items": {"type": "array", "prefixItems": [{"type": "number"}, {"type": "number"}], "items": false}}]},
         "gripper": {"$ref": "#/$defs/gripper"},
@@ -119,8 +120,28 @@
         "stream": {"$ref": "#/$defs/stream"},
         "frame_id": {"type": "string", "minLength": 1},
         "intrinsics": {"$ref": "#/$defs/intrinsics"},
+        "mount": {"$ref": "#/$defs/cameraMount"},
         "options": {"type": "object", "additionalProperties": {"$ref": "#/$defs/configValue"}}
       }
+    },
+    "cameraMount": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": {"kind": {"const": "scene"}}
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "part"],
+          "properties": {
+            "kind": {"const": "wrist"},
+            "part": {"$ref": "#/$defs/name"}
+          }
+        }
+      ]
     },
     "frame": {
       "type": "object",

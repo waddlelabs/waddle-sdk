@@ -60,6 +60,7 @@ parts:
   left:
     driver: waddle_sdk.robots.yam:arm
     posture: supervised
+    base_frame: yam_left_base
     connection: {channel: can_left}
     joint_limits: {}
     gripper:
@@ -80,6 +81,7 @@ parts:
 cameras:
   overhead:
     driver: waddle_sdk.cameras.realsense
+    mount: {kind: scene}
     connection: {serial: "207322250310"}
     stream: {width: 1280, height: 720, fps: 30}
 frames: {}
@@ -96,6 +98,14 @@ portable, normalized, and confined beneath the manifest directory. Values with
 credential-like names must be `{secret: NAME}` and are resolved only while the
 site is being opened. A site manifest cannot contain graphs, skills, models,
 chat configuration, API keys, lease modes, or Metal workspace paths.
+
+`parts.*.base_frame` names the coordinate frame in which that opened arm reports
+poses. Built-in adapters consume it directly, and the site lifecycle rejects a custom
+driver whose opened arm reports a different frame. `cameras.*.mount` is physical topology,
+not a transform: `{kind: scene}` means fixed to the site, while
+`{kind: wrist, part: left}` means the camera moves with that exact part. Higher layers
+use this declaration to decide which calibration artifact and paired robot observation
+are required; the SDK does not invent or solve the transform.
 
 `parts.*.gripper` is driver-neutral control metadata: it maps a physical jaw
 opening in metres onto one declared action row. It is visible through
