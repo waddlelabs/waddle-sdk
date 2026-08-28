@@ -190,22 +190,22 @@ def test_select_core_prefers_a_matching_companion(monkeypatch):
     assert _native._select_core() is media
 
 
-def test_select_core_falls_back_on_a_version_mismatch(monkeypatch):
-    """A mismatched pair is a half-upgraded environment: loading a core
-    built from other sources than this Python surface expects is not a risk
-    worth taking for a media transport. Warn, naming both versions and the
-    one command that fixes it, and keep the bundled core."""
+def test_select_core_warns_but_uses_compatible_version_mismatch(monkeypatch):
+    """The binding API is the compatibility contract; package versions are
+    diagnostic release labels and cannot disable an otherwise compatible core."""
     media = _fake_media_core("9.9.9")
     _install_fake_media(monkeypatch, media)
     with pytest.warns(RuntimeWarning) as record:
-        assert _native._select_core() is _core
+        assert _native._select_core() is media
     message = str(record[0].message)
     assert "9.9.9" in message and _core.__version__ in message
-    assert "pip install" in message
+    assert "binding API" in message and "using the media core" in message
 
 
 def test_select_core_falls_back_on_a_binding_api_mismatch(monkeypatch):
-    media = _fake_media_core(_core.__version__)
+    # Even a package-version mismatch must not obscure the actual safety
+    # boundary: an incompatible binding API always falls back.
+    media = _fake_media_core("9.9.9")
     media.BINDING_API_VERSION -= 1
     _install_fake_media(monkeypatch, media)
     with pytest.warns(RuntimeWarning, match="native binding"):

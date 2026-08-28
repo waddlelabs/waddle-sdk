@@ -220,6 +220,13 @@ waddle-sdk/
                              #   Built-in vendor adapters normalize validated
                              #   whole-number YAML rates such as 30.0 to the
                              #   integer form their APIs require.
+                             #   inspection.py is a separate explicit
+                             #   camera-only lifecycle for identifying views.
+                             #   Construction stays non-opening; context entry
+                             #   opens no robot, transport, control, media, or
+                             #   recording state, retains one immutable latest
+                             #   frame per camera, and closes drivers before
+                             #   bounded capture-thread joins.
       discovery.py           # non-opening configuration evidence for CAN,
                              #   serial and camera devices; immutable rows,
                              #   isolated custom scanners via the
@@ -346,7 +353,8 @@ waddle-sdk/
                              #   site.yaml + run_site.py + README. The program is
                              #   subprocess-tested and exercises load/open/run/close.
     tests/                   # pytest: Site/runtime contracts, descriptors, native
-                             #   transport/FSM behavior, camera lifecycle, owner
+                             #   transport/FSM behavior, camera and camera-only
+                             #   inspection lifecycles, owner
                              #   envelope, YAM facts/factories, lazy adapters,
                              #   packaging, and the shipped Site program. Legacy
                              #   module-global API tests were deleted at cutover.
@@ -443,11 +451,12 @@ top-level dirs; they are not built yet.
       for; measured on this tree, 3.7 MB wheel / 9.8 MB `.so` against
       16.7 MB / 45.1 MB — ~4.5x.
     - `python/waddle_sdk/_native.py` is the ONE place that picks a core: the
-      bundled one unless a version- and `BINDING_API_VERSION`-matched
-      `waddle_media._core` is installed
-      and `WADDLE_NO_MEDIA != "1"` (a mismatch warns and falls back).
-      A stale bundled core fails at import before hardware opens; a stale
-      media core warns and falls back to the bundled core. `_native.FEATURES`
+      bundled one unless a `BINDING_API_VERSION`-matched `waddle_media._core`
+      is installed and `WADDLE_NO_MEDIA != "1"`. A package-version mismatch
+      warns but still selects the compatible media core; the binding API is
+      the strict compatibility contract. A stale bundled core fails at import
+      before hardware opens; a media binding-API mismatch warns and falls back
+      to the bundled core. `_native.FEATURES`
       (a frozenset re-exported from the SELECTED core) is
       the only feature detection the Python layer may do — never a
       try-import, and never `_core.FEATURES`, which on a `[media]` install

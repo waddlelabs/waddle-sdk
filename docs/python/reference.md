@@ -59,3 +59,17 @@ Griffe. Documentation builds do not import the native extension or any vendor SD
 ::: waddle_sdk.cameras.base.CameraDriver
 
 ::: waddle_sdk.cameras.base.CameraCalibrationDriver
+
+## Camera-only inspection
+
+::: waddle_sdk.cameras.inspection.CameraInspectionSpec
+
+::: waddle_sdk.cameras.inspection.CameraInspectionFrame
+
+::: waddle_sdk.cameras.inspection.CameraInspection
+
+::: waddle_sdk.cameras.inspection.CameraInspectionSession
+
+::: waddle_sdk.cameras.inspection.CameraInspectionError
+
+::: waddle_sdk.cameras.inspection.inspect_cameras

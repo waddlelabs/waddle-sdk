@@ -23,6 +23,11 @@ import numpy as np
 from . import descriptors
 from ._session import Control, _derive_grants, create_core_session
 from .cameras import CameraDriver
+from .cameras._factory import (
+    CameraFactoryError,
+    open_camera_driver,
+    resolve_camera_factory,
+)
 from .cameras.site import CameraConfig, CameraMount
 from .robots import base
 from .robots.site import PartConfig
@@ -433,6 +438,11 @@ def _resolve_secrets(
 
 
 def _driver_target(spec: str, *, camera: bool = False):
+    if camera:
+        try:
+            return resolve_camera_factory(spec)
+        except CameraFactoryError as exc:
+            raise ManifestValidationError(str(exc)) from exc
     if ":" in spec:
         module_name, attribute = spec.split(":", 1)
     else:
@@ -455,9 +465,8 @@ def _driver_target(spec: str, *, camera: bool = False):
                 raise
             target = candidates[0]
     except (ImportError, AttributeError) as exc:
-        kind = "camera" if camera else "part"
         raise ManifestValidationError(
-            f"cannot load {kind} driver {spec!r}: {exc}"
+            f"cannot load part driver {spec!r}: {exc}"
         ) from exc
     if not callable(target):
         raise ManifestValidationError(f"driver {spec!r} is not callable")
@@ -515,29 +524,10 @@ def _call_part_factory(target, config: PartConfig) -> base.Rig:
 
 
 def _call_camera_factory(target, config: CameraConfig) -> CameraDriver:
-    parameters = inspect.signature(target).parameters
-    if "config" in parameters:
-        result = target(config=config)
-    else:
-        kwargs = {
-            **dict(config.options),
-            **dict(config.connection),
-            "width": int(config.stream["width"]),
-            "height": int(config.stream["height"]),
-            "fps": config.stream["fps"],
-        }
-        try:
-            inspect.signature(target).bind(**kwargs)
-        except TypeError as exc:
-            raise ManifestValidationError(
-                f"camera {config.name!r} driver arguments do not match its factory: {exc}"
-            ) from exc
-        result = target(**kwargs)
-    if not isinstance(result, CameraDriver):
-        raise ManifestValidationError(
-            f"camera {config.name!r} driver must provide capture() and close()"
-        )
-    return result
+    try:
+        return open_camera_driver(target, config)
+    except CameraFactoryError as exc:
+        raise ManifestValidationError(str(exc)) from exc
 
 
 def _camera_description(raw: Mapping[str, Any]) -> descriptors.Camera:

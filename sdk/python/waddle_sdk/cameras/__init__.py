@@ -7,6 +7,14 @@ driver is constructed.
 """
 
 from .base import CameraCalibrationDriver, CameraDriver, CameraFrame, CameraSample
+from .inspection import (
+    CameraInspection,
+    CameraInspectionError,
+    CameraInspectionFrame,
+    CameraInspectionSession,
+    CameraInspectionSpec,
+    inspect_cameras,
+)
 from .site import CameraConfig, CameraMount
 
 __all__ = [
@@ -14,6 +22,12 @@ __all__ = [
     "CameraConfig",
     "CameraDriver",
     "CameraFrame",
+    "CameraInspection",
+    "CameraInspectionError",
+    "CameraInspectionFrame",
+    "CameraInspectionSession",
+    "CameraInspectionSpec",
     "CameraMount",
     "CameraSample",
+    "inspect_cameras",
 ]

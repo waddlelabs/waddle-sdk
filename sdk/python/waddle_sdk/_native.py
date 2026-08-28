@@ -15,12 +15,13 @@ Selection, in order:
 2. ``WADDLE_NO_MEDIA=1`` → the bundled core (the escape hatch: reproduce
    a default install's behavior, or step around a bad companion wheel,
    without uninstalling anything).
-3. Versions disagree → the bundled core, plus a warning naming both. The
-   two wheels are one build of one ``Cargo.toml``, so a mismatch means a
-   half-upgraded environment; loading a core built from different sources
-   than this Python surface was written against is not a risk worth taking
-   for a media transport.
-4. Otherwise the media core: same shim, a strict superset of the bundled
+3. The media core's ``BINDING_API_VERSION`` disagrees → the bundled core,
+   plus a warning. This compatibility epoch, not the package release label,
+   is the strict Python/native boundary.
+4. Package versions disagree but the binding API matches → the media core,
+   plus a warning naming both versions. A half-upgraded environment should be
+   repaired, but a release-label mismatch alone does not disable working media.
+5. Otherwise the media core: same shim, a strict superset of the bundled
    one's transports.
 
 ``import waddle_sdk._core`` keeps meaning the BUNDLED module everywhere — this
@@ -75,16 +76,6 @@ def _select_core():
         return bundled
     if os.environ.get("WADDLE_NO_MEDIA") == "1":
         return bundled
-    if media.__version__ != bundled.__version__:
-        warnings.warn(
-            f"waddle-sdk-media {media.__version__} does not match waddle-sdk "
-            f"{bundled.__version__}: ignoring it and running on the bundled core, "
-            f"so LiveKit media stays unavailable. Install the matched pair with "
-            f"pip install 'waddle-sdk[media]=={bundled.__version__}'",
-            RuntimeWarning,
-            stacklevel=2,
-        )
-        return bundled
     media_api = _binding_api(media)
     if media_api != _REQUIRED_BINDING_API_VERSION:
         warnings.warn(
@@ -97,6 +88,14 @@ def _select_core():
             stacklevel=2,
         )
         return bundled
+    if media.__version__ != bundled.__version__:
+        warnings.warn(
+            f"waddle-sdk-media {media.__version__} does not match waddle-sdk "
+            f"{bundled.__version__}; binding API {media_api} matches, so using "
+            "the media core",
+            RuntimeWarning,
+            stacklevel=2,
+        )
     return media
 
 

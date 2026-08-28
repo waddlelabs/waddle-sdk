@@ -2,7 +2,7 @@
 
 ## Factory and capture
 
-A camera manifest entry names `module:factory`. Prefer a factory accepting `CameraConfig`. The SDK calls it only while the site opens; module import must remain non-opening and vendor imports must stay lazy.
+A camera manifest entry names `module:factory`. Prefer a factory accepting `CameraConfig`. The SDK calls it only while the full site enters or an explicit `inspect_cameras()` context enters. Module import, discovery, `CameraInspectionSpec` construction, and the `inspect_cameras()` call itself must remain non-opening, and vendor imports must stay lazy.
 
 A structural camera driver provides:
 
@@ -24,5 +24,7 @@ Raw metric depth stays in the customer process. A deterministic colorized previe
 ## Shutdown and failures
 
 Test a capture blocked in vendor I/O while another thread calls `close()`. Close must signal the device, unblock capture, join deterministically through the SDK pump, and remain safe when called twice. A half-open camera sequence must close every previously opened camera when a later device fails.
+
+Use `CameraInspectionSpec.from_candidate()` only when discovery identified an exact camera driver. Entering `inspect_cameras()` opens cameras but no robot parts, transport, control path, media publication, or recording. Its latest-only frames are appropriate for local camera identification, not rollout data capture.
 
 Never put motion, robot authority, or owner-envelope logic in a camera adapter.

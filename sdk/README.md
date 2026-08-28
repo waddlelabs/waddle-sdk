@@ -68,6 +68,13 @@ Custom adapters may publish a callable in the
 vendor probe fails. This extension API intentionally remains in its subpackage
 and is not added to the small SDK root exports.
 
+Identifying several camera views is an explicit second step. Build
+`CameraInspectionSpec` objects from exact camera candidates, then enter
+`waddle_sdk.cameras.inspect_cameras(specs)`. The returned context opens only those
+cameras, retains one latest immutable frame per camera, and closes each driver before
+joining its capture thread. It never opens a robot part or creates transport, control,
+media-publication, or recording state.
+
 ## `site.yaml`
 
 ```yaml
@@ -404,9 +411,9 @@ wheel, which is the SAME shim built with `livekit` too. LiveKit's libwebrtc
 dependency chain is ~690 MB of build, and an install whose job is to
 supervise a policy should not pay for a LiveKit media plane it will never
 open. Either way you `import waddle_sdk`: `waddle_sdk._native` picks the richer
-core when it is installed, warns and falls back to the bundled one if the
-two versions disagree (a half-upgraded environment), and honours
-`WADDLE_NO_MEDIA=1`.
+core whenever its binding API is compatible. A package-version mismatch warns
+but still uses that compatible media core; only a binding-API mismatch falls
+back to the bundled core. `WADDLE_NO_MEDIA=1` remains an explicit opt-out.
 
 ### Third-party content in the wheel
 
