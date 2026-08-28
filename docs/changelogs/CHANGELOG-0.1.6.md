@@ -38,3 +38,12 @@ This file preserves the coordinated `0.1.6` release of the repository.
   and fixed hold-first contracts.
 - Corrected Rust and generated-protobuf documentation links so the full core API can
   build with Rustdoc warnings denied.
+
+### Fixed
+
+- Removed internal vocabulary policy from the published normative glossary and
+  eliminated its restricted internal process names from generated public Rust and
+  protocol API documentation.
+- Made Agent Skill metadata validation ignore ordinary non-skill package directories
+  such as Python's generated `__pycache__`, matching the runtime skill discovery
+  contract in clean Python 3.10 CI environments.

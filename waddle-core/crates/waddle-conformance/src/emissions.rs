@@ -24,7 +24,7 @@ pub struct EmissionEntry {
     pub value: Value,
 }
 
-/// prost-reflect bridge: canonical proto3 JSON in and out, driven by the
+/// prost-reflect codec: canonical proto3 JSON in and out, driven by the
 /// descriptor set embedded in `waddle-types`.
 #[derive(Debug, Clone)]
 pub struct Codec {

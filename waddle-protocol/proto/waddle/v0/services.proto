@@ -10,7 +10,7 @@
 //
 // Service shape decisions (normative rationale in docs/FSM.md):
 //   - ClaimEpisode / HandoffLease are UNARY: atomic decisions with an
-//     immediate grant/deny, mirroring the production broker's lease protocol.
+//     immediate grant/deny, mirroring the production safety owner's lease protocol.
 //   - GateActions is the ONE ordered event stream per session. SDK → plane:
 //     EpisodeEvents, VerbResults, gate status, and flagged UI chat requests.
 //     Plane → SDK: claim directives,

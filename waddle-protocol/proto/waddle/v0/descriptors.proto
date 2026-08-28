@@ -395,7 +395,7 @@ enum SpaceKind {
 }
 
 // Where the single-writer lease is enforced (amendment N7). Recorded at grant
-// negotiation. ENFORCED means a broker/mux/proxy physically owns the only
+// negotiation. ENFORCED means a mux or proxy physically owns the only
 // write path; ADVISORY means in-process callables where nothing physically
 // stops the integrator's loop from writing during a takeover. The
 // intervention planner treats ADVISORY integrations more conservatively

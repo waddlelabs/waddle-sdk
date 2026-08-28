@@ -1,4 +1,4 @@
-//! The single-writer lease machine. A direct port of the production broker's
+//! The single-writer lease machine. A direct port of the production safety owner's
 //! lease semantics (FSM.md §3, rows L1–L8):
 //!
 //! - acquire is idempotent per client (the holder gets its existing token),

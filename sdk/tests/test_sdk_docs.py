@@ -218,6 +218,46 @@ def test_public_docs_are_strict_versioned_and_current():
     assert "--hash=sha256:" in requirements
 
 
+def test_published_docs_do_not_expose_internal_process_vocabulary():
+    published_markdown = [
+        REPO / "README.md",
+        SDK / "README.md",
+        REPO / "waddle-protocol" / "docs" / "GLOSSARY.md",
+        REPO / "waddle-protocol" / "docs" / "FSM.md",
+        REPO / "waddle-protocol" / "docs" / "VERSIONING.md",
+        REPO / "docs" / "index.md",
+        REPO / "docs" / "lease-lifecycle.md",
+        REPO / "docs" / "hardware-backends.md",
+        *(REPO / "docs" / "concepts").glob("*.md"),
+        *(REPO / "docs" / "core").glob("*.md"),
+        *(REPO / "docs" / "python").glob("*.md"),
+        *(REPO / "docs" / "porting").glob("*.md"),
+        *(
+            SDK / "python" / "waddle_sdk" / "agent_skills"
+        ).rglob("*.md"),
+    ]
+    public_api_text = [
+        *(path.read_text(encoding="utf-8") for path in published_markdown),
+        *(
+            path.read_text(encoding="utf-8")
+            for path in (REPO / "waddle-protocol" / "proto").rglob("*.proto")
+        ),
+        *(
+            "\n".join(
+                line
+                for line in path.read_text(encoding="utf-8").splitlines()
+                if line.lstrip().startswith(("///", "//!"))
+            )
+            for path in (REPO / "waddle-core").rglob("*.rs")
+            if "target" not in path.parts
+        ),
+    ]
+    rendered_sources = "\n".join(public_api_text).lower()
+    for restricted in ("bri" + "dge", "bro" + "ker"):
+        assert restricted not in rendered_sources
+    assert "reserved words" not in rendered_sources
+
+
 def test_generated_extension_ignore_uses_the_current_package_name():
     ignore = (REPO / ".gitignore").read_text(encoding="utf-8")
     assert "sdk/python/waddle_sdk/_core*.so" in ignore

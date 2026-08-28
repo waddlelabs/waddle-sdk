@@ -46,7 +46,7 @@ impl Verb {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum LeaseEnforcement {
-    /// A broker/mux/proxy physically owns the only write path.
+    /// A mux or proxy physically owns the only write path.
     Enforced,
     /// In-process callables: nothing physically stops the integrator's loop
     /// from writing during a takeover. Planner prefers HOLD_FIRST; dual-write

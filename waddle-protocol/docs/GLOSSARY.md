@@ -29,40 +29,8 @@ in v0.
 | **corpus** | the project-level index of episodes, sidecars, labels, and archive references; the queryable data product (`waddle_sdk.corpus`) | control plane (Local mode: cell/SDK) | no `Corpus` message in v0; it consumes `Sidecar`, `MetricsClass`, `AuditRecord`, `RecordingMode` (sidecar.proto) |
 | **capability** | *reserved for robot skills* (code-as-policy actions a cell can perform). Never used for permissions (those are **grants**) or protocol versioning (those are **feature flags**) | cell / control plane | none in v0 — deliberately |
 | **feature flag** | a protocol-evolution unit negotiated per connection; how pinned SDKs and an evolving backend coexist | protocol | `RegisterRequest.feature_flags`, `RegisterResponse.accepted_feature_flags`, `NegotiateRequest.feature_flags`, `NegotiateResponse.accepted_feature_flags` (services.proto); registry in `docs/VERSIONING.md` |
-| **teleoperator** *(N17)* | a Waddle work-plane human: a remote intervenor driving through a console on the media plane. Unqualified "operator" is **banned in normative text** — see Reserved words | control plane / work plane | `ActorKind.ACTOR_KIND_TELEOPERATOR` (descriptors.proto); `PROVENANCE_KIND_TELEOP` (control.proto); `TeleopStreamPacket`, `ClutchTransition` (media.proto) |
+| **teleoperator** *(N17)* | a Waddle work-plane human: a remote intervenor driving through a console on the media plane | control plane / work plane | `ActorKind.ACTOR_KIND_TELEOPERATOR` (descriptors.proto); `PROVENANCE_KIND_TELEOP` (control.proto); `TeleopStreamPacket`, `ClutchTransition` (media.proto) |
 | **site operator** *(N17)* | a customer-side human physically at the cell (floor staff, the integrator's ops team). Different console, different authority, different liability than a teleoperator | integrator | `ActorKind.ACTOR_KIND_SITE_OPERATOR` (descriptors.proto) |
 | **born-claimed** *(N18)* | an episode that starts life under an active claim — a retake successor opened under the still-held claim. Its own metrics class: excluded from mean-time-to-intervention, counted in the retake-continuation rate | protocol | `Episode.born_claimed`, `Episode.parent_episode_id` (episode.proto); `Sidecar.born_claimed`, `MetricsClass.METRICS_CLASS_BORN_CLAIMED`, `RetakeLink` (sidecar.proto) |
 | **part** | a named sub-space of a `Composite` action-space declaration — the `left`/`right` arms of a bimanual cell. Declaration **order is normative**: it defines the concatenated wire-vector layout every adapter depends on. Nesting is pinned to depth 1 in v0 (a part's space is never itself `Composite`), and `""` names the sole/default part on any declaration, composite or not. A part is an **addressing** axis on actions and proprioception, never an authority axis: claims, leases, and handoffs stay whole-robot single-writer in v0. Part-addressed execution (flag `waddle.v0.parts`) is "move this part, hold the rest" — FSM.md §4 | integrator declares; control plane addresses | `Composite.Part` (descriptors.proto); `Action.part`, `CompositeAction.PartAction` (control.proto); `ProprioSample.part` (services.proto); `PartTarget.part`, `ClutchTransition.part`, `NamedPose.part` (media.proto) |
 | **retake** *(N2)* | terminate the current episode and open a successor under the still-held claim, for when the intervenor deems the attempt unsalvageable. The predecessor closes `ABORTED_RETAKE` and is never silently folded into success-rate denominators: every Corpus summary reports the retake count, and SR is presented both including and excluding retakes | protocol | `TERMINAL_OUTCOME_ABORTED_RETAKE`, `INTERVENTION_PHASE_RETAKE`, `MARK_KIND_RETAKE` (episode.proto); `RetakeLink` (sidecar.proto); `CLAIM_DIRECTIVE_KIND_RETAKE` (services.proto) |
-
-## Reserved words
-
-The following words are load-bearing and restricted. Violating these rules in
-a public artifact, API, or normative document is a defect, not a style choice.
-
-- **bridge** — never appears in a public artifact or doc. It is an internal
-  process name, and in public robotics vocabulary it means a protocol
-  translator (rosbridge, foxglove_bridge), which would misidentify the proxy
-  and the ROS node. Public surfaces say **relay** and **control plane**.
-- **broker** — never appears in a public artifact or doc. It is an internal
-  process name (the cell safety owner). Public surfaces say **relay** and
-  **control plane**; the concept it implements is described as the
-  **envelope** and an **enforced lease**.
-- **agent** — never a component name (no "Waddle Agent" daemon or binary):
-  it collides with the literal agents Waddle hosts. The word refers only to
-  those hosted actors themselves — `ACTOR_KIND_AGENT` (descriptors.proto),
-  `PROVENANCE_KIND_AGENT` (control.proto).
-- **operator**, unqualified — banned in normative text *(N17)*. Write
-  **teleoperator** (Waddle work-plane human) or **site operator**
-  (customer-side human at the cell). The two roles have different consoles,
-  different authority, and different liability; cite `ActorKind` when the
-  distinction is wire-relevant.
-- **capability** — robot skills only. Permissions are **grants**;
-  protocol-evolution units are **feature flags**.
-- **grant**, verb sense — the noun sense (a declared permission) is canonical
-  *(N1)*. The work plane's `work_grant` RPC is the verb — awarding a claim —
-  and is not an instance of the protocol's `Grant`. If that ambiguity ever
-  bites, the escape hatch is renaming the message (`Grant` →
-  `StandingGrant`), never the wire RPC.
-- **relay** — belongs to `waddle-relay`. The phone app is the *companion*,
-  never a relay.

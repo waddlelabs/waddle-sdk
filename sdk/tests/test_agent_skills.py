@@ -39,7 +39,16 @@ def test_bundled_skills_are_complete_and_sorted() -> None:
 
 
 def test_skill_metadata_and_resource_links_are_strict() -> None:
-    for skill_root in sorted(path for path in SKILL_ROOT.iterdir() if path.is_dir()):
+    skill_roots = sorted(
+        path
+        for path in SKILL_ROOT.iterdir()
+        if path.is_dir() and (path / "SKILL.md").is_file()
+    )
+    assert [path.name for path in skill_roots] == [
+        "port-waddle-hardware",
+        "waddle-sdk-contracts",
+    ]
+    for skill_root in skill_roots:
         skill_md = skill_root / "SKILL.md"
         text = skill_md.read_text(encoding="utf-8")
         _opening, frontmatter, _body = text.split("---", 2)
