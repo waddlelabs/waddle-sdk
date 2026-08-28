@@ -1,0 +1,168 @@
+"""Lazy robot adapter. Replace the vendor opener; preserve the lifecycle."""
+
+from __future__ import annotations
+
+import math
+import threading
+from collections.abc import Mapping, Sequence
+from typing import Protocol
+
+import numpy as np
+
+from waddle_sdk import descriptors
+from waddle_sdk.robots import base
+from waddle_sdk.robots.site import PartConfig
+
+# Generated from explicit scaffold arguments. Keep the pinned source beside
+# every physical number and update both together.
+FACTS_SOURCE = __FACTS_SOURCE__
+JOINTS = __JOINTS__
+LIMITS = __LIMITS__
+STEP_CAPS = __STEP_CAPS__
+RATE_HZ = __RATE_HZ__
+
+
+def _owner_limits(config: PartConfig) -> tuple[tuple[float, float], ...]:
+    raw = config.joint_limits
+    if isinstance(raw, Mapping):
+        if set(raw) != set(JOINTS):
+            raise ValueError("joint_limits must name exactly the declared joints")
+        rows = tuple(raw[name] for name in JOINTS)
+    elif isinstance(raw, Sequence) and not isinstance(raw, (str, bytes)):
+        rows = tuple(raw)
+    else:
+        raise ValueError("joint_limits must be an ordered list or named mapping")
+    if len(rows) != len(JOINTS):
+        raise ValueError("joint_limits must contain one row per declared joint")
+    limits = tuple((float(row[0]), float(row[1])) for row in rows)
+    for name, (lower, upper), (source_lower, source_upper) in zip(
+        JOINTS, limits, LIMITS, strict=True
+    ):
+        if not all(math.isfinite(value) for value in (lower, upper)):
+            raise ValueError(f"joint {name!r} limits must be finite")
+        if not source_lower <= lower < upper <= source_upper:
+            raise ValueError(
+                f"joint {name!r} site limits must stay within sourced limits"
+            )
+    return limits
+
+
+class VendorClient(Protocol):
+    def read(self) -> tuple[Sequence[float], Sequence[float]]: ...
+    def write(self, target: Sequence[float]) -> None: ...
+    def hold(self) -> None: ...
+    def estop(self) -> None: ...
+    def re_enable(self) -> None: ...
+    def close(self) -> None: ...
+
+
+class LiveDriver:
+    kind = "live"
+
+    def __init__(self, client: VendorClient) -> None:
+        self._client = client
+        self._lock = threading.RLock()
+        self._estopped = False
+        self._closed = False
+
+    @property
+    def estopped(self) -> bool:
+        with self._lock:
+            return self._estopped
+
+    def read(self) -> tuple[np.ndarray, np.ndarray]:
+        with self._lock:
+            position, velocity = self._client.read()
+        return np.asarray(position, dtype=float), np.asarray(velocity, dtype=float)
+
+    def write(self, target: np.ndarray) -> None:
+        with self._lock:
+            if not self._estopped:
+                self._client.write(tuple(float(value) for value in target))
+
+    def hold(self) -> None:
+        with self._lock:
+            self._client.hold()
+
+    def estop(self) -> None:
+        with self._lock:
+            self._client.estop()
+            self._estopped = True
+
+    def re_enable(self) -> None:
+        with self._lock:
+            self._client.re_enable()
+            self._estopped = False
+
+    def step(self, dt: float) -> None:
+        del dt
+
+    def home(self, values: Sequence[float]) -> bool:
+        del values
+        return False
+
+    def close(self) -> None:
+        with self._lock:
+            if not self._closed:
+                self._closed = True
+                self._client.close()
+
+
+def _open_vendor(config: PartConfig) -> VendorClient:
+    del config
+    # Import the optional vendor SDK here, never at module import. Configure
+    # the hardware's own limits/watchdogs before returning the client.
+    raise RuntimeError("implement the lazy vendor opener before using live hardware")
+
+
+def arm(*, config: PartConfig) -> base.Rig:
+    if config.workspace_bounds:
+        raise ValueError(
+            "workspace_bounds requires frame-correct FK; implement FK and pass both "
+            "fk= and workspace= to Arm before enabling this owner rule"
+        )
+    owner_limits = _owner_limits(config)
+    space = descriptors.JointSpace(
+        joints=[
+            descriptors.Joint(
+                name=name,
+                min_position=lower,
+                max_position=upper,
+                max_velocity=cap * RATE_HZ,
+            )
+            for name, (lower, upper), cap in zip(
+                JOINTS, owner_limits, STEP_CAPS, strict=True
+            )
+        ],
+        rate_hz=RATE_HZ,
+        chunking=descriptors.Chunking(horizon=1, replan="immediate", interp="hold"),
+    )
+
+    def build_arms() -> dict[str, base.Arm]:
+        driver = LiveDriver(_open_vendor(config))
+        try:
+            opened_arm = base.Arm(
+                part="",
+                driver=driver,
+                joint_names=JOINTS,
+                joint_limits=owner_limits,
+                step_caps=STEP_CAPS,
+                base_frame=config.base_frame or "",
+                home_values=None,
+                rate_hz=RATE_HZ,
+            )
+        except BaseException:
+            driver.close()
+            raise
+        return {"": opened_arm}
+
+    return base.Rig(
+        declaration=descriptors.Robot(
+            name="__DIST_NAME__",
+            robot_id="__DIST_NAME__",
+            action_space=space,
+        ),
+        build_arms=build_arms,
+        rate_hz=RATE_HZ,
+        posture=config.posture,
+    )

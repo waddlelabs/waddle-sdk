@@ -89,7 +89,7 @@ enum GateMode {
 // Sidecar (sidecar.proto). v0 scopes ONE active episode per session (N18);
 // concurrent episodes are a named-trigger deferral.
 message Episode {
-  // Opaque id; internal id schemes (e.g. "int-<hex>") flow through as-is.
+  // Opaque id; internal id schemes (e.g. `int-<hex>`) flow through as-is.
   string episode_id = 1;
   string project = 2;
   string session_id = 3;

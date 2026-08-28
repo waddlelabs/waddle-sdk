@@ -1,0 +1,107 @@
+"""Dependency-free simulator adapter using the SDK's bounded twin."""
+
+from __future__ import annotations
+
+import math
+from collections.abc import Mapping, Sequence
+
+from waddle_sdk import descriptors
+from waddle_sdk.robots import base
+from waddle_sdk.robots.site import PartConfig
+
+# Generated from explicit scaffold arguments. Preserve the same sourced facts
+# as the live adapter so simulation is a rehearsal, not an easier system.
+FACTS_SOURCE = __FACTS_SOURCE__
+JOINTS = __JOINTS__
+LIMITS = __LIMITS__
+STEP_CAPS = __STEP_CAPS__
+HOME = __HOME__
+RATE_HZ = __RATE_HZ__
+
+
+def _owner_limits(config: PartConfig) -> tuple[tuple[float, float], ...]:
+    raw = config.joint_limits
+    if isinstance(raw, Mapping):
+        if set(raw) != set(JOINTS):
+            raise ValueError("joint_limits must name exactly the declared joints")
+        rows = tuple(raw[name] for name in JOINTS)
+    elif isinstance(raw, Sequence) and not isinstance(raw, (str, bytes)):
+        rows = tuple(raw)
+    else:
+        raise ValueError("joint_limits must be an ordered list or named mapping")
+    if len(rows) != len(JOINTS):
+        raise ValueError("joint_limits must contain one row per declared joint")
+    limits = tuple((float(row[0]), float(row[1])) for row in rows)
+    for name, (lower, upper), (source_lower, source_upper) in zip(
+        JOINTS, limits, LIMITS, strict=True
+    ):
+        if not all(math.isfinite(value) for value in (lower, upper)):
+            raise ValueError(f"joint {name!r} limits must be finite")
+        if not source_lower <= lower < upper <= source_upper:
+            raise ValueError(
+                f"joint {name!r} site limits must stay within sourced limits"
+            )
+    return limits
+
+
+def arm(*, config: PartConfig) -> base.Rig:
+    if config.workspace_bounds:
+        raise ValueError(
+            "workspace_bounds requires frame-correct FK; implement FK and pass both "
+            "fk= and workspace= to Arm before enabling this owner rule"
+        )
+    owner_limits = _owner_limits(config)
+    for name, home, (lower, upper) in zip(
+        JOINTS, HOME, owner_limits, strict=True
+    ):
+        if not lower <= home <= upper:
+            raise ValueError(
+                f"simulator home for joint {name!r} is outside the site limits"
+            )
+    space = descriptors.JointSpace(
+        joints=[
+            descriptors.Joint(
+                name=name,
+                min_position=lower,
+                max_position=upper,
+                max_velocity=cap * RATE_HZ,
+            )
+            for name, (lower, upper), cap in zip(
+                JOINTS, owner_limits, STEP_CAPS, strict=True
+            )
+        ],
+        rate_hz=RATE_HZ,
+        chunking=descriptors.Chunking(horizon=1, replan="immediate", interp="hold"),
+    )
+
+    def build_arms() -> dict[str, base.Arm]:
+        driver = base.SimDriver(
+            HOME,
+            lower=[lower for lower, _upper in owner_limits],
+            upper=[upper for _lower, upper in owner_limits],
+            step_caps=STEP_CAPS,
+            rate_hz=RATE_HZ,
+        )
+        return {
+            "": base.Arm(
+                part="",
+                driver=driver,
+                joint_names=JOINTS,
+                joint_limits=owner_limits,
+                step_caps=STEP_CAPS,
+                base_frame=config.base_frame or "",
+                home_values=HOME,
+                rate_hz=RATE_HZ,
+            )
+        }
+
+    return base.Rig(
+        declaration=descriptors.Robot(
+            name="__DIST_NAME__",
+            robot_id="__DIST_NAME__-sim",
+            action_space=space,
+        ),
+        build_arms=build_arms,
+        rate_hz=RATE_HZ,
+        posture=config.posture,
+    )

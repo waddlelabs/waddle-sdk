@@ -32,6 +32,11 @@ sdk/media/python/waddle_media/_core*.so
 # Built wheels (`uv build --wheel -o dist .` / `-o dist media`)
 dist/
 
+# Generated documentation output. Rustdoc is copied beneath docs/ so MkDocs can
+# publish it beside the authored pages; neither generated tree is source.
+/docs/reference/rust/
+/site/
+
 # The toy example's default local recording dir (sidecars + MCAPs)
 toy-recordings/
 

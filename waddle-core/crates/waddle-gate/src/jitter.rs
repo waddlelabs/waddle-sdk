@@ -65,7 +65,7 @@
 //! Each `AgentChunk` [`TimedAction`] carries the [`ChunkMeta`] of the wire
 //! chunk it came from. `ingest` detects a chunk BOUNDARY (the first step of
 //! a chunk different from the channel's currently-tracked
-//! [`ChannelState::active_chunk`]) and, at that instant only: rejects the
+//! `ChannelState::active_chunk`) and, at that instant only: rejects the
 //! whole chunk as stale (`dropped_stale_chunks`) if it is not strictly newer
 //! by `chunk_seq` — the one field `control.proto` normatively requires to be
 //! monotone per stream — additionally rejecting on `t_emitted_ns` only when

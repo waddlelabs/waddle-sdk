@@ -1,0 +1,71 @@
+from dataclasses import replace
+
+import numpy as np
+import pytest
+
+from waddle_sdk.robots.site import PartConfig
+
+from __PACKAGE_NAME__ import backend
+
+
+def _tighter_including_home(lower: float, upper: float, home: float):
+    span = upper - lower
+    if home == lower:
+        return lower, lower + span * 0.75
+    if home == upper:
+        return lower + span * 0.25, upper
+    return (lower + home) * 0.5, (home + upper) * 0.5
+
+
+def test_simulator_factory_is_non_opening_and_bounded():
+    tighter = tuple(
+        _tighter_including_home(lower, upper, home)
+        for (lower, upper), home in zip(backend.LIMITS, backend.HOME, strict=True)
+    )
+    config = PartConfig(
+        name="arm",
+        posture="supervised",
+        connection={},
+        joint_limits=dict(zip(backend.JOINTS, tighter, strict=True)),
+        workspace_bounds={},
+        envelope={},
+    )
+    rig = backend.arm(config=config)
+    assert backend.FACTS_SOURCE == __FACTS_SOURCE__
+    arm = rig.arms()[""]
+    assert arm.driver.kind == "sim"
+    assert tuple(arm.joint_names) == backend.JOINTS
+    assert tuple(arm.joint_limits) == tighter
+    assert tuple(arm.step_caps) == backend.STEP_CAPS
+    declared = rig.declaration.action_space.joints
+    assert tuple((joint.min_position, joint.max_position) for joint in declared) == tighter
+    arm.driver.write(np.asarray([upper for _lower, upper in backend.LIMITS]))
+    arm.driver.step(100.0)
+    position, _velocity = arm.driver.read()
+    assert tuple(position) == tuple(upper for _lower, upper in tighter)
+    arm.driver.write(np.asarray([lower for lower, _upper in backend.LIMITS]))
+    arm.driver.step(100.0)
+    position, _velocity = arm.driver.read()
+    assert tuple(position) == tuple(lower for lower, _upper in tighter)
+
+    workspace = {"min": [-0.1, -0.1, 0.0], "max": [0.1, 0.1, 0.2]}
+    with pytest.raises(ValueError, match="frame-correct FK"):
+        backend.arm(config=replace(config, workspace_bounds=workspace))
+
+    excluded_home = list(backend.LIMITS)
+    lower, upper = backend.LIMITS[0]
+    home = backend.HOME[0]
+    excluded_home[0] = (
+        (home + (upper - home) * 0.5, upper)
+        if home < upper
+        else (lower, lower + (home - lower) * 0.5)
+    )
+    with pytest.raises(ValueError, match="home.*outside the site limits"):
+        backend.arm(
+            config=replace(
+                config,
+                joint_limits=dict(
+                    zip(backend.JOINTS, excluded_home, strict=True)
+                ),
+            )
+        )

@@ -6,7 +6,7 @@
 //! Latency added to the integrator's loop is a bug of the highest severity.
 //!
 //! Structure:
-//! - the *plan* (rare writes) lives in [`GateShared`] and is written only by
+//! - the *plan* (rare writes) lives in [`gate::GateShared`] and is written only by
 //!   the runtime's FSM reducer;
 //! - the *stream* (intervention actions, high rate) arrives on an SPSC ring
 //!   fed by the media intake, reordered by the [`jitter`] buffer;

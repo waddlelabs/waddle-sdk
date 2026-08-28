@@ -35,6 +35,22 @@ Driver-extension contracts live in their subpackages. The older module-global
 lifecycle, local web UI, hosted task/artifact facades, and execution-backend
 discovery are not part of the public surface.
 
+## Portable Agent Skills
+
+Each wheel includes `waddle-sdk-contracts` and `port-waddle-hardware` for coding
+agents working against that installed SDK version:
+
+```bash
+waddle-sdk skills list
+waddle-sdk skills list --json
+waddle-sdk skills export port-waddle-hardware --output ./agent-skills
+```
+
+Export creates a new complete skill folder beneath the chosen directory and refuses
+an existing target. It does not install or enable the skill and never edits global
+agent configuration. The porting skill scaffolds and validates non-opening adapter
+code; it contains no live-motion or automatic commissioning command.
+
 ## Hardware discovery for configuration frontends
 
 `waddle_sdk.discovery.discover_hardware()` performs a non-opening scan for

@@ -329,8 +329,11 @@ def test_clean_install_extra_matrix(
 import importlib.metadata
 import json
 import sys
+import tempfile
+from pathlib import Path
 
 import waddle_sdk
+from waddle_sdk.agent_skills import bundled_skills, export_skill
 from waddle_sdk.cameras import mock, orbbec, realsense, usb
 from waddle_sdk.robots import alicia, alicia_d, mujoco
 from waddle_sdk.robots import xarm as xarm_adapter
@@ -340,11 +343,19 @@ names = {
     for dist in importlib.metadata.distributions()
     if dist.metadata["Name"]
 }
+with tempfile.TemporaryDirectory() as directory:
+    exported = export_skill("waddle-sdk-contracts", directory)
+    export_ok = (
+        exported.name == "waddle-sdk-contracts"
+        and (Path(exported) / "SKILL.md").read_text().startswith("---\n")
+    )
 print(json.dumps({
     "names": sorted(names),
     "core": waddle_sdk._native.core.__name__,
     "features": sorted(waddle_sdk._native.FEATURES),
     "requirements": importlib.metadata.requires("waddle-sdk"),
+    "skills": [skill.name for skill in bundled_skills()],
+    "skill_export_ok": export_ok,
     "vendor_modules": sorted(
         name for name in sys.modules
         if name in {"alicia_d_sdk", "alicia_m_sdk", "cv2", "mujoco", "pyorbbecsdk", "pyrealsense2", "xarm"}
@@ -383,6 +394,8 @@ print(json.dumps({
     ) & set(result["names"])
     assert result["vendor_modules"] == []
     assert result["requirements"]
+    assert result["skills"] == ["port-waddle-hardware", "waddle-sdk-contracts"]
+    assert result["skill_export_ok"] is True
     if "waddle-sdk-media" in effective_optional:
         assert result["core"] == "waddle_media._core"
         assert result["features"] == ["grpc", "livekit"]

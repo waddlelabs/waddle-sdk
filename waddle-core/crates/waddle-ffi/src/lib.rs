@@ -130,7 +130,7 @@ pub enum WaddleGateKind {
     Pass = 0,
     /// Dispatch `values` instead (intervention).
     Substitute = 1,
-    /// Dispatch `values` (cross-fade window; `progress` in [0,1]).
+    /// Dispatch `values` (cross-fade window; `progress` in `0..=1`).
     Blend = 2,
     /// Do NOT dispatch: the runtime is driving `send` directly
     /// (claimed-while-stalled bypass); you are a spectator.

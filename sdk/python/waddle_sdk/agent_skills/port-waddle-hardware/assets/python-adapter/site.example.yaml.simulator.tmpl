@@ -1,0 +1,17 @@
+api_version: waddle.site/v1
+kind: Site
+metadata: {id: __PACKAGE_NAME__-site}
+parts:
+  arm:
+    driver: __PACKAGE_NAME__.backend:arm
+    posture: supervised
+    base_frame: arm_base
+    connection: {}
+    joint_limits:
+__JOINT_LIMITS_YAML__
+cameras: {}
+frames: {}
+calibration: {artifacts: calib/}
+workspace_bounds: {}
+envelope: {static_keepouts: [], self_collision: {}}
+recording: {root: recordings/, format: mcap}

@@ -42,6 +42,57 @@ jobs:
         working-directory: sdk
         run: uv run --no-sync pytest
 
+      # Exercise maturin's real wheel contents, not only the editable source tree.
+      # Installing it back into the already isolated CI venv keeps the smoke fully
+      # version-matched while proving non-Python skill resources survive packaging.
+      - name: Build and smoke-test the packaged Agent Skills
+        working-directory: sdk
+        run: |
+          set -euo pipefail
+          uv build --wheel --out-dir dist
+          uv pip install --python .venv/bin/python --force-reinstall --no-deps dist/*.whl
+          .venv/bin/python - <<'PY'
+          import contextlib
+          import io
+          import json
+          from pathlib import Path
+          import tempfile
+
+          from waddle_sdk import cli
+
+          expected = ["port-waddle-hardware", "waddle-sdk-contracts"]
+          output = io.StringIO()
+          with contextlib.redirect_stdout(output):
+              assert cli.main(["skills", "list", "--json"]) == 0
+          payload = json.loads(output.getvalue())
+          assert [row["name"] for row in payload["skills"]] == expected
+
+          source_root = Path("python/waddle_sdk/agent_skills")
+          with tempfile.TemporaryDirectory() as temporary:
+              parent = Path(temporary)
+              for skill in expected:
+                  with contextlib.redirect_stdout(io.StringIO()):
+                      assert cli.main(
+                          ["skills", "export", skill, "--output", str(parent)]
+                      ) == 0
+                  source = source_root / skill
+                  exported = parent / skill
+                  source_files = {
+                      path.relative_to(source): path.read_bytes()
+                      for path in source.rglob("*")
+                      if path.is_file() and "__pycache__" not in path.parts
+                  }
+                  exported_files = {
+                      path.relative_to(exported): path.read_bytes()
+                      for path in exported.rglob("*")
+                      if path.is_file()
+                  }
+                  assert exported_files == source_files
+                  assert not any(
+                      "__pycache__" in path.parts for path in exported.rglob("*")
+                  )
+          PY
+
       - name: Check shim formatting
         working-directory: sdk
         run: cargo fmt --manifest-path rust/Cargo.toml --check
@@ -93,3 +144,38 @@ jobs:
       - name: Lint the fully connected runtime
         working-directory: waddle-core
         run: cargo clippy -p waddle-runtime --features grpc,livekit --all-targets --locked -- -D warnings
+
+  docs:
+    name: Documentation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      # The same complete, hash-locked environment used by Read the Docs.
+      # Keep this command in sync with `.readthedocs.yaml`.
+      - name: Install documentation dependencies
+        run: python -m pip install --require-hashes -r docs/requirements.txt
+
+      # Rustdoc warnings are contract-documentation failures. `--no-deps`
+      # keeps the public core reference focused on this workspace, while
+      # `--locked` prevents a docs build from resolving a different graph.
+      - name: Build the warning-clean Rust API reference
+        working-directory: waddle-core
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+        run: cargo doc --workspace --exclude xtask --no-deps --locked
+
+      # MkDocs publishes the generated reference as static HTML alongside
+      # the authored concepts/protocol/Python/hardware-porting guides.
+      - name: Stage the Rust API reference
+        run: |
+          mkdir -p docs/reference/rust
+          cp -R waddle-core/target/doc/. docs/reference/rust/
+
+      - name: Build the documentation site strictly
+        run: python -m mkdocs build --strict

@@ -4,7 +4,7 @@
 //! The one thread is also what makes the offline classification real: it
 //! drains the (unbounded) command channel into the bounded offline buffer
 //! continuously while backing off, so nothing queues behind a sleeping
-//! reconnect. See [`backoff_draining`].
+//! reconnect. See `backoff_draining`.
 //!
 //! And it is the only place that knows WHICH connection a message leaves on,
 //! which is what per-connection feature negotiation needs: a flag-scoped

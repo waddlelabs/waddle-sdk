@@ -15,7 +15,7 @@
 //!
 //! The transport is a trait; the tested default is the in-memory
 //! [`transport::InMemoryTransport`] with a scriptable server. The real tonic
-//! gRPC transport lives in [`grpc`] behind the `tonic-transport` feature
+//! gRPC transport lives in the `grpc` module behind the `tonic-transport` feature
 //! (tokio stays confined to its dedicated worker thread). Everything on the
 //! public surface is synchronous (std channels + one client thread).
 

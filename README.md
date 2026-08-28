@@ -7,6 +7,12 @@ semantics live once in the Rust core. The public lifecycle has no lease or hando
 selector: handoff is fixed to hold-first and enforcement placement is derived from
 the selected integration.
 
+The versioned public documentation starts at [`docs/index.md`](docs/index.md) and is
+configured for [Read the Docs](https://waddle-sdk.readthedocs.io/). It separates SDK
+concepts, protocol/Rust-core contracts, the Python frontend, and custom hardware
+porting; [`docs/READTHEDOCS.md`](docs/READTHEDOCS.md) records the one-time hosted
+project settings.
+
 `waddle-sdk connect` sends `site.metadata.id` with a customer/project API key to
 resolve the authoritative hosted binding, then completes a hardware-free transport
 registration; arms and cameras open only after the host accepts it.
@@ -61,6 +67,15 @@ which the command prints. The long-lived API key never enters the URL or browser
 See [Porting a hardware or simulator backend](docs/hardware-backends.md) for the
 minimal external integration surface and [`sdk/README.md`](sdk/README.md) for the
 complete Python manifest and driver contracts.
+
+The wheel also carries two version-matched, portable Agent Skills. Export is explicit
+and never edits an agent's global configuration or overwrites an existing target:
+
+```bash
+waddle-sdk skills list
+waddle-sdk skills list --json
+waddle-sdk skills export port-waddle-hardware --output ./agent-skills
+```
 
 ## Repository
 

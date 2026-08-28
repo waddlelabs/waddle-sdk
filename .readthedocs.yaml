@@ -1,0 +1,19 @@
+version: 2
+
+build:
+  os: ubuntu-24.04
+  tools:
+    python: "3.12"
+    rust: "1.96"
+  jobs:
+    pre_build:
+      - RUSTDOCFLAGS="-Dwarnings" cargo doc --manifest-path waddle-core/Cargo.toml --workspace --exclude xtask --no-deps --locked --target-dir /tmp/waddle-rustdoc
+      - mkdir -p docs/reference/rust
+      - cp -R /tmp/waddle-rustdoc/doc/. docs/reference/rust/
+
+mkdocs:
+  configuration: mkdocs.yml
+
+python:
+  install:
+    - requirements: docs/requirements.txt

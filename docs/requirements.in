@@ -1,0 +1,5 @@
+# Compile for Read the Docs with:
+# uv pip compile docs/requirements.in --generate-hashes --output-file docs/requirements.txt
+mkdocs==1.6.1
+mkdocs-material==9.6.14
+mkdocstrings[python]==0.29.1

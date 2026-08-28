@@ -1,0 +1,49 @@
+"""Lazy camera adapter. Replace the vendor opener; preserve shutdown semantics."""
+
+from __future__ import annotations
+
+import threading
+from typing import Protocol
+
+import numpy as np
+
+from waddle_sdk.cameras import CameraConfig, CameraFrame
+
+FACTS_SOURCE = __FACTS_SOURCE__
+WIDTH = __WIDTH__
+HEIGHT = __HEIGHT__
+FPS = __FPS__
+
+
+class VendorCamera(Protocol):
+    def capture(self) -> tuple[np.ndarray, np.ndarray | None]: ...
+    def close(self) -> None: ...
+
+
+class Driver:
+    def __init__(self, camera: VendorCamera) -> None:
+        self._camera = camera
+        self._lock = threading.Lock()
+        self._closed = False
+
+    def capture(self) -> CameraFrame:
+        rgb, depth = self._camera.capture()
+        return CameraFrame(rgb=rgb, depth=depth)
+
+    def close(self) -> None:
+        with self._lock:
+            if not self._closed:
+                self._closed = True
+                # The vendor close must unblock any capture in progress.
+                self._camera.close()
+
+
+def _open_vendor(config: CameraConfig) -> VendorCamera:
+    del config
+    # Import the optional vendor SDK here, never at module import. Select and
+    # verify the exact active stream before returning the camera.
+    raise RuntimeError("implement the lazy vendor opener before opening a camera")
+
+
+def camera(*, config: CameraConfig) -> Driver:
+    return Driver(_open_vendor(config))

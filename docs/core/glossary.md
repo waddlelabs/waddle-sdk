@@ -1,0 +1,1 @@
+--8<-- "waddle-protocol/docs/GLOSSARY.md"

@@ -1,4 +1,5 @@
-# Release — build the two waddle-sdk wheels and publish them to PyPI.
+# Release — build the two waddle-sdk wheels, publish them to PyPI, and attach
+# the matching portable Agent Skills bundle to an immutable GitHub Release.
 #
 # WHAT SHIPS (CLAUDE.md, "Two distributions from one source tree"):
 #
@@ -38,6 +39,12 @@
 # prefixed per distribution (`sdk-wheels-*` / `media-wheels-*`) so each job
 # downloads only what it is allowed to upload. Both jobs nevertheless depend
 # on both complete builds, making the exact-pinned pair atomic.
+#
+# AGENT SKILLS: the versioned bundle is built only from
+# sdk/python/waddle_sdk/agent_skills. It is a prerequisite of BOTH PyPI
+# publishers, then a GitHub Release is created only after both publishers
+# succeed. The workflow refuses an existing release and never clobbers an
+# asset; recovery is documented in docs/RELEASING.md.
 
 name: release
 
@@ -60,6 +67,161 @@ jobs:
   quality:
     name: release gate
     uses: ./.github/workflows/ci.yml
+
+  # ---------------------------------------------------------------------
+  # Portable Agent Skills release asset. Build this once, deterministically,
+  # and make it part of the all-or-nothing release gate before either PyPI
+  # identity can run. A dispatch from a branch retains the bundle as a run
+  # artifact but does not create a GitHub Release; a tag must match the Cargo
+  # package version exactly.
+  # ---------------------------------------------------------------------
+  skills-bundle:
+    name: Agent Skills bundle
+    needs: [quality]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      # Fail before either PyPI publish if this tag already has a GitHub
+      # Release. The eventual create also refuses an existing release, so a
+      # race cannot turn into an asset replacement.
+      - name: Refuse an existing GitHub Release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          status="$(
+            curl --silent --show-error \
+              --output /dev/null \
+              --write-out '%{http_code}' \
+              --header "Authorization: Bearer ${GH_TOKEN}" \
+              --header 'Accept: application/vnd.github+json' \
+              --header 'X-GitHub-Api-Version: 2022-11-28' \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}"
+          )"
+          case "$status" in
+            404) ;;
+            200)
+              echo "::error::GitHub Release $GITHUB_REF_NAME already exists; release assets are immutable"
+              exit 1
+              ;;
+            *)
+              echo "::error::Cannot prove that GitHub Release $GITHUB_REF_NAME is absent (HTTP $status)"
+              exit 1
+              ;;
+          esac
+
+      - name: Validate and build the deterministic skills archive
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from __future__ import annotations
+
+          import hashlib
+          import os
+          from pathlib import Path
+          import re
+          import tomllib
+          import zipfile
+
+          source = Path("sdk/python/waddle_sdk/agent_skills")
+          expected = {"port-waddle-hardware", "waddle-sdk-contracts"}
+          actual = {path.name for path in source.iterdir() if path.is_dir()}
+          if actual != expected:
+              raise SystemExit(
+                  f"skill directories differ: expected {sorted(expected)}, got {sorted(actual)}"
+              )
+
+          files: list[tuple[Path, Path]] = []
+          for skill_name in sorted(expected):
+              skill_root = source / skill_name
+              skill_md = skill_root / "SKILL.md"
+              if not skill_md.is_file():
+                  raise SystemExit(f"missing {skill_md}")
+              text = skill_md.read_text(encoding="utf-8")
+              if "[TODO" in text or "TODO:" in text:
+                  raise SystemExit(f"unfinished TODO in {skill_md}")
+              match = re.search(r"(?m)^name:\s*([^\s]+)\s*$", text)
+              if match is None or match.group(1) != skill_name:
+                  found = None if match is None else match.group(1)
+                  raise SystemExit(
+                      f"{skill_md} name must be {skill_name!r}, found {found!r}"
+                  )
+              for path in sorted(skill_root.rglob("*")):
+                  if path.is_symlink():
+                      raise SystemExit(f"skill bundles may not contain symlinks: {path}")
+                  if path.is_file():
+                      relative = path.relative_to(source)
+                      if "__pycache__" in relative.parts or path.suffix in {".pyc", ".pyo"}:
+                          raise SystemExit(f"generated Python artifact in skill: {path}")
+                      files.append((path, relative))
+
+          with Path("sdk/rust/Cargo.toml").open("rb") as handle:
+              version = str(tomllib.load(handle)["package"]["version"])
+          expected_tag = f"v{version}"
+          if os.environ.get("GITHUB_REF_TYPE") == "tag":
+              tag = os.environ.get("GITHUB_REF_NAME")
+              if tag != expected_tag:
+                  raise SystemExit(
+                      f"release tag {tag!r} does not match SDK version {expected_tag!r}"
+                  )
+
+          output_dir = Path("release-assets")
+          output_dir.mkdir()
+          archive = output_dir / f"waddle-sdk-skills-{expected_tag}.zip"
+          archive_root = archive.stem
+          fixed_time = (1980, 1, 1, 0, 0, 0)
+
+          def write_member(bundle: zipfile.ZipFile, name: str, data: bytes) -> None:
+              info = zipfile.ZipInfo(name, fixed_time)
+              # The skill tree is small. Storing members avoids zlib-version
+              # variability, so identical source bytes produce identical archives
+              # across Python patch releases and hosted runners.
+              info.compress_type = zipfile.ZIP_STORED
+              info.external_attr = 0o100644 << 16
+              bundle.writestr(info, data)
+
+          with zipfile.ZipFile(archive, "w") as bundle:
+              write_member(bundle, f"{archive_root}/SDK_VERSION", f"{version}\n".encode())
+              for path, relative in files:
+                  write_member(bundle, f"{archive_root}/{relative.as_posix()}", path.read_bytes())
+
+          digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+          checksum = archive.with_suffix(".zip.sha256")
+          checksum.write_text(f"{digest}  {archive.name}\n", encoding="ascii")
+
+          with zipfile.ZipFile(archive) as bundle:
+              names = bundle.namelist()
+              if len(names) != len(set(names)):
+                  raise SystemExit("skills archive contains duplicate members")
+              expected_members = {f"{archive_root}/SDK_VERSION"} | {
+                  f"{archive_root}/{relative.as_posix()}" for _, relative in files
+              }
+              if set(names) != expected_members:
+                  raise SystemExit("skills archive members differ from canonical skill files")
+              if bundle.read(f"{archive_root}/SDK_VERSION") != f"{version}\n".encode():
+                  raise SystemExit("skills archive SDK_VERSION is incorrect")
+              bad = bundle.testzip()
+              if bad is not None:
+                  raise SystemExit(f"skills archive CRC failed for {bad}")
+
+          print(f"built {archive} ({len(files)} canonical skill files, sha256 {digest})")
+          PY
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: release-skills
+          path: |
+            release-assets/waddle-sdk-skills-v*.zip
+            release-assets/waddle-sdk-skills-v*.zip.sha256
+          if-no-files-found: error
 
   # ---------------------------------------------------------------------
   # The default distribution: waddle-sdk (control transport, no LiveKit).
@@ -137,6 +299,45 @@ jobs:
           # Run from the repo root, never from sdk/: the source tree there
           # would shadow the installed package.
           python -c "import waddle_sdk, waddle_sdk._native as n; f=sorted(n.FEATURES); print('waddle', waddle_sdk.__version__, f); assert f == ['grpc'], f"
+          python - <<'PY'
+          import contextlib
+          import io
+          import json
+          from pathlib import Path
+          import tempfile
+
+          from waddle_sdk import cli
+
+          expected = ["port-waddle-hardware", "waddle-sdk-contracts"]
+          output = io.StringIO()
+          with contextlib.redirect_stdout(output):
+              assert cli.main(["skills", "list", "--json"]) == 0
+          payload = json.loads(output.getvalue())
+          assert [row["name"] for row in payload["skills"]] == expected
+
+          source_root = Path("sdk/python/waddle_sdk/agent_skills")
+          with tempfile.TemporaryDirectory() as temporary:
+              parent = Path(temporary)
+              for skill in expected:
+                  with contextlib.redirect_stdout(io.StringIO()):
+                      assert cli.main(
+                          ["skills", "export", skill, "--output", str(parent)]
+                      ) == 0
+                  source = source_root / skill
+                  exported = parent / skill
+                  source_files = {
+                      path.relative_to(source): path.read_bytes()
+                      for path in source.rglob("*")
+                      if path.is_file() and "__pycache__" not in path.parts
+                  }
+                  exported_files = {
+                      path.relative_to(exported): path.read_bytes()
+                      for path in exported.rglob("*")
+                      if path.is_file()
+                  }
+                  assert exported_files == source_files
+                  assert not any("__pycache__" in path.parts for path in exported.rglob("*"))
+          PY
 
       # `sdk-wheels-*` — the prefix `publish-sdk` globs for. Nothing the media
       # job uploads may ever match it.
@@ -257,7 +458,7 @@ jobs:
   # ---------------------------------------------------------------------
   publish-sdk:
     name: publish waddle-sdk to PyPI
-    needs: [wheels, media-wheels]
+    needs: [wheels, media-wheels, skills-bundle]
     runs-on: ubuntu-24.04
     # Half of the identity PyPI matches (with owner/repo/workflow); also
     # where a manual approval gate would go if this ever wants one.
@@ -311,7 +512,7 @@ jobs:
 
   publish-media:
     name: publish waddle-sdk-media to PyPI
-    needs: [wheels, media-wheels]
+    needs: [wheels, media-wheels, skills-bundle]
     runs-on: ubuntu-24.04
     # A DIFFERENT environment from `publish-sdk` — see the header. It is part
     # of what PyPI matches, so renaming it here means editing the trusted
@@ -354,3 +555,71 @@ jobs:
 
       - name: Publish
         uses: pypa/gh-action-pypi-publish@release/v1
+
+  # ---------------------------------------------------------------------
+  # The GitHub Release is last: it can never advertise a skills bundle for a
+  # release whose exact-pinned wheel pair did not publish successfully. This
+  # job is tag-only, refuses any existing release, and never uses --clobber.
+  # ---------------------------------------------------------------------
+  publish-github-release:
+    name: publish Agent Skills to GitHub Release
+    if: github.ref_type == 'tag'
+    needs: [publish-sdk, publish-media, skills-bundle]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: release-skills
+          path: release-assets
+
+      - name: Verify the release assets
+        run: |
+          set -euo pipefail
+          archive="waddle-sdk-skills-${GITHUB_REF_NAME}.zip"
+          checksum="${archive}.sha256"
+          test -f "release-assets/$archive"
+          test -f "release-assets/$checksum"
+          shopt -s nullglob
+          assets=(release-assets/*)
+          test "${#assets[@]}" -eq 2
+          (cd release-assets && sha256sum --check "$checksum")
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import zipfile
+
+          tag = os.environ["GITHUB_REF_NAME"]
+          version = tag.removeprefix("v")
+          archive = Path("release-assets") / f"waddle-sdk-skills-{tag}.zip"
+          root = archive.stem
+          with zipfile.ZipFile(archive) as bundle:
+              names = bundle.namelist()
+              if len(names) != len(set(names)):
+                  raise SystemExit("skills archive contains duplicate members")
+              if bundle.read(f"{root}/SDK_VERSION") != f"{version}\n".encode():
+                  raise SystemExit("skills archive version does not match the tag")
+              for skill in ("port-waddle-hardware", "waddle-sdk-contracts"):
+                  if f"{root}/{skill}/SKILL.md" not in names:
+                      raise SystemExit(f"skills archive is missing {skill}/SKILL.md")
+              if bundle.testzip() is not None:
+                  raise SystemExit("skills archive failed its CRC check")
+          PY
+
+      - name: Create the immutable GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::GitHub Release $GITHUB_REF_NAME already exists; refusing to overwrite it"
+            exit 1
+          fi
+          gh release create "$GITHUB_REF_NAME" \
+            "release-assets/waddle-sdk-skills-${GITHUB_REF_NAME}.zip" \
+            "release-assets/waddle-sdk-skills-${GITHUB_REF_NAME}.zip.sha256" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes

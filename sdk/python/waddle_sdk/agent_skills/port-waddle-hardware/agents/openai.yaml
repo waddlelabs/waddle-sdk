@@ -1,0 +1,4 @@
+interface:
+  display_name: "Port Waddle Hardware"
+  short_description: "Build safe Waddle hardware adapters"
+  default_prompt: "Use $port-waddle-hardware to port this hardware to the Waddle SDK."

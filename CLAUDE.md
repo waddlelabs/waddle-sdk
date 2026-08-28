@@ -18,7 +18,17 @@ touching anything.
    `docs/changelogs/CHANGELOG-<version>.md`, then reset root `CHANGELOG.md` to carry
    `[Unreleased]` plus a pointer list to the stowed files. Never delete changelog
    history; it only moves into `docs/changelogs/`.
-3. **Git lives here.** The repository root is `waddle-sdk/`. Never `git init` or write
+3. **Keep customer and agent documentation current.** Documentation is part of every
+   change, not release cleanup. When behavior, public APIs, protocols, configuration,
+   extension points, tests, build/release procedures, or repository layout changes,
+   update every affected source of truth in the same commit: authored pages under
+   `docs/`, public docstrings/generated-API inputs, examples and READMEs, and the
+   shipped Agent Skills under `sdk/python/waddle_sdk/agent_skills/`. Do not copy a
+   contract into multiple places when a normative page can be linked instead. Before
+   finishing, explicitly review the documentation impact even when no prose edit is
+   ultimately required; run the strict documentation and skill validation commands
+   below whenever those surfaces can be affected.
+4. **Git lives here.** The repository root is `waddle-sdk/`. Never `git init` or write
    artifacts in the parent directory (`api-dev/`). Scratch work goes in your session
    scratchpad, not the repo.
 
@@ -40,13 +50,24 @@ depend on it.
 ```
 waddle-sdk/
   CLAUDE.md, CHANGELOG.md, README.md, LICENSE (Apache-2.0), .gitignore
+  mkdocs.yml, .readthedocs.yaml
+                             # strict, versioned public docs build: static Python
+                             #   API plus warning-clean generated Rust API
   .github/workflows/
-    ci.yml                   # push/PR gate for Python + every Rust feature pass;
+    ci.yml                   # push/PR gate for Python, every Rust feature pass,
+                             #   and strict authored/generated documentation;
                              #   reusable by the release workflow
     release.yml              # tag v* (or dispatch) first calls the CI gate, then
-                             #   builds both wheels and publishes them atomically
-                             #   to PyPI (Trusted Publishing, no secrets)
+                             #   builds both wheels plus the portable skills bundle;
+                             #   the wheels publish atomically to PyPI and a tag run
+                             #   creates the immutable GitHub skills asset last
   docs/                      # repo-level customer-facing docs:
+    index.md, concepts/, core/, python/, porting/
+                             #   MkDocs site: SDK concepts and contracts, Rust-core
+                             #   architecture/API, Python API, hardware porting,
+                             #   testing/commissioning, and Agent Skills export
+    requirements.{in,txt}    #   direct inputs + hash-locked docs environment
+    READTHEDOCS.md           #   one-time stable/latest/tag/PR-preview project setup
     RELEASING.md             #   the release checklist + the live PyPI/GitHub
                              #   trusted-publisher identity configuration
     lease-lifecycle.md       #   the session/lease lifecycle from the
@@ -116,7 +137,8 @@ waddle-sdk/
                              #   _session.py is the private, non-global builder with
                              #   fixed hold-first/enforced core wiring. There is no
                              #   init/rollout/agent/shutdown or _testing module.
-                             #   cli.py owns the `waddle-sdk connect` process;
+                             #   cli.py owns the `waddle-sdk connect` process and
+                             #   the non-opening `skills list/export` commands;
                              #   it reads workspace identity from site.metadata.id
                              #   and combines that with customer/project provenance
                              #   resolved from WADDLE_API_KEY before hardware opens.
@@ -127,6 +149,11 @@ waddle-sdk/
                              #   and invitation failure leaves the site connected.
                              #   Driver-extension APIs stay in descriptors/,
                              #   robots/, and cameras/.
+                             #   agent_skills/ carries the exact portable
+                             #   waddle-sdk-contracts and port-waddle-hardware
+                             #   folders shipped by the wheel. Export is explicit,
+                             #   version-reported, and never overwrites a target or
+                             #   mutates an agent's global configuration.
                              #   Hardware opens only in SiteSession.__enter__; a
                              #   bound Grpc connector first completes an
                              #   authorization-only waddle.v0 registration
@@ -364,6 +391,15 @@ top-level dirs; they are not built yet.
     an alloc-free proof also runs as a normal test).
 - Quick proto syntax check without cargo:
   `uv run --with grpcio-tools python -m grpc_tools.protoc --descriptor_set_out=/dev/null -Iwaddle-protocol/proto waddle-protocol/proto/waddle/v0/*.proto`
+- Public documentation builds from the repository root. Install the exact environment
+  with `python -m pip install --require-hashes -r docs/requirements.txt`, generate the
+  Rust reference with `RUSTDOCFLAGS="-D warnings" cargo doc --manifest-path
+  waddle-core/Cargo.toml --workspace --exclude xtask --no-deps --locked`, copy
+  `waddle-core/target/doc/.` beneath `docs/reference/rust/`, then run
+  `python -m mkdocs build --strict`. Both generated directories are ignored. Python
+  references use static Griffe analysis and must never import the native extension or
+  vendor packages while building. `docs/READTHEDOCS.md` owns the one-time hosted
+  stable/latest/tag/PR-preview setup and is excluded from the public site.
 - The Python SDK runs from `sdk/` (Python 3.10+, `uv` on PATH):
   - `uv sync --dev && uv run pytest` — full build (maturin backend into `.venv`)
     + the pytest suite. Iterate on the Rust shim with
@@ -430,11 +466,12 @@ top-level dirs; they are not built yet.
     working tree, so without it a build after a test run ships that
     interpreter's bytecode and a build on a clean checkout does not.
     Non-Python PACKAGE DATA under `python-source` (today
-    `waddle_sdk/robots/yam_data/`: 16.1 KB of URDF text + licence + README, 5.6 KB
-    of it once deflated into the wheel — sdk/README.md quotes that same 16 KB
-    to a customer, so the two move together) ships with no pyproject edit at
-    all, and the code reads it through `importlib.resources` so a wheel, an
-    editable install and a checkout all work. Adding or moving such data is
+    `waddle_sdk/robots/yam_data/` plus the two complete
+    `waddle_sdk/agent_skills/` folders) ships with no pyproject edit at all,
+    and the code reads it through `importlib.resources` so a wheel, an editable
+    install and a checkout all work. The YAM data is 16.1 KB of URDF text +
+    licence + README, 5.6 KB once deflated into the wheel; sdk/README.md quotes
+    that same 16 KB to a customer, so the two move together. Adding or moving such data is
     the one time to build a wheel and list it — that it landed, and that no
     bytecode or mesh came with it.
     Each project root also carries a byte-equal copy of the repository
@@ -488,9 +525,12 @@ commands above remain the pre-commit gate and the fastest way to diagnose a fail
   honest 12.3+ deployment floor required by ScreenCaptureKit. Windows ARM64 remains
   unadvertised until both distributions have a native runner-backed smoke test.
 - **No leg may be given `continue-on-error`.** Both publish jobs need the complete
-  default and media matrices, so a failure in either distribution publishes
-  neither. This all-or-nothing gate is required because the default wheel advertises
-  an exact version of the companion through its `[media]` extra.
+  default and media matrices plus the deterministic Agent Skills bundle, so a failure
+  in either distribution or the bundle publishes neither wheel. This all-or-nothing
+  gate is required because the default wheel advertises an exact version of the
+  companion through its `[media]` extra. Tag builds create the immutable, checksummed
+  `waddle-sdk-skills-vX.Y.Z.zip` GitHub Release asset only after both PyPI jobs succeed;
+  no workflow path overwrites an existing release or asset.
 - **Publishing is Trusted Publishing (OIDC)**, no token or secret in this repo — and it
   is **two jobs, two GitHub environments**: `publish-sdk` → `pypi`, `publish-media` →
   `pypi-media`. PyPI keys a trusted publisher on (owner, repo, workflow,

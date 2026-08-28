@@ -15,7 +15,7 @@
 //!   `manifest.jsonl`;
 //! - [`mcaprec`] — the Local-mode MCAP episode recorder;
 //! - [`events`] — the bounded in-memory event ring and incident persistence;
-//! - [`reference`] — Reference-mode helpers ([`RefResolver`],
+//! - [`mod@reference`] — Reference-mode helpers ([`RefResolver`],
 //!   [`StreamRefBuilder`]).
 //!
 //! Two-clock discipline: episode bounds' epoch twins are set from [`Stamp`]s

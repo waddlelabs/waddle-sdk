@@ -1,0 +1,20 @@
+api_version: waddle.site/v1
+kind: Site
+metadata: {id: __PACKAGE_NAME__-site}
+parts:
+  simulated-holder:
+    driver: waddle_sdk.robots.mock:arm
+    posture: monitor
+    connection: {}
+    options: {joint_count: 1}
+cameras:
+  camera:
+    driver: __PACKAGE_NAME__.backend:camera
+    connection: {device: REPLACE_WITH_DEVICE}
+    stream: {width: __WIDTH__, height: __HEIGHT__, fps: __FPS__, encoding: rgb8}
+    mount: {kind: scene}
+frames: {}
+calibration: {artifacts: calib/}
+workspace_bounds: {}
+envelope: {static_keepouts: [], self_collision: {}}
+recording: {root: recordings/, format: mcap}

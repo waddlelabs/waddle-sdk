@@ -1,0 +1,49 @@
+from __future__ import annotations
+
+import threading
+
+import numpy as np
+
+from waddle_sdk.cameras import CameraConfig
+
+from __PACKAGE_NAME__ import backend
+
+
+class FakeCamera:
+    def __init__(self) -> None:
+        self.closed = 0
+        self.capture_started = threading.Event()
+        self.capture_released = threading.Event()
+
+    def capture(self):
+        self.capture_started.set()
+        self.capture_released.wait()
+        return np.zeros((__HEIGHT__, __WIDTH__, 3), dtype=np.uint8), None
+
+    def close(self):
+        self.closed += 1
+        self.capture_released.set()
+
+
+def test_close_unblocks_capture_and_is_idempotent(monkeypatch):
+    assert backend.FACTS_SOURCE == __FACTS_SOURCE__
+    fake = FakeCamera()
+    monkeypatch.setattr(backend, "_open_vendor", lambda _config: fake)
+    config = CameraConfig(
+        name="camera",
+        connection={},
+        stream={"width": __WIDTH__, "height": __HEIGHT__, "fps": __FPS__},
+        frame_id=None,
+        intrinsics=None,
+    )
+    driver = backend.camera(config=config)
+    frames = []
+    capture = threading.Thread(target=lambda: frames.append(driver.capture()))
+    capture.start()
+    assert fake.capture_started.wait(timeout=1.0)
+    driver.close()
+    driver.close()
+    capture.join(timeout=1.0)
+    assert not capture.is_alive()
+    assert frames[0].rgb.shape == (__HEIGHT__, __WIDTH__, 3)
+    assert fake.closed == 1

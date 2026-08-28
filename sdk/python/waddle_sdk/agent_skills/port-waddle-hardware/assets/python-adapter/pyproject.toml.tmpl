@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "__DIST_NAME__"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = ["waddle-sdk==__SDK_VERSION__"]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]

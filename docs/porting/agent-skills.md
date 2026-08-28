@@ -1,0 +1,31 @@
+# Agent skills for hardware porting
+
+Waddle SDK ships versioned Agent Skills alongside the Python contracts. A skill is a
+portable folder containing a `SKILL.md` workflow plus bounded references, templates,
+or deterministic helper scripts. It gives a development agent the same extension
+rules as this site; it does not grant hardware access or create another runtime.
+
+Inspect and export the skills from the installed SDK:
+
+```console
+waddle-sdk skills list
+waddle-sdk skills list --json
+waddle-sdk skills export port-waddle-hardware --output ./agent-skills
+```
+
+The list includes each bundled skill and the installed SDK version it matches. Export
+copies one complete skill folder into the requested directory so it can be reviewed or
+installed through the development tool of your choice.
+
+Export is deliberately explicit:
+
+- it never edits a global agent configuration;
+- it never silently installs or enables a skill;
+- it refuses to overwrite an existing target; and
+- its contracts describe the installed SDK, not a remembered or latest online API.
+
+The hardware-porting workflow scaffolds and reviews adapters against `PartConfig`,
+`Driver`, `Arm`, `Rig`, `CameraConfig`, and `CameraDriver`. It starts with fake vendor
+objects and non-opening validation. It must stop for explicit site-operator approval
+before any hardware-in-loop step that can move a live device. A generated adapter or
+passing test is evidence for review, never authorization or certification.

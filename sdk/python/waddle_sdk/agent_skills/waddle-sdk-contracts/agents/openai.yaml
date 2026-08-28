@@ -1,0 +1,4 @@
+interface:
+  display_name: "Waddle SDK Contracts"
+  short_description: "Understand and review Waddle SDK contracts"
+  default_prompt: "Use $waddle-sdk-contracts to explain or review these Waddle SDK contracts."
