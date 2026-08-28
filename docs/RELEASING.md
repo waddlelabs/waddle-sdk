@@ -29,11 +29,11 @@ wheel installs on 3.10+).
 
 ## PyPI trusted publisher configuration
 
-`waddle-sdk` already exists on PyPI. Before the first media release, create the
-`waddle-sdk-media` pending trusted publisher and the matching GitHub `pypi-media`
-environment described below. A successful first publish converts the pending publisher
-into an ordinary trusted publisher. There is no API token or publishing secret in this
-repository. The retired `waddle-sdk-teleop` project is not part of the new release pair.
+`waddle-sdk` already exists on PyPI. The `waddle-sdk-media` pending trusted publisher
+and matching GitHub `pypi-media` environment are configured for its first release; a
+successful first publish converts that pending publisher into an ordinary trusted
+publisher. There is no API token or publishing secret in this repository. The retired
+`waddle-sdk-teleop` project is not part of the new release pair.
 
 The live publisher identities must remain exactly:
 

@@ -31,7 +31,7 @@ waddle-sdk = "waddle_sdk.cli:main"
 # `pip install 'waddle-sdk[media]'` silently yields no LiveKit.
 # `tests/test_features.py::test_the_media_extra_pins_this_builds_version`
 # fails until the two agree.
-media = ["waddle-sdk-media==0.1.3"]
+media = ["waddle-sdk-media==0.1.4"]
 orbbec = ["pyorbbecsdk2"]
 realsense = ["pyrealsense2"]
 usb = ["opencv-python-headless>=4.8"]
@@ -57,7 +57,7 @@ robots = [
 
 [tool.uv.sources]
 # Dev-loop only (uv reads this; published wheel metadata never carries it):
-# point the `teleop` extra at the companion project in this repo, since it
+# point the `media` extra at the companion project in this repo, since it
 # is not on any index. uv's lock is universal — it resolves every extra —
 # so without this `uv sync` cannot resolve at all. Resolution only reads
 # the companion's metadata (maturin answers that from Cargo.toml, no
@@ -73,7 +73,7 @@ waddle-sdk-media = { path = "media" }
 # checked out") — used by the report_proprio read-back test to assert actual
 # merged field values, not just topic/message counts.
 # tomli: `tests/test_features.py` reads THIS file (and the companion's) to
-# hold the exact teleop pin to the version both wheels build from; stdlib
+# hold the exact media pin to the version both wheels build from; stdlib
 # tomllib covers 3.11+, this backfills 3.10.
 dev = [
     "pytest>=8",
@@ -91,7 +91,7 @@ module-name = "waddle_sdk._core"
 # `grpc` is in the DEFAULT build: a supervision layer whose default install
 # cannot reach the supervision plane would be a strange thing to ship, and
 # the tonic stack is ordinary crates.io deps. `livekit` is deliberately NOT
-# here — it lives in the `teleop` extra above.
+# here — it lives in the `media` extra above.
 features = ["pyo3/extension-module", "grpc"]
 # `python-source` is the working tree, so anything a dev run left in it gets
 # swept into the wheel. Bytecode is the one thing that actually does: without
