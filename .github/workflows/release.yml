@@ -206,6 +206,16 @@ jobs:
         shell: bash
         run: echo "MACOSX_DEPLOYMENT_TARGET=12.3" >> "$GITHUB_ENV"
 
+      # LiveKit's published Windows libwebrtc archive is built with the
+      # static MSVC runtime (/MT). Rust and cc otherwise select the dynamic
+      # runtime (/MD), which the linker rejects as an ABI mismatch. Apply the
+      # matching target feature only to this companion's Windows build; the
+      # base SDK does not link libwebrtc and keeps Rust's normal default.
+      - name: Match the Windows libwebrtc runtime
+        if: matrix.platform.name == 'windows-x64'
+        shell: bash
+        run: echo "RUSTFLAGS=-C target-feature=+crt-static" >> "$GITHUB_ENV"
+
       - name: Build the wheel
         uses: PyO3/maturin-action@v1
         with:

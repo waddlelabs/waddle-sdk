@@ -13,7 +13,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## Released changelogs
 
-- [`0.1.4` — 2026-08-27](docs/changelogs/CHANGELOG-0.1.4.md)
+- [`0.1.5` — 2026-08-27](docs/changelogs/CHANGELOG-0.1.5.md)
+- [`0.1.4` — 2026-08-27 (withdrawn)](docs/changelogs/CHANGELOG-0.1.4.md)
 - [`0.1.3` — 2026-08-27](docs/changelogs/CHANGELOG-0.1.3.md)
 - [`0.1.2` — 2026-08-25](docs/changelogs/CHANGELOG-0.1.2.md)
 - [`0.1.1` — 2026-08-24](docs/changelogs/CHANGELOG-0.1.1.md)

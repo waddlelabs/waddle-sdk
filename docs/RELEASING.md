@@ -129,6 +129,9 @@ Everything below happens on `main`, with the tree clean and the full local gate 
   macOS x86_64, and Windows x64. Each wheel links LiveKit's target-specific prebuilt
   libwebrtc and is imported on the same native architecture before publishing. macOS
   media wheels declare a 12.3+ deployment floor because the SDK links ScreenCaptureKit.
+  The Windows media build selects Rust's static CRT to match LiveKit's prebuilt
+  libwebrtc archive; do not remove that target-specific release setting or mix `/MT`
+  and `/MD` objects in the extension.
   Windows ARM64 remains unsupported until both distributions have native wheel and import
   coverage; do not infer it from LiveKit merely publishing a libwebrtc archive.
 - Free-threaded interpreters (3.13t/3.14t) are not built: abi3 does not cover them.
