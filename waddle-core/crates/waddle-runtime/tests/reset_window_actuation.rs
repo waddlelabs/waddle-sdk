@@ -124,12 +124,24 @@ fn registry(send_log: &SendLog) -> ControlRegistry {
 }
 
 fn wait_for(session: &Session, pred: impl Fn(&waddle_runtime::Status) -> bool) {
+    wait_for_named(session, "expected status", pred);
+}
+
+fn wait_for_named(
+    session: &Session,
+    expectation: &str,
+    pred: impl Fn(&waddle_runtime::Status) -> bool,
+) {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        if pred(&session.status()) {
+        let status = session.status();
+        if pred(&status) {
             return;
         }
-        assert!(Instant::now() < deadline, "timed out waiting on status");
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for {expectation}; last status: {status:?}"
+        );
         std::thread::sleep(Duration::from_millis(5));
     }
 }
@@ -257,9 +269,11 @@ fn remote_pre_reset_window_dispatches_teleop_then_completes_to_ready() {
     let (media, far) = LoopbackMedia::new();
     let session_cell: Arc<Mutex<Option<Session>>> = Arc::new(Mutex::new(None));
     let ready_to_complete = Arc::new(AtomicBool::new(false));
+    let script_armed = Arc::new(AtomicBool::new(false));
 
     let cell_for_script = session_cell.clone();
     let ready_for_script = ready_to_complete.clone();
+    let armed_for_script = script_armed.clone();
     let transport = scripted_transport(move |tx| {
         script_reset_window(
             cell_for_script.clone(),
@@ -267,7 +281,13 @@ fn remote_pre_reset_window_dispatches_teleop_then_completes_to_ready() {
             "reset-claim-pre",
             pb::ActorKind::Teleoperator,
             pb::ResetKind::Pre,
-            |s| matches!(s.episode_state, Some(Phase::Resetting)),
+            {
+                let armed_for_script = armed_for_script.clone();
+                move |s| {
+                    armed_for_script.load(Ordering::SeqCst)
+                        && matches!(s.episode_state, Some(Phase::Resetting))
+                }
+            },
             |_tx| {}, // teleop rides the media plane, not the plane's tx
             ready_for_script.clone(),
         );
@@ -305,18 +325,25 @@ fn remote_pre_reset_window_dispatches_teleop_then_completes_to_ready() {
         )
         .unwrap();
     let _ = ep0.gate(&[0.0; 6], None, None);
-    wait_for(&session, |s| {
+    wait_for_named(&session, "warmup episode to enter RUNNING", |s| {
         matches!(s.episode_state, Some(Phase::Running))
     });
     ep0.terminate(TerminalOutcome::Success, "warmup done");
 
+    // Arm the plane script only after the inline warmup reset has finished.
+    // Otherwise the script can occasionally observe that transient RESETTING
+    // phase, spend its one ENGAGE on a reset with no remote window, and leave
+    // the real episode waiting forever for a claim that will never arrive.
+    script_armed.store(true, Ordering::SeqCst);
     let handle = {
         let session = session.clone();
         std::thread::spawn(move || session.start_episode_with("towel", EpisodeOptions::default()))
     };
 
     // The window engages (the script above): gate flips to RESET.
-    wait_for(&session, |s| s.gate_mode == Some(GateMode::Reset));
+    wait_for_named(&session, "remote PRE window to enter RESET", |s| {
+        s.gate_mode == Some(GateMode::Reset)
+    });
 
     // The stale ep0 handle's gate ticks are spectator NOOPs during the
     // window (the stale-handle contract) — and, since `Gate`/`GateShared` is shared across
@@ -384,7 +411,9 @@ fn remote_pre_reset_window_dispatches_teleop_then_completes_to_ready() {
         .join()
         .unwrap()
         .expect("remote pre-reset window must resolve to READY");
-    wait_for(&session, |s| s.gate_mode == Some(GateMode::Passthrough));
+    wait_for_named(&session, "completed PRE window to enter PASSTHROUGH", |s| {
+        s.gate_mode == Some(GateMode::Passthrough)
+    });
 
     // Normal rollout proceeds on the returned Episode.
     assert!(matches!(

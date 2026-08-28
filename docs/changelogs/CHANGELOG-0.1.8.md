@@ -1,4 +1,4 @@
-# Changelog — 0.1.7
+# Changelog — 0.1.8
 
 All notable changes to the waddle-sdk monorepo are documented here.
 
@@ -6,12 +6,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follo
 artifact they describe (waddle-protocol and waddle-core version independently;
 waddle-codecs versions independently of waddle-core per amendment N4).
 
-The immutable `v0.1.7` tag reached the release quality gate, where a pre-existing
-test race failed before wheel construction or either publisher could run. PyPI and
-GitHub therefore received no `0.1.7` artifacts or release. This file is the record of
-that attempt; all intended changes and the deterministic race fix ship in `0.1.8`.
+This file preserves the coordinated `0.1.8` release of the repository. It carries the
+intended `0.1.6` and `0.1.7` changes because both tags stopped at artifact or quality
+gates before any package or GitHub Release was published.
 
-## [0.1.7] - 2026-08-28
+## [0.1.8] - 2026-08-28
 
 ### Added
 
@@ -53,3 +52,6 @@ that attempt; all intended changes and the deterministic race fix ship in `0.1.8
 - Prevented skill export from copying bytecode and cache directories that `pip`
   generates while installing packaged skill scripts; exports now contain only the
   canonical, version-matched skill resources on every supported platform.
+- Removed a race in the remote-reset runtime test: its one-shot plane script is now
+  armed only after the inline warmup reset finishes, so it cannot spend the real
+  episode's command on a transient phase with no remote window.

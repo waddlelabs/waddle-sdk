@@ -8,7 +8,7 @@ waddle-codecs versions independently of waddle-core per amendment N4).
 
 `v0.1.6` was tagged, but its cross-platform artifact smoke gate failed before either
 PyPI publisher or the GitHub Release job could run. The tag remains as an immutable
-record of that attempt; all intended changes and the artifact fix ship in `0.1.7`.
+record of that attempt; all intended changes and the artifact fixes ship in `0.1.8`.
 
 ## [0.1.6] - 2026-08-28
 

@@ -31,7 +31,7 @@ waddle-sdk = "waddle_sdk.cli:main"
 # `pip install 'waddle-sdk[media]'` silently yields no LiveKit.
 # `tests/test_features.py::test_the_media_extra_pins_this_builds_version`
 # fails until the two agree.
-media = ["waddle-sdk-media==0.1.7"]
+media = ["waddle-sdk-media==0.1.8"]
 orbbec = ["pyorbbecsdk2"]
 realsense = ["pyrealsense2"]
 usb = ["opencv-python-headless>=4.8"]
