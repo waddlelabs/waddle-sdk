@@ -115,7 +115,7 @@ def create_core_session(
     if media is not None and "livekit" not in _native.FEATURES:
         raise RuntimeError(
             "LiveKit media is not compiled into this core; install "
-            "waddle-sdk[teleop]"
+            "waddle-sdk[media]"
         )
     if transport is not None and "grpc" not in _native.FEATURES:
         raise RuntimeError(

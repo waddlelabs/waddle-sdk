@@ -214,12 +214,12 @@ def wheelhouse(tmp_path_factory: pytest.TempPathFactory) -> Path:
     )
     _build_wheel(
         directory,
-        "waddle-sdk-teleop",
+        "waddle-sdk-media",
         VERSION,
         requirements=("numpy>=1.24",),
         files={
-            "waddle_teleop/__init__.py": b"",
-            "waddle_teleop/_core.py": (
+            "waddle_media/__init__.py": b"",
+            "waddle_media/_core.py": (
                 f"__version__ = {VERSION!r}\n"
                 "BINDING_API_VERSION = 3\n"
                 'FEATURES = frozenset({"grpc", "livekit"})\n'
@@ -262,29 +262,29 @@ CASES = (
         "cameras",
         frozenset({"opencv-python-headless", "pyorbbecsdk2", "pyrealsense2"}),
     ),
-    ("teleop", "teleop", frozenset({"waddle-sdk-teleop"})),
+    ("media", "media", frozenset({"waddle-sdk-media"})),
     (
-        "teleop-orbbec",
-        "teleop,orbbec",
-        frozenset({"waddle-sdk-teleop", "pyorbbecsdk2"}),
+        "media-orbbec",
+        "media,orbbec",
+        frozenset({"waddle-sdk-media", "pyorbbecsdk2"}),
     ),
     (
-        "teleop-realsense",
-        "teleop,realsense",
-        frozenset({"waddle-sdk-teleop", "pyrealsense2"}),
+        "media-realsense",
+        "media,realsense",
+        frozenset({"waddle-sdk-media", "pyrealsense2"}),
     ),
     (
-        "teleop-usb",
-        "teleop,usb",
-        frozenset({"opencv-python-headless", "waddle-sdk-teleop"}),
+        "media-usb",
+        "media,usb",
+        frozenset({"opencv-python-headless", "waddle-sdk-media"}),
     ),
     (
-        "teleop-cameras",
-        "teleop,cameras",
+        "media-cameras",
+        "media,cameras",
         frozenset(
             {
                 "opencv-python-headless",
-                "waddle-sdk-teleop",
+                "waddle-sdk-media",
                 "pyorbbecsdk2",
                 "pyrealsense2",
             }
@@ -371,6 +371,7 @@ print(json.dumps({
             "mujoco",
             "pyorbbecsdk2",
             "pyrealsense2",
+            "waddle-sdk-media",
             "waddle-sdk-teleop",
             "xarm-python-sdk",
             "alicia-m-sdk",
@@ -382,8 +383,8 @@ print(json.dumps({
     ) & set(result["names"])
     assert result["vendor_modules"] == []
     assert result["requirements"]
-    if "waddle-sdk-teleop" in effective_optional:
-        assert result["core"] == "waddle_teleop._core"
+    if "waddle-sdk-media" in effective_optional:
+        assert result["core"] == "waddle_media._core"
         assert result["features"] == ["grpc", "livekit"]
     else:
         assert result["core"] == "waddle_sdk._core"

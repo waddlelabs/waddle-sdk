@@ -321,7 +321,7 @@ def test_vendor_adapters_are_lazy_and_name_their_install_extras(monkeypatch):
         realsense.RealSenseDriver()
 
 
-def test_camera_extra_metadata_is_orthogonal_to_teleop():
+def test_camera_extra_metadata_is_orthogonal_to_media():
     try:
         import tomllib
     except ModuleNotFoundError:  # pragma: no cover - Python 3.10 only
@@ -337,4 +337,4 @@ def test_camera_extra_metadata_is_orthogonal_to_teleop():
     assert set(extras["cameras"]) == set(
         extras["orbbec"] + extras["realsense"] + extras["usb"]
     )
-    assert extras["teleop"] == [f"waddle-sdk-teleop=={waddle_sdk.__version__}"]
+    assert extras["media"] == [f"waddle-sdk-media=={waddle_sdk.__version__}"]

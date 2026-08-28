@@ -312,7 +312,7 @@ waddle-sdk/
                              #   workspace as a non-opening initializer preset;
                              #   mounting/table/tool clearance still requires
                              #   explicit site review.
-    teleop/                  # the `waddle-sdk-teleop` companion distribution:
+    media/                   # the `waddle-sdk-media` companion distribution:
                              #   same rust/Cargo.toml, + the livekit feature;
                              #   carries its own byte-equal LICENSE packaging copy
     examples/                # one strict simulated Site program:
@@ -395,28 +395,28 @@ top-level dirs; they are not built yet.
       `synria-robocore` constraint is necessary for deterministic resolution.
       MuJoCo is separate behind `[mujoco]` and loads its MJCF only at Site.open().
       The base wheel imports no vendor SDK, and the extras compose with
-      `[teleop]`. Metadata/install
+      `[media]`. Metadata/install
       combinations are held by `tests/test_clean_installs.py`;
       hardware construction remains opt-in because importing an adapter never
       opens a device.
-    - `waddle-sdk-teleop` (`sdk/teleop/pyproject.toml`, module
-      `waddle_teleop._core`): the same manifest with `livekit` added.
+    - `waddle-sdk-media` (`sdk/media/pyproject.toml`, module
+      `waddle_media._core`): the same manifest with `livekit` added.
       Installed as the extra, never by name: `pip install
-      'waddle-sdk[teleop]'`. It is separate because libwebrtc is ~690 MB of
+      'waddle-sdk[media]'`. It is separate because libwebrtc is ~690 MB of
       build that an install which only supervises a policy should not pay
       for; measured on this tree, 3.7 MB wheel / 9.8 MB `.so` against
       16.7 MB / 45.1 MB — ~4.5x.
     - `python/waddle_sdk/_native.py` is the ONE place that picks a core: the
       bundled one unless a version- and `BINDING_API_VERSION`-matched
-      `waddle_teleop._core` is installed
-      and `WADDLE_NO_TELEOP != "1"` (a mismatch warns and falls back).
+      `waddle_media._core` is installed
+      and `WADDLE_NO_MEDIA != "1"` (a mismatch warns and falls back).
       A stale bundled core fails at import before hardware opens; a stale
-      teleop core warns and falls back to the bundled core. `_native.FEATURES`
+      media core warns and falls back to the bundled core. `_native.FEATURES`
       (a frozenset re-exported from the SELECTED core) is
       the only feature detection the Python layer may do — never a
-      try-import, and never `_core.FEATURES`, which on a `[teleop]` install
+      try-import, and never `_core.FEATURES`, which on a `[media]` install
       describes the bundled core the process is not using.
-    - **Release checklist**: `teleop = ["waddle-sdk-teleop==X"]` in
+    - **Release checklist**: `media = ["waddle-sdk-media==X"]` in
       `sdk/pyproject.toml` is the ONE version maturin cannot derive from the
       manifest (PEP 621 has no dynamic optional-dependencies), so a version
       bump must edit it — otherwise the extra resolves to the previous
@@ -425,7 +425,7 @@ top-level dirs; they are not built yet.
       `waddle_sdk.__version__`. Build and publish the two wheels together — in CI,
       not by hand: see **Release** below and `docs/RELEASING.md`.
   - Build the wheels with `uv build --wheel -o dist .` and `uv build --wheel
-    -o dist teleop` (`dist/` is git-ignored). Both `[tool.maturin]` blocks
+    -o dist media` (`dist/` is git-ignored). Both `[tool.maturin]` blocks
     carry `exclude = ["python/**/__pycache__/**"]`: `python-source` is the
     working tree, so without it a build after a test run ships that
     interpreter's bytecode and a build on a clean checkout does not.
@@ -444,7 +444,7 @@ top-level dirs; they are not built yet.
   - A build without a feature REFUSES the matching `create_session` kwarg
     (`transport_url`/`transport_token`, `media_url`/`media_token`) rather
     than degrading to a silent offline session; the LiveKit refusal names the
-    `[teleop]` extra. The shim grows kwargs, never logic. `grpc` adds a
+    `[media]` extra. The shim grows kwargs, never logic. `grpc` adds a
     direct optional `waddle-controlplane` dep (runtime takes an
     `Arc<dyn ControlTransport>` and does not re-export `grpc::connect`).
     Build the companion's flavour in place with
@@ -461,7 +461,7 @@ top-level dirs; they are not built yet.
     (livekit-api 0.5.6 against livekit-protocol 0.7.12). Pin in BOTH locks,
     or the shim's `livekit` feature breaks while core's stays green.
   - The built extensions (`python/waddle_sdk/_core*.so`,
-    `teleop/python/waddle_teleop/_core*.so`) and `dist/` are build artifacts,
+    `media/python/waddle_media/_core*.so`) and `dist/` are build artifacts,
     never checked in.
   - Linux builds of the LiveKit feature need the `glib-2.0` pkg-config metadata;
     CI installs Ubuntu's `libglib2.0-dev` before the feature-gated test and clippy
@@ -481,23 +481,23 @@ commands above remain the pre-commit gate and the fastest way to diagnose a fail
   `../../waddle-core/crates/*` escape both pyproject directories, so an sdist would be
   an archive nobody can build. pyo3's `abi3-py310` makes that one wheel per platform,
   good for 3.10+ (free-threaded interpreters are not abi3 and are not built).
-- **What each matrix leg covers**: `waddle-sdk` on linux x86_64 + aarch64 (manylinux
-  containers, both native so each leg imports the wheel it just built), macOS arm64 +
-  x86_64, Windows x64. `waddle-sdk-teleop` on **linux x86_64 alone** until libwebrtc's
-  wheel is audited elsewhere — so `pip install 'waddle-sdk[teleop]'` resolves there and
-  nowhere else, and that is the honest thing to say in release notes. Every wheel is
-  installed and imported before it is uploaded, asserting its `FEATURES`.
+- **What each matrix leg covers**: both `waddle-sdk` and `waddle-sdk-media` build on
+  linux x86_64 + aarch64 (manylinux containers, both native), macOS arm64 + x86_64,
+  and Windows x64. Every wheel is installed and imported on its build architecture
+  before upload, asserting its exact `FEATURES`. The macOS media wheel declares the
+  honest 12.3+ deployment floor required by ScreenCaptureKit. Windows ARM64 remains
+  unadvertised until both distributions have a native runner-backed smoke test.
 - **No leg may be given `continue-on-error`.** Both publish jobs need the complete
-  default matrix and the teleop wheel, so a failure in either distribution publishes
+  default and media matrices, so a failure in either distribution publishes
   neither. This all-or-nothing gate is required because the default wheel advertises
-  an exact version of the companion through its `[teleop]` extra.
+  an exact version of the companion through its `[media]` extra.
 - **Publishing is Trusted Publishing (OIDC)**, no token or secret in this repo — and it
-  is **two jobs, two GitHub environments**: `publish-sdk` → `pypi`, `publish-teleop` →
-  `pypi-teleop`. PyPI keys a trusted publisher on (owner, repo, workflow,
+  is **two jobs, two GitHub environments**: `publish-sdk` → `pypi`, `publish-media` →
+  `pypi-media`. PyPI keys a trusted publisher on (owner, repo, workflow,
   environment), so the two projects use distinct identities; a job
   carries exactly one environment, hence one job each, over artifacts named
-  `sdk-wheels-*` / `teleop-wheels-*` so neither job can upload the other's wheel.
-  A version bump edits **two** files (`sdk/rust/Cargo.toml` and the teleop pin in
+  `sdk-wheels-*` / `media-wheels-*` so neither job can upload the other's wheel.
+  A version bump edits **two** files (`sdk/rust/Cargo.toml` and the media pin in
   `sdk/pyproject.toml`); each publish job re-checks its wheels against the tag before
   anything reaches PyPI.
 

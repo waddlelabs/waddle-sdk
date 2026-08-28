@@ -4,12 +4,12 @@
 #
 #   waddle-sdk         sdk/pyproject.toml         module waddle_sdk._core
 #                      features: pyo3/extension-module + grpc      <- default install
-#   waddle-sdk-teleop  sdk/teleop/pyproject.toml  module waddle_teleop._core
-#                      the SAME rust/Cargo.toml + livekit          <- pip install 'waddle-sdk[teleop]'
+#   waddle-sdk-media   sdk/media/pyproject.toml   module waddle_media._core
+#                      the SAME rust/Cargo.toml + livekit           <- pip install 'waddle-sdk[media]'
 #
 # Each is one build of one manifest (sdk/rust/Cargo.toml), so the two can
 # never disagree on a version; `waddle_sdk._native` refuses a mismatched pair at
-# import, and `sdk/tests/test_features.py` holds the `teleop` extra's exact
+# import, and `sdk/tests/test_features.py` holds the `media` extra's exact
 # pin to that version. Bumping a version means editing BOTH
 # sdk/rust/Cargo.toml and the pin in sdk/pyproject.toml — see docs/RELEASING.md.
 #
@@ -26,16 +26,16 @@
 #
 # CREDENTIALS: none. Publishing is PyPI Trusted Publishing (OIDC) — the
 # publish jobs hold `id-token: write` and a GitHub environment, and there is
-# no token or secret anywhere in this file. Both publishers are live; their
-# exact identity fields are in docs/RELEASING.md.
+# no token or secret anywhere in this file. The exact publisher identities,
+# including the one-time setup for the new media project, are in docs/RELEASING.md.
 #
 # WHY TWO PUBLISH JOBS, AND TWO ENVIRONMENTS: PyPI keys a trusted
 # publisher on the (owner, repository, workflow, environment) tuple and
 # refuses to register the same tuple for a second project name. The two
 # projects therefore cannot share an environment — `waddle-sdk` publishes
-# from `pypi`, `waddle-sdk-teleop` from `pypi-teleop` — and since a job has
+# from `pypi`, `waddle-sdk-media` from `pypi-media` — and since a job has
 # exactly one environment, that is one publish job each. Artifact names are
-# prefixed per distribution (`sdk-wheels-*` / `teleop-wheels-*`) so each job
+# prefixed per distribution (`sdk-wheels-*` / `media-wheels-*`) so each job
 # downloads only what it is allowed to upload. Both jobs nevertheless depend
 # on both complete builds, making the exact-pinned pair atomic.
 
@@ -112,7 +112,7 @@ jobs:
         with:
           # `working-directory` is where maturin reads pyproject.toml, which
           # is how the two distributions are selected — the default wheel is
-          # sdk/, the companion is sdk/teleop/. The Rust manifest comes from
+          # sdk/, the companion is sdk/media/. The Rust manifest comes from
           # that file's `[tool.maturin] manifest-path`, so no -m flag here.
           working-directory: sdk
           target: ${{ matrix.platform.target }}
@@ -138,7 +138,7 @@ jobs:
           # would shadow the installed package.
           python -c "import waddle_sdk, waddle_sdk._native as n; f=sorted(n.FEATURES); print('waddle', waddle_sdk.__version__, f); assert f == ['grpc'], f"
 
-      # `sdk-wheels-*` — the prefix `publish-sdk` globs for. Nothing the teleop
+      # `sdk-wheels-*` — the prefix `publish-sdk` globs for. Nothing the media
       # job uploads may ever match it.
       - uses: actions/upload-artifact@v6
         with:
@@ -147,32 +147,51 @@ jobs:
           if-no-files-found: error
 
   # ---------------------------------------------------------------------
-  # The companion distribution: waddle-sdk-teleop (adds the LiveKit media
-  # plane). linux x86_64 ONLY for now, deliberately.
+  # The companion distribution: waddle-sdk-media (adds the LiveKit media
+  # plane). Build it natively on every platform supported by the base SDK.
   #
   # webrtc-sys' build script downloads a prebuilt libwebrtc (~690 MB
-  # extracted) — here that happens INSIDE the manylinux container, and the
-  # resulting extension is what auditwheel then has to accept. If auditwheel
-  # rejects it (a disallowed shared-library dependency, or a glibc symbol
-  # newer than the tag), THIS JOB FAILS AND NOTHING TELEOP IS PUBLISHED. Do
+  # extracted) for each target. Linux downloads inside the manylinux
+  # container and the resulting extension must pass auditwheel; macOS and
+  # Windows link their matching upstream archives natively. Any rejection or
+  # import failure fails this matrix and publishes neither distribution. Do
   # NOT add `continue-on-error`: a green job that uploaded no companion wheel
   # would be a release claiming an extra it did not ship.
   #
-  # Both publish jobs wait on this wheel and the complete default matrix.
+  # Both publish jobs wait on this matrix and the complete default matrix.
   # A failure therefore publishes neither distribution: the default wheel's
-  # exact `[teleop]` pin can never advertise a companion version that this
+  # exact `[media]` pin can never advertise a companion version that this
   # release did not build successfully.
   #
   # manylinux_2_28 rather than the default wheel's `auto` (2014): libwebrtc's
   # prebuilt binaries want a modern C++ toolchain, and the 2_28 image has
-  # one. The cost is a higher glibc floor for the teleop extra only
+  # one. The cost is a higher glibc floor for the media extra only
   # (glibc >= 2.28: Debian 10, Ubuntu 18.10+, RHEL 8+). If the C++ side still
   # comes up short, `before-script-linux` is where to install what it needs.
   # ---------------------------------------------------------------------
-  teleop-wheel:
-    name: waddle-sdk-teleop (linux-x86_64)
+  media-wheels:
+    name: waddle-sdk-media (${{ matrix.platform.name }})
     needs: [quality]
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: linux-x86_64
+            runner: ubuntu-24.04
+            target: x86_64
+          - name: linux-aarch64
+            runner: ubuntu-24.04-arm
+            target: aarch64
+          - name: macos-arm64
+            runner: macos-latest
+            target: aarch64
+          - name: macos-x86_64
+            runner: macos-15-intel
+            target: x86_64
+          - name: windows-x64
+            runner: windows-latest
+            target: x64
     steps:
       - uses: actions/checkout@v6
 
@@ -180,11 +199,20 @@ jobs:
         with:
           python-version: "3.10"
 
+      # webrtc-sys links ScreenCaptureKit, whose honest deployment floor is
+      # macOS 12.3. The wheel tag must not claim compatibility below it.
+      - name: Set the macOS deployment target
+        if: startsWith(matrix.platform.name, 'macos-')
+        shell: bash
+        run: echo "MACOSX_DEPLOYMENT_TARGET=12.3" >> "$GITHUB_ENV"
+
       - name: Build the wheel
         uses: PyO3/maturin-action@v1
         with:
-          working-directory: sdk/teleop
-          target: x86_64
+          working-directory: sdk/media
+          target: ${{ matrix.platform.target }}
+          # Ignored on macOS and Windows. LiveKit's prebuilt Linux libwebrtc
+          # requires the newer C++ runtime/glibc floor supplied by 2_28.
           manylinux: "2_28"
           args: --release --out dist
           # No sccache: the expensive part is a one-shot libwebrtc download
@@ -199,15 +227,15 @@ jobs:
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
-          python -m pip install sdk/teleop/dist/*.whl
-          python -c "import waddle_teleop._core as c; f=sorted(c.FEATURES); print('waddle_teleop', c.__version__, f); assert f == ['grpc', 'livekit'], f"
+          python -m pip install sdk/media/dist/*.whl
+          python -c "import waddle_media._core as c; f=sorted(c.FEATURES); print('waddle_media', c.__version__, f); assert f == ['grpc', 'livekit'], f"
 
-      # `teleop-wheels-*`, disjoint from the default wheel's `sdk-wheels-*`:
+      # `media-wheels-*`, disjoint from the default wheel's `sdk-wheels-*`:
       # each publish job may only ever see its own distribution.
       - uses: actions/upload-artifact@v6
         with:
-          name: teleop-wheels-linux-x86_64
-          path: sdk/teleop/dist/*.whl
+          name: media-wheels-${{ matrix.platform.name }}
+          path: sdk/media/dist/*.whl
           if-no-files-found: error
 
   # ---------------------------------------------------------------------
@@ -219,7 +247,7 @@ jobs:
   # ---------------------------------------------------------------------
   publish-sdk:
     name: publish waddle-sdk to PyPI
-    needs: [wheels, teleop-wheel]
+    needs: [wheels, media-wheels]
     runs-on: ubuntu-24.04
     # Half of the identity PyPI matches (with owner/repo/workflow); also
     # where a manual approval gate would go if this ever wants one.
@@ -230,7 +258,7 @@ jobs:
       id-token: write
     steps:
       # `pattern` + `merge-multiple`: only the default wheels, straight into
-      # dist/. The teleop artifact is not downloaded at all — this job's
+      # dist/. The media artifact is not downloaded at all — this job's
       # identity is not allowed to publish it.
       - uses: actions/download-artifact@v7
         with:
@@ -239,7 +267,7 @@ jobs:
           path: dist
 
       # The one release trap this repo has (CLAUDE.md's release checklist):
-      # the teleop pin in sdk/pyproject.toml is the ONE version maturin cannot
+      # the media pin in sdk/pyproject.toml is the ONE version maturin cannot
       # derive from the manifest. `sdk/tests/test_features.py` catches a
       # forgotten bump locally; this catches a tag that disagrees with what
       # was built, before any of it is on PyPI forever.
@@ -271,25 +299,25 @@ jobs:
       - name: Publish
         uses: pypa/gh-action-pypi-publish@release/v1
 
-  publish-teleop:
-    name: publish waddle-sdk-teleop to PyPI
-    needs: [wheels, teleop-wheel]
+  publish-media:
+    name: publish waddle-sdk-media to PyPI
+    needs: [wheels, media-wheels]
     runs-on: ubuntu-24.04
     # A DIFFERENT environment from `publish-sdk` — see the header. It is part
     # of what PyPI matches, so renaming it here means editing the trusted
     # publisher on PyPI too.
-    environment: pypi-teleop
+    environment: pypi-media
     permissions:
       id-token: write
     steps:
       - uses: actions/download-artifact@v7
         with:
-          pattern: teleop-wheels-*
+          pattern: media-wheels-*
           merge-multiple: true
           path: dist
 
       # Same check, same reason: the companion carries the version the
-      # `[teleop]` extra pins, so a wheel that disagrees with the tag is
+      # `[media]` extra pins, so a wheel that disagrees with the tag is
       # exactly the failure this repo's release checklist exists to prevent.
       - name: Check the wheels carry the tag's version
         run: |

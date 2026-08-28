@@ -1456,7 +1456,7 @@ pub(crate) fn create_session(
     if media_url.is_some() {
         return Err(PyRuntimeError::new_err(
             "media_url requires a waddle-sdk built with the `livekit` feature; this build has \
-             none — install the teleop extra: pip install 'waddle-sdk[teleop]' (see \
+             none — install the media extra: pip install 'waddle-sdk[media]' (see \
              waddle_sdk._native.FEATURES)",
         ));
     }

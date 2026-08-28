@@ -43,7 +43,7 @@ def test_camera_install_commands_are_held_to_package_metadata():
     )
     for extra in ("orbbec", "realsense", "usb", "cameras"):
         assert f"waddle-sdk[{extra}]" in README
-    assert "waddle-sdk[cameras,teleop]" in README
+    assert "waddle-sdk[cameras,media]" in README
 
 
 def test_readme_holds_the_site_and_runtime_boundaries():
@@ -102,9 +102,26 @@ def test_release_is_gated_and_the_distribution_pair_is_atomic():
 
     assert jobs["quality"]["uses"] == "./.github/workflows/ci.yml"
     assert jobs["wheels"]["needs"] == ["quality"]
-    assert jobs["teleop-wheel"]["needs"] == ["quality"]
-    assert jobs["publish-sdk"]["needs"] == ["wheels", "teleop-wheel"]
-    assert jobs["publish-teleop"]["needs"] == ["wheels", "teleop-wheel"]
+    assert jobs["media-wheels"]["needs"] == ["quality"]
+    assert jobs["publish-sdk"]["needs"] == ["wheels", "media-wheels"]
+    assert jobs["publish-media"]["needs"] == ["wheels", "media-wheels"]
+    assert jobs["publish-sdk"]["environment"] == "pypi"
+    assert jobs["publish-media"]["environment"] == "pypi-media"
+    assert "publish-teleop" not in jobs
+    expected_platforms = {
+        ("linux-x86_64", "ubuntu-24.04", "x86_64"),
+        ("linux-aarch64", "ubuntu-24.04-arm", "aarch64"),
+        ("macos-arm64", "macos-latest", "aarch64"),
+        ("macos-x86_64", "macos-15-intel", "x86_64"),
+        ("windows-x64", "windows-latest", "x64"),
+    }
+    media_platforms = jobs["media-wheels"]["strategy"]["matrix"]["platform"]
+    base_platforms = jobs["wheels"]["strategy"]["matrix"]["platform"]
+    assert {
+        (item["name"], item["runner"], item["target"]) for item in media_platforms
+    } == expected_platforms
+    assert media_platforms == base_platforms
+    assert "MACOSX_DEPLOYMENT_TARGET=12.3" in release_text
     assert "continue-on-error" not in str(jobs)
 
     for gate in (

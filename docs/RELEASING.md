@@ -13,12 +13,12 @@ source tree"):
 | Distribution | Project file | Module | Cargo features |
 | --- | --- | --- | --- |
 | `waddle-sdk` | `sdk/pyproject.toml` | `waddle_sdk._core` | `pyo3/extension-module`, `grpc` |
-| `waddle-sdk-teleop` | `sdk/teleop/pyproject.toml` | `waddle_teleop._core` | the same, plus `livekit` |
+| `waddle-sdk-media` | `sdk/media/pyproject.toml` | `waddle_media._core` | the same, plus `livekit` |
 
 Both are one build of `sdk/rust/Cargo.toml`, so they cannot disagree on a version, and
 `waddle_sdk._native` refuses a mismatched pair at import rather than loading a core built
 from other sources. The companion is installed as the extra — `pip install
-'waddle-sdk[teleop]'` — never by name.
+'waddle-sdk[media]'` — never by name.
 
 **Wheels only, no sdist, on purpose.** Both `[tool.maturin] manifest-path`s point at
 `sdk/rust/Cargo.toml`, whose dependencies are path deps into
@@ -29,19 +29,20 @@ wheel installs on 3.10+).
 
 ## PyPI trusted publisher configuration
 
-Both projects already exist on PyPI: the successful `v0.0.0` release on 2026-08-05
-claimed `waddle-sdk` and `waddle-sdk-teleop` and converted their pending publishers into
-ordinary trusted publishers. The matching GitHub environments also already exist.
-There is no API token or publishing secret in this repository.
+`waddle-sdk` already exists on PyPI. Before the first media release, create the
+`waddle-sdk-media` pending trusted publisher and the matching GitHub `pypi-media`
+environment described below. A successful first publish converts the pending publisher
+into an ordinary trusted publisher. There is no API token or publishing secret in this
+repository. The retired `waddle-sdk-teleop` project is not part of the new release pair.
 
 The live publisher identities must remain exactly:
 
-| Field | `waddle-sdk` | `waddle-sdk-teleop` |
+| Field | `waddle-sdk` | `waddle-sdk-media` |
 | --- | --- | --- |
 | Owner | `waddlelabs` | `waddlelabs` |
 | Repository name | `waddle-sdk` | `waddle-sdk` |
 | Workflow name | `release.yml` | `release.yml` |
-| Environment name | `pypi` | **`pypi-teleop`** |
+| Environment name | `pypi` | **`pypi-media`** |
 
 Owner and repository are the GitHub coordinates. Workflow name is the file name, not
 the workflow's display name, and environment names are case-sensitive. The environments
@@ -63,12 +64,12 @@ Everything below happens on `main`, with the tree clean and the full local gate 
    from it. The exception is the extra's pin:
 
    - `sdk/rust/Cargo.toml` → `version = "X.Y.Z"`
-   - `sdk/pyproject.toml` → `teleop = ["waddle-sdk-teleop==X.Y.Z"]`
+   - `sdk/pyproject.toml` → `media = ["waddle-sdk-media==X.Y.Z"]`
 
    That literal is the ONE version maturin cannot derive (PEP 621 has no dynamic
-   optional-dependencies). Forget it and `pip install 'waddle-sdk[teleop]'` resolves the
+   optional-dependencies). Forget it and `pip install 'waddle-sdk[media]'` resolves the
    *previous* release, `waddle_sdk._native` sees the mismatch, and the install silently has
-   no LiveKit. `sdk/tests/test_features.py::test_the_teleop_extra_pins_this_builds_version`
+   no LiveKit. `sdk/tests/test_features.py::test_the_media_extra_pins_this_builds_version`
    fails until the two agree, and the publish job re-checks the built wheels against the
    tag.
 
@@ -102,9 +103,10 @@ Everything below happens on `main`, with the tree clean and the full local gate 
    nothing.
 
 5. **Watch the run** (`gh run watch`, or the Actions tab). It builds five default wheels
-   (linux x86_64/aarch64, macOS arm64/x86_64, Windows x64) and the teleop wheel, imports
-   each one before uploading it, then publishes each distribution from its own job —
-   `publish-sdk` (environment `pypi`) and `publish-teleop` (environment `pypi-teleop`).
+   and five media wheels (linux x86_64/aarch64, macOS arm64/x86_64, Windows x64), imports
+   each one natively before uploading it, then publishes each distribution from its own
+   job — `publish-sdk` (environment `pypi`) and `publish-media` (environment
+   `pypi-media`).
    Both must be green for the release to be complete.
 
 6. **Verify from the outside**, on a machine that is not this checkout:
@@ -114,7 +116,7 @@ Everything below happens on `main`, with the tree clean and the full local gate 
    python -c "import waddle_sdk, waddle_sdk._native as n; print(waddle_sdk.__version__, sorted(n.FEATURES))"
    # -> X.Y.Z ['grpc']
 
-   pip install 'waddle-sdk[teleop]'                       # linux x86_64 only, for now
+   pip install 'waddle-sdk[media]'
    python -c "import waddle_sdk, waddle_sdk._native as n; print(waddle_sdk.__version__, sorted(n.FEATURES))"
    # -> X.Y.Z ['grpc', 'livekit']
    ```
@@ -123,20 +125,19 @@ Everything below happens on `main`, with the tree clean and the full local gate 
 
 - `pip install waddle-sdk` — linux x86_64, linux aarch64, macOS arm64, macOS x86_64,
   Windows x64. Python 3.10+ everywhere (one abi3 wheel per platform).
-- `pip install 'waddle-sdk[teleop]'` — **linux x86_64 only.** The teleop matrix stays at
-  one platform until the libwebrtc side of the build is audited on the others: its
-  extension links a prebuilt libwebrtc downloaded at build time, and whether the result
-  survives `auditwheel` (and the equivalent on macOS/Windows) has not been proven on any
-  other target. On every other platform the extra simply fails to resolve — which is the
-  intended failure: loud, at install time, rather than a session that quietly has no
-  media plane. Say this in the release notes.
+- `pip install 'waddle-sdk[media]'` — linux x86_64, linux aarch64, macOS arm64,
+  macOS x86_64, and Windows x64. Each wheel links LiveKit's target-specific prebuilt
+  libwebrtc and is imported on the same native architecture before publishing. macOS
+  media wheels declare a 12.3+ deployment floor because the SDK links ScreenCaptureKit.
+  Windows ARM64 remains unsupported until both distributions have native wheel and import
+  coverage; do not infer it from LiveKit merely publishing a libwebrtc archive.
 - Free-threaded interpreters (3.13t/3.14t) are not built: abi3 does not cover them.
 
 ## When something goes wrong
 
-- **The teleop job fails (usually auditwheel rejecting the libwebrtc-linked
+- **The media matrix fails (usually auditwheel or a platform linker rejecting the libwebrtc-linked
   extension).** Neither distribution is published: both publish jobs wait on the
-  complete default matrix and teleop wheel, and no leg uses `continue-on-error`. Fix the
+  complete default and media matrices, and no leg uses `continue-on-error`. Fix the
   build (a newer `manylinux` container, or `before-script-linux` installing what the C++
   side wants) and rerun before publishing this version.
 - **A build platform fails.** The whole `wheels` matrix gates `publish-sdk`, so a
@@ -152,5 +153,5 @@ Everything below happens on `main`, with the tree clean and the full local gate 
 - **PyPI rejects the OIDC exchange** ("invalid-publisher", or a 403 on upload). The
   identity it matches is the whole tuple: owner, repository, workflow *file* name, and
   environment. Check the failing job's `environment:` against the table above —
-  `publish-sdk` must be `pypi` and `publish-teleop` must be `pypi-teleop`, and renaming
+  `publish-sdk` must be `pypi` and `publish-media` must be `pypi-media`, and renaming
   either here means editing the trusted publisher on PyPI too.

@@ -18,7 +18,7 @@ crate-type = ["cdylib"]
 # plain `cargo clippy`/`check` build, and it must stay tokio- and
 # libwebrtc-free — that is what keeps the transports genuinely optional in the
 # core beneath it. No distribution ships featureless: `sdk/pyproject.toml`
-# builds `grpc`, `sdk/teleop/pyproject.toml` builds `grpc,livekit`. Each
+# builds `grpc`, `sdk/media/pyproject.toml` builds `grpc,livekit`. Each
 # feature only turns on the corresponding core transport — the shim itself
 # grows kwargs, never logic.
 # `waddle-runtime/{grpc,livekit}` are the same leaf features by another name;

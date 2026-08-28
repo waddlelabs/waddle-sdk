@@ -48,7 +48,7 @@ class Grpc:
 class LiveKit:
     """Select the optional LiveKit media transport.
 
-    The companion waddle-sdk-teleop wheel supplies the native feature.
+    The companion waddle-sdk-media wheel supplies the native feature.
     """
 
     url: str

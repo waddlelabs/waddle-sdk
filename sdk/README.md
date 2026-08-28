@@ -375,20 +375,20 @@ pip install 'waddle-sdk[alicia]'          # + Alicia-M SDK (Python 3.11+)
 pip install 'waddle-sdk[alicia-d]'        # + Alicia-D SDK (Python 3.11+)
 pip install 'waddle-sdk[robots]'          # + all three physical families
 pip install 'waddle-sdk[mujoco]'          # + MuJoCo 3.x simulation
-pip install 'waddle-sdk[teleop]'          # + the LiveKit media plane
-pip install 'waddle-sdk[cameras,teleop]'  # camera adapters + LiveKit media plane
+pip install 'waddle-sdk[media]'           # + the LiveKit media plane
+pip install 'waddle-sdk[cameras,media]'   # camera adapters + LiveKit media plane
 ```
 
 Two distributions from one source tree (the psycopg / psycopg-binary
 shape): `waddle-sdk` bundles the core built with the `grpc` control
-transport, and the `teleop` extra adds the exact-pinned `waddle-sdk-teleop`
+transport, and the `media` extra adds the exact-pinned `waddle-sdk-media`
 wheel, which is the SAME shim built with `livekit` too. LiveKit's libwebrtc
 dependency chain is ~690 MB of build, and an install whose job is to
-supervise a policy should not pay for a teleop media plane it will never
+supervise a policy should not pay for a LiveKit media plane it will never
 open. Either way you `import waddle_sdk`: `waddle_sdk._native` picks the richer
 core when it is installed, warns and falls back to the bundled one if the
 two versions disagree (a half-upgraded environment), and honours
-`WADDLE_NO_TELEOP=1`.
+`WADDLE_NO_MEDIA=1`.
 
 ### Third-party content in the wheel
 
@@ -422,7 +422,7 @@ The transports are cargo features on the shim. `grpc` (the control plane:
 build, so `uv sync --dev`/`maturin develop` already carry it; `livekit`
 (the media plane: `media_url=, media_token=` — the plane mints both
 tokens, this SDK never does) is not, since it belongs to the
-`waddle-sdk-teleop` companion:
+`waddle-sdk-media` companion:
 
 ```bash
 uv run maturin develop --uv --features grpc,livekit    # the companion's flavour
@@ -434,18 +434,18 @@ Clippy must be clean featureless, `--features grpc`, and
 matching kwarg rather than running offline in silence.
 **`waddle_sdk._native.FEATURES` is the probe**, not `waddle_sdk._core.FEATURES`:
 `_native` selects which core this process runs on and re-exports that
-core's features, so on a `[teleop]` install `waddle_sdk._core.FEATURES` still
+core's features, so on a `[media]` install `waddle_sdk._core.FEATURES` still
 reports the bundled core's grpc-only set while the process is running the
-teleop core. It is the only feature detection the Python layer does, and
+media core. It is the only feature detection the Python layer does, and
 the package reads it only at native construction to refuse a `transport=` or `media=` this build cannot honour.
 
-The companion wheel is `sdk/teleop/pyproject.toml`: same
+The companion wheel is `sdk/media/pyproject.toml`: same
 `manifest-path = "../rust/Cargo.toml"` (hence the same version by
-construction), `module-name = "waddle_teleop._core"`, features
+construction), `module-name = "waddle_media._core"`, features
 `grpc,livekit`. `sdk/pyproject.toml`'s `[tool.uv.sources]` points the
-`teleop` extra at it so `uv` can resolve the lock; nothing builds it
+`media` extra at it so `uv` can resolve the lock; nothing builds it
 unless the extra is actually installed. The extra's exact pin
-(`waddle-sdk-teleop==X`) is the ONE version here that maturin cannot
+(`waddle-sdk-media==X`) is the ONE version here that maturin cannot
 derive from the manifest, so a version bump must edit it too —
 `tests/test_features.py` holds it to `waddle_sdk.__version__` (and the two
 projects to one manifest) rather than to memory.

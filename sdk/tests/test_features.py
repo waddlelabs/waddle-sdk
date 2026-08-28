@@ -1,6 +1,6 @@
 """Two-distribution packaging, from the Python side.
 
-`waddle-sdk` and its `waddle-sdk-teleop` companion are one source tree
+`waddle-sdk` and its `waddle-sdk-media` companion are one source tree
 built twice; `waddle_sdk._native` decides which of the two compiled cores this
 process runs on, and `waddle_sdk.init` keys its refusals off what that core was
 BUILT with (`FEATURES`) rather than trying an import and hoping. These
@@ -86,7 +86,7 @@ def test_the_default_build_carries_the_control_transport():
 
 @pytest.mark.skipif(
     "livekit" in _core.FEATURES,
-    reason="locally built with the teleop feature (the companion wheel's flavour)",
+    reason="locally built with the media feature (the companion wheel's flavour)",
 )
 def test_the_default_build_leaves_livekit_to_the_companion_wheel():
     assert _core.FEATURES == frozenset({"grpc"})
@@ -94,7 +94,7 @@ def test_the_default_build_leaves_livekit_to_the_companion_wheel():
 
 def test_version_is_the_cores_own():
     """One Cargo.toml, one version: the Python surface and the shim ship
-    together, and the teleop companion is built from the same manifest —
+    together, and the media companion is built from the same manifest —
     which is what makes `_native`'s version check meaningful."""
     assert waddle_sdk.__version__ == _core.__version__
     assert isinstance(waddle_sdk.__version__, str) and waddle_sdk.__version__
@@ -108,18 +108,19 @@ def test_python_and_selected_native_core_share_the_binding_api():
 # --- The two projects' metadata, held to each other ------------------------
 
 
-def test_the_teleop_extra_pins_this_builds_version():
-    """`teleop = ["waddle-sdk-teleop==X"]` is the one version in this project
+def test_the_media_extra_pins_this_builds_version():
+    """`media = ["waddle-sdk-media==X"]` is the one version in this project
     that maturin does NOT derive from `rust/Cargo.toml`, so it is the one
     that can drift: bump the crate, ship two 0.2.0 wheels, and an extra
     still pinned to 0.1.0 either fails to resolve or installs last
     release's companion — whereupon `_native` sees the mismatch, warns, and
-    falls back to the bundled core, i.e. `pip install 'waddle-sdk[teleop]'`
+    falls back to the bundled core, i.e. `pip install 'waddle-sdk[media]'`
     silently yields no LiveKit. That is exactly what the exact pin exists to
     prevent, so the pin is checked here rather than left to whoever
     remembers to edit two files."""
     extras = _pyproject("pyproject.toml")["project"]["optional-dependencies"]
-    assert extras["teleop"] == [f"waddle-sdk-teleop=={waddle_sdk.__version__}"]
+    assert extras["media"] == [f"waddle-sdk-media=={waddle_sdk.__version__}"]
+    assert "teleop" not in extras
 
 
 def test_both_distributions_are_one_build_of_one_manifest():
@@ -128,12 +129,13 @@ def test_both_distributions_are_one_build_of_one_manifest():
     share a version, it is this project's shim built from the SAME
     Cargo.toml with one feature added."""
     default = _pyproject("pyproject.toml")["tool"]["maturin"]
-    companion_project = _pyproject("teleop", "pyproject.toml")
+    companion_project = _pyproject("media", "pyproject.toml")
     companion = companion_project["tool"]["maturin"]
 
-    assert companion_project["project"]["name"] == "waddle-sdk-teleop"
+    assert companion_project["project"]["name"] == "waddle-sdk-media"
+    assert not (_SDK_DIR / "teleop").exists()
     assert (_SDK_DIR / default["manifest-path"]).resolve() == (
-        _SDK_DIR / "teleop" / companion["manifest-path"]
+        _SDK_DIR / "media" / companion["manifest-path"]
     ).resolve()
 
     # A strict superset, and the extra is exactly the media plane: the
@@ -147,45 +149,45 @@ def test_both_distributions_are_one_build_of_one_manifest():
 def test_both_distributions_package_the_repository_license():
     root_license = (_SDK_DIR.parent / "LICENSE").read_bytes()
     default_project = _pyproject("pyproject.toml")["project"]
-    companion_project = _pyproject("teleop", "pyproject.toml")["project"]
+    companion_project = _pyproject("media", "pyproject.toml")["project"]
 
     assert default_project["license"] == "Apache-2.0"
     assert companion_project["license"] == "Apache-2.0"
     assert default_project["license-files"] == ["LICENSE"]
     assert companion_project["license-files"] == ["LICENSE"]
     assert (_SDK_DIR / "LICENSE").read_bytes() == root_license
-    assert (_SDK_DIR / "teleop" / "LICENSE").read_bytes() == root_license
+    assert (_SDK_DIR / "media" / "LICENSE").read_bytes() == root_license
 
 
 # --- Choosing a core -------------------------------------------------------
 
 
-def _fake_teleop_core(version: str) -> types.ModuleType:
-    module = types.ModuleType("waddle_teleop._core")
+def _fake_media_core(version: str) -> types.ModuleType:
+    module = types.ModuleType("waddle_media._core")
     module.__version__ = version
     module.BINDING_API_VERSION = _native._REQUIRED_BINDING_API_VERSION
     module.FEATURES = frozenset({"grpc", "livekit"})
     return module
 
 
-def _install_fake_teleop(monkeypatch, core_module: types.ModuleType) -> None:
-    package = types.ModuleType("waddle_teleop")
+def _install_fake_media(monkeypatch, core_module: types.ModuleType) -> None:
+    package = types.ModuleType("waddle_media")
     package._core = core_module
-    monkeypatch.setitem(sys.modules, "waddle_teleop", package)
-    monkeypatch.setitem(sys.modules, "waddle_teleop._core", core_module)
+    monkeypatch.setitem(sys.modules, "waddle_media", package)
+    monkeypatch.setitem(sys.modules, "waddle_media._core", core_module)
 
 
 def test_select_core_without_the_companion_returns_the_bundled_core(monkeypatch):
     # `None` in sys.modules makes the import fail — the shape of an
     # environment that only ever installed `waddle-sdk`.
-    monkeypatch.setitem(sys.modules, "waddle_teleop", None)
+    monkeypatch.setitem(sys.modules, "waddle_media", None)
     assert _native._select_core() is _core
 
 
 def test_select_core_prefers_a_matching_companion(monkeypatch):
-    teleop = _fake_teleop_core(_core.__version__)
-    _install_fake_teleop(monkeypatch, teleop)
-    assert _native._select_core() is teleop
+    media = _fake_media_core(_core.__version__)
+    _install_fake_media(monkeypatch, media)
+    assert _native._select_core() is media
 
 
 def test_select_core_falls_back_on_a_version_mismatch(monkeypatch):
@@ -193,8 +195,8 @@ def test_select_core_falls_back_on_a_version_mismatch(monkeypatch):
     built from other sources than this Python surface expects is not a risk
     worth taking for a media transport. Warn, naming both versions and the
     one command that fixes it, and keep the bundled core."""
-    teleop = _fake_teleop_core("9.9.9")
-    _install_fake_teleop(monkeypatch, teleop)
+    media = _fake_media_core("9.9.9")
+    _install_fake_media(monkeypatch, media)
     with pytest.warns(RuntimeWarning) as record:
         assert _native._select_core() is _core
     message = str(record[0].message)
@@ -203,17 +205,17 @@ def test_select_core_falls_back_on_a_version_mismatch(monkeypatch):
 
 
 def test_select_core_falls_back_on_a_binding_api_mismatch(monkeypatch):
-    teleop = _fake_teleop_core(_core.__version__)
-    teleop.BINDING_API_VERSION -= 1
-    _install_fake_teleop(monkeypatch, teleop)
+    media = _fake_media_core(_core.__version__)
+    media.BINDING_API_VERSION -= 1
+    _install_fake_media(monkeypatch, media)
     with pytest.warns(RuntimeWarning, match="native binding"):
         assert _native._select_core() is _core
 
 
 def test_select_core_honors_the_opt_out(monkeypatch):
-    teleop = _fake_teleop_core(_core.__version__)
-    _install_fake_teleop(monkeypatch, teleop)
-    monkeypatch.setenv("WADDLE_NO_TELEOP", "1")
+    media = _fake_media_core(_core.__version__)
+    _install_fake_media(monkeypatch, media)
+    monkeypatch.setenv("WADDLE_NO_MEDIA", "1")
     assert _native._select_core() is _core
 
 
@@ -229,9 +231,9 @@ def test_bundled_core_stays_reachable_by_name():
 # --- Refusals, keyed on what the core was built with -----------------------
 
 
-def test_media_without_livekit_names_the_teleop_extra(monkeypatch):
+def test_media_without_livekit_names_the_media_extra(monkeypatch):
     monkeypatch.setattr(_native, "FEATURES", frozenset({"grpc"}))
-    with pytest.raises(RuntimeError, match=r"waddle-sdk\[teleop\]") as excinfo:
+    with pytest.raises(RuntimeError, match=r"waddle-sdk\[media\]") as excinfo:
         create_core_session(
             "py-features-media",
             _camera_robot(),

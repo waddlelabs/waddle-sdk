@@ -86,7 +86,8 @@ uv run pytest
 ```
 
 The default `waddle-sdk` wheel carries gRPC.
-`pip install "waddle-sdk[teleop]"` adds the Linux-x86_64 LiveKit companion.
+`pip install "waddle-sdk[media]"` adds the LiveKit media companion on Linux x86-64,
+Linux ARM64, macOS Intel/Apple Silicon, and Windows x64.
 Camera adapters are lazy extras: `[orbbec]`, `[realsense]`, or `[cameras]`.
 Physical adapters are lazy too: `[xarm]`, `[alicia]`, `[alicia-d]`, or the
 combined `[robots]`; the Synria vendor SDKs currently require Python 3.11+

@@ -3,16 +3,16 @@
 ``waddle-sdk`` ships two distributions built from ONE source tree (the
 psycopg / psycopg-binary shape). The default ``waddle-sdk`` wheel bundles
 ``waddle_sdk._core``, built with the gRPC control transport. The companion
-``waddle-sdk-teleop`` wheel — installed via ``pip install
-'waddle-sdk[teleop]'`` — ships the SAME shim with the LiveKit media plane
-also compiled in, as ``waddle_teleop._core``. This module is the one place
+``waddle-sdk-media`` wheel — installed via ``pip install
+'waddle-sdk[media]'`` — ships the SAME shim with the LiveKit media plane
+also compiled in, as ``waddle_media._core``. This module is the one place
 that decides which of the two the package actually runs on, so that no
 other module ever has to.
 
 Selection, in order:
 
-1. No ``waddle_teleop`` installed → the bundled core.
-2. ``WADDLE_NO_TELEOP=1`` → the bundled core (the escape hatch: reproduce
+1. No ``waddle_media`` installed → the bundled core.
+2. ``WADDLE_NO_MEDIA=1`` → the bundled core (the escape hatch: reproduce
    a default install's behavior, or step around a bad companion wheel,
    without uninstalling anything).
 3. Versions disagree → the bundled core, plus a warning naming both. The
@@ -20,7 +20,7 @@ Selection, in order:
    half-upgraded environment; loading a core built from different sources
    than this Python surface was written against is not a risk worth taking
    for a media transport.
-4. Otherwise the teleop core: same shim, a strict superset of the bundled
+4. Otherwise the media core: same shim, a strict superset of the bundled
    one's transports.
 
 ``import waddle_sdk._core`` keeps meaning the BUNDLED module everywhere — this
@@ -70,26 +70,26 @@ def _select_core():
         )
 
     try:
-        from waddle_teleop import _core as teleop
+        from waddle_media import _core as media
     except ImportError:
         return bundled
-    if os.environ.get("WADDLE_NO_TELEOP") == "1":
+    if os.environ.get("WADDLE_NO_MEDIA") == "1":
         return bundled
-    if teleop.__version__ != bundled.__version__:
+    if media.__version__ != bundled.__version__:
         warnings.warn(
-            f"waddle-sdk-teleop {teleop.__version__} does not match waddle-sdk "
+            f"waddle-sdk-media {media.__version__} does not match waddle-sdk "
             f"{bundled.__version__}: ignoring it and running on the bundled core, "
             f"so LiveKit media stays unavailable. Install the matched pair with "
-            f"pip install 'waddle-sdk[teleop]=={bundled.__version__}'",
+            f"pip install 'waddle-sdk[media]=={bundled.__version__}'",
             RuntimeWarning,
             stacklevel=2,
         )
         return bundled
-    teleop_api = _binding_api(teleop)
-    if teleop_api != _REQUIRED_BINDING_API_VERSION:
+    media_api = _binding_api(media)
+    if media_api != _REQUIRED_BINDING_API_VERSION:
         warnings.warn(
-            "waddle-sdk-teleop native binding does not match this Python "
-            f"surface (teleop API {teleop_api!r}, required "
+            "waddle-sdk-media native binding does not match this Python "
+            f"surface (media API {media_api!r}, required "
             f"{_REQUIRED_BINDING_API_VERSION}); ignoring it and using the "
             "bundled core, so LiveKit media stays unavailable. Reinstall or "
             "rebuild both wheels from one checkout.",
@@ -97,7 +97,7 @@ def _select_core():
             stacklevel=2,
         )
         return bundled
-    return teleop
+    return media
 
 
 if TYPE_CHECKING:  # both cores are the same shim; `_core.pyi` types both
@@ -106,7 +106,7 @@ else:
     core = _select_core()
 
 #: Which connected transports the selected core carries — ``"grpc"`` (the
-#: control plane), ``"livekit"`` (the teleop media plane). This is the ONLY
+#: control plane), ``"livekit"`` (the LiveKit media plane). This is the ONLY
 #: feature detection the Python layer does, and it answers "can this build
 #: do it at all", never "what should happen now".
 FEATURES = core.FEATURES

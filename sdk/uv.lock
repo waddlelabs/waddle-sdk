@@ -2945,6 +2945,9 @@ cameras = [
     { name = "pyorbbecsdk2", version = "2.1.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "pyrealsense2" },
 ]
+media = [
+    { name = "waddle-sdk-media" },
+]
 mujoco = [
     { name = "mujoco" },
 ]
@@ -2961,9 +2964,6 @@ robots = [
     { name = "synria-robocore", marker = "python_full_version >= '3.11'" },
     { name = "synriard", marker = "python_full_version >= '3.11'" },
     { name = "xarm-python-sdk" },
-]
-teleop = [
-    { name = "waddle-sdk-teleop" },
 ]
 usb = [
     { name = "opencv-python-headless" },
@@ -3002,11 +3002,11 @@ requires-dist = [
     { name = "synriard", marker = "python_full_version >= '3.11' and extra == 'alicia'", specifier = ">=1.2.2" },
     { name = "synriard", marker = "python_full_version >= '3.11' and extra == 'alicia-d'", specifier = ">=1.2.2" },
     { name = "synriard", marker = "python_full_version >= '3.11' and extra == 'robots'", specifier = ">=1.2.2" },
-    { name = "waddle-sdk-teleop", marker = "extra == 'teleop'", directory = "teleop" },
+    { name = "waddle-sdk-media", marker = "extra == 'media'", directory = "media" },
     { name = "xarm-python-sdk", marker = "extra == 'robots'", specifier = ">=1.16" },
     { name = "xarm-python-sdk", marker = "extra == 'xarm'", specifier = ">=1.16" },
 ]
-provides-extras = ["alicia", "alicia-d", "cameras", "mujoco", "orbbec", "realsense", "robots", "teleop", "usb", "xarm"]
+provides-extras = ["alicia", "alicia-d", "cameras", "media", "mujoco", "orbbec", "realsense", "robots", "usb", "xarm"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -3018,8 +3018,8 @@ dev = [
 ]
 
 [[package]]
-name = "waddle-sdk-teleop"
-source = { directory = "teleop" }
+name = "waddle-sdk-media"
+source = { directory = "media" }
 dependencies = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },

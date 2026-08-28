@@ -16,7 +16,7 @@ dynamic = ["version"]
 waddle-sdk = "waddle_sdk.cli:main"
 
 [project.optional-dependencies]
-# The teleop companion distribution (`sdk/teleop/pyproject.toml`): the SAME
+# The media companion distribution (`sdk/media/pyproject.toml`): the SAME
 # shim built with the LiveKit media plane on top of this build's control
 # transport, shipped as its own wheel because libwebrtc is ~690 MB of build
 # that has no business in an install which only supervises a policy. The pin
@@ -28,10 +28,10 @@ waddle-sdk = "waddle_sdk.cli:main"
 # derive from `rust/Cargo.toml` (PEP 621 has no dynamic
 # optional-dependencies), so a version bump must edit it too — otherwise the
 # extra resolves to the previous release, `_native` sees the mismatch, and
-# `pip install 'waddle-sdk[teleop]'` silently yields no LiveKit.
-# `tests/test_features.py::test_the_teleop_extra_pins_this_builds_version`
+# `pip install 'waddle-sdk[media]'` silently yields no LiveKit.
+# `tests/test_features.py::test_the_media_extra_pins_this_builds_version`
 # fails until the two agree.
-teleop = ["waddle-sdk-teleop==0.1.3"]
+media = ["waddle-sdk-media==0.1.3"]
 orbbec = ["pyorbbecsdk2"]
 realsense = ["pyrealsense2"]
 usb = ["opencv-python-headless>=4.8"]
@@ -63,7 +63,7 @@ robots = [
 # the companion's metadata (maturin answers that from Cargo.toml, no
 # compile); the ~690 MB libwebrtc build happens only if someone actually
 # installs the extra, so the dev loop stays fast.
-waddle-sdk-teleop = { path = "teleop" }
+waddle-sdk-media = { path = "media" }
 
 [dependency-groups]
 # mcap: the e2e test reads /waddle/actions back from the episode MCAP.
