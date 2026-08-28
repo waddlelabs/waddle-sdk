@@ -1,4 +1,4 @@
-# Changelog — 0.1.6
+# Changelog — 0.1.7
 
 All notable changes to the waddle-sdk monorepo are documented here.
 
@@ -6,11 +6,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follo
 artifact they describe (waddle-protocol and waddle-core version independently;
 waddle-codecs versions independently of waddle-core per amendment N4).
 
-`v0.1.6` was tagged, but its cross-platform artifact smoke gate failed before either
-PyPI publisher or the GitHub Release job could run. The tag remains as an immutable
-record of that attempt; all intended changes and the artifact fix ship in `0.1.7`.
+This file preserves the coordinated `0.1.7` release of the repository. It carries the
+intended `0.1.6` changes because that tag's artifact smoke gate stopped before any
+package or GitHub Release was published.
 
-## [0.1.6] - 2026-08-28
+## [0.1.7] - 2026-08-28
 
 ### Added
 
@@ -49,3 +49,6 @@ record of that attempt; all intended changes and the artifact fix ship in `0.1.7
 - Made Agent Skill metadata validation ignore ordinary non-skill package directories
   such as Python's generated `__pycache__`, matching the runtime skill discovery
   contract in clean Python 3.10 CI environments.
+- Prevented skill export from copying bytecode and cache directories that `pip`
+  generates while installing packaged skill scripts; exports now contain only the
+  canonical, version-matched skill resources on every supported platform.

@@ -12,7 +12,8 @@ import yaml
 
 import waddle_sdk
 from waddle_sdk import cli
-from waddle_sdk.agent_skills import bundled_skills
+from waddle_sdk import agent_skills
+from waddle_sdk.agent_skills import BundledSkill, bundled_skills
 
 
 SKILL_ROOT = (
@@ -131,6 +132,35 @@ def test_export_preserves_bytes_and_script_modes_and_refuses_overwrite(
                 str(tmp_path),
             ]
         )
+
+
+def test_export_ignores_bytecode_created_when_pip_compiles_skill_scripts(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source = tmp_path / "installed" / "example-skill"
+    script = source / "scripts" / "example.py"
+    script.parent.mkdir(parents=True)
+    script.write_text("print('example')\n", encoding="utf-8")
+    cache = script.parent / "__pycache__"
+    cache.mkdir()
+    (cache / "example.cpython-310.pyc").write_bytes(b"installed bytecode")
+    (source / "orphan.pyc").write_bytes(b"installed bytecode")
+    (source / "SKILL.md").write_text(
+        "---\nname: example-skill\ndescription: Example.\n---\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        agent_skills,
+        "bundled_skills",
+        lambda: (BundledSkill("example-skill", "Example.", source),),
+    )
+
+    exported = agent_skills.export_skill("example-skill", tmp_path / "exports")
+
+    assert (exported / "scripts" / "example.py").read_bytes() == script.read_bytes()
+    assert not any("__pycache__" in path.parts for path in exported.rglob("*"))
+    assert not any(path.suffix in {".pyc", ".pyo"} for path in exported.rglob("*"))
 
 
 def _run(*arguments: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:

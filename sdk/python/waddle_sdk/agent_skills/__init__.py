@@ -83,6 +83,8 @@ def _source_mode(source: Any, relative: tuple[str, ...]) -> int:
 def _copy_resource_tree(source: Any, destination: Path, relative: tuple[str, ...]) -> None:
     destination.mkdir(mode=0o755)
     for child in source.iterdir():
+        if child.name == "__pycache__" or child.name.endswith((".pyc", ".pyo")):
+            continue
         child_relative = (*relative, child.name)
         child_destination = destination / child.name
         if child.is_dir():
