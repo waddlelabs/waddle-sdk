@@ -781,6 +781,30 @@ def test_the_live_driver_can_delegate_gripper_auto_range_to_i2rt(vendor):
     assert call["gripper_limits_override"] is None
 
 
+def test_the_live_driver_can_activate_its_explicit_socketcan_link(vendor, monkeypatch):
+    calls: list[tuple[str, int]] = []
+    monkeypatch.setattr(
+        yam,
+        "ensure_socketcan_up",
+        lambda channel, *, bitrate, report: calls.append((channel, bitrate)),
+    )
+
+    driver = _live(vendor, configure_can=True, can_bitrate=500_000)
+
+    assert isinstance(driver, base.Driver)
+    assert calls == [("can_left", 500_000)]
+
+
+def test_the_live_driver_does_not_manage_socketcan_without_opt_in(vendor, monkeypatch):
+    monkeypatch.setattr(
+        yam,
+        "ensure_socketcan_up",
+        lambda *_args, **_kwargs: pytest.fail("SocketCAN activation was not requested"),
+    )
+
+    assert isinstance(_live(vendor), base.Driver)
+
+
 def test_yam_factories_do_not_require_motor_measurements_in_sim():
     """The same manifest may omit the live-only override in simulation."""
     arm = yam.arm(workspace=WORKSPACE_BOX_M, sim=True)

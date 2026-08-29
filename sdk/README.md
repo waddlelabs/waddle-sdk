@@ -86,7 +86,10 @@ parts:
     driver: waddle_sdk.robots.yam:arm
     posture: supervised
     base_frame: yam_left_base
-    connection: {channel: can_left}
+    connection:
+      channel: can_left
+      configure_can: true
+      can_bitrate: 1000000
     joint_limits: {}
     gripper:
       joint: gripper
@@ -131,6 +134,16 @@ not a transform: `{kind: scene}` means fixed to the site, while
 `{kind: wrist, part: left}` means the camera moves with that exact part. Higher layers
 use this declaration to decide which calibration artifact and paired robot observation
 are required; the SDK does not invent or solve the transform.
+
+For YAM, `connection.configure_can: true` asks the SDK to inspect only the named
+SocketCAN interface before I2RT opens it. If that link is down, the SDK configures
+`connection.can_bitrate` and brings it up, using the process's network capability or
+the same bounded `ip` argv through `sudo`. An already-up link is never reconfigured:
+a bitrate mismatch fails with the actual and expected values. Omit or set
+`configure_can: false` when systemd-networkd, NetworkManager, or another site-owned
+service manages the bus. Custom robot adapters can reuse
+`waddle_sdk.robots.ensure_socketcan_up`; the helper never scans for other links or
+guesses what is attached.
 
 `parts.*.gripper` is driver-neutral control metadata: it maps a physical jaw
 opening in metres onto one declared action row. It is visible through

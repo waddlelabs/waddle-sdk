@@ -11,6 +11,18 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+### Added
+
+- Added a reusable, fail-closed SocketCAN link helper. An opted-in robot adapter can
+  activate only its exact declared interface at its exact bitrate before opening
+  hardware; already-up mismatched links and non-CAN interfaces are refused without
+  mutation, and missing privilege reports the exact bounded command to authorize.
+
+### Changed
+
+- The YAM adapter accepts `configure_can` plus `can_bitrate`. SDK callers remain
+  opt-in, while workspace frontends can make the choice explicit in `site.yaml`.
+
 ## Released changelogs
 
 - [`0.1.9` — 2026-08-28](docs/changelogs/CHANGELOG-0.1.9.md)

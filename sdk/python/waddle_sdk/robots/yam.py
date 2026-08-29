@@ -89,6 +89,7 @@ from ..descriptors import (
 )
 from . import base
 from .base import CrossArm
+from .socketcan import ensure_socketcan_up
 
 __all__ = [
     "ARM_JOINT_COUNT",
@@ -441,6 +442,7 @@ RIGHT_PART = "right_arm"
 LEFT_BASE_FRAME = "yam_left_base"
 RIGHT_BASE_FRAME = "yam_right_base"
 BASE_FRAME = "yam_base"
+DEFAULT_CAN_BITRATE = 1_000_000
 
 
 @dataclass(frozen=True)
@@ -530,12 +532,12 @@ class LiveDriver:
     property of the object rather than of a flag somebody remembered to check.
     It is what ``posture="monitor"`` builds.
 
-    What this driver deliberately does NOT do: bring a CAN interface up, patch
-    the vendor's transport, or work around a bus that starves its receiver.
-    Those are fleet-keeping concerns, they are specific to how a site cables
-    and loads its machines, and they belong to whoever runs the fleet — not to
-    a driver whose job is to be the honest thin layer over the vendor's own
-    calls.
+    When ``configure_can=True``, the driver uses the SDK's bounded SocketCAN
+    helper before opening I2RT: only ``channel`` is inspected, an already-up
+    link is never changed, and a down link is configured at ``can_bitrate`` and
+    read back.  This is opt-in for SDK callers; workspace frontends may expose
+    it as an explicit site choice.  It does not patch the vendor transport or
+    tune a live bus.
     """
 
     kind = "live"
@@ -549,6 +551,8 @@ class LiveDriver:
         gripper_gain_scale: float = 1.0,
         velocity_feedforward: bool = True,
         max_feedforward_vel_rad_s: float = DEFAULT_MAX_FEEDFORWARD_VEL_RAD_S,
+        configure_can: bool = False,
+        can_bitrate: int = DEFAULT_CAN_BITRATE,
         zero_gravity: bool = False,
         report: Callable[[str], None] = base.status,
     ) -> None:
@@ -566,6 +570,11 @@ class LiveDriver:
                 "only supervises a policy should resolve. The commit above is the "
                 "same one every fact in this module is stated against."
             ) from e
+
+        if not isinstance(configure_can, bool):
+            raise TypeError("configure_can must be true or false")
+        if configure_can:
+            ensure_socketcan_up(channel, bitrate=can_bitrate, report=report)
 
         self.channel = channel
         self._zero_gravity = bool(zero_gravity)
@@ -1238,6 +1247,8 @@ def _build_arms(
     gripper_gain_scale: float,
     velocity_feedforward: bool,
     max_feedforward_vel_rad_s: float,
+    configure_can: bool,
+    can_bitrate: int,
     report: Callable[[str], None],
 ) -> Callable[[], dict[str, base.Arm]]:
     """How to open these arms. Called by `Rig.arms()`, never by the factory:
@@ -1273,6 +1284,8 @@ def _build_arms(
                         gripper_gain_scale=gripper_gain_scale,
                         velocity_feedforward=velocity_feedforward,
                         max_feedforward_vel_rad_s=max_feedforward_vel_rad_s,
+                        configure_can=configure_can,
+                        can_bitrate=can_bitrate,
                         zero_gravity=zero_gravity,
                         report=report,
                     )
@@ -1325,6 +1338,8 @@ def bimanual(
     gripper_gain_scale: float = 1.0,
     velocity_feedforward: bool = True,
     max_feedforward_vel_rad_s: float = DEFAULT_MAX_FEEDFORWARD_VEL_RAD_S,
+    configure_can: bool = False,
+    can_bitrate: int = DEFAULT_CAN_BITRATE,
     name: str = "yam-bimanual",
     robot_id: str = "",
     cell_id: str = "",
@@ -1427,6 +1442,8 @@ def bimanual(
             gripper_gain_scale=gripper_gain_scale,
             velocity_feedforward=velocity_feedforward,
             max_feedforward_vel_rad_s=max_feedforward_vel_rad_s,
+            configure_can=configure_can,
+            can_bitrate=can_bitrate,
             report=report,
         ),
         rate_hz=rate_hz,
@@ -1456,6 +1473,8 @@ def arm(
     gripper_gain_scale: float = 1.0,
     velocity_feedforward: bool = True,
     max_feedforward_vel_rad_s: float = DEFAULT_MAX_FEEDFORWARD_VEL_RAD_S,
+    configure_can: bool = False,
+    can_bitrate: int = DEFAULT_CAN_BITRATE,
     name: str = "yam",
     robot_id: str = "",
     cell_id: str = "",
@@ -1514,6 +1533,8 @@ def arm(
             gripper_gain_scale=gripper_gain_scale,
             velocity_feedforward=velocity_feedforward,
             max_feedforward_vel_rad_s=max_feedforward_vel_rad_s,
+            configure_can=configure_can,
+            can_bitrate=can_bitrate,
             report=report,
         ),
         rate_hz=rate_hz,

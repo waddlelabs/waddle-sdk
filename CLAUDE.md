@@ -342,10 +342,20 @@ waddle-sdk/
                              #   around the pinned vendor close race by joining
                              #   its unretained CAN writer before the vendor
                              #   closes python-can's SocketCAN descriptor.
+                             #   An explicit configure_can=true connection may
+                             #   also use robots.socketcan before I2RT opens:
+                             #   only the declared link is inspected, a down link
+                             #   is configured at the declared bitrate and read
+                             #   back, and an already-up mismatch is refused
+                             #   without mutation. SDK callers remain opt-in;
+                             #   configuration frontends may choose the default.
                              #   It also publishes the SDK example's tabletop
                              #   workspace as a non-opening initializer preset;
                              #   mounting/table/tool clearance still requires
                              #   explicit site review.
+        socketcan.py         # reusable bounded Linux link helper for custom
+                             #   adapters; no scan, shell, robot inference, or
+                             #   reconfiguration of an already-up interface.
     media/                   # the `waddle-sdk-media` companion distribution:
                              #   same rust/Cargo.toml, + the livekit feature;
                              #   carries its own byte-equal LICENSE packaging copy

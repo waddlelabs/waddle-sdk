@@ -31,6 +31,7 @@ from .safety import (
     safety_presets_for_driver,
 )
 from .site import PartConfig
+from .socketcan import SocketCanState, ensure_socketcan_up, read_socketcan_state
 
 __all__ = [
     "Driver",
@@ -39,6 +40,9 @@ __all__ = [
     "SafetyPreset",
     "SafetyPresetProvider",
     "SafetyPresetReport",
+    "SocketCanState",
     "base",
+    "ensure_socketcan_up",
+    "read_socketcan_state",
     "safety_presets_for_driver",
 ]
