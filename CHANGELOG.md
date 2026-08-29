@@ -11,30 +11,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
-### Fixed
-
-- Restore the pinned I2RT starvation-safe SocketCAN receive path before a live
-  YAM opens. It uses one kernel wait plus a final non-blocking drain so a healthy
-  reply queued during a Python scheduling stall cannot poison the next motor
-  transaction as a cascade of false timeouts; vendor signature drift fails closed.
-- Open passive cameras before supervised robot drivers so USB enumeration and
-  first-frame setup cannot starve an already-energized YAM control loop. A camera
-  open failure now leaves every arm unopened.
-
-### Added
-
-- Added a reusable, fail-closed SocketCAN link helper. An opted-in robot adapter can
-  activate only its exact declared interface at its exact bitrate before opening
-  hardware; already-up mismatched links and non-CAN interfaces are refused without
-  mutation, and missing privilege reports the exact bounded command to authorize.
-
-### Changed
-
-- The YAM adapter accepts `configure_can` plus `can_bitrate`. SDK callers remain
-  opt-in, while workspace frontends can make the choice explicit in `site.yaml`.
-
 ## Released changelogs
 
+- [`0.1.10` — 2026-08-29](docs/changelogs/CHANGELOG-0.1.10.md)
 - [`0.1.9` — 2026-08-28](docs/changelogs/CHANGELOG-0.1.9.md)
 - [`0.1.8` — 2026-08-28](docs/changelogs/CHANGELOG-0.1.8.md)
 - [`0.1.7` — 2026-08-28 (not published)](docs/changelogs/CHANGELOG-0.1.7.md)
