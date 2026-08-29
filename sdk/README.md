@@ -145,6 +145,14 @@ service manages the bus. Custom robot adapters can reuse
 `waddle_sdk.robots.ensure_socketcan_up`; the helper never scans for other links or
 guesses what is attached.
 
+Before a live YAM opens I2RT, its reference adapter installs an exact-signature
+workaround for the pinned vendor receive loop. The stock loop polls SocketCAN in
+one-millisecond slices and can abandon a healthy reply if Python is descheduled
+across its wall-clock deadline, leaving that reply to poison the next motor
+transaction. The adapter instead makes one kernel wait plus a final non-blocking
+drain. An unknown I2RT signature is refused, and the workaround remains local to
+the YAM adapter; custom drivers are unchanged.
+
 `parts.*.gripper` is driver-neutral control metadata: it maps a physical jaw
 opening in metres onto one declared action row. It is visible through
 `Site.describe()` but is never forwarded into the driver factory. Adapter

@@ -88,6 +88,7 @@ from ..descriptors import (
     Robot,
 )
 from . import base
+from ._i2rt_patches import apply_recv_starvation_patch
 from .base import CrossArm
 from .socketcan import ensure_socketcan_up
 
@@ -599,6 +600,12 @@ class LiveDriver:
                 dtype=float,
             )
         )
+        # The pinned vendor receive loop can manufacture a timeout cascade
+        # when its Python thread is descheduled across a wall-clock polling
+        # deadline. Install the exact-signature workaround immediately before
+        # I2RT opens the bus or starts either YAM control thread. Signature
+        # drift fails closed instead of restoring the unsafe receive behavior.
+        apply_recv_starvation_patch()
         self._robot = get_yam_robot(
             channel=channel,
             gripper_type=GripperType.LINEAR_4310,

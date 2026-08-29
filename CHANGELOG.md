@@ -13,6 +13,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Restore the pinned I2RT starvation-safe SocketCAN receive path before a live
+  YAM opens. It uses one kernel wait plus a final non-blocking drain so a healthy
+  reply queued during a Python scheduling stall cannot poison the next motor
+  transaction as a cascade of false timeouts; vendor signature drift fails closed.
 - Open passive cameras before supervised robot drivers so USB enumeration and
   first-frame setup cannot starve an already-energized YAM control loop. A camera
   open failure now leaves every arm unopened.

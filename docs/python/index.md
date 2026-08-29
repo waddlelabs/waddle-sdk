@@ -23,6 +23,12 @@ returns an unopened context; entering it opens passive cameras before supervised
 drivers, then constructs pumps, recording, and one native session. Context exit
 finalizes recording before closing hardware.
 
+The reference YAM adapter also installs the exact-signature workaround required by
+the pinned I2RT receive loop before opening SocketCAN. The workaround makes one
+kernel wait for the receive budget and one final non-blocking drain; it refuses an
+unverified vendor signature rather than silently running with starvation-created
+motor timeouts. This is adapter-local and does not alter custom robot drivers.
+
 The package root exports only the lifecycle, transport declarations, outcomes, and
 manifest errors. Hardware extension contracts live under `waddle_sdk.robots` and
 `waddle_sdk.cameras`. The structural integration port for higher layers lives in

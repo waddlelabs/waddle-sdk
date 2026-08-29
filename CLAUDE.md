@@ -344,6 +344,13 @@ waddle-sdk/
                              #   around the pinned vendor close race by joining
                              #   its unretained CAN writer before the vendor
                              #   closes python-can's SocketCAN descriptor.
+                             #   Before opening I2RT it also exact-signature
+                             #   patches the pinned receive loop to make one
+                             #   kernel wait plus a final socket drain. This
+                             #   prevents a Python scheduling stall from leaving
+                             #   a healthy reply queued to poison the next motor
+                             #   transaction; vendor drift fails closed. Keep
+                             #   this workaround YAM-local, never in base.py.
                              #   An explicit configure_can=true connection may
                              #   also use robots.socketcan before I2RT opens:
                              #   only the declared link is inspected, a down link

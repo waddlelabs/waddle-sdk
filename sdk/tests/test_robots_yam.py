@@ -711,7 +711,28 @@ def vendor(monkeypatch) -> _FakeVendor:
         ("i2rt.robots.utils", utils),
     ):
         monkeypatch.setitem(sys.modules, name, module)
+    monkeypatch.setattr(yam, "apply_recv_starvation_patch", lambda: None)
     return fake
+
+
+def test_live_driver_installs_starvation_safe_receive_before_open(vendor, monkeypatch):
+    events: list[str] = []
+    original_open = vendor.get_yam_robot
+
+    def patched_open(**kwargs):
+        events.append("open")
+        return original_open(**kwargs)
+
+    monkeypatch.setattr(
+        yam,
+        "apply_recv_starvation_patch",
+        lambda: events.append("patch"),
+    )
+    sys.modules["i2rt.robots.get_robot"].get_yam_robot = patched_open
+
+    _live(vendor)
+
+    assert events == ["patch", "open"]
 
 
 def _live(vendor: _FakeVendor, **overrides) -> yam.LiveDriver:
