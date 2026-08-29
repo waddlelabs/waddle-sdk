@@ -158,7 +158,7 @@ def test_rig_session_registers_optional_live_camera_intrinsics():
         assert compiled["depthScaleMm"] == 1.0
 
 
-def test_partial_camera_open_failure_closes_camera_then_arm():
+def test_camera_open_failure_never_energizes_the_arm():
     closed: list[str] = []
     camera = _BlockingCamera(closed)
     rig = _rig(closed, camera, camera_name="not-declared")
@@ -169,7 +169,7 @@ def test_partial_camera_open_failure_closes_camera_then_arm():
     ):
         pass
 
-    assert closed == ["camera", "arm"]
+    assert closed == ["camera"]
 
 
 @dataclass(frozen=True)

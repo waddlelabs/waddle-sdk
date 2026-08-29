@@ -249,8 +249,10 @@ waddle-sdk/
                              #   pump, Rig and RigSession
                              #   layer. SiteSession composes RigSession._open
                              #   with the internal native-session builder;
-                             #   driver factory calls open no device. A half-open
-                             #   rig closes everything it opened and context
+                             #   driver factory calls open no device. RigSession
+                             #   opens passive cameras before supervised arms so
+                             #   USB startup cannot starve an energized control
+                             #   loop. A half-open rig closes everything it opened and context
                              #   exit finalizes recording before hardware close.
                              #   safety.py defines immutable, non-opening owner-
                              #   envelope presets discovered beside each driver

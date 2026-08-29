@@ -11,6 +11,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+### Fixed
+
+- Open passive cameras before supervised robot drivers so USB enumeration and
+  first-frame setup cannot starve an already-energized YAM control loop. A camera
+  open failure now leaves every arm unopened.
+
 ### Added
 
 - Added a reusable, fail-closed SocketCAN link helper. An opted-in robot adapter can

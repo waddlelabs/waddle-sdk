@@ -19,8 +19,9 @@ with site.open() as session:
 ```
 
 `load_site()` validates and resolves confined paths but opens no device. `site.open()`
-returns an unopened context; entering it constructs drivers, cameras, pumps, recording,
-and one native session. Context exit finalizes recording before closing hardware.
+returns an unopened context; entering it opens passive cameras before supervised robot
+drivers, then constructs pumps, recording, and one native session. Context exit
+finalizes recording before closing hardware.
 
 The package root exports only the lifecycle, transport declarations, outcomes, and
 manifest errors. Hardware extension contracts live under `waddle_sdk.robots` and

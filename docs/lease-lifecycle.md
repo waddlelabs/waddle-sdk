@@ -31,7 +31,7 @@ The boundaries have distinct effects:
 |---|---|
 | `load_site()` | Validates configuration and confined paths; opens nothing |
 | `site.open()` | Returns an unopened context; opens nothing |
-| Enter the site context | Constructs and opens drivers/cameras, then starts the runtime and recording |
+| Enter the site context | Opens passive cameras before supervised robot drivers, then starts the runtime and recording |
 | `session.run()` | Returns an unopened run context |
 | Enter the run context | Starts one episode through the native state machine |
 | Exit an unfinished run | Terminates it with `abort` |

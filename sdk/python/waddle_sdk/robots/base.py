@@ -2418,8 +2418,12 @@ class RigSession:
                 raise RuntimeError("this RigSession has already been opened")
             self._opened = True
         try:
-            self.arms = self._rig.arms()
+            # Open passive sensors before energized actuators. Vendor camera
+            # startup can enumerate USB devices, allocate buffers, and wait for
+            # first frames; doing that after a supervised arm starts its control
+            # loop can starve the loop during the heaviest part of site startup.
             self.cameras = self._rig.cameras()
+            self.arms = self._rig.arms()
             declarations = dict(self._rig.robot().cameras)
             changed = False
             for name, description in declarations.items():
