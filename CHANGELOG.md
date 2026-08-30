@@ -11,6 +11,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+### Fixed
+
+- Publish pinned-I2RT YAM position/velocity commands atomically under its server
+  lock, preventing a transient all-zero PD command (gravity-only tick) during jog
+  and planned motion while retaining I2RT gravity and friction compensation.
+
 ## Released changelogs
 
 - [`0.1.10` — 2026-08-29](docs/changelogs/CHANGELOG-0.1.10.md)

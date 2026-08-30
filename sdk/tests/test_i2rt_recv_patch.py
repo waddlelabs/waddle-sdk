@@ -9,7 +9,9 @@ import types
 
 import pytest
 from waddle_sdk.robots._i2rt_patches import (
+    _command_joint_state_atomic,
     _receive_message_starvation_tolerant,
+    apply_command_state_atomic_patch,
     apply_recv_starvation_patch,
 )
 
@@ -131,3 +133,100 @@ def test_apply_refuses_an_unverified_vendor_signature(monkeypatch) -> None:
 
     with pytest.raises(RuntimeError, match="re-verify"):
         apply_recv_starvation_patch()
+
+
+class _Command:
+    def __init__(self) -> None:
+        self.pos = None
+        self.vel = None
+        self.kp = None
+        self.kd = None
+
+    @classmethod
+    def init_all_zero(cls, _count: int) -> _Command:
+        return cls()
+
+
+class _Remapper:
+    def to_robot_joint_pos_space(self, value):
+        return ("position", value)
+
+    def to_robot_joint_vel_space(self, value):
+        return ("velocity", value)
+
+
+class _AssertAtomicLock:
+    def __init__(self, robot, original) -> None:
+        self.robot = robot
+        self.original = original
+
+    def __enter__(self) -> None:
+        assert self.robot._commands is self.original
+
+    def __exit__(self, *_args) -> None:
+        return None
+
+
+def test_command_state_builds_complete_command_before_locked_publication() -> None:
+    robot = types.SimpleNamespace()
+    original = _Command()
+    robot._commands = original
+    robot.motor_chain = [1, 2]
+    robot.remapper = _Remapper()
+    robot._kp = "default-kp"
+    robot._kd = "default-kd"
+    robot._clip_robot_joint_pos_command = lambda value: ("clipped", value)
+    robot._command_lock = _AssertAtomicLock(robot, original)
+
+    _command_joint_state_atomic(robot, {"pos": "p", "vel": "v"})
+
+    assert robot._commands is not original
+    assert robot._commands.pos == ("position", ("clipped", "p"))
+    assert robot._commands.vel == ("velocity", "v")
+    assert robot._commands.kp == "default-kp"
+    assert robot._commands.kd == "default-kd"
+
+
+def test_apply_command_state_patch_is_signature_checked_and_idempotent(monkeypatch) -> None:
+    class MotorChainRobot:
+        def command_joint_state(self, joint_state):
+            del self, joint_state
+
+    i2rt = types.ModuleType("i2rt")
+    robots = types.ModuleType("i2rt.robots")
+    motor_chain_robot = types.ModuleType("i2rt.robots.motor_chain_robot")
+    motor_chain_robot.MotorChainRobot = MotorChainRobot
+    monkeypatch.setitem(sys.modules, "i2rt", i2rt)
+    monkeypatch.setitem(sys.modules, "i2rt.robots", robots)
+    monkeypatch.setitem(sys.modules, "i2rt.robots.motor_chain_robot", motor_chain_robot)
+
+    apply_command_state_atomic_patch()
+    installed = MotorChainRobot.command_joint_state
+    apply_command_state_atomic_patch()
+
+    assert getattr(installed, "_waddle_atomic_command_patch", False)
+    assert MotorChainRobot.command_joint_state is installed
+
+
+def test_apply_command_state_patch_refuses_unverified_signature(monkeypatch) -> None:
+    class MotorChainRobot:
+        def command_joint_state(self, position, velocity):
+            del self, position, velocity
+
+    i2rt = types.ModuleType("i2rt")
+    robots = types.ModuleType("i2rt.robots")
+    motor_chain_robot = types.ModuleType("i2rt.robots.motor_chain_robot")
+    motor_chain_robot.MotorChainRobot = MotorChainRobot
+    monkeypatch.setitem(sys.modules, "i2rt", i2rt)
+    monkeypatch.setitem(sys.modules, "i2rt.robots", robots)
+    monkeypatch.setitem(sys.modules, "i2rt.robots.motor_chain_robot", motor_chain_robot)
+
+    with pytest.raises(RuntimeError, match="re-verify atomic YAM commands"):
+        apply_command_state_atomic_patch()
+
+
+def test_apply_command_state_patch_preserves_position_only_vendor_types() -> None:
+    class PositionOnlyRobot:
+        pass
+
+    assert apply_command_state_atomic_patch(PositionOnlyRobot) is False

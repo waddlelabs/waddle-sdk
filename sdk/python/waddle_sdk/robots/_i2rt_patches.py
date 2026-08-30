@@ -10,6 +10,12 @@ This module keeps the workaround inside the vendor adapter.  It patches only
 the exact verified method signature, preserves I2RT's public behavior, and
 fails closed when the installed vendor package has drifted.  Custom robot
 drivers and the generic SDK contracts are unaffected.
+
+The pinned ``MotorChainRobot.command_joint_state`` also replaces its shared
+command object with an all-zero object *before* taking the command lock.  The
+server thread can therefore publish one gravity-only tick between ordinary
+position/velocity commands.  The atomic replacement below builds the complete
+command off to the side and swaps it under the vendor's own lock.
 """
 
 from __future__ import annotations
@@ -25,6 +31,7 @@ _EXPECTED_RECEIVE_PARAMETERS = (
     "timeout",
     "supress_warning",
 )
+_EXPECTED_COMMAND_STATE_PARAMETERS = ("self", "joint_state")
 _ROOT_LOG = logging.getLogger()
 
 
@@ -85,4 +92,50 @@ def apply_recv_starvation_patch() -> None:
     CanInterface._receive_message = _receive_message_starvation_tolerant
 
 
-__all__ = ["apply_recv_starvation_patch"]
+def _command_joint_state_atomic(self: Any, joint_state: Any) -> None:
+    """Publish one complete I2RT PD command under the vendor command lock."""
+
+    position = self._clip_robot_joint_pos_command(joint_state["pos"])
+    velocity = joint_state["vel"]
+    commands = type(self._commands).init_all_zero(len(self.motor_chain))
+    commands.pos = self.remapper.to_robot_joint_pos_space(position)
+    commands.vel = self.remapper.to_robot_joint_vel_space(velocity)
+    commands.kp = joint_state.get("kp", self._kp)
+    commands.kd = joint_state.get("kd", self._kd)
+    with self._command_lock:
+        self._commands = commands
+
+
+_command_joint_state_atomic._waddle_atomic_command_patch = True  # type: ignore[attr-defined]
+
+
+def apply_command_state_atomic_patch(robot_type: type[Any] | None = None) -> bool:
+    """Patch one I2RT robot type before use; return false when it has no state API."""
+
+    if robot_type is None:
+        try:
+            from i2rt.robots.motor_chain_robot import MotorChainRobot
+        except Exception as error:
+            raise RuntimeError(
+                "the pinned I2RT YAM command implementation is unavailable; "
+                "cannot verify atomic position/velocity commands"
+            ) from error
+        robot_type = MotorChainRobot
+
+    current = getattr(robot_type, "command_joint_state", None)
+    if current is None:
+        return False
+    if getattr(current, "_waddle_atomic_command_patch", False):
+        return True
+    parameters = tuple(inspect.signature(current).parameters)
+    if parameters != _EXPECTED_COMMAND_STATE_PARAMETERS:
+        raise RuntimeError(
+            "the installed I2RT MotorChainRobot.command_joint_state signature is "
+            f"{parameters!r}, expected {_EXPECTED_COMMAND_STATE_PARAMETERS!r}; "
+            "re-verify atomic YAM commands before using this vendor revision"
+        )
+    robot_type.command_joint_state = _command_joint_state_atomic
+    return True
+
+
+__all__ = ["apply_command_state_atomic_patch", "apply_recv_starvation_patch"]

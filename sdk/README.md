@@ -182,7 +182,10 @@ never differentiates measurements or an IK stream to invent velocity, always
 sets the gripper's velocity to zero, and degrades to `command_joint_pos` on an
 I2RT build without that method. `velocity_feedforward: false` selects the same
 position-only degradation explicitly; `max_feedforward_vel_rad_s` bounds the
-motor hint independently of the declared motion speed.
+motor hint independently of the declared motion speed. For the pinned I2RT
+revision, the adapter constructs the complete position/velocity/PD command
+before swapping it under I2RT's command lock; its server loop therefore always
+adds gravity and friction compensation to one complete active command.
 
 `static_keepouts` accepts strict axis-aligned `box` and `sphere` records with
 an ID, collision frame, optional part filter, and non-negative margin.

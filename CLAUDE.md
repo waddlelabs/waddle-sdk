@@ -351,6 +351,11 @@ waddle-sdk/
                              #   a healthy reply queued to poison the next motor
                              #   transaction; vendor drift fails closed. Keep
                              #   this workaround YAM-local, never in base.py.
+                             #   The same narrow module replaces the pinned
+                             #   command_joint_state implementation: build a
+                             #   complete PD command off-lock, then atomically
+                             #   swap it under I2RT's command lock so the server
+                             #   cannot observe a transient gravity-only tick.
                              #   An explicit configure_can=true connection may
                              #   also use robots.socketcan before I2RT opens:
                              #   only the declared link is inspected, a down link

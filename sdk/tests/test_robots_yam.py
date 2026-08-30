@@ -712,6 +712,7 @@ def vendor(monkeypatch) -> _FakeVendor:
     ):
         monkeypatch.setitem(sys.modules, name, module)
     monkeypatch.setattr(yam, "apply_recv_starvation_patch", lambda: None)
+    monkeypatch.setattr(yam, "apply_command_state_atomic_patch", lambda _robot_type: None)
     return fake
 
 
@@ -726,13 +727,18 @@ def test_live_driver_installs_starvation_safe_receive_before_open(vendor, monkey
     monkeypatch.setattr(
         yam,
         "apply_recv_starvation_patch",
-        lambda: events.append("patch"),
+        lambda: events.append("receive-patch"),
+    )
+    monkeypatch.setattr(
+        yam,
+        "apply_command_state_atomic_patch",
+        lambda _robot_type: events.append("command-patch"),
     )
     sys.modules["i2rt.robots.get_robot"].get_yam_robot = patched_open
 
     _live(vendor)
 
-    assert events == ["patch", "open"]
+    assert events == ["receive-patch", "open", "command-patch"]
 
 
 def _live(vendor: _FakeVendor, **overrides) -> yam.LiveDriver:
