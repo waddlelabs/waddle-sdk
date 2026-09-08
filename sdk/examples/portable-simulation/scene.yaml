@@ -1,0 +1,91 @@
+api_version: waddle.scene/v1
+kind: SimulationScene
+metadata:
+  id: portable-rgbd-demo
+  description: Portable URDF arm with scene and wrist RGB-D cameras.
+physics:
+  timestep_s: 0.002
+  gravity_m_s2: [0.0, 0.0, -9.81]
+robots:
+  arm:
+    urdf: robot.urdf
+    pose:
+      position_m: [0.0, 0.0, 0.02]
+      quaternion_wxyz: [1.0, 0.0, 0.0, 0.0]
+    posture: supervised
+    base_frame: world
+    rate_hz: 100
+    position_kp: 80
+    joints:
+      shoulder: {lower: -1.2, upper: 1.2, home: 0.0, max_velocity: 1.0, effort: 10}
+      elbow: {lower: -1.5, upper: 1.5, home: 0.0, max_velocity: 1.2, effort: 7}
+    tool:
+      link: tool
+    appearance:
+      default:
+        rgba: [{uniform: [0.85, 0.95]}, 0.42, 0.08, 1.0]
+        metallic: 0.1
+        roughness: 0.45
+    coatings:
+      - name: rubber_tool_cover
+        link: tool
+        geometry: {kind: sphere, radius_m: 0.035}
+        material: {rgba: [0.04, 0.04, 0.04, 1.0], roughness: 0.95}
+    collision_spheres:
+      - {name: upper_arm, link: upper_arm, radius_m: 0.23}
+      - {name: forearm, link: forearm, radius_m: 0.21}
+cameras:
+  scene:
+    mount: {kind: scene}
+    pose:
+      position_m: [0.0, -2.2, 0.9]
+      quaternion_wxyz: [0.70710678, -0.70710678, 0.0, 0.0]
+    stream: {width: 640, height: 480, fps: 30}
+    vertical_fov_deg: 55
+    depth: true
+    depth_scale_mm: 1.0
+  wrist:
+    mount: {kind: wrist, part: arm, link: tool}
+    pose:
+      position_m: [0.0, 0.0, 0.04]
+      quaternion_wxyz: [1.0, 0.0, 0.0, 0.0]
+    stream: {width: 320, height: 240, fps: 30}
+    vertical_fov_deg: 62
+    depth: true
+    depth_scale_mm: 1.0
+lights:
+  key:
+    type: directional
+    position_m: [0.0, -1.0, 3.0]
+    direction: [0.2, 0.3, -1.0]
+    color: [1.0, 0.95, 0.88]
+    intensity: {uniform: [0.8, 1.2]}
+    cast_shadows: true
+  fill:
+    type: point
+    position_m: [-1.0, -0.5, 1.5]
+    direction: [0.0, 0.0, -1.0]
+    color: [0.65, 0.75, 1.0]
+    intensity: 0.35
+    cast_shadows: false
+geometry:
+  floor:
+    geometry: {kind: plane, size_m: [4.0, 4.0]}
+    pose: {position_m: [0.0, 0.0, 0.0]}
+    material: {rgba: [0.32, 0.34, 0.36, 1.0], roughness: 0.85}
+    collision: {friction: [0.9, 0.01, 0.001]}
+  workpiece:
+    geometry: {kind: box, size_m: [0.12, 0.12, 0.12]}
+    pose: {position_m: [0.35, 0.0, 0.06]}
+    material: {rgba: [0.1, 0.55, 0.9, 1.0], roughness: 0.5}
+    collision: {mass_kg: 0.1, friction: [0.8, 0.01, 0.001]}
+site:
+  workspace_bounds:
+    min: [-0.8, -0.8, 0.0]
+    max: [0.8, 0.8, 1.2]
+  static_keepouts: []
+  self_collision: {}
+  calibration_artifacts: calib/
+  recording_root: recordings/
+randomization:
+  seed: 42

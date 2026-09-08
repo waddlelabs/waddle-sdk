@@ -73,3 +73,45 @@ Griffe. Documentation builds do not import the native extension or any vendor SD
 ::: waddle_sdk.cameras.inspection.CameraInspectionError
 
 ::: waddle_sdk.cameras.inspection.inspect_cameras
+
+## Simulation extension contracts
+
+::: waddle_sdk.simulation
+    options:
+      members:
+        - WorldConfig
+        - SimulationBackend
+        - SimulationPartBackend
+        - SimulationCameraBackend
+        - SimulationFactoryError
+        - resolve_simulation_factory
+        - build_simulation_backend
+        - simulation_backend_names
+
+::: waddle_sdk.scene
+    options:
+      members:
+        - Scene
+        - SceneConfig
+        - SceneArtifacts
+        - CompiledScene
+        - SimulationSceneCompiler
+        - SceneError
+        - SceneSyntaxError
+        - SceneValidationError
+        - ScenePathError
+        - SceneCompilerError
+        - load_scene
+        - initialize_scene
+        - resolve_scene_compiler
+        - simulation_compiler_names
+
+## Built-in simulation backends
+
+::: waddle_sdk.robots.mujoco.MujocoBackend
+
+::: waddle_sdk.robots.ros2.Ros2Backend
+
+::: waddle_sdk.robots.ros2.Ros2Driver
+
+::: waddle_sdk.robots.ros2.Ros2CameraDriver

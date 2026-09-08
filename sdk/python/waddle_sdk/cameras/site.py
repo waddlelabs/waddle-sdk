@@ -34,6 +34,7 @@ class CameraConfig:
     mount: CameraMount | None = None
     options: Mapping[str, Any] = field(default_factory=dict)
     site_root: Path = Path(".")
+    world: str | None = None
 
 
 __all__ = ["CameraConfig", "CameraMount"]

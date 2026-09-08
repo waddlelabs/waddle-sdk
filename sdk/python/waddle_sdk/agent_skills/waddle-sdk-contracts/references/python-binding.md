@@ -20,6 +20,6 @@ After open, the SDK derives `waddle.sdk.support/v1` from actual registered verbs
 
 ## Extension seams
 
-A manifest robot factory accepts `PartConfig`, returns a declaration-only `Rig`, and defers bus/thread creation to `Rig.build_arms`. A manifest-loaded part factory returns one bare `Arm`; site composition assigns its manifest part name. A camera factory accepts `CameraConfig` and is called only during site open.
+A manifest robot factory accepts `PartConfig`, returns a declaration-only `Rig`, and defers bus/thread creation to `Rig.build_arms`. A manifest-loaded part factory returns one bare `Arm`; site composition assigns its manifest part name. A camera factory accepts `CameraConfig` and is called only during site open. A shared simulator may instead declare a `WorldConfig` factory returning `SimulationBackend`; the SDK opens that world once after authorization, advances it once per composite tick, and adapts its optional part and camera facets into the same runtime contracts.
 
 Use structural protocols rather than inheritance. Keep vendor imports lazy. Connection credentials stay in manifest secret references and are resolved only for opening. Package facts with provenance and test them against the pinned vendor artifact where possible.

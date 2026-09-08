@@ -2988,7 +2988,7 @@ requires-dist = [
     { name = "alicia-m-sdk", marker = "python_full_version >= '3.11' and extra == 'alicia'", specifier = ">=1.1.1rc1" },
     { name = "alicia-m-sdk", marker = "python_full_version >= '3.11' and extra == 'robots'", specifier = ">=1.1.1rc1" },
     { name = "jsonschema", specifier = ">=4.22,<5" },
-    { name = "mujoco", marker = "extra == 'mujoco'", specifier = ">=3.1,<4" },
+    { name = "mujoco", marker = "extra == 'mujoco'", specifier = ">=3.5,<4" },
     { name = "numpy", specifier = ">=1.24" },
     { name = "opencv-python-headless", marker = "extra == 'cameras'", specifier = ">=4.8" },
     { name = "opencv-python-headless", marker = "extra == 'usb'", specifier = ">=4.8" },

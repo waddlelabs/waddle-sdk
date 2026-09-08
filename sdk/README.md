@@ -153,6 +153,39 @@ transaction. The adapter instead makes one kernel wait plus a final non-blocking
 drain. An unknown I2RT signature is refused, and the workaround remains local to
 the YAM adapter; custom drivers are unchanged.
 
+A simulator that owns one shared scene, clock, and renderer declares a `worlds` entry.
+Its parts and cameras name `world: <name>` instead of separate device drivers. The SDK
+opens the selected backend once after connector authorization, advances it once per
+composite tick, and closes it after its cameras and arms. World-backed devices still
+produce the same runtime description, support rows, observations, actions, and RGB-D
+samples as physical devices. The manifest and public extension contract are documented
+in [Simulation backends](../docs/porting/simulation.md).
+
+For a URDF-based environment, use the portable scene build instead of hand-authoring
+simulator XML:
+
+```bash
+waddle-sdk sim backends
+waddle-sdk sim init arm.urdf --tool-link tool0 --output portable-scene
+waddle-sdk sim validate portable-scene/scene.yaml
+waddle-sdk sim compile portable-scene/scene.yaml \
+  --backend mujoco --output portable-scene/build
+```
+
+`waddle.scene/v1` declares robot placement and reviewed limits, scene/wrist camera
+optical poses, RGB-D streams, lights, material/link overrides, visual or physical
+coating geometry, scene objects, and seeded variation. Compilation is atomic and emits
+an ordinary `site.yaml`, a native world, normalized inputs, and resolved hash evidence.
+Physical coatings require an explicit conservative safety sphere. Installed simulator
+packages can register short names under `waddle_sdk.simulation_backends` and
+`waddle_sdk.simulation_compilers`; Metal remains unchanged.
+
+The shipped `ros2` world backend connects Gazebo, Isaac Sim, or another ROS graph. It
+consumes named joint state, RGB, depth, and CameraInfo topics and publishes either
+ros2_control `Float64MultiArray` position commands or Isaac-compatible JointState
+commands. ROS 2 is supplied by a sourced ROS installation and is imported only when
+that world opens.
+
 `parts.*.gripper` is driver-neutral control metadata: it maps a physical jaw
 opening in metres onto one declared action row. It is visible through
 `Site.describe()` but is never forwarded into the driver factory. Adapter
@@ -264,15 +297,17 @@ hosted UI, not to an SDK-local web server.
 A vendor module is facts plus a lazy driver factory over the vendor-neutral
 `robots.base` layer. Factory construction opens no bus and starts no thread;
 `Site.open()` owns the actual lifecycle. The built-in YAM, xArm 6/7,
-Alicia-M, Alicia-D, MuJoCo, and camera adapters import vendor SDKs lazily, so ordinary
+Alicia-M, Alicia-D, MuJoCo, ROS 2, and camera adapters import vendor SDKs lazily, so ordinary
 imports require no hardware packages. The three manifest-native physical
 families expose a single joint space with a normalized 0..1 gripper row;
 Metal owns IK and planning above this boundary.
 For no-hardware work, `waddle_sdk.robots.mock:arm` is a manifest-native
 configurable simulated arm with planar FK and conservative body geometry.
-`waddle_sdk.robots.mujoco:arm` loads a site-relative MJCF only when the Site
-opens, maps declared scalar joints and actuators explicitly, and evaluates TCP
-and conservative body geometry on a separate scratch state before dispatch.
+`waddle_sdk.robots.mujoco:arm` keeps the compatible private-world factory.
+`waddle_sdk.robots.mujoco:backend` is the shared-world form: it loads one
+site-relative MuJoCo XML model for every attached part and camera, advances that
+world once per SDK tick, renders aligned RGB-D, and evaluates TCP and conservative
+body geometry on a separate scratch state before dispatch.
 
 The owner supplies hard safety. `base.Arm` checks declared width, finiteness,
 joint limits, per-step travel, optional workspace bounds, and SDK-owned static
@@ -423,7 +458,7 @@ pip install 'waddle-sdk[xarm]'            # + UFactory xArm SDK
 pip install 'waddle-sdk[alicia]'          # + Alicia-M SDK (Python 3.11+)
 pip install 'waddle-sdk[alicia-d]'        # + Alicia-D SDK (Python 3.11+)
 pip install 'waddle-sdk[robots]'          # + all three physical families
-pip install 'waddle-sdk[mujoco]'          # + MuJoCo 3.x simulation
+pip install 'waddle-sdk[mujoco]'          # + MuJoCo 3.5+ simulation/scene compiler
 pip install 'waddle-sdk[media]'           # + the LiveKit media plane
 pip install 'waddle-sdk[cameras,media]'   # camera adapters + LiveKit media plane
 ```

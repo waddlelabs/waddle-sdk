@@ -1,4 +1,4 @@
-# Robot and simulator adapter contract
+# Robot and independent twin adapter contract
 
 ## Factory and lifecycle
 
@@ -44,3 +44,7 @@ Workspace bounds require FK. Static keep-outs and self/cross-part collision requ
 Ship hardware facts with citations to a pinned manual, model, firmware contract, or vendored machine-readable artifact. Pass that citation through the scaffold's required `--facts-source`; for a simulator, cite the explicit synthetic or test model. The generated `FACTS_SOURCE` records the text verbatim but cannot prove its authority. Directionally test facts where possible: a declared safe limit may be tighter, never wider, than the source. Keep vendor packages optional and lazily imported. Put credentials in named secret references, never source or ordinary manifest values.
 
 Build external adapters as ordinary installable packages. Do not patch an SDK registry: `site.yaml` imports the package factory directly.
+
+When multiple parts or cameras need one shared simulator scene, implement the
+[shared simulation backend contract](simulation-contract.md) instead of opening one
+world from every part.

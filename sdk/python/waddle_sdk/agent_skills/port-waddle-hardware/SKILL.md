@@ -9,8 +9,8 @@ Build an external Python adapter against the installed SDK's public contracts. D
 
 ## Workflow
 
-1. Read [robot-contract.md](references/robot-contract.md) for a robot or simulator, [camera-contract.md](references/camera-contract.md) for a camera, and [testing.md](references/testing.md) before commissioning work.
-2. Inspect the installed SDK version and exact type signatures. Prefer `PartConfig` or `CameraConfig` factories.
+1. Read [robot-contract.md](references/robot-contract.md) for a robot or independent twin, [simulation-contract.md](references/simulation-contract.md) for a shared simulation world, [camera-contract.md](references/camera-contract.md) for a camera, and [testing.md](references/testing.md) before commissioning work.
+2. Inspect the installed SDK version and exact type signatures. For a portable URDF scene, prefer the shipped `waddle-sdk sim init`, edit the generated `waddle.scene/v1` document, and run `sim validate` before writing a backend. For a custom integration, prefer `PartConfig`, `CameraConfig`, or `WorldConfig` factories.
 3. Collect authoritative hardware facts before generating code: joint names/order, SI units, limits, rate, per-command caps, stop/recovery behavior, frames, tooling/payload, camera stream shape, and shutdown behavior. Record provenance beside each fact.
 4. Scaffold only after those facts exist. From this skill directory, for example:
 
@@ -43,6 +43,8 @@ Build an external Python adapter against the installed SDK's public contracts. D
 - Never clamp a rejected target into a different command. Refuse the complete command and hold.
 - Never initiate live motion, homing, re-enable, or commissioning from this skill.
 - Never require a vendor SDK at adapter-module import time. Import it only on the opening path and provide an actionable missing-extra error.
+- Never open a simulation runtime from its world factory or `part()` declaration. Open it only from `SimulationBackend.open()` after connector authorization.
+- Never let appearance or visual-only coating geometry change physics or safety. A physical coating needs reviewed collision properties and a conservative link-local safety sphere.
 - Test fake vendor objects before hardware-in-loop work. Test half-open cleanup and blocking camera shutdown.
 - Use the installed SDK's interfaces, not remembered signatures or snippets from another release.
 

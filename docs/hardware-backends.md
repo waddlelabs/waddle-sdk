@@ -9,8 +9,10 @@ layer.
 
 | Device | Required public surface |
 |---|---|
-| Robot or simulator | `PartConfig` factory → lazy `Rig` → one `Arm` → structural `Driver` |
+| Robot or independent twin | `PartConfig` factory → lazy `Rig` → one `Arm` → structural `Driver` |
 | Camera | `CameraConfig` factory → structural `CameraDriver` |
+| Portable simulation source | `waddle.scene/v1` → installable compiler → native world + ordinary `site.yaml` |
+| Shared simulation world | `WorldConfig` factory → `SimulationBackend` → optional part and camera facets |
 
 A robust port also includes provenance for hardware facts, fake-vendor tests, an
 example manifest, and a site-specific commissioning record. Optional forward
@@ -65,6 +67,14 @@ options, and confined site root. Prefer this typed object over legacy keyword
 factories. In particular, a legacy factory cannot accept configured static envelope
 rules safely and the SDK refuses that combination.
 
+A simulator that shares one scene, clock, or renderer across parts and cameras uses a
+manifest `worlds` declaration instead. Each simulated part or camera names the world
+instead of a device driver. The SDK opens that backend once, advances it once per
+composite tick, and closes it after its cameras and arms. The complete contract and
+MuJoCo and ROS 2 manifests, the URDF scene compiler, Isaac Sim composition, and the
+installable backend/compiler entry-point groups are in
+[simulation backends](porting/simulation.md).
+
 ## Work in this order
 
 1. Record joint order, units, limits, control rate, step caps, hold/e-stop/recovery
@@ -77,7 +87,8 @@ rules safely and the SDK refuses that combination.
 7. Commission the actual unit under the site's physical safety process.
 
 Continue with [robot adapters](porting/robot.md),
-[camera adapters](porting/camera.md), and the
+[camera adapters](porting/camera.md),
+[simulation backends](porting/simulation.md), and the
 [validation and commissioning checklist](porting/testing.md).
 
 ## What higher layers learn

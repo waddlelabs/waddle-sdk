@@ -162,7 +162,7 @@ def wheelhouse(tmp_path_factory: pytest.TempPathFactory) -> Path:
     _build_wheel(
         directory,
         "mujoco",
-        "3.1.0",
+        "3.5.0",
         files={
             "mujoco/__init__.py": (
                 b'raise RuntimeError("mujoco must remain lazily imported")\n'
@@ -337,6 +337,7 @@ from waddle_sdk.agent_skills import bundled_skills, export_skill
 from waddle_sdk.cameras import mock, orbbec, realsense, usb
 from waddle_sdk.robots import alicia, alicia_d, mujoco
 from waddle_sdk.robots import xarm as xarm_adapter
+from waddle_sdk.simulation import SimulationBackend, WorldConfig
 
 names = {
     dist.metadata["Name"].lower()
@@ -356,6 +357,7 @@ print(json.dumps({
     "requirements": importlib.metadata.requires("waddle-sdk"),
     "skills": [skill.name for skill in bundled_skills()],
     "skill_export_ok": export_ok,
+    "simulation_contract": [SimulationBackend.__name__, WorldConfig.__name__],
     "vendor_modules": sorted(
         name for name in sys.modules
         if name in {"alicia_d_sdk", "alicia_m_sdk", "cv2", "mujoco", "pyorbbecsdk", "pyrealsense2", "xarm"}
@@ -396,6 +398,7 @@ print(json.dumps({
     assert result["requirements"]
     assert result["skills"] == ["port-waddle-hardware", "waddle-sdk-contracts"]
     assert result["skill_export_ok"] is True
+    assert result["simulation_contract"] == ["SimulationBackend", "WorldConfig"]
     if "waddle-sdk-media" in effective_optional:
         assert result["core"] == "waddle_media._core"
         assert result["features"] == ["grpc", "livekit"]

@@ -9,6 +9,12 @@
     "api_version": {"const": "waddle.site/v1"},
     "kind": {"const": "Site"},
     "metadata": {"$ref": "#/$defs/metadata"},
+    "worlds": {
+      "type": "object",
+      "default": {},
+      "propertyNames": {"$ref": "#/$defs/name"},
+      "additionalProperties": {"$ref": "#/$defs/world"}
+    },
     "parts": {
       "type": "object",
       "minProperties": 1,
@@ -56,12 +62,27 @@
         {"type": "object", "additionalProperties": {"$ref": "#/$defs/configValue"}}
       ]
     },
+    "world": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["driver", "connection"],
+      "properties": {
+        "driver": {"type": "string", "minLength": 3},
+        "connection": {"type": "object", "additionalProperties": {"$ref": "#/$defs/configValue"}},
+        "options": {"type": "object", "additionalProperties": {"$ref": "#/$defs/configValue"}}
+      }
+    },
     "part": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["driver", "posture", "connection"],
+      "required": ["posture", "connection"],
+      "oneOf": [
+        {"required": ["driver"], "not": {"required": ["world"]}},
+        {"required": ["world"], "not": {"required": ["driver"]}}
+      ],
       "properties": {
         "driver": {"type": "string", "minLength": 3},
+        "world": {"$ref": "#/$defs/name"},
         "posture": {"enum": ["monitor", "supervised"]},
         "base_frame": {"$ref": "#/$defs/name"},
         "connection": {"type": "object", "additionalProperties": {"$ref": "#/$defs/configValue"}},
@@ -113,9 +134,14 @@
     "camera": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["driver", "connection", "stream"],
+      "required": ["connection", "stream"],
+      "oneOf": [
+        {"required": ["driver"], "not": {"required": ["world"]}},
+        {"required": ["world"], "not": {"required": ["driver"]}}
+      ],
       "properties": {
         "driver": {"type": "string", "minLength": 3},
+        "world": {"$ref": "#/$defs/name"},
         "connection": {"type": "object", "additionalProperties": {"$ref": "#/$defs/configValue"}},
         "stream": {"$ref": "#/$defs/stream"},
         "frame_id": {"type": "string", "minLength": 1},

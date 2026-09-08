@@ -45,7 +45,7 @@ alicia-d = [
     "alicia-d-sdk>=6.1.0; python_version >= '3.11'",
     "synriard>=1.2.2; python_version >= '3.11'",
 ]
-mujoco = ["mujoco>=3.1,<4"]
+mujoco = ["mujoco>=3.5,<4"]
 cameras = ["pyorbbecsdk2", "pyrealsense2", "opencv-python-headless>=4.8"]
 robots = [
     "xarm-python-sdk>=1.16",
