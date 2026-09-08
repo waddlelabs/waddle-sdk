@@ -19,6 +19,9 @@ class PartConfig:
     base_frame: str | None = None
     options: Mapping[str, Any] = field(default_factory=dict)
     site_root: Path = Path(".")
+    # One non-serialized namespace per Site.open(). Factories may share lazy
+    # device owners here; each opened driver still owns and closes its handle.
+    resources: dict[object, Any] = field(default_factory=dict, repr=False, compare=False)
 
 
 __all__ = ["PartConfig"]

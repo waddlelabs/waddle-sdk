@@ -44,3 +44,13 @@ Workspace bounds require FK. Static keep-outs and self/cross-part collision requ
 Ship hardware facts with citations to a pinned manual, model, firmware contract, or vendored machine-readable artifact. Pass that citation through the scaffold's required `--facts-source`; for a simulator, cite the explicit synthetic or test model. The generated `FACTS_SOURCE` records the text verbatim but cannot prove its authority. Directionally test facts where possible: a declared safe limit may be tighter, never wider, than the source. Keep vendor packages optional and lazily imported. Put credentials in named secret references, never source or ordinary manifest values.
 
 Build external adapters as ordinary installable packages. Do not patch an SDK registry: `site.yaml` imports the package factory directly.
+
+## Shared physics worlds
+
+The bundled `waddle_sdk.simulation.make_site()` produces MuJoCo, Isaac Sim, and
+SAPIEN reference sites behind these same ports. Do not add simulator-specific
+program operations. `PartConfig.resources` and `CameraConfig.resources` share one
+non-serialized dictionary per site opening; use a lazy reference-counted owner
+when multiple devices share an engine. Sensor profiles must agree with the declared
+camera intrinsics, mount, resolution, depth scale, and optical axes. See the public
+[physics site contract](https://waddle-sdk.readthedocs.io/en/latest/python/simulation/).

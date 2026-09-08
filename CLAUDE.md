@@ -45,6 +45,13 @@ The closed side (control plane, teleop network, judges, relay) lives in a separa
 internal repo (`waddle`, the "cell" codebase) and is NOT here. Nothing in this repo may
 depend on it.
 
+Physics sites are documented in `docs/python/simulation.md`. The optional
+`sdk/python/waddle_sdk/simulation/` package owns shared process-isolated worlds;
+`PartConfig.resources` and `CameraConfig.resources` are one fresh dictionary per
+site opening. The reference scenes use primitive collision geometry and approximate
+inertias, not a calibrated dynamics twin. Engine-dependent acceptance lives in
+`sdk/tests/test_simulation.py` and isolates native graphics runtimes in subprocesses.
+
 ## Repo map
 
 ```

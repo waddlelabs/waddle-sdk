@@ -712,6 +712,7 @@ class Site:
         bounds = raw.get("workspace_bounds", {})
         envelope = raw.get("envelope", {})
         components: dict[str, base.Rig] = {}
+        resources: dict[object, Any] = {}
         for name, part in raw["parts"].items():
             target = _driver_target(part["driver"])
             part_config = PartConfig(
@@ -724,6 +725,7 @@ class Site:
                 base_frame=part.get("base_frame"),
                 options=part.get("options", {}),
                 site_root=self.path.parent,
+                resources=resources,
             )
             components[name] = _call_part_factory(target, part_config)
 
@@ -747,6 +749,7 @@ class Site:
                 ),
                 options=camera.get("options", {}),
                 site_root=self.path.parent,
+                resources=resources,
             )
             camera_descriptions[name] = _camera_description(camera)
             camera_factories[name] = partial(_call_camera_factory, target, camera_config)

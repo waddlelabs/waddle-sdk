@@ -31,9 +31,7 @@ except ModuleNotFoundError:  # pragma: no cover - Python 3.10 only
 SDK = Path(__file__).resolve().parents[1]
 PACKAGE = SDK / "python" / "waddle_sdk"
 VERSION = waddle_sdk.__version__
-PYTHON_311_ONLY = frozenset(
-    {"alicia-m-sdk", "alicia-d-sdk", "synriard", "synria-robocore"}
-)
+PYTHON_311_ONLY = frozenset({"alicia-m-sdk", "alicia-d-sdk", "synriard", "synria-robocore"})
 
 
 def _wheel_name(distribution: str) -> str:
@@ -89,8 +87,7 @@ def _package_files() -> dict[str, bytes]:
         files[path.relative_to(SDK / "python").as_posix()] = path.read_bytes()
     if not any(name.startswith("waddle_sdk/_core.") for name in files):
         raise AssertionError(
-            "the clean-install test needs the extension built by uv sync or "
-            "maturin develop"
+            "the clean-install test needs the extension built by uv sync or maturin develop"
         )
     return files
 
@@ -155,14 +152,12 @@ def wheelhouse(tmp_path_factory: pytest.TempPathFactory) -> Path:
         directory,
         "opencv-python-headless",
         "4.8.0",
-        files={
-            "cv2/__init__.py": b'raise RuntimeError("cv2 must remain lazily imported")\n'
-        },
+        files={"cv2/__init__.py": b'raise RuntimeError("cv2 must remain lazily imported")\n'},
     )
     _build_wheel(
         directory,
         "mujoco",
-        "3.1.0",
+        "3.2.0",
         files={
             "mujoco/__init__.py": (
                 b'raise RuntimeError("mujoco must remain lazily imported")\n'
@@ -171,13 +166,19 @@ def wheelhouse(tmp_path_factory: pytest.TempPathFactory) -> Path:
     )
     _build_wheel(
         directory,
+        "sapien",
+        "3.0.3",
+        files={
+            "sapien/__init__.py": b'raise RuntimeError("sapien must remain lazily imported")\n'
+        },
+    )
+    _build_wheel(
+        directory,
         "xarm-python-sdk",
         "1.16.0",
         files={
             "xarm/__init__.py": b"",
-            "xarm/wrapper.py": (
-                b'raise RuntimeError("xarm must remain lazily imported")\n'
-            ),
+            "xarm/wrapper.py": (b'raise RuntimeError("xarm must remain lazily imported")\n'),
         },
     )
     _build_wheel(
@@ -237,6 +238,7 @@ CASES = (
     ("realsense", "realsense", frozenset({"pyrealsense2"})),
     ("usb", "usb", frozenset({"opencv-python-headless"})),
     ("mujoco", "mujoco", frozenset({"mujoco"})),
+    ("sapien", "sapien", frozenset({"sapien"}) if sys.version_info < (3, 13) else frozenset()),
     ("xarm", "xarm", frozenset({"xarm-python-sdk"})),
     (
         "alicia",

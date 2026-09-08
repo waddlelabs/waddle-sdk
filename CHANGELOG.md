@@ -11,6 +11,16 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+### Added
+
+- Session-owned physics sites for MuJoCo, Isaac Sim, and SAPIEN, with YAM/xArm7
+  reference embodiments and cube, screw-cap, and drawer scenes. Normal SDK robot,
+  RGB-D, FK, geometry, recording, hold, and e-stop ports carry every operation.
+- Non-opening `simulation.make_site()` and optional SAPIEN dependencies; explicit
+  SI units, optical frames, normalized gripper conversion, and sensor profiles.
+- Shared session-local resource namespaces on robot/camera factory configuration,
+  isolated native workers, and native engine/SDK lifecycle conformance tests.
+
 ## Released changelogs
 
 - [`0.1.11` — 2026-08-30](docs/changelogs/CHANGELOG-0.1.11.md)
