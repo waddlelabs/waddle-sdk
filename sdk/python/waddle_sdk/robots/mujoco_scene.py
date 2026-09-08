@@ -177,6 +177,19 @@ def _resolve_urdf_asset(
     return candidate
 
 
+def _parse_urdf(*, name: str, source: Path) -> ET.Element:
+    """Parse one robot source without importing or constructing a backend."""
+
+    try:
+        tree = ET.parse(source)
+    except (OSError, ET.ParseError) as exc:
+        raise SceneValidationError(f"robots.{name}.urdf is not valid XML") from exc
+    root = tree.getroot()
+    if root.tag != "robot" or not root.get("name"):
+        raise SceneValidationError(f"robots.{name}.urdf must have a named <robot> root")
+    return root
+
+
 def _stage_urdf(
     *,
     name: str,
@@ -185,13 +198,8 @@ def _stage_urdf(
     packages: Mapping[str, object],
     output_dir: Path,
 ) -> tuple[Path, ET.Element]:
-    try:
-        tree = ET.parse(source)
-    except (OSError, ET.ParseError) as exc:
-        raise SceneValidationError(f"robots.{name}.urdf is not valid XML") from exc
-    root = tree.getroot()
-    if root.tag != "robot" or not root.get("name"):
-        raise SceneValidationError(f"robots.{name}.urdf must have a named <robot> root")
+    root = _parse_urdf(name=name, source=source)
+    tree = ET.ElementTree(root)
 
     assets_dir = output_dir / "assets" / name
     assets_dir.mkdir(parents=True, exist_ok=True)
@@ -536,9 +544,29 @@ def _write_yaml(path: Path, document: Mapping[str, Any]) -> None:
     )
 
 
+def _preflight_robot_sources(config: SceneConfig) -> None:
+    """Validate backend-independent URDF constraints before loading MuJoCo."""
+
+    for part_name, robot in config.document["robots"].items():
+        base_frame = str(robot.get("base_frame", "world"))
+        if base_frame != "world":
+            raise SceneValidationError(
+                f"robots.{part_name}.base_frame must be 'world'; the portable "
+                "robot pose already places that URDF base in the scene world"
+            )
+        source = _portable_path(
+            config.scene_root,
+            robot["urdf"],
+            field=f"robots.{part_name}.urdf",
+        )
+        root = _parse_urdf(name=str(part_name), source=source)
+        _joints(name=str(part_name), root=root, robot=robot)
+
+
 def compile_scene(*, config: SceneConfig, output_dir: Path) -> SceneArtifacts:
     """Compile one portable scene into MJCF, site.yaml, and replay evidence."""
 
+    _preflight_robot_sources(config)
     mj = _mujoco_module()
     if not hasattr(mj, "MjSpec"):
         raise SceneCompilerError(
@@ -911,9 +939,7 @@ def compile_scene(*, config: SceneConfig, output_dir: Path) -> SceneArtifacts:
         "parts": part_rows,
         "cameras": camera_rows,
         "frames": frames,
-        "calibration": {
-            "artifacts": calibration_value
-        },
+        "calibration": {"artifacts": calibration_value},
         "workspace_bounds": site_options.get("workspace_bounds", {}),
         "envelope": {
             "static_keepouts": site_options.get("static_keepouts", []),

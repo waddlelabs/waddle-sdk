@@ -193,7 +193,9 @@ def test_mujoco_compiler_emits_complete_ordinary_site(tmp_path):
     assert manifest["calibration"] == {"artifacts": "calib/"}
     assert waddle_sdk.load_site(build.site_path).id == "portable-cell"
 
-    calibration = json.loads((build.output_dir / "calib" / "scene_camera.json").read_text())
+    calibration = json.loads(
+        (build.output_dir / "calib" / "scene_camera.json").read_text()
+    )
     assert calibration["schema"] == "waddle.simulation-calibration/v1"
     assert calibration["from_frame"] == "scene_camera_optical"
     assert calibration["to_frame"] == "world"
@@ -206,7 +208,9 @@ def test_mujoco_compiler_emits_complete_ordinary_site(tmp_path):
         "scene_id": "portable-cell",
         "seed": 7,
     }
-    assert [row[3] for row in calibration["matrix"]] == pytest.approx([0.0, -2.0, 1.0, 1.0])
+    assert [row[3] for row in calibration["matrix"]] == pytest.approx(
+        [0.0, -2.0, 1.0, 1.0]
+    )
 
     world = build.world_path.read_text()
     assert 'camera name="scene_camera"' in world
@@ -245,7 +249,11 @@ def test_compiled_scene_opens_as_an_ordinary_rgbd_sdk_site(tmp_path):
         assert session.describe()["robot"]["name"] == "portable-cell"
 
 
-def test_compiler_refuses_envelope_widening_and_escaping_assets(tmp_path):
+def test_compiler_refuses_envelope_widening_and_escaping_assets(tmp_path, monkeypatch):
+    def fail_import():
+        raise AssertionError("invalid scenes must be rejected before importing MuJoCo")
+
+    monkeypatch.setattr("waddle_sdk.robots.mujoco_scene._mujoco_module", fail_import)
     with pytest.raises(SceneValidationError, match="widens the URDF limit"):
         load_scene(_write_scene(tmp_path, lower=-2.0)).compile(
             backend="mujoco", output_dir=tmp_path / "bad-build"
@@ -273,7 +281,11 @@ def test_initializer_refuses_relative_assets_that_escape_the_urdf_directory(
         initialize_scene(urdf, output_dir=tmp_path / "initialized")
 
 
-def test_mujoco_compiler_refuses_a_false_non_world_base_frame(tmp_path):
+def test_mujoco_compiler_refuses_a_false_non_world_base_frame(tmp_path, monkeypatch):
+    def fail_import():
+        raise AssertionError("invalid scenes must be rejected before importing MuJoCo")
+
+    monkeypatch.setattr("waddle_sdk.robots.mujoco_scene._mujoco_module", fail_import)
     path = _write_scene(tmp_path)
     path.write_text(path.read_text().replace("base_frame: world", "base_frame: base"))
     with pytest.raises(SceneValidationError, match="base_frame must be 'world'"):

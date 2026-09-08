@@ -45,6 +45,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Reject invalid portable-scene robot base frames and unsafe URDF joint-limit
+  widening before loading the optional MuJoCo compiler dependency.
 - Keep MuJoCo renderer creation and destruction on its owning camera-pump thread so
   EGL/OpenGL RGB-D capture closes without cross-thread context failures.
 - Transform link-local conservative collision-sphere offsets with each simulated

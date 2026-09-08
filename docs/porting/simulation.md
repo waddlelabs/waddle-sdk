@@ -230,7 +230,10 @@ valid. These public contracts live in `waddle_sdk.simulation` and `waddle_sdk.sc
 ## MuJoCo
 
 The built-in `mujoco` backend and compiler require MuJoCo 3.5 or newer and live behind
-`[mujoco]`. The compiler uses
+`[mujoco]`. Scene-schema and backend-independent URDF safety checks run before that
+optional backend is loaded, so an invalid scene reports its actual manifest or URDF
+fault even in a base SDK installation. A valid compile still requires `[mujoco]`.
+The compiler uses
 MuJoCo's own URDF parser and model-editing/attachment API, so multiple robots can share
 one generated MJCF without a hand-written URDF translator. The runtime shares one
 `MjModel` and `MjData`, renders RGB and metric depth from named cameras, derives
