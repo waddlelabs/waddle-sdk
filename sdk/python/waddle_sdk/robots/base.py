@@ -1756,7 +1756,12 @@ def scene_reset(
 # ---------------------------------------------------------------------------
 
 
-def proprio_tick(session, arms: Mapping[str, Arm]) -> Callable[[float], None]:
+def proprio_tick(
+    session,
+    arms: Mapping[str, Arm],
+    *,
+    advance: Callable[[float], None] | None = None,
+) -> Callable[[float], None]:
     """One turn of the robot's own loop: integrate every part, then report it.
 
     Separate from the gate tick on purpose — this has to keep running on a
@@ -1774,8 +1779,12 @@ def proprio_tick(session, arms: Mapping[str, Arm]) -> Callable[[float], None]:
     named here rather than filled in with a frame nobody declared."""
 
     def tick(dt: float) -> None:
+        if advance is None:
+            for arm in arms.values():
+                arm.step(dt)
+        else:
+            advance(dt)
         for part, arm in arms.items():
-            arm.step(dt)
             position, velocity = arm.state()
             pose = arm.ee_pose(position)
             if pose is None:
@@ -1907,8 +1916,8 @@ class CameraPump(threading.Thread):
     def run(self) -> None:
         period = 1.0 / float(self._description.fps)
         deadline = time.monotonic()
-        while not self._stopping.is_set():
-            try:
+        try:
+            while not self._stopping.is_set():
                 frame = self._driver.capture()
                 if self._stopping.is_set():
                     return
@@ -1940,14 +1949,25 @@ class CameraPump(threading.Thread):
                             None if intrinsics is None else intrinsics.depth_scale_mm,
                         ),
                     )
-            except Exception as exc:  # noqa: BLE001 — vendor capture can throw anything
-                if not self._stopping.is_set():
-                    self._report(
-                        f"camera={self._camera_name} capture stopped after {exc!r}"
-                    )
-                return
-            deadline += period
-            self._stopping.wait(max(0.0, deadline - time.monotonic()))
+                deadline += period
+                self._stopping.wait(max(0.0, deadline - time.monotonic()))
+        except Exception as exc:  # noqa: BLE001 — vendor capture can throw anything
+            if not self._stopping.is_set():
+                self._report(
+                    f"camera={self._camera_name} capture stopped after {exc!r}"
+                )
+        finally:
+            # Drivers are idempotently closed here as well as from stop(). This
+            # gives thread-affine renderers a teardown call on their owning
+            # capture thread while preserving the external close that unblocks
+            # physical devices.
+            try:
+                self._driver.close()
+            except Exception as exc:  # noqa: BLE001 — vendor close can throw
+                self._report(
+                    f"close camera={self._camera_name} on capture thread raised "
+                    f"{exc!r} — this camera may still be connected"
+                )
 
     def stop(self, timeout: float = 5.0) -> None:
         self._stopping.set()
@@ -2107,6 +2127,9 @@ class Rig:
     estop_hardware: bool = False
     report: Callable[[str], None] = status
     build_cameras: Callable[[], dict[str, CameraDriver]] | None = None
+    build_tick: (
+        Callable[[object, Mapping[str, Arm]], Callable[[float], None]] | None
+    ) = None
     _camera_samples: _LatestCameraSamples = field(
         default_factory=_LatestCameraSamples, init=False, repr=False, compare=False
     )
@@ -2122,6 +2145,8 @@ class Rig:
             raise ValueError("Rig.rate_hz must be > 0")
         if self.build_cameras is not None and not callable(self.build_cameras):
             raise TypeError("Rig.build_cameras must be callable or None")
+        if self.build_tick is not None and not callable(self.build_tick):
+            raise TypeError("Rig.build_tick must be callable or None")
 
     def robot(self) -> Robot:
         """The declaration this rig registers — the same object a vendor
@@ -2243,7 +2268,12 @@ class Rig:
     def pump(self, session, arms: Mapping[str, Arm]) -> RobotPump:
         """A :class:`RobotPump` reporting every part of these arms at this
         rig's declared rate. Not started."""
-        return RobotPump(proprio_tick(session, arms), self.rate_hz)
+        tick = (
+            proprio_tick(session, arms)
+            if self.build_tick is None
+            else self.build_tick(session, arms)
+        )
+        return RobotPump(tick, self.rate_hz)
 
     def session(
         self,

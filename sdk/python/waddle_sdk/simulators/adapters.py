@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import math
 import multiprocessing
 import os
@@ -10,7 +9,6 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 
@@ -19,22 +17,22 @@ from ..cameras.base import CameraFrame
 from ..cameras.site import CameraConfig
 from ..robots import base
 from ..robots.site import PartConfig
+from ..simulation import WorldConfig
 from .model import robot_links
 from .scene import load_scene, profile
 
 
 class World:
-    """One lazy, reference-counted world owned exclusively by one Site.open()."""
+    """One lazy world owned by the standard SDK simulation lifecycle."""
 
     def __init__(self, config: dict):
         self.config = config
         self._lock = threading.RLock()
-        self._users = 0
         self._process: subprocess.Popen | None = None
         self._connection = None
         self._failed = False
 
-    def acquire(self) -> World:
+    def open(self) -> None:
         with self._lock:
             if self._failed:
                 raise RuntimeError("simulation failed; reopen the site to recover")
@@ -59,7 +57,7 @@ class World:
                         [
                             self.config.get("worker_python", sys.executable),
                             "-m",
-                            "waddle_sdk.simulation.worker",
+                            "waddle_sdk.simulators.worker",
                             str(child.fileno()),
                         ],
                         pass_fds=(child.fileno(),),
@@ -78,8 +76,6 @@ class World:
                     self._shutdown()
                     self._failed = True
                     raise
-            self._users += 1
-            return self
 
     def _receive(self, timeout: float):
         if self._connection is None or not self._connection.poll(timeout):
@@ -99,18 +95,39 @@ class World:
             except (OSError, EOFError, TimeoutError):
                 self._failed = True
                 self._shutdown()
-                raise RuntimeError("simulation connection lost; reopen the site") from None
+                raise RuntimeError(
+                    "simulation connection lost; reopen the site"
+                ) from None
 
-    def release(self):
+    def step(self, dt: float) -> None:
+        # The worker owns the real-time clock between SDK composite ticks.
+        if not math.isfinite(dt) or dt <= 0:
+            raise ValueError("world step must be finite and positive")
+
+    def reset(self) -> bool:
+        # A fresh process also resets graphics runtimes that cannot restart Kit
+        # after SimulationApp.close(). Device facets keep this world reference.
         with self._lock:
-            self._users -= 1
-            if self._users == 0:
-                if self._connection is not None and not self._failed:
-                    try:
-                        self.call("close")
-                    except (RuntimeError, OSError):
-                        pass
-                self._shutdown()
+            if self._failed or self._connection is None:
+                raise RuntimeError("simulation world is unavailable")
+            self.close()
+            self.open()
+            return True
+
+    def part(self, *, config: PartConfig) -> base.Rig:
+        return _arm(self, config=config)
+
+    def camera(self, *, config: CameraConfig) -> Camera:
+        return _camera(self, config=config)
+
+    def close(self) -> None:
+        with self._lock:
+            if self._connection is not None and not self._failed:
+                try:
+                    self.call("close")
+                except (RuntimeError, OSError):
+                    pass
+            self._shutdown()
 
     def _shutdown(self):
         process, self._process = self._process, None
@@ -129,20 +146,17 @@ class World:
                     process.wait()
 
 
-def _world(config: PartConfig | CameraConfig) -> World:
-    path, definition = load_scene(config.site_root, config.connection.get("simulation"))
-    key = (World, path)
-    owner = config.resources.setdefault(key, World(definition))
-    if json.dumps(owner.config, sort_keys=True) != json.dumps(definition, sort_keys=True):
-        raise ValueError("simulation configuration changed during site assembly")
-    return owner
+def backend(*, config: WorldConfig) -> World:
+    """Declare a reference scene through the public SimulationBackend contract."""
+    _, definition = load_scene(config.site_root, config.connection.get("simulation"))
+    return World(definition)
 
 
 class Driver:
     kind = "sim"
 
     def __init__(self, world: World, *, posture: str):
-        self.world = world.acquire()
+        self.world = world
         self.profile = profile(world.config["robot"])
         self._monitor = posture == "monitor"
         self._closed = False
@@ -165,7 +179,8 @@ class Driver:
         values = np.asarray(target, dtype=float)
         self.profile.poses(values)  # shared width/finite validation
         if any(
-            x < lo or x > hi for x, (lo, hi) in zip(values, self.profile.limits, strict=True)
+            x < lo or x > hi
+            for x, (lo, hi) in zip(values, self.profile.limits, strict=True)
         ):
             raise ValueError("simulation target exceeds the robot's joint limits")
         self.world.call("write", values)
@@ -192,7 +207,8 @@ class Driver:
             return False
         self.profile.poses(values)
         if any(
-            x < lo or x > hi for x, (lo, hi) in zip(values, self.profile.limits, strict=True)
+            x < lo or x > hi
+            for x, (lo, hi) in zip(values, self.profile.limits, strict=True)
         ):
             raise ValueError("simulation home exceeds the robot's joint limits")
         return self.world.call("home", tuple(values))
@@ -236,14 +252,14 @@ class Driver:
     def close(self):
         if not self._closed:
             self._closed = True
-            self.world.release()
 
 
-def arm(*, config: PartConfig) -> base.Rig:
-    owner = _world(config)
+def _arm(owner: World, *, config: PartConfig) -> base.Rig:
     p = profile(owner.config["robot"])
     if config.base_frame != p.frame:
-        raise ValueError(f"{p.name} simulation requires its declared base frame {p.frame}")
+        raise ValueError(
+            f"{p.name} simulation requires its declared base frame {p.frame}"
+        )
     if set(config.joint_limits) != set(p.names):
         raise ValueError("simulation joint names/order must match the robot profile")
     limits = tuple(tuple(config.joint_limits[name]) for name in p.names)
@@ -296,7 +312,9 @@ def arm(*, config: PartConfig) -> base.Rig:
                     descriptors.Joint(
                         name=name, min_position=lo, max_position=hi, max_velocity=v
                     )
-                    for name, (lo, hi), v in zip(p.names, limits, velocities, strict=True)
+                    for name, (lo, hi), v in zip(
+                        p.names, limits, velocities, strict=True
+                    )
                 ),
                 rate_hz=rate,
             ),
@@ -312,7 +330,7 @@ class Camera:
         self.name = config.name
         self._intrinsics = descriptors.Intrinsics(**dict(config.intrinsics or {}))
         self._closed = False
-        self.world = owner.acquire()
+        self.world = owner
 
     def intrinsics(self):
         return self._intrinsics
@@ -326,11 +344,9 @@ class Camera:
     def close(self):
         if not self._closed:
             self._closed = True
-            self.world.release()
 
 
-def camera(*, config: CameraConfig) -> Camera:
-    owner = _world(config)
+def _camera(owner: World, *, config: CameraConfig) -> Camera:
     row = owner.config["cameras"].get(config.name)
     if row is None:
         raise ValueError("camera name is absent from the simulation profile")
@@ -349,5 +365,7 @@ def camera(*, config: CameraConfig) -> Camera:
         ("mount", mount),
     ):
         if row[key] != value:
-            raise ValueError(f"camera {config.name} {key} differs from the simulation profile")
+            raise ValueError(
+                f"camera {config.name} {key} differs from the simulation profile"
+            )
     return Camera(owner, config)

@@ -18,6 +18,13 @@ from ._hosted_ui import (
     WaddleUiInvitationClient,
 )
 from .agent_skills import bundled_skills, export_skill
+from .scene import (
+    SceneError,
+    initialize_scene,
+    load_scene,
+    simulation_compiler_names,
+)
+from .simulation import simulation_backend_names
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -68,6 +75,61 @@ def _parser() -> argparse.ArgumentParser:
         required=True,
         help="parent directory that will receive a new <skill-name> folder",
     )
+
+    sim = commands.add_parser(
+        "sim",
+        help="validate, compile, or smoke-test a portable simulation scene",
+    )
+    sim_commands = sim.add_subparsers(dest="sim_command", required=True)
+    backends = sim_commands.add_parser(
+        "backends",
+        help="list installed simulation runtimes and scene compilers",
+    )
+    backends.add_argument("--json", action="store_true", dest="as_json")
+    initialize = sim_commands.add_parser(
+        "init",
+        help="create an editable portable scene bundle from one URDF",
+    )
+    initialize.add_argument("urdf")
+    initialize.add_argument("--output", required=True)
+    initialize.add_argument("--part", default="arm")
+    initialize.add_argument("--tool-link")
+    initialize.add_argument(
+        "--color",
+        nargs=4,
+        type=float,
+        metavar=("R", "G", "B", "A"),
+        default=(0.9, 0.55, 0.1, 1.0),
+    )
+    initialize.add_argument(
+        "--package",
+        action="append",
+        default=[],
+        metavar="NAME=PATH",
+        help="resolve one package://NAME asset root while copying the URDF",
+    )
+    validate = sim_commands.add_parser(
+        "validate",
+        help="validate a portable scene without importing a simulator",
+    )
+    validate.add_argument("scene")
+    validate.add_argument("--json", action="store_true", dest="as_json")
+    compile_command = sim_commands.add_parser(
+        "compile",
+        help="compile a portable scene into a new backend-native bundle",
+    )
+    compile_command.add_argument("scene")
+    compile_command.add_argument("--backend", default="mujoco")
+    compile_command.add_argument("--output", required=True)
+    compile_command.add_argument("--seed", type=int)
+    run = sim_commands.add_parser(
+        "run",
+        help="compile and locally open a portable scene once",
+    )
+    run.add_argument("scene")
+    run.add_argument("--backend", default="mujoco")
+    run.add_argument("--output", required=True)
+    run.add_argument("--seed", type=int)
     return parser
 
 
@@ -157,10 +219,106 @@ def _skills(args: argparse.Namespace) -> int:
     raise AssertionError(f"unhandled skills command {args.skills_command!r}")
 
 
+def _sim(args: argparse.Namespace) -> int:
+    try:
+        if args.sim_command == "backends":
+            runtimes = set(simulation_backend_names())
+            compilers = set(simulation_compiler_names())
+            rows = [
+                {
+                    "name": name,
+                    "runtime": name in runtimes,
+                    "compiler": name in compilers,
+                }
+                for name in sorted(runtimes | compilers)
+            ]
+            if args.as_json:
+                print(json.dumps({"backends": rows}, sort_keys=True))
+            else:
+                for row in rows:
+                    capabilities = ", ".join(
+                        name
+                        for name in ("runtime", "compiler")
+                        if row[name]
+                    )
+                    print(f"{row['name']}\t{capabilities}")
+            return 0
+        if args.sim_command == "init":
+            packages = {}
+            for value in args.package:
+                name, separator, path = value.partition("=")
+                if not separator or not name or not path or name in packages:
+                    raise SceneError(
+                        "--package must be a unique non-empty NAME=PATH mapping"
+                    )
+                packages[name] = path
+            scene_path = initialize_scene(
+                args.urdf,
+                output_dir=args.output,
+                part_name=args.part,
+                tool_link=args.tool_link,
+                rgba=args.color,
+                packages=packages,
+            )
+            print(f"scene: {scene_path}")
+            print(
+                f"next: waddle-sdk sim compile {scene_path} --backend mujoco "
+                f"--output {scene_path.parent / 'build'}"
+            )
+            return 0
+        scene = load_scene(args.scene)
+        if args.sim_command == "validate":
+            payload = {
+                "api_version": scene.manifest["api_version"],
+                "scene_id": scene.id,
+                "robots": sorted(scene.manifest["robots"]),
+                "cameras": sorted(scene.manifest.get("cameras", {})),
+                "lights": sorted(scene.manifest.get("lights", {})),
+            }
+            if args.as_json:
+                print(json.dumps(payload, sort_keys=True))
+            else:
+                print(
+                    f"valid portable scene {scene.id!r}: "
+                    f"{len(payload['robots'])} robot(s), "
+                    f"{len(payload['cameras'])} camera(s), "
+                    f"{len(payload['lights'])} light(s)"
+                )
+            return 0
+        if args.sim_command in {"compile", "run"}:
+            build = scene.compile(
+                backend=args.backend,
+                output_dir=args.output,
+                seed=args.seed,
+            )
+            print(f"site: {build.site_path}")
+            print(f"world: {build.world_path}")
+            print(f"evidence: {build.evidence_path}")
+            if args.sim_command == "run":
+                site = load_site(build.site_path)
+                with site.open(console=False) as session:
+                    observation = session.observe()
+                    summary = {
+                        "site_id": site.id,
+                        "parts": {
+                            name: len(part.joint_position)
+                            for name, part in observation.parts.items()
+                        },
+                        "cameras_ready": sorted(observation.cameras),
+                    }
+                    print(json.dumps(summary, sort_keys=True))
+            return 0
+    except (FileExistsError, OSError, RuntimeError, SceneError) as error:
+        raise SystemExit(str(error)) from error
+    raise AssertionError(f"unhandled sim command {args.sim_command!r}")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "connect":
         return _connect(args)
     if args.command == "skills":
         return _skills(args)
+    if args.command == "sim":
+        return _sim(args)
     raise AssertionError(f"unhandled command {args.command!r}")

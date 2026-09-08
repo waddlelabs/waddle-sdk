@@ -30,7 +30,7 @@ The reference robot models preserve the live adapters' joint names, order, limit
 radian units, FK, and normalized hand action (0 closed, 1 open). YAM uses the SDK's
 pinned I2RT chain and tool convention. xArm7 uses the vendor's pinned kinematic
 origins with the standard gripper TCP. Sources and licensing are recorded alongside
-`waddle_sdk/simulation/data/`.
+`waddle_sdk/simulators/data/`.
 
 These are deliberately simple reference geometries, with approximate masses and
 inertias, position servos, and gravity compensation. They are **not calibrated
@@ -47,7 +47,7 @@ import json
 from pathlib import Path
 import yaml
 from waddle_sdk import load_site
-from waddle_sdk.simulation import make_site
+from waddle_sdk.simulators import make_site
 
 root = Path("cube-site")
 root.mkdir()
@@ -85,17 +85,21 @@ segmentation, teleport, or task-completion operation is exposed through the runt
 
 ## Ownership and extension
 
-`PartConfig.resources` and `CameraConfig.resources` refer to one non-serialized,
-session-local dictionary. A factory may declare a lazy shared owner there, but may
-only acquire native resources at the existing opening boundary. Each `Site.open()`
-receives a fresh dictionary. A simulation has one reference-counted worker shared by
-its arm and cameras; the last close releases its graphics runtime and physics world.
-This also isolates incompatible engine/Python runtimes from the control process.
+Reference scenes implement the existing [shared-world contract](../porting/simulation.md).
+The ordinary `worlds.cell` declaration owns one lazy worker and exposes part/camera
+facets. `Site` opens it after authorization, resets the whole scene once per episode,
+and closes it after devices. Each opening gets independent physics state. Worker
+isolation keeps incompatible engine/Python runtimes out of the control process.
+
+These presets add coupled grippers and articulated objects beyond the generic URDF
+compiler's supported scene subset. For custom URDF bundles, use the existing portable
+scene compiler; for an already configured Isaac stage, the existing ROS 2 backend is
+also available. No second SDK lifecycle or agent API is introduced.
 
 The worker continuously advances physics, serializes sensor/control requests, and
 fails closed on startup or connection loss. Recovery requires reopening the site;
 it never replays a motion after reconnecting. Site camera declarations are compared
-to simulation sensor profiles before opening. Joint owner limits may tighten the
+to simulation sensor profiles before exposing the camera. Joint owner limits may tighten the
 reference limits, but must include the reference home pose.
 
 External simulations can implement the existing [robot](../porting/robot.md) and

@@ -1,4 +1,4 @@
-# Robot and simulator adapter contract
+# Robot and independent twin adapter contract
 
 ## Factory and lifecycle
 
@@ -45,12 +45,9 @@ Ship hardware facts with citations to a pinned manual, model, firmware contract,
 
 Build external adapters as ordinary installable packages. Do not patch an SDK registry: `site.yaml` imports the package factory directly.
 
-## Shared physics worlds
+When multiple parts or cameras need one shared simulator scene, implement the
+[shared simulation backend contract](simulation-contract.md) instead of opening one
+world from every part.
 
-The bundled `waddle_sdk.simulation.make_site()` produces MuJoCo, Isaac Sim, and
-SAPIEN reference sites behind these same ports. Do not add simulator-specific
-program operations. `PartConfig.resources` and `CameraConfig.resources` share one
-non-serialized dictionary per site opening; use a lazy reference-counted owner
-when multiple devices share an engine. Sensor profiles must agree with the declared
-camera intrinsics, mount, resolution, depth scale, and optical axes. See the public
-[physics site contract](https://waddle-sdk.readthedocs.io/en/latest/python/simulation/).
+Reference YAM/xArm7 physics scenes use the same world lifecycle; see
+`docs/python/simulation.md` in the source repository for profiles and engine validation.

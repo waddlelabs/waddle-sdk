@@ -164,14 +164,33 @@ def _driver_targets(document: object) -> list[tuple[str, str]]:
     if not isinstance(document, Mapping):
         raise ValidationError("site manifest must be a mapping")
     targets: list[tuple[str, str]] = []
+    worlds = document.get("worlds", {})
+    if not isinstance(worlds, Mapping):
+        raise ValidationError("site worlds must be a mapping")
+    world_facets: dict[str, set[str]] = {str(name): set() for name in worlds}
     for section, kind in (("parts", "robot"), ("cameras", "camera")):
         rows = document.get(section, {})
         if not isinstance(rows, Mapping):
             raise ValidationError(f"site {section} must be a mapping")
         for name, row in rows.items():
-            if not isinstance(row, Mapping) or not isinstance(row.get("driver"), str):
-                raise ValidationError(f"site {section}.{name} must declare driver")
-            targets.append((kind, row["driver"]))
+            if not isinstance(row, Mapping):
+                raise ValidationError(f"site {section}.{name} must be a mapping")
+            driver = row.get("driver")
+            world = row.get("world")
+            if isinstance(driver, str):
+                targets.append((kind, driver))
+                continue
+            if isinstance(world, str) and world in world_facets:
+                world_facets[world].add("part" if section == "parts" else "camera")
+                continue
+            raise ValidationError(
+                f"site {section}.{name} must declare one driver or world"
+            )
+    for name, row in worlds.items():
+        if not isinstance(row, Mapping) or not isinstance(row.get("driver"), str):
+            raise ValidationError(f"site worlds.{name} must declare driver")
+        facets = ",".join(sorted(world_facets[str(name)]))
+        targets.append((f"world:{facets}", row["driver"]))
     return targets
 
 
@@ -246,6 +265,25 @@ def main() -> int:
                 ):
                     raise ValidationError(
                         f"{path}: camera adapter must define capture() and close()"
+                    )
+            if kind.startswith("world:"):
+                classes = {
+                    node.name: {
+                        member.name
+                        for member in node.body
+                        if isinstance(member, ast.FunctionDef)
+                    }
+                    for node in tree.body
+                    if isinstance(node, ast.ClassDef)
+                }
+                required = {"open", "step", "reset", "close"}
+                required.update(
+                    facet for facet in kind.partition(":")[2].split(",") if facet
+                )
+                if not any(required <= methods for methods in classes.values()):
+                    raise ValidationError(
+                        f"{path}: simulation backend must define "
+                        f"{', '.join(sorted(required))}() on one class"
                     )
             inspected += 1
     except (OSError, SyntaxError, ValidationError) as error:

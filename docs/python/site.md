@@ -6,8 +6,9 @@ The contexts are nested intentionally:
 
 1. `load_site(path)` parses and validates `waddle.site/v1` without hardware access.
 2. `Site.open()` constructs an unopened `SiteSession` context.
-3. `SiteSession.__enter__()` resolves named secrets, builds the rigs, then opens
-   drivers, cameras, native threads, and recording.
+3. `SiteSession.__enter__()` resolves named secrets and builds declaration-only rigs.
+   After connector authorization, it opens optional simulation worlds, drivers,
+   cameras, native threads, and recording.
 4. `SiteSession.run()` constructs an unopened `Run`; entering it starts one episode.
 5. `Run.observe()` returns a composite robot/camera snapshot and paired time.
 6. `Run.step()` asks the native gate, then applies the owner's envelope before any
@@ -58,6 +59,10 @@ Each manifest part calls exactly one `PartConfig` factory. That factory returns 
 combines those parts into a composite declaration. All parts currently need the same
 control rate and posture.
 
+A shared simulator instead declares `worlds.*.driver` and lets each simulated part or
+camera name that world. The SDK opens the world once and still presents its devices
+through the ordinary runtime. See [simulation backends](../porting/simulation.md).
+
 `base_frame` must match the frame reported by the opened arm. Camera mounts refer to
 the scene or one declared part; they do not imply a transform. A configured workspace
 requires forward kinematics. Static keep-outs or self/cross-part collision rules
@@ -65,3 +70,9 @@ require conservative geometry in compatible frames and fail closed when it is mi
 
 The complete JSON Schema ships at `waddle_sdk/schemas/site-v1.schema.json` in the
 installed distribution.
+
+For URDF-first simulation, `waddle-sdk sim init` creates the separate strict
+`waddle.scene/v1` authoring document and `sim compile` emits this ordinary Site form.
+Camera placement, lights, materials/coatings, deterministic variation, MuJoCo, the
+ROS 2 adapter used by Gazebo/Isaac Sim, and third-party backend entry points are covered
+in [Simulation backends](../porting/simulation.md).

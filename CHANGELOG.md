@@ -13,13 +13,48 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
-- Session-owned physics sites for MuJoCo, Isaac Sim, and SAPIEN, with YAM/xArm7
-  reference embodiments and cube, screw-cap, and drawer scenes. Normal SDK robot,
-  RGB-D, FK, geometry, recording, hold, and e-stop ports carry every operation.
-- Non-opening `simulation.make_site()` and optional SAPIEN dependencies; explicit
-  SI units, optical frames, normalized gripper conversion, and sensor profiles.
-- Shared session-local resource namespaces on robot/camera factory configuration,
-  isolated native workers, and native engine/SDK lifecycle conformance tests.
+- Reference YAM and xArm7 workspaces for MuJoCo, Isaac Sim, and SAPIEN, with shared
+  scene/wrist RGB-D profiles, normalized grippers, two cubes, a threaded cap, and a drawer.
+  Optional engines run in isolated workers behind the existing shared-world lifecycle.
+
+- Add manifest-selected shared simulation worlds through the public
+  `WorldConfig`/`SimulationBackend` contract. World-backed parts and cameras reuse the
+  ordinary SDK runtime, support matrix, owner envelope, observations, and RGB-D sample
+  path consumed by Metal.
+- Add a shared-world MuJoCo reference backend with one physics state for all attached
+  parts and cameras, exactly-once world stepping, episode reset, derived camera
+  intrinsics, and aligned metric Z16 rendering.
+- Add the strict `waddle.scene/v1` portable URDF scene contract, non-overwriting
+  `waddle-sdk sim backends|init|validate|compile|run` workflow, seeded value resolution,
+  replayable file-hash evidence, and a checked scene/wrist RGB-D example. The MuJoCo
+  compiler covers robot placement, reviewed joint limits, scene geometry, camera
+  optical poses, lights, materials, visual/physical coatings, and link-local safety
+  spheres while emitting an ordinary `site.yaml`.
+- Add installed simulator extension points through the
+  `waddle_sdk.simulation_backends` and `waddle_sdk.simulation_compilers` entry-point
+  groups while retaining explicit `module:callable` targets.
+- Add a lazy ROS 2 shared-world backend for simulator graphs. It maps reviewed joint
+  declarations to ros2_control or `JointState` position topics, pairs RGB/depth by
+  acquisition time, derives active intrinsics from `CameraInfo`, and supports an
+  optional `std_srvs/Empty` reset service. This provides the ordinary SDK boundary for
+  ROS-connected Gazebo and Isaac Sim processes.
+
+### Changed
+
+- Preserve the existing `waddle_sdk.robots.mujoco:arm` factory as a compatible
+  private-world adapter while documenting `waddle_sdk.robots.mujoco:backend` for
+  multipart and RGB-D scenes.
+- Require MuJoCo 3.5 or newer for the portable `MjSpec` scene compiler and renderer;
+  the existing runtime remains lazy behind the `[mujoco]` extra.
+
+### Fixed
+
+- Reject invalid portable-scene robot base frames and unsafe URDF joint-limit
+  widening before loading the optional MuJoCo compiler dependency.
+- Keep MuJoCo renderer creation and destruction on its owning camera-pump thread so
+  EGL/OpenGL RGB-D capture closes without cross-thread context failures.
+- Transform link-local conservative collision-sphere offsets with each simulated
+  body's pose instead of treating every sphere as body-origin centered.
 
 ## Released changelogs
 

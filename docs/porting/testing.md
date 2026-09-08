@@ -39,6 +39,13 @@ For a multipart manifest, also verify that every factory returns one bare arm, a
 rates and postures agree, base frames match, and a cross-part geometry refusal moves
 no part.
 
+For a shared simulation world, also prove that the factory and part declarations are
+non-opening, the world opens before its arms and cameras, one composite SDK tick
+advances the world exactly once, RGB and depth come from the same world state, reset
+runs once per episode, and cleanup closes cameras and arms before the world. Run this
+test through `Site.open()` so the result is the same `SdkRuntimePort` that Metal
+consumes.
+
 ## 4. Hardware-in-loop commissioning
 
 Hardware tests are attended and site-specific. Before enabling motion, record:

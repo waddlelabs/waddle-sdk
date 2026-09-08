@@ -40,7 +40,9 @@ class Engine:
         self.renderers = {}
         self._screw = None
         if config["environment"] == "bottle_cap":
-            self._screw = tuple(self.model.joint(name) for name in ("cap_rotation", "cap_lift"))
+            self._screw = tuple(
+                self.model.joint(name) for name in ("cap_rotation", "cap_lift")
+            )
 
     def _expand(self, q):
         return tuple(q[:-1]) + (q[-1] * self.profile.opening / 2,) * 2

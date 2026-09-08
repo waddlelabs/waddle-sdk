@@ -1,0 +1,440 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://waddle.dev/schemas/scene-v1.schema.json",
+  "title": "Waddle Portable Simulation Scene v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["api_version", "kind", "metadata", "robots"],
+  "properties": {
+    "api_version": {"const": "waddle.scene/v1"},
+    "kind": {"const": "SimulationScene"},
+    "metadata": {"$ref": "#/$defs/metadata"},
+    "physics": {"$ref": "#/$defs/physics"},
+    "packages": {
+      "type": "object",
+      "default": {},
+      "propertyNames": {"$ref": "#/$defs/name"},
+      "additionalProperties": {"$ref": "#/$defs/path"}
+    },
+    "robots": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {"$ref": "#/$defs/name"},
+      "additionalProperties": {"$ref": "#/$defs/robot"}
+    },
+    "cameras": {
+      "type": "object",
+      "default": {},
+      "propertyNames": {"$ref": "#/$defs/name"},
+      "additionalProperties": {"$ref": "#/$defs/camera"}
+    },
+    "lights": {
+      "type": "object",
+      "default": {},
+      "propertyNames": {"$ref": "#/$defs/name"},
+      "additionalProperties": {"$ref": "#/$defs/light"}
+    },
+    "geometry": {
+      "type": "object",
+      "default": {},
+      "propertyNames": {"$ref": "#/$defs/name"},
+      "additionalProperties": {"$ref": "#/$defs/sceneGeometry"}
+    },
+    "frames": {
+      "type": "object",
+      "default": {},
+      "propertyNames": {"$ref": "#/$defs/name"},
+      "additionalProperties": {"$ref": "#/$defs/frame"}
+    },
+    "site": {"$ref": "#/$defs/site"},
+    "randomization": {"$ref": "#/$defs/randomization"},
+    "backend_extensions": {
+      "type": "object",
+      "default": {},
+      "propertyNames": {"$ref": "#/$defs/name"},
+      "additionalProperties": {"type": "object"}
+    }
+  },
+  "$defs": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"
+    },
+    "sampleNumber": {
+      "oneOf": [
+        {"type": "number"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["uniform"],
+          "properties": {
+            "uniform": {
+              "type": "array",
+              "prefixItems": [{"type": "number"}, {"type": "number"}],
+              "items": false
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["choice"],
+          "properties": {
+            "choice": {
+              "type": "array",
+              "minItems": 1,
+              "items": {"type": "number"}
+            }
+          }
+        }
+      ]
+    },
+    "vector3": {
+      "type": "array",
+      "prefixItems": [
+        {"$ref": "#/$defs/sampleNumber"},
+        {"$ref": "#/$defs/sampleNumber"},
+        {"$ref": "#/$defs/sampleNumber"}
+      ],
+      "items": false
+    },
+    "plainVector3": {
+      "type": "array",
+      "prefixItems": [{"type": "number"}, {"type": "number"}, {"type": "number"}],
+      "items": false
+    },
+    "quaternion": {
+      "type": "array",
+      "prefixItems": [
+        {"type": "number"},
+        {"type": "number"},
+        {"type": "number"},
+        {"type": "number"}
+      ],
+      "items": false
+    },
+    "pose": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "position_m": {"$ref": "#/$defs/vector3"},
+        "quaternion_wxyz": {"$ref": "#/$defs/quaternion"}
+      }
+    },
+    "material": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "rgba": {
+          "type": "array",
+          "prefixItems": [
+            {"$ref": "#/$defs/sampleNumber"},
+            {"$ref": "#/$defs/sampleNumber"},
+            {"$ref": "#/$defs/sampleNumber"},
+            {"$ref": "#/$defs/sampleNumber"}
+          ],
+          "items": false
+        },
+        "metallic": {"$ref": "#/$defs/sampleNumber"},
+        "roughness": {"$ref": "#/$defs/sampleNumber"},
+        "emission": {"$ref": "#/$defs/sampleNumber"},
+        "reflectance": {"$ref": "#/$defs/sampleNumber"}
+      }
+    },
+    "geometry": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "size_m"],
+          "properties": {
+            "kind": {"const": "box"},
+            "size_m": {"$ref": "#/$defs/vector3"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "radius_m"],
+          "properties": {
+            "kind": {"const": "sphere"},
+            "radius_m": {"$ref": "#/$defs/sampleNumber"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "radius_m", "length_m"],
+          "properties": {
+            "kind": {"enum": ["capsule", "cylinder"]},
+            "radius_m": {"$ref": "#/$defs/sampleNumber"},
+            "length_m": {"$ref": "#/$defs/sampleNumber"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "path"],
+          "properties": {
+            "kind": {"const": "mesh"},
+            "path": {"$ref": "#/$defs/path"},
+            "scale": {"$ref": "#/$defs/vector3"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "size_m"],
+          "properties": {
+            "kind": {"const": "plane"},
+            "size_m": {
+              "type": "array",
+              "prefixItems": [
+                {"$ref": "#/$defs/sampleNumber"},
+                {"$ref": "#/$defs/sampleNumber"}
+              ],
+              "items": false
+            }
+          }
+        }
+      ]
+    },
+    "collisionSurface": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "friction": {"$ref": "#/$defs/plainVector3"},
+        "mass_kg": {"type": "number", "exclusiveMinimum": 0},
+        "density_kg_m3": {"type": "number", "exclusiveMinimum": 0}
+      },
+      "not": {"required": ["mass_kg", "density_kg_m3"]}
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": {
+        "id": {"$ref": "#/$defs/name"},
+        "description": {"type": "string", "maxLength": 1024}
+      }
+    },
+    "physics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "timestep_s": {"type": "number", "exclusiveMinimum": 0},
+        "gravity_m_s2": {"$ref": "#/$defs/plainVector3"}
+      }
+    },
+    "jointOverride": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "lower": {"type": "number"},
+        "upper": {"type": "number"},
+        "home": {"type": "number"},
+        "max_velocity": {"type": "number", "exclusiveMinimum": 0},
+        "effort": {"type": "number", "exclusiveMinimum": 0},
+        "kp": {"type": "number", "exclusiveMinimum": 0}
+      }
+    },
+    "tool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["link"],
+      "properties": {
+        "link": {"$ref": "#/$defs/name"},
+        "pose": {"$ref": "#/$defs/pose"}
+      }
+    },
+    "collisionSphere": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "link", "radius_m"],
+      "properties": {
+        "name": {"$ref": "#/$defs/name"},
+        "link": {"$ref": "#/$defs/name"},
+        "radius_m": {"type": "number", "exclusiveMinimum": 0},
+        "center_m": {"$ref": "#/$defs/plainVector3"}
+      }
+    },
+    "coatingSafetySphere": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "radius_m"],
+      "properties": {
+        "name": {"$ref": "#/$defs/name"},
+        "radius_m": {"type": "number", "exclusiveMinimum": 0},
+        "center_m": {"$ref": "#/$defs/plainVector3"}
+      }
+    },
+    "coating": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "link", "geometry", "material"],
+      "properties": {
+        "name": {"$ref": "#/$defs/name"},
+        "link": {"$ref": "#/$defs/name"},
+        "geometry": {"$ref": "#/$defs/geometry"},
+        "pose": {"$ref": "#/$defs/pose"},
+        "material": {"$ref": "#/$defs/material"},
+        "collision": {"$ref": "#/$defs/collisionSurface"},
+        "safety_sphere": {"$ref": "#/$defs/coatingSafetySphere"}
+      },
+      "dependentRequired": {"collision": ["safety_sphere"]}
+    },
+    "robot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["urdf"],
+      "properties": {
+        "urdf": {"$ref": "#/$defs/path"},
+        "pose": {"$ref": "#/$defs/pose"},
+        "posture": {"enum": ["monitor", "supervised"]},
+        "base_frame": {"$ref": "#/$defs/name"},
+        "rate_hz": {"type": "number", "exclusiveMinimum": 0},
+        "position_kp": {"type": "number", "exclusiveMinimum": 0},
+        "joints": {
+          "type": "object",
+          "propertyNames": {"$ref": "#/$defs/name"},
+          "additionalProperties": {"$ref": "#/$defs/jointOverride"}
+        },
+        "tool": {"$ref": "#/$defs/tool"},
+        "appearance": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "default": {"$ref": "#/$defs/material"},
+            "links": {
+              "type": "object",
+              "propertyNames": {"$ref": "#/$defs/name"},
+              "additionalProperties": {"$ref": "#/$defs/material"}
+            }
+          }
+        },
+        "coatings": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/coating"}
+        },
+        "collision_spheres": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/collisionSphere"}
+        }
+      }
+    },
+    "stream": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["width", "height", "fps"],
+      "properties": {
+        "width": {"type": "integer", "minimum": 1},
+        "height": {"type": "integer", "minimum": 1},
+        "fps": {"type": "number", "exclusiveMinimum": 0}
+      }
+    },
+    "cameraMount": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": {"kind": {"const": "scene"}}
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "part", "link"],
+          "properties": {
+            "kind": {"const": "wrist"},
+            "part": {"$ref": "#/$defs/name"},
+            "link": {"$ref": "#/$defs/name"}
+          }
+        }
+      ]
+    },
+    "camera": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mount", "pose", "stream"],
+      "properties": {
+        "mount": {"$ref": "#/$defs/cameraMount"},
+        "pose": {"$ref": "#/$defs/pose"},
+        "stream": {"$ref": "#/$defs/stream"},
+        "vertical_fov_deg": {"$ref": "#/$defs/sampleNumber"},
+        "depth": {"type": "boolean"},
+        "depth_scale_mm": {"type": "number", "exclusiveMinimum": 0},
+        "frame_id": {"type": "string", "minLength": 1, "maxLength": 256}
+      }
+    },
+    "light": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "position_m", "color", "intensity"],
+      "properties": {
+        "type": {"enum": ["directional", "point", "spot"]},
+        "position_m": {"$ref": "#/$defs/vector3"},
+        "direction": {"$ref": "#/$defs/vector3"},
+        "color": {"$ref": "#/$defs/vector3"},
+        "intensity": {"$ref": "#/$defs/sampleNumber"},
+        "cast_shadows": {"type": "boolean"},
+        "range_m": {"$ref": "#/$defs/sampleNumber"},
+        "spot_cutoff_deg": {"$ref": "#/$defs/sampleNumber"}
+      }
+    },
+    "sceneGeometry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["geometry", "pose", "material"],
+      "properties": {
+        "geometry": {"$ref": "#/$defs/geometry"},
+        "pose": {"$ref": "#/$defs/pose"},
+        "material": {"$ref": "#/$defs/material"},
+        "collision": {"$ref": "#/$defs/collisionSurface"}
+      }
+    },
+    "frame": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["parent"],
+      "properties": {
+        "parent": {"type": "string", "minLength": 1},
+        "pose": {"$ref": "#/$defs/pose"}
+      }
+    },
+    "workspaceBounds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["min", "max"],
+      "properties": {
+        "min": {"$ref": "#/$defs/plainVector3"},
+        "max": {"$ref": "#/$defs/plainVector3"}
+      }
+    },
+    "site": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "workspace_bounds": {"$ref": "#/$defs/workspaceBounds"},
+        "static_keepouts": {"type": "array", "items": {"type": "object"}},
+        "self_collision": {"type": "object"},
+        "calibration_artifacts": {"$ref": "#/$defs/path"},
+        "recording_root": {"$ref": "#/$defs/path"}
+      }
+    },
+    "randomization": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "seed": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807}
+      }
+    }
+  }
+}

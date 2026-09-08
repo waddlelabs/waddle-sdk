@@ -268,6 +268,77 @@ def test_scaffolds_validate_statically_and_pass_fake_vendor_tests(
     )
 
 
+def test_static_validator_accepts_a_world_selected_backend(tmp_path: Path) -> None:
+    project = tmp_path / "world-adapter"
+    source = project / "src" / "acme_sim"
+    source.mkdir(parents=True)
+    (source / "__init__.py").write_text("", encoding="utf-8")
+    (source / "backend.py").write_text(
+        """class Backend:
+    def __init__(self, config):
+        self.config = config
+
+    def part(self, *, config):
+        raise NotImplementedError
+
+    def camera(self, *, config):
+        raise NotImplementedError
+
+    def open(self):
+        pass
+
+    def step(self, dt):
+        pass
+
+    def reset(self):
+        return True
+
+    def close(self):
+        pass
+
+
+def backend(*, config):
+    return Backend(config)
+""",
+        encoding="utf-8",
+    )
+    (project / "site.yaml").write_text(
+        """api_version: waddle.site/v1
+kind: Site
+metadata: {id: world-adapter}
+worlds:
+  cell:
+    driver: acme_sim.backend:backend
+    connection: {}
+parts:
+  arm:
+    world: cell
+    posture: supervised
+    connection: {}
+cameras:
+  scene:
+    world: cell
+    connection: {}
+    stream: {width: 2, height: 2, fps: 10}
+    mount: {kind: scene}
+frames: {}
+calibration: {artifacts: calib/}
+workspace_bounds: {}
+envelope: {static_keepouts: [], self_collision: {}}
+recording: {root: recordings/, format: mcap}
+""",
+        encoding="utf-8",
+    )
+
+    result = _run(
+        str(VALIDATE),
+        str(project),
+        "--site",
+        "site.yaml",
+    )
+    assert "validated 1 custom adapter factory" in result.stdout
+
+
 @pytest.mark.parametrize("unsafe", ["../escape", "nested/name", ".", "a.b"])
 def test_scaffold_rejects_names_that_can_escape_the_output(
     tmp_path: Path, unsafe: str

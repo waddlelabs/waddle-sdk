@@ -13,12 +13,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 import yaml
-
 from waddle_sdk import load_site
 from waddle_sdk.robots import yam
-from waddle_sdk.simulation.adapters import World
-from waddle_sdk.simulation.model import SCREW_PITCH, screw_force
-from waddle_sdk.simulation.scene import (
+from waddle_sdk.simulators.adapters import World
+from waddle_sdk.simulators.model import SCREW_PITCH, screw_force
+from waddle_sdk.simulators.scene import (
     BACKENDS,
     ENVIRONMENTS,
     ROBOTS,
@@ -75,7 +74,9 @@ def test_depth_units_and_invalid_returns():
     assert depth_z16([[1.0]], 0.5).item() == 2000
 
 
-@pytest.mark.parametrize("relative", ["../scene.json", "/tmp/scene.json", "a\\scene.json"])
+@pytest.mark.parametrize(
+    "relative", ["../scene.json", "/tmp/scene.json", "a\\scene.json"]
+)
 def test_scene_paths_are_confined(tmp_path, relative):
     with pytest.raises(ValueError):
         load_scene(tmp_path, relative)
@@ -110,11 +111,15 @@ def test_native_models_rgbd_and_bounded_joint_motion(
     if backend == "isaac":
         interpreter = os.environ.get("WADDLE_ISAAC_TEST_PYTHON")
         if interpreter is None:
-            pytest.skip("set WADDLE_ISAAC_TEST_PYTHON to a licensed Isaac Sim interpreter")
+            pytest.skip(
+                "set WADDLE_ISAAC_TEST_PYTHON to a licensed Isaac Sim interpreter"
+            )
     else:
         pytest.importorskip(backend)
     monkeypatch.setenv("MUJOCO_GL", "egl")
-    monkeypatch.setenv("PYTHONPATH", str(Path(__file__).resolve().parents[1] / "python"))
+    monkeypatch.setenv(
+        "PYTHONPATH", str(Path(__file__).resolve().parents[1] / "python")
+    )
     # Physics engines own process-global graphics runtimes. Match the production
     # worker isolation, including when this suite runs after other engine tests.
     script = (
@@ -132,7 +137,7 @@ def test_native_models_rgbd_and_bounded_joint_motion(
 def _native_conformance(tmp_path, backend, robot, environment):
     _, config = documents(tmp_path, backend, robot, environment)
     p = profile(robot)
-    engine = importlib.import_module(f"waddle_sdk.simulation.{backend}").Engine(
+    engine = importlib.import_module(f"waddle_sdk.simulators.{backend}").Engine(
         config, tmp_path
     )
     try:
@@ -195,7 +200,7 @@ def _native_conformance(tmp_path, backend, robot, environment):
         elif environment == "bottle_cap":
             # Apply a native generalized torque as an external load on the cap.
             # Upward travel must come from the passive thread constraint.
-            module = importlib.import_module(f"waddle_sdk.simulation.{backend}")
+            module = importlib.import_module(f"waddle_sdk.simulators.{backend}")
             law = module.screw_force
             module.screw_force = lambda q, dq: (law(q, dq)[0] + 0.3, law(q, dq)[1])
             for _ in range(2000):
@@ -230,18 +235,23 @@ def test_site_owns_one_world_and_reopens_an_independent_world(tmp_path, monkeypa
             managed = session._managed
             owner = managed.arms["arm"].driver.world
             assert all(c.world is owner for c in managed.cameras.values())
-            assert owner._users == 3
             assert isinstance(owner, World)
+            assert owner.reset() is True
+            np.testing.assert_allclose(
+                owner.call("read")[0], profile("yam").home, atol=0.01
+            )
             processes.append(owner._process)
             assert len(session.observe().parts["arm"].joint_position) == 7
             session.estop("test")
             deadline = time.monotonic() + 2
-            while not managed.arms["arm"].driver.estopped and time.monotonic() < deadline:
+            while (
+                not managed.arms["arm"].driver.estopped and time.monotonic() < deadline
+            ):
                 time.sleep(0.01)
             assert managed.arms["arm"].driver.estopped
             with pytest.raises(RuntimeError, match="e-stopped"):
                 managed.arms["arm"].driver.write(profile("yam").home)
-        assert owner._users == 0 and owner._process is None
+        assert owner._process is None
         assert processes[-1].poll() is not None
     assert processes[0].pid != processes[1].pid
 

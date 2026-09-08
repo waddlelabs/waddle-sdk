@@ -47,6 +47,15 @@ from .runtime import (
     SupportMatrix,
     SupportRow,
 )
+from .simulation import (
+    SimulationBackend,
+    SimulationCameraBackend,
+    SimulationFactoryError,
+    SimulationPartBackend,
+    WorldConfig,
+    build_simulation_backend,
+    resolve_simulation_factory,
+)
 from .transport import Grpc
 
 SITE_API_VERSION = "waddle.site/v1"
@@ -306,7 +315,24 @@ def _validate_topology_declarations(document: Mapping[str, Any]) -> None:
     """Validate references in explicit robot/camera topology metadata."""
 
     part_names = set(document["parts"])
+    world_names = set(document.get("worlds", {}))
+    part_worlds: dict[str, str] = {}
+    for part_name, part in document["parts"].items():
+        world = part.get("world")
+        if world is None:
+            continue
+        world_name = str(world)
+        if world_name not in world_names:
+            raise ManifestValidationError(
+                f"parts.{part_name}.world: unknown world {world_name!r}"
+            )
+        part_worlds[str(part_name)] = world_name
     for camera_name, camera in document["cameras"].items():
+        camera_world = camera.get("world")
+        if camera_world is not None and str(camera_world) not in world_names:
+            raise ManifestValidationError(
+                f"cameras.{camera_name}.world: unknown world {camera_world!r}"
+            )
         mount = camera.get("mount")
         if not isinstance(mount, Mapping) or mount.get("kind") != "wrist":
             continue
@@ -314,6 +340,11 @@ def _validate_topology_declarations(document: Mapping[str, Any]) -> None:
         if owner not in part_names:
             raise ManifestValidationError(
                 f"cameras.{camera_name}.mount.part: unknown robot part {owner!r}"
+            )
+        if camera_world is not None and part_worlds.get(owner) != str(camera_world):
+            raise ManifestValidationError(
+                f"cameras.{camera_name}: a world-backed wrist camera and its "
+                "owning part must use the same world"
             )
 
 
@@ -564,6 +595,9 @@ def _combine_rigs(
     camera_factories: Mapping[str, Callable[[], CameraDriver]],
     frames: Sequence[descriptors.FrameTransform],
     envelope: Mapping[str, Any],
+    simulation_backends: Mapping[str, SimulationBackend],
+    part_worlds: Mapping[str, str],
+    simulation_lock: threading.RLock,
 ) -> base.Rig:
     rates = {float(rig.rate_hz) for rig in components.values()}
     if len(rates) != 1:
@@ -659,6 +693,23 @@ def _combine_rigs(
             "declare send grants per part"
         )
     posture = postures.pop()
+
+    tick_builder = None
+    if simulation_backends:
+
+        def build_simulation_tick(session, arms):
+            def advance(dt: float) -> None:
+                with simulation_lock:
+                    for backend in simulation_backends.values():
+                        backend.step(dt)
+                    for part, arm in arms.items():
+                        if part not in part_worlds:
+                            arm.step(dt)
+
+            return base.proprio_tick(session, arms, advance=advance)
+
+        tick_builder = build_simulation_tick
+
     return base.Rig(
         declaration=declaration,
         build_arms=build_arms,
@@ -666,7 +717,45 @@ def _combine_rigs(
         rate_hz=rate_hz,
         posture=posture,
         estop_hardware=all(rig.estop_hardware for rig in components.values()),
+        build_tick=tick_builder,
     )
+
+
+@dataclass
+class _SiteAssembly:
+    """One unopened composite rig plus its SDK-owned simulation lifecycles."""
+
+    rig: base.Rig
+    worlds: Mapping[str, SimulationBackend]
+    _opened: list[tuple[str, SimulationBackend]]
+    _lifecycle_lock: threading.RLock
+
+    def open(self) -> None:
+        try:
+            for name, backend in self.worlds.items():
+                self._opened.append((name, backend))
+                backend.open()
+        except BaseException:
+            self.close()
+            raise
+
+    def reset(self, task: str, arms: Mapping[str, base.Arm]) -> bool:
+        with self._lifecycle_lock:
+            for backend in self.worlds.values():
+                if not backend.reset():
+                    return False
+            return self.rig.pre_reset(arms)(task)
+
+    def close(self) -> None:
+        while self._opened:
+            name, backend = self._opened.pop()
+            try:
+                backend.close()
+            except Exception as exc:  # noqa: BLE001 -- backend close is isolated
+                self.rig.report(
+                    f"close world={name} raised {exc!r} — this simulation may "
+                    "still be running"
+                )
 
 
 @dataclass(frozen=True)
@@ -704,17 +793,33 @@ class Site:
             authorization_timeout_s=authorization_timeout_s,
         )
 
-    def _rig(
+    def _assembly(
         self, resolver: Mapping[str, str] | Callable[[str], str] | None
-    ) -> base.Rig:
+    ) -> _SiteAssembly:
         raw = _resolve_secrets(self.manifest, resolver)
         assert isinstance(raw, Mapping)
         bounds = raw.get("workspace_bounds", {})
         envelope = raw.get("envelope", {})
+        simulation_backends: dict[str, SimulationBackend] = {}
+        for name, world in raw.get("worlds", {}).items():
+            try:
+                target = resolve_simulation_factory(str(world["driver"]))
+                simulation_backends[str(name)] = build_simulation_backend(
+                    target,
+                    WorldConfig(
+                        name=str(name),
+                        connection=world["connection"],
+                        options=world.get("options", {}),
+                        site_root=self.path.parent,
+                    ),
+                )
+            except SimulationFactoryError as exc:
+                raise ManifestValidationError(str(exc)) from exc
+
         components: dict[str, base.Rig] = {}
-        resources: dict[object, Any] = {}
+        part_worlds: dict[str, str] = {}
         for name, part in raw["parts"].items():
-            target = _driver_target(part["driver"])
+            world_name = part.get("world")
             part_config = PartConfig(
                 name=name,
                 posture=part["posture"],
@@ -723,16 +828,39 @@ class Site:
                 workspace_bounds=bounds,
                 envelope=envelope,
                 base_frame=part.get("base_frame"),
+                world=world_name,
                 options=part.get("options", {}),
                 site_root=self.path.parent,
-                resources=resources,
             )
+            if world_name is None:
+                target = _driver_target(part["driver"])
+            else:
+                backend = simulation_backends[str(world_name)]
+                if not isinstance(backend, SimulationPartBackend) or not callable(
+                    getattr(backend, "part", None)
+                ):
+                    raise ManifestValidationError(
+                        f"world {world_name!r} does not provide part(config=...)"
+                    )
+                target = backend.part
+                part_worlds[str(name)] = str(world_name)
             components[name] = _call_part_factory(target, part_config)
 
         camera_descriptions: dict[str, descriptors.Camera] = {}
         camera_factories: dict[str, Callable[[], CameraDriver]] = {}
         for name, camera in raw.get("cameras", {}).items():
-            target = _driver_target(camera["driver"], camera=True)
+            world_name = camera.get("world")
+            if world_name is None:
+                target = _driver_target(camera["driver"], camera=True)
+            else:
+                backend = simulation_backends[str(world_name)]
+                if not isinstance(backend, SimulationCameraBackend) or not callable(
+                    getattr(backend, "camera", None)
+                ):
+                    raise ManifestValidationError(
+                        f"world {world_name!r} does not provide camera(config=...)"
+                    )
+                target = backend.camera
             camera_config = CameraConfig(
                 name=name,
                 connection=camera["connection"],
@@ -747,9 +875,9 @@ class Site:
                         part=camera["mount"].get("part"),
                     )
                 ),
+                world=world_name,
                 options=camera.get("options", {}),
                 site_root=self.path.parent,
-                resources=resources,
             )
             camera_descriptions[name] = _camera_description(camera)
             camera_factories[name] = partial(_call_camera_factory, target, camera_config)
@@ -763,7 +891,8 @@ class Site:
             )
             for name, value in raw.get("frames", {}).items()
         ]
-        return _combine_rigs(
+        simulation_lock = threading.RLock()
+        rig = _combine_rigs(
             self.id,
             components,
             {
@@ -774,7 +903,11 @@ class Site:
             camera_factories,
             frame_descriptions,
             envelope,
+            simulation_backends,
+            part_worlds,
+            simulation_lock,
         )
+        return _SiteAssembly(rig, simulation_backends, [], simulation_lock)
 
 
 class SiteSession:
@@ -803,6 +936,7 @@ class SiteSession:
             raise ValueError("authorization_timeout_s must be positive")
         self._authorization_timeout_s = float(authorization_timeout_s)
         self._managed: base.RigSession | None = None
+        self._assembly: _SiteAssembly | None = None
         self._active: Run | None = None
         self._events: list[RuntimeEvent] = []
         self._event_lock = threading.Lock()
@@ -875,7 +1009,8 @@ class SiteSession:
     def __enter__(self) -> "SiteSession":
         if self._managed is not None:
             raise RuntimeError("this SiteSession is already open")
-        rig = self.site._rig(self._secrets)
+        assembly = self.site._assembly(self._secrets)
+        rig = assembly.rig
         self._authorize_connector(rig)
         managed = base.RigSession(
             rig,
@@ -883,11 +1018,22 @@ class SiteSession:
             transport=self._transport,
             media=self._media,
             recording_dir=self.site.recording_root,
+            pre_reset=(
+                base.RIG_DEFAULT
+                if not assembly.worlds
+                else lambda task: assembly.reset(task, managed.arms)
+            ),
             console=self._console,
             _testing=self._testing,
         )
-        managed._open(create_core_session)
+        assembly.open()
+        try:
+            managed._open(create_core_session)
+        except BaseException:
+            assembly.close()
+            raise
         self._managed = managed
+        self._assembly = assembly
         self._service_stop.clear()
         self._service_thread = threading.Thread(
             target=self._serve_calibration_requests,
@@ -900,6 +1046,7 @@ class SiteSession:
 
     def __exit__(self, exc_type, exc, tb) -> bool:
         managed = self._managed
+        assembly = self._assembly
         try:
             if self._active is not None:
                 self._active.__exit__(exc_type, exc, tb)
@@ -910,12 +1057,18 @@ class SiteSession:
             if service_thread is not None:
                 service_thread.join(timeout=5.0)
             self._managed = None
-            if managed is not None:
-                managed.close(
-                    interrupted=(
-                        exc_type is not None and issubclass(exc_type, KeyboardInterrupt)
+            self._assembly = None
+            try:
+                if managed is not None:
+                    managed.close(
+                        interrupted=(
+                            exc_type is not None
+                            and issubclass(exc_type, KeyboardInterrupt)
+                        )
                     )
-                )
+            finally:
+                if assembly is not None:
+                    assembly.close()
             self._event("session.closed", {"site_id": self.site.id})
         return False
 

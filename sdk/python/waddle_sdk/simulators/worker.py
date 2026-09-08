@@ -17,7 +17,7 @@ def serve(connection: Connection) -> None:
         try:
             config = connection.recv()
             engine_type = importlib.import_module(
-                f"waddle_sdk.simulation.{config['backend']}"
+                f"waddle_sdk.simulators.{config['backend']}"
             ).Engine
             engine = engine_type(config, Path(scratch))
             # Readiness means both sensor streams render, not merely that an
@@ -35,7 +35,9 @@ def serve(connection: Connection) -> None:
                 for _ in range(steps):
                     engine.step()
                 deadline = max(deadline + steps * dt, now - 0.1)
-                if not connection.poll(max(0.0, min(0.01, deadline - time.monotonic()))):
+                if not connection.poll(
+                    max(0.0, min(0.01, deadline - time.monotonic()))
+                ):
                     continue
                 operation, arguments = connection.recv()
                 if operation == "close":

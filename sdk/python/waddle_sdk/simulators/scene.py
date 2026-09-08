@@ -1,6 +1,6 @@
 """Shared, metre/radian reference scenes and hardware-matched declarations.
 
-The reference links use conservative primitive geometry, not visual CAD. Joint
+The reference links use simple primitive geometry, not visual CAD. Joint
 origins/limits and jaw travel come from the same sources as the live adapters.
 Engines consume these definitions; they do not invent their own robot profiles.
 """
@@ -108,7 +108,9 @@ class Profile:
     def poses(self, q: Any) -> list[np.ndarray]:
         values = np.asarray(q, dtype=float)
         if values.shape != (len(self.names),) or not np.isfinite(values).all():
-            raise ValueError("joint vector must have the declared width and finite values")
+            raise ValueError(
+                "joint vector must have the declared width and finite values"
+            )
         pose = np.eye(4)
         result = [pose.copy()]
         for i in range(self.dof):
@@ -226,12 +228,14 @@ def make_site(
     cameras = {}
     mounts = {
         "scene": look_at((0.32, -0.3, 1.0), (0.32, 0, 0.02)).tolist(),
-        "wrist": look_at((0, -0.06, -0.06), np.asarray(p.pinch_offset) + [0, 0, 0.04]).tolist(),
+        "wrist": look_at(
+            (0, -0.06, -0.06), np.asarray(p.pinch_offset) + [0, 0, 0.04]
+        ).tolist(),
     }
     for name in mounts:
         cameras[name] = dict(
-            driver="waddle_sdk.simulation.adapters:camera",
-            connection=connection.copy(),
+            world="cell",
+            connection={},
             stream=dict(width=width, height=height, fps=15),
             frame_id=f"cam_{name}",
             intrinsics=intrinsic.copy(),
@@ -243,7 +247,9 @@ def make_site(
         robot=robot,
         environment=environment,
         timestep=0.002,
-        cameras={name: dict(**row, transform=mounts[name]) for name, row in cameras.items()},
+        cameras={
+            name: dict(**row, transform=mounts[name]) for name, row in cameras.items()
+        },
     )
     if worker_python is not None:
         simulation["worker_python"] = worker_python
@@ -251,11 +257,17 @@ def make_site(
         api_version="waddle.site/v1",
         kind="Site",
         metadata={"id": site_id},
+        worlds={
+            "cell": {
+                "driver": "waddle_sdk.simulators.adapters:backend",
+                "connection": connection,
+            }
+        },
         parts={
             "arm": dict(
-                driver="waddle_sdk.simulation.adapters:arm",
+                world="cell",
                 posture="supervised",
-                connection=connection.copy(),
+                connection={},
                 base_frame=p.frame,
                 joint_limits=dict(zip(p.names, p.limits)),
                 gripper=dict(
@@ -284,7 +296,12 @@ def make_site(
 
 
 def load_scene(root: Path, relative: Any) -> tuple[Path, dict]:
-    if not isinstance(relative, str) or not relative or "\\" in relative or "\x00" in relative:
+    if (
+        not isinstance(relative, str)
+        or not relative
+        or "\\" in relative
+        or "\x00" in relative
+    ):
         raise ValueError("connection.simulation must be a portable relative path")
     path = Path(relative)
     if path.is_absolute() or ".." in path.parts:
@@ -292,7 +309,10 @@ def load_scene(root: Path, relative: Any) -> tuple[Path, dict]:
     resolved = (root / path).resolve(strict=True)
     resolved.relative_to(root.resolve())
     value = json.loads(resolved.read_text())
-    if not isinstance(value, dict) or value.get("api_version") != "waddle.simulation/v1":
+    if (
+        not isinstance(value, dict)
+        or value.get("api_version") != "waddle.simulation/v1"
+    ):
         raise ValueError("expected waddle.simulation/v1 configuration")
     allowed = {
         "api_version",
@@ -304,33 +324,54 @@ def load_scene(root: Path, relative: Any) -> tuple[Path, dict]:
         "worker_python",
     }
     if value.keys() - allowed:
-        raise ValueError(f"unknown simulation settings: {sorted(value.keys() - allowed)}")
-    if value.get("backend") not in BACKENDS or value.get("environment") not in ENVIRONMENTS:
+        raise ValueError(
+            f"unknown simulation settings: {sorted(value.keys() - allowed)}"
+        )
+    if (
+        value.get("backend") not in BACKENDS
+        or value.get("environment") not in ENVIRONMENTS
+    ):
         raise ValueError("unknown simulation backend or environment")
     profile(value.get("robot"))
     dt = value.get("timestep")
-    if isinstance(dt, bool) or not isinstance(dt, (int, float)) or not 0.0001 <= dt <= 0.01:
+    if (
+        isinstance(dt, bool)
+        or not isinstance(dt, (int, float))
+        or not 0.0001 <= dt <= 0.01
+    ):
         raise ValueError("simulation timestep must be in [.0001, .01] seconds")
     cameras = value.get("cameras")
     if not isinstance(cameras, dict) or not cameras:
         raise ValueError("simulation requires explicit camera profiles")
     worker = value.get("worker_python")
-    if worker is not None and (not isinstance(worker, str) or not Path(worker).is_absolute()):
+    if worker is not None and (
+        not isinstance(worker, str) or not Path(worker).is_absolute()
+    ):
         raise ValueError("worker_python must be an absolute interpreter path")
     for name, row in cameras.items():
         if not isinstance(name, str) or not name or not isinstance(row, dict):
             raise ValueError("camera profiles must be named objects")
         stream, intr, mount = row.get("stream"), row.get("intrinsics"), row.get("mount")
         if not all(isinstance(v, dict) for v in (stream, intr, mount)):
-            raise ValueError(f"camera {name} needs stream, intrinsics, and mount objects")
+            raise ValueError(
+                f"camera {name} needs stream, intrinsics, and mount objects"
+            )
         for key in ("width", "height"):
             if type(stream.get(key)) is not int or not 16 <= stream[key] <= 4096:
-                raise ValueError(f"camera {name} {key} must be an integer in [16, 4096]")
+                raise ValueError(
+                    f"camera {name} {key} must be an integer in [16, 4096]"
+                )
         fps = stream.get("fps")
-        if type(fps) not in (int, float) or not math.isfinite(fps) or not 0 < fps <= 120:
+        if (
+            type(fps) not in (int, float)
+            or not math.isfinite(fps)
+            or not 0 < fps <= 120
+        ):
             raise ValueError(f"camera {name} fps must be in (0, 120]")
         if mount not in ({"kind": "scene"}, {"kind": "wrist", "part": "arm"}):
-            raise ValueError(f"camera {name} requires a scene mount or wrist mount on arm")
+            raise ValueError(
+                f"camera {name} requires a scene mount or wrist mount on arm"
+            )
         if not isinstance(row.get("frame_id"), str) or not row["frame_id"]:
             raise ValueError(f"camera {name} requires an optical frame id")
         for key in ("fx", "fy", "cx", "cy", "depth_scale_mm"):
@@ -350,7 +391,9 @@ def load_scene(root: Path, relative: Any) -> tuple[Path, dict]:
             raise ValueError(f"camera {name} rotation must be orthonormal")
         intr = row["intrinsics"]
         if any(intr.get("distortion", ())):
-            raise ValueError("reference simulation cameras require rectified intrinsics")
+            raise ValueError(
+                "reference simulation cameras require rectified intrinsics"
+            )
         for key in ("fx", "fy", "depth_scale_mm"):
             if not math.isfinite(intr[key]) or intr[key] <= 0:
                 raise ValueError(f"camera {name} needs positive {key}")

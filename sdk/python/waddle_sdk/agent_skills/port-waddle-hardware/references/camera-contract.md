@@ -28,3 +28,8 @@ Test a capture blocked in vendor I/O while another thread calls `close()`. Close
 Use `CameraInspectionSpec.from_candidate()` only when discovery identified an exact camera driver. Entering `inspect_cameras()` opens cameras but no robot parts, transport, control path, media publication, or recording. Its latest-only frames are appropriate for local camera identification, not rollout data capture.
 
 Never put motion, robot authority, or owner-envelope logic in a camera adapter.
+
+A camera rendered by a shared simulation world names `world` instead of `driver`. The
+world's `camera(config=...)` facet opens it after the shared scene. It returns the same
+`CameraFrame` and optional calibration facet as a physical camera. Read the
+[simulation contract](simulation-contract.md) for world timing and cleanup.

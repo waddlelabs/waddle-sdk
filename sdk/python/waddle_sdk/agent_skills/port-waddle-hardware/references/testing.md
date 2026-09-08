@@ -22,6 +22,10 @@ Use `scripts/validate_adapter.py` for a conservative static first pass. It inten
 - Optional FK and collision geometry are deterministic and conservative.
 - Camera frames have exact dtype/shape/alignment; close unblocks a blocked capture.
 - An end-to-end fake session records actions, observations, provenance, and terminal outcome and supports MCAP readback.
+- A shared simulation world opens before its arms and cameras, advances exactly once
+  per composite SDK tick, resets once per episode, and closes after its devices.
+- A complete simulated site satisfies `SdkRuntimePort` and exposes no backend-specific
+  path to Metal.
 
 ## Site-operator commissioning handoff
 

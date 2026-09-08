@@ -24,3 +24,15 @@ The same program can select a remote waddle.v0 control transport:
 
 Metal owns task graphs, skills, and hosted-run orchestration. The SDK example
 therefore demonstrates only the Site/SiteSession/Run hardware contract.
+
+`portable-simulation/` is the higher-level URDF workflow. Its strict
+`waddle.scene/v1` input declares robot appearance, conservative geometry, scene and
+wrist RGB-D cameras, camera poses, lights, environment geometry, and seeded variation.
+Compile it into a fresh directory with:
+
+    waddle-sdk sim compile examples/portable-simulation/scene.yaml \
+      --backend mujoco --output /tmp/waddle-portable-sim
+
+The output is a backend-native world plus the same ordinary `site.yaml` contract used
+above. See `docs/porting/simulation.md` for ROS 2, Gazebo, Isaac Sim, and third-party
+backend extension points.

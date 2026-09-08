@@ -59,7 +59,9 @@ def robot_links(p: Profile) -> list[Link]:
     radius = 0.02 if p.name == "yam" else 0.025
     result = [Link("base", shapes=segment(p.origins[0], radius))]
     for i in range(p.dof):
-        endpoint = p.origins[i + 1] if i + 1 < p.dof else tuple(np.asarray(p.tool_xyz) * 0.48)
+        endpoint = (
+            p.origins[i + 1] if i + 1 < p.dof else tuple(np.asarray(p.tool_xyz) * 0.48)
+        )
         result.append(
             Link(
                 f"link{i + 1}",
@@ -230,7 +232,9 @@ def urdf(links: list[Link], name: str) -> str:
         for i, shape in enumerate(link.shapes):
             for kind in ("visual", "collision"):
                 geom = ET.SubElement(node, kind)
-                ET.SubElement(geom, "origin", xyz=numbers(shape.xyz), rpy=numbers(shape.rpy))
+                ET.SubElement(
+                    geom, "origin", xyz=numbers(shape.xyz), rpy=numbers(shape.rpy)
+                )
                 geometry = ET.SubElement(geom, "geometry")
                 attrs = (
                     {"size": numbers(shape.size)}
@@ -267,7 +271,9 @@ def urdf(links: list[Link], name: str) -> str:
 def mjcf(p: Profile, config: dict) -> str:
     root = ET.Element("mujoco", model=p.name)
     ET.SubElement(root, "compiler", angle="radian", autolimits="true")
-    ET.SubElement(root, "option", timestep=str(config["timestep"]), integrator="implicitfast")
+    ET.SubElement(
+        root, "option", timestep=str(config["timestep"]), integrator="implicitfast"
+    )
     visual = ET.SubElement(root, "visual")
     ET.SubElement(
         visual,

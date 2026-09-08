@@ -25,11 +25,11 @@ class Engine:
                 "renderer": "RayTracedLighting",
             }
         )
+        import omni.replicator.core as rep
         from isaacsim.core.api import World
-        from isaacsim.core.prims import SingleArticulation
+        from isaacsim.core.prims import SingleArticulation, SingleRigidPrim
         from isaacsim.core.utils.types import ArticulationAction
         from pxr import Gf, PhysxSchema, UsdGeom, UsdLux, UsdPhysics, UsdShade
-        import omni.replicator.core as rep
 
         self.Gf, self.Geom, self.Physics, self.Physx = (
             Gf,
@@ -71,10 +71,19 @@ class Engine:
                 )
                 self.props.append(item)
         self._screw = self.props[-1] if config["environment"] == "bottle_cap" else None
+        self.tcp = self.world.scene.add(
+            SingleRigidPrim(
+                prim_path="/World/robot/tcp",
+                name="tcp_measurement",
+                reset_xform_properties=False,
+            )
+        )
         self.world.reset()
         self.order = list(self.robot.dof_names)
         self.arm_indices = [self.order.index(n) for n in p.names[:-1]]
-        self.finger_indices = [self.order.index(n) for n in ("left_finger", "right_finger")]
+        self.finger_indices = [
+            self.order.index(n) for n in ("left_finger", "right_finger")
+        ]
         self.home(p.home)
         self.cameras = {}
         for name, row in config["cameras"].items():
@@ -92,7 +101,9 @@ class Engine:
             )
             camera.CreateClippingRangeAttr(Gf.Vec2f(0.01, 10.0))
             self._pose(camera, np.eye(4))
-            product = rep.create.render_product(path, (stream["width"], stream["height"]))
+            product = rep.create.render_product(
+                path, (stream["width"], stream["height"])
+            )
             rgb = rep.AnnotatorRegistry.get_annotator("rgb")
             depth = rep.AnnotatorRegistry.get_annotator("distance_to_image_plane")
             rgb.attach([product])
@@ -104,7 +115,9 @@ class Engine:
         xform.ClearXformOpOrder()
         xform.AddTranslateOp().Set(self.Gf.Vec3d(*map(float, matrix[:3, 3])))
         q = quaternion(matrix[:3, :3])
-        xform.AddOrientOp().Set(self.Gf.Quatf(float(q[0]), self.Gf.Vec3f(*map(float, q[1:]))))
+        xform.AddOrientOp().Set(
+            self.Gf.Quatf(float(q[0]), self.Gf.Vec3f(*map(float, q[1:])))
+        )
 
     def _build(self, links, name, robot=False):
         P, G, F, PX = self.Physics, self.Geom, self.Gf, self.Physx
@@ -113,7 +126,9 @@ class Engine:
         articulated = len(links) > 1
         if articulated:
             P.ArticulationRootAPI.Apply(root.GetPrim())
-            PX.PhysxArticulationAPI.Apply(root.GetPrim()).CreateEnabledSelfCollisionsAttr(True)
+            PX.PhysxArticulationAPI.Apply(
+                root.GetPrim()
+            ).CreateEnabledSelfCollisionsAttr(True)
         poses = {}
         for link in links:
             pose = transform(link.xyz, link.rpy)
@@ -127,9 +142,13 @@ class Engine:
                 P.RigidBodyAPI.Apply(body.GetPrim())
                 mass = P.MassAPI.Apply(body.GetPrim())
                 mass.CreateMassAttr(link.mass)
-                mass.CreateDiagonalInertiaAttr(F.Vec3f(*([max(link.mass * 0.003, 1e-6)] * 3)))
+                mass.CreateDiagonalInertiaAttr(
+                    F.Vec3f(*([max(link.mass * 0.003, 1e-6)] * 3))
+                )
                 if robot:
-                    PX.PhysxRigidBodyAPI.Apply(body.GetPrim()).CreateDisableGravityAttr(True)
+                    PX.PhysxRigidBodyAPI.Apply(body.GetPrim()).CreateDisableGravityAttr(
+                        True
+                    )
             for i, shape in enumerate(link.shapes):
                 gp = f"{path}/shape_{i}"
                 if shape.kind == "box":
@@ -145,10 +164,14 @@ class Engine:
                     geometry.CreateAxisAttr("Z")
                 self._pose(geometry, transform(shape.xyz, shape.rpy))
                 if shape.kind == "box":
-                    G.Xformable(geometry).AddScaleOp().Set(F.Vec3f(*map(float, shape.size)))
+                    G.Xformable(geometry).AddScaleOp().Set(
+                        F.Vec3f(*map(float, shape.size))
+                    )
                 geometry.CreateDisplayColorAttr([F.Vec3f(*map(float, shape.color[:3]))])
                 P.CollisionAPI.Apply(geometry.GetPrim())
-                PX.PhysxCollisionAPI.Apply(geometry.GetPrim()).CreateContactOffsetAttr(0.001)
+                PX.PhysxCollisionAPI.Apply(geometry.GetPrim()).CreateContactOffsetAttr(
+                    0.001
+                )
                 self.Shade.MaterialBindingAPI.Apply(geometry.GetPrim()).Bind(
                     self.material, materialPurpose="physics"
                 )
@@ -159,7 +182,9 @@ class Engine:
                 joint.CreateBody1Rel().SetTargets([path])
                 joint.CreateLocalPos0Attr(F.Vec3f(*map(float, pose[:3, 3])))
                 q = quaternion(pose[:3, :3])
-                joint.CreateLocalRot0Attr(F.Quatf(float(q[0]), F.Vec3f(*map(float, q[1:]))))
+                joint.CreateLocalRot0Attr(
+                    F.Quatf(float(q[0]), F.Vec3f(*map(float, q[1:])))
+                )
                 continue
             parent_path = f"{root_path}/{link.parent}"
             joint_path = f"{root_path}/joints/{link.joint or link.name + '_fixed'}"
@@ -193,7 +218,9 @@ class Engine:
                 joint.CreateUpperLimitAttr(float(limits[1]))
                 if robot:
                     finger = link.kind == "prismatic"
-                    drive = P.DriveAPI.Apply(joint.GetPrim(), "linear" if finger else "angular")
+                    drive = P.DriveAPI.Apply(
+                        joint.GetPrim(), "linear" if finger else "angular"
+                    )
                     # USD angular drive gains use degrees; the public joint
                     # control API and all SDK vectors remain in radians.
                     factor = 1.0 if finger else np.pi / 180
@@ -248,8 +275,10 @@ class Engine:
         camera, _product, rgb, depth = self.cameras[name]
         matrix = np.asarray(row["transform"]).copy()
         if row["mount"]["kind"] == "wrist":
-            tcp = self.Geom.Xformable(self.stage.GetPrimAtPath("/World/robot/tcp"))
-            matrix = np.asarray(tcp.ComputeLocalToWorldTransform(0)).T @ matrix
+            position, orientation = self.native_tcp()
+            mount = np.eye(4)
+            mount[:3, :3], mount[:3, 3] = orientation, position
+            matrix = mount @ matrix
         matrix[:3, :3] = matrix[:3, :3] @ np.diag([1, -1, -1])
         self._pose(camera, matrix)
         # Flush render/annotator latency at a fixed physics state. RGB and
@@ -265,9 +294,11 @@ class Engine:
         )
 
     def native_tcp(self):
-        tcp = self.Geom.Xformable(self.stage.GetPrimAtPath("/World/robot/tcp"))
-        pose = np.asarray(tcp.ComputeLocalToWorldTransform(0)).T
-        return pose[:3, 3].copy(), pose[:3, :3].copy()
+        # Query the physics view, because USD transforms can lag PhysX/Fabric.
+        position, q = self.tcp.get_world_pose()
+        quat = self.Gf.Quatd(float(q[0]), self.Gf.Vec3d(*map(float, q[1:])))
+        matrix = np.asarray(self.Gf.Matrix3d(quat)).T
+        return np.asarray(position).copy(), matrix
 
     def close(self):
         for _camera, product, rgb, depth in self.cameras.values():

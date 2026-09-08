@@ -25,7 +25,9 @@ class Engine:
         self.joints = {j.name: j for j in self.robot.get_active_joints()}
         self.order = [j.name for j in self.robot.get_active_joints()]
         self.arm_indices = [self.order.index(n) for n in p.names[:-1]]
-        self.finger_indices = [self.order.index(n) for n in ("left_finger", "right_finger")]
+        self.finger_indices = [
+            self.order.index(n) for n in ("left_finger", "right_finger")
+        ]
         for name, joint in self.joints.items():
             finger = name.endswith("_finger")
             joint.set_drive_properties(
@@ -61,7 +63,9 @@ class Engine:
             result = loader.load(str(path))
             if result is None:
                 raise RuntimeError(f"SAPIEN could not load {name}")
-            result.set_root_pose(self.sp.Pose(links[0].xyz, quaternion(rotation(links[0].rpy))))
+            result.set_root_pose(
+                self.sp.Pose(links[0].xyz, quaternion(rotation(links[0].rpy)))
+            )
             return result
         link = links[0]
         builder = self.scene.create_actor_builder()
@@ -71,16 +75,22 @@ class Engine:
             if shape.kind == "box":
                 half = np.asarray(shape.size) / 2
                 builder.add_box_collision(pose=pose, half_size=half, material=material)
-                builder.add_box_visual(pose=pose, half_size=half, material=shape.color[:3])
+                builder.add_box_visual(
+                    pose=pose, half_size=half, material=shape.color[:3]
+                )
             elif shape.kind == "sphere":
-                builder.add_sphere_collision(pose=pose, radius=shape.size[0], material=material)
+                builder.add_sphere_collision(
+                    pose=pose, radius=shape.size[0], material=material
+                )
                 builder.add_sphere_visual(
                     pose=pose, radius=shape.size[0], material=shape.color[:3]
                 )
             else:
                 raise ValueError("single-body reference props use box/sphere geometry")
         result = (
-            builder.build(name=name) if link.kind == "free" else builder.build_static(name=name)
+            builder.build(name=name)
+            if link.kind == "free"
+            else builder.build_static(name=name)
         )
         result.set_pose(self.sp.Pose(link.xyz, quaternion(rotation(link.rpy))))
         if link.kind == "free":
@@ -99,7 +109,9 @@ class Engine:
         q, dq = self.robot.get_qpos(), self.robot.get_qvel()
         return np.r_[
             q[self.arm_indices], sum(q[self.finger_indices]) / self.profile.opening
-        ], np.r_[dq[self.arm_indices], sum(dq[self.finger_indices]) / self.profile.opening]
+        ], np.r_[
+            dq[self.arm_indices], sum(dq[self.finger_indices]) / self.profile.opening
+        ]
 
     def write(self, q):
         values = self._expand(q)
@@ -117,13 +129,17 @@ class Engine:
 
     def step(self):
         self.robot.set_qf(
-            self.robot.compute_passive_force(gravity=True, coriolis_and_centrifugal=False)
+            self.robot.compute_passive_force(
+                gravity=True, coriolis_and_centrifugal=False
+            )
         )
         if self._screw is not None:
             names = [j.name for j in self._screw.get_active_joints()]
             idx = [names.index(n) for n in ("cap_rotation", "cap_lift")]
             force = np.zeros(len(names))
-            force[idx] = screw_force(self._screw.get_qpos()[idx], self._screw.get_qvel()[idx])
+            force[idx] = screw_force(
+                self._screw.get_qpos()[idx], self._screw.get_qvel()[idx]
+            )
             self._screw.set_qf(force)
         self.scene.step()
 

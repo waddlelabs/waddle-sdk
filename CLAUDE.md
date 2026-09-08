@@ -46,9 +46,8 @@ internal repo (`waddle`, the "cell" codebase) and is NOT here. Nothing in this r
 depend on it.
 
 Physics sites are documented in `docs/python/simulation.md`. The optional
-`sdk/python/waddle_sdk/simulation/` package owns shared process-isolated worlds;
-`PartConfig.resources` and `CameraConfig.resources` are one fresh dictionary per
-site opening. The reference scenes use primitive collision geometry and approximate
+`sdk/python/waddle_sdk/simulators/` package implements reference scenes through
+the public `SimulationBackend` lifecycle and its part/camera facets. The reference scenes use primitive collision geometry and approximate
 inertias, not a calibrated dynamics twin. Engine-dependent acceptance lives in
 `sdk/tests/test_simulation.py` and isolates native graphics runtimes in subprocesses.
 
@@ -124,7 +123,20 @@ waddle-sdk/
                              #   velocity feedforward; an open describe() adds
                              #   the canonical robot action descriptor so Metal can map
                              #   named parts; schemas/
-                             #   carries the strict `waddle.site/v1` schema.
+                             #   carries the strict `waddle.site/v1` schema,
+                             #   including optional manifest-selected shared
+                             #   simulation worlds. `scene.py` plus the shipped
+                             #   `waddle.scene/v1` schema own the non-opening,
+                             #   backend-compiled portable URDF scene build and
+                             #   deterministic evidence contract. `simulation.py`
+                             #   defines the
+                             #   public lazy WorldConfig/SimulationBackend
+                             #   lifecycle plus optional part/camera facets;
+                             #   Site opens a world once after authorization,
+                             #   advances it once per composite SDK tick, resets
+                             #   it once per episode, and closes it after devices.
+                             #   Metal still sees only SdkRuntimePort and the
+                             #   ordinary support/observation/action contracts.
                              #   A part-level `gripper` record is driver-neutral
                              #   public metadata mapping physical jaw metres to
                              #   one declared action row; the open runtime's
@@ -144,8 +156,9 @@ waddle-sdk/
                              #   _session.py is the private, non-global builder with
                              #   fixed hold-first/enforced core wiring. There is no
                              #   init/rollout/agent/shutdown or _testing module.
-                             #   cli.py owns the `waddle-sdk connect` process and
-                             #   the non-opening `skills list/export` commands;
+                             #   cli.py owns the `waddle-sdk connect` process,
+                             #   non-opening `skills list/export`, and portable
+                             #   `sim backends/init/validate/compile/run` commands;
                              #   it reads workspace identity from site.metadata.id
                              #   and combines that with customer/project provenance
                              #   resolved from WADDLE_API_KEY before hardware opens.
@@ -298,10 +311,22 @@ waddle-sdk/
                              #   calls behind Driver, nonblocking commands,
                              #   torque-off monitor/e-stop, model-derived
                              #   limits. Alicia extras require Python 3.11+.
-        mujoco.py            # manifest-native joint-target simulation:
-                             #   lazy [mujoco], confined MJCF path, explicit
-                             #   scalar joint/actuator mapping, scratch-state
-                             #   FK/body spheres, local e-stop
+        mujoco.py            # manifest-native MuJoCo simulation: compatible
+                             #   private-world arm plus modular shared-world
+                             #   backend; lazy [mujoco], confined MJCF/URDF XML
+                             #   path, explicit scalar joint/actuator mapping,
+                             #   one physics state and tick across attached
+                             #   parts/cameras, aligned RGB-D rendering, derived
+                             #   intrinsics, scratch-state FK/body spheres, and
+                             #   local e-stop
+        mujoco_scene.py      # strict portable-URDF-to-MJCF compiler: staged
+                             #   inputs/assets, multi-robot attachment, reviewed
+                             #   limits/materials/coatings, cameras/lights,
+                             #   ordinary site.yaml, and hash evidence
+        ros2.py              # lazy ROS 2 simulator-world bridge: one private
+                             #   context/executor, joint-state/position topics,
+                             #   timestamp-paired RGB-D + CameraInfo, optional
+                             #   Empty reset service; used by Gazebo/Isaac graphs
         yam.py, yam_data/    # the I2RT YAM: constants-with-provenance, and
                              #   the vendor's own MIT model (URDF text, no
                              #   meshes) shipped beside them so
@@ -380,9 +405,11 @@ waddle-sdk/
     media/                   # the `waddle-sdk-media` companion distribution:
                              #   same rust/Cargo.toml, + the livekit feature;
                              #   carries its own byte-equal LICENSE packaging copy
-    examples/                # one strict simulated Site program:
-                             #   site.yaml + run_site.py + README. The program is
-                             #   subprocess-tested and exercises load/open/run/close.
+    examples/                # one strict simulated Site program plus the
+                             #   portable-simulation URDF/scene walkthrough. Both
+                             #   are test-gated; the Site program exercises
+                             #   load/open/run/close and the scene compiles to a
+                             #   complete ordinary runtime with scene/wrist RGB-D.
     tests/                   # pytest: Site/runtime contracts, descriptors, native
                              #   transport/FSM behavior, camera and camera-only
                              #   inspection lifecycles, owner
@@ -468,7 +495,10 @@ top-level dirs; they are not built yet.
       require Python 3.11+, expressed as dependency markers without narrowing
       the base wheel's Python 3.10+ range; the explicit pre-release
       `synria-robocore` constraint is necessary for deterministic resolution.
-      MuJoCo is separate behind `[mujoco]` and loads its MJCF only at Site.open().
+      MuJoCo 3.5+ is separate behind `[mujoco]`; its portable compiler imports it
+      only during `sim compile`, and the runtime loads MJCF only at Site.open(). ROS 2
+      is supplied by a sourced ROS installation and imported only when a `ros2` world
+      opens; it is intentionally not a PyPI extra.
       The base wheel imports no vendor SDK, and the extras compose with
       `[media]`. Metadata/install
       combinations are held by `tests/test_clean_installs.py`;
@@ -506,7 +536,7 @@ top-level dirs; they are not built yet.
     working tree, so without it a build after a test run ships that
     interpreter's bytecode and a build on a clean checkout does not.
     Non-Python PACKAGE DATA under `python-source` (today
-    `waddle_sdk/robots/yam_data/` plus the two complete
+    `waddle_sdk/robots/yam_data/`, strict site/scene schemas, plus the two complete
     `waddle_sdk/agent_skills/` folders) ships with no pyproject edit at all,
     and the code reads it through `importlib.resources` so a wheel, an editable
     install and a checkout all work. The YAM data is 16.1 KB of URDF text +
@@ -620,6 +650,12 @@ commands above remain the pre-commit gate and the fastest way to diagnose a fail
   part and reaches custom camera adapters through `CameraConfig`. These fields describe
   physical relationships only; the SDK does not infer transforms or promote a camera to
   arm-owned because it was discovered beside an arm.
+  Optional `worlds.*.driver` factories are also declarative and non-opening. A part or
+  camera names exactly one driver or world; a world-backed wrist camera shares its
+  owning part's world. The Site lifecycle opens worlds after connector authorization,
+  advances each exactly once per composite tick, resets them before ordinary arm reset,
+  and closes them in reverse order after cameras and arms. No simulator identity or
+  lifecycle crosses `SdkRuntimePort`.
 - **Proto evolution is append-only.** Never reuse or renumber a field or enum value;
   removed fields become `reserved` (number AND name). Times/durations are `int64`
   nanoseconds (`_ns`; wall twins `_unix_ns`; operator-clock `_client_ns`, never
