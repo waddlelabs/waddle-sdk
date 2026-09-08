@@ -101,8 +101,8 @@ class World:
 
     def step(self, dt: float) -> None:
         # The worker owns the real-time clock between SDK composite ticks.
-        if not math.isfinite(dt) or dt <= 0:
-            raise ValueError("world step must be finite and positive")
+        if not math.isfinite(dt) or dt < 0:
+            raise ValueError("world step must be finite and non-negative")
 
     def reset(self) -> bool:
         # A fresh process also resets graphics runtimes that cannot restart Kit

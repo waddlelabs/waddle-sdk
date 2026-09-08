@@ -236,6 +236,7 @@ def test_site_owns_one_world_and_reopens_an_independent_world(tmp_path, monkeypa
             owner = managed.arms["arm"].driver.world
             assert all(c.world is owner for c in managed.cameras.values())
             assert isinstance(owner, World)
+            owner.step(0.0)
             assert owner.reset() is True
             np.testing.assert_allclose(
                 owner.call("read")[0], profile("yam").home, atol=0.01
