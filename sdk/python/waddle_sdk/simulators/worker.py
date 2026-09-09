@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import importlib
+import math
 import sys
 import tempfile
-import time
 import traceback
 from multiprocessing.connection import Connection
 from pathlib import Path
@@ -25,29 +25,33 @@ def serve(connection: Connection) -> None:
             for name in config["cameras"]:
                 engine.capture(name)
             connection.send((True, None))
-            deadline = time.monotonic()
             dt = config["timestep"]
             while True:
-                now = time.monotonic()
-                # Bounded catch-up keeps observation/hold latency bounded even
-                # when rendering runs slower than the requested physics clock.
-                steps = min(50, max(0, int((now - deadline) / dt) + 1))
-                for _ in range(steps):
-                    engine.step()
-                deadline = max(deadline + steps * dt, now - 0.1)
-                if not connection.poll(
-                    max(0.0, min(0.01, deadline - time.monotonic()))
-                ):
-                    continue
                 operation, arguments = connection.recv()
                 if operation == "close":
                     engine.hold()
                     connection.send((True, None))
                     break
-                if operation not in {"read", "write", "hold", "home", "capture"}:
+                if operation not in {
+                    "read",
+                    "write",
+                    "hold",
+                    "home",
+                    "capture",
+                    "step",
+                    "reset",
+                }:
                     raise ValueError("unsupported simulation operation")
                 try:
-                    connection.send((True, getattr(engine, operation)(*arguments)))
+                    if operation == "step":
+                        # The SDK's existing robot pump owns simulation time,
+                        # matching the shared-world MuJoCo reference backend.
+                        for _ in range(math.ceil(arguments[0] / dt)):
+                            engine.step()
+                        result = None
+                    else:
+                        result = getattr(engine, operation)(*arguments)
+                    connection.send((True, result))
                 except Exception as error:
                     engine.hold()
                     traceback.print_exc(file=sys.stderr)

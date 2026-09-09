@@ -1,4 +1,4 @@
-"""MuJoCo renderer/scene extension of the existing joint-target driver."""
+"""Native MuJoCo scene, position drives, and RGB-D sensors."""
 
 from __future__ import annotations
 
@@ -8,7 +8,8 @@ from pathlib import Path
 
 import numpy as np
 
-from .model import mjcf, screw_force
+from .description import description
+from .model import mjcf
 from .scene import depth_z16, profile
 
 
@@ -17,25 +18,22 @@ class Engine:
         # Selection precedes the first MuJoCo import and is local to this worker.
         if sys.platform == "linux" and not os.environ.get("DISPLAY"):
             os.environ.setdefault("MUJOCO_GL", "egl")
-        from ..robots.mujoco import MujocoDriver
+        import mujoco
 
+        self.mj = mujoco
         self.config = config
         self.profile = p = profile(config["robot"])
+        self.description = robot = description(p.name)
         path = scratch / "scene.xml"
         path.write_text(mjcf(p, config))
-        self.driver = MujocoDriver(
-            model_path=path,
-            joint_names=p.names[:-1] + ("left_finger", "right_finger"),
-            joint_limits=p.limits[:-1] + ((0.0, p.opening / 2),) * 2,
-            actuator_names=p.names[:-1] + ("left_finger", "right_finger"),
-            home=self._expand(p.home),
-            tool_site="tcp_site",
-            collision_bodies=(),
-        )
-        self.mj, self.model, self.data = (
-            self.driver._mj,
-            self.driver._model,
-            self.driver._data,
+        self.model = mujoco.MjModel.from_xml_path(str(path))
+        self.data = mujoco.MjData(self.model)
+        joints = [self.model.joint(name) for name in p.names[:-1] + robot.hand_names]
+        self._qpos = [int(j.qposadr[0]) for j in joints]
+        self._dofs = [int(j.dofadr[0]) for j in joints]
+        self._controls = p.names[:-1] + robot.hand_names[:1]
+        self._velocity_ratio = np.array(
+            [robot.servo(name)[1] / robot.servo(name)[0] for name in self._controls]
         )
         self.renderers = {}
         self._screw = None
@@ -43,33 +41,40 @@ class Engine:
             self._screw = tuple(
                 self.model.joint(name) for name in ("cap_rotation", "cap_lift")
             )
-
-    def _expand(self, q):
-        return tuple(q[:-1]) + (q[-1] * self.profile.opening / 2,) * 2
+        self.home(p.home)
 
     def read(self):
-        q, dq = self.driver.read()
-        return np.r_[q[:-2], (q[-2] + q[-1]) / self.profile.opening], np.r_[
-            dq[:-2], (dq[-2] + dq[-1]) / self.profile.opening
-        ]
+        q, dq = self.data.qpos[self._qpos], self.data.qvel[self._dofs]
+        n = self.profile.dof
+        # Hardware reports the driven joint encoder, not passive linkage motion.
+        hand, speed = self.description.hand_state(float(q[n]), float(dq[n]))
+        return np.r_[q[:n], hand], np.r_[dq[:n], speed]
 
-    def write(self, q):
-        self.driver.write(np.asarray(self._expand(q)))
+    def write(self, q, velocity=None):
+        # Native PD(q, dq): position + kv/kp * desired velocity is exactly
+        # equivalent to kp*(target-q) + kv*(desired_velocity-dq).
+        target = np.r_[q[:-1], self.description.hand_position(q[-1])]
+        if velocity is not None:
+            target += self._velocity_ratio * np.r_[velocity[:-1], 0.0]
+        for name, value in zip(self._controls, target, strict=True):
+            self.data.actuator(name).ctrl[0] = value
 
     def hold(self):
-        self.driver.hold()
+        self.write(self.read()[0])
 
     def home(self, q):
-        return self.driver.home(self._expand(q))
+        self.data.qpos[self._qpos] = self.description.expand(q)
+        self.data.qvel[self._dofs] = 0
+        self.write(q)
+        self.mj.mj_forward(self.model, self.data)
+        return True
 
     def step(self):
-        if self._screw is not None:
-            addresses = [int(j.qposadr[0]) for j in self._screw]
-            dofs = [int(j.dofadr[0]) for j in self._screw]
-            self.data.qfrc_applied[dofs] = screw_force(
-                self.data.qpos[addresses], self.data.qvel[dofs]
-            )
-        self.driver.step(self.config["timestep"])
+        self.mj.mj_step(self.model, self.data)
+
+    def reset(self):
+        self.mj.mj_resetData(self.model, self.data)
+        return self.home(self.profile.home)
 
     def capture(self, name):
         row = self.config["cameras"][name]
@@ -78,7 +83,9 @@ class Engine:
                 self.model, height=row["stream"]["height"], width=row["stream"]["width"]
             )
         renderer = self.renderers[name]
-        renderer.update_scene(self.data, camera=name)
+        option = self.mj.MjvOption()
+        option.geomgroup[3] = 0  # collisions do not replace the manufacturer's visuals
+        renderer.update_scene(self.data, camera=name, scene_option=option)
         renderer.disable_depth_rendering()
         rgb = renderer.render().copy()
         renderer.enable_depth_rendering()
@@ -97,4 +104,3 @@ class Engine:
         for renderer in self.renderers.values():
             renderer.close()
         self.renderers.clear()
-        self.driver.close()

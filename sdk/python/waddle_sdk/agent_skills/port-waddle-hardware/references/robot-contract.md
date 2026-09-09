@@ -49,5 +49,7 @@ When multiple parts or cameras need one shared simulator scene, implement the
 [shared simulation backend contract](simulation-contract.md) instead of opening one
 world from every part.
 
-Reference YAM/xArm7 physics scenes use the same world lifecycle; see
-`docs/python/simulation.md` in the source repository for profiles and engine validation.
+Reference YAM/xArm7 physics scenes use the same world lifecycle and packaged
+manufacturer URDF/mesh assemblies. Their source hashes, licenses and conversion
+notes ship in `waddle_sdk/simulators/data/`; see `docs/python/simulation.md` in the
+source repository for profiles, native gripper mapping and engine validation.

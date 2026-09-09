@@ -21,9 +21,10 @@ source is a fact table nothing checks.
 
 The URDF's `<mesh filename="assets/…">` references are **unresolved**: none of
 the 14 STL files it names ship here. This copy is the kinematic contract — the
-chain, the limits, the tool frame — not a visual model, and nothing in this
-SDK renders anything. The meshes are megabytes against a wheel that is a few,
-and a viewer that wants them can fetch them from the pinned commit above.
+chain, the limits, the tool frame — not a standalone visual bundle. Reference
+simulation separately packages the arm meshes and the current linear hand under
+`waddle_sdk/simulators/data/yam/`; its provenance describes that assembly. This
+kinematics-only directory remains unchanged in scope.
 
 ## Patches applied to `yam.urdf`
 
@@ -79,5 +80,5 @@ unreachable source path anywhere in these files. Re-vendoring re-applies it.
 
 There is no generator to re-run: this is a hand-made snapshot. Re-vendor by
 applying the same patches to a fresh checkout of the upstream repo at whatever
-commit is then current, updating `I2RT_PIN` in `waddle/robots/yam.py`, and
+commit is then current, updating `I2RT_PIN` in `waddle_sdk/robots/yam.py`, and
 running the fact gate — which is what says whether any number moved.

@@ -1,15 +1,15 @@
-"""One primitive geometry model exported into each simulator's native format."""
+"""Manufacturer robot descriptions and reference props in native scene formats."""
 
 from __future__ import annotations
 
 import math
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import numpy as np
 
-from .scene import Profile, quaternion, rotation
+from .scene import Profile, quaternion
 
 
 def numbers(values: Any) -> str:
@@ -23,6 +23,9 @@ class Shape:
     xyz: tuple[float, ...] = (0.0, 0.0, 0.0)
     rpy: tuple[float, ...] = (0.0, 0.0, 0.0)
     color: tuple[float, ...] = (0.3, 0.35, 0.4, 1.0)
+    mesh: str | None = None
+    visual: bool = True
+    collision: bool = True
 
 
 @dataclass
@@ -37,63 +40,15 @@ class Link:
     limits: tuple[float, float] = (0.0, 0.0)
     mass: float = 0.3
     shapes: list[Shape] = field(default_factory=list)
-
-
-def segment(endpoint: Any, radius: float) -> list[Shape]:
-    """Capsule represented by URDF-compatible cylinder plus endpoint spheres."""
-    p = np.asarray(endpoint, dtype=float)
-    length = float(np.linalg.norm(p))
-    if length < 1e-5:
-        return []
-    if length < 3 * radius:
-        return [Shape("sphere", (length / 4,), tuple(p / 2))]
-    rpy = (0.0, math.acos(float(p[2] / length)), math.atan2(float(p[1]), float(p[0])))
-    return [
-        Shape("cylinder", (radius, length - 2.2 * radius), tuple(p / 2), rpy),
-        Shape("sphere", (radius,), tuple(p * (1.1 * radius / length))),
-        Shape("sphere", (radius,), tuple(p * (1 - 1.1 * radius / length))),
-    ]
+    com: tuple[float, ...] = (0.0, 0.0, 0.0)
+    inertia: tuple[float, ...] | None = None  # xx, yy, zz, xy, xz, yz in link frame
+    mimic: tuple[str, float, float] | None = None
 
 
 def robot_links(p: Profile) -> list[Link]:
-    radius = 0.02 if p.name == "yam" else 0.025
-    result = [Link("base", shapes=segment(p.origins[0], radius))]
-    for i in range(p.dof):
-        endpoint = (
-            p.origins[i + 1] if i + 1 < p.dof else tuple(np.asarray(p.tool_xyz) * 0.48)
-        )
-        result.append(
-            Link(
-                f"link{i + 1}",
-                "base" if i == 0 else f"link{i}",
-                p.origins[i],
-                p.rpys[i],
-                p.names[i],
-                "revolute",
-                limits=p.limits[i],
-                shapes=segment(endpoint, radius),
-            )
-        )
-    result.append(Link("tcp", f"link{p.dof}", p.tool_xyz, p.tool_rpy, mass=0.001))
-    for side, sign in (("left", 1), ("right", -1)):
-        axis = np.asarray(p.closing_axis) * sign
-        # Inner jaw surfaces meet at the declared pinch point at action=0.
-        # Pads straddle that point so a surface-target grasp contacts the sides.
-        xyz = np.asarray(p.pinch_offset) + axis * 0.004
-        size = (0.008, 0.04, 0.06) if p.closing_axis[0] else (0.04, 0.008, 0.06)
-        result.append(
-            Link(
-                f"{side}_pad",
-                "tcp",
-                joint=f"{side}_finger",
-                kind="prismatic",
-                axis=tuple(axis),
-                limits=(0.0, p.opening / 2),
-                mass=0.08,
-                shapes=[Shape("box", size, tuple(xyz), color=(0.08, 0.08, 0.08, 1.0))],
-            )
-        )
-    return result
+    from .description import description
+
+    return description(p.name).native_links()
 
 
 def objects(environment: str) -> list[list[Link]]:
@@ -179,37 +134,30 @@ def objects(environment: str) -> list[list[Link]]:
             ),
         ],
     )
-    twist = Link(
-        "cap_twist",
+    carriage = Link(
+        "cap_carriage",
         "bottle",
         xyz=(0.0, 0.0, 0.125),
-        joint="cap_rotation",
-        kind="revolute",
-        limits=(-0.2, 6 * math.pi),
+        joint="cap_lift",
+        kind="prismatic",
+        limits=(-0.001, 0.04),
         mass=0.001,
     )
     cap = Link(
         "cap",
-        "cap_twist",
-        joint="cap_lift",
-        kind="prismatic",
-        limits=(-0.001, 0.04),
+        "cap_carriage",
+        joint="cap_rotation",
+        kind="revolute",
+        limits=(-0.2, 6 * math.pi),
         mass=0.025,
+        # Rotation = axial travel / pitch. Both motions share the Z axis.
+        mimic=("cap_lift", 1 / SCREW_PITCH, 0.0),
         shapes=[Shape("cylinder", (0.025, 0.022), color=(0.9, 0.2, 0.12, 1.0))],
     )
-    return [table, [bottle, twist, cap]]
+    return [table, [bottle, carriage, cap]]
 
 
 SCREW_PITCH = 0.005 / (2 * math.pi)
-
-
-def screw_force(q: Any, dq: Any) -> tuple[float, float]:
-    # Metre/radian spring constraint; equal and opposite generalized forces
-    # exchange work. Engines use this same law, including the damping term.
-    theta, z = q
-    omega, dz = dq
-    force = -5000 * (z - SCREW_PITCH * theta) - 20 * (dz - SCREW_PITCH * omega)
-    return -SCREW_PITCH * force, force
 
 
 def urdf(links: list[Link], name: str) -> str:
@@ -217,29 +165,32 @@ def urdf(links: list[Link], name: str) -> str:
     for link in links:
         node = ET.SubElement(root, "link", name=link.name)
         inertial = ET.SubElement(node, "inertial")
+        ET.SubElement(inertial, "origin", xyz=numbers(link.com), rpy="0 0 0")
         ET.SubElement(inertial, "mass", value=str(link.mass))
         inertia = max(link.mass * 0.003, 1e-6)
+        tensor = link.inertia or (inertia, inertia, inertia, 0, 0, 0)
         ET.SubElement(
             inertial,
             "inertia",
-            ixx=str(inertia),
-            iyy=str(inertia),
-            izz=str(inertia),
-            ixy="0",
-            ixz="0",
-            iyz="0",
+            **dict(zip(("ixx", "iyy", "izz", "ixy", "ixz", "iyz"), map(str, tensor))),
         )
         for i, shape in enumerate(link.shapes):
             for kind in ("visual", "collision"):
+                if not getattr(shape, kind):
+                    continue
                 geom = ET.SubElement(node, kind)
                 ET.SubElement(
                     geom, "origin", xyz=numbers(shape.xyz), rpy=numbers(shape.rpy)
                 )
                 geometry = ET.SubElement(geom, "geometry")
                 attrs = (
-                    {"size": numbers(shape.size)}
-                    if shape.kind == "box"
-                    else {"radius": str(shape.size[0])}
+                    {"filename": shape.mesh, "scale": numbers(shape.size)}
+                    if shape.mesh
+                    else (
+                        {"size": numbers(shape.size)}
+                        if shape.kind == "box"
+                        else {"radius": str(shape.size[0])}
+                    )
                 )
                 if shape.kind == "cylinder":
                     attrs["length"] = str(shape.size[1])
@@ -264,13 +215,43 @@ def urdf(links: list[Link], name: str) -> str:
                     effort="50",
                     velocity="3",
                 )
-                ET.SubElement(joint, "dynamics", damping=".05", friction=".01")
+                if link.mimic:
+                    target, multiplier, offset = link.mimic
+                    ET.SubElement(
+                        joint,
+                        "mimic",
+                        joint=target,
+                        multiplier=str(multiplier),
+                        offset=str(offset),
+                    )
     return ET.tostring(root, encoding="unicode")
 
 
 def mjcf(p: Profile, config: dict) -> str:
-    root = ET.Element("mujoco", model=p.name)
-    ET.SubElement(root, "compiler", angle="radian", autolimits="true")
+    from .description import description
+
+    robot = description(p.name)
+    import mujoco
+
+    # MuJoCo's maintained URDF importer owns geometry and full inertias. Keep
+    # fixed frames for the same camera/TCP names used by the other backends.
+    props = objects(config["environment"])
+    groups = [robot.native_links(), *props]
+    scene_links = [Link("scene_root")]
+    for group in groups:
+        scene_links.extend(
+            [replace(group[0], parent="scene_root", kind="fixed"), *group[1:]]
+        )
+    source = ET.fromstring(urdf(scene_links, p.name))
+    ET.SubElement(
+        ET.SubElement(source, "mujoco"),
+        "compiler",
+        discardvisual="false",
+        fusestatic="false",
+        strippath="false",
+    )
+    native = mujoco.MjSpec.from_string(ET.tostring(source, encoding="unicode"))
+    root = ET.fromstring(native.to_xml())
     ET.SubElement(
         root, "option", timestep=str(config["timestep"]), integrator="implicitfast"
     )
@@ -281,91 +262,78 @@ def mjcf(p: Profile, config: dict) -> str:
         offwidth=str(max(c["stream"]["width"] for c in config["cameras"].values())),
         offheight=str(max(c["stream"]["height"] for c in config["cameras"].values())),
     )
-    world = ET.SubElement(root, "worldbody")
+    world = root.find("worldbody")
     ET.SubElement(world, "light", pos="0 -1 2", dir="0 0 -1", diffuse=".8 .8 .8")
-    bodies = {}
+    # Remove the URDF-only container so free props are native world children.
+    container = world.find("body[@name='scene_root']")
+    world.extend(container.findall("body"))
+    world.remove(container)
+    bodies = {body.get("name"): body for body in world.iter("body")}
+    for link in robot.links:
+        bodies[link.name].set("gravcomp", "1")
+    for group in props:
+        if group[0].kind == "free":
+            ET.SubElement(bodies[group[0].name], "freejoint")
+    # Collision visuals are hidden by the camera renderer; actual CAD remains.
+    for geom in world.iter("geom"):
+        geom.set("group", "2" if geom.get("contype") == "0" else "3")
+    for link in robot.links:
+        if link.joint:
+            bodies[link.name].find("joint").set(
+                "armature", str(robot.armature(link.joint))
+            )
     contact = ET.SubElement(root, "contact")
-    for group in [robot_links(p), *objects(config["environment"])]:
+    for group in groups:
         for link in group:
-            parent = world if link.parent is None else bodies[link.parent]
-            body = ET.SubElement(
-                parent,
-                "body",
-                name=link.name,
-                pos=numbers(link.xyz),
-                quat=numbers(quaternion(rotation(link.rpy))),
-            )
-            bodies[link.name] = body
-            if group[0].name == "base":
-                body.set("gravcomp", "1")
-            if link.kind == "free":
-                ET.SubElement(body, "freejoint")
-            elif link.joint:
-                ET.SubElement(
-                    body,
-                    "joint",
-                    name=link.joint,
-                    type="slide" if link.kind == "prismatic" else "hinge",
-                    axis=numbers(link.axis),
-                    range=numbers(link.limits),
-                    damping=".1",
-                    armature=".01",
-                )
-            ET.SubElement(
-                body,
-                "inertial",
-                pos="0 0 0",
-                mass=str(link.mass),
-                diaginertia=numbers([max(link.mass * 0.003, 1e-6)] * 3),
-            )
-            for shape in link.shapes:
-                size = (
-                    tuple(np.array(shape.size) / 2)
-                    if shape.kind == "box"
-                    else (shape.size[0], shape.size[1] / 2)
-                    if shape.kind == "cylinder"
-                    else shape.size
-                )
-                ET.SubElement(
-                    body,
-                    "geom",
-                    type=shape.kind,
-                    size=numbers(size),
-                    pos=numbers(shape.xyz),
-                    quat=numbers(quaternion(rotation(shape.rpy))),
-                    rgba=numbers(shape.color),
-                    friction="1.2 .01 .001",
-                    condim="4",
-                )
             if link.parent:
                 ET.SubElement(contact, "exclude", body1=link.parent, body2=link.name)
-    # Fixed TCP links are fused by PhysX; explicitly match that adjacent-link
-    # exclusion in MuJoCo (pads still collide with each other and with props).
-    for side in ("left", "right"):
-        ET.SubElement(contact, "exclude", body1=f"link{p.dof}", body2=f"{side}_pad")
+    for first, second in robot.exclusions:
+        ET.SubElement(contact, "exclude", body1=first, body2=second)
+    equality = ET.SubElement(root, "equality")
+    for link in scene_links:
+        if link.mimic:
+            master, multiplier, offset = link.mimic
+            ET.SubElement(
+                equality,
+                "joint",
+                joint1=link.joint,
+                joint2=master,
+                polycoef=numbers((offset, multiplier, 0, 0, 0)),
+            )
+    for first, anchor, second, _other in robot.closures():
+        ET.SubElement(
+            equality,
+            "connect",
+            body1=first,
+            body2=second,
+            anchor=numbers(anchor),
+            solref="0.005 1",
+        )
     actuators = ET.SubElement(root, "actuator")
     ET.SubElement(bodies["tcp"], "site", name="tcp_site", size=".001")
     for name, limits in zip(p.names[:-1], p.limits[:-1], strict=True):
+        kp, kd, effort = robot.servo(name)
         ET.SubElement(
             actuators,
             "position",
             name=name,
             joint=name,
-            kp="5000",
-            kv="70",
+            kp=str(kp),
+            kv=str(kd),
             ctrlrange=numbers(limits),
-            forcerange="-50 50",
+            forcerange=numbers((-effort, effort)),
         )
-    for name in ("left_finger", "right_finger"):
+    for name, limits in zip(robot.hand_names[:1], robot.hand_limits[:1], strict=True):
+        kp, kd, effort = robot.servo(name)
         ET.SubElement(
             actuators,
             "position",
             name=name,
             joint=name,
-            kp="5000",
-            kv="30",
-            ctrlrange=f"0 {p.opening / 2}",
-            forcerange="-20 20",
+            kp=str(kp),
+            kv=str(kd),
+            ctrlrange=numbers(limits),
+            forcerange=numbers((-effort, effort)),
         )
     for name, row in config["cameras"].items():
         t = np.asarray(row["transform"])
@@ -381,6 +349,8 @@ def mjcf(p: Profile, config: dict) -> str:
             resolution=f"{stream['width']} {stream['height']}",
             sensorsize="1 1",
             focalpixel=f"{intr['fx']} {intr['fy']}",
-            principalpixel=f"{intr['cx'] - stream['width'] / 2} {intr['cy'] - stream['height'] / 2}",
+            principalpixel=numbers(
+                (intr["cx"] - stream["width"] / 2, intr["cy"] - stream["height"] / 2)
+            ),
         )
     return ET.tostring(root, encoding="unicode")

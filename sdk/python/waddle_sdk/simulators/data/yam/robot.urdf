@@ -1,0 +1,642 @@
+<robot name="yam_v0">
+  <link name="base_link">
+    <inertial>
+      <origin xyz="-7.22812e-05 2.52572e-05 0.0159932" rpy="0 0 0" />
+      <mass value="0.822546" />
+      <inertia ixx="0.00169415" ixy="2.43507e-07" ixz="-1.31515e-07" iyy="0.00066093" iyz="-9.11171e-07" izz="0.00155626" />
+    </inertial>
+    <visual>
+      <origin xyz="-7.22812e-05 2.52572e-05 0.0159932" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="assets/base_link_visual.stl" />
+      </geometry>
+      <material name="base_link_parts_material">
+        <color rgba="1 0.6 0 1.0" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-7.22812e-05 2.52572e-05 0.0159932" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="assets/base_link_collision.stl" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="link_1">
+    <inertial>
+      <origin xyz="-0.00192861 -0.00795735 0.0208176" rpy="0 0 0" />
+      <mass value="0.12415" />
+      <inertia ixx="5.98038e-05" ixy="-4.5902e-06" ixz="7.411e-06" iyy="0.000169215" iyz="1.68342e-05" izz="0.000156182" />
+    </inertial>
+    <visual>
+      <origin xyz="-0.00192861 -0.00795735 0.0208176" rpy="0 -0 -1.5708" />
+      <geometry>
+        <mesh filename="assets/link_1_visual.stl" />
+      </geometry>
+      <material name="link_1_parts_material">
+        <color rgba="1 0.6 0 1.0" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.00192861 -0.00795735 0.0208176" rpy="0 -0 -1.5708" />
+      <geometry>
+        <mesh filename="assets/link_1_collision.stl" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="link_2">
+    <inertial>
+      <origin xyz="0.132008 2.10599e-06 0.000293073" rpy="0 0 0" />
+      <mass value="1.24434" />
+      <inertia ixx="0.000683304" ixy="1.99503e-09" ixz="3.68337e-09" iyy="0.0121902" iyz="3.20067e-09" izz="0.0121318" />
+    </inertial>
+    <visual>
+      <origin xyz="0.132008 2.10599e-06 0.000293073" rpy="1.5708 1.96007e-14 3.14159" />
+      <geometry>
+        <mesh filename="assets/link_2_visual.stl" />
+      </geometry>
+      <material name="link_2_parts_material">
+        <color rgba="1 0.6 0 1.0" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.132008 2.10599e-06 0.000293073" rpy="1.5708 1.96007e-14 3.14159" />
+      <geometry>
+        <mesh filename="assets/link_2_collision.stl" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="link_3">
+    <inertial>
+      <origin xyz="-0.121816 -0.054846 -0.000111108" rpy="0 0 0" />
+      <mass value="0.853698" />
+      <inertia ixx="0.000835003" ixy="-0.000536647" ixz="-1.03114e-05" iyy="0.00694973" iyz="-6.38588e-06" izz="0.00696195" />
+    </inertial>
+    <visual>
+      <origin xyz="-0.121816 -0.054846 -0.000111108" rpy="-1.5708 -1.96007e-14 -3.14159" />
+      <geometry>
+        <mesh filename="assets/link_3_visual.stl" />
+      </geometry>
+      <material name="link_3_parts_material">
+        <color rgba="1 0.6 0 1.0" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.121816 -0.054846 -0.000111108" rpy="-1.5708 -1.96007e-14 -3.14159" />
+      <geometry>
+        <mesh filename="assets/link_3_collision.stl" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="link_4">
+    <inertial>
+      <origin xyz="-0.0569778 -0.0527104 0.000154878" rpy="0 0 0" />
+      <mass value="0.463511" />
+      <inertia ixx="0.000582374" ixy="-0.000250406" ixz="-7.15749e-06" iyy="0.000491129" iyz="-3.22486e-06" izz="0.000744878" />
+    </inertial>
+    <visual>
+      <origin xyz="-0.0569778 -0.0527104 0.000154878" rpy="-1.5708 -1.34671e-13 -3.14159" />
+      <geometry>
+        <mesh filename="assets/link_4_visual.stl" />
+      </geometry>
+      <material name="link_4_parts_material">
+        <color rgba="1 0.6 0 1.0" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.0569778 -0.0527104 0.000154878" rpy="-1.5708 -1.34671e-13 -3.14159" />
+      <geometry>
+        <mesh filename="assets/link_4_collision.stl" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="link_5">
+    <inertial>
+      <origin xyz="3.64861e-05 0.00025665 0.0353526" rpy="0 0 0" />
+      <mass value="0.350962" />
+      <inertia ixx="0.000197798" ixy="-3.20004e-07" ixz="-2.01757e-07" iyy="0.000172615" iyz="-1.10998e-05" izz="0.000152291" />
+    </inertial>
+    <visual>
+      <origin xyz="3.64861e-05 0.00025665 0.0353526" rpy="-3.14159 5.80587e-15 1.5708" />
+      <geometry>
+        <mesh filename="assets/link_5_visual.stl" />
+      </geometry>
+      <material name="link_5_parts_material">
+        <color rgba="1 0.6 0 1.0" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="3.64861e-05 0.00025665 0.0353526" rpy="-3.14159 5.80587e-15 1.5708" />
+      <geometry>
+        <mesh filename="assets/link_5_collision.stl" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="link_6">
+    </link>
+  <joint name="joint6" type="revolute">
+    <origin xyz="-4.0742e-16 0.0353 0.0395" rpy="-1.5708 3.81639e-16 4.68582e-15" />
+    <parent link="link_5" />
+    <child link="link_6" />
+    <axis xyz="0 0 1" />
+    <limit effort="10" velocity="10" lower="-2.0944" upper="2.0944" />
+  </joint>
+  <joint name="joint5" type="revolute">
+    <origin xyz="-0.0739968 -0.0395003 2.44738e-05" rpy="-1.5708 1.5708 0" />
+    <parent link="link_4" />
+    <child link="link_5" />
+    <axis xyz="0 0 1" />
+    <limit effort="10" velocity="10" lower="-1.5708" upper="1.5708" />
+  </joint>
+  <joint name="joint4" type="revolute">
+    <origin xyz="-0.245 -0.0600003 -1.9984e-15" rpy="-5.65471e-31 -1.1507e-13 2.94252e-43" />
+    <parent link="link_3" />
+    <child link="link_4" />
+    <axis xyz="0 0 1" />
+    <limit effort="10" velocity="10" lower="-1.5708" upper="1.5708" />
+  </joint>
+  <joint name="joint3" type="revolute">
+    <origin xyz="0.264 0 6.77626e-21" rpy="-3.14159 1.26218e-29 7.88861e-31" />
+    <parent link="link_2" />
+    <child link="link_3" />
+    <axis xyz="0 0 1" />
+    <limit effort="10" velocity="10" lower="0" upper="3.13" />
+  </joint>
+  <joint name="joint2" type="revolute">
+    <origin xyz="2.5e-05 -0.02 0.0409" rpy="1.5708 -1.98004e-28 1.5708" />
+    <parent link="link_1" />
+    <child link="link_2" />
+    <axis xyz="0 0 1" />
+    <limit effort="10" velocity="10" lower="0" upper="3.65" />
+  </joint>
+  <joint name="joint1" type="revolute">
+    <origin xyz="-3.55271e-18 -1.05495e-18 0.0631" rpy="0 -0 1.5708" />
+    <parent link="base_link" />
+    <child link="link_1" />
+    <axis xyz="0 0 1" />
+    <limit effort="10" velocity="10" lower="-2.61799" upper="3.13" />
+  </joint>
+  <link name="grasp_link" />
+  <joint name="grasp_joint" type="fixed">
+    <parent link="link_6" />
+    <child link="grasp_link" />
+    <origin xyz="0 0 0.1347" rpy="0 0 -1.5708" />
+  </joint>
+  <link name="gripper">
+    <inertial>
+      <origin xyz="-3.57066e-05 0.000249371 -0.0293133" rpy="1.678469925997839 -0.018925158393815478 0.005349484486957601" />
+      <mass value="0.553219" />
+      <inertia ixx="0.000409686" iyy="0.000369758" izz="0.000324415" ixy="0" ixz="0" iyz="0" />
+    </inertial>
+    <visual>
+      <origin xyz="-0.014 -0.0463995 0.0731" rpy="0.0 0.0 0.0" />
+      <geometry>
+        <mesh filename="assets/gripper.stl" />
+      </geometry>
+      <material name="gripper">
+        <color rgba="0.25 0.27 0.3 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.014 -0.0463995 0.0731" rpy="0.0 0.0 0.0" />
+      <geometry>
+        <mesh filename="assets/gripper.stl" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="linear_mount" type="fixed">
+    <parent link="link_6" />
+    <child link="gripper" />
+    <origin xyz="0 0 0" rpy="3.141592653589793 0 -1.5708" />
+  </joint>
+  <link name="tip_left">
+    <inertial>
+      <origin xyz="-0.0224716 0.0143408 -0.0426253" rpy="0.5683902265279612 -0.8139509611771879 1.698600532206564" />
+      <mass value="0.0710042" />
+      <inertia ixx="6.24193e-05" iyy="6.01079e-05" izz="2.83591e-05" ixy="0" ixz="0" iyz="0" />
+    </inertial>
+    <visual>
+      <origin xyz="0.129783 0.00999321 -0.0914614" rpy="1.5708003267948967 -8.000045070843953e-12 1.5708003267948967" />
+      <geometry>
+        <mesh filename="assets/tip_left.stl" />
+      </geometry>
+      <material name="tip_left">
+        <color rgba="0.25 0.27 0.3 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.129783 0.00999321 -0.0914614" rpy="1.5708003267948967 -8.000045070843953e-12 1.5708003267948967" />
+      <geometry>
+        <mesh filename="assets/collision/tip_left/tip_left-0.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0.129783 0.00999321 -0.0914614" rpy="1.5708003267948967 -8.000045070843953e-12 1.5708003267948967" />
+      <geometry>
+        <mesh filename="assets/collision/tip_left/tip_left-1.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0.129783 0.00999321 -0.0914614" rpy="1.5708003267948967 -8.000045070843953e-12 1.5708003267948967" />
+      <geometry>
+        <mesh filename="assets/collision/tip_left/tip_left-2.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0.129783 0.00999321 -0.0914614" rpy="1.5708003267948967 -8.000045070843953e-12 1.5708003267948967" />
+      <geometry>
+        <mesh filename="assets/collision/tip_left/tip_left-3.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0.129783 0.00999321 -0.0914614" rpy="1.5708003267948967 -8.000045070843953e-12 1.5708003267948967" />
+      <geometry>
+        <mesh filename="assets/collision/tip_left/tip_left-4.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0.129783 0.00999321 -0.0914614" rpy="1.5708003267948967 -8.000045070843953e-12 1.5708003267948967" />
+      <geometry>
+        <mesh filename="assets/collision/tip_left/tip_left-5.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0.129783 0.00999321 -0.0914614" rpy="1.5708003267948967 -8.000045070843953e-12 1.5708003267948967" />
+      <geometry>
+        <mesh filename="assets/collision/tip_left/tip_left-6.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0.129783 0.00999321 -0.0914614" rpy="1.5708003267948967 -8.000045070843953e-12 1.5708003267948967" />
+      <geometry>
+        <mesh filename="assets/collision/tip_left/tip_left-7.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0.129783 0.00999321 -0.0914614" rpy="1.5708003267948967 -8.000045070843953e-12 1.5708003267948967" />
+      <geometry>
+        <mesh filename="assets/collision/tip_left/tip_left-8.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0.129783 0.00999321 -0.0914614" rpy="1.5708003267948967 -8.000045070843953e-12 1.5708003267948967" />
+      <geometry>
+        <mesh filename="assets/collision/tip_left/tip_left-9.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0.129783 0.00999321 -0.0914614" rpy="1.5708003267948967 -8.000045070843953e-12 1.5708003267948967" />
+      <geometry>
+        <mesh filename="assets/collision/tip_left/tip_left-10.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0.129783 0.00999321 -0.0914614" rpy="1.5708003267948967 -8.000045070843953e-12 1.5708003267948967" />
+      <geometry>
+        <mesh filename="assets/collision/tip_left/tip_left-11.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0.129783 0.00999321 -0.0914614" rpy="1.5708003267948967 -8.000045070843953e-12 1.5708003267948967" />
+      <geometry>
+        <mesh filename="assets/collision/tip_left/tip_left-12.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0.129783 0.00999321 -0.0914614" rpy="1.5708003267948967 -8.000045070843953e-12 1.5708003267948967" />
+      <geometry>
+        <mesh filename="assets/collision/tip_left/tip_left-13.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0.129783 0.00999321 -0.0914614" rpy="1.5708003267948967 -8.000045070843953e-12 1.5708003267948967" />
+      <geometry>
+        <mesh filename="assets/collision/tip_left/tip_left-14.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0.129783 0.00999321 -0.0914614" rpy="1.5708003267948967 -8.000045070843953e-12 1.5708003267948967" />
+      <geometry>
+        <mesh filename="assets/collision/tip_left/tip_left-15.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0.129783 0.00999321 -0.0914614" rpy="1.5708003267948967 -8.000045070843953e-12 1.5708003267948967" />
+      <geometry>
+        <mesh filename="assets/collision/tip_left/tip_left-16.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0.129783 0.00999321 -0.0914614" rpy="1.5708003267948967 -8.000045070843953e-12 1.5708003267948967" />
+      <geometry>
+        <mesh filename="assets/collision/tip_left/tip_left-17.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0.129783 0.00999321 -0.0914614" rpy="1.5708003267948967 -8.000045070843953e-12 1.5708003267948967" />
+      <geometry>
+        <mesh filename="assets/collision/tip_left/tip_left-18.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0.129783 0.00999321 -0.0914614" rpy="1.5708003267948967 -8.000045070843953e-12 1.5708003267948967" />
+      <geometry>
+        <mesh filename="assets/collision/tip_left/tip_left-19.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0.129783 0.00999321 -0.0914614" rpy="1.5708003267948967 -8.000045070843953e-12 1.5708003267948967" />
+      <geometry>
+        <mesh filename="assets/collision/tip_left/tip_left-20.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0.129783 0.00999321 -0.0914614" rpy="1.5708003267948967 -8.000045070843953e-12 1.5708003267948967" />
+      <geometry>
+        <mesh filename="assets/collision/tip_left/tip_left-21.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0.129783 0.00999321 -0.0914614" rpy="1.5708003267948967 -8.000045070843953e-12 1.5708003267948967" />
+      <geometry>
+        <mesh filename="assets/collision/tip_left/tip_left-22.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0.129783 0.00999321 -0.0914614" rpy="1.5708003267948967 -8.000045070843953e-12 1.5708003267948967" />
+      <geometry>
+        <mesh filename="assets/collision/tip_left/tip_left-23.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0.129783 0.00999321 -0.0914614" rpy="1.5708003267948967 -8.000045070843953e-12 1.5708003267948967" />
+      <geometry>
+        <mesh filename="assets/collision/tip_left/tip_left-24.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0.129783 0.00999321 -0.0914614" rpy="1.5708003267948967 -8.000045070843953e-12 1.5708003267948967" />
+      <geometry>
+        <mesh filename="assets/collision/tip_left/tip_left-25.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0.129783 0.00999321 -0.0914614" rpy="1.5708003267948967 -8.000045070843953e-12 1.5708003267948967" />
+      <geometry>
+        <mesh filename="assets/collision/tip_left/tip_left-26.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0.129783 0.00999321 -0.0914614" rpy="1.5708003267948967 -8.000045070843953e-12 1.5708003267948967" />
+      <geometry>
+        <mesh filename="assets/collision/tip_left/tip_left-27.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0.129783 0.00999321 -0.0914614" rpy="1.5708003267948967 -8.000045070843953e-12 1.5708003267948967" />
+      <geometry>
+        <mesh filename="assets/collision/tip_left/tip_left-28.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0.129783 0.00999321 -0.0914614" rpy="1.5708003267948967 -8.000045070843953e-12 1.5708003267948967" />
+      <geometry>
+        <mesh filename="assets/collision/tip_left/tip_left-29.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0.129783 0.00999321 -0.0914614" rpy="1.5708003267948967 -8.000045070843953e-12 1.5708003267948967" />
+      <geometry>
+        <mesh filename="assets/collision/tip_left/tip_left-30.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0.129783 0.00999321 -0.0914614" rpy="1.5708003267948967 -8.000045070843953e-12 1.5708003267948967" />
+      <geometry>
+        <mesh filename="assets/collision/tip_left/tip_left-31.stl" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="joint7" type="prismatic">
+    <parent link="gripper" />
+    <child link="tip_left" />
+    <origin xyz="-0.0238981 0.0450619 -0.0545599" rpy="1.5707943268087745 -1.5707923267948967 3.1415906535759155" />
+    <axis xyz="0 0 -1" />
+    <limit lower="0" upper="0.0475" effort="20" velocity="0.1" />
+  </joint>
+  <link name="tip_right">
+    <inertial>
+      <origin xyz="-0.0143408 -0.0224716 -0.0426253" rpy="2.5732020153861894 0.8139511196077853 0.12780432318383173" />
+      <mass value="0.0710042" />
+      <inertia ixx="6.24193e-05" iyy="6.01079e-05" izz="2.83591e-05" ixy="0" ixz="0" iyz="0" />
+    </inertial>
+    <visual>
+      <origin xyz="-0.0379932 0.129783 0.00133753" rpy="-1.5708005694372709 0.0 0.0" />
+      <geometry>
+        <mesh filename="assets/tip_right.stl" />
+      </geometry>
+      <material name="tip_right">
+        <color rgba="0.25 0.27 0.3 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.0379932 0.129783 0.00133753" rpy="-1.5708005694372709 0.0 0.0" />
+      <geometry>
+        <mesh filename="assets/collision/tip_right/tip_right-0.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="-0.0379932 0.129783 0.00133753" rpy="-1.5708005694372709 0.0 0.0" />
+      <geometry>
+        <mesh filename="assets/collision/tip_right/tip_right-1.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="-0.0379932 0.129783 0.00133753" rpy="-1.5708005694372709 0.0 0.0" />
+      <geometry>
+        <mesh filename="assets/collision/tip_right/tip_right-2.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="-0.0379932 0.129783 0.00133753" rpy="-1.5708005694372709 0.0 0.0" />
+      <geometry>
+        <mesh filename="assets/collision/tip_right/tip_right-3.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="-0.0379932 0.129783 0.00133753" rpy="-1.5708005694372709 0.0 0.0" />
+      <geometry>
+        <mesh filename="assets/collision/tip_right/tip_right-4.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="-0.0379932 0.129783 0.00133753" rpy="-1.5708005694372709 0.0 0.0" />
+      <geometry>
+        <mesh filename="assets/collision/tip_right/tip_right-5.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="-0.0379932 0.129783 0.00133753" rpy="-1.5708005694372709 0.0 0.0" />
+      <geometry>
+        <mesh filename="assets/collision/tip_right/tip_right-6.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="-0.0379932 0.129783 0.00133753" rpy="-1.5708005694372709 0.0 0.0" />
+      <geometry>
+        <mesh filename="assets/collision/tip_right/tip_right-7.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="-0.0379932 0.129783 0.00133753" rpy="-1.5708005694372709 0.0 0.0" />
+      <geometry>
+        <mesh filename="assets/collision/tip_right/tip_right-8.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="-0.0379932 0.129783 0.00133753" rpy="-1.5708005694372709 0.0 0.0" />
+      <geometry>
+        <mesh filename="assets/collision/tip_right/tip_right-9.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="-0.0379932 0.129783 0.00133753" rpy="-1.5708005694372709 0.0 0.0" />
+      <geometry>
+        <mesh filename="assets/collision/tip_right/tip_right-10.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="-0.0379932 0.129783 0.00133753" rpy="-1.5708005694372709 0.0 0.0" />
+      <geometry>
+        <mesh filename="assets/collision/tip_right/tip_right-11.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="-0.0379932 0.129783 0.00133753" rpy="-1.5708005694372709 0.0 0.0" />
+      <geometry>
+        <mesh filename="assets/collision/tip_right/tip_right-12.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="-0.0379932 0.129783 0.00133753" rpy="-1.5708005694372709 0.0 0.0" />
+      <geometry>
+        <mesh filename="assets/collision/tip_right/tip_right-13.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="-0.0379932 0.129783 0.00133753" rpy="-1.5708005694372709 0.0 0.0" />
+      <geometry>
+        <mesh filename="assets/collision/tip_right/tip_right-14.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="-0.0379932 0.129783 0.00133753" rpy="-1.5708005694372709 0.0 0.0" />
+      <geometry>
+        <mesh filename="assets/collision/tip_right/tip_right-15.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="-0.0379932 0.129783 0.00133753" rpy="-1.5708005694372709 0.0 0.0" />
+      <geometry>
+        <mesh filename="assets/collision/tip_right/tip_right-16.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="-0.0379932 0.129783 0.00133753" rpy="-1.5708005694372709 0.0 0.0" />
+      <geometry>
+        <mesh filename="assets/collision/tip_right/tip_right-17.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="-0.0379932 0.129783 0.00133753" rpy="-1.5708005694372709 0.0 0.0" />
+      <geometry>
+        <mesh filename="assets/collision/tip_right/tip_right-18.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="-0.0379932 0.129783 0.00133753" rpy="-1.5708005694372709 0.0 0.0" />
+      <geometry>
+        <mesh filename="assets/collision/tip_right/tip_right-19.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="-0.0379932 0.129783 0.00133753" rpy="-1.5708005694372709 0.0 0.0" />
+      <geometry>
+        <mesh filename="assets/collision/tip_right/tip_right-20.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="-0.0379932 0.129783 0.00133753" rpy="-1.5708005694372709 0.0 0.0" />
+      <geometry>
+        <mesh filename="assets/collision/tip_right/tip_right-21.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="-0.0379932 0.129783 0.00133753" rpy="-1.5708005694372709 0.0 0.0" />
+      <geometry>
+        <mesh filename="assets/collision/tip_right/tip_right-22.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="-0.0379932 0.129783 0.00133753" rpy="-1.5708005694372709 0.0 0.0" />
+      <geometry>
+        <mesh filename="assets/collision/tip_right/tip_right-23.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="-0.0379932 0.129783 0.00133753" rpy="-1.5708005694372709 0.0 0.0" />
+      <geometry>
+        <mesh filename="assets/collision/tip_right/tip_right-24.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="-0.0379932 0.129783 0.00133753" rpy="-1.5708005694372709 0.0 0.0" />
+      <geometry>
+        <mesh filename="assets/collision/tip_right/tip_right-25.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="-0.0379932 0.129783 0.00133753" rpy="-1.5708005694372709 0.0 0.0" />
+      <geometry>
+        <mesh filename="assets/collision/tip_right/tip_right-26.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="-0.0379932 0.129783 0.00133753" rpy="-1.5708005694372709 0.0 0.0" />
+      <geometry>
+        <mesh filename="assets/collision/tip_right/tip_right-27.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="-0.0379932 0.129783 0.00133753" rpy="-1.5708005694372709 0.0 0.0" />
+      <geometry>
+        <mesh filename="assets/collision/tip_right/tip_right-28.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="-0.0379932 0.129783 0.00133753" rpy="-1.5708005694372709 0.0 0.0" />
+      <geometry>
+        <mesh filename="assets/collision/tip_right/tip_right-29.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="-0.0379932 0.129783 0.00133753" rpy="-1.5708005694372709 0.0 0.0" />
+      <geometry>
+        <mesh filename="assets/collision/tip_right/tip_right-30.stl" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="-0.0379932 0.129783 0.00133753" rpy="-1.5708005694372709 0.0 0.0" />
+      <geometry>
+        <mesh filename="assets/collision/tip_right/tip_right-31.stl" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="joint8" type="prismatic">
+    <parent link="gripper" />
+    <child link="tip_right" />
+    <origin xyz="0.0238981 -0.0450619 -0.0545599" rpy="1.5708005694372709 0.0 0.0" />
+    <axis xyz="0 0 -1" />
+    <limit lower="0" upper="0.0475" effort="20" velocity="0.1" />
+    <mimic joint="joint7" multiplier="1" offset="0" />
+  </joint>
+</robot>

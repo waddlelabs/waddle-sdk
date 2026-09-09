@@ -126,12 +126,10 @@ def test_the_vendors_licence_ships_beside_the_model():
 
 
 def test_the_model_ships_as_text_with_no_meshes():
-    """The wheel carries the kinematic contract, not a visual model.
+    """This directory carries the kinematic contract without a visual bundle.
 
-    The URDF's `<mesh filename="assets/...">` references are deliberately
-    unresolved: the STLs are ~megabytes against a 3.7 MB wheel, and nothing
-    in this SDK renders anything. A future change that starts shipping them
-    fails here, where the size decision is written down.
+    Simulation separately packages its complete manufacturer assemblies under
+    simulators/data; adding those must not duplicate meshes in yam_data.
     """
     assert sorted(p.name for p in DATA.iterdir()) == [
         "LICENSE",

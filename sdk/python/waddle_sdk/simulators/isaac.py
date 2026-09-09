@@ -6,13 +6,13 @@ from pathlib import Path
 
 import numpy as np
 
-from .model import objects, robot_links, screw_force
-from .scene import depth_z16, profile, quaternion, rotation, transform
+from .description import description
+from .model import objects, robot_links, urdf
+from .scene import depth_z16, profile, quaternion, transform
 
 
 class Engine:
     def __init__(self, config: dict, scratch: Path):
-        del scratch
         # Isaac owns Kit and must initialize before importing Omni/pxr modules.
         # License acceptance remains the site operator's runtime setting.
         from isaacsim import SimulationApp
@@ -25,11 +25,16 @@ class Engine:
                 "renderer": "RayTracedLighting",
             }
         )
+        import omni.kit.app
         import omni.replicator.core as rep
+
+        omni.kit.app.get_app().get_extension_manager().set_extension_enabled_immediate(
+            "isaacsim.asset.importer.urdf", True
+        )
         from isaacsim.core.api import World
         from isaacsim.core.prims import SingleArticulation, SingleRigidPrim
         from isaacsim.core.utils.types import ArticulationAction
-        from pxr import Gf, PhysxSchema, UsdGeom, UsdLux, UsdPhysics, UsdShade
+        from pxr import Gf, PhysxSchema, Usd, UsdGeom, UsdLux, UsdPhysics, UsdShade
 
         self.Gf, self.Geom, self.Physics, self.Physx = (
             Gf,
@@ -37,9 +42,13 @@ class Engine:
             UsdPhysics,
             PhysxSchema,
         )
+        self.Usd = Usd
+        self.Articulation = SingleArticulation
+        self.RigidPrim = SingleRigidPrim
         self.Action = ArticulationAction
         self.config = config
         self.profile = p = profile(config["robot"])
+        self.description = robot = description(p.name)
         self.world = World(
             stage_units_in_meters=1.0,
             physics_dt=config["timestep"],
@@ -56,24 +65,17 @@ class Engine:
         physics_material.CreateRestitutionAttr(0.0)
         self.material = material
         self.Shade = UsdShade
-        self._signs = {}
-        self._build(robot_links(p), "robot", robot=True)
-        self.robot = self.world.scene.add(
-            SingleArticulation(prim_path="/World/robot", name="robot")
+        self.robot, robot_bodies = self._load(
+            robot_links(p), "robot", scratch, robot=True
         )
-        self.props = []
-        for links in objects(config["environment"]):
-            name = links[0].name
-            self._build(links, name)
-            if len(links) > 1:
-                item = self.world.scene.add(
-                    SingleArticulation(prim_path=f"/World/{name}", name=name)
-                )
-                self.props.append(item)
+        self.props = [
+            self._load(links, links[0].name, scratch)[0]
+            for links in objects(config["environment"])
+        ]
         self._screw = self.props[-1] if config["environment"] == "bottle_cap" else None
         self.tcp = self.world.scene.add(
             SingleRigidPrim(
-                prim_path="/World/robot/tcp",
+                prim_path=str(robot_bodies["tcp"].GetPath()),
                 name="tcp_measurement",
                 reset_xform_properties=False,
             )
@@ -81,9 +83,7 @@ class Engine:
         self.world.reset()
         self.order = list(self.robot.dof_names)
         self.arm_indices = [self.order.index(n) for n in p.names[:-1]]
-        self.finger_indices = [
-            self.order.index(n) for n in ("left_finger", "right_finger")
-        ]
+        self.finger_indices = [self.order.index(n) for n in robot.hand_names]
         self.home(p.home)
         self.cameras = {}
         for name, row in config["cameras"].items():
@@ -119,135 +119,114 @@ class Engine:
             self.Gf.Quatf(float(q[0]), self.Gf.Vec3f(*map(float, q[1:])))
         )
 
-    def _build(self, links, name, robot=False):
-        P, G, F, PX = self.Physics, self.Geom, self.Gf, self.Physx
+    def _load(self, links, name, scratch, robot=False):
+        """Use Isaac Sim's importer, as Isaac Lab's UrdfConverter does.
+
+        The importer owns mesh conversion, inertias, joint axes, and mimic
+        constraints. SDK code only configures drives and binds named bodies.
+        """
+        from isaacsim.asset.importer.urdf import URDFImporter, URDFImporterConfig
+
+        path = scratch / f"{name}.urdf"
+        path.write_text(urdf(links, name))
+        gains = {
+            link.joint: self.description.servo(link.joint)
+            for link in links
+            if robot and link.joint
+        }
+        config = URDFImporterConfig(
+            urdf_path=str(path),
+            usd_path=str(scratch / "usd"),
+            fix_base=links[0].kind != "free",
+            merge_fixed_joints=False,
+            collision_from_visuals=False,
+            allow_self_collision=True,
+            joint_drive_type="force",
+            joint_target_type="position" if robot else "none",
+            override_joint_stiffness={key: value[0] for key, value in gains.items()},
+            override_joint_damping={key: value[1] for key, value in gains.items()},
+        )
+        usd_path = URDFImporter(config).import_urdf()
+        if not usd_path:
+            raise RuntimeError(f"Isaac Sim could not import {name}")
         root_path = f"/World/{name}"
-        root = G.Xform.Define(self.stage, root_path)
-        articulated = len(links) > 1
-        if articulated:
-            P.ArticulationRootAPI.Apply(root.GetPrim())
-            PX.PhysxArticulationAPI.Apply(
-                root.GetPrim()
-            ).CreateEnabledSelfCollisionsAttr(True)
-        poses = {}
-        for link in links:
-            pose = transform(link.xyz, link.rpy)
-            if link.parent is not None:
-                pose = poses[link.parent] @ pose
-            poses[link.name] = pose
-            path = f"{root_path}/{link.name}"
-            body = G.Xform.Define(self.stage, path)
-            self._pose(body, pose)
-            if articulated or link.kind == "free":
-                P.RigidBodyAPI.Apply(body.GetPrim())
-                mass = P.MassAPI.Apply(body.GetPrim())
-                mass.CreateMassAttr(link.mass)
-                mass.CreateDiagonalInertiaAttr(
-                    F.Vec3f(*([max(link.mass * 0.003, 1e-6)] * 3))
-                )
-                if robot:
-                    PX.PhysxRigidBodyAPI.Apply(body.GetPrim()).CreateDisableGravityAttr(
-                        True
-                    )
-            for i, shape in enumerate(link.shapes):
-                gp = f"{path}/shape_{i}"
-                if shape.kind == "box":
-                    geometry = G.Cube.Define(self.stage, gp)
-                    geometry.CreateSizeAttr(1.0)
-                elif shape.kind == "sphere":
-                    geometry = G.Sphere.Define(self.stage, gp)
-                    geometry.CreateRadiusAttr(shape.size[0])
-                else:
-                    geometry = G.Cylinder.Define(self.stage, gp)
-                    geometry.CreateRadiusAttr(shape.size[0])
-                    geometry.CreateHeightAttr(shape.size[1])
-                    geometry.CreateAxisAttr("Z")
-                self._pose(geometry, transform(shape.xyz, shape.rpy))
-                if shape.kind == "box":
-                    G.Xformable(geometry).AddScaleOp().Set(
-                        F.Vec3f(*map(float, shape.size))
-                    )
-                geometry.CreateDisplayColorAttr([F.Vec3f(*map(float, shape.color[:3]))])
-                P.CollisionAPI.Apply(geometry.GetPrim())
-                PX.PhysxCollisionAPI.Apply(geometry.GetPrim()).CreateContactOffsetAttr(
-                    0.001
-                )
-                self.Shade.MaterialBindingAPI.Apply(geometry.GetPrim()).Bind(
+        root = self.Geom.Xform.Define(self.stage, root_path)
+        root.GetPrim().GetReferences().AddReference(usd_path)
+        root.GetPrim().GetVariantSet("Physics").SetVariantSelection("physx")
+        self._pose(root, transform(links[0].xyz, links[0].rpy))
+        prims = list(self.Usd.PrimRange(root.GetPrim()))
+        bodies = {
+            prim.GetName(): prim
+            for prim in prims
+            if prim.HasAPI(self.Physics.RigidBodyAPI)
+        }
+        for prim in prims:
+            if prim.HasAPI(self.Physics.CollisionAPI):
+                self.Shade.MaterialBindingAPI.Apply(prim).Bind(
                     self.material, materialPurpose="physics"
                 )
-            if not articulated:
-                continue
-            if link.parent is None:
-                joint = P.FixedJoint.Define(self.stage, f"{root_path}/anchor")
-                joint.CreateBody1Rel().SetTargets([path])
-                joint.CreateLocalPos0Attr(F.Vec3f(*map(float, pose[:3, 3])))
-                q = quaternion(pose[:3, :3])
-                joint.CreateLocalRot0Attr(
-                    F.Quatf(float(q[0]), F.Vec3f(*map(float, q[1:])))
+            if robot and prim.HasAPI(self.Physics.RigidBodyAPI):
+                self.Physx.PhysxRigidBodyAPI.Apply(prim).CreateDisableGravityAttr(True)
+            if robot and prim.GetName() in gains and prim.IsA(self.Physics.Joint):
+                axis = "linear" if prim.IsA(self.Physics.PrismaticJoint) else "angular"
+                self.Physics.DriveAPI.Apply(prim, axis).CreateMaxForceAttr(
+                    gains[prim.GetName()][2]
                 )
-                continue
-            parent_path = f"{root_path}/{link.parent}"
-            joint_path = f"{root_path}/joints/{link.joint or link.name + '_fixed'}"
-            kind = (
-                P.RevoluteJoint
-                if link.kind == "revolute"
-                else P.PrismaticJoint
-                if link.kind == "prismatic"
-                else P.FixedJoint
-            )
-            joint = kind.Define(self.stage, joint_path)
-            joint.CreateBody0Rel().SetTargets([parent_path])
-            joint.CreateBody1Rel().SetTargets([path])
-            joint.CreateLocalPos0Attr(F.Vec3f(*map(float, link.xyz)))
-            q = quaternion(rotation(link.rpy))
-            joint.CreateLocalRot0Attr(F.Quatf(float(q[0]), F.Vec3f(*map(float, q[1:]))))
-            P.FilteredPairsAPI.Apply(body.GetPrim()).CreateFilteredPairsRel().AddTarget(
-                parent_path
-            )
-            if link.joint:
-                axis = int(np.argmax(np.abs(link.axis)))
-                sign = float(link.axis[axis])
-                self._signs[link.joint] = sign
-                joint.CreateAxisAttr("XYZ"[axis])
-                limits = sorted(
-                    np.asarray(link.limits)
-                    * sign
-                    * (180 / np.pi if link.kind == "revolute" else 1.0)
+        if robot:
+            for first, second in self.description.exclusions:
+                self.Physics.FilteredPairsAPI.Apply(
+                    bodies[first]
+                ).CreateFilteredPairsRel().AddTarget(bodies[second].GetPath())
+        if robot:
+            for first, anchor, second, other in self.description.closures():
+                joint = self.Physics.SphericalJoint.Define(
+                    self.stage, f"{root_path}/closure_{first}"
                 )
-                joint.CreateLowerLimitAttr(float(limits[0]))
-                joint.CreateUpperLimitAttr(float(limits[1]))
-                if robot:
-                    finger = link.kind == "prismatic"
-                    drive = P.DriveAPI.Apply(
-                        joint.GetPrim(), "linear" if finger else "angular"
-                    )
-                    # USD angular drive gains use degrees; the public joint
-                    # control API and all SDK vectors remain in radians.
-                    factor = 1.0 if finger else np.pi / 180
-                    drive.CreateStiffnessAttr(5000 * factor)
-                    drive.CreateDampingAttr((30 if finger else 70) * factor)
-                    drive.CreateMaxForceAttr(20.0 if finger else 50.0)
+                joint.CreateBody0Rel().SetTargets([bodies[first].GetPath()])
+                joint.CreateBody1Rel().SetTargets([bodies[second].GetPath()])
+                joint.CreateLocalPos0Attr(self.Gf.Vec3f(*map(float, anchor)))
+                joint.CreateLocalPos1Attr(self.Gf.Vec3f(*map(float, other)))
+        if len(links) > 1:
+            roots = [
+                prim for prim in prims if prim.HasAPI(self.Physics.ArticulationRootAPI)
+            ]
+            if len(roots) != 1:
+                raise RuntimeError(
+                    f"Isaac importer produced {len(roots)} articulation roots for {name}"
+                )
+            item = self.Articulation(prim_path=str(roots[0].GetPath()), name=name)
+        elif links[0].kind == "free":
+            item = self.RigidPrim(
+                prim_path=str(bodies[links[0].name].GetPath()), name=name
+            )
+        else:
+            return None, bodies
+        return self.world.scene.add(item), bodies
 
     def _expand(self, q):
         values = np.zeros(len(self.order))
         values[self.arm_indices] = q[:-1]
-        for i in self.finger_indices:
-            values[i] = q[-1] * self.profile.opening / 2 * self._signs[self.order[i]]
+        values[self.finger_indices] = self.description.hand_position(q[-1])
         return values
 
     def read(self):
         q, dq = self.robot.get_joint_positions(), self.robot.get_joint_velocities()
-        signs = np.array([self._signs[self.order[i]] for i in self.finger_indices])
-        return np.r_[
-            q[self.arm_indices],
-            sum(q[self.finger_indices] * signs) / self.profile.opening,
-        ], np.r_[
-            dq[self.arm_indices],
-            sum(dq[self.finger_indices] * signs) / self.profile.opening,
-        ]
+        hand, speed = self.description.hand_state(
+            float(q[self.finger_indices[0]]),
+            float(dq[self.finger_indices[0]]),
+        )
+        return np.r_[q[self.arm_indices], hand], np.r_[dq[self.arm_indices], speed]
 
-    def write(self, q):
-        self.robot.apply_action(self.Action(joint_positions=self._expand(q)))
+    def write(self, q, velocity=None):
+        self._requested = self._expand(q)
+        self._velocity = np.zeros(len(self.order))
+        if velocity is not None:
+            self._velocity[self.arm_indices] = velocity[:-1]
+        self.robot.apply_action(
+            self.Action(
+                joint_positions=self._requested, joint_velocities=self._velocity
+            )
+        )
 
     def hold(self):
         self.write(self.read()[0])
@@ -259,16 +238,11 @@ class Engine:
         return True
 
     def step(self):
-        if self._screw is not None:
-            names = list(self._screw.dof_names)
-            idx = [names.index(n) for n in ("cap_rotation", "cap_lift")]
-            force = np.zeros(len(names))
-            force[idx] = screw_force(
-                self._screw.get_joint_positions()[idx],
-                self._screw.get_joint_velocities()[idx],
-            )
-            self._screw.set_joint_efforts(force)
         self.world.step(render=False)
+
+    def reset(self):
+        self.world.reset()
+        return self.home(self.profile.home)
 
     def capture(self, name):
         row = self.config["cameras"][name]

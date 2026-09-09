@@ -2,6 +2,9 @@
 
 Physics uses the same `Site`, `SdkRuntimePort`, joint-position, gripper, RGB-D,
 kinematics, body-geometry, recording, hold, and e-stop contracts as physical devices.
+The existing optional `PositionVelocityDriver` port accepts known trajectory
+velocities, bounded by the site's declared arm speed; the hand remains a position
+latch. Ordinary position commands and holds clear velocity feedforward.
 Only the site adapters and their configuration select an engine. Programs must use
 capability facts; importing a simulator does not establish sensor or motion support.
 
@@ -9,7 +12,7 @@ capability facts; importing a simulator does not establish sensor or motion supp
 
 | Selector | Role | Installation |
 | --- | --- | --- |
-| `mujoco` | Small, fast reference engine; extends the existing SDK MuJoCo driver | `pip install 'waddle-sdk[mujoco]'` |
+| `mujoco` | Native URDF import, MuJoCo position drives and RGB-D | `pip install 'waddle-sdk[mujoco]'` |
 | `isaac` | NVIDIA USD/PhysX and RTX rendering | Separate Isaac Sim 6.0.1 Python 3.12 installation; pass its interpreter as `worker_python` |
 | `sapien` | PhysX manipulation and Vulkan RGB-D; a foundation for ManiSkill assets | `pip install 'waddle-sdk[sapien]'` on a supported platform |
 
@@ -28,15 +31,35 @@ Each engine accepts `yam` or `xarm7` and these environments:
 
 The reference robot models preserve the live adapters' joint names, order, limits,
 radian units, FK, and normalized hand action (0 closed, 1 open). YAM uses the SDK's
-pinned I2RT chain and tool convention. xArm7 uses the vendor's pinned kinematic
-origins with the standard gripper TCP. Sources and licensing are recorded alongside
-`waddle_sdk/simulators/data/`.
+pinned I2RT URDF and tool convention, assembled with the live adapter's 95 mm
+LINEAR_4310 hand. xArm7 uses UFACTORY's expanded URDF with the G2 gripper and its
+standard TCP. The original visual meshes, link masses, centers of mass and inertia
+tensors are retained. Concave hand collision meshes are decomposed offline into
+convex pieces so each engine preserves recesses and cable clearance. Native constraints couple the jaws
+and gripper linkage; xArm7's revolute hand is mapped nonlinearly to jaw travel.
 
-These are deliberately simple reference geometries, with approximate masses and
-inertias, position servos, and gravity compensation. They are **not calibrated
-hardware dynamics models**. A different physical hand, TCP offset, link revision,
-or camera mounting requires a matching embodiment configuration. No simulation
-result certifies clearance, grasp forces, or success on hardware.
+Sources, licenses, conversion steps and SHA-256 hashes ship in
+`waddle_sdk/simulators/data/`. `tools/vendor_simulation_models.py` rebuilds those
+assets from pinned public manufacturer revisions. No model is downloaded at site
+startup. The reference collision spheres are conservative covers derived from
+these same meshes and link transforms.
+
+The SDK's existing shared-world robot pump advances the reference world in fixed
+2 ms native steps. The pump runs at 500 Hz; the part's command declaration and
+owner limits remain at 50 Hz. The worker has no independent physics clock; sensors
+and robot state share the ordinary SDK lifecycle. Episode reset uses native state
+reset/snapshots, retaining the model and renderer. Actual real-time factor depends on
+available compute and rendering load.
+Position servos, gravity compensation,
+friction and the primitive task props remain
+simulation settings. Manufacturer CAD and inertial properties do not establish
+calibrated actuator dynamics or a match to every hardware revision. A different
+physical hand, TCP offset, link revision or camera mounting needs matching site
+configuration. The LINEAR_4310 pinch offset is derived from the current manufacturer
+model (approximately 9.95 mm along the declared TCP's +Z). The SDK TCP stays
+unchanged, and the older hand's lateral pinch offset does not apply.
+Its wrist optical pose comes from I2RT's published LINEAR_4310/D405 bracket;
+the reference intrinsics remain explicit site settings.
 
 ## Create and open a site
 
@@ -116,3 +139,11 @@ for NVIDIA rendering and USD tooling, and
 [SimFoundry](https://research.nvidia.com/labs/gear/simfoundry/) is a scene-creation
 pipeline to evaluate as an asset source, rather than a fourth interchangeable
 physics runtime.
+
+The implementation review uses repositories maintained during the preceding year
+(reviewed 2026-09-08): MuJoCo Menagerie (2026-09-04), I2RT 1.3.5 (2026-09-07),
+mjlab (2026-08-31), ManiSkill (2026-08-02), and Isaac Lab (2026-09-04).
+Exact revisions, source paths, mechanism choices and limitations are recorded in
+the packaged `waddle_sdk/simulators/data/README.md`.
+All three backends use native URDF import and physics constraints. Engine-specific
+geometry conversion, axis handling and inertia conversion stay in the importer.

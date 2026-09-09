@@ -47,8 +47,18 @@ depend on it.
 
 Physics sites are documented in `docs/python/simulation.md`. The optional
 `sdk/python/waddle_sdk/simulators/` package implements reference scenes through
-the public `SimulationBackend` lifecycle and its part/camera facets. The reference scenes use primitive collision geometry and approximate
-inertias, not a calibrated dynamics twin. Engine-dependent acceptance lives in
+the public `SimulationBackend` lifecycle and its part/camera facets. Robots use
+hash-pinned manufacturer URDF assemblies, visual meshes, inertias and decomposed
+hand collisions; task props use primitive geometry. The SDK YAM arm contract is
+assembled with I2RT LINEAR_4310; xArm7 uses UFACTORY's G2 hand. The reference servos
+are not calibrated actuator models. MuJoCo, SAPIEN and Isaac Sim use native
+URDF import; xArm uses Menagerie's two linkage closures with a coupled driver.
+Known trajectory velocities use the existing optional driver port. Position-only
+commands and holds clear those velocity targets. The world advances in fixed
+2 ms native steps driven by the SDK's existing shared-world robot pump; the
+worker has no independent physics clock. The hand pinch offset comes from I2RT 1.3.5's corrected grasp site.
+`tools/vendor_simulation_models.py` rebuilds
+the packaged assets; no runtime model download occurs. Engine-dependent acceptance lives in
 `sdk/tests/test_simulation.py` and isolates native graphics runtimes in subprocesses.
 
 ## Repo map
@@ -543,7 +553,9 @@ top-level dirs; they are not built yet.
     licence + README, 5.6 KB once deflated into the wheel; sdk/README.md quotes
     that same 16 KB to a customer, so the two move together. Adding or moving such data is
     the one time to build a wheel and list it — that it landed, and that no
-    bytecode or mesh came with it.
+    bytecode came with it. Reference simulation robot meshes are deliberately
+    packaged under `simulators/data/`, separately from the kinematics-only
+    `robots/yam_data/` snapshot; their file hashes are tested.
     Each project root also carries a byte-equal copy of the repository
     `LICENSE`, declared through PEP 639 `license-files = ["LICENSE"]`; the
     packaging test holds both copies to the root, and a wheel inspection must

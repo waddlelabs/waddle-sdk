@@ -1,15 +1,16 @@
 """Shared, metre/radian reference scenes and hardware-matched declarations.
 
-The reference links use simple primitive geometry, not visual CAD. Joint
-origins/limits and jaw travel come from the same sources as the live adapters.
-Engines consume these definitions; they do not invent their own robot profiles.
+Joint origins/limits and jaw travel come from the same sources as the live
+adapters. Engines load the same pinned manufacturer URDF and mesh assemblies.
 """
 
 from __future__ import annotations
 
 import json
 import math
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
+from functools import lru_cache
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
@@ -124,8 +125,17 @@ class Profile:
         return result
 
 
+@lru_cache(maxsize=2)
 def profile(name: str) -> Profile:
     if name == "yam":
+        hand = ET.fromstring(
+            files(__package__).joinpath("data/yam/linear_4310.xml").read_text()
+        )
+        pinch = np.fromstring(
+            hand.find(".//site[@name='grasp_site']").get("pos"), sep=" "
+        )
+        # Native hand -> SDK TCP: Rx(pi), then subtract the declared tool offset.
+        pinch = pinch * [1, -1, -1] - yam.TOOL_ORIGIN_XYZ_M
         return Profile(
             name,
             yam.JOINT_NAMES,
@@ -138,7 +148,7 @@ def profile(name: str) -> Profile:
             yam.GRIPPER_MAX_OPENING_M,
             yam.BASE_FRAME,
             (0.0, 1.0, 0.0),
-            (0.044, 0.0, -0.0049),
+            tuple(map(float, pinch)),
             (0.0, 0.0, 1.0, 0.0),
         )
     if name != "xarm7":
@@ -227,11 +237,20 @@ def make_site(
     connection = {"simulation": "simulation.json"}
     cameras = {}
     mounts = {
-        "scene": look_at((0.32, -0.3, 1.0), (0.32, 0, 0.02)).tolist(),
-        "wrist": look_at(
-            (0, -0.06, -0.06), np.asarray(p.pinch_offset) + [0, 0, 0.04]
-        ).tolist(),
+        "scene": look_at((0.75, -0.9, 0.95), (0.2, 0, 0.25)).tolist(),
+        # View through the jaw gap, perpendicular to the closing axis.
+        "wrist": look_at((-0.10, 0, -0.08), (0, 0, 0.07)).tolist(),
     }
+    if robot == "yam":
+        # I2RT's optical frame for the LINEAR_4310 D405 bracket, expressed
+        # relative to the unchanged SDK TCP rather than the native hand frame.
+        mount = json.loads(
+            files(__package__).joinpath("data/yam/wrist_camera.json").read_text()
+        )
+        mounts["wrist"] = (
+            transform(-np.asarray(p.tool_xyz), (math.pi, 0, 0))
+            @ transform(mount["xyz"], mount["rpy"])
+        ).tolist()
     for name in mounts:
         cameras[name] = dict(
             world="cell",
@@ -281,7 +300,11 @@ def make_site(
                     pointing_down_wxyz=list(p.pointing_down),
                 ),
                 options=dict(
-                    rate_hz=50.0, max_joint_speed_rad_s=0.5, max_gripper_speed_per_s=1.0
+                    rate_hz=50.0,
+                    max_joint_speed_rad_s=0.5,
+                    max_gripper_speed_per_s=(
+                        yam.DEFAULT_MAX_GRIPPER_SPEED_PER_S if robot == "yam" else 1.0
+                    ),
                 ),
             )
         },

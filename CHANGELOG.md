@@ -13,6 +13,13 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Replace primitive simulation robots with pinned manufacturer YAM/xArm7 URDF
+  assemblies, actual visual meshes, masses, COMs and full inertia tensors. Match
+  the live YAM linear hand and xArm G2 gripper with native coupled joints,
+  nonlinear jaw mapping, shared convex hand collisions and mesh-derived
+  planning bounds. Reuse the optional trajectory-velocity driver port. Include
+  licenses, source hashes and an offline vendoring tool.
+
 - Reference YAM and xArm7 workspaces for MuJoCo, Isaac Sim, and SAPIEN, with shared
   scene/wrist RGB-D profiles, normalized grippers, two cubes, a threaded cap, and a drawer.
   Optional engines run in isolated workers behind the existing shared-world lifecycle.
@@ -20,7 +27,7 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 - Add manifest-selected shared simulation worlds through the public
   `WorldConfig`/`SimulationBackend` contract. World-backed parts and cameras reuse the
   ordinary SDK runtime, support matrix, owner envelope, observations, and RGB-D sample
-  path consumed by Metal.
+  path.
 - Add a shared-world MuJoCo reference backend with one physics state for all attached
   parts and cameras, exactly-once world stepping, episode reset, derived camera
   intrinsics, and aligned metric Z16 rendering.
@@ -40,6 +47,13 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   ROS-connected Gazebo and Isaac Sim processes.
 
 ### Changed
+
+- Base the reference simulation implementations on maintained 2026 I2RT,
+  Menagerie, mjlab, ManiSkill and Isaac Lab sources. Use native URDF importers,
+  xArm linkage closures and threaded-cap constraints; remove custom servo-target
+  clipping, custom solver overrides and cap force callbacks. Reuse the SDK
+  shared-world physics clock instead of running an independent worker clock. Derive the LINEAR_4310 pinch
+  offset from the manufacturer's corrected grasp site without changing SDK FK.
 
 - Preserve the existing `waddle_sdk.robots.mujoco:arm` factory as a compatible
   private-world adapter while documenting `waddle_sdk.robots.mujoco:backend` for

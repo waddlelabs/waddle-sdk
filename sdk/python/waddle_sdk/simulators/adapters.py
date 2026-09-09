@@ -18,7 +18,7 @@ from ..cameras.site import CameraConfig
 from ..robots import base
 from ..robots.site import PartConfig
 from ..simulation import WorldConfig
-from .model import robot_links
+from .description import collision_bounds, description
 from .scene import load_scene, profile
 
 
@@ -100,19 +100,12 @@ class World:
                 ) from None
 
     def step(self, dt: float) -> None:
-        # The worker owns the real-time clock between SDK composite ticks.
         if not math.isfinite(dt) or dt < 0:
             raise ValueError("world step must be finite and non-negative")
+        self.call("step", dt)
 
     def reset(self) -> bool:
-        # A fresh process also resets graphics runtimes that cannot restart Kit
-        # after SimulationApp.close(). Device facets keep this world reference.
-        with self._lock:
-            if self._failed or self._connection is None:
-                raise RuntimeError("simulation world is unavailable")
-            self.close()
-            self.open()
-            return True
+        return self.call("reset")
 
     def part(self, *, config: PartConfig) -> base.Rig:
         return _arm(self, config=config)
@@ -155,12 +148,13 @@ def backend(*, config: WorldConfig) -> World:
 class Driver:
     kind = "sim"
 
-    def __init__(self, world: World, *, posture: str):
+    def __init__(self, world: World, *, posture: str, max_joint_speed: float = 0.5):
         self.world = world
         self.profile = profile(world.config["robot"])
         self._monitor = posture == "monitor"
         self._closed = False
         self._estopped = False
+        self._max_joint_speed = max_joint_speed
 
     @property
     def estopped(self):
@@ -174,6 +168,21 @@ class Driver:
         return q, dq
 
     def write(self, target):
+        self._write(target)
+
+    def write_position_velocity(self, target, velocity_feedforward_rad_s):
+        velocity = np.asarray(velocity_feedforward_rad_s, dtype=float)
+        if (
+            velocity.shape != (len(self.profile.names),)
+            or not np.isfinite(velocity).all()
+        ):
+            raise ValueError("simulation velocity must match the finite joint vector")
+        velocity = np.clip(velocity, -self._max_joint_speed, self._max_joint_speed)
+        velocity[-1] = 0.0  # A blocked jaw remains a position latch.
+        self._write(target, velocity)
+        return True
+
+    def _write(self, target, velocity=None):
         if self._monitor or self._estopped:
             raise RuntimeError("simulation arm is monitor-only or e-stopped")
         values = np.asarray(target, dtype=float)
@@ -183,7 +192,7 @@ class Driver:
             for x, (lo, hi) in zip(values, self.profile.limits, strict=True)
         ):
             raise ValueError("simulation target exceeds the robot's joint limits")
-        self.world.call("write", values)
+        self.world.call("write", values, velocity)
 
     def hold(self):
         if not self._closed:
@@ -198,7 +207,7 @@ class Driver:
         self._estopped = False
 
     def step(self, dt):
-        # The one world clock runs in the process, including between commands.
+        # The SDK's shared-world clock runs between commands.
         # Per-arm pump ticks must never advance shared physics a second time.
         pass
 
@@ -215,38 +224,24 @@ class Driver:
 
     def forward_kinematics(self, q):
         values = tuple(q) + ((0.0,) if len(q) == self.profile.dof else ())
-        tcp = self.profile.poses(values)[-1]
+        tcp = description(self.profile.name).poses(values)["tcp"]
         return tcp[:3, 3].copy(), tcp[:3, :3].copy()
 
     def collision_spheres(self, q):
         # Arm supplies only the arm rows to FK/geometry; bound the hand at its
         # widest opening when a prospective jaw position is not available.
         q = tuple(q) + ((1.0,) if len(q) == self.profile.dof else ())
-        poses = self.profile.poses(q)
+        poses = description(self.profile.name).poses(q)
         result = []
-        for index, link in enumerate(robot_links(self.profile)):
-            if index < len(poses):
-                pose = poses[index]
-            else:
-                pose = poses[-1].copy()
-                pose[:3, 3] += pose[:3, :3] @ (
-                    np.asarray(link.axis) * q[-1] * self.profile.opening / 2
+        for name, link, center, radius in collision_bounds(self.profile.name):
+            pose = poses[link]
+            result.append(
+                base.CollisionSphere(
+                    name=name,
+                    center_m=pose[:3, 3] + pose[:3, :3] @ center,
+                    radius_m=radius,
                 )
-            for shape_index, shape in enumerate(link.shapes):
-                if shape.kind == "box":
-                    radius = float(np.linalg.norm(shape.size) / 2)
-                elif shape.kind == "cylinder":
-                    radius = math.hypot(shape.size[0], shape.size[1] / 2)
-                else:
-                    radius = shape.size[0]
-                center = pose[:3, 3] + pose[:3, :3] @ shape.xyz
-                result.append(
-                    base.CollisionSphere(
-                        name=f"{link.name}_{shape_index}",
-                        center_m=center,
-                        radius_m=radius,
-                    )
-                )
+            )
         return tuple(result)
 
     def close(self):
@@ -276,7 +271,7 @@ def _arm(owner: World, *, config: PartConfig) -> base.Rig:
     velocities = (speed,) * p.dof + (hand_speed,)
 
     def build():
-        driver = Driver(owner, posture=config.posture)
+        driver = Driver(owner, posture=config.posture, max_joint_speed=speed)
         try:
             return {
                 "": base.Arm(
@@ -320,7 +315,10 @@ def _arm(owner: World, *, config: PartConfig) -> base.Rig:
             ),
         ),
         build_arms=build,
-        rate_hz=rate,
+        # Sample/integrate at the native timestep, so an asynchronous reader
+        # cannot observe a whole control interval jumping between two calls.
+        # The part action space and owner step limits keep their declared rate.
+        rate_hz=max(rate, 1.0 / owner.config["timestep"]),
         posture=config.posture,
     )
 
