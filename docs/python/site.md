@@ -76,3 +76,14 @@ For URDF-first simulation, `waddle-sdk sim init` creates the separate strict
 Camera placement, lights, materials/coatings, deterministic variation, MuJoCo, the
 ROS 2 adapter used by Gazebo/Isaac Sim, and third-party backend entry points are covered
 in [Simulation backends](../porting/simulation.md).
+
+## YAM initializer workspace preset
+
+A mounted arm may need room on both sides of its base. The optional
+`waddle_sdk.robots.safety_presets_for_driver` contract exposes the YAM tabletop
+starting bounds as `min: [-0.7, -0.7, 0.0]` and `max: [0.7, 0.7, 1.0]`, in metres
+in each arm's declared base frame. The preset has no static keepouts or
+self-collision configuration. The site operator must review mounting, table,
+tool, and neighboring-arm clearance before copying these values into a new site.
+Existing `site.yaml` bounds remain unchanged, and importing the preset opens no
+hardware. A preset is a configuration suggestion and grants no runtime capability.

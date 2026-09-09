@@ -389,8 +389,8 @@ waddle-sdk/
                              #   back, and an already-up mismatch is refused
                              #   without mutation. SDK callers remain opt-in;
                              #   configuration frontends may choose the default.
-                             #   It also publishes the SDK example's tabletop
-                             #   workspace as a non-opening initializer preset;
+                             #   It also publishes a non-opening tabletop preset
+                             #   spanning [-0.7, -0.7, 0.0] to [0.7, 0.7, 1.0] m;
                              #   mounting/table/tool clearance still requires
                              #   explicit site review.
         socketcan.py         # reusable bounded Linux link helper for custom

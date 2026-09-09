@@ -37,6 +37,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Changed
 
+- Expand the YAM tabletop initializer preset and example to workspace bounds
+  `[-0.7, -0.7, 0.0]` through `[0.7, 0.7, 1.0]` metres in each arm base frame.
+  Existing site declarations remain authoritative and are not rewritten.
+
 - Preserve the existing `waddle_sdk.robots.mujoco:arm` factory as a compatible
   private-world adapter while documenting `waddle_sdk.robots.mujoco:backend` for
   multipart and RGB-D scenes.

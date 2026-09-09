@@ -48,3 +48,12 @@ Build external adapters as ordinary installable packages. Do not patch an SDK re
 When multiple parts or cameras need one shared simulator scene, implement the
 [shared simulation backend contract](simulation-contract.md) instead of opening one
 world from every part.
+
+## Initializer safety suggestions
+
+Adapters may expose the optional, non-opening `safety_presets(factory=, options=)`
+contract from `waddle_sdk.robots`. The YAM reference suggests an arm-base workspace
+from `[-0.7, -0.7, 0.0]` to `[0.7, 0.7, 1.0]` metres, without keepouts or a
+self-collision configuration. These are site-operator-reviewed starting values,
+not vendor joint limits or evidence that a particular mounting is collision-free.
+Preserve existing site declarations and validate the selected envelope normally.

@@ -403,8 +403,8 @@ DEFAULT_SIM_HOME = (
 def safety_presets(*, factory: str, options: Mapping[str, object]):
     """Return configuration-only YAM workspace starting points.
 
-    The tabletop box is the conservative single-arm starter shipped in the SDK
-    example.  It is expressed in each selected arm's base frame.  Mount height,
+    The tabletop box spans 0.7 m in each horizontal direction and 0 to 1 m
+    vertically, expressed in each selected arm's base frame.  Mount height,
     table geometry, tooling, payload, and neighboring arms remain site facts and
     therefore require explicit review in the initializer.
     """
@@ -419,8 +419,8 @@ def safety_presets(*, factory: str, options: Mapping[str, object]):
             identifier="yam-tabletop",
             label="YAM tabletop starter",
             workspace_bounds={
-                "min": [0.05, -0.45, 0.05],
-                "max": [0.60, 0.45, 0.70],
+                "min": [-0.7, -0.7, 0.0],
+                "max": [0.7, 0.7, 1.0],
             },
             review=(
                 "Measure the mounted base, table plane, tool length, and neighboring "
