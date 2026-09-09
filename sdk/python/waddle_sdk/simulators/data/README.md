@@ -128,7 +128,16 @@ kd 5/1.5 for shoulder/wrist motor groups. LINEAR_4310 kp 20, kd 0.5,
 come from `linear_4310.yml`. Reflecting through one jaw's half-stroke uses
 `r = .096 / (2 * 6.57)`: linear kp/kd/inertia divide by `r²`, force divides
 by `r`. xArm arm gains and effort bounds use Menagerie's size1/2/3 drives;
-the hand uses its 100/10 position drive with a 50 Nm generalized-force cap.
+the hand retains its 100/10 position drive, with the motor limit derived from
+[UFACTORY's G2 AG1200 specifications](https://docs.accessories.ufactory.cc/xArm_Gripper_G2/6.Technical_Specifications.html)
+(84±1 mm travel and 10–50 N gripping force; accessed 2026-09-09).
+The manufacturer's finger-link offsets are `a=.035465`, `b=.042039` m.
+For the parallel-jaw linkage, `abs(dwidth/dq)=2*(a*sin(q)+b*cos(q))` over
+`q∈[0,.85]`. Virtual work gives `motor_torque=jaw_force*abs(dwidth/dq)`.
+The minimum transmission is `2*b`, so a constant 4.2039 N m native motor cap
+keeps the ideal quasi-static force below 50 N throughout the stroke. The
+former Menagerie-derived 50 N m setting did not represent G2's jaw-force rating.
+This is not a calibrated force controller or a bound on impact forces.
 These are reference controller configurations, not calibrated hardware twins.
 
 Menagerie's YAM and mjlab's YAM lift task use an older crank hand. They are
@@ -151,7 +160,13 @@ fixed-tendon transmission pattern: two coefficients of 0.5 distribute the origin
 single motor's force to the opposing drive joints. The total reflected inertia
 is split equally; gains and force limits retain the original combined budget.
 The hand mimic equality uses the source's 5 ms time constant. Passive xArm
-four-bar links remain unactuated. This avoids making a soft equality transfer
+four-bar links remain unactuated. Their MuJoCo joints retain the source's
+inherited 0.1 kg m² armature, and driver/follower limits use its 5 ms response.
+This numerical armature supports the soft closure constraints; it does not
+replace or recalibrate the manufacturer's link inertia. Omitting it allowed
+loaded fingers to fold well beyond their joint limits. Native contact regressions
+check physical jaw width, settled motion, arm tracking and reopening.
+This avoids making a soft equality transfer
 the entire motor force from one jaw to the other.
 Both reference hands also use the xArm model's finger-pad contact response:
 `solref="0.004 1"`, `solimp="0.95 0.99 0.001"`, and contact priority 1. These

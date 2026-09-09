@@ -335,6 +335,99 @@ def test_native_render_presets_preserve_rgbd_and_motion(
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_xarm_gripper_motor_budget_respects_rated_jaw_force():
+    # G2's published 50 N rating is a gripping force, not hinge torque. Use
+    # the actual jaw transmission over its whole travel to check virtual work.
+    robot = description("xarm7")
+    p = profile("xarm7")
+    effort = robot.servo(robot.hand_names[0])[2]
+    for opening in np.linspace(0, 1, 31):
+        angle = robot.hand_position(opening)
+        _, derivative = robot.hand_state(angle, 1.0)
+        jaw_force = effort / abs(derivative * p.opening)
+        assert 10 <= jaw_force <= 50.001
+
+
+@pytest.mark.parametrize("backend", ["mujoco", "sapien"])
+def test_native_xarm_gripper_preserves_linkage_under_contact(
+    tmp_path, monkeypatch, backend
+):
+    pytest.importorskip(backend)
+    monkeypatch.setenv("MUJOCO_GL", "egl")
+    monkeypatch.setenv(
+        "PYTHONPATH", str(Path(__file__).resolve().parents[1] / "python")
+    )
+    script = (
+        "import runpy; from pathlib import Path; "
+        f"ns = runpy.run_path({str(Path(__file__).resolve())!r}); "
+        f"ns['_native_xarm_gripper_contact'](Path({str(tmp_path)!r}), {backend!r})"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def _native_xarm_gripper_contact(tmp_path, backend):
+    _, config = documents(tmp_path, backend, "xarm7", "bottle_cap")
+    engine = importlib.import_module(f"waddle_sdk.simulators.{backend}").Engine(
+        config, tmp_path
+    )
+    # TCP at (.34, -.16, .205) m, pointing down over the 50 mm cap. This
+    # fixture loads the manufacturer fingers without moving the arm target.
+    grasp = np.array(
+        [
+            0.25804668,
+            -0.39298376,
+            -0.62978786,
+            0.78923564,
+            -0.25263697,
+            1.12517513,
+            -2.84166090,
+            1.0,
+        ]
+    )
+    try:
+        engine.home(grasp)
+        for _ in range(round(1 / config["timestep"])):
+            engine.step()
+        grasp[-1] = 0.0
+        engine.write(grasp)
+        for _ in range(round(3 / config["timestep"])):
+            engine.step()
+        readings = []
+        for _ in range(round(1 / config["timestep"])):
+            engine.step()
+            readings.append(engine.read()[0])
+        readings = np.array(readings)
+        widths = readings[:, -1] * engine.profile.opening
+        assert 0.047 < min(widths) <= max(widths) < 0.055, widths[-1]
+        assert np.ptp(widths) < 0.0002
+        np.testing.assert_allclose(readings[-1, :-1], grasp[:-1], atol=0.004)
+        if backend == "mujoco":
+            model, data = engine.model, engine.data
+            for name in engine.description.hand_names:
+                joint = model.joint(name)
+                value = data.qpos[int(joint.qposadr[0])]
+                assert joint.range[0] - 0.01 < value < joint.range[1] + 0.01
+            for index in range(data.nefc):
+                if int(data.efc_type[index]) == int(
+                    engine.mj.mjtConstraint.mjCNSTR_EQUALITY
+                ):
+                    assert abs(data.efc_pos[index]) < 0.001
+        grasp[-1] = 1.0
+        engine.write(grasp)
+        for _ in range(round(3 / config["timestep"])):
+            engine.step()
+        assert engine.read()[0][-1] == pytest.approx(1.0, abs=0.01)
+    finally:
+        engine.close()
+
+
 def _native_conformance(
     tmp_path, backend, robot, environment, render_quality="standard"
 ):

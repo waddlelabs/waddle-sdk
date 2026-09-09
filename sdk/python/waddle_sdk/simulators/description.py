@@ -108,7 +108,13 @@ class Description:
                 # One driven slide travels half the jaw separation.
                 ratio = 0.096 / (2 * 6.57)
                 return 20 / ratio**2, 0.5 / ratio**2, 0.5 / ratio
-            return 100.0, 10.0, 50.0
+            # UFACTORY rates G2 at 50 N gripping force, not 50 N m hinge
+            # torque. Virtual work gives tau = F * abs(dwidth/dangle).
+            # Its minimum transmission over [0, .85] is 2 * .042039 m/rad
+            # (the manufacturer's finger-link Z offset at the open stop).
+            # A constant native torque bound respects the quasi-static rating
+            # throughout the stroke without a custom per-step force callback.
+            return 100.0, 10.0, 50.0 * 2 * 0.042039
         index = profile(self.name).names.index(joint)
         if self.name == "yam":
             return (80.0, 5.0, 28.0) if index < 3 else (10.0, 1.5, 10.0)

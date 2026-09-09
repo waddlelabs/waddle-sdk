@@ -50,6 +50,11 @@ clearance. Convex meshes remain unchanged. Public planning bounds conservatively
 cover complete collision triangles per physical link, so their number does not
 scale with the importer's convex partition. Native constraints
 close the xArm linkage; its revolute hand is mapped nonlinearly to jaw travel.
+Its native motor limit is 4.2039 N m, derived from the G2's published maximum
+50 N gripping force and the minimum jaw transmission over its stroke. This
+bounds the ideal quasi-static jaw force; it does not calibrate impact forces or
+emulate the hardware's force-control electronics. The former 50 N m motor limit
+could overload the simulated linkage. See [UFACTORY's G2 specifications](https://docs.accessories.ufactory.cc/xArm_Gripper_G2/6.Technical_Specifications.html).
 SAPIEN retains the URDF's native jaw coupling and shares the actuator's gains,
 force limit, and reflected inertia across the two native drives. Equal position
 targets alone cannot keep the jaws coupled under asymmetric contact. Splitting
@@ -58,8 +63,12 @@ No per-step contact forces or object attachments implement grasping.
 
 MuJoCo uses Menagerie's single-motor fixed tendon to distribute force between
 opposing jaws, preserving the combined gain, force limit, and reflected inertia.
-The native hand equality uses Menagerie's 5 ms time constant. All reference scenes
-use MuJoCo's recommended elliptic friction cone with impedance ratio 10 and Newton
+The native hand equality uses Menagerie's 5 ms time constant. MuJoCo also
+retains the xArm passive-hand joints' reference armature of 0.1 kg m² and the
+driver/follower limits' 5 ms response. These native numerical settings support
+the four-bar closures under contact; the manufacturer link inertias remain
+unchanged. They are simulator settings, not measured motor inertias.
+All reference scenes use MuJoCo's recommended elliptic friction cone with impedance ratio 10 and Newton
 tolerance `1e-10` to reduce gradual grasp slip. This costs more solver work than
 the default pyramidal cone; it does not increase material friction or eliminate
 all compliance. See [MuJoCo's slip guidance](https://mujoco.readthedocs.io/en/stable/modeling.html#preventing-slip).

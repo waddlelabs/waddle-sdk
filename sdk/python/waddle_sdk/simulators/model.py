@@ -411,7 +411,8 @@ def mjcf(p: Profile, config: dict) -> str:
             geom.set("rgba", "1 1 1 1")
     for link in robot.links:
         if link.joint:
-            bodies[link.name].find("joint").set(
+            joint = bodies[link.name].find("joint")
+            joint.set(
                 "armature",
                 str(
                     robot.armature(master) / len(hand_drives)
@@ -419,6 +420,15 @@ def mjcf(p: Profile, config: dict) -> str:
                     else robot.armature(link.joint)
                 ),
             )
+            if p.name == "xarm7" and link.joint in robot.hand_names:
+                # Menagerie's follower/spring-link classes inherit the .1
+                # joint armature. Dropping it leaves the soft four-bar closure
+                # supported only by tiny CAD link inertias, so a loaded hand
+                # folds instead of retaining its physical jaw opening.
+                if link.joint not in hand_drives:
+                    joint.set("armature", "0.1")
+                if not link.joint.endswith("inner_knuckle_joint"):
+                    joint.set("solreflimit", "0.005 1")
     contact = ET.SubElement(root, "contact")
     for group in groups:
         for link in group:

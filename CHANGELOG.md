@@ -76,6 +76,13 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Convert G2's 50 N jaw-force rating through its actual linkage to a 4.2039 N m
+  native motor limit; the former 50 N m reference setting could grossly overload
+  the hand. Retain MuJoCo's reference passive-link armature and joint-limit
+  response so loaded fingers preserve the four-bar geometry and reported jaw
+  width. Native MuJoCo/SAPIEN regressions cover grasp retention, arm tracking,
+  and reopening without changing public controls or motion tolerances.
+
 - Give SAPIEN's passive screw cap the same 0.001 N m resistance budget as
   MuJoCo through a native force-limited velocity damper. Its default joint
   friction let the cap unwind under gravity after the fingers released it.

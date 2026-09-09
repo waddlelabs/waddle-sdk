@@ -60,6 +60,12 @@ use the same URDF inertial importer as articulations; static scenery omits
 dynamic inertials. Native tests inspect cube mass and inertia after import.
 MuJoCo distributes the single hand motor through Menagerie's fixed tendon,
 splitting its gain/force/inertia budget between the opposing drive joints.
+The G2 force rating is converted from 50 N at the jaws to a constant 4.2039 N m
+motor limit using the minimum linkage transmission over its travel. This is a
+quasi-static upper bound, not a calibrated force controller. MuJoCo also retains
+Menagerie's 0.1 passive-hand joint armature and 5 ms driver/follower limit response;
+omitting these lets the soft four-bar closures deform under load. Native MuJoCo
+and SAPIEN tests require a loaded G2 grasp to report its physical jaw opening.
 It uses the documented elliptic friction cone, impedance ratio 10, and Newton
 tolerance 1e-10 to reduce slow contact creep across all reference scenes.
 Finger collisions retain manufacturer geometry and use Menagerie's pad contact
