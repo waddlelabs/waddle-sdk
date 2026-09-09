@@ -124,6 +124,9 @@ download occurs. Engine-dependent acceptance lives in
 `sdk/tests/test_simulation.py` and isolates native graphics runtimes in subprocesses.
 Its rendered RGB/depth witnesses use off-center optical principal points, unequal
 focal lengths, and submillimetre depth units to catch camera convention errors.
+Isaac camera authoring also has a standalone `usd-core` projection regression:
+USD aperture offsets move the frustum window, opposite the image principal point.
+That check needs no Isaac runtime and does not replace rendered RGB-D acceptance.
 Reference worlds preserve site-selected part, base-frame, and camera names;
 one world binds one robot part, preventing two names from aliasing one actuator.
 Native material/lighting defaults use a bundled CC0 table texture; provenance and

@@ -218,6 +218,14 @@ misses a scheduled frame, the camera pump resumes at the next future frame slot.
 It never builds a backlog of render requests that can starve shared physics/control.
 Every acquired frame still follows the ordinary publication and recording path.
 
+Isaac's USD camera authoring converts the principal point into aperture offsets
+with OpenUSD's frustum convention. The projection/deprojection regression runs
+without Isaac: install the optional `usd-core` package in a development test
+environment, then run `python -m pytest tests/test_simulation.py -k isaac_usd_camera`
+from `sdk/`. It checks off-center and unequal-focal-length calibration using
+OpenUSD's actual projection matrix. It does not validate RTX raster sampling,
+annotator alignment or frame delivery; those remain native acceptance checks.
+
 Each site owns its camera placements, calibration, and object layout. These may
 differ between physical and simulated environments. To reproduce a particular
 sensor, use its active focal lengths, principal point, resolution, and depth scale.

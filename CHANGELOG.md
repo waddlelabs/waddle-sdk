@@ -84,6 +84,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Correct Isaac's USD camera aperture-offset signs so off-center site intrinsics
+  project into the declared image coordinates. Add a standalone OpenUSD projection
+  and deprojection regression; Isaac rendered RGB-D still requires native validation.
+
 - Place new reference drawer cameras in front of the cabinet so the handle face
   is visible at the robot's home pose. Preserve existing scene configurations;
   native RGB-D tests check the handle's actual front plane for both robot models.

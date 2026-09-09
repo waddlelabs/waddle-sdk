@@ -11,6 +11,27 @@ from .model import objects, robot_links, urdf
 from .scene import depth_z16, profile, quaternion, transform
 
 
+def _camera(stage, path, row):
+    """Author a USD pinhole camera from the site RGB-D calibration."""
+    from pxr import Gf, UsdGeom
+
+    camera = UsdGeom.Camera.Define(stage, path)
+    intr, stream = row["intrinsics"], row["stream"]
+    camera.CreateFocalLengthAttr(1.0)
+    camera.CreateHorizontalApertureAttr(stream["width"] / intr["fx"])
+    camera.CreateVerticalApertureAttr(stream["height"] / intr["fy"])
+    # USD shifts the frustum window; the principal point moves oppositely.
+    # Image Y points down, so its aperture offset has the opposite sign to X.
+    camera.CreateHorizontalApertureOffsetAttr(
+        (stream["width"] / 2 - intr["cx"]) / intr["fx"]
+    )
+    camera.CreateVerticalApertureOffsetAttr(
+        (intr["cy"] - stream["height"] / 2) / intr["fy"]
+    )
+    camera.CreateClippingRangeAttr(Gf.Vec2f(0.01, 10.0))
+    return camera
+
+
 class Engine:
     def __init__(self, config: dict, scratch: Path):
         # Isaac owns Kit and must initialize before importing Omni/pxr modules.
@@ -92,18 +113,8 @@ class Engine:
         self.cameras = {}
         for name, row in config["cameras"].items():
             path = f"/World/camera_{name}"
-            camera = UsdGeom.Camera.Define(self.stage, path)
-            intr, stream = row["intrinsics"], row["stream"]
-            camera.CreateFocalLengthAttr(1.0)
-            camera.CreateHorizontalApertureAttr(stream["width"] / intr["fx"])
-            camera.CreateVerticalApertureAttr(stream["height"] / intr["fy"])
-            camera.CreateHorizontalApertureOffsetAttr(
-                (intr["cx"] - stream["width"] / 2) / intr["fx"]
-            )
-            camera.CreateVerticalApertureOffsetAttr(
-                -(intr["cy"] - stream["height"] / 2) / intr["fy"]
-            )
-            camera.CreateClippingRangeAttr(Gf.Vec2f(0.01, 10.0))
+            camera = _camera(self.stage, path, row)
+            stream = row["stream"]
             self._pose(camera, np.eye(4))
             product = rep.create.render_product(
                 path, (stream["width"], stream["height"])

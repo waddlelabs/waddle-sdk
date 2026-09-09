@@ -604,6 +604,50 @@ def _native_xarm_gripper_contact(tmp_path, backend):
         engine.close()
 
 
+@pytest.mark.parametrize(
+    "width,height,fx,fy,cx,cy",
+    [
+        (192, 144, 174.0, 161.0, 109.0, 62.0),
+        (641, 479, 511.0, 497.0, 301.25, 260.75),
+        (640, 480, 576.0, 576.0, 319.5, 239.5),
+    ],
+)
+def test_isaac_usd_camera_projects_with_declared_intrinsics(
+    width, height, fx, fy, cx, cy
+):
+    # OpenUSD's real projection matrix is available without Kit or an Isaac
+    # license. Native rendered RGB-D acceptance remains a separate requirement.
+    usd = pytest.importorskip("pxr.Usd", reason="requires standalone usd-core")
+    from pxr import Gf
+    from waddle_sdk.simulators.isaac import _camera
+
+    stage = usd.Stage.CreateInMemory()
+    camera = _camera(
+        stage,
+        "/camera",
+        {
+            "stream": {"width": width, "height": height},
+            "intrinsics": {"fx": fx, "fy": fy, "cx": cx, "cy": cy},
+        },
+    )
+    projection = camera.GetCamera(
+        usd.TimeCode.Default()
+    ).frustum.ComputeProjectionMatrix()
+    for x, y, z in [(0, 0, 1), (0.1, -0.1, 0.5), (-0.1, 0.1, 2)]:
+        # Site optical coordinates are +Z forward/+Y down; USD uses -Z/+Y up.
+        ndc = projection.Transform(Gf.Vec3d(x, -y, -z))
+        u, v = (ndc[0] + 1) * width / 2, (1 - ndc[1]) * height / 2
+        np.testing.assert_allclose(
+            [u, v], [fx * x / z + cx, fy * y / z + cy], atol=1e-5, rtol=0
+        )
+        np.testing.assert_allclose(
+            [(u - cx) * z / fx, (v - cy) * z / fy, z],
+            [x, y, z],
+            atol=1e-7,
+            rtol=0,
+        )
+
+
 def _native_conformance(
     tmp_path, backend, robot, environment, render_quality="standard"
 ):
