@@ -330,6 +330,13 @@ def _native_conformance(tmp_path, backend, robot, environment):
             red, green, blue = map(int, rgb[v, u])
             assert green > 2 * max(red, blue), (u, v, rgb[v, u])
         if environment == "drawer":
+            # Test the passive slide with the arm clear of its swept volume.
+            # A tabletop home can otherwise physically stop the opening drawer.
+            clear = engine.read()[0].copy()
+            clear[0] = np.pi / 2
+            engine.write(clear)
+            advance(2.0)
+            assert engine.read()[0][0] == pytest.approx(clear[0], abs=0.015)
             if backend == "mujoco":
                 joint = engine.model.joint("drawer_slide")
                 engine.data.qfrc_applied[int(joint.dofadr[0])] = 5.0
@@ -345,7 +352,7 @@ def _native_conformance(tmp_path, backend, robot, environment):
                 if backend == "sapien"
                 else float(engine.props[-1].get_joint_positions()[0])
             )
-            assert 0.20 < travel < 0.225
+            assert 0.20 < travel < 0.225, travel
         elif environment == "bottle_cap":
             # Apply a native generalized torque as an external load on the cap.
             # Upward travel must come from the passive thread constraint.

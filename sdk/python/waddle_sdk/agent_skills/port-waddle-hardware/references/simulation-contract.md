@@ -35,6 +35,9 @@ and its simulation profile when renaming a part. One reference world contains
 one robot; two part names cannot alias that robot. Camera placements, calibration,
 and object layouts may differ between sites, while reported intrinsics and depth
 units must describe the rendered pixels.
+Reference YAM worlds start near neutral home with an open hand and 0.1 rad
+shoulder/elbow clearance from the zero stops.
+Opening/reset establishes that start; a new run preserves the current scene.
 
 The SDK pumps resume after slow work without catch-up bursts. Camera capture
 skips missed frame slots; physics never applies a newly issued target to ticks

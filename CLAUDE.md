@@ -55,6 +55,12 @@ are not calibrated actuator models. MuJoCo, SAPIEN and Isaac Sim use native
 URDF import; xArm uses Menagerie's two linkage closures. SAPIEN uses ManiSkill's
 PD mimic-controller pattern for coupled jaws, sharing the actuator's gain/force/
 inertia budget; other engines retain native hand coupling.
+Reference YAM worlds start near neutral home at `(0, .1, .1, -.3, 0, 0)` radians,
+with an open hand, modest wrist pitch and clearance from the shoulder/elbow zero stops. Starting on
+native compliant stops can settle outside declared limits and refuse subsequent
+jog paths. The SDK's distinct high bimanual test poses cannot be reoriented
+downward in place and are not reference-scene homes. Physical devices retain their
+measured pose.
 Known trajectory velocities use the existing optional driver port. Position-only
 commands and holds clear those velocity targets. The world advances in fixed
 2 ms native steps driven by the SDK's existing shared-world robot pump. State

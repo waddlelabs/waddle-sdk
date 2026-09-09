@@ -43,6 +43,18 @@ drives. This avoids the imported URDF tendon's contact oscillation, but approxim
 the physical transmission under asymmetric contact. The other engines retain native
 jaw coupling. No per-step contact forces or object attachments implement grasping.
 
+The YAM reference scene starts near the manufacturer's [neutral home](https://doc.i2rt.com/products/yam),
+with arm joints `(0, 0.1, 0.1, -0.3, 0, 0)` radians and its hand open. The shoulder
+and elbow stay 0.1 rad inside their zero stops: native compliant joint limits can
+otherwise settle slightly outside the declared range and prevent the next jog.
+The modest wrist pitch keeps the tool in a working region where it can turn down
+without changing its tip position. This is a reference working pose, not a
+measurement of a physical arm's resting position.
+The SDK's distinct high bimanual test poses are not used as reference-scene homes.
+Opening or explicitly resetting a world establishes
+this pose. Ordinary run boundaries preserve the current pose. Camera calibration
+and robot kinematics are independent of this initial joint configuration.
+
 Sources, licenses, conversion steps and SHA-256 hashes ship in
 `waddle_sdk/simulators/data/`. `tools/vendor_simulation_models.py` rebuilds those
 assets from pinned public manufacturer revisions. No model is downloaded at site

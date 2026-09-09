@@ -144,7 +144,11 @@ def profile(name: str) -> Profile:
             yam.CHAIN_ORIGIN_RPY_RAD,
             yam.TOOL_ORIGIN_XYZ_M,
             yam.TOOL_ORIGIN_RPY_RAD,
-            tuple(yam.DEFAULT_SIM_HOME[0][:-1]) + (1.0,),
+            # Near I2RT's neutral home, with shoulder/elbow clear of their
+            # zero stops: native compliant limits can settle just outside a
+            # stop, making a subsequent path start invalid. A modest wrist
+            # pitch leaves room for in-place down orientation. Keep the hand open.
+            (0.0, 0.1, 0.1, -0.3, 0.0, 0.0, 1.0),
             yam.GRIPPER_MAX_OPENING_M,
             yam.BASE_FRAME,
             (0.0, 1.0, 0.0),
