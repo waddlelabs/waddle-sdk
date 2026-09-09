@@ -138,6 +138,9 @@ class Engine:
             for link in links
             if robot and link.joint
         }
+        passive_damping = {
+            link.joint: link.damping for link in links if link.joint and link.damping
+        }
         config = URDFImporterConfig(
             urdf_path=str(path),
             usd_path=str(scratch / "usd"),
@@ -176,6 +179,18 @@ class Engine:
                 self.Physics.DriveAPI.Apply(prim, axis).CreateMaxForceAttr(
                     gains[prim.GetName()][2]
                 )
+            if prim.GetName() in passive_damping and prim.IsA(self.Physics.Joint):
+                linear = prim.IsA(self.Physics.PrismaticJoint)
+                drive = self.Physics.DriveAPI.Apply(
+                    prim, "linear" if linear else "angular"
+                )
+                drive.CreateTypeAttr("force")
+                drive.CreateStiffnessAttr(0.0)
+                # USD angular drive rates are degrees/s; the source uses radians/s.
+                drive.CreateDampingAttr(
+                    passive_damping[prim.GetName()] * (1.0 if linear else np.pi / 180)
+                )
+                drive.CreateTargetVelocityAttr(0.0)
         if robot:
             for first, second in self.description.exclusions:
                 self.Physics.FilteredPairsAPI.Apply(

@@ -42,6 +42,12 @@ Opening/reset establishes that start; a new run preserves the current scene.
 renderer detail independently of camera resolution and physics. Missing quality
 in older reference scenes means `standard`. Higher quality can reduce throughput;
 MuJoCo/SAPIEN remain raster renderers, while Isaac high uses path tracing.
+Reference native dynamics include a passive damped drawer, a single-motor
+MuJoCo hand tendon, and the engine's recommended elliptic friction cone to reduce
+grasp creep. These use ordinary physics constraints; manipulation tests must
+observe contact, prop motion, and retention separately from commanded robot pose.
+The normative model settings and limitations are in `docs/python/simulation.md`
+and the packaged `simulators/data/README.md`.
 
 Reference workers advance elapsed real time in fixed substeps before each request,
 using the previous target. Slow capture/IPC therefore cannot drop physics time or

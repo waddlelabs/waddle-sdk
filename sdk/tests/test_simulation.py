@@ -428,52 +428,101 @@ def _native_conformance(
             assert engine.read()[0][0] == pytest.approx(clear[0], abs=0.015)
             if backend == "mujoco":
                 joint = engine.model.joint("drawer_slide")
-                engine.data.qfrc_applied[int(joint.dofadr[0])] = 5.0
+
+                def drawer_force(value):
+                    engine.data.qfrc_applied[int(joint.dofadr[0])] = value
+
+                def drawer_state():
+                    return (
+                        float(engine.data.qpos[int(joint.qposadr[0])]),
+                        float(engine.data.qvel[int(joint.dofadr[0])]),
+                    )
             elif backend == "sapien":
-                engine.props[-1].set_qf(np.array([5.0]))
+
+                def drawer_force(value):
+                    engine.props[-1].set_qf(np.array([value]))
+
+                def drawer_state():
+                    return engine.props[-1].get_qpos()[0], engine.props[-1].get_qvel()[
+                        0
+                    ]
             else:
-                engine.props[-1].set_joint_efforts(np.array([5.0]))
+
+                def drawer_force(value):
+                    engine.props[-1].set_joint_efforts(np.array([value]))
+
+                def drawer_state():
+                    return (
+                        engine.props[-1].get_joint_positions()[0],
+                        engine.props[-1].get_joint_velocities()[0],
+                    )
+
+            # A short pull must dissipate motion, not coast to a limit and
+            # bounce closed indefinitely after the gripper has let go.
+            drawer_force(0.5)
+            advance(0.1)
+            drawer_force(0.0)
+            advance(0.5)
+            resting_position, speed = drawer_state()
+            assert resting_position > 0.001
+            assert abs(speed) < 0.001
             advance(2.0)
-            travel = (
-                float(engine.data.qpos[int(joint.qposadr[0])])
-                if backend == "mujoco"
-                else float(engine.props[-1].get_qpos()[0])
-                if backend == "sapien"
-                else float(engine.props[-1].get_joint_positions()[0])
-            )
+            assert drawer_state()[0] == pytest.approx(resting_position, abs=0.0001)
+            drawer_force(5.0)
+            advance(2.0)
+            travel, _speed = drawer_state()
             assert 0.20 < travel < 0.225, travel
         elif environment == "bottle_cap":
             # Apply a native generalized torque as an external load on the cap.
             # Upward travel must come from the passive thread constraint.
             if backend == "mujoco":
-                engine.data.qfrc_applied[int(engine._screw[0].dofadr[0])] = 0.3
+
+                def cap_force(value):
+                    engine.data.qfrc_applied[int(engine._screw[0].dofadr[0])] = value
+
+                def cap_state():
+                    return np.array(
+                        [
+                            float(engine.data.qpos[int(j.qposadr[0])])
+                            for j in engine._screw
+                        ]
+                    )
             else:
                 names = (
                     [j.name for j in engine._screw.get_active_joints()]
                     if backend == "sapien"
                     else list(engine._screw.dof_names)
                 )
-                force = np.zeros(len(names))
-                force[names.index("cap_rotation")] = 0.3
-                if backend == "sapien":
-                    engine._screw.set_qf(force)
-                else:
-                    engine._screw.set_joint_efforts(force)
+
+                def cap_force(value):
+                    force = np.zeros(len(names))
+                    force[names.index("cap_rotation")] = value
+                    if backend == "sapien":
+                        engine._screw.set_qf(force)
+                    else:
+                        engine._screw.set_joint_efforts(force)
+
+                def cap_state():
+                    values = (
+                        engine._screw.get_qpos()
+                        if backend == "sapien"
+                        else engine._screw.get_joint_positions()
+                    )
+                    return values[
+                        [names.index(n) for n in ("cap_rotation", "cap_lift")]
+                    ]
+
+            cap_force(0.3)
             advance(4.0)
-            if backend == "mujoco":
-                q = [float(engine.data.qpos[int(j.qposadr[0])]) for j in engine._screw]
-            elif backend == "sapien":
-                names = [j.name for j in engine._screw.get_active_joints()]
-                q = engine._screw.get_qpos()[
-                    [names.index(n) for n in ("cap_rotation", "cap_lift")]
-                ]
-            else:
-                names = list(engine._screw.dof_names)
-                q = engine._screw.get_joint_positions()[
-                    [names.index(n) for n in ("cap_rotation", "cap_lift")]
-                ]
+            q = cap_state()
             assert q[0] > 3.0 and q[1] > 0.002, q
             assert abs(q[1] - SCREW_PITCH * q[0]) < 0.003
+            cap_force(0.0)
+            advance(2.0)
+            released = cap_state()
+            advance(5.0)
+            assert cap_state()[0] > 3.0
+            assert cap_state()[1] == pytest.approx(released[1], abs=0.0001)
         assert engine.reset() is True
         np.testing.assert_allclose(engine.read()[0], p.home, atol=1e-6)
         if backend == "mujoco":
@@ -487,6 +536,96 @@ def _native_conformance(
                 else float(engine.props[-1].get_joint_positions()[0])
             )
             assert travel == pytest.approx(0, abs=1e-6)
+            if backend == "mujoco" and robot == "yam":
+                # A horizontal grasp around the fixed-height handle loads both
+                # jaws. A soft, single-sided transmission must not move the
+                # pinch midpoint and deflect the arm away from its target.
+                grasp = np.array(
+                    [
+                        -0.00030024084,
+                        1.95616480086,
+                        0.74226724928,
+                        1.21389020595,
+                        -0.00029410866,
+                        1.57080267467,
+                        1.0,
+                    ]
+                )
+                engine.home(grasp)
+                expected = p.poses(grasp)[-1][:3, 3]
+                grasp[-1] = 0.0
+                engine.write(grasp)
+                advance(2.0)
+                first, second = (engine.model.joint(n) for n in ("joint7", "joint8"))
+                jaws = [
+                    float(engine.data.qpos[int(j.qposadr[0])]) for j in (first, second)
+                ]
+                assert min(jaws) > 0.001  # physical handle stops closing
+                assert abs(jaws[0] - jaws[1]) < 0.0005
+                np.testing.assert_allclose(engine.native_tcp()[0], expected, atol=0.001)
+            elif backend == "mujoco" and robot == "xarm7":
+                # Retain an ordinary handle grasp under load. This catches
+                # gradual friction-cone creep despite ample normal force.
+                grasp = np.array(
+                    [
+                        -0.18759,
+                        0.22317,
+                        0.17308,
+                        0.38154,
+                        -3.16054,
+                        1.40853,
+                        1.53572,
+                        1.0,
+                    ]
+                )
+                pulled = np.array(
+                    [
+                        -0.56731,
+                        0.04854,
+                        0.54599,
+                        0.05310,
+                        -3.16345,
+                        1.55916,
+                        1.54585,
+                        0.0,
+                    ]
+                )
+                engine.home(grasp)
+                grasp[-1] = 0.0
+                engine.write(grasp)
+                advance(2.0)
+                for fraction in np.linspace(0.01, 1.0, 100):
+                    engine.write(grasp + fraction * (pulled - grasp))
+                    advance(0.02)
+                advance(1.0)
+                opened, _ = drawer_state()
+                assert opened > 0.09
+                advance(5.0)
+                assert drawer_state()[0] == pytest.approx(opened, abs=0.002)
+        if environment == "two_cubes" and backend == "mujoco" and robot == "yam":
+            # Approach the 50 mm cube through two tabletop grasp waypoints.
+            # Jaw motion must settle under contact, not penetrate the cube or
+            # oscillate enough to defeat ordinary measured-stall detection.
+            waypoints = (
+                [-0.271499, 1.758647, 1.410958, -1.140441, -0.000006, -1.675033, 1.0],
+                [-0.303437, 1.849018, 1.325780, -1.032856, -0.000018, -1.872019, 1.0],
+            )
+            start = engine.read()[0]
+            for values in waypoints:
+                target = np.array(values)
+                for fraction in np.linspace(0.01, 1.0, 100):
+                    engine.write(start + fraction * (target - start))
+                    advance(0.01)
+                start = target
+            target[-1] = 0.0
+            engine.write(target)
+            advance(2.0)
+            opening = []
+            for _ in range(500):
+                engine.step()
+                opening.append(engine.read()[0][-1] * p.opening)
+            assert 0.049 < min(opening) <= max(opening) < 0.053
+            assert np.ptp(opening) < 0.0002
     finally:
         engine.close()
 

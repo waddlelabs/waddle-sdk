@@ -55,8 +55,9 @@ stop anchors the mapping; the nominal SDK opening is 84 mm. This preserves
 physical jaw travel instead of treating normalized opening as a joint angle.
 The URDF gives the geometric finger-angle relationships used for FK. Native
 physics uses Menagerie's two ball-joint linkage closures and the single
-opposing-driver relation. MuJoCo and Isaac retain a native mimic with one driven
-motor; SAPIEN uses the shared PD mimic-controller pattern described below.
+opposing-driver relation. MuJoCo distributes one motor through a native fixed
+tendon; Isaac retains one driven motor and a native mimic. SAPIEN uses the shared
+PD mimic-controller pattern described below.
 This avoids overconstraining the four-bar mechanism with six position drives.
 
 ## Collision and dynamics
@@ -85,6 +86,11 @@ MuJoCo and native constraints in PhysX; no per-step force callback moves the cap
 SAPIEN's fixed tendon uses coefficients `[0, 1, -pitch]` for both length and
 force, so generalized forces conserve work across metres/radians. Its reference
 axial compliance is 5000 N/m with 20 Ns/m damping.
+MuJoCo's cap joint has 0.001 N m native `frictionloss`, preventing gravity from
+back-driving the otherwise frictionless helix after release. This is reference
+prop resistance, not measured seal torque. PhysX joint-friction coefficients
+have different units/semantics; they do not receive that value as a coefficient.
+Native retention tests bound released axial drift to 0.1 mm over five seconds.
 
 ## Maintained implementation references
 
@@ -122,6 +128,29 @@ are divided equally between them. This preserves their combined budget under
 symmetric motion, but approximates transmission behavior under asymmetric contact.
 xArm's passive four-bar links retain native closure constraints. MuJoCo and Isaac
 retain native coupling.
+
+MuJoCo follows Menagerie's [xArm](https://github.com/google-deepmind/mujoco_menagerie/blob/8161bba264d7fa7c99ca301e91e7fb44737676ad/ufactory_xarm7/xarm7.xml)
+and [Robotiq](https://github.com/google-deepmind/mujoco_menagerie/blob/8161bba264d7fa7c99ca301e91e7fb44737676ad/robotiq_2f85/2f85.xml)
+fixed-tendon transmission pattern: two coefficients of 0.5 distribute the original
+single motor's force to the opposing drive joints. The total reflected inertia
+is split equally; gains and force limits retain the original combined budget.
+The hand mimic equality uses the source's 5 ms time constant. Passive xArm
+four-bar links remain unactuated. This avoids making a soft equality transfer
+the entire motor force from one jaw to the other.
+Both reference hands also use the xArm model's finger-pad contact response:
+`solref="0.004 1"`, `solimp="0.95 0.99 0.001"`, and contact priority 1. These
+parameters apply to the same manufacturer finger collision meshes, without
+increasing their material friction or replacing them with primitive pads.
+This keeps the stiff linear hand from deeply penetrating a held cube and
+oscillating under the default 20 ms contact response.
+
+All MuJoCo reference scenes use elliptic friction cones, impedance ratio 10,
+and Newton tolerance 1e-10, following the engine's maintained
+[manipulation guidance](https://mujoco.readthedocs.io/en/stable/modeling.html#preventing-slip).
+This reduces regularization-induced creep without extra friction, contact-force
+callbacks, or NoSlip post-processing. The manufacturer's meshes and linkage
+geometry are unchanged. The reference drawer has 5 N·s/m passive damping in its
+URDF; Isaac applies the equivalent zero-stiffness velocity drive explicitly.
 
 SAPIEN uses ManiSkill's documented 100 Hz physics default (10 ms substeps);
 MuJoCo and Isaac retain 2 ms substeps. The SDK command rate stays independent.

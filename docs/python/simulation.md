@@ -27,7 +27,16 @@ Each engine accepts `yam` or `xarm7` and these environments:
 - `bottle_cap`: a fixed bottle fixture and a cap with coupled passive rotation and
   axial travel (5 mm/revolution). This reference thread model has three turns of
   travel; the cap remains on its axial guide, rather than becoming a free body.
-- `drawer`: a fixed cabinet and a physical drawer with 220 mm of passive travel.
+- `drawer`: a fixed cabinet and a physical drawer with 220 mm of passive travel
+  and 5 N·s/m native joint damping. The damping dissipates a pull after release;
+  there is no spring returning the drawer to its starting position.
+
+MuJoCo's reference cap uses `0.001 N·m` of native dry thread resistance to retain
+progress after release. This is an illustrative prop setting, not a measured
+bottle seal. MuJoCo's soft constraints permit small residual drift; native
+acceptance bounds axial drift to 0.1 mm over a five-second released interval.
+PhysX joint-friction parameters have different semantics and are not assigned
+the same numeric torque as a coefficient.
 
 The reference robot models preserve the live adapters' joint names, order, limits,
 radian units, FK, and normalized hand action (0 closed, 1 open). YAM uses the SDK's
@@ -42,6 +51,18 @@ the actuator's gains, force limit, and reflected inertia across the two native
 drives. This avoids the imported URDF tendon's contact oscillation, but approximates
 the physical transmission under asymmetric contact. The other engines retain native
 jaw coupling. No per-step contact forces or object attachments implement grasping.
+
+MuJoCo uses Menagerie's single-motor fixed tendon to distribute force between
+opposing jaws, preserving the combined gain, force limit, and reflected inertia.
+The native hand equality uses Menagerie's 5 ms time constant. All reference scenes
+use MuJoCo's recommended elliptic friction cone with impedance ratio 10 and Newton
+tolerance `1e-10` to reduce gradual grasp slip. This costs more solver work than
+the default pyramidal cone; it does not increase material friction or eliminate
+all compliance. See [MuJoCo's slip guidance](https://mujoco.readthedocs.io/en/stable/modeling.html#preventing-slip).
+Finger collisions also use Menagerie's pad contact response (`solref="0.004 1"`,
+`solimp="0.95 0.99 0.001"`, priority 1) on the original decomposed finger meshes.
+This prevents the default soft contacts from producing excessive jaw penetration
+and oscillation under a grasp. Material friction and the 2 ms timestep are unchanged.
 
 The YAM reference scene starts with its TCP near `(0.36, 0, 0.14)` m and the open
 hand pitched 45 degrees down. This lies in the overlap of the model's forward and

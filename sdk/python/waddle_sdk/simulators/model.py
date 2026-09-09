@@ -45,6 +45,7 @@ class Link:
     com: tuple[float, ...] = (0.0, 0.0, 0.0)
     inertia: tuple[float, ...] | None = None  # xx, yy, zz, xy, xz, yz in link frame
     mimic: tuple[str, float, float] | None = None
+    damping: float = 0.0  # passive joint resistance in SI units
 
 
 def robot_links(p: Profile) -> list[Link]:
@@ -114,6 +115,7 @@ def objects(environment: str) -> list[list[Link]]:
             axis=(-1.0, 0.0, 0.0),
             limits=(0.0, 0.22),
             mass=0.5,
+            damping=5.0,
             shapes=[
                 Shape(
                     "box",
@@ -226,6 +228,10 @@ def urdf(links: list[Link], name: str) -> str:
             ET.SubElement(joint, "origin", xyz=numbers(link.xyz), rpy=numbers(link.rpy))
             if link.joint:
                 ET.SubElement(joint, "axis", xyz=numbers(link.axis))
+                if link.damping:
+                    ET.SubElement(
+                        joint, "dynamics", damping=str(link.damping), friction="0"
+                    )
                 ET.SubElement(
                     joint,
                     "limit",
@@ -256,6 +262,10 @@ def mjcf(p: Profile, config: dict) -> str:
     # fixed frames for the same camera/TCP names used by the other backends.
     props = objects(config["environment"])
     groups = [robot.native_links(), *props]
+    master = robot.hand_names[0]
+    hand_drives = [master] + [
+        link.joint for link in groups[0] if link.mimic == (master, 1.0, 0.0)
+    ]
     scene_links = [Link("scene_root")]
     for group in groups:
         scene_links.extend(
@@ -271,8 +281,17 @@ def mjcf(p: Profile, config: dict) -> str:
     )
     native = mujoco.MjSpec.from_string(ET.tostring(source, encoding="unicode"))
     root = ET.fromstring(native.to_xml())
+    # MuJoCo's documented manipulation configuration reduces soft-constraint
+    # friction creep for all contacts, without changing material friction.
     ET.SubElement(
-        root, "option", timestep=str(config["timestep"]), integrator="implicitfast"
+        root,
+        "option",
+        timestep=str(config["timestep"]),
+        integrator="implicitfast",
+        cone="elliptic",
+        impratio="10",
+        solver="Newton",
+        tolerance="1e-10",
     )
     visual = ET.SubElement(root, "visual")
     samples, shadow_size = {
@@ -356,9 +375,28 @@ def mjcf(p: Profile, config: dict) -> str:
     for group in props:
         if group[0].kind == "free":
             ET.SubElement(bodies[group[0].name], "freejoint")
+    if config["environment"] == "bottle_cap":
+        # Native dry thread resistance in N m, above the cap's roughly
+        # 0.0002 N m gravity load through the helix. This is a reference prop
+        # setting, not a measured bottle seal or an active holding torque.
+        bodies["cap"].find("joint").set("frictionloss", "0.001")
     # Collision visuals are hidden by the camera renderer; actual CAD remains.
     for geom in world.iter("geom"):
         geom.set("group", "2" if geom.get("contype") == "0" else "3")
+    # Reuse Menagerie's finger-pad contact response on the manufacturer's
+    # collision meshes. Default 20 ms contacts let the stiff linear hand
+    # penetrate a held cube and oscillate; no material friction is increased.
+    fingers = (
+        ("tip_left", "tip_right")
+        if p.name == "yam"
+        else ("left_finger", "right_finger")
+    )
+    for name in fingers:
+        for geom in bodies[name].findall("geom"):
+            if geom.get("group") == "3":
+                geom.set("solref", "0.004 1")
+                geom.set("solimp", "0.95 0.99 0.001")
+                geom.set("priority", "1")
     for geom in bodies["table"].findall("geom"):
         if geom.get("group") == "2":
             geom.set("material", "table_finish")
@@ -366,7 +404,12 @@ def mjcf(p: Profile, config: dict) -> str:
     for link in robot.links:
         if link.joint:
             bodies[link.name].find("joint").set(
-                "armature", str(robot.armature(link.joint))
+                "armature",
+                str(
+                    robot.armature(master) / len(hand_drives)
+                    if link.joint in hand_drives
+                    else robot.armature(link.joint)
+                ),
             )
     contact = ET.SubElement(root, "contact")
     for group in groups:
@@ -379,13 +422,16 @@ def mjcf(p: Profile, config: dict) -> str:
     for link in scene_links:
         if link.mimic:
             master, multiplier, offset = link.mimic
-            ET.SubElement(
+            coupling = ET.SubElement(
                 equality,
                 "joint",
                 joint1=link.joint,
                 joint2=master,
                 polycoef=numbers((offset, multiplier, 0, 0, 0)),
             )
+            if link.joint in hand_drives:
+                # Match Menagerie's mechanical gripper coupling time constant.
+                coupling.set("solref", "0.005 1")
     for first, anchor, second, _other in robot.closures():
         ET.SubElement(
             equality,
@@ -395,6 +441,13 @@ def mjcf(p: Profile, config: dict) -> str:
             anchor=numbers(anchor),
             solref="0.005 1",
         )
+    # Menagerie's xArm/Robotiq pattern distributes one motor's force through a
+    # fixed tendon. The mechanical equality need not transfer the entire load
+    # from one jaw to the other, which otherwise shifts the pinch midpoint.
+    # Keep the same total gain, force budget and reflected rotor inertia.
+    tendon = ET.SubElement(ET.SubElement(root, "tendon"), "fixed", name="hand_motor")
+    for name in hand_drives:
+        ET.SubElement(tendon, "joint", joint=name, coef=str(1 / len(hand_drives)))
     actuators = ET.SubElement(root, "actuator")
     ET.SubElement(bodies["tcp"], "site", name="tcp_site", size=".001")
     for name, limits in zip(p.names[:-1], p.limits[:-1], strict=True):
@@ -415,7 +468,7 @@ def mjcf(p: Profile, config: dict) -> str:
             actuators,
             "position",
             name=name,
-            joint=name,
+            tendon="hand_motor",
             kp=str(kp),
             kv=str(kd),
             ctrlrange=numbers(limits),

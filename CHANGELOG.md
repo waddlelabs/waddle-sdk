@@ -77,6 +77,21 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Balance MuJoCo hand actuation with Menagerie's native fixed tendon, preserving
+  the single motor's total force, gain and reflected inertia. This prevents the
+  YAM jaws from diverging under handle contact and displacing the TCP.
+- Use MuJoCo's documented elliptic friction cone and impedance ratio 10 across
+  reference scenes to reduce slow contact creep. Native xArm handle-grasp
+  retention is now checked alongside joint motion and RGB-D conformance.
+- Apply Menagerie's published finger-pad contact response to the original
+  manufacturer collision meshes. Prevent excessive cube penetration and YAM
+  jaw oscillation; add a native grasp-width and settling regression.
+- Give the MuJoCo reference cap native dry thread resistance and check released
+  axial retention, instead of letting gravity back-drive a frictionless helix.
+- Give the reference drawer explicit passive joint damping, preventing an
+  undamped pull from coasting into its limit and bouncing back after release.
+  Preserve the passive joint and normal gripper contacts across engine adapters.
+
 - Advance reference physics by elapsed monotonic time before reading state or
   changing targets, so rendering delays do not silently slow declared joint
   velocities or replay new targets into the past. Retain fixed engine substeps

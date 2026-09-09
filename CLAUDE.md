@@ -55,6 +55,19 @@ are not calibrated actuator models. MuJoCo, SAPIEN and Isaac Sim use native
 URDF import; xArm uses Menagerie's two linkage closures. SAPIEN uses ManiSkill's
 PD mimic-controller pattern for coupled jaws, sharing the actuator's gain/force/
 inertia budget; other engines retain native hand coupling.
+MuJoCo distributes the single hand motor through Menagerie's fixed tendon,
+splitting its gain/force/inertia budget between the opposing drive joints.
+It uses the documented elliptic friction cone, impedance ratio 10, and Newton
+tolerance 1e-10 to reduce slow contact creep across all reference scenes.
+Finger collisions retain manufacturer geometry and use Menagerie's pad contact
+response (4 ms solref, 0.95/0.99/0.001 solimp, priority 1). Native YAM cube checks
+require a physical-width grasp and settled jaw motion under contact.
+Reference drawers declare passive damping in the scene URDF. MuJoCo/SAPIEN import
+it natively; Isaac uses a zero-stiffness velocity damper. Native acceptance checks
+that a released slide dissipates velocity and retains its opened position.
+MuJoCo's cap has 0.001 N m native dry thread resistance; the native cap test
+checks that a released thread retains axial progress. These reference props
+are not calibrated hardware friction models.
 Reference YAM worlds start with TCP near `(0.36, 0, 0.14)` m and the open hand
 pitched 45 degrees down. This working pose lies in the overlap of forward and
 downward reach, away from the near-neutral pose's inner approach boundary.
