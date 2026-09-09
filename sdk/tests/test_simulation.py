@@ -731,6 +731,105 @@ def test_explicit_worker_advances_only_on_the_shared_sdk_clock(monkeypatch, dura
     assert state.steps == 50
 
 
+@pytest.mark.parametrize("operation", ["read", "write", "hold"])
+def test_world_control_is_served_before_a_second_queued_camera(operation):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    world = World({})
+    capture_started = threading.Event()
+    release_capture = threading.Event()
+    calls = []
+
+    class Connection:
+        def send(self, request):
+            calls.append(request[0])
+
+        def poll(self, timeout):
+            if len(calls) == 1:
+                capture_started.set()
+                assert release_capture.wait(2)
+            return True
+
+        def recv(self):
+            return True, calls[-1]
+
+    world._connection = Connection()
+
+    def wait_queued(count):
+        deadline = time.monotonic() + 2
+        while True:
+            with world._requests:
+                if len(world._pending) == count:
+                    return
+            assert time.monotonic() < deadline, "request did not queue"
+            time.sleep(0.001)
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        first = pool.submit(world.call, "capture", "scene")
+        try:
+            assert capture_started.wait(2)
+            second = pool.submit(world.call, "capture", "wrist")
+            wait_queued(1)
+            control = pool.submit(world.call, operation)
+            wait_queued(2)
+        finally:
+            release_capture.set()
+        assert first.result(timeout=2) == "capture"
+        assert control.result(timeout=2) == operation
+        assert second.result(timeout=2) == "capture"
+    assert calls == ["capture", operation, "capture"]
+
+
+def test_world_close_waits_for_active_io_and_unblocks_queued_camera():
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    world = World({})
+    capture_started = threading.Event()
+    release_capture = threading.Event()
+    calls = []
+
+    class Connection:
+        def send(self, request):
+            calls.append(request[0])
+
+        def poll(self, timeout):
+            if len(calls) == 1:
+                capture_started.set()
+                assert release_capture.wait(2)
+            return True
+
+        def recv(self):
+            return True, None
+
+        def close(self):
+            calls.append("disconnected")
+
+    world._connection = Connection()
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        first = pool.submit(world.call, "capture", "scene")
+        try:
+            assert capture_started.wait(2)
+            closing = pool.submit(world.close)
+            second = pool.submit(world.call, "capture", "wrist")
+            deadline = time.monotonic() + 2
+            while True:
+                with world._requests:
+                    if len(world._pending) == 2:
+                        break
+                assert time.monotonic() < deadline
+                time.sleep(0.001)
+        finally:
+            release_capture.set()
+        first.result(timeout=2)
+        closing.result(timeout=2)
+        with pytest.raises(RuntimeError, match="unavailable"):
+            second.result(timeout=2)
+    assert calls == ["capture", "close", "disconnected"]
+    assert world._pending == [] and not world._busy
+
+
 @pytest.mark.parametrize("backend", ["mujoco", "sapien"])
 @pytest.mark.parametrize("reset_on_episode", [False, True])
 def test_episode_boundary_preserves_state_unless_reset_requested(

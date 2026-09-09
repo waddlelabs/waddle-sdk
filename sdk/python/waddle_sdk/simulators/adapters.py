@@ -36,6 +36,10 @@ class World:
         self.config = config
         self._reset_on_episode = reset_on_episode
         self._lock = threading.RLock()
+        self._requests = threading.Condition(self._lock)
+        self._pending: list[tuple[bool, int]] = []
+        self._request_sequence = 0
+        self._busy = False
         self._process: subprocess.Popen | None = None
         self._connection = None
         self._failed = False
@@ -95,23 +99,49 @@ class World:
         return result
 
     def call(self, operation: str, *arguments):
-        with self._lock:
+        # A capture already rendering must finish, but a second camera must
+        # not get ahead of queued state/control requests. Preserve FIFO order
+        # within each priority and one outstanding transaction on the pipe.
+        with self._requests:
+            ticket = (operation == "capture", self._request_sequence)
+            self._request_sequence += 1
+            self._pending.append(ticket)
+            try:
+                self._requests.wait_for(
+                    lambda: not self._busy and ticket == min(self._pending)
+                )
+            except BaseException:
+                self._pending.remove(ticket)
+                self._requests.notify_all()
+                raise
+            self._pending.remove(ticket)
+            self._busy = True
+        try:
             if self._failed or self._connection is None:
                 raise RuntimeError("simulation world is unavailable")
             try:
                 self._connection.send((operation, arguments))
                 return self._receive(15.0 if operation == "capture" else 5.0)
             except (OSError, EOFError, TimeoutError):
-                self._failed = True
-                self._shutdown()
+                with self._lock:
+                    self._failed = True
+                    self._shutdown()
                 raise RuntimeError(
                     "simulation connection lost; reopen the site"
                 ) from None
+        finally:
+            with self._requests:
+                self._busy = False
+                self._requests.notify_all()
 
     def step(self, dt: float) -> None:
         if not math.isfinite(dt) or dt < 0:
             raise ValueError("world step must be finite and non-negative")
-        self.call("step", dt)
+        # Real-time workers advance elapsed time before every observable read,
+        # write and capture. Sending an additional no-op step on each SDK pump
+        # tick only competes with those requests for the shared connection.
+        if not self._real_time:
+            self.call("step", dt)
 
     def reset(self) -> bool:
         if self._reset_on_episode:

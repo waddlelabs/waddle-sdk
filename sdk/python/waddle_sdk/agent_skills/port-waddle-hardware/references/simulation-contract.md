@@ -59,6 +59,8 @@ using the previous target. Slow capture/IPC therefore cannot drop physics time o
 apply a new command retroactively. Set `worlds.cell.options.real_time: false` for
 explicit SDK stepping. Camera pumps skip missed frame slots; available compute
 still bounds delivered frame rate and simulation throughput.
+Queued state/control requests take priority over queued captures on the shared
+native connection. An in-progress capture still finishes before the next request.
 
 ## When to implement another world
 

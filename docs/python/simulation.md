@@ -95,6 +95,11 @@ physics under the previous target; a new command is never applied retroactively.
 Fractional substeps carry between requests. State reporting uses the ordinary SDK
 pump at twice the declared control rate, with a 100 Hz floor. New scenes use the physical SDK control defaults: YAM 10 Hz, xArm7 50 Hz,
 and 1 rad/s joint speed for both. Explicit site settings remain authoritative. Available compute still bounds achievable throughput.
+Queued state/control requests take priority over queued camera captures, retaining
+FIFO order within each group and one native transaction at a time. An in-progress
+capture cannot be interrupted. Real-time pump ticks need no extra clock request:
+reads, writes and captures already advance elapsed time. Explicit-step rollouts
+still dispatch their requested durations.
 
 For explicitly stepped rollouts, set `worlds.cell.options.real_time: false`; only
 SDK world-step durations then advance physics. This is independent of scene reset:
@@ -209,7 +214,7 @@ compiler's supported scene subset. For custom URDF bundles, use the existing por
 scene compiler; for an already configured Isaac stage, the existing ROS 2 backend is
 also available. No second SDK lifecycle or agent API is introduced.
 
-The worker continuously advances physics, serializes sensor/control requests, and
+The worker advances physics, serializes sensor/control requests, and
 fails closed on startup or connection loss. Recovery requires reopening the site;
 it never replays a motion after reconnecting. Site camera declarations are compared
 to simulation sensor profiles before exposing the camera. Joint owner limits may tighten the

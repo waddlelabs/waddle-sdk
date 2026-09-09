@@ -78,6 +78,9 @@ commands and holds clear those velocity targets. Reference workers default to
 real-time physics: before each read/write/capture request they integrate elapsed
 monotonic time under the previous target in fixed native substeps. This avoids both
 dropped time under rendering load and retroactively applying a new command.
+The shared worker connection prioritizes queued state/control requests over
+queued captures, with FIFO ordering within each group. Real-time SDK pump ticks
+send no additional clock request; explicit-step rollouts retain their clock calls.
 `worlds.cell.options.real_time: false` retains explicit SDK world-step durations
 for rollouts. Fractional steps carry between requests. State reporting uses the
 existing SDK pump with a 100 Hz floor. Camera pumps skip missed capture slots.

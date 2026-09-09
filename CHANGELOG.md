@@ -77,6 +77,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Prioritize queued simulation state/control requests ahead of camera captures,
+  preserving one serialized native transaction. Real-time SDK pump ticks no
+  longer send redundant clock requests; native reads, writes and captures
+  already integrate elapsed time. This reduces camera-induced command latency.
 - Decompose concave manufacturer arm and housing collision meshes through the
   existing CoACD build step, alongside fingers. Preserve physical recesses that
   a single convex hull filled, causing false YAM forearm/hand collisions during
