@@ -77,6 +77,13 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Decompose concave manufacturer arm and housing collision meshes through the
+  existing CoACD build step, alongside fingers. Preserve physical recesses that
+  a single convex hull filled, causing false YAM forearm/hand collisions during
+  wrist motion. Convex source meshes and visual geometry remain unchanged.
+- Build conservative planning bounds per physical link, independent of how its
+  collision mesh is partitioned. This avoids redundant overlapping spheres and
+  keeps native convex decomposition from multiplying planning work.
 - Balance MuJoCo hand actuation with Menagerie's native fixed tendon, preserving
   the single motor's total force, gain and reflected inertia. This prevents the
   YAM jaws from diverging under handle contact and displacing the TCP.

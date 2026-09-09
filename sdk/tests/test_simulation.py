@@ -172,6 +172,36 @@ def test_mesh_sphere_cover_contains_collision_triangles(robot):
                 )
 
 
+def test_mesh_sphere_cover_is_independent_of_collision_partition(monkeypatch):
+    module = importlib.import_module("waddle_sdk.simulators.description")
+    triangles = np.array(
+        [[[x, 0, 0], [x + 0.01, 0.01, 0], [x, 0, 0.01]] for x in (0, 0.02, 0.1, 0.12)]
+    )
+    meshes = {"whole": triangles, "a": triangles[::2], "b": triangles[1::2]}
+
+    def shape(mesh):
+        return SimpleNamespace(
+            collision=True, mesh=mesh, size=(1, 2, 1), rpy=(0, 0, 0.5), xyz=(0.1, 0, 0)
+        )
+
+    link = SimpleNamespace(name="link", shapes=[shape("whole")])
+    monkeypatch.setattr(module, "description", lambda _: SimpleNamespace(links=[link]))
+    monkeypatch.setattr(module, "mesh_triangles", meshes.__getitem__)
+    collision_bounds.cache_clear()
+    try:
+        whole = collision_bounds("fixture")
+        link.shapes = [shape("a"), shape("b")]
+        collision_bounds.cache_clear()
+        split = collision_bounds("fixture")
+        assert len(split) == len(whole)
+        for expected, actual in zip(whole, split):
+            assert actual[:2] == expected[:2]
+            np.testing.assert_allclose(actual[2], expected[2], atol=1e-12)
+            assert actual[3] == pytest.approx(expected[3], abs=1e-12)
+    finally:
+        collision_bounds.cache_clear()
+
+
 def test_yam_arm_assembly_retains_the_shipped_urdf_inertials():
     original = ET.fromstring(yam.urdf_text())
     assembled = ET.parse(files("waddle_sdk.simulators").joinpath("data/yam/robot.urdf"))
@@ -527,6 +557,22 @@ def _native_conformance(
         np.testing.assert_allclose(engine.read()[0], p.home, atol=1e-6)
         if backend == "mujoco":
             assert engine.data.time == 0
+            if robot == "yam":
+                # In this folded wrist pose, a single convex hull fills a
+                # forearm recess and creates contact 22 mm from the source
+                # collision surface. Preserve that clearance in the importer.
+                folded = np.array(
+                    [-0.880189, 1.551672, 0.660299, 0.932776, -1.264037, 0.039450, 1.0]
+                )
+                engine.home(folded)
+                for contact in engine.data.contact:
+                    names = {
+                        engine.model.body(int(engine.model.geom(int(g)).bodyid[0])).name
+                        for g in contact.geom
+                    }
+                    if names == {"link_4", "gripper"}:
+                        assert contact.dist > -0.0001
+                engine.home(p.home)
         if environment == "drawer":
             travel = (
                 float(engine.data.qpos[int(joint.qposadr[0])])

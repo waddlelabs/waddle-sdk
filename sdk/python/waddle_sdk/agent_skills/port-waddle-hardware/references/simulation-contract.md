@@ -48,6 +48,11 @@ grasp creep. These use ordinary physics constraints; manipulation tests must
 observe contact, prop motion, and retention separately from commanded robot pose.
 The normative model settings and limitations are in `docs/python/simulation.md`
 and the packaged `simulators/data/README.md`.
+Reference model builds decompose every concave collision mesh, including arm
+links, before native convex import. A single convex hull can otherwise fill
+physical recesses and cause false self-collisions in reachable wrist poses.
+Public planning bounds cover each physical link independently of that convex
+partition; native collision detail must not multiply redundant planning bounds.
 
 Reference workers advance elapsed real time in fixed substeps before each request,
 using the previous target. Slow capture/IPC therefore cannot drop physics time or

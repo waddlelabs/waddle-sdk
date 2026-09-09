@@ -49,7 +49,7 @@ Physics sites are documented in `docs/python/simulation.md`. The optional
 `sdk/python/waddle_sdk/simulators/` package implements reference scenes through
 the public `SimulationBackend` lifecycle and its part/camera facets. Robots use
 hash-pinned manufacturer URDF assemblies, visual meshes, inertias and decomposed
-hand collisions; task props use primitive geometry. The SDK YAM arm contract is
+concave collisions; task props use primitive geometry. The SDK YAM arm contract is
 assembled with I2RT LINEAR_4310; xArm7 uses UFACTORY's G2 hand. The reference servos
 are not calibrated actuator models. MuJoCo, SAPIEN and Isaac Sim use native
 URDF import; xArm uses Menagerie's two linkage closures. SAPIEN uses ManiSkill's
@@ -84,7 +84,11 @@ existing SDK pump with a 100 Hz floor. Camera pumps skip missed capture slots.
 Reference worlds preserve state across runs; `reset_on_episode: true` restores
 native snapshots. Per-arm episode hooks do not home world-owned robots independently. The hand pinch offset comes from I2RT 1.3.5's corrected grasp site.
 `tools/vendor_simulation_models.py` rebuilds
-the packaged assets; no runtime model download occurs. Engine-dependent acceptance lives in
+the packaged assets, decomposing every concave manufacturer collision mesh with
+CoACD so a single convex hull cannot fill forearm or housing clearances. Convex
+meshes remain unchanged. Conservative planning spheres cover complete triangles
+per physical link, independently of the native convex partition. No runtime model
+download occurs. Engine-dependent acceptance lives in
 `sdk/tests/test_simulation.py` and isolates native graphics runtimes in subprocesses.
 Its rendered RGB/depth witnesses use off-center optical principal points, unequal
 focal lengths, and submillimetre depth units to catch camera convention errors.

@@ -43,8 +43,11 @@ radian units, FK, and normalized hand action (0 closed, 1 open). YAM uses the SD
 pinned I2RT URDF and tool convention, assembled with the live adapter's 95 mm
 LINEAR_4310 hand. xArm7 uses UFACTORY's expanded URDF with the G2 gripper and its
 standard TCP. The original visual meshes, link masses, centers of mass and inertia
-tensors are retained. Concave hand collision meshes are decomposed offline into
-convex pieces so each engine preserves recesses and cable clearance. Native constraints
+tensors are retained. Concave collision meshes are decomposed offline into
+convex pieces so each engine preserves arm recesses, finger geometry and housing
+clearance. Convex meshes remain unchanged. Public planning bounds conservatively
+cover complete collision triangles per physical link, so their number does not
+scale with the importer's convex partition. Native constraints
 close the xArm linkage; its revolute hand is mapped nonlinearly to jaw travel.
 SAPIEN follows ManiSkill's PD mimic-controller pattern for the coupled jaws, sharing
 the actuator's gains, force limit, and reflected inertia across the two native

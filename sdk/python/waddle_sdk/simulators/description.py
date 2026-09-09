@@ -340,21 +340,27 @@ def collision_bounds(name: str):
     """Conservative sphere cover of complete mesh triangles, in each link frame."""
     result = []
     for link in description(name).links:
-        for index, shape in enumerate(link.shapes):
+        surfaces = []
+        for shape in link.shapes:
             if not shape.collision:
                 continue
             triangles = mesh_triangles(shape.mesh) * np.asarray(shape.size)
             triangles = triangles @ rotation(shape.rpy).T + np.asarray(shape.xyz)
-            # Split along the longest dimension. Assign entire triangles, never
-            # just vertices, so every surface point is enclosed by a sphere.
-            axis = int(np.argmax(np.ptp(triangles.reshape(-1, 3), axis=0)))
-            centers = triangles.mean(axis=1)[:, axis]
-            bins = np.floor((centers - centers.min()) / 0.04).astype(int)
-            for bucket in np.unique(bins):
-                vertices = triangles[bins == bucket].reshape(-1, 3)
-                center = (vertices.min(axis=0) + vertices.max(axis=0)) / 2
-                radius = float(np.linalg.norm(vertices - center, axis=1).max()) + 1e-6
-                result.append(
-                    (f"{link.name}_{index}_{bucket}", link.name, center, radius)
-                )
+            surfaces.append(triangles)
+        if not surfaces:
+            continue
+        # Cover a physical link, independent of the native importer's convex
+        # partition. Covering each overlapping piece separately multiplies the
+        # public planning geometry without adding useful spatial resolution.
+        triangles = np.concatenate(surfaces)
+        # Split along the longest dimension. Assign entire triangles, never
+        # just vertices, so every surface point is enclosed by a sphere.
+        axis = int(np.argmax(np.ptp(triangles.reshape(-1, 3), axis=0)))
+        centers = triangles.mean(axis=1)[:, axis]
+        bins = np.floor((centers - centers.min()) / 0.04).astype(int)
+        for bucket in np.unique(bins):
+            vertices = triangles[bins == bucket].reshape(-1, 3)
+            center = (vertices.min(axis=0) + vertices.max(axis=0)) / 2
+            radius = float(np.linalg.norm(vertices - center, axis=1).max()) + 1e-6
+            result.append((f"{link.name}_{bucket}", link.name, center, radius))
     return tuple(result)

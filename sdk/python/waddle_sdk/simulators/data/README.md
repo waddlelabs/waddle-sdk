@@ -63,17 +63,21 @@ This avoids overconstraining the four-bar mechanism with six position drives.
 ## Collision and dynamics
 
 Visuals always use the manufacturer's complete meshes. Collisions use its
-declared collision meshes, with finger geometry and the G2 housing/cable mesh
-decomposed offline by CoACD into at most 32 convex pieces per link. This retains
-finger recesses and the empty space around the cable. All engines use those same pieces.
+declared collision meshes. Every concave mesh is decomposed offline by CoACD
+into at most 32 convex pieces per link; already convex meshes remain unchanged.
+This retains forearm and finger recesses and empty space around housings/cables.
+Applying this only to fingers left a convex hull across the YAM forearm recess,
+producing false housing contacts during folded wrist motion. All engines use
+the same decomposed pieces. No self-collision exclusion removes that contact pair.
 Fixed frame links retain physical adjacency; exclusions inside the G2 linkage
 cover its connected pins and finger/base pairs declared noncolliding by the
 manufacturer's `xarm7_with_gripper.srdf`. There is no exclusion between a robot
 and a task object. Native equalities, linkage constraints, and the SAPIEN coupled
 jaw controller implement the hand's relations.
 
-Planning bounds are conservative sphere covers of the same mesh triangles,
-transformed through the same URDF. Manufacturer masses, COM offsets and full
+Planning bounds conservatively cover complete triangles per physical link,
+independently of how native collision meshes are partitioned. They use the same
+URDF transforms. Manufacturer masses, COM offsets and full
 inertia tensors are preserved. Reference position servos, gravity compensation
 and contact friction are simulation settings, not measured actuator dynamics.
 Known trajectory velocity uses the existing SDK optional driver port; no velocity

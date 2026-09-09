@@ -14,7 +14,193 @@
     </visual>
     <collision>
       <geometry>
-        <mesh filename="assets/xarm7/visual/link_base.stl" />
+        <mesh filename="assets/collision/link_base/link_base-0.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link_base/link_base-1.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link_base/link_base-2.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link_base/link_base-3.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link_base/link_base-4.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link_base/link_base-5.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link_base/link_base-6.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link_base/link_base-7.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link_base/link_base-8.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link_base/link_base-9.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link_base/link_base-10.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link_base/link_base-11.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link_base/link_base-12.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link_base/link_base-13.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link_base/link_base-14.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link_base/link_base-15.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link_base/link_base-16.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link_base/link_base-17.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link_base/link_base-18.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link_base/link_base-19.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link_base/link_base-20.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link_base/link_base-21.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link_base/link_base-22.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link_base/link_base-23.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link_base/link_base-24.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link_base/link_base-25.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link_base/link_base-26.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link_base/link_base-27.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link_base/link_base-28.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link_base/link_base-29.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link_base/link_base-30.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link_base/link_base-31.stl" />
       </geometry>
       <origin rpy="0 0 0" xyz="0 0 0" />
     </collision>
@@ -34,7 +220,193 @@
     </visual>
     <collision>
       <geometry>
-        <mesh filename="assets/xarm7/visual/link1.stl" />
+        <mesh filename="assets/collision/link1/link1-0.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link1/link1-1.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link1/link1-2.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link1/link1-3.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link1/link1-4.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link1/link1-5.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link1/link1-6.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link1/link1-7.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link1/link1-8.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link1/link1-9.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link1/link1-10.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link1/link1-11.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link1/link1-12.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link1/link1-13.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link1/link1-14.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link1/link1-15.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link1/link1-16.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link1/link1-17.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link1/link1-18.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link1/link1-19.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link1/link1-20.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link1/link1-21.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link1/link1-22.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link1/link1-23.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link1/link1-24.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link1/link1-25.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link1/link1-26.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link1/link1-27.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link1/link1-28.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link1/link1-29.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link1/link1-30.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link1/link1-31.stl" />
       </geometry>
       <origin rpy="0 0 0" xyz="0 0 0" />
     </collision>
@@ -62,7 +434,193 @@
     </visual>
     <collision>
       <geometry>
-        <mesh filename="assets/xarm7/visual/link2.stl" />
+        <mesh filename="assets/collision/link2/link2-0.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link2/link2-1.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link2/link2-2.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link2/link2-3.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link2/link2-4.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link2/link2-5.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link2/link2-6.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link2/link2-7.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link2/link2-8.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link2/link2-9.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link2/link2-10.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link2/link2-11.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link2/link2-12.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link2/link2-13.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link2/link2-14.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link2/link2-15.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link2/link2-16.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link2/link2-17.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link2/link2-18.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link2/link2-19.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link2/link2-20.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link2/link2-21.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link2/link2-22.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link2/link2-23.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link2/link2-24.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link2/link2-25.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link2/link2-26.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link2/link2-27.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link2/link2-28.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link2/link2-29.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link2/link2-30.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link2/link2-31.stl" />
       </geometry>
       <origin rpy="0 0 0" xyz="0 0 0" />
     </collision>
@@ -90,7 +648,193 @@
     </visual>
     <collision>
       <geometry>
-        <mesh filename="assets/xarm7/visual/link3.stl" />
+        <mesh filename="assets/collision/link3/link3-0.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link3/link3-1.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link3/link3-2.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link3/link3-3.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link3/link3-4.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link3/link3-5.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link3/link3-6.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link3/link3-7.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link3/link3-8.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link3/link3-9.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link3/link3-10.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link3/link3-11.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link3/link3-12.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link3/link3-13.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link3/link3-14.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link3/link3-15.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link3/link3-16.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link3/link3-17.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link3/link3-18.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link3/link3-19.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link3/link3-20.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link3/link3-21.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link3/link3-22.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link3/link3-23.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link3/link3-24.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link3/link3-25.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link3/link3-26.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link3/link3-27.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link3/link3-28.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link3/link3-29.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link3/link3-30.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link3/link3-31.stl" />
       </geometry>
       <origin rpy="0 0 0" xyz="0 0 0" />
     </collision>
@@ -118,7 +862,193 @@
     </visual>
     <collision>
       <geometry>
-        <mesh filename="assets/xarm7/visual/link4.stl" />
+        <mesh filename="assets/collision/link4/link4-0.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link4/link4-1.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link4/link4-2.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link4/link4-3.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link4/link4-4.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link4/link4-5.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link4/link4-6.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link4/link4-7.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link4/link4-8.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link4/link4-9.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link4/link4-10.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link4/link4-11.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link4/link4-12.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link4/link4-13.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link4/link4-14.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link4/link4-15.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link4/link4-16.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link4/link4-17.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link4/link4-18.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link4/link4-19.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link4/link4-20.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link4/link4-21.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link4/link4-22.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link4/link4-23.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link4/link4-24.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link4/link4-25.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link4/link4-26.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link4/link4-27.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link4/link4-28.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link4/link4-29.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link4/link4-30.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link4/link4-31.stl" />
       </geometry>
       <origin rpy="0 0 0" xyz="0 0 0" />
     </collision>
@@ -146,7 +1076,193 @@
     </visual>
     <collision>
       <geometry>
-        <mesh filename="assets/xarm7/visual/link5.stl" />
+        <mesh filename="assets/collision/link5/link5-0.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link5/link5-1.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link5/link5-2.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link5/link5-3.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link5/link5-4.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link5/link5-5.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link5/link5-6.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link5/link5-7.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link5/link5-8.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link5/link5-9.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link5/link5-10.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link5/link5-11.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link5/link5-12.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link5/link5-13.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link5/link5-14.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link5/link5-15.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link5/link5-16.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link5/link5-17.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link5/link5-18.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link5/link5-19.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link5/link5-20.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link5/link5-21.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link5/link5-22.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link5/link5-23.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link5/link5-24.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link5/link5-25.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link5/link5-26.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link5/link5-27.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link5/link5-28.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link5/link5-29.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link5/link5-30.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link5/link5-31.stl" />
       </geometry>
       <origin rpy="0 0 0" xyz="0 0 0" />
     </collision>
@@ -174,7 +1290,193 @@
     </visual>
     <collision>
       <geometry>
-        <mesh filename="assets/xarm7/visual/link6.stl" />
+        <mesh filename="assets/collision/link6/link6-0.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link6/link6-1.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link6/link6-2.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link6/link6-3.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link6/link6-4.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link6/link6-5.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link6/link6-6.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link6/link6-7.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link6/link6-8.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link6/link6-9.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link6/link6-10.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link6/link6-11.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link6/link6-12.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link6/link6-13.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link6/link6-14.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link6/link6-15.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link6/link6-16.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link6/link6-17.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link6/link6-18.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link6/link6-19.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link6/link6-20.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link6/link6-21.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link6/link6-22.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link6/link6-23.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link6/link6-24.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link6/link6-25.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link6/link6-26.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link6/link6-27.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link6/link6-28.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link6/link6-29.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link6/link6-30.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link6/link6-31.stl" />
       </geometry>
       <origin rpy="0 0 0" xyz="0 0 0" />
     </collision>
@@ -202,7 +1504,193 @@
     </visual>
     <collision>
       <geometry>
-        <mesh filename="assets/end_tool/collision/end_tool.stl" />
+        <mesh filename="assets/collision/link7/link7-0.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link7/link7-1.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link7/link7-2.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link7/link7-3.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link7/link7-4.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link7/link7-5.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link7/link7-6.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link7/link7-7.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link7/link7-8.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link7/link7-9.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link7/link7-10.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link7/link7-11.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link7/link7-12.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link7/link7-13.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link7/link7-14.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link7/link7-15.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link7/link7-16.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link7/link7-17.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link7/link7-18.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link7/link7-19.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link7/link7-20.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link7/link7-21.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link7/link7-22.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link7/link7-23.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link7/link7-24.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link7/link7-25.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link7/link7-26.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link7/link7-27.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link7/link7-28.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link7/link7-29.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link7/link7-30.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/link7/link7-31.stl" />
       </geometry>
       <origin rpy="0 0 0" xyz="0 0 0" />
     </collision>
@@ -427,7 +1915,193 @@
     </visual>
     <collision>
       <geometry>
-        <mesh filename="assets/gripper/xarm/left_outer_knuckle_g2.stl" />
+        <mesh filename="assets/collision/left_outer_knuckle/left_outer_knuckle-0.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_outer_knuckle/left_outer_knuckle-1.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_outer_knuckle/left_outer_knuckle-2.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_outer_knuckle/left_outer_knuckle-3.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_outer_knuckle/left_outer_knuckle-4.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_outer_knuckle/left_outer_knuckle-5.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_outer_knuckle/left_outer_knuckle-6.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_outer_knuckle/left_outer_knuckle-7.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_outer_knuckle/left_outer_knuckle-8.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_outer_knuckle/left_outer_knuckle-9.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_outer_knuckle/left_outer_knuckle-10.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_outer_knuckle/left_outer_knuckle-11.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_outer_knuckle/left_outer_knuckle-12.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_outer_knuckle/left_outer_knuckle-13.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_outer_knuckle/left_outer_knuckle-14.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_outer_knuckle/left_outer_knuckle-15.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_outer_knuckle/left_outer_knuckle-16.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_outer_knuckle/left_outer_knuckle-17.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_outer_knuckle/left_outer_knuckle-18.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_outer_knuckle/left_outer_knuckle-19.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_outer_knuckle/left_outer_knuckle-20.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_outer_knuckle/left_outer_knuckle-21.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_outer_knuckle/left_outer_knuckle-22.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_outer_knuckle/left_outer_knuckle-23.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_outer_knuckle/left_outer_knuckle-24.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_outer_knuckle/left_outer_knuckle-25.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_outer_knuckle/left_outer_knuckle-26.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_outer_knuckle/left_outer_knuckle-27.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_outer_knuckle/left_outer_knuckle-28.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_outer_knuckle/left_outer_knuckle-29.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_outer_knuckle/left_outer_knuckle-30.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_outer_knuckle/left_outer_knuckle-31.stl" />
       </geometry>
       <origin rpy="0 0 0" xyz="0 0 0" />
     </collision>
@@ -666,7 +2340,193 @@
     </visual>
     <collision>
       <geometry>
-        <mesh filename="assets/gripper/xarm/left_inner_knuckle_g2.stl" />
+        <mesh filename="assets/collision/left_inner_knuckle/left_inner_knuckle-0.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_inner_knuckle/left_inner_knuckle-1.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_inner_knuckle/left_inner_knuckle-2.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_inner_knuckle/left_inner_knuckle-3.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_inner_knuckle/left_inner_knuckle-4.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_inner_knuckle/left_inner_knuckle-5.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_inner_knuckle/left_inner_knuckle-6.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_inner_knuckle/left_inner_knuckle-7.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_inner_knuckle/left_inner_knuckle-8.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_inner_knuckle/left_inner_knuckle-9.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_inner_knuckle/left_inner_knuckle-10.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_inner_knuckle/left_inner_knuckle-11.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_inner_knuckle/left_inner_knuckle-12.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_inner_knuckle/left_inner_knuckle-13.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_inner_knuckle/left_inner_knuckle-14.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_inner_knuckle/left_inner_knuckle-15.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_inner_knuckle/left_inner_knuckle-16.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_inner_knuckle/left_inner_knuckle-17.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_inner_knuckle/left_inner_knuckle-18.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_inner_knuckle/left_inner_knuckle-19.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_inner_knuckle/left_inner_knuckle-20.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_inner_knuckle/left_inner_knuckle-21.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_inner_knuckle/left_inner_knuckle-22.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_inner_knuckle/left_inner_knuckle-23.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_inner_knuckle/left_inner_knuckle-24.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_inner_knuckle/left_inner_knuckle-25.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_inner_knuckle/left_inner_knuckle-26.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_inner_knuckle/left_inner_knuckle-27.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_inner_knuckle/left_inner_knuckle-28.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_inner_knuckle/left_inner_knuckle-29.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_inner_knuckle/left_inner_knuckle-30.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/left_inner_knuckle/left_inner_knuckle-31.stl" />
       </geometry>
       <origin rpy="0 0 0" xyz="0 0 0" />
     </collision>
@@ -693,7 +2553,193 @@
     </visual>
     <collision>
       <geometry>
-        <mesh filename="assets/gripper/xarm/right_outer_knuckle_g2.stl" />
+        <mesh filename="assets/collision/right_outer_knuckle/right_outer_knuckle-0.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_outer_knuckle/right_outer_knuckle-1.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_outer_knuckle/right_outer_knuckle-2.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_outer_knuckle/right_outer_knuckle-3.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_outer_knuckle/right_outer_knuckle-4.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_outer_knuckle/right_outer_knuckle-5.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_outer_knuckle/right_outer_knuckle-6.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_outer_knuckle/right_outer_knuckle-7.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_outer_knuckle/right_outer_knuckle-8.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_outer_knuckle/right_outer_knuckle-9.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_outer_knuckle/right_outer_knuckle-10.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_outer_knuckle/right_outer_knuckle-11.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_outer_knuckle/right_outer_knuckle-12.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_outer_knuckle/right_outer_knuckle-13.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_outer_knuckle/right_outer_knuckle-14.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_outer_knuckle/right_outer_knuckle-15.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_outer_knuckle/right_outer_knuckle-16.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_outer_knuckle/right_outer_knuckle-17.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_outer_knuckle/right_outer_knuckle-18.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_outer_knuckle/right_outer_knuckle-19.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_outer_knuckle/right_outer_knuckle-20.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_outer_knuckle/right_outer_knuckle-21.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_outer_knuckle/right_outer_knuckle-22.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_outer_knuckle/right_outer_knuckle-23.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_outer_knuckle/right_outer_knuckle-24.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_outer_knuckle/right_outer_knuckle-25.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_outer_knuckle/right_outer_knuckle-26.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_outer_knuckle/right_outer_knuckle-27.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_outer_knuckle/right_outer_knuckle-28.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_outer_knuckle/right_outer_knuckle-29.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_outer_knuckle/right_outer_knuckle-30.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_outer_knuckle/right_outer_knuckle-31.stl" />
       </geometry>
       <origin rpy="0 0 0" xyz="0 0 0" />
     </collision>
@@ -933,7 +2979,193 @@
     </visual>
     <collision>
       <geometry>
-        <mesh filename="assets/gripper/xarm/right_inner_knuckle_g2.stl" />
+        <mesh filename="assets/collision/right_inner_knuckle/right_inner_knuckle-0.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_inner_knuckle/right_inner_knuckle-1.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_inner_knuckle/right_inner_knuckle-2.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_inner_knuckle/right_inner_knuckle-3.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_inner_knuckle/right_inner_knuckle-4.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_inner_knuckle/right_inner_knuckle-5.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_inner_knuckle/right_inner_knuckle-6.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_inner_knuckle/right_inner_knuckle-7.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_inner_knuckle/right_inner_knuckle-8.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_inner_knuckle/right_inner_knuckle-9.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_inner_knuckle/right_inner_knuckle-10.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_inner_knuckle/right_inner_knuckle-11.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_inner_knuckle/right_inner_knuckle-12.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_inner_knuckle/right_inner_knuckle-13.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_inner_knuckle/right_inner_knuckle-14.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_inner_knuckle/right_inner_knuckle-15.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_inner_knuckle/right_inner_knuckle-16.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_inner_knuckle/right_inner_knuckle-17.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_inner_knuckle/right_inner_knuckle-18.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_inner_knuckle/right_inner_knuckle-19.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_inner_knuckle/right_inner_knuckle-20.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_inner_knuckle/right_inner_knuckle-21.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_inner_knuckle/right_inner_knuckle-22.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_inner_knuckle/right_inner_knuckle-23.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_inner_knuckle/right_inner_knuckle-24.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_inner_knuckle/right_inner_knuckle-25.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_inner_knuckle/right_inner_knuckle-26.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_inner_knuckle/right_inner_knuckle-27.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_inner_knuckle/right_inner_knuckle-28.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_inner_knuckle/right_inner_knuckle-29.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_inner_knuckle/right_inner_knuckle-30.stl" />
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0" />
+    </collision>
+    <collision>
+      <geometry>
+        <mesh filename="assets/collision/right_inner_knuckle/right_inner_knuckle-31.stl" />
       </geometry>
       <origin rpy="0 0 0" xyz="0 0 0" />
     </collision>

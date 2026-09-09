@@ -51,14 +51,18 @@ def write(root: ET.Element, path: Path) -> None:
     path.write_text(ET.tostring(root, encoding="unicode") + "\n")
 
 
-def collision_parts(robot: ET.Element, dest: Path, names: tuple[str, ...]) -> None:
-    """Retain concave hand geometry with an offline decomposition shared by engines."""
+def collision_parts(robot: ET.Element, dest: Path) -> None:
+    """Retain concave collision geometry with offline decomposition shared by engines."""
     coacd.set_log_level("error")
-    for name in names:
-        link = robot.find(f"link[@name='{name}']")
+    for link in robot.findall("link"):
+        name = link.get("name")
         collision = link.find("collision")
+        if collision is None:
+            continue
         source = dest / collision.find("geometry/mesh").get("filename")
         mesh = trimesh.load_mesh(source)
+        if mesh.is_convex:
+            continue
         parts = coacd.run_coacd(
             coacd.Mesh(mesh.vertices, mesh.faces),
             threshold=0.015,
@@ -177,7 +181,7 @@ def yam() -> None:
                 ET.SubElement(
                     joint, "mimic", joint="joint7", multiplier="1", offset="0"
                 )
-    collision_parts(robot, dest, ("tip_left", "tip_right"))
+    collision_parts(robot, dest)
     write(robot, dest / "robot.urdf")
     station = ET.fromstring(
         fetch(
@@ -254,9 +258,7 @@ def xarm7() -> None:
                 target.write_bytes(raw)
         # G2's housing mesh includes its long cable. A single convex hull
         # fills the empty space between cable and housing, blocking the arm.
-        collision_parts(
-            robot, dest, ("xarm_gripper_base_link", "left_finger", "right_finger")
-        )
+        collision_parts(robot, dest)
         write(robot, dest / "robot.urdf")
     (dest / "LICENSE").write_bytes(fetch("xArm-Developer/xarm_ros", XARM, "LICENSE"))
 
