@@ -179,6 +179,7 @@ def objects(environment: str) -> list[list[Link]]:
 
 
 SCREW_PITCH = 0.005 / (2 * math.pi)
+SCREW_RESISTANCE = 0.001  # N m; reference thread resistance, not measured seal torque.
 
 
 def urdf(links: list[Link], name: str) -> str:
@@ -386,7 +387,7 @@ def mjcf(p: Profile, config: dict) -> str:
         # Native dry thread resistance in N m, above the cap's roughly
         # 0.0002 N m gravity load through the helix. This is a reference prop
         # setting, not a measured bottle seal or an active holding torque.
-        bodies["cap"].find("joint").set("frictionloss", "0.001")
+        bodies["cap"].find("joint").set("frictionloss", str(SCREW_RESISTANCE))
     # Collision visuals are hidden by the camera renderer; actual CAD remains.
     for geom in world.iter("geom"):
         geom.set("group", "2" if geom.get("contype") == "0" else "3")

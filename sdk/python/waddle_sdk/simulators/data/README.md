@@ -100,7 +100,14 @@ MuJoCo's cap joint has 0.001 N m native `frictionloss`, preventing gravity from
 back-driving the otherwise frictionless helix after release. This is reference
 prop resistance, not measured seal torque. PhysX joint-friction coefficients
 have different units/semantics; they do not receive that value as a coefficient.
-Native retention tests bound released axial drift to 0.1 mm over five seconds.
+SAPIEN 3 exposes only that legacy friction coefficient. The screw instead uses
+a native zero-stiffness, zero-velocity drive with 1 N m s/rad damping and a
+0.001 N m torque limit, following PhysX's
+[joint drive/friction guidance](https://nvidia-omniverse.github.io/PhysX/physx/5.7.0/_api_build/classPxArticulationJointReducedCoordinate.html).
+This approximates dry resistance with a viscous transition below 0.001 rad/s;
+it has no angular position target and does not latch a released cap. Native
+retention tests start away from either end stop, bound released axial drift
+to 0.1 mm over five seconds, and require turning under torque in both directions.
 
 ## Maintained implementation references
 

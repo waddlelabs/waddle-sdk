@@ -77,6 +77,12 @@ does not specify a physical arm's resting configuration.
 The bottle sits to the side of this central region, and the cabinet's closed
 front sits beyond it, so neither prop intersects the starting hand. The drawer
 handle travels from x=0.503 m to x=0.283 m as it opens.
+The cap's native thread resistance uses a 0.001 N m budget: dry friction in
+MuJoCo and a force-limited velocity damper in SAPIEN. SAPIEN's 1 N m s/rad
+damping gives a viscous transition below 0.001 rad/s; no position servo holds
+the cap after release. Native tests check retention away from an end stop and
+continued turning in either direction. These are reference prop settings,
+not measured bottle seal torque.
 The SDK's distinct high bimanual test poses are not used as reference-scene homes.
 Opening or explicitly resetting a world establishes
 this pose. Ordinary run boundaries preserve the current pose. Camera calibration

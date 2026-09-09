@@ -46,6 +46,9 @@ Reference native dynamics include a passive damped drawer, a single-motor
 MuJoCo hand tendon, and the engine's recommended elliptic friction cone to reduce
 grasp creep. These use ordinary physics constraints; manipulation tests must
 observe contact, prop motion, and retention separately from commanded robot pose.
+For threaded props, test release away from joint limits and confirm that applied
+torque can still turn them in both directions. End-stop tests can hide missing
+passive resistance; a position servo that holds progress is not thread friction.
 Check imported native mass and inertia together. Changing a body's mass after
 automatic inertia calculation can silently leave the two inconsistent; the
 reference cubes now use explicit shared URDF mass properties in every backend.

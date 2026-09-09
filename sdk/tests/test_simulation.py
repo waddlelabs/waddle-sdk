@@ -532,6 +532,11 @@ def _native_conformance(
                             for j in engine._screw
                         ]
                     )
+
+                def cap_release(angle, speed):
+                    for joint, scale in zip(engine._screw, (1, SCREW_PITCH)):
+                        engine.data.qpos[int(joint.qposadr[0])] = angle * scale
+                        engine.data.qvel[int(joint.dofadr[0])] = speed * scale
             else:
                 names = (
                     [j.name for j in engine._screw.get_active_joints()]
@@ -556,6 +561,37 @@ def _native_conformance(
                     return values[
                         [names.index(n) for n in ("cap_rotation", "cap_lift")]
                     ]
+
+                def cap_release(angle, speed):
+                    scales = np.array(
+                        [1 if n == "cap_rotation" else SCREW_PITCH for n in names]
+                    )
+                    if backend == "sapien":
+                        engine._screw.set_qpos(angle * scales)
+                        engine._screw.set_qvel(speed * scales)
+                    else:
+                        engine._screw.set_joint_positions(angle * scales)
+                        engine._screw.set_joint_velocities(speed * scales)
+
+            # An end-stop torque test can hide a back-driving thread. Release
+            # mid-travel with a small unwinding velocity, as fingers disengage.
+            # Native resistance must arrest motion without locking the cap:
+            # ordinary applied torque must still turn it in either direction.
+            cap_release(np.pi / 2, -0.1)
+            advance(0.1)
+            released = cap_state()
+            advance(5.0)
+            drift = np.abs(cap_state() - released)
+            assert drift[0] < 0.02 and drift[1] < 0.0001, drift
+            cap_force(0.01)
+            advance(0.25)
+            turned = cap_state()[0]
+            assert turned > released[0] + 0.02
+            cap_force(-0.01)
+            advance(0.5)
+            assert cap_state()[0] < turned - 0.02
+            cap_force(0.0)
+            engine.reset()
 
             cap_force(0.3)
             advance(4.0)

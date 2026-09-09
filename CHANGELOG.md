@@ -76,6 +76,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Give SAPIEN's passive screw cap the same 0.001 N m resistance budget as
+  MuJoCo through a native force-limited velocity damper. Its default joint
+  friction let the cap unwind under gravity after the fingers released it.
+  Native tests now check release away from the end stop and rotation in both
+  directions, so a limit cannot conceal missing thread resistance.
+
 - Set SAPIEN robot collision margins to 2 mm per shape for 2 ms stepping.
   The native centimetre margin generated over a thousand speculative contacts
   between the closed xArm hand's convex pieces, slowing physics beyond real

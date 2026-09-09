@@ -68,9 +68,12 @@ require a physical-width grasp and settled jaw motion under contact.
 Reference drawers declare passive damping in the scene URDF. MuJoCo/SAPIEN import
 it natively; Isaac uses a zero-stiffness velocity damper. Native acceptance checks
 that a released slide dissipates velocity and retains its opened position.
-MuJoCo's cap has 0.001 N m native dry thread resistance; the native cap test
-checks that a released thread retains axial progress. These reference props
-are not calibrated hardware friction models.
+MuJoCo's cap has 0.001 N m native dry thread resistance. SAPIEN uses a native
+zero-stiffness velocity damper with the same torque limit and 1 N m s/rad
+damping, replacing legacy load-dependent friction on the screw joints.
+Native cap tests check released progress away from the end stop and continued
+rotation under torque in both directions. These reference props are not
+calibrated hardware friction models.
 Reference YAM worlds start with TCP near `(0.36, 0, 0.14)` m and the open hand
 pitched 45 degrees down. This working pose lies in the overlap of forward and
 downward reach, away from the near-neutral pose's inner approach boundary.

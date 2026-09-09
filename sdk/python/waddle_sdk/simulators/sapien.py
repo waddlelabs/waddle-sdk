@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 
 from .description import description
-from .model import SCREW_PITCH, objects, robot_links, urdf
+from .model import SCREW_PITCH, SCREW_RESISTANCE, objects, robot_links, urdf
 from .scene import depth_z16, profile, quaternion, rotation
 
 
@@ -151,6 +151,15 @@ class Engine:
             )
             for entity in entities:
                 self.scene.add_entity(entity)
+            for joint in result.get_active_joints():
+                joint.set_friction(0.0)
+                if joint.name == "cap_rotation":
+                    # SAPIEN 3 exposes legacy load-dependent friction, not
+                    # PhysX's newer per-axis friction effort. A native zero-
+                    # stiffness, zero-velocity drive models passive resistance
+                    # with the same torque budget as MuJoCo. The 1 N m s/rad
+                    # damper saturates at 0.001 rad/s; it never holds an angle.
+                    joint.set_drive_properties(0.0, 1.0, force_limit=SCREW_RESISTANCE)
         else:
             result = loader.load(str(path))
         if result is None:
