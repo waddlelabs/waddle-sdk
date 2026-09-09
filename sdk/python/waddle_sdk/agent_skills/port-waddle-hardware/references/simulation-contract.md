@@ -46,6 +46,11 @@ Reference native dynamics include a passive damped drawer, a single-motor
 MuJoCo hand tendon, and the engine's recommended elliptic friction cone to reduce
 grasp creep. These use ordinary physics constraints; manipulation tests must
 observe contact, prop motion, and retention separately from commanded robot pose.
+Check imported native mass and inertia together. Changing a body's mass after
+automatic inertia calculation can silently leave the two inconsistent; the
+reference cubes now use explicit shared URDF mass properties in every backend.
+Likewise, equal opposing-jaw targets do not replace mechanical coupling under
+asymmetric contact. Reference SAPIEN hands retain the native URDF relation.
 The normative model settings and limitations are in `docs/python/simulation.md`
 and the packaged `simulators/data/README.md`.
 Reference model builds decompose every concave collision mesh, including arm
@@ -117,3 +122,9 @@ replace SDK authority or paired SDK timestamps.
 - Prove renderer thread affinity, process/topic loss, and partial-open cleanup.
 - Open the complete site and assert `SdkRuntimePort`; do not stop at unit-testing the
   backend object.
+
+Reference engines use 2 ms native substeps; SAPIEN robot shapes use 2 mm
+contact margins while retaining native rest offsets and material friction. Keep integration accuracy separate
+from SDK control and sensor rates; a stable-looking pose alone does not prove
+that native joint velocities have converged under contact. Consumer completion
+thresholds must not mask a native solver defect.

@@ -56,8 +56,8 @@ physical jaw travel instead of treating normalized opening as a joint angle.
 The URDF gives the geometric finger-angle relationships used for FK. Native
 physics uses Menagerie's two ball-joint linkage closures and the single
 opposing-driver relation. MuJoCo distributes one motor through a native fixed
-tendon; Isaac retains one driven motor and a native mimic. SAPIEN uses the shared
-PD mimic-controller pattern described below.
+tendon; Isaac retains one driven motor and a native mimic. SAPIEN retains the
+native mimic while sharing the actuator budget across opposing drives.
 This avoids overconstraining the four-bar mechanism with six position drives.
 
 ## Collision and dynamics
@@ -87,6 +87,12 @@ report hand position and velocity from the driven joint's encoder, matching
 the hardware convention rather than averaging passive linkage joints. Task props
 remain primitive reference models. The screw uses a native joint equality in
 MuJoCo and native constraints in PhysX; no per-step force callback moves the cap.
+The 60 g, 50 mm cubes explicitly declare uniform-body inertia of
+`0.000025 kg m²` about each central axis. All engines import these mass properties
+from the shared URDF. SAPIEN uses its native URDF actor builder for single-body
+props as well as its articulation builder for robots and jointed props; setting
+only actor mass after creation would retain inertia at the wrong density.
+Standalone static scenery has no dynamic inertial record.
 SAPIEN's fixed tendon uses coefficients `[0, 1, -pitch]` for both length and
 force, so generalized forces conserve work across metres/radians. Its reference
 axial compliance is 5000 N/m with 20 Ns/m damping.
@@ -124,14 +130,13 @@ I2RT's current `SimRobot.command_joint_pos` teleports coordinates, so it is
 not used as a contact-physics backend. The xArm physics retains the G2 CAD and
 manufacturer inertias; Menagerie's linkage anchor frames match its joint geometry.
 SAPIEN uses ManiSkill's explicit zero joint-friction default and 15/1 solver
-iterations. Its hand uses the maintained
-[`PDJointPosMimicController` pattern](https://github.com/mani-skill/ManiSkill/blob/62ff3a5896b4d5b4cf0ac4c8d79afe600c9404a3/mani_skill/agents/controllers/pd_joint_pos.py),
-instead of SAPIEN's oscillatory URDF mimic tendon. The same opening target drives
-both coupled joints; the single actuator's gains, force cap and reflected inertia
-are divided equally between them. This preserves their combined budget under
-symmetric motion, but approximates transmission behavior under asymmetric contact.
-xArm's passive four-bar links retain native closure constraints. MuJoCo and Isaac
-retain native coupling.
+iterations. Equal targets drive both opposing jaws, sharing the single actuator's
+gain, force cap and reflected inertia equally. The manufacturer's native URDF
+mimic relation is also retained: matching targets alone let the two joints drift
+apart under asymmetric contact. With the shared drive load, the native tendon
+need not transfer the entire motor force from one jaw to the other. A native
+YAM handle regression checks jaw agreement within 0.5 mm and vertical TCP
+retention within 1 mm. xArm's passive four-bar links retain native closure constraints.
 
 MuJoCo follows Menagerie's [xArm](https://github.com/google-deepmind/mujoco_menagerie/blob/8161bba264d7fa7c99ca301e91e7fb44737676ad/ufactory_xarm7/xarm7.xml)
 and [Robotiq](https://github.com/google-deepmind/mujoco_menagerie/blob/8161bba264d7fa7c99ca301e91e7fb44737676ad/robotiq_2f85/2f85.xml)
@@ -156,9 +161,26 @@ callbacks, or NoSlip post-processing. The manufacturer's meshes and linkage
 geometry are unchanged. The reference drawer has 5 N·s/m passive damping in its
 URDF; Isaac applies the equivalent zero-stiffness velocity drive explicitly.
 
-SAPIEN uses ManiSkill's documented 100 Hz physics default (10 ms substeps);
-MuJoCo and Isaac retain 2 ms substeps. The SDK command rate stays independent.
-See the maintained [simulation configuration guide](https://github.com/mani-skill/ManiSkill/blob/main/docs/source/user_guide/tutorials/custom_tasks/advanced.md).
+All three reference engines use 2 ms substeps. The generic ManiSkill 100 Hz
+step left SAPIEN's coupled hand/contact solve with significant residual joint
+velocities during a stationary grasp, preventing ordinary motion completion.
+Reducing SAPIEN's step to 2 ms improves that solve while retaining its motor
+budget and material friction. See PhysX's
+[drive stability guidance](https://nvidia-omniverse.github.io/PhysX/physx/5.7.0/docs/Articulations.html#articulation-drive-stability)
+on competing drives/contact constraints and timestep size. This does not make
+reported native velocities exact derivatives of sampled poses or calibrate the
+reference servos. It performs five times as many native substeps as the earlier
+SAPIEN default; SDK command and camera rates stay independent.
+
+SAPIEN 3.0.3's native shape contact margin defaults to 10 mm. On the decomposed xArm
+hand, closure generated 1,152 contact records and about 4.84 ms per physics step
+in an isolated local diagnostic, exceeding a 2 ms real-time budget. Robot
+shapes now use 2 mm margins, yielding 24 contacts and about 0.18 ms per step in
+that same fixture. These timings are illustrative local measurements, not runtime
+guarantees. Native rest offsets and material friction remain unchanged. This
+follows [ManiSkill's contact-generation guidance](https://github.com/mani-skill/ManiSkill/blob/main/docs/source/user_guide/tutorials/custom_robots.md)
+and [PhysX's contact-offset guidance](https://nvidia-omniverse.github.io/PhysX/physx/5.7.0/docs/AdvancedCollisionDetection.html).
+Custom faster dynamics require their own timestep/contact validation.
 
 Reference workers default to real-time physics. Before each request they advance
 elapsed monotonic time with the existing target, retaining fixed native substeps

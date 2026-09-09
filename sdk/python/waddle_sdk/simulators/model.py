@@ -83,6 +83,8 @@ def objects(environment: str) -> list[list[Link]]:
                         xyz=(0.32, y, 0.026),
                         kind="free",
                         mass=0.06,
+                        # Uniform 50 mm cube: I = mass * side**2 / 6.
+                        inertia=(0.000025, 0.000025, 0.000025, 0.0, 0.0, 0.0),
                         shapes=[Shape("box", (0.05, 0.05, 0.05), color=color)],
                     )
                 ]
@@ -183,16 +185,21 @@ def urdf(links: list[Link], name: str) -> str:
     root = ET.Element("robot", name=name)
     for link in links:
         node = ET.SubElement(root, "link", name=link.name)
-        inertial = ET.SubElement(node, "inertial")
-        ET.SubElement(inertial, "origin", xyz=numbers(link.com), rpy="0 0 0")
-        ET.SubElement(inertial, "mass", value=str(link.mass))
-        inertia = max(link.mass * 0.003, 1e-6)
-        tensor = link.inertia or (inertia, inertia, inertia, 0, 0, 0)
-        ET.SubElement(
-            inertial,
-            "inertia",
-            **dict(zip(("ixx", "iyy", "izz", "ixy", "ixz", "iyz"), map(str, tensor))),
-        )
+        # Standalone static scenery has no dynamic mass properties. Keep
+        # inertials for every articulation link, including its fixed frames.
+        if len(links) > 1 or link.kind != "fixed":
+            inertial = ET.SubElement(node, "inertial")
+            ET.SubElement(inertial, "origin", xyz=numbers(link.com), rpy="0 0 0")
+            ET.SubElement(inertial, "mass", value=str(link.mass))
+            inertia = max(link.mass * 0.003, 1e-6)
+            tensor = link.inertia or (inertia, inertia, inertia, 0, 0, 0)
+            ET.SubElement(
+                inertial,
+                "inertia",
+                **dict(
+                    zip(("ixx", "iyy", "izz", "ixy", "ixz", "iyz"), map(str, tensor))
+                ),
+            )
         for i, shape in enumerate(link.shapes):
             for kind in ("visual", "collision"):
                 if not getattr(shape, kind):

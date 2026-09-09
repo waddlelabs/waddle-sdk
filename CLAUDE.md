@@ -52,9 +52,12 @@ hash-pinned manufacturer URDF assemblies, visual meshes, inertias and decomposed
 concave collisions; task props use primitive geometry. The SDK YAM arm contract is
 assembled with I2RT LINEAR_4310; xArm7 uses UFACTORY's G2 hand. The reference servos
 are not calibrated actuator models. MuJoCo, SAPIEN and Isaac Sim use native
-URDF import; xArm uses Menagerie's two linkage closures. SAPIEN uses ManiSkill's
-PD mimic-controller pattern for coupled jaws, sharing the actuator's gain/force/
-inertia budget; other engines retain native hand coupling.
+URDF import; xArm uses Menagerie's two linkage closures. SAPIEN retains native
+URDF jaw coupling while sharing the actuator's gain/force/inertia budget across
+opposing drives. Equal targets alone cannot preserve coupling under contact.
+The 60 g, 50 mm cubes declare uniform-body inertia. Single-body SAPIEN props
+use the same URDF inertial importer as articulations; static scenery omits
+dynamic inertials. Native tests inspect cube mass and inertia after import.
 MuJoCo distributes the single hand motor through Menagerie's fixed tendon,
 splitting its gain/force/inertia budget between the opposing drive joints.
 It uses the documented elliptic friction cone, impedance ratio 10, and Newton
@@ -73,6 +76,13 @@ pitched 45 degrees down. This working pose lies in the overlap of forward and
 downward reach, away from the near-neutral pose's inner approach boundary.
 The SDK's distinct high bimanual test poses are not reference-scene homes.
 Physical devices retain their measured pose.
+All three reference engines use 2 ms native substeps, independently of SDK
+control/camera rates. SAPIEN uses 2 mm per-shape robot contact margins to avoid
+thousands of speculative contacts between nearby convex finger pieces; native
+rest offsets, manufacturer meshes and collision exclusions remain unchanged. SAPIEN coupled-hand contact tests also require retained
+load-bearing contacts on both manufacturer fingers; a tilted cube need not
+retain a face-aligned jaw opening. Its native velocity residuals are reduced
+at this step, not replaced by fabricated stationary values.
 Known trajectory velocities use the existing optional driver port. Position-only
 commands and holds clear those velocity targets. Reference workers default to
 real-time physics: before each read/write/capture request they integrate elapsed

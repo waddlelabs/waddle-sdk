@@ -23,7 +23,8 @@ site never downloads packages, accepts a license, or substitutes a mock engine.
 
 Each engine accepts `yam` or `xarm7` and these environments:
 
-- `two_cubes`: two free rigid cubes on a table, with frictional grasp contacts.
+- `two_cubes`: two free 60 g, 50 mm rigid cubes on a table, with frictional
+  grasp contacts and the inertia of a uniform solid cube.
 - `bottle_cap`: a fixed bottle fixture and a cap with coupled passive rotation and
   axial travel (5 mm/revolution). This reference thread model has three turns of
   travel; the cap remains on its axial guide, rather than becoming a free body.
@@ -49,11 +50,11 @@ clearance. Convex meshes remain unchanged. Public planning bounds conservatively
 cover complete collision triangles per physical link, so their number does not
 scale with the importer's convex partition. Native constraints
 close the xArm linkage; its revolute hand is mapped nonlinearly to jaw travel.
-SAPIEN follows ManiSkill's PD mimic-controller pattern for the coupled jaws, sharing
-the actuator's gains, force limit, and reflected inertia across the two native
-drives. This avoids the imported URDF tendon's contact oscillation, but approximates
-the physical transmission under asymmetric contact. The other engines retain native
-jaw coupling. No per-step contact forces or object attachments implement grasping.
+SAPIEN retains the URDF's native jaw coupling and shares the actuator's gains,
+force limit, and reflected inertia across the two native drives. Equal position
+targets alone cannot keep the jaws coupled under asymmetric contact. Splitting
+the drive load also avoids making the coupling transfer all of one jaw's force.
+No per-step contact forces or object attachments implement grasping.
 
 MuJoCo uses Menagerie's single-motor fixed tendon to distribute force between
 opposing jaws, preserving the combined gain, force limit, and reflected inertia.
@@ -87,8 +88,14 @@ assets from pinned public manufacturer revisions. No model is downloaded at site
 startup. The reference collision spheres are conservative covers derived from
 these same meshes and link transforms.
 
-Reference worlds use real-time physics by default. SAPIEN uses ManiSkill's
-100 Hz physics default; MuJoCo and Isaac retain 500 Hz native stepping. The worker advances fixed
+Reference worlds use real-time physics by default with 500 Hz native stepping
+(2 ms substeps) in all three engines. SAPIEN's coupled hand contacts require finer
+integration than the generic 100 Hz manipulation default. This increases native
+physics work; camera and SDK control rates remain independent. SAPIEN uses 2 mm
+per-shape robot contact margins so the closed hand's convex pieces do not generate
+thousands of distant candidate contacts. This changes contact generation distance,
+not the meshes, resting separation, exclusions or material friction. The worker
+advances fixed
 native substeps up to each request's monotonic arrival time **before** reading
 state or changing a target. Rendering and IPC delays therefore preserve elapsed
 physics under the previous target; a new command is never applied retroactively.

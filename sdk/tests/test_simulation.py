@@ -355,6 +355,21 @@ def _native_conformance(
             engine.step()
 
     try:
+        if environment == "two_cubes" and backend in {"mujoco", "sapien"}:
+            # A uniform 60 g, 50 mm cube has I = m * side**2 / 6. Inspect
+            # imported native bodies: setting mass alone can leave the inertia
+            # computed for the builder's default density behind.
+            for index in (1, 2):
+                if backend == "mujoco":
+                    body = engine.model.body(f"cube_{index}")
+                    mass, inertia = float(body.mass[0]), body.inertia
+                else:
+                    body = engine.props[index].find_component_by_type(
+                        engine.sp.physx.PhysxRigidDynamicComponent
+                    )
+                    mass, inertia = body.mass, body.inertia
+                assert mass == pytest.approx(0.06)
+                np.testing.assert_allclose(inertia, np.full(3, 0.000025), rtol=1e-5)
         if backend == "mujoco":
             robot_bodies = {link.name for link in description(robot).links}
             # Reference scenes must start without the hand embedded in a prop.
@@ -582,10 +597,10 @@ def _native_conformance(
                 else float(engine.props[-1].get_joint_positions()[0])
             )
             assert travel == pytest.approx(0, abs=1e-6)
-            if backend == "mujoco" and robot == "yam":
+            if backend in {"mujoco", "sapien"} and robot == "yam":
                 # A horizontal grasp around the fixed-height handle loads both
-                # jaws. A soft, single-sided transmission must not move the
-                # pinch midpoint and deflect the arm away from its target.
+                # jaws. Mechanical coupling must preserve their agreement
+                # and the vertical pinch midpoint under asymmetric load.
                 grasp = np.array(
                     [
                         -0.00030024084,
@@ -602,13 +617,20 @@ def _native_conformance(
                 grasp[-1] = 0.0
                 engine.write(grasp)
                 advance(2.0)
-                first, second = (engine.model.joint(n) for n in ("joint7", "joint8"))
-                jaws = [
-                    float(engine.data.qpos[int(j.qposadr[0])]) for j in (first, second)
-                ]
+                if backend == "mujoco":
+                    joints = (engine.model.joint(n) for n in ("joint7", "joint8"))
+                    jaws = [float(engine.data.qpos[int(j.qposadr[0])]) for j in joints]
+                else:
+                    jaws = engine.robot.get_qpos()[engine.finger_indices]
                 assert min(jaws) > 0.001  # physical handle stops closing
                 assert abs(jaws[0] - jaws[1]) < 0.0005
-                np.testing.assert_allclose(engine.native_tcp()[0], expected, atol=0.001)
+                actual = engine.native_tcp()[0]
+                if backend == "mujoco":
+                    np.testing.assert_allclose(actual, expected, atol=0.001)
+                else:
+                    # The drawer is free along X; this coupling regression
+                    # checks the vertical deflection from unequal jaw forces.
+                    assert actual[2] == pytest.approx(expected[2], abs=0.001)
             elif backend == "mujoco" and robot == "xarm7":
                 # Retain an ordinary handle grasp under load. This catches
                 # gradual friction-cone creep despite ample normal force.
@@ -648,7 +670,11 @@ def _native_conformance(
                 assert opened > 0.09
                 advance(5.0)
                 assert drawer_state()[0] == pytest.approx(opened, abs=0.002)
-        if environment == "two_cubes" and backend == "mujoco" and robot == "yam":
+        if (
+            environment == "two_cubes"
+            and backend in {"mujoco", "sapien"}
+            and robot == "yam"
+        ):
             # Approach the 50 mm cube through two tabletop grasp waypoints.
             # Jaw motion must settle under contact, not penetrate the cube or
             # oscillate enough to defeat ordinary measured-stall detection.
@@ -663,6 +689,10 @@ def _native_conformance(
                     engine.write(start + fraction * (target - start))
                     advance(0.01)
                 start = target
+            # This fixture tests a stationary grasp. Allow the position servo
+            # to finish the approach before the fingers close around the cube.
+            advance(1.0)
+            np.testing.assert_allclose(engine.read()[0][:-1], target[:-1], atol=0.003)
             target[-1] = 0.0
             engine.write(target)
             advance(2.0)
@@ -670,8 +700,34 @@ def _native_conformance(
             for _ in range(500):
                 engine.step()
                 opening.append(engine.read()[0][-1] * p.opening)
-            assert 0.049 < min(opening) <= max(opening) < 0.053
+            if backend == "mujoco":
+                assert 0.049 < min(opening) <= max(opening) < 0.053
+            else:
+                # The cube can tilt between the manufacturer finger meshes.
+                # Check actual load-bearing contacts on both fingers instead
+                # of assuming its faces remain parallel to the closing axis.
+                touching = set()
+                for contact in engine.scene.get_contacts():
+                    names = {body.name for body in contact.bodies}
+                    if "cube_1" in names and any(
+                        np.linalg.norm(point.impulse) > 1e-6 for point in contact.points
+                    ):
+                        touching.update(names - {"cube_1"})
+                        assert (
+                            min(point.separation for point in contact.points) > -0.001
+                        )
+                assert {"tip_left", "tip_right"} <= touching
             assert np.ptp(opening) < 0.0002
+        if environment == "two_cubes" and backend == "sapien" and robot == "xarm7":
+            # A closed reference hand needs local contact candidates, not the
+            # >1,000 distant pairs produced by centimetre margins between its
+            # convex pieces. Bound native work without a wall-clock race.
+            engine.home(p.home)
+            closed = np.array(p.home)
+            closed[-1] = 0.0
+            engine.write(closed)
+            advance(2.0)
+            assert len(engine.scene.get_contacts()) < 100
     finally:
         engine.close()
 

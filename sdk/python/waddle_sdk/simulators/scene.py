@@ -279,9 +279,9 @@ def make_site(
         robot=robot,
         environment=environment,
         render_quality=render_quality,
-        # ManiSkill uses 100 Hz PhysX stepping with implicit position drives.
+        # Resolve the native hand's coupled drives and contact at 500 Hz.
         # SDK command and camera declarations remain independent.
-        timestep=0.01 if backend == "sapien" else 0.002,
+        timestep=0.002,
         cameras={
             name: dict(**row, transform=mounts[name]) for name, row in cameras.items()
         },

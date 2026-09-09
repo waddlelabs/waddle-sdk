@@ -56,9 +56,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   declared command rate, with a 100 Hz floor. Carry fractional substeps forward
   instead of advancing extra physics time when reporting intervals do not divide
   the native timestep.
-- Use ManiSkill's native PD mimic-controller pattern for SAPIEN jaws, sharing the
-  original gain, force and inertia budget across coupled drives. Retain the xArm
-  passive linkage closures and unchanged contact settings.
+- Share SAPIEN's original gain, force and inertia budget across opposing jaw
+  drives while retaining native jaw coupling and xArm passive linkage closures.
 - Add a bundled CC0 Poly Haven table texture and native material/key/fill lighting
   to MuJoCo and SAPIEN reference scenes, without changing geometry or RGB-D units.
 
@@ -76,6 +75,29 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   the existing runtime remains lazy behind the `[mujoco]` extra.
 
 ### Fixed
+
+- Set SAPIEN robot collision margins to 2 mm per shape for 2 ms stepping.
+  The native centimetre margin generated over a thousand speculative contacts
+  between the closed xArm hand's convex pieces, slowing physics beyond real
+  time and starving ordinary control. Collision meshes, exclusions, rest offsets
+  and material friction remain unchanged.
+
+- Use 2 ms native substeps in SAPIEN reference scenes, matching the other engines.
+  The previous 10 ms step left coupled hand/contact solves with residual joint
+  velocities that could prevent a stationary grasp from completing its lift.
+  Finer integration improves convergence while retaining motor gains and force
+  limits. SDK command rates and camera profiles remain independent.
+
+- Preserve native SAPIEN jaw coupling under contact. Equal position targets
+  alone let the YAM jaws disagree by nearly 4 mm and shift the TCP under an
+  asymmetric handle load. The native URDF relation, with the existing shared
+  actuator budget, keeps the jaws coupled without changing controller gains or
+  consumer completion thresholds.
+
+- Give the 60 g, 50 mm reference cubes their uniform-body inertia in every
+  backend. SAPIEN now imports single-body props through its existing URDF
+  loader, retaining declared mass, COM and inertia instead of overriding mass
+  alone after its builder calculated inertia at a different density.
 
 - Prioritize queued simulation state/control requests ahead of camera captures,
   preserving one serialized native transaction. Real-time SDK pump ticks no

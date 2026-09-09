@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
-from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -37,18 +36,11 @@ class Engine:
         self.hand_drives = {master} | {
             link.joint for link in links if link.mimic == (master, 1.0, 0.0)
         }
-        # Use ManiSkill's PDJointPosMimicController pattern. SAPIEN's URDF
-        # mimic tendon can oscillate under grasp contact. Share the single
-        # actuator's gains, force budget and reflected inertia across its jaws;
-        # passive four-bar links keep their native closure constraints.
-        self.robot = self._load(
-            [
-                replace(link, mimic=None) if link.joint in self.hand_drives else link
-                for link in links
-            ],
-            "robot",
-            scratch,
-        )
+        # Retain native mechanical coupling under asymmetric contact. Equal
+        # position targets alone let opposing jaws drift independently. Share
+        # the single actuator's gains, force budget and reflected inertia so
+        # the coupling does not have to transfer the entire one-sided drive.
+        self.robot = self._load(links, "robot", scratch)
         self.robot.set_solver_position_iterations(15)
         self.robot.set_solver_velocity_iterations(1)
         self.joints = {j.name: j for j in self.robot.get_active_joints()}
@@ -79,6 +71,13 @@ class Engine:
             self._load(group, group[0].name, scratch)
             for group in objects(config["environment"])
         ]
+        # A centimetre contact margin creates thousands of speculative pairs
+        # between the small convex finger pieces as the hand closes. At 2 ms
+        # substeps, a 2 mm per-shape margin covers reference motion while
+        # keeping contact generation local. Preserve the native rest offsets.
+        for body in self.robot.get_links():
+            for shape in body.collision_shapes:
+                shape.contact_offset = 0.002
         self._screw = self.props[-1] if config["environment"] == "bottle_cap" else None
         self._initial_state = self.scene.get_physx_system().pack()
         self.cameras = {}
@@ -93,100 +92,82 @@ class Engine:
             self.cameras[name] = camera
 
     def _load(self, links, name, scratch):
-        if len(links) > 1:
-            path = scratch / f"{name}.urdf"
-            path.write_text(urdf(links, name))
-            if name == "robot":
-                srdf = ET.Element("robot", name=name)
-                for first, second in self.description.exclusions:
-                    ET.SubElement(
-                        srdf,
-                        "disable_collisions",
-                        link1=first,
-                        link2=second,
-                        reason="Default",
-                    )
-                path.with_suffix(".srdf").write_text(
-                    ET.tostring(srdf, encoding="unicode")
+        path = scratch / f"{name}.urdf"
+        path.write_text(urdf(links, name))
+        if name == "robot":
+            srdf = ET.Element("robot", name=name)
+            for first, second in self.description.exclusions:
+                ET.SubElement(
+                    srdf,
+                    "disable_collisions",
+                    link1=first,
+                    link2=second,
+                    reason="Default",
                 )
-            loader = self.scene.create_urdf_loader()
-            loader.set_material(1.2, 1.0, 0.0)
-            loader.fix_root_link = True
-            # Each URDF collision element names one convex mesh; multiple
-            # elements remain supported. STL has no submesh partition format.
-            loader.load_multiple_collisions_from_file = False
-            if name == "bottle":
-                # A helical thread couples metres to radians. Use the native
-                # tendon with work-conjugate force coefficients, rather than
-                # the URDF loader's inverse-ratio mimic-force convention.
-                builders, _, _ = loader.parse(str(path))
-                entities = builders[0].build_entities(fix_root_link=True)
-                chain = [
-                    entity.find_component_by_type(
-                        self.sp.physx.PhysxArticulationLinkComponent
+            path.with_suffix(".srdf").write_text(ET.tostring(srdf, encoding="unicode"))
+        loader = self.scene.create_urdf_loader()
+        loader.set_material(1.2, 1.0, 0.0)
+        loader.fix_root_link = True
+        # Each URDF collision element names one convex mesh; multiple
+        # elements remain supported. STL has no submesh partition format.
+        loader.load_multiple_collisions_from_file = False
+        if len(links) == 1:
+            # Use the same URDF inertial import as articulated props and robots.
+            # A post-build mass override retains the default-density inertia.
+            _, builders, _ = loader.parse(str(path))
+            builder = builders[0]
+            link = links[0]
+            visuals = [shape for shape in link.shapes if shape.visual]
+            for record, shape in zip(builder.visual_records, visuals, strict=True):
+                record.material.roughness = 0.65
+                record.material.specular = 0.3
+                if shape.texture:
+                    record.material.base_color_texture = self.sp.render.RenderTexture2D(
+                        shape.texture
                     )
-                    for entity in entities
-                ]
-                result = chain[0].articulation
-                coefficients = [0, 1, -SCREW_PITCH]
-                result.create_fixed_tendon(
-                    chain, coefficients, coefficients, stiffness=5000, damping=20
-                )
-                for entity in entities:
-                    self.scene.add_entity(entity)
-            else:
-                result = loader.load(str(path))
-            if result is None:
-                raise RuntimeError(f"SAPIEN could not load {name}")
-            result.set_root_pose(
-                self.sp.Pose(links[0].xyz, quaternion(rotation(links[0].rpy)))
+            result = (
+                builder.build(name=name)
+                if link.kind == "free"
+                else builder.build_static(name=name)
             )
-            for link in result.get_links():
-                visual = link.entity.find_component_by_type(
-                    self.sp.render.RenderBodyComponent
-                )
-                if visual:
-                    for shape in visual.render_shapes:
-                        for part in shape.parts:
-                            part.material.specular = 0.5
-                            part.material.roughness = 0.35 if name == "robot" else 0.65
-                            part.material.metallic = 0.1 if name == "robot" else 0.0
+            result.set_pose(self.sp.Pose(link.xyz, quaternion(rotation(link.rpy))))
             return result
-        link = links[0]
-        builder = self.scene.create_actor_builder()
-        material = self.scene.create_physical_material(1.2, 1.0, 0.0)
-        for shape in link.shapes:
-            pose = self.sp.Pose(shape.xyz, quaternion(rotation(shape.rpy)))
-            finish = self.sp.render.RenderMaterial(
-                base_color=shape.color, roughness=0.65, specular=0.3
+        if name == "bottle":
+            # A helical thread couples metres to radians. Use the native
+            # tendon with work-conjugate force coefficients, rather than
+            # the URDF loader's inverse-ratio mimic-force convention.
+            builders, _, _ = loader.parse(str(path))
+            entities = builders[0].build_entities(fix_root_link=True)
+            chain = [
+                entity.find_component_by_type(
+                    self.sp.physx.PhysxArticulationLinkComponent
+                )
+                for entity in entities
+            ]
+            result = chain[0].articulation
+            coefficients = [0, 1, -SCREW_PITCH]
+            result.create_fixed_tendon(
+                chain, coefficients, coefficients, stiffness=5000, damping=20
             )
-            if shape.texture:
-                finish.base_color_texture = self.sp.render.RenderTexture2D(
-                    shape.texture
-                )
-            if shape.kind == "box":
-                half = np.asarray(shape.size) / 2
-                builder.add_box_collision(pose=pose, half_size=half, material=material)
-                builder.add_box_visual(pose=pose, half_size=half, material=finish)
-            elif shape.kind == "sphere":
-                builder.add_sphere_collision(
-                    pose=pose, radius=shape.size[0], material=material
-                )
-                builder.add_sphere_visual(
-                    pose=pose, radius=shape.size[0], material=finish
-                )
-            else:
-                raise ValueError("single-body reference props use box/sphere geometry")
-        result = (
-            builder.build(name=name)
-            if link.kind == "free"
-            else builder.build_static(name=name)
+            for entity in entities:
+                self.scene.add_entity(entity)
+        else:
+            result = loader.load(str(path))
+        if result is None:
+            raise RuntimeError(f"SAPIEN could not load {name}")
+        result.set_root_pose(
+            self.sp.Pose(links[0].xyz, quaternion(rotation(links[0].rpy)))
         )
-        result.set_pose(self.sp.Pose(link.xyz, quaternion(rotation(link.rpy))))
-        if link.kind == "free":
-            result.find_component_by_type(
-                self.sp.physx.PhysxRigidDynamicComponent
-            ).mass = link.mass
+        for link in result.get_links():
+            visual = link.entity.find_component_by_type(
+                self.sp.render.RenderBodyComponent
+            )
+            if visual:
+                for shape in visual.render_shapes:
+                    for part in shape.parts:
+                        part.material.specular = 0.5
+                        part.material.roughness = 0.35 if name == "robot" else 0.65
+                        part.material.metallic = 0.1 if name == "robot" else 0.0
         return result
 
     def _expand(self, q):
