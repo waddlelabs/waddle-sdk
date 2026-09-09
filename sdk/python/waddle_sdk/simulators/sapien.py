@@ -117,6 +117,11 @@ class Engine:
             _, builders, _ = loader.parse(str(path))
             builder = builders[0]
             link = links[0]
+            # GPU simulation ignores actor pose setters after scene insertion.
+            # Initialize both physics and render poses through the builder.
+            builder.set_initial_pose(
+                self.sp.Pose(link.xyz, quaternion(rotation(link.rpy)))
+            )
             visuals = [shape for shape in link.shapes if shape.visual]
             for record, shape in zip(builder.visual_records, visuals, strict=True):
                 record.material.roughness = 0.65
@@ -130,7 +135,6 @@ class Engine:
                 if link.kind == "free"
                 else builder.build_static(name=name)
             )
-            result.set_pose(self.sp.Pose(link.xyz, quaternion(rotation(link.rpy))))
             return result
         if name == "bottle":
             # A helical thread couples metres to radians. Use the native

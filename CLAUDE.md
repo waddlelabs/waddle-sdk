@@ -67,6 +67,10 @@ preserve coupling under contact.
 The 60 g, 50 mm cubes declare uniform-body inertia. Single-body SAPIEN props
 use the same URDF inertial importer as articulations; static scenery omits
 dynamic inertials. Native tests inspect cube mass and inertia after import.
+Single-body props set their initial pose on the builder before scene insertion;
+GPU PhysX ignores later actor pose setters. An optional placement regression uses
+`WADDLE_SAPIEN_GPU_TEST_PYTHON` with SAPIEN, CUDA-enabled Torch and pytest. It checks
+native GPU state after insertion without claiming GPU workspace support.
 MuJoCo distributes the single hand motor through Menagerie's fixed tendon,
 splitting its gain/force/inertia budget between the opposing drive joints.
 The G2 force rating is converted from 50 N at the jaws to a constant 4.2039 N m

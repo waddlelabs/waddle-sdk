@@ -84,6 +84,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Initialize SAPIEN reference prop poses before scene insertion so GPU PhysX
+  retains the declared placement. Add a native GPU regression that detects
+  cubes incorrectly spawning at the origin. The reference workspace still uses
+  CPU physics; this corrects its shared prop importer for GPU integration.
+
 - Keep Isaac's xArm gripper loop-closing joints outside the articulation tree,
   as required by PhysX, while retaining both physical constraints. Test the
   complete imported manufacturer joint trees and loop-anchor alignment through

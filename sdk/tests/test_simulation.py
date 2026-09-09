@@ -313,6 +313,61 @@ def test_native_models_rgbd_and_bounded_joint_motion(
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_native_sapien_gpu_prop_placement(tmp_path, monkeypatch):
+    interpreter = os.environ.get("WADDLE_SAPIEN_GPU_TEST_PYTHON")
+    if interpreter is None:
+        pytest.skip(
+            "set WADDLE_SAPIEN_GPU_TEST_PYTHON to a CUDA/SAPIEN/Torch interpreter"
+        )
+    monkeypatch.setenv(
+        "PYTHONPATH", str(Path(__file__).resolve().parents[1] / "python")
+    )
+    script = (
+        "import runpy; from pathlib import Path; "
+        f"ns = runpy.run_path({str(Path(__file__).resolve())!r}); "
+        f"ns['_native_sapien_gpu_prop_placement'](Path({str(tmp_path)!r}))"
+    )
+    result = subprocess.run(
+        [interpreter, "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def _native_sapien_gpu_prop_placement(tmp_path):
+    import sapien
+    import torch
+    from waddle_sdk.simulators.model import objects
+    from waddle_sdk.simulators.sapien import Engine
+
+    sapien.physx.enable_gpu()
+    physics = sapien.physx.PhysxGpuSystem()
+    physics.gpu_set_cuda_stream(torch.cuda.current_stream().cuda_stream)
+    # Exercise the shared importer directly; the reference workspace currently
+    # uses CPU simulation. Scene insertion has different GPU pose semantics.
+    engine = Engine.__new__(Engine)
+    engine.sp = sapien
+    engine.scene = sapien.Scene([physics, sapien.render.RenderSystem()])
+    engine.scene.set_timestep(0.002)
+    groups = objects("two_cubes")
+    props = [engine._load(group, group[0].name, tmp_path) for group in groups]
+    physics.gpu_init()
+    physics.gpu_fetch_rigid_dynamic_data()
+    native = physics.cuda_rigid_dynamic_data.torch().cpu().numpy()
+    for entity, group in zip(props, groups, strict=True):
+        if group[0].kind != "free":
+            continue
+        body = entity.find_component_by_type(sapien.physx.PhysxRigidDynamicComponent)
+        # GPU initialization performs one native warm-up step. Gravity may
+        # move a correctly placed cube by 0.04 mm, not relocate it to the origin.
+        np.testing.assert_allclose(
+            native[body.gpu_pose_index, :3], group[0].xyz, atol=0.0001
+        )
+
+
 @pytest.mark.parametrize("backend", ["mujoco", "sapien"])
 @pytest.mark.parametrize("quality", ["fast", "high"])
 def test_native_render_presets_preserve_rgbd_and_motion(

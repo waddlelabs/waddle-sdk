@@ -28,6 +28,13 @@ the activated importer extension; a separately installed version alone does not
 prove which bundled module Kit loads. These are upstream dependency fixes,
 documented in the [converter changelog](https://github.com/newton-physics/urdf-usd-converter/blob/v0.3.3/CHANGELOG.md).
 
+The SAPIEN reference workspace currently uses CPU physics. Its shared prop
+importer also has an optional GPU placement regression: set
+`WADDLE_SAPIEN_GPU_TEST_PYTHON` to a Python environment with SAPIEN 3, CUDA-enabled
+Torch and pytest, then run `python -m pytest tests/test_simulation.py -k native_sapien_gpu_prop_placement`
+from `sdk/`. It checks actual native body positions after scene insertion; it
+does not establish GPU workspace or manipulation support.
+
 Each engine accepts `yam` or `xarm7` and these environments:
 
 - `two_cubes`: two free 60 g, 50 mm rigid cubes on a table, with frictional
