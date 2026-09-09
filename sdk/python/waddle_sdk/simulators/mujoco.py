@@ -36,11 +36,6 @@ class Engine:
             [robot.servo(name)[1] / robot.servo(name)[0] for name in self._controls]
         )
         self.renderers = {}
-        self._screw = None
-        if config["environment"] == "bottle_cap":
-            self._screw = tuple(
-                self.model.joint(name) for name in ("cap_rotation", "cap_lift")
-            )
         self.home(p.home)
 
     def read(self):

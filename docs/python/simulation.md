@@ -25,19 +25,25 @@ Each engine accepts `yam` or `xarm7` and these environments:
 
 - `two_cubes`: two free 60 g, 50 mm rigid cubes on a table, with frictional
   grasp contacts and the inertia of a uniform solid cube.
-- `bottle_cap`: a fixed bottle fixture and a cap with coupled passive rotation and
-  axial travel (5 mm/revolution). This reference thread model has three turns of
-  travel; the cap remains on its axial guide, rather than becoming a free body.
+- `bottle_cap`: a fixed bottle fixture and a passive cap. MuJoCo uses native
+  thread contact with a 25 g free cap and 4.166667 mm/revolution pitch; the cap
+  can leave the thread. SAPIEN/Isaac currently use a finite rotation/axial guide
+  with 5 mm/revolution pitch and three turns of travel; free removal on those
+  backends is not yet implemented.
 - `drawer`: a fixed cabinet and a physical drawer with 220 mm of passive travel
   and 5 N·s/m native joint damping. The damping dissipates a pull after release;
   there is no spring returning the drawer to its starting position.
 
-MuJoCo's reference cap uses `0.001 N·m` of native dry thread resistance to retain
-progress after release. This is an illustrative prop setting, not a measured
-bottle seal. MuJoCo's soft constraints permit small residual drift; native
-acceptance bounds axial drift to 0.1 mm over a five-second released interval.
-PhysX joint-friction parameters have different semantics and are not assigned
-the same numeric torque as a coefficient.
+MuJoCo's cap reuses its installed first-party nut/bolt SDFs through a small
+dimensional wrapper. Native contact and friction retain the cap under axial
+load; no guide or attachment is released by task logic. The roof and packaged
+convex surfaces let the same robot geometry grasp the cap and interact with
+scenery. These are illustrative prop settings, not a measured commercial seal.
+A C++17 compiler (`c++`, or one selected with `CXX`) is required for this scene.
+Each bottle-cap worker compiles the wrapper against its own installed MuJoCo
+headers/library in a private temporary directory, then loads it through the
+native plugin API. This adds compilation to worker startup; it does not download
+assets or overwrite an installation. Cube and drawer workers do not compile it.
 
 The reference robot models preserve the live adapters' joint names, order, limits,
 radian units, FK, and normalized hand action (0 closed, 1 open). YAM uses the SDK's
@@ -86,12 +92,12 @@ does not specify a physical arm's resting configuration.
 The bottle sits to the side of this central region, and the cabinet's closed
 front sits beyond it, so neither prop intersects the starting hand. The drawer
 handle travels from x=0.503 m to x=0.283 m as it opens.
-The cap's native thread resistance uses a 0.001 N m budget: dry friction in
-MuJoCo and a force-limited velocity damper in SAPIEN. SAPIEN's 1 N m s/rad
-damping gives a viscous transition below 0.001 rad/s; no position servo holds
-the cap after release. Native tests check retention away from an end stop and
-continued turning in either direction. These are reference prop settings,
-not measured bottle seal torque.
+SAPIEN's guided cap uses a force-limited velocity damper with a 0.001 N m
+budget and 1 N m s/rad damping, giving a viscous transition below 0.001 rad/s.
+No position servo holds that cap after release. Its native tests check retention
+away from an end stop and continued turning in either direction. MuJoCo's
+separate free-cap tests check axial-load retention, thread pitch, natural exit,
+and subsequent free-body motion.
 The SDK's distinct high bimanual test poses are not used as reference-scene homes.
 Opening or explicitly resetting a world establishes
 this pose. Ordinary run boundaries preserve the current pose. Camera calibration
@@ -100,7 +106,9 @@ and robot kinematics are independent of this initial joint configuration.
 Sources, licenses, conversion steps and SHA-256 hashes ship in
 `waddle_sdk/simulators/data/`. `tools/vendor_simulation_models.py` rebuilds those
 assets from pinned public manufacturer revisions. No model is downloaded at site
-startup. The reference collision spheres are conservative covers derived from
+startup. `tools/vendor_thread_model.py` rebuilds the native thread collision
+assets from the installed first-party SDFs; its data README records versions and
+reproduction. The reference collision spheres are conservative covers derived from
 these same meshes and link transforms.
 
 Reference worlds use real-time physics by default with 500 Hz native stepping

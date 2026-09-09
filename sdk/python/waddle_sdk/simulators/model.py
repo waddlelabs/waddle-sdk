@@ -269,6 +269,11 @@ def mjcf(p: Profile, config: dict) -> str:
     # MuJoCo's maintained URDF importer owns geometry and full inertias. Keep
     # fixed frames for the same camera/TCP names used by the other backends.
     props = objects(config["environment"])
+    if config["environment"] == "bottle_cap":
+        # MuJoCo uses freely removable native thread contact. Keep the bottle
+        # body; its neck/cap assembly is supplied by the thread asset below.
+        bottle = props[1][0]
+        props = [props[0], [replace(bottle, shapes=bottle.shapes[:1])]]
     groups = [robot.native_links(), *props]
     master = robot.hand_names[0]
     hand_drives = [master] + [
@@ -383,11 +388,6 @@ def mjcf(p: Profile, config: dict) -> str:
     for group in props:
         if group[0].kind == "free":
             ET.SubElement(bodies[group[0].name], "freejoint")
-    if config["environment"] == "bottle_cap":
-        # Native dry thread resistance in N m, above the cap's roughly
-        # 0.0002 N m gravity load through the helix. This is a reference prop
-        # setting, not a measured bottle seal or an active holding torque.
-        bodies["cap"].find("joint").set("frictionloss", str(SCREW_RESISTANCE))
     # Collision visuals are hidden by the camera renderer; actual CAD remains.
     for geom in world.iter("geom"):
         geom.set("group", "2" if geom.get("contype") == "0" else "3")
@@ -516,4 +516,8 @@ def mjcf(p: Profile, config: dict) -> str:
                 )
             ),
         )
+    if config["environment"] == "bottle_cap":
+        from .thread import append_mjcf
+
+        append_mjcf(root)
     return ET.tostring(root, encoding="unicode")

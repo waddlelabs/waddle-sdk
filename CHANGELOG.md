@@ -13,6 +13,14 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- A freely removable MuJoCo reference cap with native first-party nut/bolt SDF
+  contacts, dimensional scaling, a rigid roof and hash-bound convex collision
+  surfaces. The cap remains a 25 g free body throughout unscrewing and removal.
+  A C++17 compiler is required only when opening a MuJoCo bottle-cap scene;
+  compilation uses a private temporary directory and the installed native API.
+  Include an offline asset rebuild tool and native axial-retention/free-exit tests.
+  SAPIEN/Isaac caps retain their finite guides pending equivalent native support.
+
 - Reference scene `render_quality` presets (`fast`, `standard`, `high`) using
   native renderer settings without changing robot, physics, or camera contracts.
   Existing scene files retain standard rendering.

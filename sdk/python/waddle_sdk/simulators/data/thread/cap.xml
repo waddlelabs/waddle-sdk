@@ -1,0 +1,167 @@
+<mujoco model="threaded_cap">
+  <extension>
+    <plugin plugin="waddle_sdk.sdf.metric_nut">
+      <instance name="nut">
+        <config key="radius" value="0.26" />
+        <config key="scale" value="0.05" />
+      </instance>
+    </plugin>
+    <plugin plugin="waddle_sdk.sdf.metric_bolt">
+      <instance name="bolt">
+        <config key="radius" value="0.255" />
+        <config key="scale" value="0.05" />
+      </instance>
+    </plugin>
+  </extension>
+  <asset>
+    <mesh name="nut">
+      <plugin instance="nut" />
+    </mesh>
+    <mesh name="bolt">
+      <plugin instance="bolt" />
+    </mesh>
+    <mesh name="nut_convex_0" file="nut-0.stl" />
+    <mesh name="nut_convex_1" file="nut-1.stl" />
+    <mesh name="nut_convex_2" file="nut-2.stl" />
+    <mesh name="nut_convex_3" file="nut-3.stl" />
+    <mesh name="nut_convex_4" file="nut-4.stl" />
+    <mesh name="nut_convex_5" file="nut-5.stl" />
+    <mesh name="nut_convex_6" file="nut-6.stl" />
+    <mesh name="nut_convex_7" file="nut-7.stl" />
+    <mesh name="nut_convex_8" file="nut-8.stl" />
+    <mesh name="nut_convex_9" file="nut-9.stl" />
+    <mesh name="nut_convex_10" file="nut-10.stl" />
+    <mesh name="nut_convex_11" file="nut-11.stl" />
+    <mesh name="nut_convex_12" file="nut-12.stl" />
+    <mesh name="nut_convex_13" file="nut-13.stl" />
+    <mesh name="nut_convex_14" file="nut-14.stl" />
+    <mesh name="nut_convex_15" file="nut-15.stl" />
+    <mesh name="nut_convex_16" file="nut-16.stl" />
+    <mesh name="nut_convex_17" file="nut-17.stl" />
+    <mesh name="nut_convex_18" file="nut-18.stl" />
+    <mesh name="nut_convex_19" file="nut-19.stl" />
+    <mesh name="nut_convex_20" file="nut-20.stl" />
+    <mesh name="nut_convex_21" file="nut-21.stl" />
+    <mesh name="nut_convex_22" file="nut-22.stl" />
+    <mesh name="nut_convex_23" file="nut-23.stl" />
+    <mesh name="nut_convex_24" file="nut-24.stl" />
+    <mesh name="nut_convex_25" file="nut-25.stl" />
+    <mesh name="nut_convex_26" file="nut-26.stl" />
+    <mesh name="nut_convex_27" file="nut-27.stl" />
+    <mesh name="nut_convex_28" file="nut-28.stl" />
+    <mesh name="nut_convex_29" file="nut-29.stl" />
+    <mesh name="nut_convex_30" file="nut-30.stl" />
+    <mesh name="nut_convex_31" file="nut-31.stl" />
+    <mesh name="bolt_convex_0" file="bolt-0.stl" />
+    <mesh name="bolt_convex_1" file="bolt-1.stl" />
+    <mesh name="bolt_convex_2" file="bolt-2.stl" />
+    <mesh name="bolt_convex_3" file="bolt-3.stl" />
+    <mesh name="bolt_convex_4" file="bolt-4.stl" />
+    <mesh name="bolt_convex_5" file="bolt-5.stl" />
+    <mesh name="bolt_convex_6" file="bolt-6.stl" />
+    <mesh name="bolt_convex_7" file="bolt-7.stl" />
+    <mesh name="bolt_convex_8" file="bolt-8.stl" />
+    <mesh name="bolt_convex_9" file="bolt-9.stl" />
+    <mesh name="bolt_convex_10" file="bolt-10.stl" />
+    <mesh name="bolt_convex_11" file="bolt-11.stl" />
+    <mesh name="bolt_convex_12" file="bolt-12.stl" />
+    <mesh name="bolt_convex_13" file="bolt-13.stl" />
+    <mesh name="bolt_convex_14" file="bolt-14.stl" />
+    <mesh name="bolt_convex_15" file="bolt-15.stl" />
+    <mesh name="bolt_convex_16" file="bolt-16.stl" />
+    <mesh name="bolt_convex_17" file="bolt-17.stl" />
+    <mesh name="bolt_convex_18" file="bolt-18.stl" />
+    <mesh name="bolt_convex_19" file="bolt-19.stl" />
+    <mesh name="bolt_convex_20" file="bolt-20.stl" />
+    <mesh name="bolt_convex_21" file="bolt-21.stl" />
+    <mesh name="bolt_convex_22" file="bolt-22.stl" />
+    <mesh name="bolt_convex_23" file="bolt-23.stl" />
+    <mesh name="bolt_convex_24" file="bolt-24.stl" />
+    <mesh name="bolt_convex_25" file="bolt-25.stl" />
+    <mesh name="bolt_convex_26" file="bolt-26.stl" />
+    <mesh name="bolt_convex_27" file="bolt-27.stl" />
+    <mesh name="bolt_convex_28" file="bolt-28.stl" />
+    <mesh name="bolt_convex_29" file="bolt-29.stl" />
+    <mesh name="bolt_convex_30" file="bolt-30.stl" />
+    <mesh name="bolt_convex_31" file="bolt-31.stl" />
+  </asset>
+  <worldbody>
+    <body pos="0.34 -0.16 0.19410000000000002" quat="0 1 0 0" name="cap">
+      <joint type="free" damping="0" name="cap_free" />
+      <geom type="sdf" name="nut" mesh="nut" rgba=".9 .2 .12 1" mass=".022" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" group="2" contype="2" conaffinity="2">
+        <plugin instance="nut" />
+      </geom>
+      <geom name="cap_roof" type="cylinder" size=".02887 .001" pos="0 0 -.026" mass=".003" rgba=".9 .2 .12 1" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" group="2" contype="4" conaffinity="3" />
+      <inertial mass="0.024999999999999998" pos="0.0 0.0 -0.0031200000000000004" quat="1.0 0.0 0.0 0.0" diaginertia="9.733922509041042e-06 7.021903874365215e-06 5.859590435447224e-06" />
+      <geom name="nut_convex_0" type="mesh" mesh="nut_convex_0" contype="4" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="nut_convex_1" type="mesh" mesh="nut_convex_1" contype="4" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="nut_convex_2" type="mesh" mesh="nut_convex_2" contype="4" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="nut_convex_3" type="mesh" mesh="nut_convex_3" contype="4" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="nut_convex_4" type="mesh" mesh="nut_convex_4" contype="4" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="nut_convex_5" type="mesh" mesh="nut_convex_5" contype="4" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="nut_convex_6" type="mesh" mesh="nut_convex_6" contype="4" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="nut_convex_7" type="mesh" mesh="nut_convex_7" contype="4" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="nut_convex_8" type="mesh" mesh="nut_convex_8" contype="4" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="nut_convex_9" type="mesh" mesh="nut_convex_9" contype="4" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="nut_convex_10" type="mesh" mesh="nut_convex_10" contype="4" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="nut_convex_11" type="mesh" mesh="nut_convex_11" contype="4" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="nut_convex_12" type="mesh" mesh="nut_convex_12" contype="4" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="nut_convex_13" type="mesh" mesh="nut_convex_13" contype="4" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="nut_convex_14" type="mesh" mesh="nut_convex_14" contype="4" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="nut_convex_15" type="mesh" mesh="nut_convex_15" contype="4" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="nut_convex_16" type="mesh" mesh="nut_convex_16" contype="4" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="nut_convex_17" type="mesh" mesh="nut_convex_17" contype="4" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="nut_convex_18" type="mesh" mesh="nut_convex_18" contype="4" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="nut_convex_19" type="mesh" mesh="nut_convex_19" contype="4" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="nut_convex_20" type="mesh" mesh="nut_convex_20" contype="4" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="nut_convex_21" type="mesh" mesh="nut_convex_21" contype="4" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="nut_convex_22" type="mesh" mesh="nut_convex_22" contype="4" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="nut_convex_23" type="mesh" mesh="nut_convex_23" contype="4" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="nut_convex_24" type="mesh" mesh="nut_convex_24" contype="4" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="nut_convex_25" type="mesh" mesh="nut_convex_25" contype="4" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="nut_convex_26" type="mesh" mesh="nut_convex_26" contype="4" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="nut_convex_27" type="mesh" mesh="nut_convex_27" contype="4" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="nut_convex_28" type="mesh" mesh="nut_convex_28" contype="4" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="nut_convex_29" type="mesh" mesh="nut_convex_29" contype="4" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="nut_convex_30" type="mesh" mesh="nut_convex_30" contype="4" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="nut_convex_31" type="mesh" mesh="nut_convex_31" contype="4" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+    </body>
+    <body name="bottle_thread" quat="0 1 0 0" pos="0.34 -0.16 0.169">
+      <geom type="sdf" name="bolt" mesh="bolt" rgba="0.7 0.7 0.7 1" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" group="2" contype="2" conaffinity="2">
+        <plugin instance="bolt" />
+      </geom>
+      <geom name="bolt_convex_0" type="mesh" mesh="bolt_convex_0" contype="8" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="bolt_convex_1" type="mesh" mesh="bolt_convex_1" contype="8" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="bolt_convex_2" type="mesh" mesh="bolt_convex_2" contype="8" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="bolt_convex_3" type="mesh" mesh="bolt_convex_3" contype="8" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="bolt_convex_4" type="mesh" mesh="bolt_convex_4" contype="8" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="bolt_convex_5" type="mesh" mesh="bolt_convex_5" contype="8" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="bolt_convex_6" type="mesh" mesh="bolt_convex_6" contype="8" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="bolt_convex_7" type="mesh" mesh="bolt_convex_7" contype="8" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="bolt_convex_8" type="mesh" mesh="bolt_convex_8" contype="8" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="bolt_convex_9" type="mesh" mesh="bolt_convex_9" contype="8" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="bolt_convex_10" type="mesh" mesh="bolt_convex_10" contype="8" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="bolt_convex_11" type="mesh" mesh="bolt_convex_11" contype="8" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="bolt_convex_12" type="mesh" mesh="bolt_convex_12" contype="8" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="bolt_convex_13" type="mesh" mesh="bolt_convex_13" contype="8" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="bolt_convex_14" type="mesh" mesh="bolt_convex_14" contype="8" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="bolt_convex_15" type="mesh" mesh="bolt_convex_15" contype="8" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="bolt_convex_16" type="mesh" mesh="bolt_convex_16" contype="8" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="bolt_convex_17" type="mesh" mesh="bolt_convex_17" contype="8" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="bolt_convex_18" type="mesh" mesh="bolt_convex_18" contype="8" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="bolt_convex_19" type="mesh" mesh="bolt_convex_19" contype="8" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="bolt_convex_20" type="mesh" mesh="bolt_convex_20" contype="8" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="bolt_convex_21" type="mesh" mesh="bolt_convex_21" contype="8" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="bolt_convex_22" type="mesh" mesh="bolt_convex_22" contype="8" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="bolt_convex_23" type="mesh" mesh="bolt_convex_23" contype="8" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="bolt_convex_24" type="mesh" mesh="bolt_convex_24" contype="8" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="bolt_convex_25" type="mesh" mesh="bolt_convex_25" contype="8" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="bolt_convex_26" type="mesh" mesh="bolt_convex_26" contype="8" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="bolt_convex_27" type="mesh" mesh="bolt_convex_27" contype="8" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="bolt_convex_28" type="mesh" mesh="bolt_convex_28" contype="8" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="bolt_convex_29" type="mesh" mesh="bolt_convex_29" contype="8" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="bolt_convex_30" type="mesh" mesh="bolt_convex_30" contype="8" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+      <geom name="bolt_convex_31" type="mesh" mesh="bolt_convex_31" contype="8" conaffinity="1" group="3" mass="0" solref=".004 1" solimp=".95 .99 5e-06" friction="1 .005 .0001" />
+    </body>
+  </worldbody>
+</mujoco>

@@ -49,7 +49,8 @@ Physics sites are documented in `docs/python/simulation.md`. The optional
 `sdk/python/waddle_sdk/simulators/` package implements reference scenes through
 the public `SimulationBackend` lifecycle and its part/camera facets. Robots use
 hash-pinned manufacturer URDF assemblies, visual meshes, inertias and decomposed
-concave collisions; task props use primitive geometry. The SDK YAM arm contract is
+concave collisions; most task props use primitive geometry. MuJoCo's removable
+cap adds native first-party SDF thread surfaces and packaged convex collisions. The SDK YAM arm contract is
 assembled with I2RT LINEAR_4310; xArm7 uses UFACTORY's G2 hand. The reference servos
 are not calibrated actuator models. MuJoCo, SAPIEN and Isaac Sim use native
 URDF import; xArm uses Menagerie's two linkage closures. SAPIEN retains native
@@ -74,12 +75,18 @@ require a physical-width grasp and settled jaw motion under contact.
 Reference drawers declare passive damping in the scene URDF. MuJoCo/SAPIEN import
 it natively; Isaac uses a zero-stiffness velocity damper. Native acceptance checks
 that a released slide dissipates velocity and retains its opened position.
-MuJoCo's cap has 0.001 N m native dry thread resistance. SAPIEN uses a native
-zero-stiffness velocity damper with the same torque limit and 1 N m s/rad
-damping, replacing legacy load-dependent friction on the screw joints.
-Native cap tests check released progress away from the end stop and continued
-rotation under torque in both directions. These reference props are not
-calibrated hardware friction models.
+MuJoCo's cap is a 25 g free body with native thread contacts at 4.166667 mm/turn.
+`simulators/thread.py` loads a small C++17 dimensional wrapper over the installed
+first-party nut/bolt SDFs. Each bottle-cap worker compiles it in a private temporary
+directory; `CXX` selects a compiler, and other environments do not compile it.
+No runtime downloads, installed-library overwrites, object attachments or
+constraint-switching callbacks are used. Native cap tests check axial-load
+retention, pitch, natural exit and free-body motion. `tools/vendor_thread_model.py`
+rebuilds its hash-bound CoACD collision surfaces. SAPIEN/Isaac retain the finite
+5 mm/turn guide for now; free removal there is not implemented. SAPIEN's native
+zero-stiffness damper uses a 0.001 N m torque limit and 1 N m s/rad damping.
+Guided-cap tests retain their released-progress and bidirectional-turn checks.
+These reference props are not calibrated hardware friction models.
 Reference YAM worlds start with TCP near `(0.36, 0, 0.14)` m and the open hand
 pitched 45 degrees down. This working pose lies in the overlap of forward and
 downward reach, away from the near-neutral pose's inner approach boundary.

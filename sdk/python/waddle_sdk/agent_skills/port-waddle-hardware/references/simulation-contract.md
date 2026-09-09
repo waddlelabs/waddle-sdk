@@ -49,6 +49,11 @@ observe contact, prop motion, and retention separately from commanded robot pose
 For threaded props, test release away from joint limits and confirm that applied
 torque can still turn them in both directions. End-stop tests can hide missing
 passive resistance; a position servo that holds progress is not thread friction.
+For removable caps, also prove natural thread exit, free-body motion and robot
+release. A finite screw guide cannot establish removal. The MuJoCo reference cap
+uses its first-party SDFs through a dimensional plugin compiled only when that
+scene opens; its C++17 dependency and rebuild provenance are documented in
+`simulators/data/thread/README.md`.
 Check imported native mass and inertia together. Changing a body's mass after
 automatic inertia calculation can silently leave the two inconsistent; the
 reference cubes now use explicit shared URDF mass properties in every backend.

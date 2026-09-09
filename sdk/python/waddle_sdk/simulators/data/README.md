@@ -230,3 +230,13 @@ together, then run the model, native engine, documentation and wheel checks.
 
 `xarm7-kinematics.yaml` and `xarm-LICENSE` retain the original kinematic snapshot
 used by the reference profile, from the same xarm_ros revision.
+
+## Native MuJoCo thread
+
+`thread/` contains the freely removable reference cap. Its small C++17 wrapper
+forwards dimensional queries to MuJoCo's installed first-party nut/bolt SDFs.
+The thread contacts are native; the cap has no task-switched attachment or guide.
+Packaged CoACD pieces expose the same surfaces to ordinary robot/scenery contacts.
+See [thread/README.md](thread/README.md) for source attribution, versioned geometry,
+compilation requirements, hashes and the offline rebuild command. SAPIEN/Isaac
+reference caps still use their separate finite guided model.

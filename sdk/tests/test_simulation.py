@@ -372,6 +372,182 @@ def test_native_xarm_gripper_preserves_linkage_under_contact(
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+@pytest.mark.parametrize("robot", ROBOTS)
+def test_native_mujoco_cap_retains_axial_load_and_unscrews_freely(
+    tmp_path, monkeypatch, robot
+):
+    pytest.importorskip("mujoco")
+    monkeypatch.setenv("MUJOCO_GL", "egl")
+    monkeypatch.setenv(
+        "PYTHONPATH", str(Path(__file__).resolve().parents[1] / "python")
+    )
+    script = (
+        "import runpy; from pathlib import Path; "
+        f"ns = runpy.run_path({str(Path(__file__).resolve())!r}); "
+        f"ns['_native_free_cap'](Path({str(tmp_path)!r}), {robot!r})"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_native_thread_assets_are_complete_and_hash_bound():
+    from waddle_sdk.simulators.thread import assets
+
+    root = assets()
+    manifest = json.loads((root / "manifest.json").read_text())
+    meshes = ET.parse(root / "cap.xml").findall("asset/mesh[@file]")
+    required = {"cap.xml", "metric_thread.cc", "LICENSE"}
+    required.update(mesh.get("file") for mesh in meshes)
+    assert required <= manifest["files"].keys()
+    assert meshes
+
+
+def test_native_thread_compiler_is_required_only_for_bottle_cap(tmp_path, monkeypatch):
+    pytest.importorskip("mujoco")
+    monkeypatch.setenv("CXX", str(tmp_path / "absent-compiler"))
+    monkeypatch.setenv(
+        "PYTHONPATH", str(Path(__file__).resolve().parents[1] / "python")
+    )
+    script = (
+        "import runpy; from pathlib import Path; "
+        f"ns = runpy.run_path({str(Path(__file__).resolve())!r}); "
+        f"ns['_native_thread_compiler_dependency'](Path({str(tmp_path)!r}))"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def _native_thread_compiler_dependency(tmp_path):
+    from waddle_sdk.simulators.mujoco import Engine
+
+    for environment in ENVIRONMENTS:
+        _, config = documents(tmp_path, "mujoco", "yam", environment)
+        if environment == "bottle_cap":
+            with pytest.raises(RuntimeError, match="requires a C\\+\\+17 compiler"):
+                Engine(config, tmp_path)
+        else:
+            engine = Engine(config, tmp_path)
+            try:
+                engine.step()
+                assert np.isfinite(engine.read()[0]).all()
+            finally:
+                engine.close()
+
+
+def _native_free_cap(tmp_path, robot):
+    from waddle_sdk.simulators.mujoco import Engine
+
+    _, config = documents(tmp_path, "mujoco", robot, "bottle_cap")
+    engine = Engine(config, tmp_path)
+    try:
+        model, data, mj = engine.model, engine.data, engine.mj
+        joint = model.joint("cap_free")
+        assert joint.type[0] == mj.mjtJoint.mjJNT_FREE
+        cap = model.body("cap")
+        assert cap.mass[0] == pytest.approx(0.025)
+        assert cap.mocapid[0] == -1
+        qa = int(joint.qposadr[0])
+        clear = np.array(engine.profile.home)
+        clear[0] = np.pi / 2
+        engine.home(clear)
+
+        def advance(seconds):
+            for _ in range(round(seconds / config["timestep"])):
+                engine.step()
+
+        def angle():
+            w, x, y, z = data.qpos[qa + 3 : qa + 7]
+            return np.arctan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
+
+        def vertical_bounds(body_id):
+            corners = []
+            for gid in np.flatnonzero(model.geom_bodyid == body_id):
+                bounds = model.geom_aabb[gid]
+                local = np.array(
+                    [
+                        bounds[:3] + bounds[3:] * [x, y, z]
+                        for x in (-1, 1)
+                        for y in (-1, 1)
+                        for z in (-1, 1)
+                    ]
+                )
+                corners.extend(
+                    local @ data.geom_xmat[gid].reshape(3, 3).T + data.geom_xpos[gid]
+                )
+            return np.min(corners, axis=0)[2], np.max(corners, axis=0)[2]
+
+        advance(2)
+        initial_height, initial_angle = float(data.qpos[qa + 2]), angle()
+        # A pull alone must not back-drive the cap through an ideal screw
+        # guide. Only native contact/friction supplies thread self-locking.
+        data.xfrc_applied[cap.id, 2] = 5
+        advance(2)
+        assert abs(data.qpos[qa + 2] - initial_height) < 0.001
+        assert abs(angle() - initial_angle) < 0.02
+        data.xfrc_applied[cap.id] = 0
+        advance(1)
+        assert data.qpos[qa + 2] == pytest.approx(initial_height, abs=0.0001)
+
+        # A native wrench is a model diagnostic, not task acceptance. Follow
+        # the actual turns and require natural release into free-body motion.
+        data.xfrc_applied[cap.id] = [0, 0, 0.5, 0, 0, 0.01]
+        last_angle, total_angle = angle(), 0.0
+        samples = []
+        for _ in range(round(8 / config["timestep"])):
+            engine.step()
+            value = angle()
+            total_angle += np.arctan2(
+                np.sin(value - last_angle), np.cos(value - last_angle)
+            )
+            last_angle = value
+            turns = total_angle / (2 * np.pi)
+            samples.append((turns, float(data.qpos[qa + 2])))
+            cap_low = vertical_bounds(cap.id)[0]
+            bottle_top = vertical_bounds(model.body("bottle_thread").id)[1]
+            if cap_low > bottle_top + 0.01:
+                break
+        assert 4.5 < turns < 7.0, turns
+        assert cap_low > bottle_top + 0.01
+        engaged = np.array([row for row in samples if 0.5 < row[0] < 4])
+        slope, intercept = np.polyfit(engaged[:, 0], engaged[:, 1], 1)
+        assert slope == pytest.approx(0.05 / 12, abs=0.0002)
+        assert np.max(abs(engaged[:, 1] - (slope * engaged[:, 0] + intercept))) < 0.001
+        data.xfrc_applied[cap.id] = 0
+
+        def com_vertical_speed():
+            # A spinning free body's joint origin can orbit its offset COM.
+            # Gravity makes the center of mass ballistic, not that origin.
+            mj.mj_forward(model, data)
+            mj.mj_subtreeVel(model, data)
+            return float(data.subtree_linvel[cap.id, 2])
+
+        vertical_speed = com_vertical_speed()
+        advance(0.05)
+        measured_speed = com_vertical_speed()
+        assert measured_speed == pytest.approx(
+            vertical_speed + 0.05 * model.opt.gravity[2],
+            # Allow 1% integration error for the freely tumbling offset COM.
+            abs=0.01 * abs(0.05 * model.opt.gravity[2]),
+        ), (vertical_speed, measured_speed, data.qpos[qa : qa + 7].tolist())
+        engine.reset()
+        assert data.time == 0
+        assert data.qpos[qa + 2] == pytest.approx(0.1941)
+    finally:
+        engine.close()
+
+
 def _native_xarm_gripper_contact(tmp_path, backend):
     _, config = documents(tmp_path, backend, "xarm7", "bottle_cap")
     engine = importlib.import_module(f"waddle_sdk.simulators.{backend}").Engine(
@@ -610,61 +786,42 @@ def _native_conformance(
             advance(2.0)
             travel, _speed = drawer_state()
             assert 0.20 < travel < 0.225, travel
-        elif environment == "bottle_cap":
+        elif environment == "bottle_cap" and backend != "mujoco":
             # Apply a native generalized torque as an external load on the cap.
-            # Upward travel must come from the passive thread constraint.
-            if backend == "mujoco":
+            # These backends retain the passive guide. MuJoCo's contact-based
+            # free cap is checked by _native_free_cap instead.
+            names = (
+                [j.name for j in engine._screw.get_active_joints()]
+                if backend == "sapien"
+                else list(engine._screw.dof_names)
+            )
 
-                def cap_force(value):
-                    engine.data.qfrc_applied[int(engine._screw[0].dofadr[0])] = value
+            def cap_force(value):
+                force = np.zeros(len(names))
+                force[names.index("cap_rotation")] = value
+                if backend == "sapien":
+                    engine._screw.set_qf(force)
+                else:
+                    engine._screw.set_joint_efforts(force)
 
-                def cap_state():
-                    return np.array(
-                        [
-                            float(engine.data.qpos[int(j.qposadr[0])])
-                            for j in engine._screw
-                        ]
-                    )
-
-                def cap_release(angle, speed):
-                    for joint, scale in zip(engine._screw, (1, SCREW_PITCH)):
-                        engine.data.qpos[int(joint.qposadr[0])] = angle * scale
-                        engine.data.qvel[int(joint.dofadr[0])] = speed * scale
-            else:
-                names = (
-                    [j.name for j in engine._screw.get_active_joints()]
+            def cap_state():
+                values = (
+                    engine._screw.get_qpos()
                     if backend == "sapien"
-                    else list(engine._screw.dof_names)
+                    else engine._screw.get_joint_positions()
                 )
+                return values[[names.index(n) for n in ("cap_rotation", "cap_lift")]]
 
-                def cap_force(value):
-                    force = np.zeros(len(names))
-                    force[names.index("cap_rotation")] = value
-                    if backend == "sapien":
-                        engine._screw.set_qf(force)
-                    else:
-                        engine._screw.set_joint_efforts(force)
-
-                def cap_state():
-                    values = (
-                        engine._screw.get_qpos()
-                        if backend == "sapien"
-                        else engine._screw.get_joint_positions()
-                    )
-                    return values[
-                        [names.index(n) for n in ("cap_rotation", "cap_lift")]
-                    ]
-
-                def cap_release(angle, speed):
-                    scales = np.array(
-                        [1 if n == "cap_rotation" else SCREW_PITCH for n in names]
-                    )
-                    if backend == "sapien":
-                        engine._screw.set_qpos(angle * scales)
-                        engine._screw.set_qvel(speed * scales)
-                    else:
-                        engine._screw.set_joint_positions(angle * scales)
-                        engine._screw.set_joint_velocities(speed * scales)
+            def cap_release(angle, speed):
+                scales = np.array(
+                    [1 if n == "cap_rotation" else SCREW_PITCH for n in names]
+                )
+                if backend == "sapien":
+                    engine._screw.set_qpos(angle * scales)
+                    engine._screw.set_qvel(speed * scales)
+                else:
+                    engine._screw.set_joint_positions(angle * scales)
+                    engine._screw.set_joint_velocities(speed * scales)
 
             # An end-stop torque test can hide a back-driving thread. Release
             # mid-travel with a small unwinding velocity, as fingers disengage.
