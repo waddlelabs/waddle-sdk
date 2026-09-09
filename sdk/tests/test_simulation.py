@@ -425,7 +425,7 @@ def _native_conformance(tmp_path, backend, robot, environment):
 
 
 @pytest.mark.parametrize("durations", [[0.1], [1 / 60] * 6, [0.0005] * 200])
-def test_worker_advances_only_on_the_shared_sdk_clock(monkeypatch, durations):
+def test_explicit_worker_advances_only_on_the_shared_sdk_clock(monkeypatch, durations):
     from waddle_sdk.simulators import worker
 
     state = SimpleNamespace(steps=0, reads=[])
@@ -595,3 +595,102 @@ def test_reference_world_rejects_aliasing_two_parts_to_one_robot(tmp_path):
     (tmp_path / "site.yaml").write_text(yaml.safe_dump(site))
     with pytest.raises(ValueError, match="one robot part"):
         load_site(tmp_path / "site.yaml")._assembly(None)
+
+
+def test_realtime_worker_accounts_for_render_delay_before_changing_targets(monkeypatch):
+    from waddle_sdk.simulators import worker
+
+    clock = SimpleNamespace(now=0.0)
+    state = SimpleNamespace(target=0, steps=[], reads=[])
+    config = {"backend": "mujoco", "cameras": {}, "timestep": 0.002, "_real_time": True}
+
+    class Engine:
+        def __init__(self, config, scratch):
+            pass
+
+        def step(self):
+            state.steps.append(state.target)
+
+        def write(self, target):
+            state.target = target
+
+        def capture(self, name):
+            clock.now += 0.08
+
+        def read(self):
+            state.reads.append(len(state.steps))
+
+        def hold(self):
+            state.target = 0
+
+        def close(self):
+            pass
+
+    class Connection:
+        pending = [
+            (0.0, config),
+            (0.0, ("write", [1])),
+            (0.01, ("step", [0.01])),
+            (0.02, ("capture", ["scene"])),
+            (0.1, ("write", [2])),
+            (0.11, ("read", [])),
+            (0.11, ("close", [])),
+        ]
+
+        def recv(self):
+            clock.now, value = self.pending.pop(0)
+            return value
+
+        def send(self, result):
+            assert result[0], result
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(worker.time, "monotonic", lambda: clock.now)
+    monkeypatch.setattr(
+        worker,
+        "importlib",
+        SimpleNamespace(import_module=lambda _: SimpleNamespace(Engine=Engine)),
+    )
+    worker.serve(Connection())
+    assert state.steps == [1] * 50 + [2] * 5
+    assert state.reads == [55]
+
+
+@pytest.mark.parametrize("invalid", [1, "true", None])
+def test_reference_real_time_mode_requires_boolean(invalid):
+    with pytest.raises(ValueError, match="real_time must be a boolean"):
+        World({}, real_time=invalid)
+
+
+@pytest.mark.parametrize("robot", ROBOTS)
+def test_reference_control_defaults_match_nonopening_physical_declaration(robot):
+    from waddle_sdk.robots import xarm
+    from waddle_sdk.robots.site import PartConfig
+
+    if robot == "yam":
+        physical = yam.arm(workspace=None, channel="unused-test-bus").robot().action_space
+    else:
+        physical = (
+            xarm.arm(
+                config=PartConfig(
+                    name="arm",
+                    posture="supervised",
+                    connection={},
+                    joint_limits={},
+                    workspace_bounds={},
+                    envelope={},
+                    options={"model": robot},
+                )
+            )
+            .robot()
+            .action_space
+        )
+    site, _ = make_site(
+        "parity", backend="sapien", robot=robot, environment="two_cubes"
+    )
+    options = site["parts"]["arm"]["options"]
+    assert options["rate_hz"] == physical.rate_hz
+    assert options["max_joint_speed_rad_s"] == physical.joints[0].max_velocity
+    assert options["max_gripper_speed_per_s"] == physical.joints[-1].max_velocity

@@ -123,12 +123,17 @@ symmetric motion, but approximates transmission behavior under asymmetric contac
 xArm's passive four-bar links retain native closure constraints. MuJoCo and Isaac
 retain native coupling.
 
-The SDK's existing shared-world robot pump owns physics time; the worker has no
-independent clock or catch-up loop. State reporting runs at least twice the declared
-control rate, with a 100 Hz floor, while physics retains its 2 ms native substeps.
-Fractional substeps carry between ticks instead of accelerating non-integral rate
-ratios. Missed pump ticks are not replayed under newly issued commands. The part's
-normal 50 Hz command rate and corresponding owner step limits are unchanged.
+SAPIEN uses ManiSkill's documented 100 Hz physics default (10 ms substeps);
+MuJoCo and Isaac retain 2 ms substeps. The SDK command rate stays independent.
+See the maintained [simulation configuration guide](https://github.com/mani-skill/ManiSkill/blob/main/docs/source/user_guide/tutorials/custom_tasks/advanced.md).
+
+Reference workers default to real-time physics. Before each request they advance
+elapsed monotonic time with the existing target, retaining fixed native substeps
+and fractional remainders. Rendering/IPC delays do not discard simulation time
+or apply new commands retroactively. `worlds.cell.options.real_time: false`
+retains explicit SDK stepping for rollouts. The ordinary SDK reporting pump
+runs at least twice the command rate with a 100 Hz floor; new scenes derive command-rate and speed defaults
+from the physical SDK declarations (YAM 10 Hz, xArm7 50 Hz, both 1 rad/s). Available compute still bounds throughput.
 Runs preserve scene state by default.
 Explicit `worlds.cell.options.reset_on_episode: true` uses native state
 reset/snapshots; it does not recompile the robot or restart its renderer. The world

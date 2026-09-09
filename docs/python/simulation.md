@@ -63,21 +63,21 @@ assets from pinned public manufacturer revisions. No model is downloaded at site
 startup. The reference collision spheres are conservative covers derived from
 these same meshes and link transforms.
 
-The SDK's existing shared-world robot pump advances the reference world in fixed
-2 ms native steps. State reporting runs at twice the declared control rate, with a
-100 Hz floor, batching native substeps between reports. Fractional steps carry into
-the next report rather than rounding each interval up. The part's command declaration
-and owner limits are unchanged (50 Hz in the default site). The worker has no
-independent physics clock; sensors
-and robot state share the ordinary SDK lifecycle. Runs preserve the physical scene
-by default; a new run holds the measured robot pose instead of homing it or resetting
-props. To start each rollout from the initial scene, explicitly set
-`worlds.cell.options.reset_on_episode: true` in `site.yaml`. That option uses native
-state reset/snapshots, retaining the model and renderer. Reopening a site always
-creates a fresh scene. Actual real-time factor depends on
-available compute and rendering load. A delayed robot pump resumes its declared
-cadence without a catch-up burst: new commands are never integrated over ticks
-missed during an earlier planning/rendering pause.
+Reference worlds use real-time physics by default. SAPIEN uses ManiSkill's
+100 Hz physics default; MuJoCo and Isaac retain 500 Hz native stepping. The worker advances fixed
+native substeps up to each request's monotonic arrival time **before** reading
+state or changing a target. Rendering and IPC delays therefore preserve elapsed
+physics under the previous target; a new command is never applied retroactively.
+Fractional substeps carry between requests. State reporting uses the ordinary SDK
+pump at twice the declared control rate, with a 100 Hz floor. New scenes use the physical SDK control defaults: YAM 10 Hz, xArm7 50 Hz,
+and 1 rad/s joint speed for both. Explicit site settings remain authoritative. Available compute still bounds achievable throughput.
+
+For explicitly stepped rollouts, set `worlds.cell.options.real_time: false`; only
+SDK world-step durations then advance physics. This is independent of scene reset:
+runs preserve the scene by default, while `worlds.cell.options.reset_on_episode:
+true` restores native snapshots for each rollout. Reopening creates a fresh scene.
+Both modes use the same model, renderer, sensors and SDK lifecycle.
+
 Position servos, gravity compensation,
 friction and the primitive task props remain
 simulation settings. Manufacturer CAD and inertial properties do not establish

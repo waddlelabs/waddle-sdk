@@ -6,6 +6,7 @@ import importlib
 import math
 import sys
 import tempfile
+import time
 import traceback
 from multiprocessing.connection import Connection
 from pathlib import Path
@@ -27,8 +28,27 @@ def serve(connection: Connection) -> None:
             connection.send((True, None))
             dt = config["timestep"]
             pending_time = 0.0
+            real_time = config.get("_real_time", False)
+            last_time = time.monotonic()
+
+            def advance(duration):
+                nonlocal pending_time
+                pending_time += duration
+                steps = math.floor(pending_time / dt + 1e-10)
+                for _ in range(steps):
+                    engine.step()
+                pending_time = max(0.0, pending_time - steps * dt)
+
             while True:
                 operation, arguments = connection.recv()
+                if real_time:
+                    # Advance the OLD targets up to this request before reading
+                    # state or installing a new target. Render/IPC delays must
+                    # neither discard elapsed physics nor replay new commands
+                    # into the past. The engine always retains its fixed dt.
+                    now = time.monotonic()
+                    advance(now - last_time)
+                    last_time = now
                 if operation == "close":
                     engine.hold()
                     connection.send((True, None))
@@ -45,20 +65,16 @@ def serve(connection: Connection) -> None:
                     raise ValueError("unsupported simulation operation")
                 try:
                     if operation == "step":
-                        # The SDK's existing robot pump owns simulation time,
-                        # matching the shared-world MuJoCo reference backend.
-                        # Carry fractional substeps across ticks. Rounding each
-                        # tick up would accelerate non-integral rate ratios.
-                        pending_time += arguments[0]
-                        steps = math.floor(pending_time / dt + 1e-10)
-                        for _ in range(steps):
-                            engine.step()
-                        pending_time = max(0.0, pending_time - steps * dt)
+                        # Explicit stepping remains available for rollouts;
+                        # interactive sites use elapsed time on the same worker.
+                        if not real_time:
+                            advance(arguments[0])
                         result = None
                     else:
                         result = getattr(engine, operation)(*arguments)
                         if operation == "reset":
                             pending_time = 0.0
+                            last_time = time.monotonic()
                     connection.send((True, result))
                 except Exception as error:
                     engine.hold()

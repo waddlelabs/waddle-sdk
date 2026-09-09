@@ -101,6 +101,8 @@ class Profile:
     closing_axis: tuple[float, ...]
     pinch_offset: tuple[float, ...]
     pointing_down: tuple[float, ...]
+    rate_hz: float
+    max_joint_speed_rad_s: float
 
     @property
     def dof(self) -> int:
@@ -153,6 +155,8 @@ def profile(name: str) -> Profile:
             (0.0, 1.0, 0.0),
             tuple(map(float, pinch)),
             (0.0, 0.0, 1.0, 0.0),
+            yam.DEFAULT_RATE_HZ,
+            yam.DEFAULT_MAX_JOINT_SPEED_RAD_S,
         )
     if name != "xarm7":
         raise ValueError(f"robot must be one of {ROBOTS}")
@@ -187,6 +191,8 @@ def profile(name: str) -> Profile:
         (0.0, 1.0, 0.0),
         (0.0, 0.0, 0.0),
         (0.0, 1.0, 0.0, 0.0),
+        declaration.action_space.rate_hz,
+        joints[0].max_velocity,
     )
 
 
@@ -268,7 +274,9 @@ def make_site(
         backend=backend,
         robot=robot,
         environment=environment,
-        timestep=0.002,
+        # ManiSkill uses 100 Hz PhysX stepping with implicit position drives.
+        # SDK command and camera declarations remain independent.
+        timestep=0.01 if backend == "sapien" else 0.002,
         cameras={
             name: dict(**row, transform=mounts[name]) for name, row in cameras.items()
         },
@@ -283,6 +291,7 @@ def make_site(
             "cell": {
                 "driver": "waddle_sdk.simulators.adapters:backend",
                 "connection": connection,
+                "options": {"real_time": True},
             }
         },
         parts={
@@ -303,8 +312,8 @@ def make_site(
                     pointing_down_wxyz=list(p.pointing_down),
                 ),
                 options=dict(
-                    rate_hz=50.0,
-                    max_joint_speed_rad_s=0.5,
+                    rate_hz=p.rate_hz,
+                    max_joint_speed_rad_s=p.max_joint_speed_rad_s,
                     max_gripper_speed_per_s=(
                         yam.DEFAULT_MAX_GRIPPER_SPEED_PER_S if robot == "yam" else 1.0
                     ),

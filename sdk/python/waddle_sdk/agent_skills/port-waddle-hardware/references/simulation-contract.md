@@ -39,10 +39,11 @@ Reference YAM worlds start with TCP near `(0.36, 0, 0.14)` m and the open hand
 pitched 45 degrees down, in the overlap of forward and downward reach.
 Opening/reset establishes that start; a new run preserves the current scene.
 
-The SDK pumps resume after slow work without catch-up bursts. Camera capture
-skips missed frame slots; physics never applies a newly issued target to ticks
-missed during an earlier planning pause. Real-time factor and delivered camera
-frame rate still depend on available compute.
+Reference workers advance elapsed real time in fixed substeps before each request,
+using the previous target. Slow capture/IPC therefore cannot drop physics time or
+apply a new command retroactively. Set `worlds.cell.options.real_time: false` for
+explicit SDK stepping. Camera pumps skip missed frame slots; available compute
+still bounds delivered frame rate and simulation throughput.
 
 ## When to implement another world
 

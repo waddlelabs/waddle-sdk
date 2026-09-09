@@ -61,19 +61,15 @@ downward reach, away from the near-neutral pose's inner approach boundary.
 The SDK's distinct high bimanual test poses are not reference-scene homes.
 Physical devices retain their measured pose.
 Known trajectory velocities use the existing optional driver port. Position-only
-commands and holds clear those velocity targets. The world advances in fixed
-2 ms native steps driven by the SDK's existing shared-world robot pump. State
-reporting runs at twice the declared control rate, with a 100 Hz floor; fractional
-substeps carry between ticks rather than rounding each tick up. The
-worker has no independent physics clock. Camera pumps skip missed capture slots
-instead of busy-rendering a backlog after a slow frame; catch-up bursts can starve
-shared physics/control at full camera resolution. The robot pump also resumes its
-cadence after a delay instead of integrating new targets over historical missed
-ticks. Under load, simulation time can lag wall time; it never repays a planning
-pause by accelerating a subsequently issued command. Reference worlds preserve robot and prop
-state across runs by default; `worlds.cell.options.reset_on_episode: true` opts
-into native scene reset for rollouts. Per-arm episode hooks do not home these
-world-owned robots independently. The hand pinch offset comes from I2RT 1.3.5's corrected grasp site.
+commands and holds clear those velocity targets. Reference workers default to
+real-time physics: before each read/write/capture request they integrate elapsed
+monotonic time under the previous target in fixed native substeps. This avoids both
+dropped time under rendering load and retroactively applying a new command.
+`worlds.cell.options.real_time: false` retains explicit SDK world-step durations
+for rollouts. Fractional steps carry between requests. State reporting uses the
+existing SDK pump with a 100 Hz floor. Camera pumps skip missed capture slots.
+Reference worlds preserve state across runs; `reset_on_episode: true` restores
+native snapshots. Per-arm episode hooks do not home world-owned robots independently. The hand pinch offset comes from I2RT 1.3.5's corrected grasp site.
 `tools/vendor_simulation_models.py` rebuilds
 the packaged assets; no runtime model download occurs. Engine-dependent acceptance lives in
 `sdk/tests/test_simulation.py` and isolates native graphics runtimes in subprocesses.

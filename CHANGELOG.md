@@ -73,6 +73,14 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Advance reference physics by elapsed monotonic time before reading state or
+  changing targets, so rendering delays do not silently slow declared joint
+  velocities or replay new targets into the past. Retain fixed engine substeps
+  and explicit rollout stepping through `worlds.cell.options.real_time: false`.
+  Use ManiSkill's standard 100 Hz SAPIEN physics cadence; SDK command and camera
+  rates remain independent. New scene control defaults come from the physical
+  SDK embodiment declarations instead of a simulator-wide 50 Hz / 0.5 rad/s.
+
 - Place the reference YAM at a tabletop working pose with its TCP near
   `(0.36, 0, 0.14)` m and the hand pitched 45 degrees down. The prior pose lay
   near the inner boundary for horizontal approaches. The model and owner limits

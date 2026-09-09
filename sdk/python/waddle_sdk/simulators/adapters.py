@@ -25,9 +25,14 @@ from .scene import load_scene, profile
 class World:
     """One lazy world owned by the standard SDK simulation lifecycle."""
 
-    def __init__(self, config: dict, *, reset_on_episode: bool = False):
+    def __init__(
+        self, config: dict, *, reset_on_episode: bool = False, real_time: bool = True
+    ):
         if type(reset_on_episode) is not bool:
             raise ValueError("reset_on_episode must be a boolean")
+        if type(real_time) is not bool:
+            raise ValueError("real_time must be a boolean")
+        self._real_time = real_time
         self.config = config
         self._reset_on_episode = reset_on_episode
         self._lock = threading.RLock()
@@ -72,7 +77,7 @@ class World:
                     )
                     self._connection = parent
                     child.close()
-                    parent.send(self.config)
+                    parent.send({**self.config, "_real_time": self._real_time})
                     self._receive(180.0)
                 except BaseException:
                     child.close()
@@ -156,7 +161,9 @@ def backend(*, config: WorldConfig) -> World:
     """Declare a reference scene through the public SimulationBackend contract."""
     _, definition = load_scene(config.site_root, config.connection.get("simulation"))
     return World(
-        definition, reset_on_episode=config.options.get("reset_on_episode", False)
+        definition,
+        reset_on_episode=config.options.get("reset_on_episode", False),
+        real_time=config.options.get("real_time", True),
     )
 
 
