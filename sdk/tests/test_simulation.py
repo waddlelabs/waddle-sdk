@@ -435,6 +435,37 @@ def test_worker_advances_only_on_the_shared_sdk_clock(monkeypatch):
     assert state.steps == 50
 
 
+@pytest.mark.parametrize("backend", ["mujoco", "sapien"])
+@pytest.mark.parametrize("reset_on_episode", [False, True])
+def test_episode_boundary_preserves_state_unless_reset_requested(
+    tmp_path, monkeypatch, backend, reset_on_episode
+):
+    pytest.importorskip(backend)
+    monkeypatch.setenv("MUJOCO_GL", "egl")
+    site, _ = documents(tmp_path, backend=backend)
+    if reset_on_episode:
+        site["worlds"]["cell"]["options"] = {"reset_on_episode": True}
+    (tmp_path / "site.yaml").write_text(yaml.safe_dump(site))
+    with load_site(tmp_path / "site.yaml").open(
+        console=False, _testing=True
+    ) as session:
+        owner = session._managed.arms["arm"].driver.world
+        moved = np.array(profile("yam").home)
+        moved[0] += 0.08
+        # Establish a different physical pose without depending on a controller.
+        owner.call("home", moved)
+        with session.run(task="continue", actor="test"):
+            actual = session.observe().parts["arm"].joint_position
+            expected = profile("yam").home if reset_on_episode else moved
+            np.testing.assert_allclose(actual, expected, atol=0.002)
+
+
+@pytest.mark.parametrize("invalid", ["false", 0, 1, None])
+def test_episode_reset_setting_requires_a_boolean(invalid):
+    with pytest.raises(ValueError, match="reset_on_episode must be a boolean"):
+        World({}, reset_on_episode=invalid)
+
+
 def test_site_owns_one_world_and_reopens_an_independent_world(tmp_path, monkeypatch):
     pytest.importorskip("mujoco")
     monkeypatch.setenv("MUJOCO_GL", "egl")

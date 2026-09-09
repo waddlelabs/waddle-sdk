@@ -116,8 +116,10 @@ SAPIEN uses ManiSkill's explicit zero joint-friction default and 15/1 solver
 iterations. The SDK's existing shared-world robot pump owns physics time; the worker has no
 independent clock or catch-up loop. The pump runs at the native physics cadence
 (500 Hz by default), while the part declares its normal 50 Hz command rate and
-retains the corresponding owner step limits. Episode reset uses native state
-reset/snapshots; it does not recompile the robot or restart its renderer.
+retains the corresponding owner step limits. Runs preserve scene state by default.
+Explicit `worlds.cell.options.reset_on_episode: true` uses native state
+reset/snapshots; it does not recompile the robot or restart its renderer. The world
+owns initialization, and per-arm episode hooks never home these robots again.
 
 ## Rebuilding
 

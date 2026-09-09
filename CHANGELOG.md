@@ -63,6 +63,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Preserve reference simulation state across control runs by default. Starting
+  a new run after jog release no longer teleports the robot or rearranges props
+  underneath an already observed command. Shared-world initialization owns the
+  home pose; per-arm episode hooks do not home again. Rollouts can explicitly
+  select `worlds.cell.options.reset_on_episode: true` for native scene reset.
 - Reject invalid portable-scene robot base frames and unsafe URDF joint-limit
   widening before loading the optional MuJoCo compiler dependency.
 - Keep MuJoCo renderer creation and destruction on its owning camera-pump thread so

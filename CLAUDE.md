@@ -56,7 +56,10 @@ URDF import; xArm uses Menagerie's two linkage closures with a coupled driver.
 Known trajectory velocities use the existing optional driver port. Position-only
 commands and holds clear those velocity targets. The world advances in fixed
 2 ms native steps driven by the SDK's existing shared-world robot pump; the
-worker has no independent physics clock. The hand pinch offset comes from I2RT 1.3.5's corrected grasp site.
+worker has no independent physics clock. Reference worlds preserve robot and prop
+state across runs by default; `worlds.cell.options.reset_on_episode: true` opts
+into native scene reset for rollouts. Per-arm episode hooks do not home these
+world-owned robots independently. The hand pinch offset comes from I2RT 1.3.5's corrected grasp site.
 `tools/vendor_simulation_models.py` rebuilds
 the packaged assets; no runtime model download occurs. Engine-dependent acceptance lives in
 `sdk/tests/test_simulation.py` and isolates native graphics runtimes in subprocesses.

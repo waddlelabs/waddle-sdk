@@ -25,8 +25,11 @@ from .scene import load_scene, profile
 class World:
     """One lazy world owned by the standard SDK simulation lifecycle."""
 
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, *, reset_on_episode: bool = False):
+        if type(reset_on_episode) is not bool:
+            raise ValueError("reset_on_episode must be a boolean")
         self.config = config
+        self._reset_on_episode = reset_on_episode
         self._lock = threading.RLock()
         self._process: subprocess.Popen | None = None
         self._connection = None
@@ -105,7 +108,12 @@ class World:
         self.call("step", dt)
 
     def reset(self) -> bool:
-        return self.call("reset")
+        if self._reset_on_episode:
+            return self.call("reset")
+        # A control run is not a request to rearrange the physical scene.
+        # Interactive press/release and later tasks continue from measured state.
+        self.call("hold")
+        return True
 
     def part(self, *, config: PartConfig) -> base.Rig:
         return _arm(self, config=config)
@@ -142,7 +150,9 @@ class World:
 def backend(*, config: WorldConfig) -> World:
     """Declare a reference scene through the public SimulationBackend contract."""
     _, definition = load_scene(config.site_root, config.connection.get("simulation"))
-    return World(definition)
+    return World(
+        definition, reset_on_episode=config.options.get("reset_on_episode", False)
+    )
 
 
 class Driver:
@@ -290,7 +300,9 @@ def _arm(owner: World, *, config: PartConfig) -> base.Rig:
                     fk=driver.forward_kinematics,
                     collision_spheres=driver.collision_spheres,
                     collision_frame=p.frame,
-                    home_values=p.home,
+                    # The shared world owns initialization/reset; the ordinary
+                    # per-arm episode hook must not teleport it independently.
+                    home_values=None,
                     arm_dof=p.dof,
                     rate_hz=rate,
                 )

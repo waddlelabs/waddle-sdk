@@ -53,3 +53,6 @@ Reference YAM/xArm7 physics scenes use the same world lifecycle and packaged
 manufacturer URDF/mesh assemblies. Their source hashes, licenses and conversion
 notes ship in `waddle_sdk/simulators/data/`; see `docs/python/simulation.md` in the
 source repository for profiles, native gripper mapping and engine validation.
+Reference worlds preserve state across runs unless
+`worlds.cell.options.reset_on_episode: true` explicitly requests rollout reset.
+World-owned arms do not independently home in the per-arm episode hook.

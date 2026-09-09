@@ -47,8 +47,12 @@ these same meshes and link transforms.
 The SDK's existing shared-world robot pump advances the reference world in fixed
 2 ms native steps. The pump runs at 500 Hz; the part's command declaration and
 owner limits remain at 50 Hz. The worker has no independent physics clock; sensors
-and robot state share the ordinary SDK lifecycle. Episode reset uses native state
-reset/snapshots, retaining the model and renderer. Actual real-time factor depends on
+and robot state share the ordinary SDK lifecycle. Runs preserve the physical scene
+by default; a new run holds the measured robot pose instead of homing it or resetting
+props. To start each rollout from the initial scene, explicitly set
+`worlds.cell.options.reset_on_episode: true` in `site.yaml`. That option uses native
+state reset/snapshots, retaining the model and renderer. Reopening a site always
+creates a fresh scene. Actual real-time factor depends on
 available compute and rendering load.
 Position servos, gravity compensation,
 friction and the primitive task props remain
@@ -110,8 +114,10 @@ segmentation, teleport, or task-completion operation is exposed through the runt
 
 Reference scenes implement the existing [shared-world contract](../porting/simulation.md).
 The ordinary `worlds.cell` declaration owns one lazy worker and exposes part/camera
-facets. `Site` opens it after authorization, resets the whole scene once per episode,
-and closes it after devices. Each opening gets independent physics state. Worker
+facets. `Site` opens it after authorization, calls its reset hook once per episode,
+and closes it after devices. The reference reset hook preserves state unless
+`reset_on_episode` is explicitly enabled; ordinary per-arm hooks never home it
+independently. Each opening gets independent physics state. Worker
 isolation keeps incompatible engine/Python runtimes out of the control process.
 
 These presets add coupled grippers and articulated objects beyond the generic URDF
