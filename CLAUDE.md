@@ -92,6 +92,9 @@ pitched 45 degrees down. This working pose lies in the overlap of forward and
 downward reach, away from the near-neutral pose's inner approach boundary.
 The SDK's distinct high bimanual test poses are not reference-scene homes.
 Physical devices retain their measured pose.
+New drawer sites use a front scene-camera view so the handle face is visible at
+home. Existing explicit camera transforms are preserved. Native RGB-D tests
+check the rendered handle front plane independently of the configured view.
 All three reference engines use 2 ms native substeps, independently of SDK
 control/camera rates. SAPIEN uses 2 mm per-shape robot contact margins to avoid
 thousands of speculative contacts between nearby convex finger pieces; native

@@ -254,6 +254,9 @@ def make_site(
         # View through the jaw gap, perpendicular to the closing axis.
         "wrist": look_at((-0.10, 0, -0.08), (0, 0, 0.07)).tolist(),
     }
+    if environment == "drawer":
+        # See the handle's front face instead of looking from behind the cabinet.
+        mounts["scene"] = look_at((-0.45, -0.55, 0.55), (0.4, 0, 0.2)).tolist()
     if robot == "yam":
         # I2RT's optical frame for the LINEAR_4310 D405 bracket, expressed
         # relative to the unchanged SDK TCP rather than the native hand frame.

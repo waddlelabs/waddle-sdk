@@ -624,6 +624,27 @@ def _native_conformance(
             engine.step()
 
     try:
+        if environment == "drawer":
+            # The reference view must expose the handle's front face, not just
+            # its top/side silhouette behind the cabinet. Verify rendered RGB-D
+            # against the physical front plane while the robot is at home.
+            camera = config["cameras"]["scene"]
+            t = np.array(camera["transform"])
+            intr = camera["intrinsics"]
+            point = np.linalg.inv(t) @ [0.491, 0.0, 0.14, 1.0]
+            u = round(intr["fx"] * point[0] / point[2] + intr["cx"])
+            v = round(intr["fy"] * point[1] / point[2] + intr["cy"])
+            rgb, depth = engine.capture("scene")
+            assert 0 <= u < rgb.shape[1] and 0 <= v < rgb.shape[0]
+            z = depth[v, u] * intr["depth_scale_mm"] / 1000
+            world = t @ [
+                z * (u - intr["cx"]) / intr["fx"],
+                z * (v - intr["cy"]) / intr["fy"],
+                z,
+                1.0,
+            ]
+            assert world[0] == pytest.approx(0.491, abs=0.004), world
+            assert min(rgb[v, u]) > 100, rgb[v, u]
         if environment == "two_cubes" and backend in {"mujoco", "sapien"}:
             # A uniform 60 g, 50 mm cube has I = m * side**2 / 6. Inspect
             # imported native bodies: setting mass alone can leave the inertia

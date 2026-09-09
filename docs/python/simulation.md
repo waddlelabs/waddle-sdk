@@ -92,6 +92,11 @@ does not specify a physical arm's resting configuration.
 The bottle sits to the side of this central region, and the cabinet's closed
 front sits beyond it, so neither prop intersects the starting hand. The drawer
 handle travels from x=0.503 m to x=0.283 m as it opens.
+New drawer sites place the scene camera in front of the cabinet, at
+`(-0.45, -0.55, 0.55)` m looking toward `(0.4, 0, 0.2)` m, so its handle face is
+visible at the reference home. The other scenes retain their overhead oblique
+view. Existing scene files retain their explicit camera transforms; updating a
+transform also requires regenerating calibration artifacts bound to that scene.
 SAPIEN's guided cap uses a force-limited velocity damper with a 0.001 N m
 budget and 1 N m s/rad damping, giving a viscous transition below 0.001 rad/s.
 No position servo holds that cap after release. Its native tests check retention

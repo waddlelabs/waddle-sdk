@@ -84,6 +84,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Place new reference drawer cameras in front of the cabinet so the handle face
+  is visible at the robot's home pose. Preserve existing scene configurations;
+  native RGB-D tests check the handle's actual front plane for both robot models.
+
 - Convert G2's 50 N jaw-force rating through its actual linkage to a 4.2039 N m
   native motor limit; the former 50 N m reference setting could grossly overload
   the hand. Retain MuJoCo's reference passive-link armature and joint-limit
