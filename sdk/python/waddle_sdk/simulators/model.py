@@ -94,7 +94,9 @@ def objects(environment: str) -> list[list[Link]]:
     if environment == "drawer":
         cabinet = Link(
             "cabinet",
-            xyz=(0.46, 0.0, 0.0),
+            # Keep the closed front clear of the robot's starting hand. The
+            # handle travels from x=.503 to .283 m as the drawer opens.
+            xyz=(0.66, 0.0, 0.0),
             shapes=[
                 Shape("box", (0.3, 0.32, 0.018), (0.02, 0.0, 0.009)),
                 Shape("box", (0.3, 0.018, 0.24), (0.02, -0.151, 0.12)),
@@ -136,7 +138,9 @@ def objects(environment: str) -> list[list[Link]]:
     # agent-accessible command that declares the task complete.
     bottle = Link(
         "bottle",
-        xyz=(0.34, 0.0, 0.085),
+        # Leave the central jog region clear; the cap remains on the tabletop
+        # within the robot's reach. Contacts use the normal engine solver.
+        xyz=(0.34, -0.16, 0.085),
         shapes=[
             Shape("cylinder", (0.033, 0.17), color=(0.1, 0.6, 0.35, 1.0)),
             Shape(

@@ -73,10 +73,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
-- Start reference YAM scenes near neutral home with an open hand, modest wrist
-  pitch and 0.1 rad shoulder/elbow clearance from their zero stops. The previous bimanual test pose
-  was too high and extended for an in-place downward orientation; exact zero could
-  settle just outside a compliant joint stop and refuse subsequent jog paths.
+- Place the reference YAM at a tabletop working pose with its TCP near
+  `(0.36, 0, 0.14)` m and the hand pitched 45 degrees down. The prior pose lay
+  near the inner boundary for horizontal approaches. The model and owner limits
+  are unchanged; physical adapters retain their measured configuration. Place
+  the bottle and cabinet clear of the starting hand and check native startup
+  contacts for both robot models in every reference scene.
 
 - Resume robot-pump cadence after a scheduling delay instead of replaying missed
   ticks under a newly issued target. Catch-up bursts after planning could advance

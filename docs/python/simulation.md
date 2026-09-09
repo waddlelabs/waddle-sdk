@@ -43,13 +43,15 @@ drives. This avoids the imported URDF tendon's contact oscillation, but approxim
 the physical transmission under asymmetric contact. The other engines retain native
 jaw coupling. No per-step contact forces or object attachments implement grasping.
 
-The YAM reference scene starts near the manufacturer's [neutral home](https://doc.i2rt.com/products/yam),
-with arm joints `(0, 0.1, 0.1, -0.3, 0, 0)` radians and its hand open. The shoulder
-and elbow stay 0.1 rad inside their zero stops: native compliant joint limits can
-otherwise settle slightly outside the declared range and prevent the next jog.
-The modest wrist pitch keeps the tool in a working region where it can turn down
-without changing its tip position. This is a reference working pose, not a
-measurement of a physical arm's resting position.
+The YAM reference scene starts with its TCP near `(0.36, 0, 0.14)` m and the open
+hand pitched 45 degrees down. This lies in the overlap of the model's forward and
+downward reach, with room for nearby tabletop motion. The previous near-neutral
+pose sat at the inner boundary for forward approaches. This is a reference
+working pose; the manufacturer's model and joint limits are unchanged, and it
+does not specify a physical arm's resting configuration.
+The bottle sits to the side of this central region, and the cabinet's closed
+front sits beyond it, so neither prop intersects the starting hand. The drawer
+handle travels from x=0.503 m to x=0.283 m as it opens.
 The SDK's distinct high bimanual test poses are not used as reference-scene homes.
 Opening or explicitly resetting a world establishes
 this pose. Ordinary run boundaries preserve the current pose. Camera calibration

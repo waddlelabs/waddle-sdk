@@ -81,6 +81,18 @@ def test_yam_fk_matches_live_adapter_at_multiple_configurations():
         np.testing.assert_allclose(pose[:3, :3], expected_rot, atol=1e-9)
 
 
+def test_yam_reference_home_is_in_the_tabletop_working_region():
+    p = profile("yam")
+    position, orientation = yam.forward_kinematics(p.home[:-1])
+    assert 0.34 < position[0] < 0.38
+    assert abs(position[1]) < 0.02
+    assert 0.13 < position[2] < 0.15
+    assert orientation[0, 2] > 0.5 and orientation[2, 2] < -0.5
+    assert all(
+        lo < q < hi for q, (lo, hi) in zip(p.home[:-1], p.limits[:-1], strict=True)
+    )
+
+
 @pytest.mark.parametrize("robot", ROBOTS)
 def test_manufacturer_assets_are_complete_and_hash_bound(robot):
     root = Path(str(files("waddle_sdk.simulators").joinpath("data")))
@@ -247,6 +259,16 @@ def _native_conformance(tmp_path, backend, robot, environment):
 
     try:
         if backend == "mujoco":
+            robot_bodies = {link.name for link in description(robot).links}
+            # Reference scenes must start without the hand embedded in a prop.
+            # Check native contacts, independently of the layout declarations.
+            for contact in engine.data.contact:
+                bodies = [
+                    engine.model.body(engine.model.geom(int(g)).bodyid[0]).name
+                    for g in contact.geom
+                ]
+                if (bodies[0] in robot_bodies) != (bodies[1] in robot_bodies):
+                    assert contact.dist >= 0, (bodies, contact.dist)
             # Check the compiled engine model, not just the source URDF: the
             # exporter must retain COM and the complete non-diagonal inertia.
             for link in description(robot).links:
