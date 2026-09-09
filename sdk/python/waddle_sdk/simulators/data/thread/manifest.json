@@ -372,6 +372,61 @@
     "nut-6.stl": "08bfbf189cfe752c37ab56b1c9f9318ffea8e2a65a56fb1c468ad1247bb7379c",
     "nut-7.stl": "eba044eb57cc37504e61fa481d8d3f1dc2055452e0e484e4c1c24314e2e77666",
     "nut-8.stl": "6fb0260781720308955c6a453a14af7137ac6e6b429f4e01bde3c2e9d26cca7b",
-    "nut-9.stl": "185112796efc908882cef564f15474c63bbc1d48d8826cf66ea42060511611c9"
+    "nut-9.stl": "185112796efc908882cef564f15474c63bbc1d48d8826cf66ea42060511611c9",
+    "nut-physx.stl": "5ed4bc5f164d8b2c2c37bb4d96514e3079e83c77a18af12b3ad18530ca5dad83",
+    "bolt-physx.stl": "0dcabdabe7e8a34082b0edbf3cd52876df118f8fa98d10a4fea8d569ae6dd992"
+  },
+  "physx_geometry": {
+    "source": "MuJoCo 3.11.0 first-party SDFs; uniform scale 0.05, nut radius 0.26, bolt radius 0.255",
+    "sampling": {
+      "method": "Lewiner marching cubes",
+      "scikit_image": "0.26.0",
+      "spacing_m": 0.00015
+    },
+    "simplification": {
+      "manifold3d": "3.5.3",
+      "tolerance_m": 2.5e-05
+    },
+    "cleanup": {
+      "pymeshlab": "2025.7.post1",
+      "steps": [
+        "remove T vertices with edge flips",
+        "remove T vertices with edge collapse, aspect threshold 1e6",
+        "remove unreferenced vertices"
+      ],
+      "precision": "float32"
+    },
+    "native_sdf": {
+      "spacing_m": 0.000223856875,
+      "subgrid_size": 6
+    },
+    "geometry": {
+      "nut": {
+        "vertices": 12201,
+        "faces": 24402,
+        "watertight": true,
+        "winding_consistent": true,
+        "volume_m3": 3.8021702559636106e-05,
+        "zero_area_faces": 0,
+        "duplicate_faces": 0,
+        "max_sample_sdf_error_m": 0.0001000006993611663,
+        "sample_sdf_error_p99_m": 4.4845251451255815e-05,
+        "samples": 36603,
+        "sha256": "5ed4bc5f164d8b2c2c37bb4d96514e3079e83c77a18af12b3ad18530ca5dad83"
+      },
+      "bolt": {
+        "vertices": 12518,
+        "faces": 25032,
+        "watertight": true,
+        "winding_consistent": true,
+        "volume_m3": 6.837656805845432e-05,
+        "zero_area_faces": 0,
+        "duplicate_faces": 0,
+        "max_sample_sdf_error_m": 0.00016711304585139143,
+        "sample_sdf_error_p99_m": 4.539291063944684e-05,
+        "samples": 37550,
+        "sha256": "0dcabdabe7e8a34082b0edbf3cd52876df118f8fa98d10a4fea8d569ae6dd992"
+      }
+    }
   }
 }

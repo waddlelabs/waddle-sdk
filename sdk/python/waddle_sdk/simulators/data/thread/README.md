@@ -1,4 +1,4 @@
-# Native MuJoCo bottle-cap geometry
+# Native bottle-cap geometry
 
 The cap is a 25 g free rigid body throughout the simulation. MuJoCo's installed
 first-party nut/bolt SDFs supply thread contact; `metric_thread.cc` forwards their
@@ -44,5 +44,25 @@ plugin API and contains no copied thread formula.
 - https://github.com/google-deepmind/mujoco/blob/3.11.0/model/plugin/sdf/nutbolt.xml
 - https://mujoco.readthedocs.io/en/stable/programming/extension.html
 
-SAPIEN/Isaac reference caps currently retain their finite guided model; this
-MuJoCo asset does not establish free removal on those backends.
+SAPIEN uses `nut-physx.stl` and `bolt-physx.stl` for native GPU PhysX contact.
+These higher-resolution surfaces are sampled from the same first-party SDFs
+with 0.15 mm spacing using scikit-image's Lewiner marching cubes, simplified
+with Manifold's 0.025 mm tolerance, and cleaned with MeshLab's T-vertex filters.
+Their final float32 topology is watertight with no duplicate or zero-area faces;
+the manifest records versions, parameters and hashes. The original coarse
+visualization meshes are inadequate for this small thread clearance.
+
+Rebuild the PhysX surfaces separately with the versions above and NumPy 2.5.3:
+
+```bash
+PYTHONPATH=sdk/python python tools/vendor_physx_thread_model.py --output /tmp/physx-thread-assets
+```
+
+The generator calls the installed native SDF in a temporary C++ sampler. It
+contains no thread formula and reproduces both packaged STL hashes. Inspect
+the output before omitting `--output` to update the packaged surfaces and manifest.
+
+The PhysX assembly reads its poses, roof, mass, COM and inertia from `cap.xml`.
+SAPIEN's native mesh loader/cooker consumes the packaged surfaces; its worker
+does not need MuJoCo or a compiler. Isaac still retains its finite guided model.
+The GPU fixture does not itself establish workspace or agent task acceptance.

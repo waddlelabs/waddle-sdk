@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import logging
 import math
 import sys
 import tempfile
@@ -31,24 +32,44 @@ def serve(connection: Connection) -> None:
             real_time = config.get("_real_time", False)
             last_time = time.monotonic()
 
-            def advance(duration):
+            def advance(duration, deadline=None):
                 nonlocal pending_time
                 pending_time += duration
                 steps = math.floor(pending_time / dt + 1e-10)
-                for _ in range(steps):
+                for index in range(steps):
                     engine.step()
+                    if (
+                        deadline is not None
+                        and index + 1 < steps
+                        and time.monotonic() >= deadline
+                    ):
+                        # Drop wall-clock lag, never enlarge a native step or
+                        # replay the next command over an unfinished backlog.
+                        pending_time = 0.0
+                        return False
                 pending_time = max(0.0, pending_time - steps * dt)
+                return True
 
+            warned_slow = False
             while True:
                 operation, arguments = connection.recv()
                 if real_time:
                     # Advance the OLD targets up to this request before reading
                     # state or installing a new target. Render/IPC delays must
-                    # neither discard elapsed physics nor replay new commands
-                    # into the past. The engine always retains its fixed dt.
+                    # not replay new commands into the past. Bound catch-up work
+                    # to 20 ms (plus one native step), so sustained overload
+                    # slows simulation instead of starving controls/sensors.
+                    # Explicit rollouts retain their full requested duration.
                     now = time.monotonic()
-                    advance(now - last_time)
-                    last_time = now
+                    caught_up = advance(now - last_time, deadline=now + 0.02)
+                    last_time = now if caught_up else time.monotonic()
+                    if not caught_up and not warned_slow:
+                        logging.getLogger(__name__).warning(
+                            "Physics cannot keep up with real time; dropping "
+                            "wall-clock lag while retaining fixed native steps. "
+                            "Motion and camera throughput may be slower."
+                        )
+                        warned_slow = True
                 if operation == "close":
                     engine.hold()
                     connection.send((True, None))

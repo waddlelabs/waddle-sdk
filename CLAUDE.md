@@ -68,9 +68,14 @@ The 60 g, 50 mm cubes declare uniform-body inertia. Single-body SAPIEN props
 use the same URDF inertial importer as articulations; static scenery omits
 dynamic inertials. Native tests inspect cube mass and inertia after import.
 Single-body props set their initial pose on the builder before scene insertion;
-GPU PhysX ignores later actor pose setters. An optional placement regression uses
-`WADDLE_SAPIEN_GPU_TEST_PYTHON` with SAPIEN, CUDA-enabled Torch and pytest. It checks
-native GPU state after insertion without claiming GPU workspace support.
+GPU PhysX ignores later actor pose setters. SAPIEN's bottle scene uses native GPU
+physics through `simulators/sapien_gpu.py`; cubes/drawers retain CPU physics.
+The `sapien-gpu` extra adds Torch for native CUDA state buffers. GPU initialization
+precedes home/state writes; episode reset restores free-body and joint state,
+and rendering synchronizes native poses. Native velocities are preserved.
+The operator prepares SAPIEN's matching GPU library before opening a site;
+worker startup checks its presence to prevent implicit downloads.
+`WADDLE_SAPIEN_GPU_TEST_PYTHON` selects the optional CUDA/SAPIEN/Torch test worker.
 MuJoCo distributes the single hand motor through Menagerie's fixed tendon,
 splitting its gain/force/inertia budget between the opposing drive joints.
 The G2 force rating is converted from 50 N at the jaws to a constant 4.2039 N m
@@ -94,10 +99,15 @@ directory; `CXX` selects a compiler, and other environments do not compile it.
 No runtime downloads, installed-library overwrites, object attachments or
 constraint-switching callbacks are used. Native cap tests check axial-load
 retention, pitch, natural exit and free-body motion. `tools/vendor_thread_model.py`
-rebuilds its hash-bound CoACD collision surfaces. SAPIEN/Isaac retain the finite
-5 mm/turn guide for now; free removal there is not implemented. SAPIEN's native
-zero-stiffness damper uses a 0.001 N m torque limit and 1 N m s/rad damping.
-Guided-cap tests retain their released-progress and bidirectional-turn checks.
+rebuilds its hash-bound CoACD collision surfaces. SAPIEN uses higher-resolution
+offline meshes of the same SDFs with native GPU PhysX contact, retaining the
+cap.xml mass, inertia, roof and poses. Its cap is free throughout; GPU reset,
+axial retention and natural exit require native checks. Isaac still uses the
+finite 5 mm/turn guide; free removal there is not implemented. Its guided-cap
+tests retain their released-progress and bidirectional-turn checks.
+`tools/vendor_physx_thread_model.py` reproducibly rebuilds the PhysX surfaces
+using native SDF sampling, Lewiner marching cubes, Manifold and MeshLab;
+generation dependencies and versions are separate from the worker installation.
 These reference props are not calibrated hardware friction models.
 Reference YAM worlds start with TCP near `(0.36, 0, 0.14)` m and the open hand
 pitched 45 degrees down. This working pose lies in the overlap of forward and
@@ -117,8 +127,12 @@ at this step, not replaced by fabricated stationary values.
 Known trajectory velocities use the existing optional driver port. Position-only
 commands and holds clear those velocity targets. Reference workers default to
 real-time physics: before each read/write/capture request they integrate elapsed
-monotonic time under the previous target in fixed native substeps. This avoids both
-dropped time under rendering load and retroactively applying a new command.
+monotonic time under the previous target in fixed native substeps. Catch-up work
+has a 20 ms wall budget, checked between native steps. On overload the worker
+discards remaining wall-clock lag and rebases its clock before accepting a new
+target; it warns once that physics is slower than real time. Native timesteps,
+forces and measured velocities do not change. Explicit rollouts execute every
+requested substep. This prevents sustained slow physics from starving the pipe.
 The shared worker connection prioritizes queued state/control requests over
 queued captures, with FIFO ordering within each group. Real-time SDK pump ticks
 send no additional clock request; explicit-step rollouts retain their clock calls.

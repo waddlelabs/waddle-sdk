@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
 
 from .description import description
-from .model import SCREW_PITCH, SCREW_RESISTANCE, objects, robot_links, urdf
+from .model import objects, robot_links, urdf
 from .scene import depth_z16, profile, quaternion, rotation
 
 
@@ -20,7 +21,18 @@ class Engine:
         self.config = config
         self.profile = p = profile(config["robot"])
         self.description = robot = description(p.name)
-        self.scene = sapien.Scene()
+        self.gpu = None
+        if config["environment"] == "bottle_cap":
+            from .sapien_gpu import State
+
+            # PhysX 5.3 SDF contacts require GPU physics. Other reference
+            # scenes retain their CPU simulation and installation footprint.
+            self.gpu = State()
+        self.scene = (
+            sapien.Scene([self.gpu.physics, sapien.render.RenderSystem()])
+            if self.gpu
+            else sapien.Scene()
+        )
         self.scene.set_timestep(config["timestep"])
         self.scene.set_ambient_light([0.18, 0.20, 0.24])
         quality = config.get("render_quality", "standard")
@@ -66,20 +78,28 @@ class Engine:
             drive.set_limit_y(0, 0)
             drive.set_limit_z(0, 0)
             self.drives.append(drive)
-        self.home(p.home)
-        self.props = [
-            self._load(group, group[0].name, scratch)
-            for group in objects(config["environment"])
-        ]
+        groups = objects(config["environment"])
+        if self.gpu:
+            # Retain the fixture body; native thread contact replaces its
+            # old neck and finite twist/lift guide.
+            bottle = groups[1][0]
+            groups[1] = [replace(bottle, shapes=bottle.shapes[:1])]
+        self.props = [self._load(group, group[0].name, scratch) for group in groups]
+        if self.gpu:
+            from .thread import append_sapien
+
+            self.props.extend(append_sapien(self.scene))
         # A centimetre contact margin creates thousands of speculative pairs
         # between the small convex finger pieces as the hand closes. At 2 ms
         # substeps, a 2 mm per-shape margin covers reference motion while
         # keeping contact generation local. Preserve the native rest offsets.
         for body in self.robot.get_links():
+            if self.gpu:
+                # The hardware supplies gravity compensation; match Isaac's
+                # native per-link setting without altering prop gravity.
+                body.disable_gravity = True
             for shape in body.collision_shapes:
                 shape.contact_offset = 0.002
-        self._screw = self.props[-1] if config["environment"] == "bottle_cap" else None
-        self._initial_state = self.scene.get_physx_system().pack()
         self.cameras = {}
         for name, row in config["cameras"].items():
             intr, stream = row["intrinsics"], row["stream"]
@@ -90,6 +110,13 @@ class Engine:
                 0.01, 10.0, intr["fx"], intr["fy"], intr["cx"], intr["cy"], 0.0
             )
             self.cameras[name] = camera
+        if self.gpu:
+            self.gpu.initialize(self.robot)
+        self.home(p.home)
+        if self.gpu:
+            self.gpu.save()
+        else:
+            self._initial_state = self.scene.get_physx_system().pack()
 
     def _load(self, links, name, scratch):
         path = scratch / f"{name}.urdf"
@@ -136,36 +163,7 @@ class Engine:
                 else builder.build_static(name=name)
             )
             return result
-        if name == "bottle":
-            # A helical thread couples metres to radians. Use the native
-            # tendon with work-conjugate force coefficients, rather than
-            # the URDF loader's inverse-ratio mimic-force convention.
-            builders, _, _ = loader.parse(str(path))
-            entities = builders[0].build_entities(fix_root_link=True)
-            chain = [
-                entity.find_component_by_type(
-                    self.sp.physx.PhysxArticulationLinkComponent
-                )
-                for entity in entities
-            ]
-            result = chain[0].articulation
-            coefficients = [0, 1, -SCREW_PITCH]
-            result.create_fixed_tendon(
-                chain, coefficients, coefficients, stiffness=5000, damping=20
-            )
-            for entity in entities:
-                self.scene.add_entity(entity)
-            for joint in result.get_active_joints():
-                joint.set_friction(0.0)
-                if joint.name == "cap_rotation":
-                    # SAPIEN 3 exposes legacy load-dependent friction, not
-                    # PhysX's newer per-axis friction effort. A native zero-
-                    # stiffness, zero-velocity drive models passive resistance
-                    # with the same torque budget as MuJoCo. The 1 N m s/rad
-                    # damper saturates at 0.001 rad/s; it never holds an angle.
-                    joint.set_drive_properties(0.0, 1.0, force_limit=SCREW_RESISTANCE)
-        else:
-            result = loader.load(str(path))
+        result = loader.load(str(path))
         if result is None:
             raise RuntimeError(f"SAPIEN could not load {name}")
         result.set_root_pose(
@@ -190,7 +188,11 @@ class Engine:
         return values
 
     def read(self):
-        q, dq = self.robot.get_qpos(), self.robot.get_qvel()
+        q, dq = (
+            self.gpu.read()
+            if self.gpu
+            else (self.robot.get_qpos(), self.robot.get_qvel())
+        )
         hand, speed = self.description.hand_state(
             float(q[self.finger_indices[0]]),
             float(dq[self.finger_indices[0]]),
@@ -204,6 +206,11 @@ class Engine:
             if velocity is None
             else np.asarray(velocity[:-1])
         )
+        if self.gpu:
+            native_velocity = np.zeros(len(self.order))
+            native_velocity[self.arm_indices] = self._velocity
+            self.gpu.write(self._requested, native_velocity)
+            return
         for i, name in enumerate(self.profile.names[:-1]):
             self.joints[name].set_drive_velocity_target(float(self._velocity[i]))
         for name, joint in self.joints.items():
@@ -213,25 +220,34 @@ class Engine:
         self.write(self.read()[0])
 
     def home(self, q):
-        self.robot.set_qpos(self._expand(q))
-        self.robot.set_qvel(np.zeros(len(self.order)))
+        if self.gpu:
+            self.gpu.home(self._expand(q))
+        else:
+            self.robot.set_qpos(self._expand(q))
+            self.robot.set_qvel(np.zeros(len(self.order)))
         self.write(q)
         return True
 
     def step(self):
-        self.robot.set_qf(
-            self.robot.compute_passive_force(
-                gravity=True, coriolis_and_centrifugal=False
+        if not self.gpu:
+            self.robot.set_qf(
+                self.robot.compute_passive_force(
+                    gravity=True, coriolis_and_centrifugal=False
+                )
             )
-        )
         self.scene.step()
 
     def reset(self):
-        self.scene.get_physx_system().unpack(self._initial_state)
+        if self.gpu:
+            self.gpu.reset()
+        else:
+            self.scene.get_physx_system().unpack(self._initial_state)
         self.write(self.profile.home)
         return True
 
     def capture(self, name):
+        if self.gpu:
+            self.gpu.sync()
         row = self.config["cameras"][name]
         matrix = np.asarray(row["transform"])
         if row["mount"]["kind"] == "wrist":
@@ -251,6 +267,8 @@ class Engine:
         return rgb, depth_z16(depth, row["intrinsics"]["depth_scale_mm"])
 
     def native_tcp(self):
+        if self.gpu:
+            self.gpu.sync()
         pose = (
             next(link for link in self.robot.get_links() if link.name == "tcp")
             .get_entity_pose()
@@ -263,4 +281,5 @@ class Engine:
         self.drives.clear()
         self.props.clear()
         self.robot = None
+        self.gpu = None
         self.scene = None

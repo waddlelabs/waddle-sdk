@@ -14,7 +14,7 @@ capability facts; importing a simulator does not establish sensor or motion supp
 | --- | --- | --- |
 | `mujoco` | Native URDF import, MuJoCo position drives and RGB-D | `pip install 'waddle-sdk[mujoco]'` |
 | `isaac` | NVIDIA USD/PhysX and RTX rendering | Separate Isaac Sim 6.0.1 Python 3.12 installation; pass its interpreter as `worker_python` |
-| `sapien` | PhysX manipulation and Vulkan RGB-D; a foundation for ManiSkill assets | `pip install 'waddle-sdk[sapien]'` on a supported platform |
+| `sapien` | PhysX manipulation and Vulkan RGB-D; a foundation for ManiSkill assets | `pip install 'waddle-sdk[sapien]'`; bottle scenes require `waddle-sdk[sapien-gpu]` and CUDA |
 
 MuJoCo and SAPIEN can run headlessly with working EGL/Vulkan drivers. The worker
 currently requires POSIX. Isaac has its own GPU, driver, Python, and license
@@ -28,22 +28,27 @@ the activated importer extension; a separately installed version alone does not
 prove which bundled module Kit loads. These are upstream dependency fixes,
 documented in the [converter changelog](https://github.com/newton-physics/urdf-usd-converter/blob/v0.3.3/CHANGELOG.md).
 
-The SAPIEN reference workspace currently uses CPU physics. Its shared prop
-importer also has an optional GPU placement regression: set
-`WADDLE_SAPIEN_GPU_TEST_PYTHON` to a Python environment with SAPIEN 3, CUDA-enabled
-Torch and pytest, then run `python -m pytest tests/test_simulation.py -k native_sapien_gpu_prop_placement`
-from `sdk/`. It checks actual native body positions after scene insertion; it
-does not establish GPU workspace or manipulation support.
+SAPIEN uses CPU physics for cubes and drawers. Bottle scenes select GPU physics
+because PhysX 5.3 requires it for native SDF contact. Install `waddle-sdk[sapien-gpu]`
+in that scene's worker interpreter; the extra adds Torch for CUDA state buffers.
+Prepare SAPIEN's native GPU library once in that environment with
+`python -c 'import sapien; sapien.physx.enable_gpu()'`; that explicit setup command
+downloads SAPIEN's matching library if absent. Opening a workspace requires the
+library to be present and never performs that download. This has a larger
+installation and GPU-memory footprint than the CPU scenes. No extra SDK control
+or camera API is needed. For native GPU tests, set `WADDLE_SAPIEN_GPU_TEST_PYTHON`
+to that interpreter with pytest installed. An available CUDA device is required;
+missing support raises a startup error instead of substituting a guided cap.
 
 Each engine accepts `yam` or `xarm7` and these environments:
 
 - `two_cubes`: two free 60 g, 50 mm rigid cubes on a table, with frictional
   grasp contacts and the inertia of a uniform solid cube.
-- `bottle_cap`: a fixed bottle fixture and a passive cap. MuJoCo uses native
+- `bottle_cap`: a fixed bottle fixture and a passive cap. MuJoCo and SAPIEN use native
   thread contact with a 25 g free cap and 4.166667 mm/revolution pitch; the cap
-  can leave the thread. SAPIEN/Isaac currently use a finite rotation/axial guide
+  can leave the thread. Isaac currently uses a finite rotation/axial guide
   with 5 mm/revolution pitch and three turns of travel; free removal on those
-  backends is not yet implemented.
+  backend is not yet implemented.
 - `drawer`: a fixed cabinet and a physical drawer with 220 mm of passive travel
   and 5 N·s/m native joint damping. The damping dissipates a pull after release;
   there is no spring returning the drawer to its starting position.
@@ -58,6 +63,12 @@ Each bottle-cap worker compiles the wrapper against its own installed MuJoCo
 headers/library in a private temporary directory, then loads it through the
 native plugin API. This adds compilation to worker startup; it does not download
 assets or overwrite an installation. Cube and drawer workers do not compile it.
+
+SAPIEN imports packaged high-resolution meshes of the same first-party SDFs
+through PhysX's native mesh cooker. Its cap, roof, mass, center of mass and inertia
+use the same assembly as MuJoCo. Native contact supplies the thread coupling;
+the cap has no guide or attachment. This path needs neither MuJoCo nor a compiler
+in the worker. GPU episode reset restores both joint and free-body state.
 
 The reference robot models preserve the live adapters' joint names, order, limits,
 radian units, FK, and normalized hand action (0 closed, 1 open). YAM uses the SDK's
@@ -114,12 +125,9 @@ New drawer sites place the scene camera in front of the cabinet, at
 visible at the reference home. The other scenes retain their overhead oblique
 view. Existing scene files retain their explicit camera transforms; updating a
 transform also requires regenerating calibration artifacts bound to that scene.
-SAPIEN's guided cap uses a force-limited velocity damper with a 0.001 N m
-budget and 1 N m s/rad damping, giving a viscous transition below 0.001 rad/s.
-No position servo holds that cap after release. Its native tests check retention
-away from an end stop and continued turning in either direction. MuJoCo's
-separate free-cap tests check axial-load retention, thread pitch, natural exit,
-and subsequent free-body motion.
+Free-cap tests check axial-load retention, thread pitch, natural exit, and
+subsequent free-body motion. Isaac's remaining guided-cap tests check retention
+away from an end stop and continued turning in either direction.
 The SDK's distinct high bimanual test poses are not used as reference-scene homes.
 Opening or explicitly resetting a world establishes
 this pose. Ordinary run boundaries preserve the current pose. Camera calibration
@@ -129,7 +137,8 @@ Sources, licenses, conversion steps and SHA-256 hashes ship in
 `waddle_sdk/simulators/data/`. `tools/vendor_simulation_models.py` rebuilds those
 assets from pinned public manufacturer revisions. No model is downloaded at site
 startup. `tools/vendor_thread_model.py` rebuilds the native thread collision
-assets from the installed first-party SDFs; its data README records versions and
+assets from the installed first-party SDFs; `tools/vendor_physx_thread_model.py`
+rebuilds the finer PhysX surfaces. The data README records versions and
 reproduction. The reference collision spheres are conservative covers derived from
 these same meshes and link transforms.
 
@@ -142,9 +151,15 @@ thousands of distant candidate contacts. This changes contact generation distanc
 not the meshes, resting separation, exclusions or material friction. The worker
 advances fixed
 native substeps up to each request's monotonic arrival time **before** reading
-state or changing a target. Rendering and IPC delays therefore preserve elapsed
-physics under the previous target; a new command is never applied retroactively.
-Fractional substeps carry between requests. State reporting uses the ordinary SDK
+state or changing a target. Rendering and IPC delays advance physics under the
+previous target; a new command is never applied retroactively. Catch-up work has
+a 20 ms wall-time budget, checked between native steps. If physics cannot keep up,
+the worker discards remaining wall-clock lag and warns once, so controls and
+sensors keep responding while simulated motion runs slower than real time.
+This follows [PhysX's overload guidance](https://nvidia-omniverse.github.io/PhysX/physx/5.7.0/docs/BestPractices.html#the-well-of-despair).
+Native timesteps, forces and measured velocities are preserved. Explicit rollouts
+execute every requested substep without this budget. Fractional substeps carry
+between requests unless overload rebases the clock. State reporting uses the ordinary SDK
 pump at twice the declared control rate, with a 100 Hz floor. New scenes use the physical SDK control defaults: YAM 10 Hz, xArm7 50 Hz,
 and 1 rad/s joint speed for both. Explicit site settings remain authoritative. Available compute still bounds achievable throughput.
 Queued state/control requests take priority over queued camera captures, retaining

@@ -47,6 +47,10 @@ alicia-d = [
 ]
 mujoco = ["mujoco>=3.5,<4"]
 sapien = ["sapien>=3.0,<4; python_version < '3.13'"]
+sapien-gpu = [
+    "sapien>=3.0,<4; python_version < '3.13'",
+    "torch>=2.5,<3; python_version < '3.13'",
+]
 cameras = ["pyorbbecsdk2", "pyrealsense2", "opencv-python-headless>=4.8"]
 robots = [
     "xarm-python-sdk>=1.16",

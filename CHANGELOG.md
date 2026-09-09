@@ -19,7 +19,7 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   A C++17 compiler is required only when opening a MuJoCo bottle-cap scene;
   compilation uses a private temporary directory and the installed native API.
   Include an offline asset rebuild tool and native axial-retention/free-exit tests.
-  SAPIEN/Isaac caps retain their finite guides pending equivalent native support.
+  Isaac caps retain their finite guides pending equivalent native support.
 
 - Reference scene `render_quality` presets (`fast`, `standard`, `high`) using
   native renderer settings without changing robot, physics, or camera contracts.
@@ -83,6 +83,15 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   the existing runtime remains lazy behind the `[mujoco]` extra.
 
 ### Fixed
+
+- Bound real-time worker catch-up work while retaining fixed native timesteps.
+  Slow physics now warns and discards wall-clock lag instead of accumulating
+  an unbounded backlog that disconnects controls and cameras. Explicit rollouts
+  still execute their complete requested duration.
+- Replace SAPIEN's finite bottle-cap guide with a free rigid cap using packaged
+  first-party thread surfaces and native GPU PhysX contact. Add optional CUDA
+  worker state handling and the `sapien-gpu` extra; preserve ordinary SDK
+  control, camera and reset contracts. Cube and drawer scenes retain CPU physics.
 
 - Initialize SAPIEN reference prop poses before scene insertion so GPU PhysX
   retains the declared placement. Add a native GPU regression that detects

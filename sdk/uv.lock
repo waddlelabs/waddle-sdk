@@ -3092,7 +3092,8 @@ dependencies = [
     { name = "filelock" },
     { name = "fsspec" },
     { name = "jinja2" },
-    { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" } },
+    { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "nvidia-cudnn-cu13", marker = "sys_platform == 'linux'" },
     { name = "nvidia-cusparselt-cu13", marker = "sys_platform == 'linux'" },
     { name = "nvidia-nccl-cu13", marker = "sys_platform == 'linux'" },
@@ -3264,6 +3265,10 @@ robots = [
 sapien = [
     { name = "sapien", marker = "python_full_version < '3.13'" },
 ]
+sapien-gpu = [
+    { name = "sapien", marker = "python_full_version < '3.13'" },
+    { name = "torch", marker = "python_full_version < '3.13'" },
+]
 usb = [
     { name = "opencv-python-headless" },
 ]
@@ -3297,16 +3302,18 @@ requires-dist = [
     { name = "pyrealsense2", marker = "extra == 'realsense'" },
     { name = "pyyaml", specifier = ">=6,<7" },
     { name = "sapien", marker = "python_full_version < '3.13' and extra == 'sapien'", specifier = ">=3.0,<4" },
+    { name = "sapien", marker = "python_full_version < '3.13' and extra == 'sapien-gpu'", specifier = ">=3.0,<4" },
     { name = "synria-robocore", marker = "python_full_version >= '3.11' and extra == 'alicia'", specifier = ">=2.5.0rc3,<3" },
     { name = "synria-robocore", marker = "python_full_version >= '3.11' and extra == 'robots'", specifier = ">=2.5.0rc3,<3" },
     { name = "synriard", marker = "python_full_version >= '3.11' and extra == 'alicia'", specifier = ">=1.2.2" },
     { name = "synriard", marker = "python_full_version >= '3.11' and extra == 'alicia-d'", specifier = ">=1.2.2" },
     { name = "synriard", marker = "python_full_version >= '3.11' and extra == 'robots'", specifier = ">=1.2.2" },
+    { name = "torch", marker = "python_full_version < '3.13' and extra == 'sapien-gpu'", specifier = ">=2.5,<3" },
     { name = "waddle-sdk-media", marker = "extra == 'media'", directory = "media" },
     { name = "xarm-python-sdk", marker = "extra == 'robots'", specifier = ">=1.16" },
     { name = "xarm-python-sdk", marker = "extra == 'xarm'", specifier = ">=1.16" },
 ]
-provides-extras = ["alicia", "alicia-d", "cameras", "media", "mujoco", "orbbec", "realsense", "robots", "sapien", "usb", "xarm"]
+provides-extras = ["alicia", "alicia-d", "cameras", "media", "mujoco", "orbbec", "realsense", "robots", "sapien", "sapien-gpu", "usb", "xarm"]
 
 [package.metadata.requires-dev]
 dev = [

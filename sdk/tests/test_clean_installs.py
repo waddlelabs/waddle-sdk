@@ -163,7 +163,15 @@ def wheelhouse(tmp_path_factory: pytest.TempPathFactory) -> Path:
         directory,
         "sapien",
         "3.0.3",
-        files={"sapien/__init__.py": b'raise RuntimeError("sapien must remain lazy")\n'},
+        files={
+            "sapien/__init__.py": b'raise RuntimeError("sapien must remain lazy")\n'
+        },
+    )
+    _build_wheel(
+        directory,
+        "torch",
+        "2.5.0",
+        files={"torch/__init__.py": b'raise RuntimeError("torch must remain lazy")\n'},
     )
     _build_wheel(
         directory,
@@ -244,6 +252,7 @@ CASES = (
     ("usb", "usb", frozenset({"opencv-python-headless"})),
     ("mujoco", "mujoco", frozenset({"mujoco"})),
     ("sapien", "sapien", frozenset({"sapien"})),
+    ("sapien-gpu", "sapien-gpu", frozenset({"sapien", "torch"})),
     ("xarm", "xarm", frozenset({"xarm-python-sdk"})),
     (
         "alicia",
@@ -345,6 +354,7 @@ from waddle_sdk.cameras import mock, orbbec, realsense, usb
 from waddle_sdk.robots import alicia, alicia_d, mujoco
 from waddle_sdk.robots import xarm as xarm_adapter
 from waddle_sdk.simulation import SimulationBackend, WorldConfig
+from waddle_sdk.simulators import sapien as sapien_adapter, sapien_gpu
 
 names = {
     dist.metadata["Name"].lower()
@@ -367,7 +377,7 @@ print(json.dumps({
     "simulation_contract": [SimulationBackend.__name__, WorldConfig.__name__],
     "vendor_modules": sorted(
         name for name in sys.modules
-        if name in {"alicia_d_sdk", "alicia_m_sdk", "cv2", "mujoco", "pyorbbecsdk", "pyrealsense2", "xarm"}
+        if name in {"alicia_d_sdk", "alicia_m_sdk", "cv2", "mujoco", "pyorbbecsdk", "pyrealsense2", "sapien", "torch", "xarm"}
     ),
 }))
 """
@@ -384,7 +394,7 @@ print(json.dumps({
         effective_optional -= PYTHON_311_ONLY
 
     if sys.version_info >= (3, 13):
-        effective_optional -= {"sapien"}
+        effective_optional -= {"sapien", "torch"}
 
     expected = {"waddle-sdk", "numpy", *effective_optional}
     assert expected <= set(result["names"])
@@ -393,6 +403,7 @@ print(json.dumps({
             "opencv-python-headless",
             "mujoco",
             "sapien",
+            "torch",
             "pyorbbecsdk2",
             "pyrealsense2",
             "waddle-sdk-media",
