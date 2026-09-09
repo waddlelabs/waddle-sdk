@@ -38,6 +38,10 @@ units must describe the rendered pixels.
 Reference YAM worlds start with TCP near `(0.36, 0, 0.14)` m and the open hand
 pitched 45 degrees down, in the overlap of forward and downward reach.
 Opening/reset establishes that start; a new run preserves the current scene.
+`make_site(..., render_quality="fast" | "standard" | "high")` selects native
+renderer detail independently of camera resolution and physics. Missing quality
+in older reference scenes means `standard`. Higher quality can reduce throughput;
+MuJoCo/SAPIEN remain raster renderers, while Isaac high uses path tracing.
 
 Reference workers advance elapsed real time in fixed substeps before each request,
 using the previous target. Slow capture/IPC therefore cannot drop physics time or

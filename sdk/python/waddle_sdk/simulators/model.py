@@ -275,6 +275,14 @@ def mjcf(p: Profile, config: dict) -> str:
         root, "option", timestep=str(config["timestep"]), integrator="implicitfast"
     )
     visual = ET.SubElement(root, "visual")
+    samples, shadow_size = {
+        "fast": (0, 1024),
+        "standard": (4, 4096),
+        "high": (8, 8192),
+    }[config.get("render_quality", "standard")]
+    ET.SubElement(
+        visual, "quality", offsamples=str(samples), shadowsize=str(shadow_size)
+    )
     ET.SubElement(
         visual,
         "global",

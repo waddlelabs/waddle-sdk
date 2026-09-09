@@ -93,7 +93,21 @@ The reference table uses a bundled 1K CC0 Poly Haven wood texture (about 5.3 MB
 installed). MuJoCo and SAPIEN use native material highlights and warm key/cool
 fill lighting. These are raster rendering defaults, not calibrated photographic
 appearance; RTX rendering remains an Isaac capability requiring separate native
-validation. Appearance changes can affect visual detections and GPU cost. They do
+validation. Select `render_quality="fast"`, `"standard"` (default), or `"high"`
+in `make_site()`; this becomes `render_quality` in `simulation.json`. Older scene
+files without this field retain standard rendering.
+
+| Quality | MuJoCo | SAPIEN | Isaac |
+| --- | --- | --- | --- |
+| `fast` | No multisampling, 1024 shadow map | No key-light shadows | RTX lighting, no antialiasing |
+| `standard` | 4 samples, 4096 shadow map | 2048 shadow map | RTX lighting, DLSS antialiasing |
+| `high` | 8 samples, 8192 shadow map | 4096 shadow map | Path tracing, 16 samples/frame, denoising |
+
+These select native renderer settings. MuJoCo and SAPIEN remain raster renderers.
+Higher detail consumes more GPU memory and render time and can reduce delivered
+camera and control throughput because sensors share a worker with physics. Camera
+resolution and requested frame rate remain separate settings. Appearance changes
+can affect visual detections and GPU cost. They do
 not change contact geometry, camera intrinsics, depth encoding, or owner limits.
 
 ## Create and open a site
@@ -111,7 +125,7 @@ root = Path("cube-site")
 root.mkdir()
 site, simulation = make_site(
     "cube-site", backend="mujoco", robot="yam", environment="two_cubes",
-    width=640, height=480,
+    width=640, height=480, render_quality="standard",
 )
 (root / "site.yaml").write_text(yaml.safe_dump(site, sort_keys=False))
 (root / "simulation.json").write_text(json.dumps(simulation, indent=2))

@@ -24,6 +24,7 @@ from ..robots.site import PartConfig
 BACKENDS = ("mujoco", "isaac", "sapien")
 ROBOTS = ("yam", "xarm7")
 ENVIRONMENTS = ("two_cubes", "bottle_cap", "drawer")
+RENDER_QUALITIES = ("fast", "standard", "high")
 
 
 def rotation(rpy: Any) -> np.ndarray:
@@ -217,6 +218,7 @@ def make_site(
     width: int = 640,
     height: int = 480,
     worker_python: str | None = None,
+    render_quality: str = "standard",
 ) -> tuple[dict, dict]:
     """Return a strict site declaration and its separate simulator configuration.
 
@@ -225,6 +227,8 @@ def make_site(
     """
     if backend not in BACKENDS or environment not in ENVIRONMENTS:
         raise ValueError(f"choose backend {BACKENDS} and environment {ENVIRONMENTS}")
+    if render_quality not in RENDER_QUALITIES:
+        raise ValueError(f"render_quality must be one of {RENDER_QUALITIES}")
     if (
         type(width) is not int
         or type(height) is not int
@@ -274,6 +278,7 @@ def make_site(
         backend=backend,
         robot=robot,
         environment=environment,
+        render_quality=render_quality,
         # ManiSkill uses 100 Hz PhysX stepping with implicit position drives.
         # SDK command and camera declarations remain independent.
         timestep=0.01 if backend == "sapien" else 0.002,
@@ -357,6 +362,7 @@ def load_scene(root: Path, relative: Any) -> tuple[Path, dict]:
         "timestep",
         "cameras",
         "worker_python",
+        "render_quality",
     }
     if value.keys() - allowed:
         raise ValueError(
@@ -368,6 +374,8 @@ def load_scene(root: Path, relative: Any) -> tuple[Path, dict]:
     ):
         raise ValueError("unknown simulation backend or environment")
     profile(value.get("robot"))
+    if value.get("render_quality", "standard") not in RENDER_QUALITIES:
+        raise ValueError(f"render_quality must be one of {RENDER_QUALITIES}")
     dt = value.get("timestep")
     if (
         isinstance(dt, bool)

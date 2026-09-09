@@ -29,6 +29,7 @@ from waddle_sdk.simulators.model import SCREW_PITCH
 from waddle_sdk.simulators.scene import (
     BACKENDS,
     ENVIRONMENTS,
+    RENDER_QUALITIES,
     ROBOTS,
     depth_z16,
     load_scene,
@@ -188,6 +189,47 @@ def test_depth_units_and_invalid_returns():
     assert depth_z16([[1.0]], 0.5).item() == 2000
 
 
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_render_quality_preserves_site_and_scene_contract(tmp_path, backend):
+    baseline_site, baseline = make_site(
+        "render-test", backend=backend, robot="yam", environment="two_cubes"
+    )
+    assert baseline["render_quality"] == "standard"
+    for quality in RENDER_QUALITIES:
+        site, scene = make_site(
+            "render-test",
+            backend=backend,
+            robot="yam",
+            environment="two_cubes",
+            render_quality=quality,
+        )
+        assert site == baseline_site
+        assert scene == {**baseline, "render_quality": quality}
+        (tmp_path / "simulation.json").write_text(json.dumps(scene))
+        assert load_scene(tmp_path, "simulation.json")[1] == scene
+    # Existing workspaces need no scene rewrite or calibration-hash migration.
+    del baseline["render_quality"]
+    (tmp_path / "simulation.json").write_text(json.dumps(baseline))
+    assert load_scene(tmp_path, "simulation.json")[1] == baseline
+
+
+@pytest.mark.parametrize("quality", ["ultra", "", None, 3, {}])
+def test_invalid_render_quality_is_rejected_before_opening(tmp_path, quality):
+    with pytest.raises(ValueError, match="render_quality"):
+        make_site(
+            "render-test",
+            backend="mujoco",
+            robot="yam",
+            environment="two_cubes",
+            render_quality=quality,
+        )
+    _, scene = documents(tmp_path)
+    scene["render_quality"] = quality
+    (tmp_path / "simulation.json").write_text(json.dumps(scene))
+    with pytest.raises(ValueError, match="render_quality"):
+        load_scene(tmp_path, "simulation.json")
+
+
 @pytest.mark.parametrize(
     "relative", ["../scene.json", "/tmp/scene.json", "a\\scene.json"]
 )
@@ -241,8 +283,33 @@ def test_native_models_rgbd_and_bounded_joint_motion(
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def _native_conformance(tmp_path, backend, robot, environment):
+@pytest.mark.parametrize("backend", ["mujoco", "sapien"])
+@pytest.mark.parametrize("quality", ["fast", "high"])
+def test_native_render_presets_preserve_rgbd_and_motion(
+    tmp_path, monkeypatch, backend, quality
+):
+    pytest.importorskip(backend)
+    monkeypatch.setenv("MUJOCO_GL", "egl")
+    monkeypatch.setenv(
+        "PYTHONPATH", str(Path(__file__).resolve().parents[1] / "python")
+    )
+    script = (
+        "import runpy; from pathlib import Path; "
+        f"ns = runpy.run_path({str(Path(__file__).resolve())!r}); "
+        f"ns['_native_conformance'](Path({str(tmp_path)!r}), "
+        f"{backend!r}, 'yam', 'two_cubes', {quality!r})"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=300
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def _native_conformance(
+    tmp_path, backend, robot, environment, render_quality="standard"
+):
     _, config = documents(tmp_path, backend, robot, environment)
+    config["render_quality"] = render_quality
     # Real RGB-D cameras have off-center principal points and unequal focal
     # lengths. Centered defaults conceal renderer convention mistakes.
     config["cameras"]["scene"]["intrinsics"].update(
@@ -670,7 +737,9 @@ def test_reference_control_defaults_match_nonopening_physical_declaration(robot)
     from waddle_sdk.robots.site import PartConfig
 
     if robot == "yam":
-        physical = yam.arm(workspace=None, channel="unused-test-bus").robot().action_space
+        physical = (
+            yam.arm(workspace=None, channel="unused-test-bus").robot().action_space
+        )
     else:
         physical = (
             xarm.arm(

@@ -79,7 +79,10 @@ Reference worlds preserve site-selected part, base-frame, and camera names;
 one world binds one robot part, preventing two names from aliasing one actuator.
 Native material/lighting defaults use a bundled CC0 table texture; provenance and
 its digest are in `simulators/data/appearance/README.md`. These affect appearance
-without changing collision geometry, and do not enable additional ray tracing.
+without changing collision geometry. Reference `render_quality` presets select
+native antialiasing/shadow detail; `standard` preserves older scene defaults.
+MuJoCo/SAPIEN remain raster renderers; Isaac `high` selects path tracing and needs
+separate licensed native validation. Quality never changes sensor profiles or physics.
 
 ## Repo map
 

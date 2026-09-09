@@ -24,7 +24,13 @@ class Engine:
         self.scene = sapien.Scene()
         self.scene.set_timestep(config["timestep"])
         self.scene.set_ambient_light([0.18, 0.20, 0.24])
-        self.scene.add_directional_light([0.3, 0.4, -1], [2.0, 1.85, 1.7], shadow=True)
+        quality = config.get("render_quality", "standard")
+        self.scene.add_directional_light(
+            [0.3, 0.4, -1],
+            [2.0, 1.85, 1.7],
+            shadow=quality != "fast",
+            shadow_map_size={"fast": 512, "standard": 2048, "high": 4096}[quality],
+        )
         self.scene.add_directional_light([-0.4, -0.4, -1], [0.3, 0.36, 0.45])
         links = robot_links(p)
         master = robot.hand_names[0]

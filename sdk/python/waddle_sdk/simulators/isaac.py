@@ -17,12 +17,16 @@ class Engine:
         # License acceptance remains the site operator's runtime setting.
         from isaacsim import SimulationApp
 
+        quality = config.get("render_quality", "standard")
         self.app = SimulationApp(
             {
                 "headless": True,
                 "width": 640,
                 "height": 480,
-                "renderer": "RayTracedLighting",
+                "renderer": "PathTracing" if quality == "high" else "RayTracedLighting",
+                "anti_aliasing": 0 if quality == "fast" else 3,
+                "samples_per_pixel_per_frame": 16,
+                "denoiser": True,
             }
         )
         import omni.kit.app

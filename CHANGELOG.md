@@ -13,6 +13,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Reference scene `render_quality` presets (`fast`, `standard`, `high`) using
+  native renderer settings without changing robot, physics, or camera contracts.
+  Existing scene files retain standard rendering.
+
 - Replace primitive simulation robots with pinned manufacturer YAM/xArm7 URDF
   assemblies, actual visual meshes, masses, COMs and full inertia tensors. Match
   the live YAM linear hand and xArm G2 gripper with native coupled joints,
