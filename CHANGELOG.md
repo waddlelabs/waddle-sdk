@@ -13,6 +13,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Include Isaac in the existing rendering-preset, episode-reset, shared-world
+  lifecycle/e-stop and custom camera/part-name checks. Use its explicitly selected
+  licensed worker interpreter; assertions and other backend behavior are unchanged.
+  Include native Isaac cube mass/inertia in the shared physical-property checks.
+  Add SAPIEN to the shared-world reopen/e-stop test as well.
+
 - A freely removable MuJoCo reference cap with native first-party nut/bolt SDF
   contacts, dimensional scaling, a rigid roof and hash-bound convex collision
   surfaces. The cap remains a 25 g free body throughout unscrewing and removal.

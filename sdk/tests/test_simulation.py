@@ -38,7 +38,14 @@ from waddle_sdk.simulators.scene import (
 )
 
 
-def documents(root: Path, backend="mujoco", robot="yam", environment="two_cubes"):
+def documents(
+    root: Path,
+    backend="mujoco",
+    robot="yam",
+    environment="two_cubes",
+    *,
+    worker_python=None,
+):
     site, sim = make_site(
         "physics-test",
         backend=backend,
@@ -46,6 +53,7 @@ def documents(root: Path, backend="mujoco", robot="yam", environment="two_cubes"
         environment=environment,
         width=192,
         height=144,
+        worker_python=worker_python,
     )
     (root / "simulation.json").write_text(json.dumps(sim))
     (root / "site.yaml").write_text(yaml.safe_dump(site))
@@ -376,12 +384,12 @@ def _native_sapien_gpu_prop_placement(tmp_path):
         )
 
 
-@pytest.mark.parametrize("backend", ["mujoco", "sapien"])
+@pytest.mark.parametrize("backend", BACKENDS)
 @pytest.mark.parametrize("quality", ["fast", "high"])
 def test_native_render_presets_preserve_rgbd_and_motion(
     tmp_path, monkeypatch, backend, quality
 ):
-    pytest.importorskip(backend)
+    interpreter = _native_python(backend, "two_cubes")
     monkeypatch.setenv("MUJOCO_GL", "egl")
     monkeypatch.setenv(
         "PYTHONPATH", str(Path(__file__).resolve().parents[1] / "python")
@@ -393,7 +401,7 @@ def test_native_render_presets_preserve_rgbd_and_motion(
         f"{backend!r}, 'yam', 'two_cubes', {quality!r})"
     )
     result = subprocess.run(
-        [sys.executable, "-c", script], capture_output=True, text=True, timeout=300
+        [interpreter, "-c", script], capture_output=True, text=True, timeout=300
     )
     assert result.returncode == 0, result.stdout + result.stderr
 
@@ -1041,7 +1049,7 @@ def _native_conformance(
             ]
             assert world[0] == pytest.approx(0.491, abs=0.004), world
             assert min(rgb[v, u]) > 100, rgb[v, u]
-        if environment == "two_cubes" and backend in {"mujoco", "sapien"}:
+        if environment == "two_cubes":
             # A uniform 60 g, 50 mm cube has I = m * side**2 / 6. Inspect
             # imported native bodies: setting mass alone can leave the inertia
             # computed for the builder's default density behind.
@@ -1049,11 +1057,17 @@ def _native_conformance(
                 if backend == "mujoco":
                     body = engine.model.body(f"cube_{index}")
                     mass, inertia = float(body.mass[0]), body.inertia
-                else:
+                elif backend == "sapien":
                     body = engine.props[index].find_component_by_type(
                         engine.sp.physx.PhysxRigidDynamicComponent
                     )
                     mass, inertia = body.mass, body.inertia
+                else:
+                    body = engine.props[index]
+                    mass = float(body.get_mass())
+                    inertia = np.diag(
+                        body._rigid_prim_view.get_inertias()[0].reshape(3, 3)
+                    )
                 assert mass == pytest.approx(0.06)
                 np.testing.assert_allclose(inertia, np.full(3, 0.000025), rtol=1e-5)
         if backend == "mujoco":
@@ -1521,14 +1535,14 @@ def test_world_close_waits_for_active_io_and_unblocks_queued_camera():
     assert world._pending == [] and not world._busy
 
 
-@pytest.mark.parametrize("backend", ["mujoco", "sapien"])
+@pytest.mark.parametrize("backend", BACKENDS)
 @pytest.mark.parametrize("reset_on_episode", [False, True])
 def test_episode_boundary_preserves_state_unless_reset_requested(
     tmp_path, monkeypatch, backend, reset_on_episode
 ):
-    pytest.importorskip(backend)
+    interpreter = _native_python(backend, "two_cubes")
     monkeypatch.setenv("MUJOCO_GL", "egl")
-    site, _ = documents(tmp_path, backend=backend)
+    site, _ = documents(tmp_path, backend=backend, worker_python=interpreter)
     if reset_on_episode:
         site["worlds"]["cell"]["options"] = {"reset_on_episode": True}
     (tmp_path / "site.yaml").write_text(yaml.safe_dump(site))
@@ -1552,10 +1566,13 @@ def test_episode_reset_setting_requires_a_boolean(invalid):
         World({}, reset_on_episode=invalid)
 
 
-def test_site_owns_one_world_and_reopens_an_independent_world(tmp_path, monkeypatch):
-    pytest.importorskip("mujoco")
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_site_owns_one_world_and_reopens_an_independent_world(
+    tmp_path, monkeypatch, backend
+):
+    interpreter = _native_python(backend, "two_cubes")
     monkeypatch.setenv("MUJOCO_GL", "egl")
-    documents(tmp_path)
+    documents(tmp_path, backend=backend, worker_python=interpreter)
     site = load_site(tmp_path / "site.yaml")
     processes = []
     for _ in range(2):
@@ -1594,13 +1611,13 @@ def test_camera_profile_mismatch_fails_before_open(tmp_path):
             pass
 
 
-@pytest.mark.parametrize("backend", ["mujoco", "sapien"])
+@pytest.mark.parametrize("backend", BACKENDS)
 def test_site_preserves_custom_part_camera_and_base_frame_names(
     tmp_path, monkeypatch, backend
 ):
-    pytest.importorskip(backend)
+    interpreter = _native_python(backend, "two_cubes")
     monkeypatch.setenv("MUJOCO_GL", "egl")
-    site, simulation = documents(tmp_path, backend=backend)
+    site, simulation = documents(tmp_path, backend=backend, worker_python=interpreter)
     site["parts"]["left"] = site["parts"].pop("arm")
     site["parts"]["left"]["base_frame"] = "left_base"
     for old, new in (("scene", "bench_rgbd"), ("wrist", "left_rgbd")):

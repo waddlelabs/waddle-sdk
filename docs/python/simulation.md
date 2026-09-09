@@ -80,6 +80,12 @@ and GPU memory use. These USD checks do not prove Isaac rendering, reset, contac
 robot control or task completion; run the licensed native suite before qualifying
 an Isaac installation.
 
+The native rendering-preset, episode reset, shared-world lifecycle and custom
+camera/part-name tests include Isaac. They skip unless `WADDLE_ISAAC_TEST_PYTHON`
+names an operator-prepared, licensed interpreter. From the SDK Python project,
+select it explicitly when running `pytest tests/test_simulation.py -k isaac`.
+Collecting these tests or skipping them does not qualify that installation.
+
 The reference robot models preserve the live adapters' joint names, order, limits,
 radian units, FK, and normalized hand action (0 closed, 1 open). YAM uses the SDK's
 pinned I2RT URDF and tool convention, assembled with the live adapter's 95 mm

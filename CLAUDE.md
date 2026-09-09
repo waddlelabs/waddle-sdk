@@ -111,6 +111,11 @@ roof and material bindings through the production reference helper. These checks
 do not establish live Isaac acceptance. SAPIEN/Isaac share physical free-cap
 assertions; Isaac requires a licensed interpreter and remains unqualified until
 those and the ordinary robot/RGB-D/workspace checks have run.
+Native render presets, episode resets, world reopen/e-stop and custom camera/part
+names are parameterized across all engines. `WADDLE_ISAAC_TEST_PYTHON` gates every
+Isaac execution; the site-level tests pass that interpreter to the normal worker.
+Do not narrow these tests to available engines or treat collected/skipped cases
+as native acceptance.
 `tools/vendor_physx_thread_model.py` reproducibly rebuilds the PhysX surfaces
 using native SDF sampling, Lewiner marching cubes, Manifold and MeshLab;
 generation dependencies and versions are separate from the worker installation.
