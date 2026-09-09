@@ -53,9 +53,17 @@ concave collisions; most task props use primitive geometry. MuJoCo's removable
 cap adds native first-party SDF thread surfaces and packaged convex collisions. The SDK YAM arm contract is
 assembled with I2RT LINEAR_4310; xArm7 uses UFACTORY's G2 hand. The reference servos
 are not calibrated actuator models. MuJoCo, SAPIEN and Isaac Sim use native
-URDF import; xArm uses Menagerie's two linkage closures. SAPIEN retains native
-URDF jaw coupling while sharing the actuator's gain/force/inertia budget across
-opposing drives. Equal targets alone cannot preserve coupling under contact.
+URDF import; xArm uses Menagerie's two linkage closures.
+Isaac explicitly excludes those physical closure joints from the articulation
+tree, as PhysX requires. Standalone converter/USD tests check both complete
+manufacturer joint trees and coincident loop anchors without launching Isaac.
+The imported full-inertia regression detects the upstream converter 0.1.3
+principal-axis bug; release 0.3.3 passes. Isaac's loaded converter, including
+extension-bundled packages, needs those upstream fixes for native qualification.
+Standalone converter tests do not establish that Kit selected that version.
+SAPIEN retains native URDF jaw coupling while sharing the actuator's
+gain/force/inertia budget across opposing drives. Equal targets alone cannot
+preserve coupling under contact.
 The 60 g, 50 mm cubes declare uniform-body inertia. Single-body SAPIEN props
 use the same URDF inertial importer as articulations; static scenery omits
 dynamic inertials. Native tests inspect cube mass and inertia after import.

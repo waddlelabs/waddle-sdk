@@ -84,6 +84,13 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Keep Isaac's xArm gripper loop-closing joints outside the articulation tree,
+  as required by PhysX, while retaining both physical constraints. Test the
+  complete imported manufacturer joint trees and loop-anchor alignment through
+  standalone OpenUSD and the URDF converter used by Isaac. Imported full-inertia
+  checks also detect the upstream 0.1.3 principal-axis bug; document the verified
+  0.3.3 upstream correction without adding an inertia-rewriting workaround.
+
 - Correct Isaac's USD camera aperture-offset signs so off-center site intrinsics
   project into the declared image coordinates. Add a standalone OpenUSD projection
   and deprojection regression; Isaac rendered RGB-D still requires native validation.

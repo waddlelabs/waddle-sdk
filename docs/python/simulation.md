@@ -21,6 +21,13 @@ currently requires POSIX. Isaac has its own GPU, driver, Python, and license
 requirements. Installation and license acceptance are operator actions; opening a
 site never downloads packages, accepts a license, or substitutes a mock engine.
 
+Isaac's loaded `urdf-usd-converter` also needs the principal-axis fixes verified
+in upstream release 0.3.3. The older 0.1.3 converter bundled with Isaac 6.0.1
+misorients non-diagonal link inertias. Check the converter actually selected by
+the activated importer extension; a separately installed version alone does not
+prove which bundled module Kit loads. These are upstream dependency fixes,
+documented in the [converter changelog](https://github.com/newton-physics/urdf-usd-converter/blob/v0.3.3/CHANGELOG.md).
+
 Each engine accepts `yam` or `xarm7` and these environments:
 
 - `two_cubes`: two free 60 g, 50 mm rigid cubes on a table, with frictional
@@ -56,6 +63,9 @@ clearance. Convex meshes remain unchanged. Public planning bounds conservatively
 cover complete collision triangles per physical link, so their number does not
 scale with the importer's convex partition. Native constraints
 close the xArm linkage; its revolute hand is mapped nonlinearly to jaw travel.
+Isaac marks both loop-closing spherical joints as excluded from the articulation
+tree. They remain enabled physical constraints; all imported manufacturer joints
+stay in the tree. This follows [PhysX's closed-loop articulation setup](https://docs.omniverse.nvidia.com/kit/docs/omni_physics/latest/dev_guide/rigid_bodies_articulations/articulations.html#closed-loops).
 Its native motor limit is 4.2039 N m, derived from the G2's published maximum
 50 N gripping force and the minimum jaw transmission over its stroke. This
 bounds the ideal quasi-static jaw force; it does not calibrate impact forces or
@@ -225,6 +235,12 @@ environment, then run `python -m pytest tests/test_simulation.py -k isaac_usd_ca
 from `sdk/`. It checks off-center and unequal-focal-length calibration using
 OpenUSD's actual projection matrix. It does not validate RTX raster sampling,
 annotator alignment or frame delivery; those remain native acceptance checks.
+A separate test environment with `urdf-usd-converter==0.3.3` supplies OpenUSD
+through its dependencies. Allow prerelease dependency wheels when installing
+that converter, then use `-k isaac_usd` to also check the complete imported robot
+mass properties, joint trees and loop-anchor alignment. Converter tests run in subprocesses so
+their USD schema registration is independent of earlier camera tests. They do
+not establish loaded-grasp or other native Isaac physics acceptance.
 
 Each site owns its camera placements, calibration, and object layout. These may
 differ between physical and simulated environments. To reproduce a particular

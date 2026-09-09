@@ -648,6 +648,107 @@ def test_isaac_usd_camera_projects_with_declared_intrinsics(
         )
 
 
+@pytest.mark.parametrize("robot", ROBOTS)
+def test_isaac_usd_robot_preserves_manufacturer_inertias_and_joint_tree(
+    tmp_path, robot
+):
+    if importlib.util.find_spec("urdf_usd_converter") is None:
+        pytest.skip("requires standalone urdf-usd-converter")
+    # USD freezes its schema registry on first use. Match worker isolation so
+    # camera tests cannot freeze it before the converter registers its schemas.
+    script = (
+        "import runpy; from pathlib import Path; "
+        f"ns = runpy.run_path({str(Path(__file__).resolve())!r}); "
+        f"ns['_usd_model_conformance'](Path({str(tmp_path)!r}), {robot!r})"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=60
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def _usd_model_conformance(tmp_path, robot):
+    import urdf_usd_converter as converter
+    from pxr import Gf, Sdf, Usd, UsdGeom, UsdPhysics
+    from waddle_sdk.simulators.isaac import _closures
+    from waddle_sdk.simulators.model import urdf
+
+    model = description(robot)
+    path = tmp_path / f"{robot}.urdf"
+    path.write_text(urdf(model.native_links(), robot))
+    asset = converter.Converter(layer_structure=False, scene=False).convert(
+        str(path), str(tmp_path / "usd")
+    )
+    stage = Usd.Stage.Open(asset.path)
+    assert UsdGeom.GetStageMetersPerUnit(stage) == 1.0
+    assert UsdGeom.GetStageUpAxis(stage) == "Z"
+    bodies = {
+        prim.GetName(): prim
+        for prim in stage.Traverse()
+        if prim.HasAPI(UsdPhysics.RigidBodyAPI)
+    }
+    assert set(bodies) == {link.name for link in model.links}
+    for link in model.links:
+        mass = UsdPhysics.MassAPI(bodies[link.name])
+        assert mass.GetMassAttr().Get() == pytest.approx(link.mass, abs=1e-6)
+        np.testing.assert_allclose(
+            mass.GetCenterOfMassAttr().Get(), link.com, atol=1e-7
+        )
+        # Gf uses row vectors. Reconstruct the body-frame tensor from the
+        # imported principal axes, independently of the converter's eigenbasis.
+        axes = np.asarray(Gf.Matrix3d(mass.GetPrincipalAxesAttr().Get()))
+        tensor = axes.T @ np.diag(mass.GetDiagonalInertiaAttr().Get()) @ axes
+        xx, yy, zz, xy, xz, yz = link.inertia
+        np.testing.assert_allclose(
+            tensor,
+            [[xx, xy, xz], [xy, yy, yz], [xz, yz, zz]],
+            atol=1e-8,
+            rtol=0,
+            err_msg=link.name,
+        )
+    root_path = str(stage.GetDefaultPrim().GetPath())
+    _closures(stage, root_path, bodies, model)
+    parsed = UsdPhysics.UsdPhysicsLoadStageFromPrimRange(stage, [Sdf.Path("/")])
+    joints = [
+        desc
+        for _paths, descriptions in parsed.values()
+        for desc in descriptions
+        if isinstance(desc, UsdPhysics.JointDesc)
+    ]
+    # All manufacturer joints plus the world attachment must still form a
+    # connected, acyclic articulation. Loop constraints stay active outside it.
+    parent = {prim.GetPath(): prim.GetPath() for prim in bodies.values()}
+    parent[Sdf.Path.emptyPath] = Sdf.Path.emptyPath
+
+    def component(path):
+        while parent[path] != path:
+            path = parent[path]
+        return path
+
+    closures = []
+    for joint in joints:
+        assert joint.isValid and joint.jointEnabled
+        if joint.excludeFromArticulation:
+            closures.append(joint)
+            continue
+        first, second = component(joint.body0), component(joint.body1)
+        assert first != second, f"articulation cycle at {joint.primPath}"
+        parent[second] = first
+    assert len({component(path) for path in parent}) == 1
+    assert len(closures) == (2 if robot == "xarm7" else 0)
+    transforms = UsdGeom.XformCache()
+    for joint in closures:
+        assert joint.type == UsdPhysics.ObjectType.SphericalJoint
+        first = transforms.GetLocalToWorldTransform(stage.GetPrimAtPath(joint.body0))
+        second = transforms.GetLocalToWorldTransform(stage.GetPrimAtPath(joint.body1))
+        np.testing.assert_allclose(
+            first.Transform(Gf.Vec3d(joint.localPose0Position)),
+            second.Transform(Gf.Vec3d(joint.localPose1Position)),
+            atol=1e-7,
+            rtol=0,
+        )
+
+
 def _native_conformance(
     tmp_path, backend, robot, environment, render_quality="standard"
 ):

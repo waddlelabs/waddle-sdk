@@ -32,6 +32,21 @@ def _camera(stage, path, row):
     return camera
 
 
+def _closures(stage, root_path, bodies, robot):
+    """Author the manufacturer's loop constraints beside its URDF tree."""
+    from pxr import Gf, UsdPhysics
+
+    for first, anchor, second, other in robot.closures():
+        joint = UsdPhysics.SphericalJoint.Define(stage, f"{root_path}/closure_{first}")
+        # PhysX articulations require a tree. Close the linkage with ordinary
+        # joints so every imported manufacturer joint stays in that tree.
+        joint.CreateExcludeFromArticulationAttr(True)
+        joint.CreateBody0Rel().SetTargets([bodies[first].GetPath()])
+        joint.CreateBody1Rel().SetTargets([bodies[second].GetPath()])
+        joint.CreateLocalPos0Attr(Gf.Vec3f(*map(float, anchor)))
+        joint.CreateLocalPos1Attr(Gf.Vec3f(*map(float, other)))
+
+
 class Engine:
     def __init__(self, config: dict, scratch: Path):
         # Isaac owns Kit and must initialize before importing Omni/pxr modules.
@@ -208,14 +223,7 @@ class Engine:
                     bodies[first]
                 ).CreateFilteredPairsRel().AddTarget(bodies[second].GetPath())
         if robot:
-            for first, anchor, second, other in self.description.closures():
-                joint = self.Physics.SphericalJoint.Define(
-                    self.stage, f"{root_path}/closure_{first}"
-                )
-                joint.CreateBody0Rel().SetTargets([bodies[first].GetPath()])
-                joint.CreateBody1Rel().SetTargets([bodies[second].GetPath()])
-                joint.CreateLocalPos0Attr(self.Gf.Vec3f(*map(float, anchor)))
-                joint.CreateLocalPos1Attr(self.Gf.Vec3f(*map(float, other)))
+            _closures(self.stage, root_path, bodies, self.description)
         if len(links) > 1:
             roots = [
                 prim for prim in prims if prim.HasAPI(self.Physics.ArticulationRootAPI)
