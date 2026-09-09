@@ -374,7 +374,8 @@
     "nut-8.stl": "6fb0260781720308955c6a453a14af7137ac6e6b429f4e01bde3c2e9d26cca7b",
     "nut-9.stl": "185112796efc908882cef564f15474c63bbc1d48d8826cf66ea42060511611c9",
     "nut-physx.stl": "5ed4bc5f164d8b2c2c37bb4d96514e3079e83c77a18af12b3ad18530ca5dad83",
-    "bolt-physx.stl": "0dcabdabe7e8a34082b0edbf3cd52876df118f8fa98d10a4fea8d569ae6dd992"
+    "bolt-physx.stl": "0dcabdabe7e8a34082b0edbf3cd52876df118f8fa98d10a4fea8d569ae6dd992",
+    "cap.usdc": "2c21e87467a5e7ca3625833b3a7771d334856245a6af81c233b446f56e6bff22"
   },
   "physx_geometry": {
     "source": "MuJoCo 3.11.0 first-party SDFs; uniform scale 0.05, nut radius 0.26, bolt radius 0.255",

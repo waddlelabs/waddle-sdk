@@ -25,7 +25,6 @@ from waddle_sdk.simulators.description import (
     description,
     mesh_triangles,
 )
-from waddle_sdk.simulators.model import SCREW_PITCH
 from waddle_sdk.simulators.scene import (
     BACKENDS,
     ENVIRONMENTS,
@@ -460,77 +459,126 @@ def test_native_mujoco_cap_retains_axial_load_and_unscrews_freely(
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+@pytest.mark.parametrize("backend", ["sapien", "isaac"])
 @pytest.mark.parametrize("robot", ROBOTS)
-def test_native_sapien_cap_retains_axial_load_and_unscrews_freely(
-    tmp_path, monkeypatch, robot
+def test_native_physx_cap_retains_axial_load_and_unscrews_freely(
+    tmp_path, monkeypatch, backend, robot
 ):
-    interpreter = _native_python("sapien", "bottle_cap")
+    interpreter = _native_python(backend, "bottle_cap")
     monkeypatch.setenv(
         "PYTHONPATH", str(Path(__file__).resolve().parents[1] / "python")
     )
     script = (
         "import runpy; from pathlib import Path; "
         f"ns = runpy.run_path({str(Path(__file__).resolve())!r}); "
-        f"ns['_native_sapien_free_cap'](Path({str(tmp_path)!r}), {robot!r})"
+        f"ns['_native_physx_free_cap'](Path({str(tmp_path)!r}), {backend!r}, {robot!r})"
     )
     result = subprocess.run(
         [interpreter, "-c", script],
         capture_output=True,
         text=True,
-        timeout=180,
+        timeout=300,
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def _native_sapien_free_cap(tmp_path, robot):
-    from waddle_sdk.simulators.sapien import Engine
-
-    _, config = documents(tmp_path, "sapien", robot, "bottle_cap")
-    engine = Engine(config, tmp_path)
+def _native_physx_free_cap(tmp_path, backend, robot):
+    _, config = documents(tmp_path, backend, robot, "bottle_cap")
+    engine = importlib.import_module(f"waddle_sdk.simulators.{backend}").Engine(
+        config, tmp_path
+    )
     try:
-        px = engine.sp.physx
-        physics = engine.gpu.physics
-        entity = engine.props[-1]
-        assert entity.name == "cap"
-        assert entity.find_component_by_type(px.PhysxArticulationLinkComponent) is None
-        body = entity.find_component_by_type(px.PhysxRigidDynamicComponent)
-        assert body.mass == pytest.approx(0.025)
-        np.testing.assert_allclose(
-            body.inertia, [9.733922509e-6, 7.021903874e-6, 5.859590435e-6], rtol=1e-6
-        )
-        state = physics.cuda_rigid_dynamic_data.torch()
-        force = physics.cuda_rigid_dynamic_force.torch()
-        torque = physics.cuda_rigid_dynamic_torque.torch()
-        index = body.gpu_pose_index
+        if backend == "sapien":
+            px = engine.sp.physx
+            physics = engine.gpu.physics
+            entity = engine.props[-1]
+            assert entity.name == "cap"
+            assert (
+                entity.find_component_by_type(px.PhysxArticulationLinkComponent) is None
+            )
+            body = entity.find_component_by_type(px.PhysxRigidDynamicComponent)
+            assert body.mass == pytest.approx(0.025)
+            np.testing.assert_allclose(
+                body.inertia,
+                [9.733922509e-6, 7.021903874e-6, 5.859590435e-6],
+                rtol=1e-6,
+            )
+            state = physics.cuda_rigid_dynamic_data.torch()
+            forces = physics.cuda_rigid_dynamic_force.torch()
+            torques = physics.cuda_rigid_dynamic_torque.torch()
+            index = body.gpu_pose_index
 
-        def read():
-            physics.gpu_fetch_rigid_dynamic_data()
-            return state[index].cpu().numpy().copy()
+            def read():
+                physics.gpu_fetch_rigid_dynamic_data()
+                return state[index].cpu().numpy().copy()
+
+            def apply(force, torque):
+                forces.zero_()
+                torques.zero_()
+                forces[index, 2], torques[index, 2] = force, torque
+                physics.gpu_apply_rigid_dynamic_force()
+                physics.gpu_apply_rigid_dynamic_torque()
+
+            bolt = engine.props[-2]
+            bolt_body = bolt.find_component_by_type(px.PhysxRigidStaticComponent)
+            shape = bolt_body.collision_shapes[0]
+            transform = bolt.pose.to_transformation_matrix()
+            vertices = np.asarray(shape.vertices) * shape.scale
+            top = np.max(vertices @ transform[:3, :3].T + transform[:3, 3], axis=0)[2]
+        else:
+            from pxr import Usd, UsdGeom, UsdPhysics
+
+            cap = engine.props[-1]
+            context = engine.world.get_physics_context()
+            assert context.is_gpu_dynamics_enabled()
+            assert context.get_broadphase_type() == "GPU"
+            root = engine.stage.GetPrimAtPath("/World/threaded_cap")
+            assert not any(prim.IsA(UsdPhysics.Joint) for prim in Usd.PrimRange(root))
+            assert cap.get_mass() == pytest.approx(0.025)
+
+            def read():
+                position, orientation = cap.get_world_pose()
+                return np.r_[
+                    position,
+                    orientation,
+                    cap.get_linear_velocity(),
+                    cap.get_angular_velocity(),
+                ]
+
+            def apply(force, torque):
+                cap._rigid_prim_view.apply_forces_and_torques_at_pos(
+                    forces=np.array([[0, 0, force]], dtype=np.float32),
+                    torques=np.array([[0, 0, torque]], dtype=np.float32),
+                    is_global=True,
+                )
+
+            bolt = UsdGeom.Mesh.Get(
+                engine.stage, "/World/threaded_cap/bottle_thread/thread"
+            )
+            transform = np.asarray(
+                bolt.ComputeLocalToWorldTransform(Usd.TimeCode.Default())
+            )
+            vertices = np.asarray(bolt.GetPointsAttr().Get())
+            top = np.max(vertices @ transform[:3, :3] + transform[3, :3], axis=0)[2]
 
         initial = read()
         clear = np.array(engine.profile.home)
         clear[0] = np.pi / 2
         engine.home(clear)
 
-        def advance(seconds):
+        def advance(seconds, force=0.0, torque=0.0):
             heights = []
             for _ in range(round(seconds / config["timestep"])):
-                physics.gpu_apply_rigid_dynamic_force()
-                physics.gpu_apply_rigid_dynamic_torque()
+                apply(force, torque)
                 engine.step()
                 heights.append(read()[2])
             return np.asarray(heights)
 
-        force.zero_()
-        torque.zero_()
         advance(3)
         height = read()[2]
-        force[index, 2] = 2.0
-        assert np.max(np.abs(advance(2) - height)) < 0.001
-        force.zero_()
+        assert np.max(np.abs(advance(2, force=2.0) - height)) < 0.001
         advance(1)
-        force[index, 2], torque[index, 2] = 0.5, 0.01
 
         def angle(value):
             w, x, y, z = value[3:7]
@@ -538,17 +586,10 @@ def _native_sapien_free_cap(tmp_path, robot):
 
         # A 40 mm sphere encloses the cap including its offset roof. Clearing
         # the bolt's actual mesh bounds by that radius proves contact-free exit.
-        bolt = engine.props[-2]
-        bolt_body = bolt.find_component_by_type(px.PhysxRigidStaticComponent)
-        shape = bolt_body.collision_shapes[0]
-        transform = bolt.pose.to_transformation_matrix()
-        vertices = np.asarray(shape.vertices) * shape.scale
-        top = np.max(vertices @ transform[:3, :3].T + transform[:3, 3], axis=0)[2]
         last, total = angle(read()), 0.0
         samples = []
         for _ in range(round(8 / config["timestep"])):
-            physics.gpu_apply_rigid_dynamic_force()
-            physics.gpu_apply_rigid_dynamic_torque()
+            apply(0.5, 0.01)
             engine.step()
             current = read()
             value = angle(current)
@@ -564,8 +605,6 @@ def _native_sapien_free_cap(tmp_path, robot):
         slope, intercept = np.polyfit(engaged[:, 0], engaged[:, 1], 1)
         assert slope == pytest.approx(0.05 / 12, abs=0.0002)
         assert np.max(abs(engaged[:, 1] - slope * engaged[:, 0] - intercept)) < 0.001
-        force.zero_()
-        torque.zero_()
         vertical_speed = read()[9]  # native center-of-mass linear velocity
         advance(0.05)
         assert read()[9] == pytest.approx(vertical_speed - 9.81 * 0.05, abs=0.005)
@@ -584,6 +623,7 @@ def test_native_thread_assets_are_complete_and_hash_bound():
     meshes = ET.parse(root / "cap.xml").findall("asset/mesh[@file]")
     required = {
         "cap.xml",
+        "cap.usdc",
         "metric_thread.cc",
         "LICENSE",
         "nut-physx.stl",
@@ -1163,59 +1203,6 @@ def _native_conformance(
             advance(2.0)
             travel, _speed = drawer_state()
             assert 0.20 < travel < 0.225, travel
-        elif environment == "bottle_cap" and backend == "isaac":
-            # Apply a native generalized torque as an external load on the cap.
-            # Isaac retains the passive guide. MuJoCo/SAPIEN have separate
-            # contact-based free-cap checks.
-            names = list(engine._screw.dof_names)
-
-            def cap_force(value):
-                force = np.zeros(len(names))
-                force[names.index("cap_rotation")] = value
-                engine._screw.set_joint_efforts(force)
-
-            def cap_state():
-                values = engine._screw.get_joint_positions()
-                return values[[names.index(n) for n in ("cap_rotation", "cap_lift")]]
-
-            def cap_release(angle, speed):
-                scales = np.array(
-                    [1 if n == "cap_rotation" else SCREW_PITCH for n in names]
-                )
-                engine._screw.set_joint_positions(angle * scales)
-                engine._screw.set_joint_velocities(speed * scales)
-
-            # An end-stop torque test can hide a back-driving thread. Release
-            # mid-travel with a small unwinding velocity, as fingers disengage.
-            # Native resistance must arrest motion without locking the cap:
-            # ordinary applied torque must still turn it in either direction.
-            cap_release(np.pi / 2, -0.1)
-            advance(0.1)
-            released = cap_state()
-            advance(5.0)
-            drift = np.abs(cap_state() - released)
-            assert drift[0] < 0.02 and drift[1] < 0.0001, drift
-            cap_force(0.01)
-            advance(0.25)
-            turned = cap_state()[0]
-            assert turned > released[0] + 0.02
-            cap_force(-0.01)
-            advance(0.5)
-            assert cap_state()[0] < turned - 0.02
-            cap_force(0.0)
-            engine.reset()
-
-            cap_force(0.3)
-            advance(4.0)
-            q = cap_state()
-            assert q[0] > 3.0 and q[1] > 0.002, q
-            assert abs(q[1] - SCREW_PITCH * q[0]) < 0.003
-            cap_force(0.0)
-            advance(2.0)
-            released = cap_state()
-            advance(5.0)
-            assert cap_state()[0] > 3.0
-            assert cap_state()[1] == pytest.approx(released[1], abs=0.0001)
         assert engine.reset() is True
         np.testing.assert_allclose(engine.read()[0], p.home, atol=1e-6)
         if backend == "mujoco":

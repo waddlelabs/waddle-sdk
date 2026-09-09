@@ -102,9 +102,15 @@ retention, pitch, natural exit and free-body motion. `tools/vendor_thread_model.
 rebuilds its hash-bound CoACD collision surfaces. SAPIEN uses higher-resolution
 offline meshes of the same SDFs with native GPU PhysX contact, retaining the
 cap.xml mass, inertia, roof and poses. Its cap is free throughout; GPU reset,
-axial retention and natural exit require native checks. Isaac still uses the
-finite 5 mm/turn guide; free removal there is not implemented. Its guided-cap
-tests retain their released-progress and bidirectional-turn checks.
+axial retention and natural exit require native checks. Isaac references the
+same assembly in a self-contained USD asset and enables GPU dynamics/broadphase
+for native SDF contact. No finite twist/lift guide remains in the shared model.
+`tools/vendor_thread_usd.py` rebuilds the USD with standalone OpenUSD/trimesh;
+`test_simulation_thread_usd.py` checks exact surfaces, topology, inertials, poses,
+roof and material bindings through the production reference helper. These checks
+do not establish live Isaac acceptance. SAPIEN/Isaac share physical free-cap
+assertions; Isaac requires a licensed interpreter and remains unqualified until
+those and the ordinary robot/RGB-D/workspace checks have run.
 `tools/vendor_physx_thread_model.py` reproducibly rebuilds the PhysX surfaces
 using native SDF sampling, Lewiner marching cubes, Manifold and MeshLab;
 generation dependencies and versions are separate from the worker installation.

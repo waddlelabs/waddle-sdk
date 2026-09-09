@@ -2,7 +2,7 @@
 
 Only dimensional scaling lives in the small compiled plugin. MuJoCo supplies
 the SDFs and contact solver; no callback applies forces or changes constraints.
-SAPIEN uses offline surface meshes with native GPU PhysX SDF contacts.
+SAPIEN and Isaac use offline surface meshes with native GPU PhysX SDF contacts.
 """
 
 from __future__ import annotations
@@ -97,6 +97,15 @@ def append_mjcf(root: ET.Element) -> None:
     root.find("worldbody").extend(template.find("worldbody"))
     root.find("option").set("sdf_initpoints", "40")
     root.find("option").set("sdf_iterations", "20")
+
+
+def append_isaac(stage, path):
+    """Reference the self-contained USD assembly; return its free cap prim."""
+    from pxr import UsdGeom
+
+    root = UsdGeom.Xform.Define(stage, path)
+    root.GetPrim().GetReferences().AddReference(str(assets() / "cap.usdc"))
+    return stage.GetPrimAtPath(f"{path}/cap")
 
 
 def append_sapien(scene):

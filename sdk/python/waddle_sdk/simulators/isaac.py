@@ -96,6 +96,11 @@ class Engine:
         )
         self.stage = self.world.stage
         UsdGeom.SetStageUpAxis(self.stage, UsdGeom.Tokens.z)
+        if config["environment"] == "bottle_cap":
+            # Non-convex dynamic thread contacts use native PhysX SDFs.
+            physics = self.world.get_physics_context()
+            physics.enable_gpu_dynamics(True)
+            physics.set_broadphase_type("GPU")
         light = UsdLux.DomeLight.Define(self.stage, "/World/light")
         light.CreateIntensityAttr(1500.0)
         material = UsdShade.Material.Define(self.stage, "/World/contact_material")
@@ -112,7 +117,19 @@ class Engine:
             self._load(links, links[0].name, scratch)[0]
             for links in objects(config["environment"])
         ]
-        self._screw = self.props[-1] if config["environment"] == "bottle_cap" else None
+        if config["environment"] == "bottle_cap":
+            from .thread import append_isaac
+
+            cap = append_isaac(self.stage, "/World/threaded_cap")
+            self.props.append(
+                self.world.scene.add(
+                    SingleRigidPrim(
+                        prim_path=str(cap.GetPath()),
+                        name="cap",
+                        reset_xform_properties=False,
+                    )
+                )
+            )
         self.tcp = self.world.scene.add(
             SingleRigidPrim(
                 prim_path=str(robot_bodies["tcp"].GetPath()),

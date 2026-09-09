@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
-from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -79,11 +78,6 @@ class Engine:
             drive.set_limit_z(0, 0)
             self.drives.append(drive)
         groups = objects(config["environment"])
-        if self.gpu:
-            # Retain the fixture body; native thread contact replaces its
-            # old neck and finite twist/lift guide.
-            bottle = groups[1][0]
-            groups[1] = [replace(bottle, shapes=bottle.shapes[:1])]
         self.props = [self._load(group, group[0].name, scratch) for group in groups]
         if self.gpu:
             from .thread import append_sapien

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field, replace
 from importlib.resources import files
@@ -137,9 +136,8 @@ def objects(environment: str) -> list[list[Link]]:
         return [table, [cabinet, drawer]]
     if environment != "bottle_cap":
         raise ValueError("unknown reference environment")
-    # A fixture holds the bottle so a single arm can unscrew it. The cap has
-    # passive twist and axial travel coupled by a screw constraint, never an
-    # agent-accessible command that declares the task complete.
+    # A fixture holds the bottle so a single arm can unscrew it. Each engine
+    # loads the same free-cap/thread assembly from the packaged native assets.
     bottle = Link(
         "bottle",
         # Leave the central jog region clear; the cap remains on the tabletop
@@ -147,39 +145,9 @@ def objects(environment: str) -> list[list[Link]]:
         xyz=(0.34, -0.16, 0.085),
         shapes=[
             Shape("cylinder", (0.033, 0.17), color=(0.1, 0.6, 0.35, 1.0)),
-            Shape(
-                "cylinder",
-                (0.018, 0.035),
-                (0.0, 0.0, 0.095),
-                color=(0.1, 0.6, 0.35, 1.0),
-            ),
         ],
     )
-    carriage = Link(
-        "cap_carriage",
-        "bottle",
-        xyz=(0.0, 0.0, 0.125),
-        joint="cap_lift",
-        kind="prismatic",
-        limits=(-0.001, 0.04),
-        mass=0.001,
-    )
-    cap = Link(
-        "cap",
-        "cap_carriage",
-        joint="cap_rotation",
-        kind="revolute",
-        limits=(-0.2, 6 * math.pi),
-        mass=0.025,
-        # Rotation = axial travel / pitch. Both motions share the Z axis.
-        mimic=("cap_lift", 1 / SCREW_PITCH, 0.0),
-        shapes=[Shape("cylinder", (0.025, 0.022), color=(0.9, 0.2, 0.12, 1.0))],
-    )
-    return [table, [bottle, carriage, cap]]
-
-
-SCREW_PITCH = 0.005 / (2 * math.pi)
-SCREW_RESISTANCE = 0.001  # N m; reference thread resistance, not measured seal torque.
+    return [table, [bottle]]
 
 
 def urdf(links: list[Link], name: str) -> str:
@@ -269,11 +237,6 @@ def mjcf(p: Profile, config: dict) -> str:
     # MuJoCo's maintained URDF importer owns geometry and full inertias. Keep
     # fixed frames for the same camera/TCP names used by the other backends.
     props = objects(config["environment"])
-    if config["environment"] == "bottle_cap":
-        # MuJoCo uses freely removable native thread contact. Keep the bottle
-        # body; its neck/cap assembly is supplied by the thread asset below.
-        bottle = props[1][0]
-        props = [props[0], [replace(bottle, shapes=bottle.shapes[:1])]]
     groups = [robot.native_links(), *props]
     master = robot.hand_names[0]
     hand_drives = [master] + [

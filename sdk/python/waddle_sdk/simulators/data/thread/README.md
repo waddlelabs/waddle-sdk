@@ -64,5 +64,24 @@ the output before omitting `--output` to update the packaged surfaces and manife
 
 The PhysX assembly reads its poses, roof, mass, COM and inertia from `cap.xml`.
 SAPIEN's native mesh loader/cooker consumes the packaged surfaces; its worker
-does not need MuJoCo or a compiler. Isaac still retains its finite guided model.
+does not need MuJoCo or a compiler. Isaac references `cap.usdc`, a self-contained
+USD assembly with those exact STL surfaces and XML mass properties. The cap uses
+a native sparse SDF (resolution 256, subgrid 6); the neck is a static triangle
+mesh. GPU physics and broadphase are enabled before the scene starts. The roof
+is a native cylinder. No finite guide or runtime release callback is present.
 The GPU fixture does not itself establish workspace or agent task acceptance.
+
+Rebuild the USD with standalone usd-core 26.8, trimesh 5.1.0 and NumPy 2.5.3:
+
+```bash
+python tools/vendor_thread_usd.py --output /tmp/thread-usd
+```
+
+The command does not import or launch Isaac/Kit. Inspect its output before
+omitting `--output` to replace the packaged USD and manifest hash. After changing
+either source STL or `cap.xml`, regenerate the USD too. Standalone tests compare
+the exact surfaces, manifold topology, poses, mass/inertia, roof and relocated
+material bindings. Licensed native Isaac contact, RGB-D, reset and robot tests
+remain separate acceptance requirements.
+
+- https://docs.omniverse.nvidia.com/kit/docs/omni_physics/latest/dev_guide/rigid_bodies_articulations/collision.html#create-an-sdf-collider

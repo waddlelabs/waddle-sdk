@@ -44,11 +44,11 @@ Each engine accepts `yam` or `xarm7` and these environments:
 
 - `two_cubes`: two free 60 g, 50 mm rigid cubes on a table, with frictional
   grasp contacts and the inertia of a uniform solid cube.
-- `bottle_cap`: a fixed bottle fixture and a passive cap. MuJoCo and SAPIEN use native
-  thread contact with a 25 g free cap and 4.166667 mm/revolution pitch; the cap
-  can leave the thread. Isaac currently uses a finite rotation/axial guide
-  with 5 mm/revolution pitch and three turns of travel; free removal on those
-  backend is not yet implemented.
+- `bottle_cap`: a fixed bottle fixture and a 25 g free cap with native thread
+  surfaces at 4.166667 mm/revolution pitch. All adapters use a removable assembly;
+  MuJoCo and SAPIEN have native axial-retention/free-exit coverage. Isaac's USD
+  assembly is checked offline; its runtime contact and removal acceptance remain
+  pending licensed native execution.
 - `drawer`: a fixed cabinet and a physical drawer with 220 mm of passive travel
   and 5 N·s/m native joint damping. The damping dissipates a pull after release;
   there is no spring returning the drawer to its starting position.
@@ -69,6 +69,16 @@ through PhysX's native mesh cooker. Its cap, roof, mass, center of mass and iner
 use the same assembly as MuJoCo. Native contact supplies the thread coupling;
 the cap has no guide or attachment. This path needs neither MuJoCo nor a compiler
 in the worker. GPU episode reset restores both joint and free-body state.
+
+Isaac references a packaged USD version of those exact surfaces and the same
+mass, inertia and roof. It selects GPU dynamics and GPU broadphase for the bottle
+scene, with a native SDF collider on the free cap and a static triangle-mesh neck.
+This follows [NVIDIA's SDF collider setup](https://docs.omniverse.nvidia.com/kit/docs/omni_physics/latest/dev_guide/rigid_bodies_articulations/collision.html#create-an-sdf-collider).
+Geometry conversion happens offline; its worker needs no additional converter,
+MuJoCo installation or compiler for the cap. Native SDF cooking adds startup work
+and GPU memory use. These USD checks do not prove Isaac rendering, reset, contact,
+robot control or task completion; run the licensed native suite before qualifying
+an Isaac installation.
 
 The reference robot models preserve the live adapters' joint names, order, limits,
 radian units, FK, and normalized hand action (0 closed, 1 open). YAM uses the SDK's
@@ -125,9 +135,9 @@ New drawer sites place the scene camera in front of the cabinet, at
 visible at the reference home. The other scenes retain their overhead oblique
 view. Existing scene files retain their explicit camera transforms; updating a
 transform also requires regenerating calibration artifacts bound to that scene.
-Free-cap tests check axial-load retention, thread pitch, natural exit, and
-subsequent free-body motion. Isaac's remaining guided-cap tests check retention
-away from an end stop and continued turning in either direction.
+Free-cap tests check axial-load retention, thread pitch, natural exit, subsequent
+free-body motion and reset. SAPIEN and Isaac share the same physical assertions;
+Isaac cases require an explicitly selected licensed test interpreter.
 The SDK's distinct high bimanual test poses are not used as reference-scene homes.
 Opening or explicitly resetting a world establishes
 this pose. Ordinary run boundaries preserve the current pose. Camera calibration
@@ -138,7 +148,8 @@ Sources, licenses, conversion steps and SHA-256 hashes ship in
 assets from pinned public manufacturer revisions. No model is downloaded at site
 startup. `tools/vendor_thread_model.py` rebuilds the native thread collision
 assets from the installed first-party SDFs; `tools/vendor_physx_thread_model.py`
-rebuilds the finer PhysX surfaces. The data README records versions and
+rebuilds the finer PhysX surfaces. `tools/vendor_thread_usd.py` packages those
+surfaces as a self-contained USD assembly without launching Isaac. The data README records versions and
 reproduction. The reference collision spheres are conservative covers derived from
 these same meshes and link transforms.
 
