@@ -31,6 +31,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -1077,6 +1078,29 @@ def test_the_pump_runs_the_tick_it_was_given_until_it_is_stopped():
 
     assert not pump.is_alive(), "stop() joins the thread"
     assert calls[0] == pytest.approx(0.01), "the tick is handed the declared period"
+
+
+def test_robot_pump_does_not_apply_new_commands_to_missed_ticks(monkeypatch):
+    clock = SimpleNamespace(now=0.0)
+    calls, waits = [], []
+
+    class StopAfterThreeTicks:
+        def is_set(self):
+            return len(waits) == 3
+
+        def wait(self, seconds):
+            waits.append(seconds)
+            # A planner or renderer prevented this thread from running. The
+            # next command belongs to now, not the missed historical ticks.
+            clock.now += seconds + (2.0 if len(waits) == 1 else 0.0)
+
+    pump = base.RobotPump(lambda dt: calls.append((clock.now, dt)), 20.0)
+    pump._stopping = StopAfterThreeTicks()
+    monkeypatch.setattr(base, "time", SimpleNamespace(monotonic=lambda: clock.now))
+    pump.run()
+    assert [t for t, dt in calls] == pytest.approx([0.0, 2.05, 2.10])
+    assert [dt for t, dt in calls] == pytest.approx([0.05] * 3)
+    assert all(wait > 0 for wait in waits)
 
 
 def test_the_proprio_tick_steps_every_part_and_reports_it():

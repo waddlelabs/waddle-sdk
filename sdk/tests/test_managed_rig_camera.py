@@ -7,6 +7,7 @@ import sys
 import threading
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -192,6 +193,43 @@ class _RecordingSession:
 
     def publish_depth_preview(self, camera: str, preview: np.ndarray) -> None:
         self.published.append((f"{camera}/depth", preview))
+
+
+@pytest.mark.parametrize(
+    ("capture_s", "expected_starts"),
+    [(0.01, [0.0, 0.05, 0.10]), (0.12, [0.0, 0.15, 0.30])],
+)
+def test_camera_cadence_skips_missed_frames_without_catchup_bursts(
+    monkeypatch, capture_s, expected_starts
+):
+    clock = SimpleNamespace(now=0.0)
+    starts, waits, closed = [], [], []
+
+    class SlowCamera(_BlockingCamera):
+        def capture(self):
+            starts.append(clock.now)
+            clock.now += capture_s
+            return CameraFrame(rgb=np.zeros((2, 2, 3), dtype=np.uint8))
+
+    class StopAfterThreeFrames:
+        def is_set(self):
+            return len(waits) == 3
+
+        def wait(self, seconds):
+            waits.append(seconds)
+            clock.now += seconds
+
+    driver = SlowCamera(closed)
+    rig = _rig(closed, driver)
+    session = _RecordingSession()
+    pump = rig.camera_pumps(session, {"overhead": driver})["overhead"]
+    pump._stopping = StopAfterThreeFrames()
+    monkeypatch.setattr(base, "time", SimpleNamespace(monotonic=lambda: clock.now))
+    pump.run()
+    assert starts == pytest.approx(expected_starts)
+    assert all(wait > 0 for wait in waits)
+    assert len(session.published) == 3
+    assert closed == ["camera"]
 
 
 def test_capture_keeps_metric_depth_local_and_publishes_paired_preview():

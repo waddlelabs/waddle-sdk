@@ -52,17 +52,33 @@ hash-pinned manufacturer URDF assemblies, visual meshes, inertias and decomposed
 hand collisions; task props use primitive geometry. The SDK YAM arm contract is
 assembled with I2RT LINEAR_4310; xArm7 uses UFACTORY's G2 hand. The reference servos
 are not calibrated actuator models. MuJoCo, SAPIEN and Isaac Sim use native
-URDF import; xArm uses Menagerie's two linkage closures with a coupled driver.
+URDF import; xArm uses Menagerie's two linkage closures. SAPIEN uses ManiSkill's
+PD mimic-controller pattern for coupled jaws, sharing the actuator's gain/force/
+inertia budget; other engines retain native hand coupling.
 Known trajectory velocities use the existing optional driver port. Position-only
 commands and holds clear those velocity targets. The world advances in fixed
-2 ms native steps driven by the SDK's existing shared-world robot pump; the
-worker has no independent physics clock. Reference worlds preserve robot and prop
+2 ms native steps driven by the SDK's existing shared-world robot pump. State
+reporting runs at twice the declared control rate, with a 100 Hz floor; fractional
+substeps carry between ticks rather than rounding each tick up. The
+worker has no independent physics clock. Camera pumps skip missed capture slots
+instead of busy-rendering a backlog after a slow frame; catch-up bursts can starve
+shared physics/control at full camera resolution. The robot pump also resumes its
+cadence after a delay instead of integrating new targets over historical missed
+ticks. Under load, simulation time can lag wall time; it never repays a planning
+pause by accelerating a subsequently issued command. Reference worlds preserve robot and prop
 state across runs by default; `worlds.cell.options.reset_on_episode: true` opts
 into native scene reset for rollouts. Per-arm episode hooks do not home these
 world-owned robots independently. The hand pinch offset comes from I2RT 1.3.5's corrected grasp site.
 `tools/vendor_simulation_models.py` rebuilds
 the packaged assets; no runtime model download occurs. Engine-dependent acceptance lives in
 `sdk/tests/test_simulation.py` and isolates native graphics runtimes in subprocesses.
+Its rendered RGB/depth witnesses use off-center optical principal points, unequal
+focal lengths, and submillimetre depth units to catch camera convention errors.
+Reference worlds preserve site-selected part, base-frame, and camera names;
+one world binds one robot part, preventing two names from aliasing one actuator.
+Native material/lighting defaults use a bundled CC0 table texture; provenance and
+its digest are in `simulators/data/appearance/README.md`. These affect appearance
+without changing collision geometry, and do not enable additional ray tracing.
 
 ## Repo map
 

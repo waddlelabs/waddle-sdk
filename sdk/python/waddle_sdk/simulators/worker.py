@@ -26,6 +26,7 @@ def serve(connection: Connection) -> None:
                 engine.capture(name)
             connection.send((True, None))
             dt = config["timestep"]
+            pending_time = 0.0
             while True:
                 operation, arguments = connection.recv()
                 if operation == "close":
@@ -46,11 +47,18 @@ def serve(connection: Connection) -> None:
                     if operation == "step":
                         # The SDK's existing robot pump owns simulation time,
                         # matching the shared-world MuJoCo reference backend.
-                        for _ in range(math.ceil(arguments[0] / dt)):
+                        # Carry fractional substeps across ticks. Rounding each
+                        # tick up would accelerate non-integral rate ratios.
+                        pending_time += arguments[0]
+                        steps = math.floor(pending_time / dt + 1e-10)
+                        for _ in range(steps):
                             engine.step()
+                        pending_time = max(0.0, pending_time - steps * dt)
                         result = None
                     else:
                         result = getattr(engine, operation)(*arguments)
+                        if operation == "reset":
+                            pending_time = 0.0
                     connection.send((True, result))
                 except Exception as error:
                     engine.hold()

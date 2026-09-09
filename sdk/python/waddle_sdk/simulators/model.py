@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field, replace
+from importlib.resources import files
 from typing import Any
 
 import numpy as np
@@ -26,6 +27,7 @@ class Shape:
     mesh: str | None = None
     visual: bool = True
     collision: bool = True
+    texture: str | None = None
 
 
 @dataclass
@@ -56,7 +58,18 @@ def objects(environment: str) -> list[list[Link]]:
         Link(
             "table",
             xyz=(0.35, 0.0, -0.035),
-            shapes=[Shape("box", (1.2, 1.0, 0.07), color=(0.55, 0.4, 0.25, 1.0))],
+            shapes=[
+                Shape(
+                    "box",
+                    (1.2, 1.0, 0.07),
+                    color=(1.0, 1.0, 1.0, 1.0),
+                    texture=str(
+                        files(__package__).joinpath(
+                            "data/appearance/wood_table_001_diff_1k.png"
+                        )
+                    ),
+                )
+            ],
         )
     ]
     if environment == "two_cubes":
@@ -198,6 +211,8 @@ def urdf(links: list[Link], name: str) -> str:
                 if kind == "visual":
                     material = ET.SubElement(geom, "material", name=f"{link.name}_{i}")
                     ET.SubElement(material, "color", rgba=numbers(shape.color))
+                    if shape.texture:
+                        ET.SubElement(material, "texture", filename=shape.texture)
         if link.parent is not None:
             joint = ET.SubElement(
                 root, "joint", name=link.joint or f"{link.name}_fixed", type=link.kind
@@ -263,7 +278,62 @@ def mjcf(p: Profile, config: dict) -> str:
         offheight=str(max(c["stream"]["height"] for c in config["cameras"].values())),
     )
     world = root.find("worldbody")
-    ET.SubElement(world, "light", pos="0 -1 2", dir="0 0 -1", diffuse=".8 .8 .8")
+    ET.SubElement(
+        visual,
+        "headlight",
+        ambient=".18 .20 .24",
+        diffuse=".25 .25 .25",
+        specular=".1 .1 .1",
+    )
+    ET.SubElement(
+        world,
+        "light",
+        pos="-0.5 -1 2",
+        dir=".3 .4 -1",
+        diffuse=".9 .85 .78",
+        specular=".5 .5 .5",
+    )
+    ET.SubElement(
+        world,
+        "light",
+        pos="1 1 1.5",
+        dir="-.4 -.4 -1",
+        diffuse=".3 .36 .45",
+        castshadow="false",
+    )
+    asset = root.find("asset")
+    ET.SubElement(
+        asset,
+        "texture",
+        name="studio_sky",
+        type="skybox",
+        builtin="gradient",
+        rgb1=".35 .42 .52",
+        rgb2=".82 .85 .89",
+        width="256",
+        height="1536",
+    )
+    ET.SubElement(
+        asset,
+        "texture",
+        name="table_wood",
+        type="2d",
+        file=props[0][0].shapes[0].texture,
+    )
+    ET.SubElement(
+        asset,
+        "material",
+        name="table_finish",
+        texture="table_wood",
+        texrepeat="1 1",
+        texuniform="true",
+        specular=".25",
+        shininess=".2",
+    )
+    for material in asset.findall("material"):
+        if material.get("name") != "table_finish":
+            material.set("specular", ".45")
+            material.set("shininess", ".4")
     # Remove the URDF-only container so free props are native world children.
     container = world.find("body[@name='scene_root']")
     world.extend(container.findall("body"))
@@ -277,6 +347,10 @@ def mjcf(p: Profile, config: dict) -> str:
     # Collision visuals are hidden by the camera renderer; actual CAD remains.
     for geom in world.iter("geom"):
         geom.set("group", "2" if geom.get("contype") == "0" else "3")
+    for geom in bodies["table"].findall("geom"):
+        if geom.get("group") == "2":
+            geom.set("material", "table_finish")
+            geom.set("rgba", "1 1 1 1")
     for link in robot.links:
         if link.joint:
             bodies[link.name].find("joint").set(
@@ -339,7 +413,10 @@ def mjcf(p: Profile, config: dict) -> str:
         t = np.asarray(row["transform"])
         gl_rotation = t[:3, :3] @ np.diag([1, -1, -1])
         intr, stream = row["intrinsics"], row["stream"]
-        # MuJoCo principal pixel offsets are measured relative to image center.
+        # MuJoCo shifts the projection frustum, so its offsets have the
+        # opposite sign to principal points in the returned optical image.
+        # Optical pixel centers are integer coordinates; the first OpenGL
+        # raster sample is half a pixel from the edge of the viewport.
         ET.SubElement(
             bodies["tcp"] if row["mount"]["kind"] == "wrist" else world,
             "camera",
@@ -350,7 +427,10 @@ def mjcf(p: Profile, config: dict) -> str:
             sensorsize="1 1",
             focalpixel=f"{intr['fx']} {intr['fy']}",
             principalpixel=numbers(
-                (intr["cx"] - stream["width"] / 2, intr["cy"] - stream["height"] / 2)
+                (
+                    (stream["width"] - 1) / 2 - intr["cx"],
+                    (stream["height"] - 1) / 2 - intr["cy"],
+                )
             ),
         )
     return ET.tostring(root, encoding="unicode")

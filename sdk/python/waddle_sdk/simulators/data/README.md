@@ -55,8 +55,9 @@ stop anchors the mapping; the nominal SDK opening is 84 mm. This preserves
 physical jaw travel instead of treating normalized opening as a joint angle.
 The URDF gives the geometric finger-angle relationships used for FK. Native
 physics uses Menagerie's two ball-joint linkage closures and the single
-opposing-driver mimic, with one driven motor. This avoids overconstraining
-the four-bar mechanism with six independent position drives.
+opposing-driver relation. MuJoCo and Isaac retain a native mimic with one driven
+motor; SAPIEN uses the shared PD mimic-controller pattern described below.
+This avoids overconstraining the four-bar mechanism with six position drives.
 
 ## Collision and dynamics
 
@@ -67,8 +68,8 @@ finger recesses and the empty space around the cable. All engines use those same
 Fixed frame links retain physical adjacency; exclusions inside the G2 linkage
 cover its connected pins and finger/base pairs declared noncolliding by the
 manufacturer's `xarm7_with_gripper.srdf`. There is no exclusion between a robot
-and a task object. Native MuJoCo equalities and PhysX tendon/mimic constraints
-enforce the hand's relations.
+and a task object. Native equalities, linkage constraints, and the SAPIEN coupled
+jaw controller implement the hand's relations.
 
 Planning bounds are conservative sphere covers of the same mesh triangles,
 transformed through the same URDF. Manufacturer masses, COM offsets and full
@@ -113,13 +114,28 @@ I2RT's current `SimRobot.command_joint_pos` teleports coordinates, so it is
 not used as a contact-physics backend. The xArm physics retains the G2 CAD and
 manufacturer inertias; Menagerie's linkage anchor frames match its joint geometry.
 SAPIEN uses ManiSkill's explicit zero joint-friction default and 15/1 solver
-iterations. The SDK's existing shared-world robot pump owns physics time; the worker has no
-independent clock or catch-up loop. The pump runs at the native physics cadence
-(500 Hz by default), while the part declares its normal 50 Hz command rate and
-retains the corresponding owner step limits. Runs preserve scene state by default.
+iterations. Its hand uses the maintained
+[`PDJointPosMimicController` pattern](https://github.com/mani-skill/ManiSkill/blob/62ff3a5896b4d5b4cf0ac4c8d79afe600c9404a3/mani_skill/agents/controllers/pd_joint_pos.py),
+instead of SAPIEN's oscillatory URDF mimic tendon. The same opening target drives
+both coupled joints; the single actuator's gains, force cap and reflected inertia
+are divided equally between them. This preserves their combined budget under
+symmetric motion, but approximates transmission behavior under asymmetric contact.
+xArm's passive four-bar links retain native closure constraints. MuJoCo and Isaac
+retain native coupling.
+
+The SDK's existing shared-world robot pump owns physics time; the worker has no
+independent clock or catch-up loop. State reporting runs at least twice the declared
+control rate, with a 100 Hz floor, while physics retains its 2 ms native substeps.
+Fractional substeps carry between ticks instead of accelerating non-integral rate
+ratios. Missed pump ticks are not replayed under newly issued commands. The part's
+normal 50 Hz command rate and corresponding owner step limits are unchanged.
+Runs preserve scene state by default.
 Explicit `worlds.cell.options.reset_on_episode: true` uses native state
 reset/snapshots; it does not recompile the robot or restart its renderer. The world
 owns initialization, and per-arm episode hooks never home these robots again.
+
+Visual-only texture provenance is in `appearance/README.md`. Materials and fill
+lighting affect RGB appearance, not the manufacturer geometry or contact settings.
 
 ## Rebuilding
 

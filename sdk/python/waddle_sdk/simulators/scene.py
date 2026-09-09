@@ -391,9 +391,15 @@ def load_scene(root: Path, relative: Any) -> tuple[Path, dict]:
             or not 0 < fps <= 120
         ):
             raise ValueError(f"camera {name} fps must be in (0, 120]")
-        if mount not in ({"kind": "scene"}, {"kind": "wrist", "part": "arm"}):
+        wrist = (
+            set(mount) == {"kind", "part"}
+            and mount["kind"] == "wrist"
+            and isinstance(mount["part"], str)
+            and bool(mount["part"].strip())
+        )
+        if mount != {"kind": "scene"} and not wrist:
             raise ValueError(
-                f"camera {name} requires a scene mount or wrist mount on arm"
+                f"camera {name} requires a scene mount or wrist mount on a named part"
             )
         if not isinstance(row.get("frame_id"), str) or not row["frame_id"]:
             raise ValueError(f"camera {name} requires an optical frame id")

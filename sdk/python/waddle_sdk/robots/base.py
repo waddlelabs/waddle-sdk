@@ -1813,7 +1813,8 @@ class RobotPump(threading.Thread):
     It exists because the robot's own housekeeping cannot pause while the
     caller's thread is elsewhere — blocked inside ``a Metal-hosted run``, or
     sitting in a monitor-only session with no rollout loop at all. ``stop()``
-    joins."""
+    joins. A delayed tick resumes the declared cadence without replaying missed
+    ticks against a newer command; simulated time may lag under load."""
 
     def __init__(
         self,
@@ -1836,7 +1837,13 @@ class RobotPump(threading.Thread):
         while not self._stopping.is_set():
             self._tick(self._period)
             deadline += self._period
-            self._stopping.wait(max(0.0, deadline - time.monotonic()))
+            now = time.monotonic()
+            if deadline < now:
+                # A new target must not be integrated over historical ticks
+                # missed while planning/rendering held up this thread. Resume
+                # the declared cadence instead of bursting to repay time debt.
+                deadline = now + self._period
+            self._stopping.wait(max(0.0, deadline - now))
 
     def stop(self, timeout: float = 5.0) -> None:
         self._stopping.set()
@@ -1889,6 +1896,8 @@ class CameraPump(threading.Thread):
     paths. Pixel-aligned metric depth remains in :class:`CameraSample` for local
     geometry/perception, while a deterministic RGB8 visualization of that exact
     paired plane is published on the media-only ``<camera>/depth`` track.
+    Slow capture/publication skips missed frame slots instead of creating a
+    catch-up backlog; every frame actually acquired is still published.
     """
 
     def __init__(
@@ -1950,7 +1959,13 @@ class CameraPump(threading.Thread):
                         ),
                     )
                 deadline += period
-                self._stopping.wait(max(0.0, deadline - time.monotonic()))
+                now = time.monotonic()
+                if deadline < now:
+                    # Captures are live samples, not a backlog to replay. Skip
+                    # missed slots after slow capture/publish instead of busy
+                    # rendering to catch up and starving shared physics/control.
+                    deadline += (math.floor((now - deadline) / period) + 1) * period
+                self._stopping.wait(max(0.0, deadline - now))
         except Exception as exc:  # noqa: BLE001 — vendor capture can throw anything
             if not self._stopping.is_set():
                 self._report(

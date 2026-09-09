@@ -29,10 +29,22 @@ cameras compile into the simulator and the same SDK frame declaration. Materials
 visual-only coatings cannot affect contact or owner safety. A physical coating requires
 explicit collision properties and a conservative link-local safety sphere.
 
+The packaged YAM/xArm7 reference worlds preserve site-selected robot-part,
+base-frame, and camera names. Change wrist-camera owner names in both the site
+and its simulation profile when renaming a part. One reference world contains
+one robot; two part names cannot alias that robot. Camera placements, calibration,
+and object layouts may differ between sites, while reported intrinsics and depth
+units must describe the rendered pixels.
+
+The SDK pumps resume after slow work without catch-up bursts. Camera capture
+skips missed frame slots; physics never applies a newly issued target to ticks
+missed during an earlier planning pause. Real-time factor and delivered camera
+frame rate still depend on available compute.
+
 ## When to implement another world
 
 Use a world when parts and cameras share physics, render state, scene objects, or one
-simulator process. Metal must not know the choice: the opened site exposes only the
+simulator process. Consumers must not know the choice: the opened site exposes only the
 ordinary `SdkRuntimePort`, support rows, observations, actions, and camera samples.
 
 The contracts live in `waddle_sdk.simulation`:

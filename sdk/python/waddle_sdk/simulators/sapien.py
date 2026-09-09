@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -22,10 +23,26 @@ class Engine:
         self.description = robot = description(p.name)
         self.scene = sapien.Scene()
         self.scene.set_timestep(config["timestep"])
-        self.scene.set_ambient_light([0.5, 0.5, 0.5])
-        self.scene.add_directional_light([0, -0.5, -1], [1.0, 1.0, 1.0], shadow=True)
-        self.robot = self._load(robot_links(p), "robot", scratch)
-        # ManiSkill 3 SceneConfig defaults (15/1 iterations, native contacts).
+        self.scene.set_ambient_light([0.18, 0.20, 0.24])
+        self.scene.add_directional_light([0.3, 0.4, -1], [2.0, 1.85, 1.7], shadow=True)
+        self.scene.add_directional_light([-0.4, -0.4, -1], [0.3, 0.36, 0.45])
+        links = robot_links(p)
+        master = robot.hand_names[0]
+        self.hand_drives = {master} | {
+            link.joint for link in links if link.mimic == (master, 1.0, 0.0)
+        }
+        # Use ManiSkill's PDJointPosMimicController pattern. SAPIEN's URDF
+        # mimic tendon can oscillate under grasp contact. Share the single
+        # actuator's gains, force budget and reflected inertia across its jaws;
+        # passive four-bar links keep their native closure constraints.
+        self.robot = self._load(
+            [
+                replace(link, mimic=None) if link.joint in self.hand_drives else link
+                for link in links
+            ],
+            "robot",
+            scratch,
+        )
         self.robot.set_solver_position_iterations(15)
         self.robot.set_solver_velocity_iterations(1)
         self.joints = {j.name: j for j in self.robot.get_active_joints()}
@@ -36,8 +53,10 @@ class Engine:
             # PDJointPosController explicitly sets friction=0 by default;
             # SAPIEN's loader otherwise inserts joint friction=0.05.
             joint.set_friction(0.0)
-            joint.set_armature([robot.armature(name)])
-            kp, kd, effort = robot.servo(name)
+            source = master if name in self.hand_drives else name
+            share = len(self.hand_drives) if name in self.hand_drives else 1
+            joint.set_armature([robot.armature(source) / share])
+            kp, kd, effort = (value / share for value in robot.servo(source))
             joint.set_drive_properties(kp, kd, force_limit=effort)
         self.drives = []
         links = {link.name: link for link in self.robot.get_links()}
@@ -116,24 +135,39 @@ class Engine:
             result.set_root_pose(
                 self.sp.Pose(links[0].xyz, quaternion(rotation(links[0].rpy)))
             )
+            for link in result.get_links():
+                visual = link.entity.find_component_by_type(
+                    self.sp.render.RenderBodyComponent
+                )
+                if visual:
+                    for shape in visual.render_shapes:
+                        for part in shape.parts:
+                            part.material.specular = 0.5
+                            part.material.roughness = 0.35 if name == "robot" else 0.65
+                            part.material.metallic = 0.1 if name == "robot" else 0.0
             return result
         link = links[0]
         builder = self.scene.create_actor_builder()
         material = self.scene.create_physical_material(1.2, 1.0, 0.0)
         for shape in link.shapes:
             pose = self.sp.Pose(shape.xyz, quaternion(rotation(shape.rpy)))
+            finish = self.sp.render.RenderMaterial(
+                base_color=shape.color, roughness=0.65, specular=0.3
+            )
+            if shape.texture:
+                finish.base_color_texture = self.sp.render.RenderTexture2D(
+                    shape.texture
+                )
             if shape.kind == "box":
                 half = np.asarray(shape.size) / 2
                 builder.add_box_collision(pose=pose, half_size=half, material=material)
-                builder.add_box_visual(
-                    pose=pose, half_size=half, material=shape.color[:3]
-                )
+                builder.add_box_visual(pose=pose, half_size=half, material=finish)
             elif shape.kind == "sphere":
                 builder.add_sphere_collision(
                     pose=pose, radius=shape.size[0], material=material
                 )
                 builder.add_sphere_visual(
-                    pose=pose, radius=shape.size[0], material=shape.color[:3]
+                    pose=pose, radius=shape.size[0], material=finish
                 )
             else:
                 raise ValueError("single-body reference props use box/sphere geometry")

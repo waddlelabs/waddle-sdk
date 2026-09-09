@@ -86,6 +86,11 @@ capture. Raw metric depth remains local. A media-enabled session may publish RGB
 a deterministic colorized depth preview on separate tracks; the adapter does not
 encode or route those tracks.
 
+The declared frame rate schedules capture attempts. Slow capture or publication
+can reduce the delivered rate: the SDK skips missed frame slots and resumes at a
+future slot instead of issuing catch-up bursts. Every acquired frame is still
+published through the ordinary sample and recording paths.
+
 ## Intrinsics and deprojection
 
 A driver may structurally implement `CameraCalibrationDriver.intrinsics()` to report

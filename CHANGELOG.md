@@ -48,6 +48,16 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Changed
 
+- Batch reference-world 2 ms physics substeps between state reports at twice the
+  declared command rate, with a 100 Hz floor. Carry fractional substeps forward
+  instead of advancing extra physics time when reporting intervals do not divide
+  the native timestep.
+- Use ManiSkill's native PD mimic-controller pattern for SAPIEN jaws, sharing the
+  original gain, force and inertia budget across coupled drives. Retain the xArm
+  passive linkage closures and unchanged contact settings.
+- Add a bundled CC0 Poly Haven table texture and native material/key/fill lighting
+  to MuJoCo and SAPIEN reference scenes, without changing geometry or RGB-D units.
+
 - Base the reference simulation implementations on maintained 2026 I2RT,
   Menagerie, mjlab, ManiSkill and Isaac Lab sources. Use native URDF importers,
   xArm linkage closures and threaded-cap constraints; remove custom servo-target
@@ -62,6 +72,25 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   the existing runtime remains lazy behind the `[mujoco]` extra.
 
 ### Fixed
+
+- Resume robot-pump cadence after a scheduling delay instead of replaying missed
+  ticks under a newly issued target. Catch-up bursts after planning could advance
+  simulated arms past their target, causing owner-envelope refusals and timeouts.
+
+- Skip missed camera capture slots after slow rendering/publication instead of
+  issuing catch-up bursts. Those bursts starved shared simulation physics at full
+  RGB-D resolution and caused ordinary SAPIEN joint/orientation motion to time out.
+  Preserve native physics timesteps, owner limits, and every acquired frame's
+  normal publication/recording path.
+
+- Preserve site-selected robot-part, base-frame, and wrist-camera owner names
+  in reference simulation worlds, allowing the same program scopes as physical
+  hardware. Reject binding two logical parts to the single reference robot.
+
+- Correct MuJoCo principal-point signs so RGB pixels and axial depth agree
+  with the declared optical intrinsics for off-center cameras. Native engine
+  acceptance now checks projected RGB geometry and depth with unequal focal
+  lengths, an off-center principal point, and submillimetre depth units.
 
 - Preserve reference simulation state across control runs by default. Starting
   a new run after jog release no longer teleports the robot or rearranges props

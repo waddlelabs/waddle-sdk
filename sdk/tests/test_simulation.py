@@ -65,9 +65,9 @@ def test_all_reference_declarations_validate_without_opening(
     assert set(site["cameras"]) == {"scene", "wrist"}
     assert site["parts"]["arm"]["gripper"]["open_m"] == profile(robot).opening
     assembly = loaded._assembly(None)
-    assert assembly.rig.rate_hz == 1.0 / sim["timestep"]
     action_space = assembly.rig.robot().action_space.parts["arm"]
     assert action_space.rate_hz == site["parts"]["arm"]["options"]["rate_hz"]
+    assert assembly.rig.rate_hz == max(100.0, 2 * action_space.rate_hz)
 
 
 def test_yam_fk_matches_live_adapter_at_multiple_configurations():
@@ -231,6 +231,11 @@ def test_native_models_rgbd_and_bounded_joint_motion(
 
 def _native_conformance(tmp_path, backend, robot, environment):
     _, config = documents(tmp_path, backend, robot, environment)
+    # Real RGB-D cameras have off-center principal points and unequal focal
+    # lengths. Centered defaults conceal renderer convention mistakes.
+    config["cameras"]["scene"]["intrinsics"].update(
+        fx=174.0, fy=161.0, cx=109.0, cy=62.0, depth_scale_mm=0.1
+    )
     p = profile(robot)
     engine = importlib.import_module(f"waddle_sdk.simulators.{backend}").Engine(
         config, tmp_path
@@ -306,7 +311,7 @@ def _native_conformance(tmp_path, backend, robot, environment):
         u = round(intr["fx"] * point[0] / point[2] + intr["cx"])
         v = round(intr["fy"] * point[1] / point[2] + intr["cy"])
         _, depth = engine.capture("scene")
-        z = depth[v, u] / 1000
+        z = depth[v, u] * intr["depth_scale_mm"] / 1000
         assert z > 0
         world = t @ [
             z * (u - intr["cx"]) / intr["fx"],
@@ -315,6 +320,15 @@ def _native_conformance(tmp_path, backend, robot, environment):
             1.0,
         ]
         assert abs(world[2]) < 0.004
+        if environment == "two_cubes":
+            # Check RGB against an independent world-space witness too: the
+            # top-center of the green cube must project into its green pixels.
+            point = np.linalg.inv(t) @ [0.32, -0.10, 0.05, 1.0]
+            u = round(intr["fx"] * point[0] / point[2] + intr["cx"])
+            v = round(intr["fy"] * point[1] / point[2] + intr["cy"])
+            rgb, _ = engine.capture("scene")
+            red, green, blue = map(int, rgb[v, u])
+            assert green > 2 * max(red, blue), (u, v, rgb[v, u])
         if environment == "drawer":
             if backend == "mujoco":
                 joint = engine.model.joint("drawer_slide")
@@ -381,7 +395,8 @@ def _native_conformance(tmp_path, backend, robot, environment):
         engine.close()
 
 
-def test_worker_advances_only_on_the_shared_sdk_clock(monkeypatch):
+@pytest.mark.parametrize("durations", [[0.1], [1 / 60] * 6, [0.0005] * 200])
+def test_worker_advances_only_on_the_shared_sdk_clock(monkeypatch, durations):
     from waddle_sdk.simulators import worker
 
     state = SimpleNamespace(steps=0, reads=[])
@@ -411,7 +426,7 @@ def test_worker_advances_only_on_the_shared_sdk_clock(monkeypatch):
             config,
             ("capture", ["scene"]),
             ("read", []),
-            ("step", [0.1]),
+            *[("step", [dt]) for dt in durations],
             ("read", []),
             ("close", []),
         ]
@@ -506,3 +521,48 @@ def test_camera_profile_mismatch_fails_before_open(tmp_path):
     with pytest.raises(ValueError, match="differs"):
         with load_site(tmp_path / "site.yaml").open(console=False, _testing=True):
             pass
+
+
+@pytest.mark.parametrize("backend", ["mujoco", "sapien"])
+def test_site_preserves_custom_part_camera_and_base_frame_names(
+    tmp_path, monkeypatch, backend
+):
+    pytest.importorskip(backend)
+    monkeypatch.setenv("MUJOCO_GL", "egl")
+    site, simulation = documents(tmp_path, backend=backend)
+    site["parts"]["left"] = site["parts"].pop("arm")
+    site["parts"]["left"]["base_frame"] = "left_base"
+    for old, new in (("scene", "bench_rgbd"), ("wrist", "left_rgbd")):
+        for cameras in (site["cameras"], simulation["cameras"]):
+            cameras[new] = cameras.pop(old)
+            cameras[new]["frame_id"] = new
+            if old == "wrist":
+                cameras[new]["mount"]["part"] = "left"
+    (tmp_path / "site.yaml").write_text(yaml.safe_dump(site))
+    (tmp_path / "simulation.json").write_text(json.dumps(simulation))
+    with load_site(tmp_path / "site.yaml").open(
+        console=False, _testing=True
+    ) as session:
+        observed = session.observe()
+        deadline = time.monotonic() + 5
+        while set(observed.cameras) != {"bench_rgbd", "left_rgbd"}:
+            assert time.monotonic() < deadline, "both named cameras must produce frames"
+            time.sleep(0.01)
+            observed = session.observe()
+        assert set(observed.parts) == {"left"}
+        assert observed.parts["left"].frame_id == "left_base"
+        assert observed.parts["left"].ee_pose_wxyz is not None
+        assert set(observed.cameras) == {"bench_rgbd", "left_rgbd"}
+        arm = session._managed.arms["left"]
+        assert arm.collision_frame == "left_base"
+        with session.run(task="hold measured pose", actor="test") as run:
+            assert run.step(observed.gate_vector(), observed).dispatched
+            run.finish("success")
+
+
+def test_reference_world_rejects_aliasing_two_parts_to_one_robot(tmp_path):
+    site, _ = documents(tmp_path)
+    site["parts"]["other"] = dict(site["parts"]["arm"])
+    (tmp_path / "site.yaml").write_text(yaml.safe_dump(site))
+    with pytest.raises(ValueError, match="one robot part"):
+        load_site(tmp_path / "site.yaml")._assembly(None)

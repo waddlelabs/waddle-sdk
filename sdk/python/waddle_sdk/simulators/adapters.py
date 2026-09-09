@@ -34,6 +34,7 @@ class World:
         self._process: subprocess.Popen | None = None
         self._connection = None
         self._failed = False
+        self._part_name: str | None = None
 
     def open(self) -> None:
         with self._lock:
@@ -116,7 +117,11 @@ class World:
         return True
 
     def part(self, *, config: PartConfig) -> base.Rig:
-        return _arm(self, config=config)
+        if self._part_name is not None and self._part_name != config.name:
+            raise ValueError("a reference simulation world contains one robot part")
+        rig = _arm(self, config=config)
+        self._part_name = config.name
+        return rig
 
     def camera(self, *, config: CameraConfig) -> Camera:
         return _camera(self, config=config)
@@ -261,10 +266,8 @@ class Driver:
 
 def _arm(owner: World, *, config: PartConfig) -> base.Rig:
     p = profile(owner.config["robot"])
-    if config.base_frame != p.frame:
-        raise ValueError(
-            f"{p.name} simulation requires its declared base frame {p.frame}"
-        )
+    if not isinstance(config.base_frame, str) or not config.base_frame.strip():
+        raise ValueError("simulation requires a declared robot base frame")
     if set(config.joint_limits) != set(p.names):
         raise ValueError("simulation joint names/order must match the robot profile")
     limits = tuple(tuple(config.joint_limits[name]) for name in p.names)
@@ -290,7 +293,7 @@ def _arm(owner: World, *, config: PartConfig) -> base.Rig:
                     joint_names=p.names,
                     joint_limits=limits,
                     step_caps=tuple(v / rate for v in velocities),
-                    base_frame=p.frame,
+                    base_frame=config.base_frame,
                     workspace=(
                         tuple(config.workspace_bounds["min"]),
                         tuple(config.workspace_bounds["max"]),
@@ -299,7 +302,7 @@ def _arm(owner: World, *, config: PartConfig) -> base.Rig:
                     else None,
                     fk=driver.forward_kinematics,
                     collision_spheres=driver.collision_spheres,
-                    collision_frame=p.frame,
+                    collision_frame=config.base_frame,
                     # The shared world owns initialization/reset; the ordinary
                     # per-arm episode hook must not teleport it independently.
                     home_values=None,
@@ -327,10 +330,11 @@ def _arm(owner: World, *, config: PartConfig) -> base.Rig:
             ),
         ),
         build_arms=build,
-        # Sample/integrate at the native timestep, so an asynchronous reader
-        # cannot observe a whole control interval jumping between two calls.
-        # The part action space and owner step limits keep their declared rate.
-        rate_hz=max(rate, 1.0 / owner.config["timestep"]),
+        # Separate state reporting from native physics substeps, as in
+        # ManiSkill. Oversample control to avoid whole command-interval jumps,
+        # without a process round trip and FK report for every 2 ms substep.
+        # The action space and owner step limits keep their declared rate.
+        rate_hz=max(100.0, 2 * rate),
         posture=config.posture,
     )
 

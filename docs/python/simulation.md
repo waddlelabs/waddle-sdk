@@ -35,8 +35,13 @@ pinned I2RT URDF and tool convention, assembled with the live adapter's 95 mm
 LINEAR_4310 hand. xArm7 uses UFACTORY's expanded URDF with the G2 gripper and its
 standard TCP. The original visual meshes, link masses, centers of mass and inertia
 tensors are retained. Concave hand collision meshes are decomposed offline into
-convex pieces so each engine preserves recesses and cable clearance. Native constraints couple the jaws
-and gripper linkage; xArm7's revolute hand is mapped nonlinearly to jaw travel.
+convex pieces so each engine preserves recesses and cable clearance. Native constraints
+close the xArm linkage; its revolute hand is mapped nonlinearly to jaw travel.
+SAPIEN follows ManiSkill's PD mimic-controller pattern for the coupled jaws, sharing
+the actuator's gains, force limit, and reflected inertia across the two native
+drives. This avoids the imported URDF tendon's contact oscillation, but approximates
+the physical transmission under asymmetric contact. The other engines retain native
+jaw coupling. No per-step contact forces or object attachments implement grasping.
 
 Sources, licenses, conversion steps and SHA-256 hashes ship in
 `waddle_sdk/simulators/data/`. `tools/vendor_simulation_models.py` rebuilds those
@@ -45,15 +50,20 @@ startup. The reference collision spheres are conservative covers derived from
 these same meshes and link transforms.
 
 The SDK's existing shared-world robot pump advances the reference world in fixed
-2 ms native steps. The pump runs at 500 Hz; the part's command declaration and
-owner limits remain at 50 Hz. The worker has no independent physics clock; sensors
+2 ms native steps. State reporting runs at twice the declared control rate, with a
+100 Hz floor, batching native substeps between reports. Fractional steps carry into
+the next report rather than rounding each interval up. The part's command declaration
+and owner limits are unchanged (50 Hz in the default site). The worker has no
+independent physics clock; sensors
 and robot state share the ordinary SDK lifecycle. Runs preserve the physical scene
 by default; a new run holds the measured robot pose instead of homing it or resetting
 props. To start each rollout from the initial scene, explicitly set
 `worlds.cell.options.reset_on_episode: true` in `site.yaml`. That option uses native
 state reset/snapshots, retaining the model and renderer. Reopening a site always
 creates a fresh scene. Actual real-time factor depends on
-available compute and rendering load.
+available compute and rendering load. A delayed robot pump resumes its declared
+cadence without a catch-up burst: new commands are never integrated over ticks
+missed during an earlier planning/rendering pause.
 Position servos, gravity compensation,
 friction and the primitive task props remain
 simulation settings. Manufacturer CAD and inertial properties do not establish
@@ -64,6 +74,13 @@ model (approximately 9.95 mm along the declared TCP's +Z). The SDK TCP stays
 unchanged, and the older hand's lateral pinch offset does not apply.
 Its wrist optical pose comes from I2RT's published LINEAR_4310/D405 bracket;
 the reference intrinsics remain explicit site settings.
+
+The reference table uses a bundled 1K CC0 Poly Haven wood texture (about 5.3 MB
+installed). MuJoCo and SAPIEN use native material highlights and warm key/cool
+fill lighting. These are raster rendering defaults, not calibrated photographic
+appearance; RTX rendering remains an Isaac capability requiring separate native
+validation. Appearance changes can affect visual detections and GPU cost. They do
+not change contact geometry, camera intrinsics, depth encoding, or owner limits.
 
 ## Create and open a site
 
@@ -91,8 +108,11 @@ with load_site(root / "site.yaml").open(console=False) as session:
 `make_site()` is non-opening. Its site has one part, `arm`, and two cameras, `scene`
 and `wrist`. Every backend uses those same names and profiles. Names, resolutions,
 intrinsics, and optical transforms are explicit configuration, not engine defaults.
-Edit camera declarations and their matching simulation profiles together. The
-reference scene has a single robot; multi-arm/custom arrangements can use ordinary
+Edit camera declarations and their matching simulation profiles together. Robot
+part names and base-frame labels also come from the site; when renaming a part,
+update its wrist-camera owner in both documents. A base-frame label names the
+robot's existing base coordinates and does not transform them. The reference
+scene has a single robot; multi-arm/custom arrangements can use ordinary
 external SDK adapter packages without an SDK registry change.
 
 ## Sensor and frame contract
@@ -101,10 +121,22 @@ RGB is RGB8, depth is Z16 axial optical depth, and each pair comes from one froz
 physics state. `depth_scale_mm=1` means millimetres per integer; zero denotes missing
 or out-of-range depth. Intrinsics are rectified pinhole intrinsics. The default
 resolution is 640×480 at a requested 15 Hz, with explicit focal lengths and principal
-point. Actual frame rate depends on rendering performance.
+point. Actual frame rate depends on rendering performance. If capture or publication
+misses a scheduled frame, the camera pump resumes at the next future frame slot.
+It never builds a backlog of render requests that can starve shared physics/control.
+Every acquired frame still follows the ordinary publication and recording path.
+
+Each site owns its camera placements, calibration, and object layout. These may
+differ between physical and simulated environments. To reproduce a particular
+sensor, use its active focal lengths, principal point, resolution, and depth scale.
+The principal point
+is expressed in optical image pixels measured from the top-left corner, including
+when it is off-center. These reference cameras require rectified input profiles;
+copying a distorted lens's coefficients into a pinhole renderer is not supported.
 
 Optical frames use +X right, +Y down, +Z forward. Robot poses use metres and wxyz
-quaternions, in `yam_base` or `xarm_base`. A scene-camera transform is
+quaternions, in the site's declared base frame (`yam_base` or `xarm_base` by default).
+A scene-camera transform is
 `base_from_camera`; a wrist transform is `tcp_from_camera` and follows the robot.
 Renderer-specific camera axes, depth conventions, joint ordering, and two-finger
 coordinates are converted inside the engine adapter. No privileged object pose,
