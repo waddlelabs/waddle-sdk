@@ -135,3 +135,16 @@ the adapter factory. Unit-specific motor calibration stays in `options`.
 A portable URDF can let a higher layer construct generic kinematics. It is independent
 of the adapter's `fk` callback: publish either, both, or neither, and claim only what is
 actually valid.
+
+## YAM gravity compensation
+
+The YAM factories accept `gravity_comp_factor`, an absolute six-joint vector in
+arm joint order. Its default is `[1.0, 1.1, 1.2, 1.3, 1.0, 1.0]`; the third and
+fourth factors are rounded two-arm bench calibration, not vendor ratings or a
+universal calibration. Site owners can override this under `parts.<part>.options`
+for each arm. Values must be finite and positive; invalid vectors fail before
+hardware opens. The declaration freezes the vector, and the live driver passes
+it to I2RT before control threads start. The vendor appends its unchanged gripper
+factor of 1.0. PD gains, friction compensation, and motion limits are independent.
+Reopen the hardware to apply a configuration change. The kinematic YAM simulator
+ignores these factors.

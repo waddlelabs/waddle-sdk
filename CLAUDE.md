@@ -362,6 +362,11 @@ waddle-sdk/
                              #   from measurements/IK), zeros the hand velocity,
                              #   and falls back to command_joint_pos when the
                              #   pinned vendor surface lacks that capability.
+                             #   YAM gravity_comp_factor is an absolute six-arm-joint
+                             #   option, frozen at declaration and passed into I2RT
+                             #   before servo startup. Defaults are [1,1.1,1.2,1.3,1,1]
+                             #   from rounded two-arm bench calibration for J3/J4;
+                             #   the vendor appends its unchanged gripper factor.
                              #   Per-unit gripper motor limits are an optional
                              #   override; when absent, hardware open delegates
                              #   to I2RT's jaw-moving auto-range. Simulation

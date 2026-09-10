@@ -1193,3 +1193,66 @@ def test_a_site_may_measure_one_hand_differently_from_the_other(vendor):
     assert np.allclose(
         vendor.calls[1]["gripper_limits_override"], GRIPPER_LIMITS_MOTOR_RAD
     )
+
+@pytest.mark.parametrize("factory", ["live", "arm", "bimanual"])
+def test_gravity_defaults_reach_vendor_constructor_for_each_arm(vendor, factory):
+    if factory == "live":
+        drivers = {"arm": _live(vendor)}
+    else:
+        kwargs = {"workspace": None, "fk": None}
+        if factory == "arm":
+            kwargs["channel"] = "can_test"
+        else:
+            kwargs.update(
+                left=yam.ArmSite(channel="can_left"),
+                right=yam.ArmSite(channel="can_right"),
+            )
+        drivers = getattr(yam, factory)(**kwargs).arms()
+    try:
+        assert len(vendor.calls) == (2 if factory == "bimanual" else 1)
+        for call in vendor.calls:
+            # Absolute arm factors: the vendor appends its own gripper row.
+            np.testing.assert_array_equal(
+                call["gravity_comp_factor"], [1, 1.1, 1.2, 1.3, 1, 1]
+            )
+    finally:
+        for driver in drivers.values():
+            driver.close()
+
+
+def test_gravity_override_is_frozen_at_declaration_and_not_multiplied(vendor):
+    factors = [1, 1.1, 1.25, 1.35, 1, 1]
+    rig = yam.arm(
+        workspace=None, fk=None, channel="can_test", gravity_comp_factor=factors
+    )
+    factors[2] = 9
+    drivers = rig.arms()
+    try:
+        np.testing.assert_array_equal(
+            vendor.calls[0]["gravity_comp_factor"], [1, 1.1, 1.25, 1.35, 1, 1]
+        )
+    finally:
+        for driver in drivers.values():
+            driver.close()
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        None,
+        [1] * 5,
+        [1] * 7,
+        [1, 1, 0, 1, 1, 1],
+        [1, 1, -1, 1, 1, 1],
+        [1, 1, float("nan"), 1, 1, 1],
+        [1, 1, float("inf"), 1, 1, 1],
+        [1, 1, True, 1, 1, 1],
+        [1, 1, "1.2", 1, 1, 1],
+    ],
+)
+def test_invalid_gravity_factors_refuse_before_vendor_open(vendor, values):
+    with pytest.raises(ValueError, match="gravity_comp_factor"):
+        _live(vendor, gravity_comp_factor=values)
+    with pytest.raises(ValueError, match="gravity_comp_factor"):
+        yam.arm(workspace=None, channel="can_test", gravity_comp_factor=values)
+    assert not vendor.calls

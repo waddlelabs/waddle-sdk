@@ -100,6 +100,7 @@ __all__ = [
     "CHAIN_AXIS",
     "CHAIN_ORIGIN_RPY_RAD",
     "CHAIN_ORIGIN_XYZ_M",
+    "DEFAULT_GRAVITY_COMP_FACTOR",
     "DEFAULT_MAX_FEEDFORWARD_VEL_RAD_S",
     "DEFAULT_MAX_GRIPPER_SPEED_PER_S",
     "DEFAULT_MAX_JOINT_SPEED_RAD_S",
@@ -139,6 +140,31 @@ __all__ = [
 #: package is installed by the same pin (it is not on PyPI), so a module that
 #: drives an arm and a model that describes one cannot drift apart silently.
 I2RT_PIN = "570ef66681ff12bd8298aba34084307cfecc9f05"
+
+#: Absolute gravity torque factors for the six arm joints, passed to I2RT
+#: before its servo starts. Joints 3/4 use rounded two-arm bench calibration;
+#: these are SDK control defaults, not vendor ratings or universal calibration.
+#: The vendor appends its unchanged gripper factor of 1.0.
+DEFAULT_GRAVITY_COMP_FACTOR = (1.0, 1.1, 1.2, 1.3, 1.0, 1.0)
+
+
+def _checked_gravity_comp_factor(values: Sequence[float]) -> tuple[float, ...]:
+    try:
+        row = tuple(values)
+    except TypeError as exc:
+        raise ValueError(
+            "gravity_comp_factor needs six finite positive numbers"
+        ) from exc
+    if len(row) != ARM_JOINT_COUNT or any(
+        isinstance(value, (bool, str, bytes))
+        or not isinstance(value, (int, float, np.integer, np.floating))
+        or not math.isfinite(float(value))
+        or float(value) <= 0.0
+        for value in row
+    ):
+        raise ValueError("gravity_comp_factor needs six finite positive numbers")
+    return tuple(float(value) for value in row)
+
 
 #: Where that commit lives, and the ONE command that installs it.
 #:
@@ -548,6 +574,7 @@ class LiveDriver:
         channel: str,
         *,
         gripper_limits: Sequence[float] | None = None,
+        gravity_comp_factor: Sequence[float] = DEFAULT_GRAVITY_COMP_FACTOR,
         arm_gain_scale: float = 1.0,
         gripper_gain_scale: float = 1.0,
         velocity_feedforward: bool = True,
@@ -557,6 +584,7 @@ class LiveDriver:
         zero_gravity: bool = False,
         report: Callable[[str], None] = base.status,
     ) -> None:
+        gravity_factors = _checked_gravity_comp_factor(gravity_comp_factor)
         try:
             from i2rt.robots.get_robot import get_yam_robot
             from i2rt.robots.utils import GripperType
@@ -611,6 +639,7 @@ class LiveDriver:
             gripper_type=GripperType.LINEAR_4310,
             zero_gravity_mode=self._zero_gravity,
             gripper_limits_override=gripper_limits_override,
+            gravity_comp_factor=np.asarray(gravity_factors, dtype=float),
         )
         try:
             # I2RT's constructor latches its initial measured pose with the
@@ -1256,6 +1285,7 @@ def _build_arms(
     step_caps: Sequence[float],
     joint_limits: Sequence[Sequence[float]],
     rate_hz: float,
+    gravity_comp_factor: Sequence[float],
     arm_gain_scale: float,
     gripper_gain_scale: float,
     velocity_feedforward: bool,
@@ -1293,6 +1323,7 @@ def _build_arms(
                     driver = LiveDriver(
                         site.channel,
                         gripper_limits=site.gripper_limits,
+                        gravity_comp_factor=gravity_comp_factor,
                         arm_gain_scale=arm_gain_scale,
                         gripper_gain_scale=gripper_gain_scale,
                         velocity_feedforward=velocity_feedforward,
@@ -1347,6 +1378,7 @@ def bimanual(
     rate_hz: float = DEFAULT_RATE_HZ,
     max_joint_speed_rad_s: float = DEFAULT_MAX_JOINT_SPEED_RAD_S,
     max_gripper_speed_per_s: float = DEFAULT_MAX_GRIPPER_SPEED_PER_S,
+    gravity_comp_factor: Sequence[float] = DEFAULT_GRAVITY_COMP_FACTOR,
     arm_gain_scale: float = 1.0,
     gripper_gain_scale: float = 1.0,
     velocity_feedforward: bool = True,
@@ -1380,6 +1412,12 @@ def bimanual(
     `waddle_sdk.robots.base.POSTURES`), and on live hardware ``"monitor"``
     additionally opens the arms compliant, so nothing can command them at
     either end.
+
+    ``gravity_comp_factor`` is an absolute six-joint vector, defaulting to
+    :data:`DEFAULT_GRAVITY_COMP_FACTOR`. It is validated and frozen at declaration,
+    then passed to I2RT before its servo starts. The gripper factor stays 1.0.
+    These bench-derived defaults are not a substitute for per-unit calibration;
+    ``sim=True`` uses the kinematic simulator and ignores gravity factors.
 
     ``fk`` is the forward kinematics each part reports its TCP from, and it is
     OPT-IN: pass ``None`` (with ``workspace=None``) for a rig that reports
@@ -1451,6 +1489,7 @@ def bimanual(
             step_caps=caps,
             joint_limits=joints,
             rate_hz=rate_hz,
+            gravity_comp_factor=_checked_gravity_comp_factor(gravity_comp_factor),
             arm_gain_scale=arm_gain_scale,
             gripper_gain_scale=gripper_gain_scale,
             velocity_feedforward=velocity_feedforward,
@@ -1482,6 +1521,7 @@ def arm(
     rate_hz: float = DEFAULT_RATE_HZ,
     max_joint_speed_rad_s: float = DEFAULT_MAX_JOINT_SPEED_RAD_S,
     max_gripper_speed_per_s: float = DEFAULT_MAX_GRIPPER_SPEED_PER_S,
+    gravity_comp_factor: Sequence[float] = DEFAULT_GRAVITY_COMP_FACTOR,
     arm_gain_scale: float = 1.0,
     gripper_gain_scale: float = 1.0,
     velocity_feedforward: bool = True,
@@ -1542,6 +1582,7 @@ def arm(
             step_caps=caps,
             joint_limits=joints,
             rate_hz=rate_hz,
+            gravity_comp_factor=_checked_gravity_comp_factor(gravity_comp_factor),
             arm_gain_scale=arm_gain_scale,
             gripper_gain_scale=gripper_gain_scale,
             velocity_feedforward=velocity_feedforward,

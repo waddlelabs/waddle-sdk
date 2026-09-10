@@ -102,6 +102,7 @@ parts:
       pointing_down_wxyz: [0.0, 0.0, 1.0, 0.0]
     options:
       gripper_limits: [1.7, 0.1]
+      gravity_comp_factor: [1.0, 1.1, 1.2, 1.3, 1.0, 1.0]
       arm_gain_scale: 1.0
       gripper_gain_scale: 1.0
       velocity_feedforward: true
@@ -206,6 +207,16 @@ live hardware opens. That calibration moves the jaws at connection time;
 supplying a measured pair skips it. The driver-neutral `gripper` record remains
 independent and describes normalized actions and physical jaw geometry to
 higher layers.
+`gravity_comp_factor` sets the six absolute arm gravity-torque factors, in joint
+order. The SDK defaults are `[1.0, 1.1, 1.2, 1.3, 1.0, 1.0]`: joints 3 and 4 use
+rounded two-arm bench calibration; the remaining rows retain the pinned vendor
+values. These are control defaults, not universal per-unit calibration. For a
+specific arm, put its six finite positive values in `parts.<part>.options`; the
+vector replaces these defaults rather than multiplying them. I2RT receives the
+vector before its servo starts and appends its unchanged gripper factor of 1.0.
+Changing configuration takes effect on the next hardware open. The kinematic
+`sim: true` driver does not model gravity and is unaffected.
+
 `arm_gain_scale` changes only the first six I2RT kp/kd rows;
 `gripper_gain_scale` changes only the seventh. Both default to the vendor's
 gains and, when configured, are restored unchanged after an e-stop recovery.

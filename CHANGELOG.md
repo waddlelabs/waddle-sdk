@@ -37,6 +37,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Changed
 
+- Set YAM absolute arm gravity factors to `[1.0, 1.1, 1.2, 1.3, 1.0, 1.0]`, using
+  rounded two-arm bench calibration for joints 3/4. A validated, declaration-frozen
+  `gravity_comp_factor` option overrides all six values per arm. Pass it into I2RT
+  before its servo starts; retain the vendor gripper factor, PD gains, and friction.
+
 - Expand the YAM tabletop initializer preset and example to workspace bounds
   `[-0.7, -0.7, 0.0]` through `[0.7, 0.7, 1.0]` metres in each arm base frame.
   Existing site declarations remain authoritative and are not rewritten.
