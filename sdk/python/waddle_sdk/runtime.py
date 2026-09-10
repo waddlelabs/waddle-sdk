@@ -1,6 +1,6 @@
 """Typed contracts shared by local and remote SDK runtime adapters.
 
-The protocol is deliberately structural: Metal can depend on this public
+The protocol is deliberately structural: applications can depend on this public
 module without importing a transport implementation or any SDK internals.
 Concrete authority, timing, gating, and recording remain native-core owned.
 """
@@ -49,10 +49,10 @@ def _thaw_json(value: object) -> JSONValue:
 
 
 class SupportFact(str, enum.Enum):
-    """One SDK implementation or declaration fact used by Metal.
+    """One SDK implementation or declaration fact used by applications.
 
     These are support facts, not robot skill capabilities. A fact can satisfy
-    one prerequisite of a Metal capability, but it never grants permission or
+    one prerequisite of an application capability, but it never grants permission or
     says that a complete skill is available.
     """
 
@@ -287,7 +287,7 @@ class RuntimeFaultCause:
 
 @dataclass
 class RuntimeFault(Exception):
-    """A concise public runtime failure consumable by Metal.
+    """A concise public runtime failure consumable by applications.
 
     ``detail``, ``context``, and ``causes`` cross process and tenant-aware
     logging boundaries. Implementations must keep them free of credentials,
@@ -372,7 +372,7 @@ class RunPort(Protocol):
 
 @runtime_checkable
 class SdkRuntimePort(Protocol):
-    """The sole surface Metal needs from a local or remote SDK session."""
+    """The structural surface applications need from a local or remote SDK session."""
 
     def describe(self) -> Mapping[str, JSONValue]: ...
 

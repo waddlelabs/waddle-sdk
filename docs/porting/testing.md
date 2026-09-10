@@ -43,7 +43,7 @@ For a shared simulation world, also prove that the factory and part declarations
 non-opening, the world opens before its arms and cameras, one composite SDK tick
 advances the world exactly once, RGB and depth come from the same world state, reset
 runs once per episode, and cleanup closes cameras and arms before the world. Run this
-test through `Site.open()` so the result is the same `SdkRuntimePort` that Metal
+test through `Site.open()` so the result is the same `SdkRuntimePort` that applications
 consumes.
 
 ## 4. Hardware-in-loop commissioning

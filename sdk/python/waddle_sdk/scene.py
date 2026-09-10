@@ -2,8 +2,8 @@
 
 The scene layer is an explicit build step.  It turns a reviewed portable scene
 and its local assets into backend-native files plus an ordinary ``site.yaml``.
-It never opens a Site, simulator, robot, camera, transport, or renderer.  Metal
-continues to consume only the resulting :class:`~waddle_sdk.runtime.SdkRuntimePort`.
+It never opens a Site, simulator, robot, camera, transport, or renderer. Applications
+consume the resulting :class:`~waddle_sdk.runtime.SdkRuntimePort` unchanged.
 """
 
 from __future__ import annotations

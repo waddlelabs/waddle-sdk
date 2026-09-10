@@ -98,7 +98,7 @@ enum ActorKind {
   ACTOR_KIND_UNSPECIFIED = 0;
   ACTOR_KIND_TELEOPERATOR = 1;
   ACTOR_KIND_SITE_OPERATOR = 2;
-  ACTOR_KIND_AGENT = 3;   // a Waddle-hosted code-as-policy agent
+  ACTOR_KIND_AGENT = 3;   // an application-hosted code-as-policy agent
   ACTOR_KIND_POLICY = 4;  // the customer's policy under supervision
   ACTOR_KIND_SYSTEM = 5;  // the platform itself (watchdogs, planners)
   ACTOR_KIND_CUSTOM = 6;  // customer-supplied source (e.g. a leader arm)

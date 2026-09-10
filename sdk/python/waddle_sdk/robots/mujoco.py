@@ -2,7 +2,7 @@
 
 The modular backend loads one customer-owned MJCF or URDF world for every part
 and camera that references it.  The legacy :func:`arm` factory remains a
-single-part convenience.  Both are deliberately joint target sinks: Metal
+single-part convenience.  Both are deliberately joint target sinks: Application code
 owns IK and planning, while this module owns simulator lifecycle, state,
 stepping, rendering, and hard-safety geometry.
 """

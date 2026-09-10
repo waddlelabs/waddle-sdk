@@ -17,7 +17,7 @@ MUJOCO_GL=egl uv run waddle-sdk sim run examples/portable-simulation/scene.yaml 
 
 The build directory contains `site.yaml`, `world.xml`, the normalized URDF and
 assets, simulator-ground-truth scene/wrist transforms under `calib/`, and
-`resolved-scene.json`. Metal opens the generated `site.yaml` through the ordinary
+`resolved-scene.json`. Application code opens the generated `site.yaml` through the ordinary
 SDK port and autoloads those calibration artifacts; it has no simulation-specific
 attachment or operator calibration step.
 

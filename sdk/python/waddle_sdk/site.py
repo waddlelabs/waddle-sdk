@@ -102,7 +102,7 @@ def _operation_fault(
     Arbitrary vendor exception strings can contain device paths, URLs, or
     credentials.  Keep the original exception in Python's ``__cause__`` for
     owner-side logs, but carry only its type plus SDK-owned operation/scope
-    fields over Metal's transport.
+    fields over the application's transport.
     """
     if isinstance(error, RuntimeFault):
         return error

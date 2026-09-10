@@ -50,7 +50,7 @@ def test_readme_holds_the_site_and_runtime_boundaries():
     prose = " ".join(README.split())
     assert 'waddle_sdk.load_site("site.yaml")' in README
     assert "SdkRuntimePort" in README
-    assert "Guided calibration orchestration belongs to Metal" in prose
+    assert "Guided calibration orchestration belongs to applications" in prose
     assert "hold-first" in prose
     assert "waddle.execution.v1" not in README
     assert "waddle_sdk.ui()" not in README

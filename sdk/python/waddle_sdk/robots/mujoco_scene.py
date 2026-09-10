@@ -81,7 +81,7 @@ def _simulation_calibration(
     matrix: np.ndarray,
     part: str | None = None,
 ) -> dict[str, Any]:
-    """Build one deterministic Metal-compatible privileged calibration record."""
+    """Build one deterministic application-readable privileged calibration record."""
 
     artifact: dict[str, Any] = {
         "schema": "waddle.simulation-calibration/v1",

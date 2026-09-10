@@ -8,7 +8,7 @@ In a source checkout, use this precedence:
 2. `waddle-protocol/docs/FSM.md` for lifecycle guards and transitions.
 3. `waddle-protocol/docs/VERSIONING.md` for compatibility and feature flags.
 4. Versioned protobuf comments, conformance format, and append-only fixtures.
-5. Historical rationale only where the fresh normative documents are silent.
+5. Public design rationale only where the normative documents are silent.
 
 Protocol evolution is append-only within `waddle.v0`. Do not renumber or reuse removed fields or enum values. Reserve both number and name. Unknown enum values mean a newer peer and require the field's conservative fallback.
 

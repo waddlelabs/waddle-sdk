@@ -2,9 +2,8 @@
 
 Presets are configuration suggestions, never authority and never a substitute for
 site review.  A robot module may expose a module-level ``safety_presets`` callable
-with the signature documented by :class:`SafetyPresetProvider`.  Initializers can
-then offer hardware-aware starting values without importing Metal into the SDK or
-opening a device.
+with the signature documented by :class:`SafetyPresetProvider`. Initializers can
+then offer hardware-aware starting values without opening a device.
 """
 
 from __future__ import annotations

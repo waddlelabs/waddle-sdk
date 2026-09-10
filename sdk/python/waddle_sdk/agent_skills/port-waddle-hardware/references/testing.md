@@ -25,7 +25,7 @@ Use `scripts/validate_adapter.py` for a conservative static first pass. It inten
 - A shared simulation world opens before its arms and cameras, advances exactly once
   per composite SDK tick, resets once per episode, and closes after its devices.
 - A complete simulated site satisfies `SdkRuntimePort` and exposes no backend-specific
-  path to Metal.
+  path to applications.
 
 ## Site-operator commissioning handoff
 

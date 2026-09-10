@@ -24,7 +24,7 @@ import waddle_sdk
 
 site = waddle_sdk.load_site("site.yaml")
 with site.open(transport=waddle_sdk.Grpc(url, token)) as session:
-    with session.run(task={"id": "inspect"}, actor={"id": "metal"}) as run:
+    with session.run(task={"id": "inspect"}, actor={"id": "controller"}) as run:
         observation = run.observe()
         result = run.step(action, observation)
         if not result.dispatched:
@@ -116,7 +116,7 @@ shipped in this tree:
 pip install "i2rt @ git+https://github.com/i2rt-robotics/i2rt@570ef66681ff12bd8298aba34084307cfecc9f05"
 ```
 
-Contributors and agents must read [`CLAUDE.md`](CLAUDE.md) before changing the
+Contributors and agents must read [`AGENTS.md`](AGENTS.md) before changing the
 repository.
 
 ## License

@@ -32,7 +32,7 @@ explicit collision properties and a conservative link-local safety sphere.
 ## When to implement another world
 
 Use a world when parts and cameras share physics, render state, scene objects, or one
-simulator process. Metal must not know the choice: the opened site exposes only the
+simulator process. Applications need no simulator-specific runtime: the opened site exposes the
 ordinary `SdkRuntimePort`, support rows, observations, actions, and camera samples.
 
 The contracts live in `waddle_sdk.simulation`:

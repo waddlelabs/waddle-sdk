@@ -16,7 +16,7 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 - Add manifest-selected shared simulation worlds through the public
   `WorldConfig`/`SimulationBackend` contract. World-backed parts and cameras reuse the
   ordinary SDK runtime, support matrix, owner envelope, observations, and RGB-D sample
-  path consumed by Metal.
+  path consumed by applications.
 - Add a shared-world MuJoCo reference backend with one physics state for all attached
   parts and cameras, exactly-once world stepping, episode reset, derived camera
   intrinsics, and aligned metric Z16 rendering.
@@ -36,6 +36,15 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   ROS-connected Gazebo and Isaac Sim processes.
 
 ### Changed
+
+- Make `AGENTS.md` the canonical guide and `CLAUDE.md` its relative symlink; keep
+  build and public-contract guidance together, with publication-confirmed changelog
+  archiving. Clarify public runtime documentation, examples, diagnostic messages,
+  and historical notes without changing SDK APIs or execution behavior.
+- Keep public rationale and amendment history while removing unrelated
+  implementation and naming roadmaps; clarify its informative status.
+- Document the optional MuJoCo prerequisite for the complete scene-compiler test
+  suite and headless Linux rendering configuration.
 
 - Set YAM absolute arm gravity factors to `[1.0, 1.1, 1.2, 1.3, 1.0, 1.0]`, using
   rounded two-arm bench calibration for joints 3/4. A validated, declaration-frozen

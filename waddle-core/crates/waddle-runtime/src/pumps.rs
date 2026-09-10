@@ -776,7 +776,7 @@ pub(crate) fn spawn_media_intake(
 
 /// Flatten a teleop packet's part targets in order (pose → 7 values wxyz,
 /// twist → 6); the first declared gripper rides along. Retargeting into the
-/// robot's action space is the closed side's job — this is the raw stream.
+/// robot's action space is the application's job — this is the raw stream.
 ///
 /// KNOWN DEFECT (deferred to media-plane part routing). A packet whose
 /// targets each declare a gripper loses every gripper after the first: the

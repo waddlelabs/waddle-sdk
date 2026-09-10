@@ -5,9 +5,9 @@ The SDK has two separate simulation extension points:
 - A **portable scene compiler** turns a reviewed URDF-based `waddle.scene/v1`
   document into backend-native assets plus an ordinary `site.yaml`.
 - A **shared-world backend** owns one simulator clock, scene, renderer, and every
-  attached robot and camera while presenting the usual SDK runtime to Metal.
+  attached robot and camera while presenting the usual SDK runtime to applications.
 
-Metal never receives a simulator identity or simulation-specific runtime. A generated
+The runtime interface exposes no simulator identity or simulation-specific behavior. A generated
 MuJoCo site, a ROS-connected Isaac Sim stage, and physical hardware all cross the same
 `SdkRuntimePort`, support matrix, owner envelope, observation, action, and RGB-D sample
 contracts.
@@ -63,10 +63,9 @@ visual-only coating, conservative body spheres, and environment geometry.
 Portable builds also seed `calib/` with deterministic scene-camera and wrist-mount
 artifacts derived from the resolved simulator frame graph. These records carry
 `simulation_ground_truth` provenance, zero measured pairs, and the resolved scene
-seed. Metal autoloads them through its ordinary calibration-artifact path when the
-workspace calibration path is `calib`, so a simulation never asks an operator to
-perform physical calibration. This behavior is compiler-only: a physical site is
-never auto-calibrated. A wrist camera must be rigidly mounted on the declared tool
+seed. Applications may read these explicit simulation records from `calib/`; they
+are evidence from the compiler, not measured physical calibration. A physical site
+is never auto-calibrated. A wrist camera must be rigidly mounted on the declared tool
 link; compilation refuses any geometry for which a constant camera-to-TCP transform
 cannot be proven.
 
@@ -248,7 +247,7 @@ worlds:
   cell:
     driver: ros2
     connection:
-      node_name: waddle_cell
+      node_name: sdk_scene
       namespace: /cell
       domain_id: 7
       reset_service: /reset_simulation   # optional std_srvs/Empty

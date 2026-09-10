@@ -3,8 +3,8 @@
 A simulation backend is an ordinary installable Python package named by a
 ``site.yaml`` world.  Its factory and ``part`` declarations are non-opening;
 the SDK opens the world only after connector authorization and closes it after
-all world-backed arms and cameras.  Metal never imports this module or a
-backend package.  It continues to consume the ordinary :class:`SdkRuntimePort`.
+all world-backed arms and cameras. Applications consuming the ordinary
+:class:`~waddle_sdk.runtime.SdkRuntimePort` need no simulator-specific imports.
 """
 
 from __future__ import annotations

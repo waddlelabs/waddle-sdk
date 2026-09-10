@@ -410,7 +410,7 @@ DEFAULT_MAX_GRIPPER_SPEED_PER_S = 2.5
 
 #: Ceiling on a supplied arm velocity feedforward.  This is a motor command
 #: applied before position error is measured, so a bad value is less
-#: self-correcting than an ordinary position target.  Metal's declared ramps
+#: self-correcting than an ordinary position target.  The application's declared ramps
 #: are normally far below it; the bound is the adapter's last line of defense.
 DEFAULT_MAX_FEEDFORWARD_VEL_RAD_S = 3.0
 
@@ -1153,7 +1153,7 @@ def _checked_joint_limits(
     the shipped interval is reported by name and by how far. Nothing here
     clamps and nothing here quietly accepts — this is the number the envelope
     will judge every command by, and the same number the declaration carries
-    to the plane, so a teleoperator and a Waddle-hosted agent are shown the
+    to the plane, so a teleoperator and an application-hosted agent are shown the
     range this rig really has."""
     if limits is None:
         return JOINT_LIMITS
@@ -1393,7 +1393,7 @@ def bimanual(
     report: Callable[[str], None] = base.status,
 ) -> base.Rig:
     """Two YAMs, declared as ONE robot with two named parts, so a teleoperator
-    or a Waddle-hosted agent can address either arm by name.
+    or an application-hosted agent can address either arm by name.
 
     Declaration only: this opens no bus and starts no thread. ``rig.arms()``
     is where the hardware opens.

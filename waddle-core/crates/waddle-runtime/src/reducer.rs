@@ -390,7 +390,7 @@ impl Reducer {
                 // pump services PRE the same way it does for any episode with
                 // no per-episode override slot, falling back to the
                 // session-level default. A declared `Remote` PRE spec for a
-                // successor is still a known gap (pending the closed-side
+                // successor is still a known gap (pending the application
                 // retake/hand-reset flow); untouched here.
                 //
                 // POST is different: nothing suppresses the successor's own
@@ -692,7 +692,7 @@ impl Reducer {
         ) {
             Ok(action) => vec![action],
             // Same contract as a gate tick's: an action that does not fit
-            // the declared space (a raw teleop stream ahead of closed-side
+            // the declared space (a raw teleop stream ahead of application
             // retargeting) still gets its row, with no decodable action,
             // rather than vanishing from the trace.
             Err(_) => Vec::new(),
@@ -837,7 +837,7 @@ impl Reducer {
                 ) {
                     Ok(action) => vec![action],
                     // An action left the gate but does not fit the declared
-                    // space (e.g. a raw teleop stream ahead of closed-side
+                    // space (e.g. a raw teleop stream ahead of application
                     // retargeting). Write the chunk with no decodable action
                     // rather than skipping the tick, so /waddle/actions stays
                     // a complete, obs-aligned per-tick trace.

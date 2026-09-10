@@ -2201,7 +2201,7 @@ impl Session {
 
     /// Publish an RGB8 visualization of a declared camera's aligned metric
     /// depth as the append-only `<camera>/depth` media track. Raw depth is
-    /// not accepted here and remains available to SDK/Metal perception; this
+    /// not accepted here and remains available to SDK perception; this
     /// method is solely the browser-compatible operator presentation seam.
     pub fn publish_depth_preview(
         &self,

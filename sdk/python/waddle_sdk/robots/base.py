@@ -9,7 +9,7 @@ two things is here, once:
 * :class:`SimDriver` — a rate-limited kinematic twin of any joint robot, so
   the sim run is a rehearsal of the live one rather than an easier version.
 * :class:`Arm` — the ENVELOPE seam. One object every command crosses, whoever
-  sent it: the program's own policy, a teleoperator's jog, a Waddle-hosted
+  sent it: the program's own policy, a teleoperator's jog, an application-hosted
   agent's trajectory. It rejects; it never clamps.
 * :class:`RejectLog`, :class:`ParkGate`, :func:`apply_console_gesture`,
   :func:`start_console_recovery` + :class:`ConsoleRecovery` — bounded
@@ -17,7 +17,7 @@ two things is here, once:
   e-stop latch. One reader per terminal, aimed at the arms of whoever started
   it and retired with them.
 * :class:`RobotPump` + :func:`proprio_tick` — the loop that keeps reporting
-  while the caller's thread is busy (blocked inside `a Metal-hosted run`, say).
+  while the caller's thread is busy (blocked inside `an application run`, say).
 * :func:`chunk_sender`, :func:`apply_decision`, :func:`split_by_part` — the
   `Control.send` verb over a set of arms, and the declared-layout arithmetic
   it routes with.
@@ -1187,7 +1187,7 @@ def chunk_sender(
 
     Waddle drives them through the returned callable, from its own dispatch
     thread, whenever something holds the lease: a teleoperator, a reset agent,
-    or the hosted agent a hosted Metal run invites.
+    or the hosted agent an application run invites.
 
     A step may carry a GRIPPER value on the sidechannel, and this layer models
     a hand as a JOINT row — so there is nowhere to put one. Such a step is
@@ -1766,7 +1766,7 @@ def proprio_tick(
 
     Separate from the gate tick on purpose — this has to keep running on a
     background thread while the caller's thread is blocked inside
-    ``a Metal-hosted run``, because the machine still moves and the agent still
+    ``an application run``, because the machine still moves and the agent still
     needs to see it.
 
     ``joint_pos`` is passed explicitly for every part. A per-part sample
@@ -1811,7 +1811,7 @@ class RobotPump(threading.Thread):
     own tick. The usual one is :func:`proprio_tick`.
 
     It exists because the robot's own housekeeping cannot pause while the
-    caller's thread is elsewhere — blocked inside ``a Metal-hosted run``, or
+    caller's thread is elsewhere — blocked inside ``an application run``, or
     sitting in a monitor-only session with no rollout loop at all. ``stop()``
     joins."""
 
@@ -2040,13 +2040,13 @@ RIG_DEFAULT = _RigDefault()
 #:     — choosing between the two is the whole of that decision.
 #: ``"supervised"``
 #:     ``send``, ``hold`` and ``estop``: the ordinary posture, in which a
-#:     teleoperator, a reset agent or a Waddle-hosted agent can drive this
+#:     teleoperator, a reset agent or an application-hosted agent can drive this
 #:     robot through the owner's envelope.
 #:
 #: A posture is NOT an authority decision and adds none: who may command a
 #: robot, when, and under what claim is waddle-core's, unchanged either way.
 #: Whether a rollout is agent-driven or windowed stays a call-site choice —
-#: `a Metal-hosted run` versus `a Site Run` — never a construction one.
+#: `an application run` versus `a Site Run` — never a construction one.
 POSTURES = ("monitor", "supervised")
 
 
@@ -2293,7 +2293,7 @@ class Rig:
 
             rig = yam.bimanual(workspace=..., gripper_limits=..., sim=True)
             with rig.session("my-project", transport=waddle_sdk.Grpc(url, token)) as s:
-                result = a Metal-hosted run("stack the cups")
+                result = run_application(s, "stack the cups")
 
         Every keyword that is not this rig's own goes straight to
         `the Site lifecycle` and means exactly what it means there; ``send``
