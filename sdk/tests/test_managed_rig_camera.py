@@ -338,3 +338,28 @@ def test_camera_extra_metadata_is_orthogonal_to_media():
         extras["orbbec"] + extras["realsense"] + extras["usb"]
     )
     assert extras["media"] == [f"waddle-sdk-media=={waddle_sdk.__version__}"]
+
+
+@pytest.mark.parametrize("changes", [{"fx": True}, {"distortion": (float("nan"),)}])
+def test_camera_sample_validates_metadata_before_vendor_resolution(changes):
+    def forbidden(*args):
+        pytest.fail("invalid calibration must not reach vendor resolution")
+
+    sample = CameraSample(
+        stamp=_Stamp(session_ns=1, unix_ns=2),
+        rgb=np.zeros((1, 1, 3), dtype=np.uint8),
+        depth=np.ones((1, 1), dtype=np.uint16),
+        point_resolver=forbidden,
+    )
+    intrinsics = descriptors.Intrinsics(
+        **{
+            "fx": 100.0,
+            "fy": 100.0,
+            "cx": 0.0,
+            "cy": 0.0,
+            "depth_scale_mm": 1.0,
+            **changes,
+        }
+    )
+    with pytest.raises(ValueError):
+        sample.point_at(0, 0, intrinsics)

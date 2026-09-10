@@ -115,3 +115,16 @@ Griffe. Documentation builds do not import the native extension or any vendor SD
 ::: waddle_sdk.robots.ros2.Ros2Driver
 
 ::: waddle_sdk.robots.ros2.Ros2CameraDriver
+
+
+## Non-opening hardware metadata
+
+::: waddle_sdk.robots.metadata
+
+::: waddle_sdk.cameras.metadata
+
+::: waddle_sdk.robots.yam.model_sources
+
+::: waddle_sdk.robots.yam_model.YamModelSources
+
+::: waddle_sdk.robots.yam_model.ModelSourceError

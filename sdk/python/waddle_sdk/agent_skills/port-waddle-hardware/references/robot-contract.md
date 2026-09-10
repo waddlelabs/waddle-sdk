@@ -57,3 +57,5 @@ from `[-0.7, -0.7, 0.0]` to `[0.7, 0.7, 1.0]` metres, without keepouts or a
 self-collision configuration. These are site-operator-reviewed starting values,
 not vendor joint limits or evidence that a particular mounting is collision-free.
 Preserve existing site declarations and validate the selected envelope normally.
+
+Applications can use `waddle_sdk.robots.metadata.part_action_spaces` and `gripper_mapping` without vendor imports or topology assumptions. Supply an explicit physical gripper mapping when supported; reversed action ranges are valid. The YAM reference supplies verified optional source assets through `yam.model_sources()`; source inspection never opens a driver or selects a planner.

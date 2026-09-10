@@ -13,6 +13,13 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Public non-opening robot/camera metadata helpers: named part action spaces,
+  validated physical gripper mappings with reversed action ranges, effective
+  camera declarations and intrinsics with explicit optional depth scaling.
+- `yam.model_sources()` provides immutable verified source geometry, attribution,
+  TCP attachment and coupled finger travel from the exact optional I2RT pin,
+  without opening hardware or selecting a planner.
+
 - Export public `waddle_sdk.FEATURES` as the selected native core's feature set,
   allowing applications to check media support without importing SDK internals.
 - Add opt-in public SDK camera/LiveKit acceptance using scoped grants, actual RGB
@@ -43,6 +50,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   ROS-connected Gazebo and Isaac Sim processes.
 
 ### Changed
+
+- Camera depth resolution shares metadata validation and refuses malformed
+  distortion coefficients before calling a vendor resolver.
+- Correct the documented root-export regression to include the existing public
+  `FEATURES` export.
 
 - Make `AGENTS.md` the canonical guide and `CLAUDE.md` its relative symlink; keep
   build and public-contract guidance together, with publication-confirmed changelog

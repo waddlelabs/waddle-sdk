@@ -75,6 +75,7 @@ import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from importlib.resources import files
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -91,6 +92,9 @@ from . import base
 from ._i2rt_patches import apply_command_state_atomic_patch, apply_recv_starvation_patch
 from .base import CrossArm
 from .socketcan import ensure_socketcan_up
+
+if TYPE_CHECKING:
+    from .yam_model import YamModelSources
 
 __all__ = [
     "ARM_JOINT_COUNT",
@@ -131,6 +135,7 @@ __all__ = [
     "bimanual",
     "declaration",
     "forward_kinematics",
+    "model_sources",
     "safety_presets",
     "urdf_text",
 ]
@@ -345,6 +350,17 @@ def urdf_text() -> str:
     return (files(__package__) / "yam_data" / "yam.urdf").read_text(
         encoding="utf-8"
     )
+
+
+def model_sources() -> YamModelSources:
+    """Load verified source geometry and hardware relationships without opening.
+
+    See :mod:`waddle_sdk.robots.yam_model` for the immutable bundle and failure
+    contract. The optional pinned I2RT dependency is inspected only on this call.
+    """
+    from .yam_model import model_sources as load_sources
+
+    return load_sources()
 
 
 # ---------------------------------------------------------------------------

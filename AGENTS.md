@@ -146,7 +146,7 @@ waddle-sdk/
                              #   pointing-down wxyz orientation for generic
                              #   application behavior; unlike `options`, none of this is
                              #   forwarded to the adapter factory.
-                             #   Root exports exactly Site/SiteSession/Run, load_site,
+                             #   Root exports exactly FEATURES, Site/SiteSession/Run, load_site,
                              #   Grpc/LiveKit, Outcome, manifest errors, and the
                              #   typed connector compatibility warning/refusal.
                              #   transport.py holds pure transport declarations;
@@ -164,7 +164,7 @@ waddle-sdk/
                              #   derived short-lived UI URL. The key itself never
                              #   enters a URL/browser, the request never retries,
                              #   and invitation failure leaves the site connected.
-                             #   Driver-extension APIs stay in descriptors/,
+                             #   Driver-extension APIs stay in descriptors.py,
                              #   robots/, and cameras/.
                              #   agent_skills/ carries the exact portable
                              #   waddle-sdk-contracts and port-waddle-hardware
@@ -243,6 +243,15 @@ waddle-sdk/
                              #   recording state, retains one immutable latest
                              #   frame per camera, and closes drivers before
                              #   bounded capture-thread joins.
+      robots/metadata.py     # non-opening named action-space and validated physical
+                             #   gripper mapping helpers over public describe data;
+                             #   reversed actions and arbitrary part widths work.
+      cameras/metadata.py    # effective camera declarations and shared intrinsics
+                             #   parsing; RGB-only metadata need not supply depth
+                             #   scale, metric resolution explicitly requires it.
+      robots/yam_model.py    # lazy verified source bundle behind yam.model_sources:
+                             #   URDF/hand/meshes, license, hashes, attachment and
+                             #   finger travel; no planner or collision approximation.
       discovery.py           # non-opening configuration evidence for CAN,
                              #   serial and camera devices; immutable rows,
                              #   isolated custom scanners via the

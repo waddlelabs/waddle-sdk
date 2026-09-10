@@ -59,6 +59,7 @@ def test_readme_holds_the_site_and_runtime_boundaries():
     assert "ConnectorRegistrationError" in README
     assert "ConnectorCompatibilityWarning" in README
     assert set(waddle_sdk.__all__) == {
+        "FEATURES",
         "ConnectorCompatibilityWarning",
         "ConnectorRegistrationError",
         "Grpc",

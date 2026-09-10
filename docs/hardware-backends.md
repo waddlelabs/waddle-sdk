@@ -19,6 +19,43 @@ example manifest, and a site-specific commissioning record. Optional forward
 kinematics, conservative body spheres, camera intrinsics, and point resolution add
 support facts without changing the required seam.
 
+## Reading hardware metadata without opening devices
+
+`waddle_sdk.robots.metadata.part_action_spaces(description)` resolves the named
+part action spaces in a public `describe()` result. It supports arbitrary joint
+counts and explicit composite parts; an unnamed multi-part space is not guessed.
+`gripper_mapping(raw, joints)` validates an optional jaw-metres/action mapping
+against its named action row and returns an immutable `GripperMapping`, or `None`
+when unavailable. `opening(action)` preserves out-of-range measurements;
+`action(opening_m)` refuses targets outside the physical range. Reversed action
+ranges work without adapter-specific conversion code. Timing, command admission
+and completion remain the application's responsibility and all actions still
+cross the SDK gate.
+
+`waddle_sdk.cameras.metadata.camera_declarations(description)` merges effective
+runtime declarations with explicit site mounts/configuration. The runtime has
+already applied explicit site intrinsics over optional driver intrinsics.
+`camera_intrinsics(raw)` parses manifest and wire fields, retaining distortion
+model identity. RGB-only calibration may omit a depth scale; metric consumers
+must pass `require_depth_scale=True`. Missing/invalid values raise
+`CameraMetadataError` with `intrinsics_missing` or `intrinsics_invalid`; callers
+can disable only the dependent behavior for that camera. `CameraSample.point_at`
+uses the same validation before resolving paired depth. No helper infers a mount,
+rectifies distortion or substitutes another camera.
+
+For the YAM reference adapter, `waddle_sdk.robots.yam.model_sources()` explicitly
+loads a verified `YamModelSources` bundle: SDK URDF, pinned vendor hand MJCF and
+mesh bytes, license, source hashes, named joints, TCP attachment and coupled
+finger travel in mesh coordinates. It inspects the exact installed I2RT Git pin
+and SHA256 records without importing vendor driver code, downloading assets or
+opening a device. The vendor URDF's absent terminal mesh is represented by the
+complete hand and its explicit attachment transform. Unavailable or inconsistent
+sources raise `ModelSourceError`; there is no substitute geometry. Meshes remain
+in the optional vendor installation, not the SDK wheel. Applications own scene
+assembly, collision approximations and planner selection. Custom adapters may
+supply their own source-model APIs; these helpers add no required runtime method,
+YAM dependency or model-provider registry to other drivers.
+
 ## Non-negotiable boundaries
 
 - Importing the package and calling a part factory open no bus, device, or thread.

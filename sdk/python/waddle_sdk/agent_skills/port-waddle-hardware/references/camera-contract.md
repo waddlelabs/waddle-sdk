@@ -33,3 +33,5 @@ A camera rendered by a shared simulation world names `world` instead of `driver`
 world's `camera(config=...)` facet opens it after the shared scene. It returns the same
 `CameraFrame` and optional calibration facet as a physical camera. Read the
 [simulation contract](simulation-contract.md) for world timing and cleanup.
+
+`waddle_sdk.cameras.metadata` normalizes effective runtime declarations and parses intrinsics, retaining the declared distortion model. Missing optional calibration disables only dependent camera behavior. RGB-only intrinsics need no depth scale; metric resolution explicitly requires one and shares validation with `CameraSample.point_at`.
