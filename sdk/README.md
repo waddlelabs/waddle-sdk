@@ -531,7 +531,7 @@ cargo clippy --manifest-path rust/Cargo.toml --features grpc,livekit --all-targe
 Clippy must be clean featureless, `--features grpc`, and
 `--features grpc,livekit`. A build that lacks a feature refuses the
 matching kwarg rather than running offline in silence.
-**`waddle_sdk._native.FEATURES` is the probe**, not `waddle_sdk._core.FEATURES`:
+**`waddle_sdk.FEATURES` is the probe**, not `waddle_sdk._core.FEATURES`:
 `_native` selects which core this process runs on and re-exports that
 core's features, so on a `[media]` install `waddle_sdk._core.FEATURES` still
 reports the bundled core's grpc-only set while the process is running the
@@ -548,6 +548,39 @@ unless the extra is actually installed. The extra's exact pin
 derive from the manifest, so a version bump must edit it too —
 `tests/test_features.py` holds it to `waddle_sdk.__version__` (and the two
 projects to one manifest) rather than to memory.
+
+### Opt-in real camera publication acceptance
+
+`tests/test_livekit_public.py` exercises `Site.open(media=LiveKit(url, token))`
+with a synthetic camera and arm, a real LiveKit service, and an independent RTC
+viewer. Install the matching `[media]` companion plus the test-only
+`livekit==1.1.18` and `websockets==17.0.1` clients. The caller supplies three explicit
+environment values: `WADDLE_TEST_LIVEKIT_URL`,
+`WADDLE_TEST_LIVEKIT_PUBLISHER_TOKEN`, and `WADDLE_TEST_LIVEKIT_VIEWER_TOKEN`.
+The tokens must name the same **fresh** `sdk-media-test-<unique-id>` room with
+different identities: publisher-only camera permission and viewer-only subscribe
+permission. Provision grants and delete the test room outside the SDK; the test
+never consumes API signing keys or opens physical hardware. Without these values,
+it skips rather than dialing an ambient endpoint.
+
+```bash
+python -m pytest -q tests/test_livekit_public.py
+```
+
+The test receives actual RGB and colorized `<camera>/depth` frames at the declared
+resolution and separately confirms local metric depth. A loopback-only signaling
+proxy drops this test publisher's sockets; the native transport reconnects while
+the same public SiteSession and entered Run remain owned. A new viewer then
+rediscovers both tracks, followed by normal public SDK shutdown. Proxy handshake
+logging is disabled because headers can contain scoped tokens. This proves media
+transport and session continuity, not browser rendering or physical-camera quality.
+
+LiveKit room and publisher identity come from the caller's grant and remain stable
+for the opened session. Native LiveKit manages reconnection and server-issued
+token refresh. The public SDK currently has no API to replace an opened session's
+media URL, room, identity or caller-provided grant. Do not reopen a hardware site
+merely to hand off an application's unrelated connection; retain the SDK owner
+and its media publication.
 
 ## Hollow-frontend checklist
 

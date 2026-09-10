@@ -417,6 +417,9 @@ waddle-sdk/
                              #   envelope, YAM facts/factories, lazy adapters,
                              #   packaging, and the shipped Site program. Legacy
                              #   module-global API tests were deleted at cutover.
+                             #   test_livekit_public.py is an explicit opt-in
+                             #   synthetic camera/publication/reconnect acceptance
+                             #   test using fresh scoped room grants.
 ```
 
 Future artifacts (`waddle-proxy`, `waddle-cpp`, `waddle_ros`) will live in new
@@ -473,6 +476,14 @@ top-level dirs; they are not built yet.
     package; ordinary SDK imports do not. On headless Linux, set `MUJOCO_GL=egl`
     for rendering tests. Iterate on the Rust shim with
     `uv run --no-sync maturin develop --uv && uv run --no-sync pytest`.
+  - Real LiveKit publication acceptance is opt-in through
+    `tests/test_livekit_public.py`. Its matching media companion, test clients and
+    three explicit scoped-grant environment variables are documented in
+    [sdk/README.md](sdk/README.md#opt-in-real-camera-publication-acceptance).
+    Without them it skips without dialing a service. Use a fresh test room,
+    provision/delete it outside the SDK, and never expose signing keys or scoped
+    grants in logs. The test exercises synthetic RGB/depth publication and native
+    signaling reconnect while retaining the same public SiteSession/Run.
   - `cargo clippy --manifest-path rust/Cargo.toml --all-targets -- -D warnings`
     and `cargo fmt --manifest-path rust/Cargo.toml --check` must be clean
     (this works because pyo3's `extension-module` feature lives only in
@@ -520,8 +531,8 @@ top-level dirs; they are not built yet.
       warns but still selects the compatible media core; the binding API is
       the strict compatibility contract. A stale bundled core fails at import
       before hardware opens; a media binding-API mismatch warns and falls back
-      to the bundled core. `_native.FEATURES`
-      (a frozenset re-exported from the SELECTED core) is
+      to the bundled core. Public `waddle_sdk.FEATURES` (the same frozenset as
+      internal `_native.FEATURES`, re-exported from the SELECTED core) is
       the only feature detection the Python layer may do — never a
       try-import, and never `_core.FEATURES`, which on a `[media]` install
       describes the bundled core the process is not using.

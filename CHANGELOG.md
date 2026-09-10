@@ -13,6 +13,13 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Export public `waddle_sdk.FEATURES` as the selected native core's feature set,
+  allowing applications to check media support without importing SDK internals.
+- Add opt-in public SDK camera/LiveKit acceptance using scoped grants, actual RGB
+  and depth-display frames, native signaling reconnect with the same SiteSession
+  and Run, and independent viewer rejoin. Document matching media dependencies
+  and the explicit test lifecycle without changing hardware/media lifecycle behavior.
+
 - Add manifest-selected shared simulation worlds through the public
   `WorldConfig`/`SimulationBackend` contract. World-backed parts and cameras reuse the
   ordinary SDK runtime, support matrix, owner envelope, observations, and RGB-D sample

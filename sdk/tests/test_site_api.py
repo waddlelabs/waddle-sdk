@@ -709,6 +709,7 @@ def test_root_exports_only_primary_surface():
     assert set(waddle_sdk.__all__) == {
         "ConnectorCompatibilityWarning",
         "ConnectorRegistrationError",
+        "FEATURES",
         "Grpc",
         "LiveKit",
         "ManifestError",

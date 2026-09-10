@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import enum
 
-from ._native import core
+from ._native import FEATURES, core
 from .site import (
     ConnectorCompatibilityWarning,
     ConnectorRegistrationError,
@@ -41,6 +41,7 @@ class Outcome(str, enum.Enum):
 __all__ = [
     "ConnectorCompatibilityWarning",
     "ConnectorRegistrationError",
+    "FEATURES",
     "Grpc",
     "LiveKit",
     "ManifestError",
