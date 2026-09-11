@@ -13,10 +13,15 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Shared optional `ModelSourceProvider` and immutable `ModelSources` bundle for
+  complete source geometry, assets, named bindings and attribution. Any robot
+  adapter can expose the same non-opening module extension without registry edits;
+  absent support and selected failures remain distinct.
+
 - Public non-opening robot/camera metadata helpers: named part action spaces,
   validated physical gripper mappings with reversed action ranges, effective
   camera declarations and intrinsics with explicit optional depth scaling.
-- `yam.model_sources()` provides immutable verified source geometry, attribution,
+- The YAM `model_sources` extension provides verified source geometry, attribution,
   TCP attachment and coupled finger travel from the exact optional I2RT pin,
   without opening hardware or selecting a planner.
 
@@ -50,6 +55,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   ROS-connected Gazebo and Isaac Sim processes.
 
 ### Changed
+
+- YAM source loading implements the shared adapter contract and returns complete
+  articulated MJCF, preserving physical slide coordinates and coupling. Remove
+  the unpublished YAM-specific bundle fields from the public source boundary.
+- Document and regression-test xArm G2's physical millimetre API boundary. Vendor
+  code owns nonlinear motor-pulse conversion; parallel opening mappings stay linear.
 
 - Camera depth resolution shares metadata validation and refuses malformed
   distortion coefficients before calling a vendor resolver.

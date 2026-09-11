@@ -11,24 +11,17 @@ import base64
 import hashlib
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass
 from importlib import metadata
 from pathlib import Path, PurePosixPath
-from types import MappingProxyType
 from xml.etree import ElementTree as ET
 
 import numpy as np
 
 from . import yam
+from .models import ModelSourceError, ModelSources
 
 _ARM = "i2rt/robot_models/arm/yam/"
 _HAND = "i2rt/robot_models/gripper/linear_4310/"
-
-
-class ModelSourceError(ValueError):
-    """Selected source geometry is unavailable or fails provenance/structure checks."""
-
-    code = "model_sources_invalid"
 
 
 def _fail(detail):
@@ -37,35 +30,6 @@ def _fail(detail):
 
 def _sha(data):
     return hashlib.sha256(data).hexdigest()
-
-
-@dataclass(frozen=True)
-class YamModelSources:
-    """Immutable, verified arm/hand source bytes and their physical relationships.
-
-    Matrices are homogeneous transforms in metres, using column vectors.
-    ``hand_attachment`` maps the vendor hand root into the terminal arm link.
-    ``finger_displacement_mesh_m`` gives each coupled finger's complete slide in
-    its mesh coordinates. It describes travel, not a collision approximation.
-    The vendor arm URDF lacks its terminal link mesh: ``arm_assets`` deliberately
-    omits it; the complete hand replaces that link's geometry at the given transform.
-    Asset keys are the relative paths referenced by the respective source XML.
-    """
-
-    arm_urdf: bytes
-    hand_mjcf: bytes
-    arm_assets: Mapping[str, bytes]
-    hand_assets: Mapping[str, bytes]
-    joint_names: tuple[str, ...]
-    base_link: str
-    terminal_link: str
-    tcp_site: str
-    hand_attachment: tuple[tuple[float, ...], ...]
-    finger_displacement_mesh_m: Mapping[str, tuple[float, ...]]
-    vendor_repository: str
-    vendor_commit: str
-    vendor_sources_sha256: Mapping[str, str]
-    license_bytes: bytes
 
 
 def _pose(element, *, urdf=False):
@@ -139,7 +103,9 @@ def _vendor():
     return read, provenance, read(licenses[0])
 
 
-def model_sources() -> YamModelSources:
+def model_sources(
+    *, factory: str, part_name: str, part: Mapping
+) -> ModelSources | None:
     """Read the exact installed vendor pin and verify every consumed asset hash.
 
     Requires the documented I2RT install only when explicitly called. Missing,
@@ -147,7 +113,31 @@ def model_sources() -> YamModelSources:
     is no network download, device construction or approximate fallback.
     """
     try:
-        return _read_sources()
+        if factory != "arm":
+            return None
+        frame = part.get("base_frame", part.get("options", {}).get("base_frame"))
+        options = part.get("options", {})
+        if (
+            not isinstance(frame, str)
+            or not frame
+            or options.get("base_frame", frame) != frame
+        ):
+            raise _fail(
+                "Every YAM part must declare one consistent explicit base frame"
+            )
+        if "fk" in options:
+            raise _fail("A custom SDK FK needs a customer-selected model")
+        if part.get("gripper") != {
+            "joint": yam.GRIPPER_JOINT_NAME,
+            "closed_m": 0,
+            "open_m": yam.GRIPPER_MAX_OPENING_M,
+            "closed_action": 0,
+            "open_action": 1,
+        }:
+            raise _fail(
+                "The standard YAM source requires the declared physical SDK gripper mapping"
+            )
+        return _read_sources(part_name)
     except ModelSourceError:
         raise
     except (
@@ -162,7 +152,7 @@ def model_sources() -> YamModelSources:
         raise _fail("YAM source model metadata or structure is invalid") from error
 
 
-def _read_sources():
+def _read_sources(part_name):
     read, provenance, license_bytes = _vendor()
     urdf_bytes = yam.urdf_text().encode()
     hand_bytes = read(_HAND + "linear_4310.xml")
@@ -234,19 +224,156 @@ def _read_sources():
     transform = _pose(sdk_tcp_joint.find("origin"), urdf=True) @ np.linalg.inv(
         _pose(hand_tcp)
     )
-    return YamModelSources(
-        urdf_bytes,
-        hand_bytes,
-        MappingProxyType(arm_assets),
-        MappingProxyType(hand_assets),
-        tuple(yam.ARM_JOINT_NAMES),
-        yam.URDF_BASE_LINK,
-        terminal,
-        "grasp_site",
-        tuple(tuple(float(v) for v in row) for row in transform),
-        MappingProxyType(fingers),
-        yam.I2RT_REPO,
-        yam.I2RT_PIN,
-        MappingProxyType(provenance),
-        license_bytes,
+    model, assets = _assemble(urdf, hand, arm_assets, hand_assets, terminal, transform)
+    return ModelSources(
+        format="mjcf",
+        model=model,
+        assets=assets,
+        joint_names=tuple(yam.ARM_JOINT_NAMES),
+        joint_units=("rad",) * len(yam.ARM_JOINT_NAMES),
+        base_body=yam.URDF_BASE_LINK,
+        tcp_site="grasp_site",
+        tcp_frame=part_name + "_tool",
+        licenses={"LICENSE.i2rt": license_bytes},
+        provenance={
+            "vendor_repository": yam.I2RT_REPO,
+            "vendor_commit": yam.I2RT_PIN,
+            "vendor_sources_sha256": provenance,
+            "sdk_urdf_sha256": _sha(urdf_bytes),
+            "hand_attachment": "T_sdk_link6_tcp @ inverse(T_vendor_hand_grasp_site)",
+            "T_sdk_link6_vendor_hand": transform.tolist(),
+            "geometry_scope": "Complete YAM arm and linear_4310 hand. No table, environment or other arm geometry.",
+        },
     )
+
+
+def _text(values):
+    return " ".join(format(float(value), ".17g") for value in values)
+
+
+def _urdf_pose(element):
+    return _pose(element, urdf=True)
+
+
+def _set_pose(element, transform):
+    # Stable matrix-to-wxyz conversion, including 180-degree rotations.
+    rotation = transform[:3, :3]
+    values = (
+        np.array(
+            [
+                [
+                    rotation[0, 0] - rotation[1, 1] - rotation[2, 2],
+                    rotation[1, 0] + rotation[0, 1],
+                    rotation[2, 0] + rotation[0, 2],
+                    rotation[2, 1] - rotation[1, 2],
+                ],
+                [
+                    rotation[1, 0] + rotation[0, 1],
+                    rotation[1, 1] - rotation[0, 0] - rotation[2, 2],
+                    rotation[2, 1] + rotation[1, 2],
+                    rotation[0, 2] - rotation[2, 0],
+                ],
+                [
+                    rotation[2, 0] + rotation[0, 2],
+                    rotation[2, 1] + rotation[1, 2],
+                    rotation[2, 2] - rotation[0, 0] - rotation[1, 1],
+                    rotation[1, 0] - rotation[0, 1],
+                ],
+                [
+                    rotation[2, 1] - rotation[1, 2],
+                    rotation[0, 2] - rotation[2, 0],
+                    rotation[1, 0] - rotation[0, 1],
+                    np.trace(rotation),
+                ],
+            ]
+        )
+        / 3
+    )
+    _, vectors = np.linalg.eigh(values)
+    q = vectors[:, -1][[3, 0, 1, 2]]
+    if q[0] < 0:
+        q = -q
+    element.set("pos", _text(transform[:3, 3]))
+    element.set("quat", _text(q))
+
+
+def _assemble(urdf, hand, arm_assets, hand_assets, terminal, transform):
+    import copy
+
+    links = {link.get("name"): link for link in urdf.findall("link")}
+    joints = {joint.get("name"): joint for joint in urdf.findall("joint")}
+    root = ET.Element("mujoco", model="sdk_yam_linear_4310")
+    ET.SubElement(root, "compiler", angle="radian", fusestatic="false")
+    assets = ET.SubElement(root, "asset")
+    world = ET.SubElement(root, "worldbody")
+    base = ET.SubElement(world, "body", name=yam.URDF_BASE_LINK)
+    bodies = {yam.URDF_BASE_LINK: base}
+    copied = {}
+    for joint_name in yam.ARM_JOINT_NAMES:
+        joint = joints[joint_name]
+        if joint.get("type") != "revolute":
+            raise _fail("The public YAM joint chain changed")
+        name = joint.find("child").get("link")
+        body = ET.SubElement(
+            bodies[joint.find("parent").get("link")], "body", name=name
+        )
+        _set_pose(body, _urdf_pose(joint.find("origin")))
+        limit = joint.find("limit")
+        ET.SubElement(
+            body,
+            "joint",
+            name=joint_name,
+            type="hinge",
+            axis=joint.find("axis").get("xyz"),
+            range=f"{limit.get('lower')} {limit.get('upper')}",
+        )
+        bodies[name] = body
+    for name, body in bodies.items():
+        if name == terminal:
+            continue
+        link = links[name]
+        inertial = link.find("inertial")
+        inertia = inertial.find("inertia")
+        origin = inertial.find("origin")
+        if not np.allclose(_urdf_pose(origin)[:3, :3], np.eye(3), atol=1e-12):
+            raise _fail("The public arm inertia frames changed")
+        ET.SubElement(
+            body,
+            "inertial",
+            pos=origin.get("xyz"),
+            mass=inertial.find("mass").get("value"),
+            fullinertia=" ".join(
+                inertia.get(key) for key in ("ixx", "iyy", "izz", "ixy", "ixz", "iyz")
+            ),
+        )
+        collisions = link.findall("collision")
+        if len(collisions) != 1:
+            raise _fail("The public arm collision mesh layout changed")
+        collision = collisions[0]
+        source = PurePosixPath(collision.find("geometry/mesh").get("filename"))
+        if source.parent != PurePosixPath("assets"):
+            raise _fail("The public arm collision asset path changed")
+        filename = "assets/arm_" + source.name
+        copied[filename] = arm_assets[str(source)]
+        ET.SubElement(assets, "mesh", name=name, file=filename)
+        geom = ET.SubElement(
+            body, "geom", name=name + "_collision", type="mesh", mesh=name
+        )
+        _set_pose(geom, _urdf_pose(collision.find("origin")))
+    for mesh in hand.findall("asset/mesh"):
+        element = copy.deepcopy(mesh)
+        filename = "assets/hand_" + mesh.get("file")
+        copied[filename] = hand_assets[mesh.get("file")]
+        element.set("file", filename)
+        assets.append(element)
+    for child in hand.find("worldbody/body"):
+        element = copy.deepcopy(child)
+        _set_pose(element, transform @ _pose(child))
+        bodies[terminal].append(element)
+    # Preserve physical slide coordinates and their coupling in the source.
+    root.append(copy.deepcopy(hand.find("equality")))
+    for geom in root.iter("geom"):
+        if geom.get("name") is None:
+            geom.set("name", geom.get("mesh") + "_collision")
+    ET.indent(root)
+    return ET.tostring(root, encoding="utf-8", xml_declaration=True), copied

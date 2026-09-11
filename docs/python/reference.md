@@ -125,6 +125,4 @@ Griffe. Documentation builds do not import the native extension or any vendor SD
 
 ::: waddle_sdk.robots.yam.model_sources
 
-::: waddle_sdk.robots.yam_model.YamModelSources
-
-::: waddle_sdk.robots.yam_model.ModelSourceError
+::: waddle_sdk.robots.models

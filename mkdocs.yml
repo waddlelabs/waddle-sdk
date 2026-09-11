@@ -54,6 +54,7 @@ nav:
       - Porting contract: hardware-backends.md
       - Agent skills: porting/agent-skills.md
       - Robot adapters: porting/robot.md
+      - Source models: porting/source-models.md
       - Camera adapters: porting/camera.md
       - Simulation backends: porting/simulation.md
       - Validation and commissioning: porting/testing.md

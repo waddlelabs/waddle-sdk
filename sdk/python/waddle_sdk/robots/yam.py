@@ -94,7 +94,7 @@ from .base import CrossArm
 from .socketcan import ensure_socketcan_up
 
 if TYPE_CHECKING:
-    from .yam_model import YamModelSources
+    from .models import ModelSources
 
 __all__ = [
     "ARM_JOINT_COUNT",
@@ -352,15 +352,15 @@ def urdf_text() -> str:
     )
 
 
-def model_sources() -> YamModelSources:
+def model_sources(*, factory: str, part_name: str, part: Mapping) -> ModelSources | None:
     """Load verified source geometry and hardware relationships without opening.
 
-    See :mod:`waddle_sdk.robots.yam_model` for the immutable bundle and failure
+    See :mod:`waddle_sdk.robots.models` for the shared bundle and failure
     contract. The optional pinned I2RT dependency is inspected only on this call.
     """
     from .yam_model import model_sources as load_sources
 
-    return load_sources()
+    return load_sources(factory=factory, part_name=part_name, part=part)
 
 
 # ---------------------------------------------------------------------------

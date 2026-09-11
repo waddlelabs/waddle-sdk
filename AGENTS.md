@@ -249,9 +249,13 @@ waddle-sdk/
       cameras/metadata.py    # effective camera declarations and shared intrinsics
                              #   parsing; RGB-only metadata need not supply depth
                              #   scale, metric resolution explicitly requires it.
-      robots/yam_model.py    # lazy verified source bundle behind yam.model_sources:
-                             #   URDF/hand/meshes, license, hashes, attachment and
-                             #   finger travel; no planner or collision approximation.
+      robots/models.py       # optional ModelSourceProvider/ModelSources contract;
+                             #   one non-opening resolver for every adapter,
+                             #   immutable confined assets and named frame/joint
+                             #   bindings. See docs/porting/source-models.md.
+      robots/yam_model.py    # YAM reference implementation: verified URDF/hand
+                             #   assembly into complete articulated MJCF, license
+                             #   and source hashes; no collision approximation.
       discovery.py           # non-opening configuration evidence for CAN,
                              #   serial and camera devices; immutable rows,
                              #   isolated custom scanners via the

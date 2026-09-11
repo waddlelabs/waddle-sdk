@@ -24,4 +24,4 @@ A manifest robot factory accepts `PartConfig`, returns a declaration-only `Rig`,
 
 Use structural protocols rather than inheritance. Keep vendor imports lazy. Connection credentials stay in manifest secret references and are resolved only for opening. Package facts with provenance and test them against the pinned vendor artifact where possible.
 
-Use public `robots.metadata` and `cameras.metadata` helpers to interpret descriptions; preserve per-scope missing metadata. The SDK validates physical conversions and camera intrinsics, while applications own orchestration. See the public hardware-backends guide for these contracts and the opt-in `yam.model_sources()` source bundle.
+Use public `robots.metadata` and `cameras.metadata` helpers to interpret descriptions; preserve per-scope missing metadata. The SDK validates physical conversions and camera intrinsics, while applications own orchestration. See the public hardware-backends guide for these contracts and the optional shared `robots.models.ModelSourceProvider` contract.

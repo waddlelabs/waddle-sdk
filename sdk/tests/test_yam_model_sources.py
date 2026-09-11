@@ -3,13 +3,31 @@
 import importlib.metadata
 import json
 import sys
+from xml.etree import ElementTree as ET
 
 import numpy as np
 import pytest
 from waddle_sdk import Site
 from waddle_sdk.robots import yam
 from waddle_sdk.robots import yam_model as sources
-from waddle_sdk.robots.yam_model import ModelSourceError
+from waddle_sdk.robots.models import ModelSourceError
+
+
+def sources_for_arm():
+    return yam.model_sources(
+        factory="arm",
+        part_name="arm",
+        part={
+            "base_frame": "declared-base",
+            "gripper": {
+                "joint": yam.GRIPPER_JOINT_NAME,
+                "closed_m": 0,
+                "open_m": yam.GRIPPER_MAX_OPENING_M,
+                "closed_action": 0,
+                "open_action": 1,
+            },
+        },
+    )
 
 
 def test_modified_pinned_asset_rejected_before_publish(tmp_path, monkeypatch):
@@ -33,7 +51,7 @@ def test_modified_pinned_asset_rejected_before_publish(tmp_path, monkeypatch):
         sources.metadata, "distribution", lambda _: ChangedDistribution()
     )
     with pytest.raises(ModelSourceError, match="package record"):
-        yam.model_sources()
+        sources_for_arm()
 
 
 def test_missing_or_wrong_vendor_revision_never_generates_placeholder(
@@ -44,7 +62,7 @@ def test_missing_or_wrong_vendor_revision_never_generates_placeholder(
 
     monkeypatch.setattr(sources.metadata, "distribution", missing)
     with pytest.raises(ModelSourceError, match="pinned I2RT"):
-        yam.model_sources()
+        sources_for_arm()
 
     class WrongRevision:
         def read_text(self, _):
@@ -54,7 +72,7 @@ def test_missing_or_wrong_vendor_revision_never_generates_placeholder(
 
     monkeypatch.setattr(sources.metadata, "distribution", lambda _: WrongRevision())
     with pytest.raises(ModelSourceError, match="exact SDK I2RT Git pin"):
-        yam.model_sources()
+        sources_for_arm()
 
 
 def test_complete_sources_are_immutable_and_do_not_open_hardware(monkeypatch):
@@ -66,22 +84,25 @@ def test_complete_sources_are_immutable_and_do_not_open_hardware(monkeypatch):
     monkeypatch.setattr(yam, "arm", forbidden)
     monkeypatch.setattr(Site, "open", forbidden)
     before = {name for name in sys.modules if name.startswith("i2rt.")}
-    bundle = yam.model_sources()
+    bundle = sources_for_arm()
     assert {name for name in sys.modules if name.startswith("i2rt.")} == before
-    assert bundle.arm_urdf == yam.urdf_text().encode()
-    assert len(bundle.arm_assets) == 6 and len(bundle.hand_assets) == 3
+    model = ET.fromstring(bundle.model)
+    assert bundle.format == "mjcf" and len(bundle.assets) == 9
     assert bundle.joint_names == yam.ARM_JOINT_NAMES
-    assert bundle.base_link == yam.URDF_BASE_LINK
-    assert bundle.vendor_commit == yam.I2RT_PIN
-    assert len(bundle.vendor_sources_sha256) == 11
-    assert "MIT License" in bundle.license_bytes.decode()
-    assert np.asarray(bundle.hand_attachment).shape == (4, 4)
-    for displacement in bundle.finger_displacement_mesh_m.values():
-        assert np.linalg.norm(displacement) == pytest.approx(
-            yam.GRIPPER_MAX_OPENING_M / 2
+    assert bundle.base_body == yam.URDF_BASE_LINK
+    assert bundle.provenance["vendor_commit"] == yam.I2RT_PIN
+    assert len(bundle.provenance["vendor_sources_sha256"]) == 11
+    assert "MIT License" in bundle.licenses["LICENSE.i2rt"].decode()
+    assert np.asarray(bundle.provenance["T_sdk_link6_vendor_hand"]).shape == (4, 4)
+    slides = model.findall(".//joint[@type='slide']")
+    assert len(slides) == 2
+    assert model.find("equality/joint") is not None
+    for joint in slides:
+        assert [float(v) for v in joint.get("range").split()] == pytest.approx(
+            [0, yam.GRIPPER_MAX_OPENING_M / 2]
         )
     with pytest.raises(TypeError):
-        bundle.arm_assets["new"] = b"bad"
+        bundle.assets["new"] = b"bad"
 
 
 @pytest.mark.parametrize("change", ["coupling", "range", "asset", "tcp"])
@@ -112,4 +133,4 @@ def test_changed_source_relationship_is_refused(monkeypatch, change):
         sources, "_vendor", lambda: (changed, provenance, license_bytes)
     )
     with pytest.raises(ModelSourceError):
-        yam.model_sources()
+        sources_for_arm()

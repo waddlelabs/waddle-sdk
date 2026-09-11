@@ -43,18 +43,21 @@ can disable only the dependent behavior for that camera. `CameraSample.point_at`
 uses the same validation before resolving paired depth. No helper infers a mount,
 rectifies distortion or substitutes another camera.
 
-For the YAM reference adapter, `waddle_sdk.robots.yam.model_sources()` explicitly
-loads a verified `YamModelSources` bundle: SDK URDF, pinned vendor hand MJCF and
-mesh bytes, license, source hashes, named joints, TCP attachment and coupled
-finger travel in mesh coordinates. It inspects the exact installed I2RT Git pin
-and SHA256 records without importing vendor driver code, downloading assets or
-opening a device. The vendor URDF's absent terminal mesh is represented by the
-complete hand and its explicit attachment transform. Unavailable or inconsistent
-sources raise `ModelSourceError`; there is no substitute geometry. Meshes remain
-in the optional vendor installation, not the SDK wheel. Applications own scene
-assembly, collision approximations and planner selection. Custom adapters may
-supply their own source-model APIs; these helpers add no required runtime method,
-YAM dependency or model-provider registry to other drivers.
+Robot source assets use the optional shared `ModelSourceProvider`/`ModelSources`
+contract. The same resolver loads any configured adapter's source extension;
+YAM is one implementation. See [source models](porting/source-models.md) for the
+contract, independent adapter example, absence/failure behavior and source evidence.
+
+The xArm G2 adapter uses UFactory's `get/set_gripper_g2_position` millimetre APIs.
+Its underlying motor-pulse/linkage relationship is nonlinear: the vendor getter
+uses a sine conversion and its setter the inverse arcsine conversion. That stays
+inside the vendor API; our normalized action maps linearly to 0–84 mm opening.
+Do not substitute the older raw-pulse `get/set_gripper_position` methods.
+UFactory's [Python API](https://github.com/xArm-Developer/xArm-Python-SDK/blob/master/xarm/wrapper/xarm_api.py)
+and [implementation](https://github.com/xArm-Developer/xArm-Python-SDK/blob/master/xarm/x3/gripper.py)
+were reviewed on 2026-09-10. The current getter returns integer millimetres, so
+this API does not establish sub-millimetre measurement precision. Physical jaw
+calibration and replaceable-finger geometry still require site-specific evidence.
 
 ## Non-negotiable boundaries
 
