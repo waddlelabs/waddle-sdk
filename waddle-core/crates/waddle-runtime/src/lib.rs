@@ -20,7 +20,7 @@ pub mod session;
 pub mod verbs;
 
 pub use jog::{JogAxis, JogRefusal, JogRequest};
-pub use media_uplink::{FrameData, FramePixels};
+pub use media_uplink::{FrameData, FramePixels, MediaTrackStatus};
 pub use mirror::{AgentTaskKind, AgentTaskStatus, ResetProgressPhase, ResetProgressStatus, Status};
 pub use pumps::STALL_THRESHOLD_NS;
 pub use session::{

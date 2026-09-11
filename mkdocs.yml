@@ -49,6 +49,7 @@ nav:
   - Python:
       - Python SDK: python/index.md
       - Site lifecycle and manifest: python/site.md
+      - Ownership and media: python/ownership-and-media.md
       - API reference: python/reference.md
   - Port custom hardware:
       - Porting contract: hardware-backends.md

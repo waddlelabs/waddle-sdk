@@ -41,7 +41,7 @@ from typing import TYPE_CHECKING
 # chunk/action additions. A semantic package version cannot distinguish two
 # local wheels built from different commits, so the native shim carries this
 # deliberately small compatibility epoch as well.
-_REQUIRED_BINDING_API_VERSION = 3
+_REQUIRED_BINDING_API_VERSION = 4
 
 
 def _binding_api(module: object) -> int | None:

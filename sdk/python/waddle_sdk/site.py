@@ -7,6 +7,7 @@ import importlib
 import inspect
 import json
 import re
+import sys
 import threading
 import time
 import warnings
@@ -29,6 +30,7 @@ from .cameras._factory import (
     resolve_camera_factory,
 )
 from .cameras.site import CameraConfig, CameraMount
+from .ownership import SiteOwnershipError, _SiteLock
 from .robots import base
 from .robots.site import PartConfig
 from .runtime import (
@@ -626,16 +628,20 @@ def _combine_rigs(
             for name, rig in components.items():
                 arms = rig.arms()
                 if len(arms) != 1:
-                    base.close_all(arms, report=rig.report)
+                    if not base.close_all(arms, report=rig.report):
+                        raise SiteOwnershipError(
+                            "site_close_unknown",
+                            "Invalid part assembly did not confirm teardown",
+                        )
                     raise ManifestValidationError(
                         f"part {name!r} factory returned a rig with {len(arms)} arms; "
                         "a site part factory must return exactly one"
                     )
                 arm = next(iter(arms.values()))
+                opened[name] = arm
                 arm.part = name
                 expected_base = part_base_frames.get(name)
                 if expected_base is not None and arm.base_frame != expected_base:
-                    arm.close()
                     raise ManifestValidationError(
                         f"part {name!r} driver returned base frame {arm.base_frame!r}, "
                         f"not declared base_frame {expected_base!r}"
@@ -646,11 +652,9 @@ def _combine_rigs(
                         self_collision=envelope.get("self_collision", {}),
                     )
                 except (TypeError, ValueError) as exc:
-                    arm.close()
                     raise ManifestValidationError(
                         f"part {name!r} cannot enforce the site envelope: {exc}"
                     ) from exc
-                opened[name] = arm
             collision_frames = {
                 arm.collision_frame
                 for arm in opened.values()
@@ -662,7 +666,11 @@ def _combine_rigs(
                     f"collision frame, got {sorted(collision_frames)!r}"
                 )
         except BaseException:
-            base.close_all(opened)
+            if not base.close_all(opened):
+                raise SiteOwnershipError(
+                    "site_close_unknown",
+                    "Partial site assembly did not confirm teardown",
+                )
             raise
         return opened
 
@@ -672,7 +680,11 @@ def _combine_rigs(
             for name, factory in camera_factories.items():
                 opened[name] = factory()
         except BaseException:
-            base.close_all(opened)
+            if not base.close_all(opened):
+                raise SiteOwnershipError(
+                    "site_close_unknown",
+                    "Partial site assembly did not confirm teardown",
+                )
             raise
         return opened
 
@@ -747,15 +759,21 @@ class _SiteAssembly:
             return self.rig.pre_reset(arms)(task)
 
     def close(self) -> None:
+        failed = False
         while self._opened:
             name, backend = self._opened.pop()
             try:
                 backend.close()
             except Exception as exc:  # noqa: BLE001 -- backend close is isolated
+                failed = True
                 self.rig.report(
                     f"close world={name} raised {exc!r} — this simulation may "
                     "still be running"
                 )
+        if failed:
+            raise SiteOwnershipError(
+                "site_close_unknown", "A simulation world did not confirm teardown"
+            )
 
 
 @dataclass(frozen=True)
@@ -781,7 +799,7 @@ class Site:
         secrets: Mapping[str, str] | Callable[[str], str] | None = None,
         _testing: bool = False,
         authorization_timeout_s: float = 15.0,
-    ) -> "SiteSession":
+    ) -> SiteSession:
         """Return an unopened session context; hardware opens in ``__enter__``."""
         return SiteSession(
             self,
@@ -880,7 +898,9 @@ class Site:
                 site_root=self.path.parent,
             )
             camera_descriptions[name] = _camera_description(camera)
-            camera_factories[name] = partial(_call_camera_factory, target, camera_config)
+            camera_factories[name] = partial(
+                _call_camera_factory, target, camera_config
+            )
 
         frame_descriptions = [
             descriptors.FrameTransform(
@@ -895,10 +915,7 @@ class Site:
         rig = _combine_rigs(
             self.id,
             components,
-            {
-                str(name): part.get("base_frame")
-                for name, part in raw["parts"].items()
-            },
+            {str(name): part.get("base_frame") for name, part in raw["parts"].items()},
             camera_descriptions,
             camera_factories,
             frame_descriptions,
@@ -908,6 +925,10 @@ class Site:
             simulation_lock,
         )
         return _SiteAssembly(rig, simulation_backends, [], simulation_lock)
+
+
+# Retain uncertain sessions and their locks even if a caller loses its handle.
+_OWNED_SITES: set[SiteSession] = set()
 
 
 class SiteSession:
@@ -935,6 +956,9 @@ class SiteSession:
         if authorization_timeout_s <= 0:
             raise ValueError("authorization_timeout_s must be positive")
         self._authorization_timeout_s = float(authorization_timeout_s)
+        self._ownership: _SiteLock | None = None
+        self._teardown_failed = False
+        self._closing = False
         self._managed: base.RigSession | None = None
         self._assembly: _SiteAssembly | None = None
         self._active: Run | None = None
@@ -1006,9 +1030,22 @@ class SiteSession:
         finally:
             probe.shutdown()
 
-    def __enter__(self) -> "SiteSession":
-        if self._managed is not None:
-            raise RuntimeError("this SiteSession is already open")
+    def __enter__(self) -> SiteSession:
+        if self._ownership is not None or self._teardown_failed:
+            raise SiteOwnershipError(
+                "site_owned", "This site session already owns or retains its resources"
+            )
+        self._ownership = _SiteLock(self.site.id)
+        self._closing = False
+        _OWNED_SITES.add(self)
+        try:
+            return self._open()
+        except BaseException:
+            # Opening and teardown share the same path, including partial starts.
+            self.__exit__(*sys.exc_info())
+            raise
+
+    def _open(self) -> SiteSession:
         assembly = self.site._assembly(self._secrets)
         rig = assembly.rig
         self._authorize_connector(rig)
@@ -1026,14 +1063,10 @@ class SiteSession:
             console=self._console,
             _testing=self._testing,
         )
-        assembly.open()
-        try:
-            managed._open(create_core_session)
-        except BaseException:
-            assembly.close()
-            raise
-        self._managed = managed
         self._assembly = assembly
+        assembly.open()
+        self._managed = managed
+        managed._open(create_core_session)
         self._service_stop.clear()
         self._service_thread = threading.Thread(
             target=self._serve_calibration_requests,
@@ -1045,32 +1078,66 @@ class SiteSession:
         return self
 
     def __exit__(self, exc_type, exc, tb) -> bool:
-        managed = self._managed
-        assembly = self._assembly
+        if self._teardown_failed:
+            raise SiteOwnershipError(
+                "site_close_unknown",
+                "Site teardown was not confirmed; ownership remains held",
+            )
+        managed, assembly = self._managed, self._assembly
+        self._closing = True
         try:
-            if self._active is not None:
-                self._active.__exit__(exc_type, exc, tb)
-        finally:
-            self._service_stop.set()
-            service_thread = self._service_thread
-            self._service_thread = None
-            if service_thread is not None:
-                service_thread.join(timeout=5.0)
-            self._managed = None
-            self._assembly = None
             try:
-                if managed is not None:
-                    managed.close(
-                        interrupted=(
-                            exc_type is not None
-                            and issubclass(exc_type, KeyboardInterrupt)
-                        )
-                    )
+                if self._active is not None:
+                    self._active.__exit__(exc_type, exc, tb)
             finally:
-                if assembly is not None:
-                    assembly.close()
-            self._event("session.closed", {"site_id": self.site.id})
+                self._service_stop.set()
+                if self._service_thread is not None:
+                    self._service_thread.join(timeout=5.0)
+                    if self._service_thread.is_alive():
+                        raise SiteOwnershipError(
+                            "site_close_unknown",
+                            "Site service did not stop; ownership remains held",
+                        )
+                try:
+                    if managed is not None:
+                        managed.close(
+                            interrupted=(
+                                exc_type is not None
+                                and issubclass(exc_type, KeyboardInterrupt)
+                            )
+                        )
+                finally:
+                    if assembly is not None:
+                        assembly.close()
+                if (
+                    isinstance(exc, SiteOwnershipError)
+                    and exc.code == "site_close_unknown"
+                ):
+                    raise exc
+                if managed is not None and not managed.teardown_confirmed:
+                    raise SiteOwnershipError(
+                        "site_close_unknown",
+                        "Hardware teardown was not confirmed; ownership remains held",
+                    )
+        except BaseException:
+            self._teardown_failed = True
+            raise
+        self._managed = self._assembly = self._service_thread = None
+        if self._ownership is not None:
+            self._ownership.release()
+            self._ownership = None
+        _OWNED_SITES.discard(self)
+        self._event("session.closed", {"site_id": self.site.id})
         return False
+
+    def media_tracks(self) -> list[dict[str, JSONValue]]:
+        """Snapshot native publisher identities and local attempt status.
+
+        No credentials or pixels are returned. Published means a local transport
+        accepted a frame, not that a remote viewer received it. Missing cameras
+        and sessions without media have no tracks; depth appears after intake.
+        """
+        return self._require().core.media_tracks()
 
     def _serve_calibration_requests(self) -> None:
         cursor = 0
@@ -1120,7 +1187,7 @@ class SiteSession:
                     )
 
     def _require(self) -> base.RigSession:
-        if self._managed is None or self._managed.core is None:
+        if self._closing or self._managed is None or self._managed.core is None:
             raise RuntimeFault(FaultCode.NOT_OPEN, "SiteSession is not open")
         return self._managed
 
@@ -1261,9 +1328,7 @@ class SiteSession:
             }
         )
 
-    def _camera_embodiment_digest(
-        self, camera: Mapping[str, JSONValue]
-    ) -> str:
+    def _camera_embodiment_digest(self, camera: Mapping[str, JSONValue]) -> str:
         return self._digest(
             {
                 "contractVersion": SUPPORT_CONTRACT_VERSION,
@@ -1325,9 +1390,7 @@ class SiteSession:
         base_frames = {name: arm.base_frame for name, arm in managed.arms.items()}
         digest = self._composite_embodiment_digest(robot, base_frames)
         grant_facts = self._grant_facts(grants)
-        part_spaces = self._part_space_descriptions(
-            action_space, tuple(managed.arms)
-        )
+        part_spaces = self._part_space_descriptions(action_space, tuple(managed.arms))
         manifest_parts = self.site.manifest["parts"]
         rows: list[SupportRow] = []
         for name, arm in managed.arms.items():
@@ -1443,9 +1506,7 @@ class SiteSession:
             )
         return vector
 
-    def forward_kinematics(
-        self, part: str, joint_position: Sequence[float]
-    ) -> Pose:
+    def forward_kinematics(self, part: str, joint_position: Sequence[float]) -> Pose:
         """Evaluate an opened part's hardware-specific FK implementation."""
         managed = self._require()
         arm = managed.arms.get(part)
@@ -1511,10 +1572,10 @@ class SiteSession:
                 context={"part": part},
             ) from exc
 
-    def run(self, *, task, actor) -> "Run":
+    def run(self, *, task, actor) -> Run:
         return Run(self, task=task, actor=actor)
 
-    def begin_run(self, *, task, actor) -> "Run":
+    def begin_run(self, *, task, actor) -> Run:
         run = self.run(task=task, actor=actor)
         run.__enter__()
         return run
@@ -1705,7 +1766,7 @@ class Run:
     def outcome(self) -> str | None:
         return None if self._episode is None else self._episode.outcome
 
-    def __enter__(self) -> "Run":
+    def __enter__(self) -> Run:
         managed = self._session._require()
         if self._session._active is not None:
             raise RuntimeFault(FaultCode.BUSY, "another run is active")

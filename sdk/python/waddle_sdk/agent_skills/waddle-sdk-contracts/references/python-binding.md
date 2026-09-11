@@ -25,3 +25,9 @@ A manifest robot factory accepts `PartConfig`, returns a declaration-only `Rig`,
 Use structural protocols rather than inheritance. Keep vendor imports lazy. Connection credentials stay in manifest secret references and are resolved only for opening. Package facts with provenance and test them against the pinned vendor artifact where possible.
 
 Use public `robots.metadata` and `cameras.metadata` helpers to interpret descriptions; preserve per-scope missing metadata. The SDK validates physical conversions and camera intrinsics, while applications own orchestration. See the public hardware-backends guide for these contracts and the optional shared `robots.models.ModelSourceProvider` contract.
+
+Site context entry acquires SDK-owned per-user site-ID exclusivity before factories
+run. `SiteOwnershipError.code` distinguishes contention and uncertain teardown;
+uncertain teardown retains ownership. The optional `MediaRuntimePort.media_tracks()`
+returns native publisher identities and last local attempt status, not proof of
+viewer delivery. See the public site ownership/media guide for scope and limits.

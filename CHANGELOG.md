@@ -13,6 +13,13 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Shared site-ID process ownership in `Site.open()`, acquired before adapter
+  construction and retained after uncertain teardown. Applications using the
+  same site ID now coordinate through the same SDK lock.
+- Optional `MediaRuntimePort` and `SiteSession.media_tracks()` expose native
+  publisher identities, per-stream last-attempt status and drop counts without
+  reconstructing track facts from observations.
+
 - Shared optional `ModelSourceProvider` and immutable `ModelSources` bundle for
   complete source geometry, assets, named bindings and attribution. Any robot
   adapter can expose the same non-opening module extension without registry edits;
@@ -55,6 +62,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   ROS-connected Gazebo and Isaac Sim processes.
 
 ### Changed
+
+- Native binding API 4 adds publisher snapshots; rebuild base and media extensions
+  together. Camera/arm/world teardown failures now prevent site ownership release.
 
 - YAM source loading implements the shared adapter contract and returns complete
   articulated MJCF, preserving physical slide coordinates and coupling. Remove

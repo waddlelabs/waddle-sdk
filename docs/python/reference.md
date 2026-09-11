@@ -126,3 +126,7 @@ Griffe. Documentation builds do not import the native extension or any vendor SD
 ::: waddle_sdk.robots.yam.model_sources
 
 ::: waddle_sdk.robots.models
+
+## Site ownership errors
+
+::: waddle_sdk.ownership.SiteOwnershipError

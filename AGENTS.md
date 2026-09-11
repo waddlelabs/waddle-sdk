@@ -171,6 +171,13 @@ waddle-sdk/
                              #   folders shipped by the wheel. Export is explicit,
                              #   version-reported, and never overwrites a target or
                              #   mutates an agent's global configuration.
+                             #   ownership.py supplies the shared per-user site-ID
+                             #   kernel lock acquired before hardware construction;
+                             #   uncertain teardown retains it for process lifetime.
+                             #   SiteSession.media_tracks() exposes native publisher
+                             #   identities and last-attempt evidence via optional
+                             #   MediaRuntimePort (binding API 4). See
+                             #   docs/python/ownership-and-media.md.
                              #   Hardware opens only in SiteSession.__enter__; a
                              #   bound Grpc connector first completes an
                              #   authorization-only waddle.v0 registration

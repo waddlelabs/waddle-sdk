@@ -11,7 +11,7 @@ import enum
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, TypeAlias, runtime_checkable
 
 import numpy as np
 import numpy.typing as npt
@@ -371,6 +371,13 @@ class RunPort(Protocol):
 
 
 @runtime_checkable
+class MediaRuntimePort(Protocol):
+    """Optional native publisher evidence, independent of motion support."""
+
+    def media_tracks(self) -> list[dict[str, JSONValue]]: ...
+
+
+@runtime_checkable
 class SdkRuntimePort(Protocol):
     """The structural surface applications need from a local or remote SDK session."""
 
@@ -450,6 +457,7 @@ __all__ = [
     "RuntimeFault",
     "RuntimeFaultCause",
     "SdkRuntimePort",
+    "MediaRuntimePort",
     "SdkSupportPort",
     "SubmitResult",
     "SUPPORT_CONTRACT_VERSION",

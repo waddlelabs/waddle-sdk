@@ -2279,6 +2279,29 @@ impl Session {
         Ok(())
     }
 
+    /// Publisher-owned track identities and last local attempt evidence.
+    /// No-media sessions return no tracks. Depth appears only after preview
+    /// intake; publication evidence persists across sparse frames and reconnects.
+    /// A published frame does not establish remote reception or live connectivity.
+    pub fn media_tracks(&self) -> Vec<crate::MediaTrackStatus> {
+        let mut tracks: Vec<_> = self
+            .inner
+            .camera_uplinks
+            .iter()
+            .filter_map(|(camera, uplink)| uplink.status(camera, "rgb"))
+            .chain(
+                self.inner
+                    .depth_uplinks
+                    .iter()
+                    .filter_map(|(camera, uplink)| uplink.status(camera, "depth")),
+            )
+            .collect();
+        tracks.sort_by(|a, b| {
+            (&a.camera_id, a.stream == "depth").cmp(&(&b.camera_id, b.stream == "depth"))
+        });
+        tracks
+    }
+
     /// Frames dropped for `camera` because the uplink pump fell behind (the
     /// bounded per-camera queue overflowed and the oldest queued frame was
     /// discarded to admit the newest) — or because `publish_track`/encode/

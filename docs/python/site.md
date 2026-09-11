@@ -87,3 +87,7 @@ self-collision configuration. The site operator must review mounting, table,
 tool, and neighboring-arm clearance before copying these values into a new site.
 Existing `site.yaml` bounds remain unchanged, and importing the preset opens no
 hardware. A preset is a configuration suggestion and grants no runtime capability.
+
+Site opening now coordinates ownership across applications. See
+[site ownership and publisher evidence](ownership-and-media.md) for lock scope,
+uncertain teardown and the optional native media-track contract.

@@ -1319,7 +1319,7 @@ def estop_all(
 
 def close_all(
     units: Mapping[str, Arm | Driver], *, report: Callable[[str], None] = status
-) -> None:
+) -> bool:
     """Drop every one of these connections, even if an earlier one raised.
 
     The same doctrine as :func:`estop_all` — one unit that will not answer is
@@ -1328,18 +1328,23 @@ def close_all(
     on its way out of something that has already gone wrong (a rig that failed
     part-way through opening its arms, a session unwinding), and an exception
     from here would replace the reason it is unwinding with a footnote about a
-    bus that did not answer.
+    bus that did not answer. The return value reports whether every close
+    completed, so the site lifecycle can retain ownership after uncertainty.
 
     What closing COSTS is the unit's own answer, not this function's: see
     :func:`closing_drops_torque`."""
+    confirmed = True
     for part, unit in units.items():
         try:
             unit.close()
         except Exception as e:  # noqa: BLE001 — a vendor call can throw anything
+            confirmed = False
             report(
                 f"close part={part} raised {e!r} — this unit may still be connected "
                 "and energized"
             )
+
+    return confirmed
 
 
 def console_is_at_the_machine() -> bool:
@@ -1910,6 +1915,7 @@ class CameraPump(threading.Thread):
         self._report = report
         self._stopping = threading.Event()
         self._closed = False
+        self.teardown_confirmed = True
         self._close_lock = threading.Lock()
         self._next_sequence = 0
 
@@ -1964,6 +1970,7 @@ class CameraPump(threading.Thread):
             try:
                 self._driver.close()
             except Exception as exc:  # noqa: BLE001 — vendor close can throw
+                self.teardown_confirmed = False
                 self._report(
                     f"close camera={self._camera_name} on capture thread raised "
                     f"{exc!r} — this camera may still be connected"
@@ -1977,6 +1984,7 @@ class CameraPump(threading.Thread):
                 try:
                     self._driver.close()
                 except Exception as exc:  # noqa: BLE001 — vendor close may throw
+                    self.teardown_confirmed = False
                     self._report(
                         f"close camera={self._camera_name} raised {exc!r} — this "
                         "camera may still be connected"
@@ -1984,6 +1992,7 @@ class CameraPump(threading.Thread):
         if threading.current_thread() is not self:
             self.join(timeout=timeout)
             if self.is_alive():
+                self.teardown_confirmed = False
                 self._report(
                     f"camera={self._camera_name} capture did not stop after {timeout}s"
                 )
@@ -2348,6 +2357,7 @@ class RigSession:
         _testing: bool = False,
     ) -> None:
         self._rig = rig
+        self.teardown_confirmed = True
         self._project = project
         self._send = send
         self._init_kwargs = dict(
@@ -2534,6 +2544,13 @@ class RigSession:
             self._finish()
 
     def _finish(self) -> None:
+        try:
+            self._finish_resources()
+        except BaseException:
+            self.teardown_confirmed = False
+            raise
+
+    def _finish_resources(self) -> None:
         """Stop every owner-side activity and close every opened handle once."""
         with self._lifecycle_lock:
             if self._finished:
@@ -2546,10 +2563,12 @@ class RigSession:
         closed_cameras: set[str] = set()
         for name, camera_pump in list(self.camera_pumps.items()):
             camera_pump.stop()
+            self.teardown_confirmed &= camera_pump.teardown_confirmed
             closed_cameras.add(name)
         self.camera_pumps.clear()
         if self.pump is not None:
             self.pump.stop()
+            self.teardown_confirmed &= not self.pump.is_alive()
             self.pump = None
 
         for name, driver in self.cameras.items():
@@ -2558,6 +2577,7 @@ class RigSession:
             try:
                 driver.close()
             except Exception as exc:  # noqa: BLE001 — vendor close can throw anything
+                self.teardown_confirmed = False
                 self._report(
                     f"close camera={name} raised {exc!r} — this camera may still "
                     "be connected"
@@ -2568,4 +2588,4 @@ class RigSession:
             if close_session is not None:
                 close_session()
         finally:
-            close_all(self.arms, report=self._report)
+            self.teardown_confirmed &= close_all(self.arms, report=self._report)
