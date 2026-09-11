@@ -263,6 +263,8 @@ waddle-sdk/
       robots/yam_model.py    # YAM reference implementation: verified URDF/hand
                              #   assembly into complete articulated MJCF, license
                              #   and source hashes; no collision approximation.
+                             #   Source selection checks the five physical gripper
+                             #   mapping fields and accepts additional grasp metadata.
       discovery.py           # non-opening configuration evidence for CAN,
                              #   serial and camera devices; immutable rows,
                              #   isolated custom scanners via the

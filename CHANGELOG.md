@@ -103,6 +103,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Accept optional grasp metadata alongside the standard YAM physical gripper
+  mapping when resolving model sources; retain rejection of changed jaw/action
+  mappings and all source geometry/provenance validation.
+
 - Keep MuJoCo renderer creation and destruction on its owning camera-pump thread so
   EGL/OpenGL RGB-D capture closes without cross-thread context failures.
 - Transform link-local conservative collision-sphere offsets with each simulated

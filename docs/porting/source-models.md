@@ -81,6 +81,11 @@ missing vendor terminal mesh is replaced through the declared hand/TCP attachmen
 inside the adapter. Neither callers nor the shared bundle need YAM-specific fields.
 Mesh bytes remain in the optional vendor installation and are not shipped in the
 SDK wheel. Missing or modified selected vendor sources raise `ModelSourceError`.
+The standard source requires the five physical gripper mapping fields (joint,
+closed/open metres and closed/open actions) to match the reference hand.
+Additional grasp metadata, such as a closing axis, pinch offset and preferred
+orientation, does not change that mapping and is accepted without changing the
+source geometry. A changed physical mapping still requires a matching custom model.
 
 Tests in `sdk/tests/test_model_sources.py` cover independent adapter resolution,
 absence, selected failures, frozen metadata and path/binding refusal.

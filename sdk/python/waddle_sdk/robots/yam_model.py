@@ -127,13 +127,17 @@ def model_sources(
             )
         if "fk" in options:
             raise _fail("A custom SDK FK needs a customer-selected model")
-        if part.get("gripper") != {
+        expected_mapping = {
             "joint": yam.GRIPPER_JOINT_NAME,
             "closed_m": 0,
             "open_m": yam.GRIPPER_MAX_OPENING_M,
             "closed_action": 0,
             "open_action": 1,
-        }:
+        }
+        gripper = part.get("gripper")
+        if not isinstance(gripper, Mapping) or any(
+            gripper.get(key) != value for key, value in expected_mapping.items()
+        ):
             raise _fail(
                 "The standard YAM source requires the declared physical SDK gripper mapping"
             )

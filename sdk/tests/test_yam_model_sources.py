@@ -13,7 +13,7 @@ from waddle_sdk.robots import yam_model as sources
 from waddle_sdk.robots.models import ModelSourceError
 
 
-def sources_for_arm():
+def sources_for_arm(gripper_metadata=None):
     return yam.model_sources(
         factory="arm",
         part_name="arm",
@@ -25,9 +25,40 @@ def sources_for_arm():
                 "open_m": yam.GRIPPER_MAX_OPENING_M,
                 "closed_action": 0,
                 "open_action": 1,
+                **(gripper_metadata or {}),
             },
         },
     )
+
+
+def test_optional_grasp_metadata_preserves_standard_physical_sources():
+    pytest.importorskip("i2rt")
+    baseline = sources_for_arm()
+    enriched = sources_for_arm(
+        {
+            "closing_axis_tcp": [0.0, 1.0, 0.0],
+            "pinch_offset_tcp_m": [0.044, 0.0, -0.0049],
+            "pointing_down_wxyz": [0.0, 0.0, 1.0, 0.0],
+        }
+    )
+    assert enriched.model == baseline.model
+    assert enriched.assets == baseline.assets
+    assert enriched.provenance == baseline.provenance
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        {"joint": "other"},
+        {"closed_m": 0.01},
+        {"open_m": 0.2},
+        {"closed_action": 1},
+        {"open_action": 2},
+    ],
+)
+def test_nonstandard_physical_gripper_mapping_remains_rejected(changed):
+    with pytest.raises(ModelSourceError, match="physical SDK gripper mapping"):
+        sources_for_arm(changed)
 
 
 def test_modified_pinned_asset_rejected_before_publish(tmp_path, monkeypatch):
