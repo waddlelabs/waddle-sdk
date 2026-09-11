@@ -100,3 +100,6 @@ features = ["pyo3/extension-module", "grpc"]
 # does not — the same commit, two different wheels. pip compiles bytecode at
 # install time for the interpreter that will actually import it.
 exclude = ["python/**/__pycache__/**"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

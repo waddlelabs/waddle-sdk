@@ -86,12 +86,6 @@ class ConnectorRegistrationError(RuntimeError):
         super().__init__(f"{code}: {detail}")
 
 
-def _exception_type(error: BaseException) -> str:
-    """Return a bounded identifier without serializing an untrusted exception."""
-    name = re.sub(r"[^0-9A-Za-z_.-]", "_", type(error).__name__)
-    return name[:80] or "Exception"
-
-
 def _operation_fault(
     operation: str,
     error: Exception,
@@ -99,29 +93,11 @@ def _operation_fault(
     code: FaultCode = FaultCode.INTERNAL,
     context: Mapping[str, JSONValue] | None = None,
 ) -> RuntimeFault:
-    """Classify an untyped implementation error at the public runtime boundary.
-
-    Arbitrary vendor exception strings can contain device paths, URLs, or
-    credentials.  Keep the original exception in Python's ``__cause__`` for
-    owner-side logs, but carry only its type plus SDK-owned operation/scope
-    fields over the application's transport.
-    """
-    if isinstance(error, RuntimeFault):
-        return error
-    error_type = _exception_type(error)
-    safe_context: dict[str, JSONValue] = {
-        "operation": operation,
-        "error_type": error_type,
-    }
-    if context is not None:
-        safe_context.update(context)
-    if isinstance(error, OSError) and error.errno is not None:
-        safe_context["errno"] = int(error.errno)
-    return RuntimeFault(
-        code,
-        f"{operation} failed ({error_type})",
-        retryable=isinstance(error, TimeoutError),
-        context=safe_context,
+    """Add operation/scope without replacing the original diagnostic."""
+    return RuntimeFault.from_exception(
+        error,
+        code=code,
+        context={"operation": operation, **dict(context or {})},
     )
 
 
@@ -1077,13 +1053,33 @@ class SiteSession:
         self._event("session.opened", {"site_id": self.site.id})
         return self
 
+    def close(self, *, torque_release_authorized: bool = False) -> None:
+        """Finish the run and release this session's devices and ownership.
+
+        Normal close preserves the site operator's parking/support wait. Pass
+        ``torque_release_authorized=True`` only when the site operator has
+        explicitly authorized releasing motor holding torque for this shutdown.
+        This permits attended test harnesses without a console to close cleanly;
+        it does not establish that the robot has reached a safe pose.
+        """
+        if not isinstance(torque_release_authorized, bool):
+            raise TypeError("torque_release_authorized must be a boolean")
+        self._close(
+            None, None, None, torque_release_authorized=torque_release_authorized
+        )
+
     def __exit__(self, exc_type, exc, tb) -> bool:
+        return self._close(exc_type, exc, tb)
+
+    def _close(self, exc_type, exc, tb, *, torque_release_authorized=False) -> bool:
         if self._teardown_failed:
             raise SiteOwnershipError(
                 "site_close_unknown",
                 "Site teardown was not confirmed; ownership remains held",
             )
         managed, assembly = self._managed, self._assembly
+        if managed is None and assembly is None and self._ownership is None:
+            return False
         self._closing = True
         try:
             try:
@@ -1102,8 +1098,11 @@ class SiteSession:
                     if managed is not None:
                         managed.close(
                             interrupted=(
-                                exc_type is not None
-                                and issubclass(exc_type, KeyboardInterrupt)
+                                torque_release_authorized
+                                or (
+                                    exc_type is not None
+                                    and issubclass(exc_type, KeyboardInterrupt)
+                                )
                             )
                         )
                 finally:
@@ -1792,7 +1791,7 @@ class Run:
                 reason = (
                     "run exited before a terminal outcome"
                     if exc_type is None
-                    else f"unhandled {_exception_type(exc)}"
+                    else RuntimeFault.from_exception(exc).detail
                 )
                 try:
                     self._episode.terminate("abort", reason)

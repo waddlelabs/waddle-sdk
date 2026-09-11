@@ -13,6 +13,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Unify software and live behavior tests under `sdk/tests`; `pytest --live` selects
+  viable camera/robot checks from metadata and optional motion profiles, reports
+  missing prerequisites and stays disabled in CI/releases.
+- Explicit `SiteSession.close(torque_release_authorized=True)` for authorized
+  headless teardown, sharing context-exit resource and ownership handling.
+
 - Shared site-ID process ownership in `Site.open()`, acquired before adapter
   construction and retained after uncertain teardown. Applications using the
   same site ID now coordinate through the same SDK lock.
@@ -102,6 +108,14 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   the existing runtime remains lazy behind the `[mujoco]` extra.
 
 ### Fixed
+
+- Preserve original runtime exception text, JSON metadata and nested causes through
+  `RuntimeFault.from_exception`; existing typed faults pass through unchanged and
+  only credential material is redacted. Teardown/reporting failures no longer
+  replace the primary live motion failure.
+
+- Refuse YAM reads and commands when its CAN/server writer has stopped or real
+  feedback cache updates stall, even if vendor observation timestamps advance.
 
 - Accept optional grasp metadata alongside the standard YAM physical gripper
   mapping when resolving model sources; retain rejection of changed jaw/action

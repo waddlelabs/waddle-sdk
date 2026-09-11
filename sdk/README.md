@@ -560,11 +560,11 @@ environment values: `WADDLE_TEST_LIVEKIT_URL`,
 The tokens must name the same **fresh** `sdk-media-test-<unique-id>` room with
 different identities: publisher-only camera permission and viewer-only subscribe
 permission. Provision grants and delete the test room outside the SDK; the test
-never consumes API signing keys or opens physical hardware. Without these values,
-it skips rather than dialing an ambient endpoint.
+never consumes API signing keys or opens physical hardware. Without `--live` and these values,
+it skips before dialing an endpoint.
 
 ```bash
-python -m pytest -q tests/test_livekit_public.py
+python -m pytest --live -q tests/test_livekit_public.py
 ```
 
 The test receives actual RGB and colorized `<camera>/depth` frames at the declared

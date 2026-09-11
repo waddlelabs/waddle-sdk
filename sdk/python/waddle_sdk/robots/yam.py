@@ -75,6 +75,7 @@ import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from importlib.resources import files
+from time import monotonic
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -88,6 +89,7 @@ from ..descriptors import (
     JointSpace,
     Robot,
 )
+from ..runtime import FaultCode, RuntimeFault
 from . import base
 from ._i2rt_patches import apply_command_state_atomic_patch, apply_recv_starvation_patch
 from .base import CrossArm
@@ -550,6 +552,10 @@ class LiveDriver:
       it is the number the envelope measures the next command's per-step cap
       against, so guessing it would let a large uncommanded jaw motion through
       the check that exists to refuse one.
+      When the pinned vendor exposes its CAN cache, reads and commands also
+      refuse a stopped writer/server or a cache that has not been replaced
+      across 0.5 seconds of observation. The vendor's read-time timestamps do
+      not prove that a new motor reply arrived.
     * ``robot.zero_torque_mode()`` is the stop the vendor offers, and it is
       HONEST about what it is: the arm goes compliant and FLOATS under the
       always-on gravity compensation. It does not freeze in place. The site's
@@ -584,6 +590,7 @@ class LiveDriver:
     """
 
     kind = "live"
+    _MAX_FEEDBACK_STALL_S = 0.5
 
     def __init__(
         self,
@@ -625,6 +632,9 @@ class LiveDriver:
         self._zero_gravity = bool(zero_gravity)
         self._report = report
         self._lock = threading.Lock()
+        self._feedback_lock = threading.Lock()
+        self._last_feedback_state: object | None = None
+        self._last_feedback_update = monotonic()
         self._estopped = False
         self._velocity_feedforward = bool(velocity_feedforward)
         self._max_feedforward_vel_rad_s = float(max_feedforward_vel_rad_s)
@@ -783,7 +793,67 @@ class LiveDriver:
     def estopped(self) -> bool:
         return self._estopped
 
+    def _check_feedback(self) -> None:
+        """Reject stopped or demonstrably stale pinned-I2RT feedback.
+
+        I2RT replaces ``motor_chain.state`` under ``state_lock`` only after
+        successful CAN transactions. Its public observations and even its
+        internal joint-state timestamp can instead be rebuilt from that same
+        old cache. Retain the object itself to prevent identity reuse, and
+        measure how long repeated checks see it with our monotonic clock.
+        Identical joint values in newly acquired feedback remain valid.
+
+        Alternate vendor objects without this optional telemetry retain their
+        existing read/write contract. A first observation, or a new snapshot
+        after an observation gap, establishes a baseline rather than proving
+        the snapshot's acquisition time, which I2RT does not expose.
+        """
+        server = getattr(self._robot, "_server_thread", None)
+        if callable(getattr(server, "is_alive", None)) and not server.is_alive():
+            raise RuntimeFault(
+                FaultCode.MOTOR_FAILURE,
+                f"{self.channel}: I2RT control server has stopped",
+                context={"channel": self.channel, "reason": "control_server_stopped"},
+            )
+        chain = getattr(self._robot, "motor_chain", None)
+        if chain is None:
+            return
+        if getattr(chain, "running", None) is False:
+            raise RuntimeFault(
+                FaultCode.MOTOR_FAILURE,
+                f"{self.channel}: I2RT CAN writer has stopped",
+                context={"channel": self.channel, "reason": "can_writer_stopped"},
+            )
+        state_lock = getattr(chain, "state_lock", None)
+        if state_lock is None or not hasattr(chain, "state"):
+            return
+        with self._feedback_lock:
+            with state_lock:
+                snapshot = chain.state
+            if snapshot is None:
+                raise RuntimeFault(
+                    FaultCode.MOTOR_FAILURE,
+                    f"{self.channel}: I2RT has no CAN feedback",
+                    context={"channel": self.channel, "reason": "missing_feedback"},
+                )
+            now = monotonic()
+            if snapshot is not self._last_feedback_state:
+                self._last_feedback_state = snapshot
+                self._last_feedback_update = now
+            elif now - self._last_feedback_update > self._MAX_FEEDBACK_STALL_S:
+                raise RuntimeFault(
+                    FaultCode.MOTOR_FAILURE,
+                    f"{self.channel}: stale CAN feedback; no new motor replies "
+                    f"observed for {now - self._last_feedback_update:.3f} s",
+                    context={
+                        "channel": self.channel,
+                        "reason": "feedback_stalled",
+                        "stall_s": now - self._last_feedback_update,
+                    },
+                )
+
     def read(self) -> tuple[np.ndarray, np.ndarray]:
+        self._check_feedback()
         obs = self._robot.get_observations() or {}
         joint_pos = obs.get("joint_pos")
         if joint_pos is None:
@@ -826,6 +896,7 @@ class LiveDriver:
                     "with no gains, so a command here would latch a setpoint that "
                     "moves nothing. Clear the latch at the machine."
                 )
+            self._check_feedback()
             self._robot.command_joint_pos(np.asarray(target, dtype=float))
 
     def write_position_velocity(
@@ -861,6 +932,7 @@ class LiveDriver:
                     "with no gains, so a command here would latch a setpoint that "
                     "moves nothing. Clear the latch at the machine."
                 )
+            self._check_feedback()
             if not self._velocity_feedforward or not self._can_command_state:
                 self._robot.command_joint_pos(position)
                 return False

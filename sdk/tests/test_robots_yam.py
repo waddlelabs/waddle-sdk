@@ -24,24 +24,23 @@ the golden below.
 
 from __future__ import annotations
 
-from contextlib import contextmanager
-
 import json
 import sys
 import threading
 import time
 import types
+from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
 import pytest
+import waddle_sdk
 from mcap.reader import make_reader
 from mcap_protobuf.decoder import DecoderFactory
-
-import waddle_sdk
 from waddle_sdk import descriptors
 from waddle_sdk._session import Control, _derive_grants, create_core_session
 from waddle_sdk.robots import base, yam
+from waddle_sdk.runtime import FaultCode, RuntimeFault
 
 
 @contextmanager
@@ -52,8 +51,6 @@ def _episode(session, *, task: str):
     finally:
         if not episode.done:
             episode.terminate("abort")
-
-
 
 
 # --------------------------------------------------------------------------
@@ -350,12 +347,11 @@ _AT_THE_ZERO = (0.20, 1.00, 0.0, 0.10, -0.50, 0.05, 0.00)
 def test_a_rig_declares_the_limits_its_own_machine_has():
     """The model's numbers are a DEFAULT, not a ceiling on what an owner may
     declare: the envelope is the owner's, and the machine is what it is."""
+
     # No workspace box and no forward kinematics: the only thing that may
     # decide this command is the declared interval.
     def _rig(**overrides) -> base.Rig:
-        return _arm_rig(
-            workspace=None, fk=None, sim_home=_AT_THE_ZERO, **overrides
-        )
+        return _arm_rig(workspace=None, fk=None, sim_home=_AT_THE_ZERO, **overrides)
 
     rig = _rig(joint_limits=_ZERO_OFFSET_LIMITS)
     joint3 = rig.robot().action_space.joints[2]
@@ -451,9 +447,7 @@ def test_a_monitor_rig_registers_only_the_owners_stop():
     rig = _bimanual(posture="monitor")
     verbs = rig.control(rig.arms())
     assert verbs.send is None and verbs.hold is None
-    assert _derive_grants(verbs, rig.robot().action_space) == [
-        {"verb": "VERB_ESTOP"}
-    ]
+    assert _derive_grants(verbs, rig.robot().action_space) == [{"verb": "VERB_ESTOP"}]
 
 
 def test_a_supervised_rig_registers_the_three_driving_verbs():
@@ -476,7 +470,9 @@ def test_the_sim_factory_drives_its_twins_through_the_envelope(tmp_path):
     arms = rig.arms()
     assert set(arms) == {"left_arm", "right_arm"}
 
-    session = create_core_session("yam-sim-smoke", rig.robot(), rig.control(arms), recording_dir=tmp_path)
+    session = create_core_session(
+        "yam-sim-smoke", rig.robot(), rig.control(arms), recording_dir=tmp_path
+    )
     with _episode(session, task="nudge both arms") as ep:
         position = np.concatenate(
             [arms[p].state()[0] for p in ("left_arm", "right_arm")]
@@ -646,10 +642,7 @@ class _FakeYamRobot:
 
     def command_joint_state(self, state) -> None:
         self.state_commands.append(
-            {
-                str(key): np.asarray(value, dtype=float)
-                for key, value in state.items()
-            }
+            {str(key): np.asarray(value, dtype=float) for key, value in state.items()}
         )
 
     def zero_torque_mode(self) -> None:
@@ -712,7 +705,9 @@ def vendor(monkeypatch) -> _FakeVendor:
     ):
         monkeypatch.setitem(sys.modules, name, module)
     monkeypatch.setattr(yam, "apply_recv_starvation_patch", lambda: None)
-    monkeypatch.setattr(yam, "apply_command_state_atomic_patch", lambda _robot_type: None)
+    monkeypatch.setattr(
+        yam, "apply_command_state_atomic_patch", lambda _robot_type: None
+    )
     return fake
 
 
@@ -860,6 +855,90 @@ def test_the_live_driver_reads_the_hand_as_the_seventh_row(vendor):
     assert velocity.shape == (yam.JOINT_COUNT,)
 
 
+@pytest.mark.parametrize("operation", ["read", "write", "write_position_velocity"])
+def test_live_driver_refuses_a_stopped_can_writer(vendor, operation):
+    driver = _live(vendor)
+    robot = vendor.robots[0]
+    robot.motor_chain = types.SimpleNamespace(running=False)
+    target = np.array([0.1] * yam.ARM_JOINT_COUNT + [0.5])
+
+    with pytest.raises(RuntimeFault, match="CAN.*stopped") as caught:
+        if operation == "read":
+            driver.read()
+        elif operation == "write":
+            driver.write(target)
+        else:
+            driver.write_position_velocity(target, np.zeros(yam.JOINT_COUNT))
+
+    assert robot.commands == []
+    assert robot.state_commands == []
+    assert caught.value.code is FaultCode.MOTOR_FAILURE
+    assert caught.value.context["channel"] == "can_left"
+
+
+def test_live_driver_refuses_a_stopped_vendor_server(vendor):
+    driver = _live(vendor)
+    robot = vendor.robots[0]
+    robot._server_thread = types.SimpleNamespace(is_alive=lambda: False)
+
+    with pytest.raises(RuntimeFault, match="server.*stopped"):
+        driver.read()
+
+
+@pytest.mark.parametrize("operation", ["read", "write", "write_position_velocity"])
+def test_live_driver_refuses_an_unchanged_can_feedback_cache(
+    vendor, monkeypatch, operation
+):
+    clock = [100.0]
+    monkeypatch.setattr(yam, "monotonic", lambda: clock[0])
+    driver = _live(vendor)
+    robot = vendor.robots[0]
+    robot.motor_chain = types.SimpleNamespace(
+        running=True,
+        state=[object() for _ in range(yam.JOINT_COUNT)],
+        state_lock=threading.Lock(),
+    )
+
+    driver.read()
+    clock[0] += 0.2
+    driver.read()
+    clock[0] += 0.4
+    target = np.array([0.1] * yam.ARM_JOINT_COUNT + [0.5])
+
+    with pytest.raises(RuntimeFault, match="stale.*feedback"):
+        if operation == "read":
+            driver.read()
+        elif operation == "write":
+            driver.write(target)
+        else:
+            driver.write_position_velocity(target, np.zeros(yam.JOINT_COUNT))
+
+    assert robot.commands == []
+    assert robot.state_commands == []
+
+
+def test_live_driver_accepts_new_feedback_with_unchanged_joint_values(
+    vendor, monkeypatch
+):
+    clock = [100.0]
+    monkeypatch.setattr(yam, "monotonic", lambda: clock[0])
+    driver = _live(vendor)
+    robot = vendor.robots[0]
+    robot.motor_chain = types.SimpleNamespace(
+        running=True,
+        state=[object() for _ in range(yam.JOINT_COUNT)],
+        state_lock=threading.Lock(),
+    )
+    first, _ = driver.read()
+
+    for _ in range(5):
+        clock[0] += 0.2
+        with robot.motor_chain.state_lock:
+            robot.motor_chain.state = list(robot.motor_chain.state)
+        measured, _ = driver.read()
+        assert measured == pytest.approx(first)
+
+
 def test_a_known_velocity_uses_i2rt_joint_state_and_stops_the_hand(vendor):
     """One-for-one port of the historical YAM feedforward write contract."""
     driver = _live(vendor)
@@ -908,9 +987,7 @@ def test_feedforward_can_be_disabled_without_disabling_motion(vendor):
     driver = _live(vendor, velocity_feedforward=False)
     target = np.array([0.1] * yam.ARM_JOINT_COUNT + [0.5])
 
-    applied = driver.write_position_velocity(
-        target, np.full(yam.JOINT_COUNT, 0.2)
-    )
+    applied = driver.write_position_velocity(target, np.full(yam.JOINT_COUNT, 0.2))
 
     robot = vendor.robots[0]
     assert applied is False
@@ -1021,7 +1098,9 @@ def test_site_gain_scales_apply_to_disjoint_motors_and_survive_re_enable(vendor)
     assert len(robot.gains) == 1
     assert np.allclose(robot.gains[0][0], expected_kp)
     assert np.allclose(robot.gains[0][1], expected_kd)
-    assert any("arm gains x1.5" in line and "gripper gains x0.1" in line for line in lines)
+    assert any(
+        "arm gains x1.5" in line and "gripper gains x0.1" in line for line in lines
+    )
 
     driver.estop()
     driver.re_enable()
@@ -1034,7 +1113,9 @@ def test_site_gain_scales_apply_to_disjoint_motors_and_survive_re_enable(vendor)
     "name,value",
     [("arm_gain_scale", 0.0), ("gripper_gain_scale", float("nan"))],
 )
-def test_invalid_gain_scales_fail_the_open_and_close_the_vendor_handle(vendor, name, value):
+def test_invalid_gain_scales_fail_the_open_and_close_the_vendor_handle(
+    vendor, name, value
+):
     with pytest.raises(ValueError, match=name):
         _live(vendor, **{name: value})
     assert vendor.robots[0].closed == 1
@@ -1193,6 +1274,7 @@ def test_a_site_may_measure_one_hand_differently_from_the_other(vendor):
     assert np.allclose(
         vendor.calls[1]["gripper_limits_override"], GRIPPER_LIMITS_MOTOR_RAD
     )
+
 
 @pytest.mark.parametrize("factory", ["live", "arm", "bimanual"])
 def test_gravity_defaults_reach_vendor_constructor_for_each_arm(vendor, factory):

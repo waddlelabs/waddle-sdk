@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import textwrap
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import pytest
@@ -135,7 +136,9 @@ def test_part_driver_must_honor_declared_base_frame(tmp_path):
     )
 
     with (
-        pytest.raises(waddle_sdk.ManifestValidationError, match="not declared base_frame"),
+        pytest.raises(
+            waddle_sdk.ManifestValidationError, match="not declared base_frame"
+        ),
         waddle_sdk.load_site(path).open(console=False, _testing=True),
     ):
         pass
@@ -179,7 +182,9 @@ def test_driver_neutral_gripper_mapping_is_strict_and_not_a_factory_option(tmp_p
         assert site_fixtures.opened["arms"] == 1
 
     path.write_text(
-        path.read_text().replace("open_action: 1.0", "open_action: 1.0, surprise: true"),
+        path.read_text().replace(
+            "open_action: 1.0", "open_action: 1.0, surprise: true"
+        ),
         encoding="utf-8",
     )
     with pytest.raises(waddle_sdk.ManifestValidationError, match="surprise"):
@@ -220,7 +225,9 @@ def test_gripper_grasp_geometry_is_hardware_neutral_and_complete(tmp_path):
         ),
         encoding="utf-8",
     )
-    with pytest.raises(waddle_sdk.ManifestValidationError, match="geometry is incomplete"):
+    with pytest.raises(
+        waddle_sdk.ManifestValidationError, match="geometry is incomplete"
+    ):
         waddle_sdk.load_site(path)
 
 
@@ -310,7 +317,9 @@ def test_hardware_opens_only_inside_context_and_closes_once(tmp_path):
         robot = session.describe()["robot"]
         (part,) = robot["actionSpace"]["composite"]["parts"]
         assert part["name"] == "arm"
-        assert [joint["name"] for joint in part["space"]["jointPosition"]["joints"]] == [
+        assert [
+            joint["name"] for joint in part["space"]["jointPosition"]["joints"]
+        ] == [
             "j0",
             "j1",
         ]
@@ -329,9 +338,9 @@ def test_open_session_exposes_immutable_support_and_optional_sdk_facets(tmp_path
         description = session.describe()
         assert description["support"] == matrix.as_dict()
         assert description["support"]["contractVersion"] == "waddle.sdk.support/v1"
-        assert description["support"]["actionSpace"] == description["robot"][
-            "actionSpace"
-        ]
+        assert (
+            description["support"]["actionSpace"] == description["robot"]["actionSpace"]
+        )
         assert description["support"]["grants"] == description["robot"]["grants"]
         assert len(description["support"]["embodimentDigest"]) == 64
 
@@ -414,9 +423,7 @@ def test_support_dtos_require_exact_lowercase_sha256(invalid: str):
 
 def test_support_digests_are_scoped_to_relevant_public_embodiment(tmp_path):
     def digests(path):
-        with waddle_sdk.load_site(path).open(
-            console=False, _testing=True
-        ) as session:
+        with waddle_sdk.load_site(path).open(console=False, _testing=True) as session:
             matrix = session.support()
             return matrix.embodiment_digest, {
                 row.scope: row.embodiment_digest for row in matrix.rows
@@ -495,62 +502,64 @@ def test_observation_envelope_is_stamped_after_camera_snapshot(tmp_path):
         assert observation.session_ns >= observation.cameras["overhead"].session_ns
 
 
-def test_runtime_fault_serializes_structured_causes():
-    fault = RuntimeFault(
-        FaultCode.TRANSPORT_LOST,
-        "camera read failed",
-        retryable=True,
-        context={"camera": "overhead"},
-        causes=(
-            RuntimeFaultCause(
-                "camera.timeout",
-                "frame deadline elapsed",
-                {"timeout_ms": 500},
-            ),
-        ),
-    )
+@pytest.mark.parametrize("operation", ["observe", "submit"])
+def test_motor_diagnostics_survive_the_runtime_boundary_without_credentials(
+    tmp_path, operation
+):
+    class MotorError(RuntimeError):
+        pass
 
-    assert fault.as_dict() == {
-        "code": "transport_lost",
-        "detail": "camera read failed",
-        "retryable": True,
-        "context": {"camera": "overhead"},
-        "causes": [
-            {
-                "code": "camera.timeout",
-                "detail": "frame deadline elapsed",
-                "context": {"timeout_ms": 500},
-                "causes": [],
-            }
-        ],
+    class LocalSocket:
+        def __repr__(self):
+            raise AssertionError("Do not serialize arbitrary vendor objects")
+
+    source = OSError(110, "motor 3 reply deadline exceeded", "/dev/can_left")
+    failure = MotorError("motor 3 encoder failed on can_left; token=live-secret")
+    failure.code = "motor.encoder_timeout"
+    failure.context = {"channel": "can_left", "motor_id": 3}
+    failure.metadata = {
+        "attempt": 2,
+        "token_budget": 32,
+        "authorization": "Bearer live-secret",
     }
-
-
-def test_observe_classifies_vendor_failure_without_exposing_exception_text(tmp_path):
+    failure.socket = LocalSocket()
+    failure.__cause__ = source
     site = waddle_sdk.load_site(_write_site(tmp_path))
     with site.open(console=False, _testing=True) as session:
         session._managed.pump.stop()
         session._managed.pump = None
         driver = session._managed.arms["arm"].driver
 
-        def fail_read():
-            raise RuntimeError("token=do-not-cross-the-runtime-boundary")
+        def fail(*_args):
+            raise failure
 
-        driver.read = fail_read
         with pytest.raises(RuntimeFault) as caught:
-            session.observe()
+            if operation == "observe":
+                driver.read = fail
+                session.observe()
+            else:
+                driver.write = fail
+                with session.run(task="motor failure", actor={"id": "test"}) as run:
+                    run.step([0.01, 0.01], run.observe())
 
     fault = caught.value
-    assert fault.code is FaultCode.INTERNAL
-    assert fault.detail == "observe robot part failed (RuntimeError)"
-    assert fault.context == {
-        "operation": "observe robot part",
-        "error_type": "RuntimeError",
-        "part": "arm",
+    assert fault.detail == "motor 3 encoder failed on can_left; token=[REDACTED]"
+    assert fault.__cause__ is failure
+    payload = fault.as_dict()
+    origin = payload["causes"][0]
+    assert origin["code"] == failure.code
+    assert origin["context"]["context"] == failure.context
+    assert origin["context"]["metadata"] == {
+        "attempt": 2,
+        "token_budget": 32,
+        "authorization": "[REDACTED]",
     }
-    assert fault.causes == ()
-    assert "do-not-cross" not in json.dumps(fault.as_dict())
-    assert isinstance(fault.__cause__, RuntimeError)
+    assert "socket" in origin["context"]["omitted_non_json_fields"]
+    cause = origin["causes"][0]
+    assert cause["detail"] == str(source)
+    assert cause["context"]["errno"] == 110
+    assert cause["context"]["filename"] == "/dev/can_left"
+    assert "live-secret" not in json.dumps(payload)
 
 
 def test_observe_preserves_an_existing_structured_runtime_fault(tmp_path):
@@ -595,7 +604,7 @@ def test_hold_classifies_native_validation_at_the_runtime_boundary(tmp_path):
 
     fault = caught.value
     assert fault.code is FaultCode.INVALID_REQUEST
-    assert fault.detail == "request hold failed (ValueError)"
+    assert fault.detail == "credential=[REDACTED]"
     assert fault.context["operation"] == "request hold"
     assert "do-not-serialize" not in json.dumps(fault.as_dict())
 
@@ -667,9 +676,7 @@ def test_substitution_uses_the_selected_streams_velocity_never_the_callers(tmp_p
                 assert time.monotonic() < deadline, "claim never engaged"
                 time.sleep(0.005)
 
-            core._testing_push_chunk(
-                [0.1, -0.1], velocity_feedforward=[0.25, -0.25]
-            )
+            core._testing_push_chunk([0.1, -0.1], velocity_feedforward=[0.25, -0.25])
             caller = JointPositionCommand(
                 [0.02, -0.02], velocity_feedforward_rad_s=[0.9, -0.9]
             )
@@ -691,7 +698,9 @@ def test_substitution_uses_the_selected_streams_velocity_never_the_callers(tmp_p
                 selected = run.step(caller, run.observe())
                 if selected.gate == "substitute":
                     break
-                assert time.monotonic() < deadline, "position-only chunk never substituted"
+                assert time.monotonic() < deadline, (
+                    "position-only chunk never substituted"
+                )
                 time.sleep(0.005)
             assert len(site_fixtures.velocity_commands) == 1, (
                 "the caller's feedforward crossed onto the selected stream's position"
@@ -887,3 +896,40 @@ def test_upgrade_required_is_typed_and_never_opens_hardware(tmp_path, monkeypatc
     assert "secret-from-server" not in str(captured.value)
     assert probe.closed
     assert site_fixtures.opened == {"arms": 0, "cameras": 0}
+
+
+@pytest.mark.parametrize("authorized", [False, True])
+def test_close_keeps_holding_until_release_is_authorized(
+    tmp_path, monkeypatch, authorized
+):
+    # The fake still owns no hardware; marking it live exercises the real
+    # parking gate, which simulation normally skips entirely.
+    monkeypatch.setattr(site_fixtures._Driver, "kind", "live")
+    site = waddle_sdk.load_site(_write_site(tmp_path))
+    session = site.open(console=False, _testing=True).__enter__()
+    park = session._managed.park
+    run = session.begin_run(task="close acceptance", actor={"id": "test"})
+    with pytest.raises(TypeError, match="boolean"):
+        session.close(torque_release_authorized="yes")
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(session.close, torque_release_authorized=authorized)
+        try:
+            if not authorized:
+                assert park.wait_holding(timeout=2), (
+                    "close never entered its parking wait"
+                )
+                assert not future.done()
+                assert site_fixtures.closed == {"arms": 0, "cameras": 0}
+                assert park.confirm()
+            future.result(timeout=2)
+        finally:
+            park.confirm()
+            future.result(timeout=2)
+    assert run.done and run.outcome == "abort"
+    session.close(torque_release_authorized=True)
+    session.__exit__(None, None, None)
+    assert site_fixtures.closed == {"arms": 1, "cameras": 1}
+    assert sum(event.kind == "session.closed" for event in session.events()) == 1
+    reopened = site.open(console=False, _testing=True).__enter__()
+    reopened.close(torque_release_authorized=True)
+    assert site_fixtures.closed == {"arms": 2, "cameras": 2}

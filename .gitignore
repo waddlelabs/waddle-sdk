@@ -42,3 +42,4 @@ toy-recordings/
 
 # Puddle GUI
 .puddle
+.live-tests.json

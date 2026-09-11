@@ -48,8 +48,16 @@ adapter declares its own vendor dependency in its own package.
 
 `SdkRuntimePort` is the shared direct and remote shape: `describe`, `begin_run`,
 `observe`, `submit`, `hold`, `estop`, cursor-based `events`, and bounded calibration
-measurements. Faults crossing that boundary are structured and must not contain
-credentials, customer paths, or arbitrary vendor exception text.
+measurements. Faults crossing that boundary preserve their original diagnostic
+text, device scope, JSON metadata and lower-level cause chain. Applications can
+use `RuntimeFault.from_exception` to wrap untyped implementation failures without
+discarding those details; existing `RuntimeFault` objects pass through unchanged.
+Only explicitly credential-labelled fields/assignments and Bearer values are
+redacted. Device paths and benign vendor messages remain diagnostic evidence.
+Non-JSON attributes are named as omitted rather than serialized with `repr`;
+metadata and cause nesting are bounded. Typed fault producers must exclude secrets.
+YAM control-thread and feedback failures originate as `motor_failure` with the
+channel and specific failure reason, so consumers can retain their scope.
 
 An opened `SiteSession` also implements optional support, kinematics, and conservative
 geometry facets. These report implementation facts; they do not widen the action space

@@ -27,6 +27,8 @@ _ENV = (
     "WADDLE_TEST_LIVEKIT_PUBLISHER_TOKEN",
     "WADDLE_TEST_LIVEKIT_VIEWER_TOKEN",
 )
+pytestmark = [pytest.mark.live, pytest.mark.requires_env(*_ENV)]
+
 _LOG = logging.getLogger("sdk.media.acceptance.websocket")
 _LOG.disabled = True  # Signaling headers may contain the scoped token.
 

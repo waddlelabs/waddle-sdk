@@ -433,6 +433,7 @@ waddle-sdk/
                              #   are test-gated; the Site program exercises
                              #   load/open/run/close and the scene compiles to a
                              #   complete ordinary runtime with scene/wrist RGB-D.
+    tests/live/              # opt-in real-device behavior; metadata discovery via --live
     tests/                   # pytest: Site/runtime contracts, descriptors, native
                              #   transport/FSM behavior, camera and camera-only
                              #   inspection lifecycles, owner
@@ -502,7 +503,7 @@ top-level dirs; they are not built yet.
     `tests/test_livekit_public.py`. Its matching media companion, test clients and
     three explicit scoped-grant environment variables are documented in
     [sdk/README.md](sdk/README.md#opt-in-real-camera-publication-acceptance).
-    Without them it skips without dialing a service. Use a fresh test room,
+    Without `--live` and these grants it skips without dialing a service. Use a fresh test room,
     provision/delete it outside the SDK, and never expose signing keys or scoped
     grants in logs. The test exercises synthetic RGB/depth publication and native
     signaling reconnect while retaining the same public SiteSession/Run.
@@ -794,3 +795,20 @@ commands above remain the pre-commit gate and the fastest way to diagnose a fail
   outcome from the intended one anyway.
 - When you finish a work session, verify: workspace tests green, clippy/fmt clean,
   CHANGELOG.md updated, this file still accurate.
+
+## Live local acceptance
+
+All tests stay under `sdk/tests`; `sdk/tests/live` is an opt-in behavior group.
+`pytest --live --collect-only` reports eligible hardware and missing prerequisites
+without opening devices. Optional `--live-config`/`WADDLE_SDK_LIVE_CONFIG` selects
+motion profiles; `--live-site`/`WADDLE_LIVE_SITE` selects a manifest independently.
+No flag means no live execution or hardware discovery. CI/release refuses --live.
+See [live test guide](sdk/tests/live/README.md). Use normal pytest markers to select
+hardware/motion groups; missing requirements skip dependent cases, actual errors
+fail with faithful scope, message and metadata. Test outcomes and key contracts,
+not the existence of individual functions or the source shape of each change.
+`SiteSession.close(torque_release_authorized=True)` permits headless teardown only
+with explicit site-operator authorization to release holding torque. Normal close
+and context exit keep the parking/support wait; uncertain teardown retains ownership.
+YAM checks actual CAN cache updates and CAN/server liveness before observations
+and writes, refusing stopped/stale feedback rather than accepting cached positions.
