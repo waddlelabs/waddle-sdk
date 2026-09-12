@@ -10,7 +10,7 @@ import numpy as np
 
 from ..robots.mujoco import _evaluation_snapshot
 from .description import description
-from .model import mjcf
+from .model import mjcf, objects
 from .scene import depth_z16, profile
 
 
@@ -48,9 +48,23 @@ class Engine:
         self._velocity_ratio = np.array(
             [robot.servo(name)[1] / robot.servo(name)[0] for name in native_controls]
         )
+        self._prop_initial = {
+            link.joint: float(link.initial)
+            for group in objects(config["environment"])
+            for link in group
+            if link.joint is not None
+        }
         self.renderers = {}
         for part in self.parts:
             self.home(part, p.home)
+        self._restore_prop_initial()
+
+    def _restore_prop_initial(self):
+        for name, value in self._prop_initial.items():
+            joint = self.model.joint(name)
+            self.data.qpos[int(joint.qposadr[0])] = value
+            self.data.qvel[int(joint.dofadr[0])] = 0.0
+        self.mj.mj_forward(self.model, self.data)
 
     def _part(self, part=None):
         if part is None:
@@ -105,6 +119,7 @@ class Engine:
         self.mj.mj_resetData(self.model, self.data)
         for part in self.parts:
             self.home(part, self.profile.home)
+        self._restore_prop_initial()
         return True
 
     def evaluation_reset(self, *, seed):

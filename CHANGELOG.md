@@ -13,6 +13,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Add five medium single-arm MuJoCo development environments for distractor
+  selection, drawer closing, two-cube stacking, ring placement, and hook use.
+  Their ordinary reset path restores declared passive-joint initial positions;
+  native checks cover task-object visibility and mechanics for every reference
+  family without embedding robot routes or success logic.
 - Add the two-arm `split_workspace_sorting` MuJoCo development environment for
   every reference family. It presents two independently reachable cubes and two
   opposite-side bins through the ordinary dual-arm runtime, scene camera, wrist

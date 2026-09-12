@@ -1733,9 +1733,24 @@ def _native_conformance(
             advance(2.0)
             travel, _speed = drawer_state()
             assert 0.20 < travel < 0.225, travel
-        if backend == "mujoco" and environment in TASK_ENVIRONMENTS:
+        if backend == "mujoco" and environment in {
+            "touch_target",
+            "pick_lift",
+            "place_in_bin",
+            "push_to_region",
+            "operate_control",
+        }:
             assert engine.reset() is True
             _wave_a_prop_conformance(engine, advance, config, environment)
+        if backend == "mujoco" and environment in {
+            "select-distractors",
+            "close-drawer",
+            "stack-two-cubes",
+            "ring-on-peg",
+            "use-hook",
+        }:
+            assert engine.reset() is True
+            _wave_b_single_prop_conformance(engine, advance, config, environment)
         assert engine.reset() is True
         np.testing.assert_allclose(engine.read()[0], p.home, atol=1e-6)
         if backend == "mujoco":
@@ -2000,6 +2015,131 @@ def _wave_a_prop_conformance(engine, advance, config, environment):
     data.qfrc_applied[target_dof] = 0
     assert data.qpos[target_qpos] > 0.008
     assert all(abs(data.qpos[int(joint.qposadr[0])]) < 1e-5 for joint in distractors)
+
+
+def _wave_b_single_prop_conformance(engine, advance, config, environment):
+    """Probe medium single-arm task mechanics without supplying a robot route."""
+
+    model, data = engine.model, engine.data
+    witnesses = {
+        "select-distractors": (
+            ((0.26, -0.14, 0.046), "orange"),
+            ((0.34, -0.03, 0.046), "green"),
+            ((0.25, 0.09, 0.046), "purple"),
+            ((0.43, 0.13, 0.012), "blue"),
+        ),
+        "close-drawer": (((0.353, 0.0, 0.14), "bright"),),
+        "stack-two-cubes": (
+            ((0.27, -0.10, 0.046), "green"),
+            ((0.35, 0.08, 0.046), "blue"),
+        ),
+        "ring-on-peg": (
+            ((0.313, -0.10, 0.015), "orange"),
+            ((0.43, 0.10, 0.10), "blue"),
+        ),
+        "use-hook": (
+            ((0.27, -0.13, 0.016), "orange"),
+            ((0.44, 0.04, 0.03), "green"),
+            ((0.28, 0.15, 0.002), "blue"),
+        ),
+    }
+    classifiers = {
+        "green": lambda r, g, b: g > 2 * max(r, b),
+        "blue": lambda r, g, b: b > 1.5 * max(r, g),
+        "orange": lambda r, g, b: r > 1.4 * g and g > 1.5 * b,
+        "purple": lambda r, g, b: r > 1.5 * g and b > 1.5 * g,
+        "bright": lambda r, g, b: min(r, g, b) > 100,
+    }
+    camera = config["cameras"]["scene"]
+    world_from_camera = np.asarray(camera["transform"])
+    intrinsics = camera["intrinsics"]
+    rgb, _ = engine.capture("scene")
+    for world_point, expected_color in witnesses[environment]:
+        point = np.linalg.inv(world_from_camera) @ [*world_point, 1.0]
+        u = round(intrinsics["fx"] * point[0] / point[2] + intrinsics["cx"])
+        v = round(intrinsics["fy"] * point[1] / point[2] + intrinsics["cy"])
+        assert 0 <= u < rgb.shape[1] and 0 <= v < rgb.shape[0]
+        pixels = rgb[max(0, v - 3) : v + 4, max(0, u - 3) : u + 4]
+        assert any(
+            classifiers[expected_color](*map(int, pixel))
+            for pixel in pixels.reshape(-1, 3)
+        ), (world_point, expected_color, rgb[v, u])
+
+    def place_free(name, xyz):
+        body = model.body(name)
+        joint_id = int(body.jntadr[0])
+        assert model.jnt_type[joint_id] == engine.mj.mjtJoint.mjJNT_FREE
+        qpos = int(model.jnt_qposadr[joint_id])
+        dof = int(model.jnt_dofadr[joint_id])
+        data.qpos[qpos : qpos + 7] = (*xyz, 1.0, 0.0, 0.0, 0.0)
+        data.qvel[dof : dof + 6] = 0.0
+        engine.mj.mj_forward(model, data)
+        return int(body.id)
+
+    if environment == "select-distractors":
+        target = place_free("target_object", (0.43, 0.13, 0.08))
+        initial_distractors = {
+            name: data.body(name).xpos.copy()
+            for name in ("distractor_object_1", "distractor_object_2")
+        }
+        advance(1.0)
+        np.testing.assert_allclose(data.xpos[target, :2], (0.43, 0.13), atol=0.01)
+        assert 0.03 < data.xpos[target, 2] < 0.05
+        for name, initial in initial_distractors.items():
+            np.testing.assert_allclose(data.body(name).xpos, initial, atol=0.003)
+        return
+
+    if environment == "close-drawer":
+        clear = engine.read()[0].copy()
+        clear[0] = np.pi / 2
+        engine.home(clear)
+        joint = model.joint("drawer_slide")
+        qpos, dof = int(joint.qposadr[0]), int(joint.dofadr[0])
+        assert data.qpos[qpos] == pytest.approx(0.15)
+        data.qfrc_applied[dof] = -5.0
+        advance(1.0)
+        data.qfrc_applied[dof] = 0.0
+        advance(0.3)
+        assert data.qpos[qpos] < 0.005
+        assert abs(data.qvel[dof]) < 0.001
+        assert engine.reset() is True
+        assert data.qpos[qpos] == pytest.approx(0.15)
+        return
+
+    if environment == "stack-two-cubes":
+        bottom = place_free("cube_bottom", (0.31, 0.0, 0.023))
+        top = place_free("cube_top", (0.31, 0.0, 0.09))
+        advance(1.0)
+        assert data.xpos[top, 2] - data.xpos[bottom, 2] == pytest.approx(
+            0.046, abs=0.004
+        )
+        assert np.linalg.norm(data.xpos[top, :2] - data.xpos[bottom, :2]) < 0.008
+        return
+
+    if environment == "ring-on-peg":
+        ring = place_free("target_ring", (0.43, 0.10, 0.13))
+        advance(1.5)
+        np.testing.assert_allclose(data.xpos[ring, :2], (0.43, 0.10), atol=0.006)
+        assert data.xpos[ring, 2] < 0.025
+        return
+
+    assert environment == "use-hook"
+    hook = place_free("hook", (0.40, 0.014, 0.009))
+    target = place_free("target_object", (0.44, 0.04, 0.018))
+    contacted = False
+    data.xfrc_applied[hook, 0] = -1.0
+    initial_target_x = float(data.xpos[target, 0])
+    for _ in range(round(0.5 / config["timestep"])):
+        engine.step()
+        for contact in data.contact:
+            names = {
+                model.body(int(model.geom(int(geom)).bodyid[0])).name
+                for geom in contact.geom
+            }
+            contacted |= names == {"hook", "target_object"}
+    data.xfrc_applied[hook] = 0.0
+    assert contacted
+    assert data.xpos[target, 0] < initial_target_x - 0.01
 
 
 @pytest.mark.parametrize("robot", ROBOTS)

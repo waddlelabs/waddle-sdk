@@ -5,12 +5,14 @@ licenses inside each model directory. `models.json` records the public source
 URLs, source SHA-256 values and hashes of every packaged model file. Loading a
 reference robot verifies its packaged files before an engine sees the model.
 
-The built-in `touch_target`, `pick_lift`, `place_in_bin`, `push_to_region`, and
-`operate_control` MuJoCo development environments use programmatic primitive
-geometry in `simulators/model.py`; they do not add third-party assets. Their
-dimensions, masses, inertias, joints, colors, and collision participation are
-declared there and covered by native scene tests. They are development fixtures
-rather than measurements of a particular physical installation.
+The built-in single-arm MuJoCo development environments for target contact, cube
+lift, bin placement, region pushing, control operation, distractor selection,
+drawer closing, two-cube stacking, ring placement, and hook use are built from
+programmatic primitive geometry in `simulators/model.py`; they do not add
+third-party assets.
+Their dimensions, masses, inertias, joints, colors, and collision participation
+are declared there and covered by native scene tests. They are development
+fixtures rather than measurements of a particular physical installation.
 
 | Assembly | Source revision | License |
 | --- | --- | --- |

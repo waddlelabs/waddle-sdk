@@ -53,13 +53,21 @@ Each engine accepts `so101`, `yam`, or `xarm7` and these environments:
   and 5 N·s/m native joint damping. The damping dissipates a pull after release;
   there is no spring returning the drawer to its starting position.
 
-MuJoCo also provides six interactive development task environments:
+MuJoCo also provides eleven interactive development task environments:
 
 - `touch_target`: one red contact target and two blue distractors.
 - `pick_lift`: one free 46 mm cube.
 - `place_in_bin`: one free cube and an open five-sided bin.
 - `push_to_region`: one free cube and a non-colliding visual goal region.
 - `operate_control`: one red and two blue independently sliding push controls.
+- `select-distractors`: one requested cube, two differently colored distractor
+  cubes, and an open bin.
+- `close-drawer`: the physical drawer initialized at 150 mm open so an ordinary
+  reset restores the task's starting state.
+- `stack-two-cubes`: two independently movable 46 mm cubes.
+- `ring-on-peg`: a free compound ring and a fixed vertical peg with physical
+  clearance between them.
+- `use-hook`: a free compound hook, a movable target, and a marked goal region.
 - `split_workspace_sorting`: a matched two-arm scene with one cube initially in
   each arm's outer workspace and two open bins near the center. Each cube's
   matching bin is on the opposite side.
@@ -67,7 +75,8 @@ MuJoCo also provides six interactive development task environments:
 These environments use the ordinary robot, camera, and lifecycle interfaces.
 Their scene camera exposes every task-relevant object at the starting pose for
 SO-101, YAM, and xArm7. Native tests verify visibility, initial separation from
-the robot, free-body mechanics, bin containment, and independent control travel.
+the robot, free-body mechanics, bin containment, passive-joint initialization,
+stacking, ring/peg clearance, tool contact, and independent control travel.
 They are development fixtures, not calibrated physical twins. Isaac and SAPIEN
 selection is rejected until the same native evidence exists for those backends.
 

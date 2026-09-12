@@ -31,6 +31,11 @@ SINGLE_ARM_TASK_ENVIRONMENTS = (
     "place_in_bin",
     "push_to_region",
     "operate_control",
+    "select-distractors",
+    "close-drawer",
+    "stack-two-cubes",
+    "ring-on-peg",
+    "use-hook",
 )
 DUAL_ARM_TASK_ENVIRONMENTS = ("split_workspace_sorting",)
 TASK_ENVIRONMENTS = (*SINGLE_ARM_TASK_ENVIRONMENTS, *DUAL_ARM_TASK_ENVIRONMENTS)

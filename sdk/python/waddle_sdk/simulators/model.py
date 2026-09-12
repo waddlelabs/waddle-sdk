@@ -46,6 +46,7 @@ class Link:
     inertia: tuple[float, ...] | None = None  # xx, yy, zz, xy, xz, yz in link frame
     mimic: tuple[str, float, float] | None = None
     damping: float = 0.0  # passive joint resistance in SI units
+    initial: float = 0.0  # passive joint initial position in metres/radians
 
 
 def robot_links(p: Profile) -> list[Link]:
@@ -73,6 +74,74 @@ def objects(environment: str) -> list[list[Link]]:
             ],
         )
     ]
+
+    def free_box(name, xyz, color, *, size=0.046, mass=0.05):
+        inertia = mass * size**2 / 6
+        return Link(
+            name,
+            xyz=xyz,
+            kind="free",
+            mass=mass,
+            inertia=(inertia, inertia, inertia, 0.0, 0.0, 0.0),
+            shapes=[Shape("box", (size, size, size), color=color)],
+        )
+
+    def open_bin(name, xyz, color=(0.1, 0.3, 0.85, 1.0)):
+        return Link(
+            name,
+            xyz=xyz,
+            shapes=[
+                Shape("box", (0.18, 0.18, 0.01), (0.0, 0.0, 0.005), color=color),
+                Shape("box", (0.01, 0.18, 0.08), (-0.085, 0.0, 0.04), color=color),
+                Shape("box", (0.01, 0.18, 0.08), (0.085, 0.0, 0.04), color=color),
+                Shape("box", (0.16, 0.01, 0.08), (0.0, -0.085, 0.04), color=color),
+                Shape("box", (0.16, 0.01, 0.08), (0.0, 0.085, 0.04), color=color),
+            ],
+        )
+
+    def drawer_fixture(*, initial=0.0, cabinet_kind="fixed", cabinet_name="cabinet"):
+        cabinet = Link(
+            cabinet_name,
+            xyz=(0.66, 0.0, 0.0),
+            kind=cabinet_kind,
+            mass=1.5,
+            inertia=(0.02, 0.025, 0.015, 0.0, 0.0, 0.0),
+            shapes=[
+                Shape("box", (0.3, 0.32, 0.018), (0.02, 0.0, 0.009)),
+                Shape("box", (0.3, 0.018, 0.24), (0.02, -0.151, 0.12)),
+                Shape("box", (0.3, 0.018, 0.24), (0.02, 0.151, 0.12)),
+                Shape("box", (0.018, 0.32, 0.24), (0.161, 0.0, 0.12)),
+                Shape("box", (0.3, 0.32, 0.018), (0.02, 0.0, 0.24)),
+            ],
+        )
+        drawer = Link(
+            "drawer",
+            cabinet_name,
+            xyz=(0.0, 0.0, 0.04),
+            joint="drawer_slide",
+            kind="prismatic",
+            axis=(-1.0, 0.0, 0.0),
+            limits=(0.0, 0.22),
+            mass=0.5,
+            damping=5.0,
+            initial=initial,
+            shapes=[
+                Shape(
+                    "box",
+                    (0.26, 0.27, 0.012),
+                    (0.0, 0.0, 0.01),
+                    color=(0.6, 0.5, 0.4, 1.0),
+                ),
+                Shape("box", (0.016, 0.28, 0.16), (-0.13, 0.0, 0.075)),
+                Shape(
+                    "box",
+                    (0.024, 0.09, 0.018),
+                    (-0.157, 0.0, 0.1),
+                    color=(0.85, 0.85, 0.85, 1.0),
+                ),
+            ],
+        )
+        return [cabinet, drawer]
     if environment == "two_cubes":
         return [
             table,
@@ -278,47 +347,138 @@ def objects(environment: str) -> list[list[Link]]:
                 )
             )
         return [table, [panel, *buttons]]
+    if environment == "select-distractors":
+        return [
+            table,
+            [
+                free_box(
+                    "target_object",
+                    (0.26, -0.14, 0.023),
+                    (0.95, 0.45, 0.08, 1.0),
+                )
+            ],
+            [
+                free_box(
+                    "distractor_object_1",
+                    (0.34, -0.03, 0.023),
+                    (0.1, 0.72, 0.2, 1.0),
+                )
+            ],
+            [
+                free_box(
+                    "distractor_object_2",
+                    (0.25, 0.09, 0.023),
+                    (0.68, 0.16, 0.82, 1.0),
+                )
+            ],
+            [open_bin("goal_bin", (0.43, 0.13, 0.0))],
+        ]
+    if environment == "close-drawer":
+        return [table, drawer_fixture(initial=0.15)]
+    if environment == "stack-two-cubes":
+        return [
+            table,
+            [
+                free_box(
+                    "cube_bottom", (0.27, -0.10, 0.023), (0.1, 0.72, 0.2, 1.0)
+                )
+            ],
+            [
+                free_box(
+                    "cube_top", (0.35, 0.08, 0.023), (0.15, 0.35, 0.95, 1.0)
+                )
+            ],
+        ]
+    if environment == "ring-on-peg":
+        segments = []
+        segment_count = 12
+        radius = 0.033
+        for index in range(segment_count):
+            angle = 2 * math.pi * index / segment_count
+            segments.append(
+                Shape(
+                    "box",
+                    (0.018, 0.012, 0.014),
+                    (radius * math.cos(angle), radius * math.sin(angle), 0.0),
+                    (0.0, 0.0, angle + math.pi / 2),
+                    color=(0.95, 0.25, 0.08, 1.0),
+                )
+            )
+        ring = Link(
+            "target_ring",
+            xyz=(0.28, -0.10, 0.008),
+            kind="free",
+            mass=0.04,
+            inertia=(0.000022, 0.000022, 0.00004, 0.0, 0.0, 0.0),
+            shapes=segments,
+        )
+        peg = Link(
+            "target_peg",
+            xyz=(0.43, 0.10, 0.0),
+            shapes=[
+                Shape(
+                    "cylinder",
+                    (0.012, 0.10),
+                    (0.0, 0.0, 0.05),
+                    color=(0.12, 0.35, 0.95, 1.0),
+                )
+            ],
+        )
+        return [table, [ring], [peg]]
+    if environment == "use-hook":
+        hook = Link(
+            "hook",
+            xyz=(0.27, -0.13, 0.009),
+            kind="free",
+            mass=0.05,
+            inertia=(0.00008, 0.00008, 0.00012, 0.0, 0.0, 0.0),
+            shapes=[
+                Shape("box", (0.13, 0.014, 0.014), color=(0.95, 0.45, 0.08, 1.0)),
+                Shape(
+                    "box",
+                    (0.014, 0.06, 0.014),
+                    (0.058, 0.023, 0.0),
+                    color=(0.95, 0.45, 0.08, 1.0),
+                ),
+                Shape(
+                    "box",
+                    (0.035, 0.014, 0.014),
+                    (0.048, 0.052, 0.0),
+                    color=(0.95, 0.45, 0.08, 1.0),
+                ),
+            ],
+        )
+        target = Link(
+            "target_object",
+            xyz=(0.44, 0.04, 0.015),
+            kind="free",
+            mass=0.06,
+            inertia=(0.00002, 0.00002, 0.00003, 0.0, 0.0, 0.0),
+            shapes=[
+                Shape(
+                    "cylinder",
+                    (0.03, 0.03),
+                    color=(0.1, 0.72, 0.2, 1.0),
+                )
+            ],
+        )
+        region = Link(
+            "goal_region",
+            xyz=(0.28, 0.15, 0.0005),
+            shapes=[
+                Shape(
+                    "box",
+                    (0.14, 0.12, 0.001),
+                    color=(0.12, 0.35, 0.95, 1.0),
+                    collision=False,
+                )
+            ],
+        )
+        return [table, [hook], [target], [region]]
     if environment == "drawer":
-        cabinet = Link(
-            "cabinet",
-            # Keep the closed front clear of the robot's starting hand. The
-            # handle travels from x=.503 to .283 m as the drawer opens.
-            xyz=(0.66, 0.0, 0.0),
-            shapes=[
-                Shape("box", (0.3, 0.32, 0.018), (0.02, 0.0, 0.009)),
-                Shape("box", (0.3, 0.018, 0.24), (0.02, -0.151, 0.12)),
-                Shape("box", (0.3, 0.018, 0.24), (0.02, 0.151, 0.12)),
-                Shape("box", (0.018, 0.32, 0.24), (0.161, 0.0, 0.12)),
-                Shape("box", (0.3, 0.32, 0.018), (0.02, 0.0, 0.24)),
-            ],
-        )
-        drawer = Link(
-            "drawer",
-            "cabinet",
-            xyz=(0.0, 0.0, 0.04),
-            joint="drawer_slide",
-            kind="prismatic",
-            axis=(-1.0, 0.0, 0.0),
-            limits=(0.0, 0.22),
-            mass=0.5,
-            damping=5.0,
-            shapes=[
-                Shape(
-                    "box",
-                    (0.26, 0.27, 0.012),
-                    (0.0, 0.0, 0.01),
-                    color=(0.6, 0.5, 0.4, 1.0),
-                ),
-                Shape("box", (0.016, 0.28, 0.16), (-0.13, 0.0, 0.075)),
-                Shape(
-                    "box",
-                    (0.024, 0.09, 0.018),
-                    (-0.157, 0.0, 0.1),
-                    color=(0.85, 0.85, 0.85, 1.0),
-                ),
-            ],
-        )
-        return [table, [cabinet, drawer]]
+        # Keep the closed front clear of the robot's starting hand. The
+        # handle travels from x=.503 to .283 m as the drawer opens.
+        return [table, drawer_fixture()]
     if environment != "bottle_cap":
         raise ValueError("unknown reference environment")
     # A fixture holds the bottle so a single arm can unscrew it. Each engine
