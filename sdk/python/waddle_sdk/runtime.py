@@ -468,10 +468,13 @@ class Observation:
 
 @dataclass(frozen=True)
 class SubmitResult:
+    """Dispatch receipt; an owner refusal retains its exact structured fault."""
+
     dispatched: bool
     gate: str
     part: str | None = None
     detail: str = ""
+    fault: RuntimeFault | None = None
 
 
 @runtime_checkable

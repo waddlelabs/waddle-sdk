@@ -102,9 +102,9 @@ waddle-sdk/
                              #   lifecycle; `runtime.py` owns the structural
                              #   SDK port/DTOs consumed by applications, including an
                              #   explicit transport-safe RuntimeFault cause chain;
-                             #   runtime boundaries retain raw vendor exceptions
-                             #   only as local Python causes and publish the failed
-                             #   operation/scope/category without arbitrary text,
+                             #   runtime boundaries retain vendor messages,
+                             #   exception types, structured metadata and causes
+                             #   with the failed operation and device scope,
                              #   plus an immutable `waddle.sdk.support/v1` matrix and
                              #   independent optional support/FK/body-geometry
                              #   ports. SiteSession derives those facts from
@@ -501,12 +501,19 @@ top-level dirs; they are not built yet.
     `uv run --no-sync maturin develop --uv && uv run --no-sync pytest`.
   - Real LiveKit publication acceptance is opt-in through
     `tests/test_livekit_public.py`. Its matching media companion, test clients and
-    three explicit scoped-grant environment variables are documented in
+    scoped-grant or test signing-credential environment variables are documented in
     [sdk/README.md](sdk/README.md#opt-in-real-camera-publication-acceptance).
-    Without `--live` and these grants it skips without dialing a service. Use a fresh test room,
-    provision/delete it outside the SDK, and never expose signing keys or scoped
-    grants in logs. The test exercises synthetic RGB/depth publication and native
+    Without `--live` and configured grants/signing credentials it skips without
+    dialing a service. A selected media fixture can create/delete an isolated
+    test room; externally supplied scoped grants leave room ownership with the
+    caller. Collection and non-media selections issue no requests. Never expose
+    signing keys or scoped grants in logs. The test exercises synthetic RGB/depth publication and native
     signaling reconnect while retaining the same public SiteSession/Run.
+    `tests/live/test_03_media.py` adds the same transport/reconnect checks for each
+    configured physical camera, preserving the site lock while using a mock motion
+    context so no physical arm opens. It requires both camera discovery and scoped
+    media grants. Raw/source dimensions and adaptive viewer dimensions are separate
+    evidence; only raw aligned depth is treated as metric data.
   - `cargo clippy --manifest-path rust/Cargo.toml --all-targets -- -D warnings`
     and `cargo fmt --manifest-path rust/Cargo.toml --check` must be clean
     (this works because pyo3's `extension-module` feature lives only in
@@ -798,6 +805,10 @@ commands above remain the pre-commit gate and the fastest way to diagnose a fail
 
 ## Live local acceptance
 
+Per-part uplink cadence is tested with explicit reducer admission times and a FIFO
+transport barrier. Independently phased streams need not share a timestamp; never
+make scheduler coincidence or a longer sleep the proof of separate 10 Hz budgets.
+
 All tests stay under `sdk/tests`; `sdk/tests/live` is an opt-in behavior group.
 `pytest --live --collect-only` reports eligible hardware and missing prerequisites
 without opening devices. Optional `--live-config`/`WADDLE_SDK_LIVE_CONFIG` selects
@@ -807,8 +818,32 @@ See [live test guide](sdk/tests/live/README.md). Use normal pytest markers to se
 hardware/motion groups; missing requirements skip dependent cases, actual errors
 fail with faithful scope, message and metadata. Test outcomes and key contracts,
 not the existence of individual functions or the source shape of each change.
+Motion profiles may select `comparison.vendor = "i2rt"` with explicit endpoint,
+settling-time and initial-state margins. The paired runner opens pristine vendor
+and SDK subprocesses sequentially, measures the same trajectories and checks
+absolute arrival separately from comparative accuracy. Controller settings and
+external command cadence must match; this does not establish maximum native
+vendor throughput. Each selected-part projection preserves the original site ID
+and ownership lock. Keep raw samples, original faults and uncertain cleanup in
+the evidence; never advance to larger motions after failed reference acquisition.
+Optional `rest_positions` supplies reviewed named-joint parking targets. Paired
+backends return there after healthy bounded trials, including nonarrival, before
+closing; parking evidence stays outside comparison trials. Parking failure blocks
+the next owner. Driver, gate and captured background faults prohibit further
+trajectory commands, including automatic parking; never infer a resting pose.
 `SiteSession.close(torque_release_authorized=True)` permits headless teardown only
 with explicit site-operator authorization to release holding torque. Normal close
 and context exit keep the parking/support wait; uncertain teardown retains ownership.
 YAM checks actual CAN cache updates and CAN/server liveness before observations
 and writes, refusing stopped/stale feedback rather than accepting cached positions.
+YAM `arm_gains` optionally supplies six KP/KD values independently, excluding
+nondefault `arm_gain_scale`. Explicit and scaled gains must fit the pinned MIT
+encoding (positive KP <= 500, KD <= 5) before CAN startup; reject silent clipping.
+Defaults and hand gains remain unchanged. Recovery restores the requested vectors;
+monitor and simulation modes validate but do not apply PD gains. Live evidence
+distinguishes requested gains from predicted 12-bit encoded gains, never claiming
+hardware gain readback. See [gain configuration](docs/porting/robot.md#yam-gain-configuration).
+Before YAM benchmark motion, a test-only bounded readiness check observes the
+constructor hold command, two subsequent CAN cache generations and later robot
+state ingestion. Preserve `startup_evidence` independently of motion timing;
+never wait for an in-envelope pose or infer physical settling from readiness.

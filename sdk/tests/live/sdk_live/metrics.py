@@ -61,7 +61,15 @@ def endpoint(
         "trajectory_duration_s": seconds,
         "sample_count": len(samples),
         "samples": samples,
+        "initial_tcp_m": list(initial_pose),
+        "target_tcp_m": list(target_pose),
+        "measured_tcp_m": list(measured_pose),
     }
+
+
+def rotation_distance(first, second):
+    cosine = (np.trace(np.asarray(first).T @ np.asarray(second)) - 1) / 2
+    return float(np.arccos(np.clip(cosine, -1, 1)))
 
 
 def write_report(path, report):
@@ -81,3 +89,7 @@ def assert_arrived(trial, case):
     assert trial["joint_error_rad"] <= case["joint_tolerance_rad"], trial
     assert trial["tcp_error_m"] <= case["tcp_tolerance_m"], trial
     assert trial["displacement_m"] >= case["min_displacement_m"], trial
+    if "minimum_orientation_rad" in case:
+        assert (
+            trial["orientation_displacement_rad"] >= case["minimum_orientation_rad"]
+        ), trial

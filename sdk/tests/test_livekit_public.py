@@ -1,25 +1,24 @@
 """Opt-in real media acceptance using public Site and synthetic camera APIs.
 
-The caller supplies separate publisher/viewer grants for a fresh sdk-media-test-*
-room. No API signing key or physical camera is used by this test.
+The selected media fixture supplies isolated publisher/viewer grants, using
+caller-provided grants or explicitly configured test signing credentials.
 """
 
 from __future__ import annotations
 
 import asyncio
 import base64
-from collections import Counter
-from contextlib import asynccontextmanager
 import json
 import logging
 import os
+from collections import Counter
+from contextlib import asynccontextmanager
 from pathlib import Path
-from uuid import uuid4
 from urllib.parse import urlsplit, urlunsplit
+from uuid import uuid4
 
 import numpy as np
 import pytest
-
 from waddle_sdk import LiveKit, load_site
 
 _ENV = (
@@ -38,10 +37,11 @@ def _claims(token):
     return json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
 
 
-def _configuration():
-    if not all(os.environ.get(name) for name in _ENV):
+def _configuration(values=None):
+    values = os.environ if values is None else values
+    if not all(values.get(name) for name in _ENV):
         pytest.skip("requires explicit isolated LiveKit publisher/viewer test grants")
-    url, publisher, viewer = (os.environ[name] for name in _ENV)
+    url, publisher, viewer = (values[name] for name in _ENV)
     published, viewed = _claims(publisher), _claims(viewer)
     room = published["video"]["room"]
     assert room.startswith("sdk-media-test-"), "Use a fresh isolated test room"
@@ -54,7 +54,7 @@ def _configuration():
     return url, publisher, viewer, published["sub"]
 
 
-def _site(path: Path):
+def _site(path: Path, *, camera_row=None, site_id=None):
     manifest = {
         "api_version": "waddle.site/v1",
         "kind": "Site",
@@ -98,6 +98,11 @@ def _site(path: Path):
         "envelope": {"static_keepouts": [], "self_collision": {}},
         "recording": {"root": "recordings", "format": "mcap"},
     }
+    if camera_row is not None:
+        # A camera-only transport projection uses a mock motion context. Camera
+        # mounting is irrelevant to transport; never open its physical arm.
+        manifest["cameras"]["scene"] = {**camera_row, "mount": {"kind": "scene"}}
+        manifest["metadata"]["id"] = site_id
     path.write_text(json.dumps(manifest))
     return load_site(path)
 
@@ -145,7 +150,7 @@ async def _signaling_proxy(upstream_url):
                     task.result()
         except ConnectionClosed:
             pass
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 -- grant-bearing errors must stay private.
             # Never emit a failing handshake URL/query or raw grant-bearing error.
             await connected.put(type(error).__name__)
         finally:
@@ -161,10 +166,12 @@ async def _signaling_proxy(upstream_url):
 
 
 class _Viewer:
-    def __init__(self, rtc, publisher):
+    def __init__(self, rtc, publisher, size=(96, 64)):
         self.rtc, self.publisher = rtc, publisher
+        self.size = size
         self.room = rtc.Room()
         self.frames, self.images, self.publications = Counter(), {}, {}
+        self.received_sizes, self.publication_sizes = {}, {}
         self.changed = asyncio.Event()
         self.tasks, self.streams = [], []
 
@@ -173,6 +180,12 @@ class _Viewer:
             assert participant.identity == publisher
             assert publication.source == rtc.TrackSource.SOURCE_CAMERA
             self.publications[publication.name] = publication.sid
+            self.publication_sizes[publication.name] = (
+                publication.width,
+                publication.height,
+            )
+            if publication.simulcasted:
+                publication.set_video_quality(rtc.VideoQuality.VIDEO_QUALITY_HIGH)
             stream = rtc.VideoStream(
                 track, capacity=2, format=rtc.VideoBufferType.RGB24
             )
@@ -182,13 +195,26 @@ class _Viewer:
             )
 
     async def consume(self, name, stream):
-        async for event in stream:
-            frame = event.frame
-            assert (frame.width, frame.height) == (96, 64)
-            self.images[name] = (
-                np.frombuffer(frame.data, dtype=np.uint8).reshape(64, 96, 3).copy()
-            )
-            self.frames[name] += 1
+        try:
+            async for event in stream:
+                frame = event.frame
+                assert self.publication_sizes[name] == self.size
+                # WebRTC can adapt encoded dimensions to available bandwidth.
+                # Validate the source dimensions separately from received pixels.
+                width, height = self.size
+                assert 0 < frame.width <= width and 0 < frame.height <= height
+                assert frame.width * height == frame.height * width
+                self.received_sizes.setdefault(name, set()).add(
+                    (frame.width, frame.height)
+                )
+                self.images[name] = (
+                    np.frombuffer(frame.data, dtype=np.uint8)
+                    .reshape(frame.height, frame.width, 3)
+                    .copy()
+                )
+                self.frames[name] += 1
+                self.changed.set()
+        finally:
             self.changed.set()
 
     async def received(self, minimum, *, timeout=20):
@@ -197,6 +223,12 @@ class _Viewer:
                 self.frames[name] >= count for name, count in minimum.items()
             ):
                 self.changed.clear()
+                for task in self.tasks:
+                    if task.done():
+                        task.result()  # Preserve the actual frame validation error.
+                        raise AssertionError(
+                            "Video stream ended before enough frames arrived"
+                        )
                 await self.changed.wait()
 
         await asyncio.wait_for(wait(), timeout)
@@ -209,23 +241,28 @@ class _Viewer:
         await asyncio.gather(*(stream.aclose() for stream in self.streams))
 
 
-def test_public_camera_rgb_depth_and_signaling_reconnect_keep_one_sdk_run(tmp_path):
-    config = _configuration()
+def test_public_camera_rgb_depth_and_signaling_reconnect_keep_one_sdk_run(
+    tmp_path, livekit_configuration
+):
     rtc = pytest.importorskip("livekit.rtc")
     pytest.importorskip("websockets.asyncio.server")
-    asyncio.run(_acceptance(tmp_path, rtc, config))
+    asyncio.run(_acceptance(tmp_path, rtc, livekit_configuration))
 
 
-async def _acceptance(tmp_path, rtc, config):
+async def _acceptance(tmp_path, rtc, config, *, site=None):
     url, publisher_token, viewer_token, publisher = config
-    viewer = _Viewer(rtc, publisher)
+    synthetic = site is None
+    site = site or _site(tmp_path / "site.yaml")
+    stream = site.manifest["cameras"]["scene"]["stream"]
+    size = (int(stream["width"]), int(stream["height"]))
+    viewer = _Viewer(rtc, publisher, size)
+    evidence = {"width": size[0], "height": size[1], "synthetic": synthetic}
     sdk = run = None
     try:
         await viewer.room.connect(
             url, viewer_token, rtc.RoomOptions(connect_timeout=10)
         )
         async with _signaling_proxy(url) as (endpoint, connections):
-            site = _site(tmp_path / "site.yaml")
             unopened = site.open(
                 media=LiveKit(endpoint, publisher_token), console=False
             )
@@ -240,12 +277,22 @@ async def _acceptance(tmp_path, rtc, config):
             await viewer.received({"scene": 3, "scene/depth": 3})
             assert set(viewer.publications) == {"scene", "scene/depth"}
             rgb, depth = viewer.images["scene"], viewer.images["scene/depth"]
-            assert int(rgb[32, 48, 1]) > int(rgb[32, 48, 0]) + 60
+            if synthetic:
+                assert int(rgb[32, 48, 1]) > int(rgb[32, 48, 0]) + 60
+            else:
+                assert rgb.max() > rgb.min(), "Remote RGB image is flat"
+                assert depth.max() > depth.min(), "Remote depth preview is flat"
             assert not np.array_equal(rgb, depth), (
                 "Depth must be its paired colorized preview"
             )
             sample = (await asyncio.to_thread(sdk.observe)).cameras["scene"]
-            assert sample.depth.dtype == np.uint16 and int(sample.depth[32, 48]) == 400
+            assert sample.depth.dtype == np.uint16
+            assert sample.depth.shape == (size[1], size[0])
+            if synthetic:
+                assert int(sample.depth[32, 48]) == 400
+            else:
+                assert np.count_nonzero(sample.depth) > sample.depth.size * 0.01
+            evidence["initial_frames"] = dict(viewer.frames)
             before = viewer.frames.copy()
             for socket in first:
                 socket.transport.abort()
@@ -253,16 +300,21 @@ async def _acceptance(tmp_path, rtc, config):
             assert not isinstance(resumed, str), "Publisher signaling did not reconnect"
             assert resumed[0] is not first[0]
             await viewer.received({name: count + 3 for name, count in before.items()})
+            evidence["after_publisher_reconnect"] = dict(viewer.frames)
+            evidence["received_sizes"] = {
+                name: sorted(sizes) for name, sizes in viewer.received_sizes.items()
+            }
             assert run.id == run_id and not run.done
             assert not any(event.kind == "run.step" for event in sdk.events())
             # A new viewer session discovers the same live publisher and names.
             await viewer.close()
-            viewer = _Viewer(rtc, publisher)
+            viewer = _Viewer(rtc, publisher, size)
             await viewer.room.connect(
                 url, viewer_token, rtc.RoomOptions(connect_timeout=10)
             )
             await viewer.received({"scene": 3, "scene/depth": 3})
             assert set(viewer.publications) == {"scene", "scene/depth"}
+            evidence["viewer_rejoin_frames"] = dict(viewer.frames)
             assert run.id == run_id and not run.done
             await asyncio.to_thread(run.__exit__, None, None, None)
             assert run.done and run.outcome == "abort"
@@ -275,3 +327,4 @@ async def _acceptance(tmp_path, rtc, config):
         if sdk is not None:
             await asyncio.to_thread(sdk.__exit__, None, None, None)
         await viewer.close()
+    return evidence

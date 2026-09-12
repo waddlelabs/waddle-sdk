@@ -13,6 +13,28 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Optional YAM `arm_gains` configures independent six-joint KP/KD values while
+  preserving hand gains and recovery behavior. Paired raw/SDK benchmarks apply
+  the same settings and distinguish requested gains from predicted MIT encoding.
+  Explicit and scaled gains are validated before CAN startup; unrepresentable
+  requests now fail instead of being silently clamped by the vendor codec.
+
+- Real-camera RGB/depth publication and reconnect tests through the native SDK
+  and configured LiveKit service, using isolated camera ownership without opening
+  physical arms. Reports distinguish source dimensions from adaptive video sizes.
+
+- Opt-in paired YAM benchmarks run pristine I2RT and SDK processes with matching
+  controller settings and sampled trajectories. Reports preserve measured joint
+  and TCP arrival, timing, vendor diagnostics, failures and cleanup; explicit
+  comparison margins enforce accuracy and settling-time noninferiority.
+  Optional reviewed rest targets return healthy trials to supported parking before
+  backend hand-off. Parking remains separate measured evidence; parking failures
+  block the next backend, and original motion/background faults prohibit further
+  trajectory commands.
+  Both backends now require observable post-start CAN feedback before timing a
+  trajectory, preserving startup evidence separately and refusing stale startup
+  within a bounded deadline without moving or changing envelope checks.
+
 - Unify software and live behavior tests under `sdk/tests`; `pytest --live` selects
   viable camera/robot checks from metadata and optional motion profiles, reports
   missing prerequisites and stays disabled in CI/releases.
@@ -69,6 +91,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Changed
 
+- Owner-envelope refusals preserve their originating safety fault, exact reason,
+  part, measured/commanded values and bounds in the submission receipt and event.
+  Independent hold failures remain separate diagnostics.
+
 - Native binding API 4 adds publisher snapshots; rebuild base and media extensions
   together. Camera/arm/world teardown failures now prevent site ownership release.
 
@@ -108,6 +134,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   the existing runtime remains lazy behind the `[mujoco]` extra.
 
 ### Fixed
+
+- Replace a scheduler-dependent per-part uplink test with controlled reducer
+  admission times, verifying independent 10 Hz budgets and nonstarvation without
+  requiring unrelated streams to have identical phases.
 
 - Preserve original runtime exception text, JSON metadata and nested causes through
   `RuntimeFault.from_exception`; existing typed faults pass through unchanged and

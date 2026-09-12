@@ -60,6 +60,7 @@ from ..cameras import CameraCalibrationDriver, CameraDriver, CameraFrame, Camera
 from ..cameras.base import _depth_preview_rgb
 from ..descriptors import Camera as CameraDescription
 from ..descriptors import FrameTransform, Intrinsics, Robot
+from ..runtime import FaultCode, RuntimeFault
 
 __all__ = [
     "CONSOLE_THREAD_NAME",
@@ -1095,6 +1096,7 @@ def apply_decision(
     velocity_feedforward_rad_s: (
         Mapping[str, Sequence[float]] | Sequence[float] | None
     ) = None,
+    on_refusal: Callable[[RuntimeFault], None] | None = None,
 ) -> bool:
     """Apply one gate decision atomically across every addressed part.
 
@@ -1103,7 +1105,11 @@ def apply_decision(
     every addressed part and rejects the whole decision; a multi-part command
     can therefore never move its first part before discovering that its second
     part is outside the owner envelope.  The return value reports whether the
-    complete decision reached the drivers.
+    complete decision reached the drivers. ``on_refusal`` optionally receives
+    the exact scoped owner-envelope fault after all addressed parts are held;
+    callers that only need the boolean retain the same return contract. If a
+    hold fails, every remaining hold is attempted and the refusal is raised
+    with those independent faults in ``context['hold_errors']``.
     """
     rows = decided if isinstance(decided, dict) else split_by_part(arms, decided)
     velocity_rows: Mapping[str, Sequence[float]]
@@ -1124,6 +1130,7 @@ def apply_decision(
         )
 
     prepared: list[tuple[Arm, np.ndarray, np.ndarray | None]] = []
+    measurements: dict[str, np.ndarray] = {}
     refusal: tuple[Arm, str] | None = None
     for part, values in rows.items():
         arm = arms[part]
@@ -1151,6 +1158,7 @@ def apply_decision(
             )
         else:
             current, _velocity = arm.state()
+            measurements[part] = np.asarray(current, dtype=float).copy()
             reason = arm.check(target, current)
         prepared.append((arm, target, velocity))
         if reason is not None and refusal is None:
@@ -1163,10 +1171,53 @@ def apply_decision(
 
     if refusal is not None:
         failed, reason = refusal
+        failed_part = next(name for name, arm in arms.items() if arm is failed)
+        failed_target = next(
+            target for arm, target, _velocity in prepared if arm is failed
+        )
+
+        def values(array):
+            # Non-finite rejected input still needs transport-safe evidence.
+            return [
+                value if math.isfinite(value) else str(value)
+                for value in array.tolist()
+            ]
+
+        context = {
+            "operation": "admit_joint_target",
+            "part": failed_part,
+            "frame_id": failed.base_frame,
+            "target": values(failed_target),
+            "joint_names": list(failed.joint_names),
+            "joint_limits": [list(pair) for pair in failed.joint_limits],
+            "step_caps": list(failed.step_caps),
+            "workspace_bounds": None
+            if failed.workspace is None
+            else [list(row) for row in failed.workspace],
+            "addressed_parts": list(rows),
+        }
+        if failed_part in measurements:
+            context["measured"] = values(measurements[failed_part])
+        fault = RuntimeFault(FaultCode.SAFETY_REFUSAL, reason, context=context)
         failed.rejected += 1
         failed._reject(reason)
+        hold_errors = []
         for arm, _target, _velocity in prepared:
-            arm.hold()
+            try:
+                arm.hold()
+            except Exception as error:  # noqa: BLE001 -- hold every addressed part, retain each failure
+                hold_errors.append(error)
+        if hold_errors:
+            fault.context = {
+                **context,
+                "hold_errors": [
+                    RuntimeFault.from_exception(error).as_dict()
+                    for error in hold_errors
+                ],
+            }
+            raise fault from hold_errors[0]
+        if on_refusal is not None:
+            on_refusal(fault)
         return False
 
     for arm, target, velocity in prepared:

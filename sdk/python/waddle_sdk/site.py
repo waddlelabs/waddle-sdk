@@ -1850,6 +1850,7 @@ class Run:
         part = None if gate is None else gate.part
         dispatched = decided is not None
         detail = ""
+        refusal_faults: list[RuntimeFault] = []
         if kind != "pass":
             # A non-pass action belongs to the core's selected stream, never
             # to the caller. Clear the caller's hint even when the selected
@@ -1873,6 +1874,7 @@ class Run:
                     # caller on pass, selected stream on substitute/anchorless
                     # blend, absent on an actually interpolated blend.
                     velocity_feedforward_rad_s=velocity_feedforward,
+                    on_refusal=refusal_faults.append,
                 )
             except RuntimeFault:
                 raise
@@ -1886,13 +1888,22 @@ class Run:
                 raise _operation_fault("dispatch robot action", exc) from exc
             if not dispatched:
                 kind = "owner_refusal"
-                detail = "the owner envelope refused the complete action"
+                if refusal_faults:
+                    detail = refusal_faults[0].detail
+                    part = str(refusal_faults[0].context["part"])
+        fault = refusal_faults[0] if refusal_faults else None
         result = SubmitResult(
-            dispatched=dispatched, gate=kind, part=part, detail=detail
+            dispatched=dispatched, gate=kind, part=part, detail=detail, fault=fault
         )
         self._session._event(
             "run.step",
-            {"run_id": self.id, "dispatched": dispatched, "gate": kind, "part": part},
+            {
+                "run_id": self.id,
+                "dispatched": dispatched,
+                "gate": kind,
+                "part": part,
+                **({"fault": fault.as_dict()} if fault is not None else {}),
+            },
         )
         return result
 

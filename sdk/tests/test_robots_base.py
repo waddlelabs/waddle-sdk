@@ -620,6 +620,39 @@ def test_multipart_dispatch_preflights_every_envelope_before_any_write():
     assert arms["right"].driver.holds == 1
 
 
+def test_admission_refusal_preserves_exact_scope_and_hold_failures(monkeypatch):
+    from waddle_sdk.runtime import FaultCode, RuntimeFault
+
+    arms = _two_arms()
+    target = np.array([0.9, 0.0])
+    expected = arms["right"].check(target, arms["right"].state()[0])
+    faults = []
+    assert (
+        base.apply_decision(arms, {"right": target}, on_refusal=faults.append) is False
+    )
+    assert faults[0].code is FaultCode.SAFETY_REFUSAL
+    assert faults[0].detail == expected
+    assert faults[0].context["part"] == "right"
+    assert faults[0].context["target"] == [0.9, 0.0]
+    assert faults[0].context["measured"] == [0.0, 0.0]
+
+    failure = RuntimeFault(
+        FaultCode.MOTOR_FAILURE, "left motor 2 cannot hold", context={"motor": 2}
+    )
+
+    def broken_hold():
+        raise failure
+
+    monkeypatch.setattr(arms["left"].driver, "hold", broken_hold)
+    holds_before = arms["right"].driver.holds
+    with pytest.raises(RuntimeFault) as captured:
+        base.apply_decision(arms, {"left": [0.0, 0.0, 1.0], "right": target})
+    assert captured.value.code is FaultCode.SAFETY_REFUSAL
+    assert captured.value.detail == expected
+    assert captured.value.context["hold_errors"] == [failure.as_dict()]
+    assert arms["right"].driver.holds == holds_before + 1
+
+
 def test_multipart_dispatch_preflights_the_owner_estop_latch():
     arms = _two_arms()
     arms["right"].estop()

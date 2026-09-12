@@ -217,9 +217,17 @@ vector before its servo starts and appends its unchanged gripper factor of 1.0.
 Changing configuration takes effect on the next hardware open. The kinematic
 `sim: true` driver does not model gravity and is unaffected.
 
-`arm_gain_scale` changes only the first six I2RT kp/kd rows;
-`gripper_gain_scale` changes only the seventh. Both default to the vendor's
-gains and, when configured, are restored unchanged after an e-stop recovery.
+`arm_gains` optionally supplies separate six-element `kp` and `kd` vectors under
+`parts.<part>.options`, so position stiffness can change independently of damping.
+It is mutually exclusive with `arm_gain_scale != 1`; that legacy scale multiplies
+both gains for all six arm joints. `gripper_gain_scale` affects only the seventh
+motor. Defaults remain the vendor's gains. Effective values must be finite and
+positive, with KP at most 500 and KD at most 5. Configuration is checked before
+CAN starts; a request the vendor would silently clamp now fails. In particular,
+default arm KD is already 5 on joints 1–3, so increasing `arm_gain_scale` is refused.
+These are encoding limits, not recommended tuning values. Requested gains survive
+e-stop recovery; simulation and monitor modes validate but do not apply PD gains.
+See [YAM gain configuration](../docs/porting/robot.md#yam-gain-configuration).
 When an application supplies a trajectory's known joint velocity, the YAM adapter uses
 I2RT `command_joint_state` for simultaneous position/velocity control. It
 never differentiates measurements or an IK stream to invent velocity, always
@@ -559,21 +567,35 @@ environment values: `WADDLE_TEST_LIVEKIT_URL`,
 `WADDLE_TEST_LIVEKIT_PUBLISHER_TOKEN`, and `WADDLE_TEST_LIVEKIT_VIEWER_TOKEN`.
 The tokens must name the same **fresh** `sdk-media-test-<unique-id>` room with
 different identities: publisher-only camera permission and viewer-only subscribe
-permission. Provision grants and delete the test room outside the SDK; the test
-never consumes API signing keys or opens physical hardware. Without `--live` and these values,
-it skips before dialing an endpoint.
+permission. These externally supplied grants leave room creation/deletion with
+the caller. Alternatively, supply `WADDLE_TEST_LIVEKIT_URL`,
+`WADDLE_TEST_LIVEKIT_API_KEY` and `WADDLE_TEST_LIVEKIT_API_SECRET`; the selected
+media fixture creates an isolated room, issues scoped grants and deletes that
+room afterward. Collection and non-media selections issue no service requests.
+Without `--live` and either credential form, it skips before dialing an endpoint.
+This synthetic test opens no physical hardware. Never put signing keys or grants
+in logs.
 
 ```bash
 python -m pytest --live -q tests/test_livekit_public.py
 ```
 
-The test receives actual RGB and colorized `<camera>/depth` frames at the declared
-resolution and separately confirms local metric depth. A loopback-only signaling
+The test receives RGB and colorized `<camera>/depth` frames, checks the published
+source resolution and separately confirms local metric depth. Received video may
+adapt resolution to network conditions; reports distinguish those dimensions.
+A loopback-only signaling
 proxy drops this test publisher's sockets; the native transport reconnects while
 the same public SiteSession and entered Run remain owned. A new viewer then
 rediscovers both tracks, followed by normal public SDK shutdown. Proxy handshake
 logging is disabled because headers can contain scoped tokens. This proves media
 transport and session continuity, not browser rendering or physical-camera quality.
+
+With the same credential options and a configured physical site, run
+`python -m pytest --live --live-config=/absolute/bench.json tests/live/test_03_media.py`.
+This tests each selected real camera through the same SDK publication/reconnect
+path, using a mock motion context without opening its physical arm. Camera
+ownership retains the original site ID. See [the live test guide](tests/live/README.md)
+for discovery and evidence requirements.
 
 LiveKit room and publisher identity come from the caller's grant and remain stable
 for the opened session. Native LiveKit manages reconnection and server-issued

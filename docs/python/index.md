@@ -12,6 +12,8 @@ with site.open() as session:
         observation = run.observe()
         result = run.step(action, observation)
         if not result.dispatched:
+            if result.fault is not None:
+                raise result.fault
             run.hold(result.detail or "command withheld")
             run.finish(waddle_sdk.Outcome.ABORT.value, "command withheld")
         else:
@@ -58,6 +60,17 @@ Non-JSON attributes are named as omitted rather than serialized with `repr`;
 metadata and cause nesting are bounded. Typed fault producers must exclude secrets.
 YAM control-thread and feedback failures originate as `motor_failure` with the
 channel and specific failure reason, so consumers can retain their scope.
+
+An owner-envelope refusal keeps `SubmitResult.dispatched=False` and
+`gate="owner_refusal"`. Its additive `fault` field carries `safety_refusal` with
+the exact admission reason, named part/frame, measured and requested joints,
+limits and workspace. `detail` and `part` mirror that origin, and the `run.step`
+event retains its serialized fault. Applications should propagate that fault
+unchanged. Other gate decisions may have no fault. The low-level
+`robots.base.apply_decision` retains its boolean return and offers an optional
+`on_refusal` callback for consumers needing these diagnostics. If holding a
+refused multipart command fails, all remaining holds are attempted and the
+refusal is raised with each separate failure in `context.hold_errors`.
 
 An opened `SiteSession` also implements optional support, kinematics, and conservative
 geometry facets. These report implementation facts; they do not widen the action space

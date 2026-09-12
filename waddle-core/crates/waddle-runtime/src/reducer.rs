@@ -959,7 +959,166 @@ mod tests {
     use crate::mirror::Mirror;
     use crate::verbs::{ControlRegistry, VerbDispatch};
     use prost::Message as _;
+    use waddle_controlplane::{ClientConfig, InMemoryTransport, PlaneEvent, ServerMsg};
     use waddle_types::{LeaseEnforcement, ReplanPolicy, RobotDescription};
+
+    /// Per-part budgets allow independently phased streams, not just parts
+    /// that happen to be admitted on the same OS-thread wake. Drive the real
+    /// reducer's admission times explicitly; the transport barrier observes
+    /// queued output without using a sleep to decide when it is complete.
+    #[test]
+    fn uplink_cadence_is_per_part() {
+        let (sent_tx, sent_rx) = std::sync::mpsc::channel();
+        let transport = InMemoryTransport::new(move |message, server| match message {
+            ClientMsg::Register(request) => {
+                server
+                    .send(ServerMsg::Registered(pb::RegisterResponse {
+                        accepted_feature_flags: request.feature_flags,
+                        ..Default::default()
+                    }))
+                    .unwrap();
+            }
+            ClientMsg::Observation(update) => sent_tx.send(Some(update)).unwrap(),
+            ClientMsg::Heartbeat(_) => sent_tx.send(None).unwrap(),
+            _ => {}
+        });
+        let plane = Arc::new(ControlPlaneClient::spawn(
+            transport,
+            ClientConfig::new(pb::RegisterRequest {
+                feature_flags: vec!["waddle.v0.parts".into()],
+                ..Default::default()
+            }),
+        ));
+        while !matches!(
+            plane.recv_event_timeout(Duration::from_secs(5)).unwrap(),
+            PlaneEvent::Registered(_)
+        ) {}
+
+        let part_space = pb::ActionSpace {
+            space: Some(pb::action_space::Space::JointPosition(pb::JointPosition {
+                joints: vec![pb::JointDescriptor {
+                    name: "joint".into(),
+                    ..Default::default()
+                }],
+            })),
+            rate_hz: 50.0,
+            ..Default::default()
+        };
+        let space = ActionSpace::from_pb(&pb::ActionSpace {
+            space: Some(pb::action_space::Space::Composite(pb::Composite {
+                parts: ["left", "right"]
+                    .into_iter()
+                    .map(|name| pb::composite::Part {
+                        name: name.into(),
+                        space: Some(part_space.clone()),
+                    })
+                    .collect(),
+            })),
+            rate_hz: 50.0,
+            ..Default::default()
+        })
+        .unwrap();
+        let clock = SessionClock::capture();
+        let (gate_shared, _stream_tx) = GateShared::new(
+            GatePlan::passthrough(MonoNs(0)),
+            8,
+            0,
+            ReplanPolicy::Immediate,
+        );
+        let (outcome_tx, _outcome_rx) = std::sync::mpsc::channel();
+        let verbs = Arc::new(VerbDispatch::spawn(
+            ControlRegistry::default(),
+            clock.clone(),
+            outcome_tx,
+        ));
+        let (_proprio_tx, proprio_rx) = std::sync::mpsc::channel();
+        let (_dispatch_tx, dispatch_rx) = std::sync::mpsc::channel();
+        let mirror = Mirror::new();
+        mirror.update(|status| status.parts_negotiated = true);
+        let mut reducer = Reducer::new(
+            SessionConfig::minimal(
+                "cadence",
+                HandoffPolicy::HoldFirst,
+                LeaseEnforcement::Advisory,
+            ),
+            clock,
+            gate_shared,
+            verbs,
+            mirror,
+            Some(plane.clone()),
+            None,
+            None,
+            "cadence-project".into(),
+            "digest".into(),
+            space,
+            Arc::new(parking_lot::Mutex::new(None)),
+            Arc::new(parking_lot::Mutex::new(crate::session::TaskContext {
+                task: "task".into(),
+                metadata: Default::default(),
+            })),
+            None,
+            Arc::new(waddle_ingest::LatestSlot::new()),
+            proprio_rx,
+            LatestJoints::new(),
+            dispatch_rx,
+        );
+
+        // Left chatters at 100 Hz. Right begins 20 ms later and never
+        // reports again: neither chatter nor silence changes its budget.
+        for tick in 0..=22 {
+            reducer.latest.entry("left".into()).or_default().joint_pos = vec![f64::from(tick)];
+            if tick == 2 {
+                reducer.latest.insert(
+                    "right".into(),
+                    PartProprio {
+                        joint_pos: vec![0.2],
+                        ..Default::default()
+                    },
+                );
+            }
+            reducer.maybe_uplink_observation(MonoNs(i64::from(tick) * 10_000_000));
+        }
+        // A deliberately late wake makes BOTH parts due. An identical
+        // wake and a wake 1 ns short of the 100 ms boundary admit neither.
+        for now in [340_000_000, 340_000_000, 439_999_999, 440_000_000] {
+            reducer.maybe_uplink_observation(MonoNs(now));
+        }
+        plane.send(ClientMsg::Heartbeat(pb::HeartbeatPing::default()));
+        let mut by_part: BTreeMap<String, Vec<(i64, Vec<f64>)>> = BTreeMap::new();
+        while let Some(update) = sent_rx.recv_timeout(Duration::from_secs(5)).unwrap() {
+            let Some(pb::observation_update::Payload::Proprio(sample)) = update.payload else {
+                panic!("expected a proprio summary");
+            };
+            by_part
+                .entry(sample.part)
+                .or_default()
+                .push((update.t_ns, sample.joint_pos));
+        }
+        assert_eq!(by_part.len(), 2);
+        assert_eq!(
+            by_part["left"],
+            vec![
+                (0, vec![0.0]),
+                (100_000_000, vec![10.0]),
+                (200_000_000, vec![20.0]),
+                (340_000_000, vec![22.0]),
+                (440_000_000, vec![22.0]),
+            ]
+        );
+        assert_eq!(
+            by_part["right"],
+            [
+                20_000_000,
+                120_000_000,
+                220_000_000,
+                340_000_000,
+                440_000_000
+            ]
+            .into_iter()
+            .map(|now| (now, vec![0.2]))
+            .collect::<Vec<_>>()
+        );
+    }
 
     /// The episode TAIL, pinned where it is deterministic: `finalize` is
     /// called directly, so no reducer wake can drain the channel first and

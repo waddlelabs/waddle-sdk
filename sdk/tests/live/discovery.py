@@ -2,6 +2,7 @@
 
 import os
 from collections import Counter
+from importlib.util import find_spec
 from pathlib import Path
 
 import pytest
@@ -33,6 +34,7 @@ def pytest_configure(config):
         ("hardware", "opens physical devices"),
         ("motion", "commands physical motion"),
         ("requires_env", "named environment prerequisites for a live service test"),
+        ("requires_site", "needs an explicitly configured site manifest"),
     ):
         config.addinivalue_line("markers", f"{name}: {text}")
     config.live_bench = {"parts": [], "cameras": [], "cases": []}
@@ -136,20 +138,53 @@ def reason(item):
     )
     if required:
         absent = [name for name in required if not os.environ.get(name)]
-        return "missing " + ", ".join(absent) if absent else None
+        provisionable = set(absent) <= {
+            "WADDLE_TEST_LIVEKIT_URL",
+            "WADDLE_TEST_LIVEKIT_PUBLISHER_TOKEN",
+            "WADDLE_TEST_LIVEKIT_VIEWER_TOKEN",
+        } and all(
+            os.environ.get(name)
+            for name in (
+                "WADDLE_TEST_LIVEKIT_URL",
+                "WADDLE_TEST_LIVEKIT_API_KEY",
+                "WADDLE_TEST_LIVEKIT_API_SECRET",
+            )
+        )
+        if absent and not provisionable:
+            return "missing " + ", ".join(absent)
     missing = item.config.live_missing
     params = getattr(getattr(item, "callspec", None), "params", {})
+    needs_site = (
+        item.get_closest_marker("requires_site")
+        if hasattr(item, "get_closest_marker")
+        else None
+    )
+    if needs_site and "site" in missing:
+        return missing["site"]
     if "camera" in params:
         return missing.get(f"cameras:{params['camera']}") or (
             "no configured camera" if params["camera"] is None else None
         )
+    if required and not params and not needs_site:
+        return None
     if "site" in missing:
         return missing["site"]
-    # A Site owner opens every configured part; camera-only tests use a separate
-    # public lifecycle, so absent arms cannot disable camera inspection.
-    for name in item.config.live_bench["parts"]:
-        if f"parts:{name}" in missing:
-            return missing[f"parts:{name}"]
+    # Each robot test projects one part, retaining the original site lock ID.
+    selected_part = params.get("part") or (params.get("case") or {}).get("part")
+    if f"parts:{selected_part}" in missing:
+        return missing[f"parts:{selected_part}"]
+    if (
+        params.get("case")
+        and item.config.live_bench.get("comparison", {}).get("vendor") == "i2rt"
+    ):
+        site = load_site(item.config.live_bench["site"])
+        if (
+            site.manifest["parts"][selected_part].get("driver")
+            != "waddle_sdk.robots.yam:arm"
+        ):
+            return "raw i2rt comparison requires a YAM arm"
+        if find_spec("i2rt") is None:
+            return "raw i2rt comparison requires the optional I2RT package"
     if "shutdown" in missing:
         return missing["shutdown"]
     if "case" in params and params["case"] is None:
@@ -196,3 +231,15 @@ def pytest_terminal_summary(terminalreporter, config):
         terminalreporter.write_line(f"{count}: {label}")
     for warning in getattr(config, "live_warnings", ()):
         terminalreporter.write_line(warning)
+    if all(
+        os.environ.get(name)
+        for name in (
+            "WADDLE_TEST_LIVEKIT_URL",
+            "WADDLE_TEST_LIVEKIT_API_KEY",
+            "WADDLE_TEST_LIVEKIT_API_SECRET",
+        )
+    ):
+        terminalreporter.write_line(
+            "LiveKit signing credentials configured; only selected media fixtures issue grants. "
+            "Discovery does not verify service permission."
+        )

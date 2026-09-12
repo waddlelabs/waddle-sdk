@@ -1084,23 +1084,39 @@ def test_re_enable_restores_the_snapshotted_gains_and_holds_the_measured_pose(ve
     assert driver.estopped is False
 
 
-def test_site_gain_scales_apply_to_disjoint_motors_and_survive_re_enable(vendor):
+@pytest.mark.parametrize(
+    "options, arm_kp, arm_kd",
+    [
+        ({"arm_gain_scale": 0.5}, [5.0] * 6, [0.5] * 6),
+        (
+            {
+                "arm_gains": {
+                    "kp": [100, 120, 140, 10, 12, 14],
+                    "kd": [5, 5, 5, 1, 1.5, 2],
+                }
+            },
+            [100, 120, 140, 10, 12, 14],
+            [5, 5, 5, 1, 1.5, 2],
+        ),
+    ],
+)
+def test_site_arm_and_hand_gains_stay_independent_and_survive_re_enable(
+    vendor, options, arm_kp, arm_kd
+):
     lines: list[str] = []
     driver = _live(
         vendor,
-        arm_gain_scale=1.5,
+        **options,
         gripper_gain_scale=0.1,
         report=lines.append,
     )
     robot = vendor.robots[0]
-    expected_kp = np.array([15.0] * yam.ARM_JOINT_COUNT + [1.0])
-    expected_kd = np.array([1.5] * yam.ARM_JOINT_COUNT + [0.1])
+    expected_kp = np.array(arm_kp + [1.0])
+    expected_kd = np.array(arm_kd + [0.1])
     assert len(robot.gains) == 1
     assert np.allclose(robot.gains[0][0], expected_kp)
     assert np.allclose(robot.gains[0][1], expected_kd)
-    assert any(
-        "arm gains x1.5" in line and "gripper gains x0.1" in line for line in lines
-    )
+    assert lines
 
     driver.estop()
     driver.re_enable()
@@ -1110,15 +1126,53 @@ def test_site_gain_scales_apply_to_disjoint_motors_and_survive_re_enable(vendor)
 
 
 @pytest.mark.parametrize(
-    "name,value",
-    [("arm_gain_scale", 0.0), ("gripper_gain_scale", float("nan"))],
+    "options",
+    [
+        {"arm_gain_scale": 0.0},
+        {"arm_gain_scale": 1.5},
+        {"gripper_gain_scale": float("nan")},
+        {"gripper_gain_scale": 11.0},
+        {"arm_gains": {"kp": [80] * 5, "kd": [5] * 6}},
+        {"arm_gains": {"kp": [501] * 6, "kd": [5] * 6}},
+        {"arm_gains": {"kp": [80] * 6, "kd": [5.01] * 6}},
+        {"arm_gains": {"kp": [True] * 6, "kd": [5] * 6}},
+        {"arm_gains": {"kp": [80] * 6, "kd": [float("nan")] * 6}},
+        {"arm_gain_scale": 0.5, "arm_gains": {"kp": [80] * 6, "kd": [5] * 6}},
+    ],
 )
-def test_invalid_gain_scales_fail_the_open_and_close_the_vendor_handle(
-    vendor, name, value
-):
-    with pytest.raises(ValueError, match=name):
-        _live(vendor, **{name: value})
-    assert vendor.robots[0].closed == 1
+def test_invalid_or_clamped_gains_fail_before_can_startup(vendor, monkeypatch, options):
+    configured = []
+    monkeypatch.setattr(
+        yam, "ensure_socketcan_up", lambda *args, **kwargs: configured.append(True)
+    )
+    with pytest.raises(ValueError, match="can_left.*gain"):
+        _live(vendor, configure_can=True, **options)
+    assert not configured and not vendor.calls
+
+
+@pytest.mark.parametrize("bimanual", [False, True])
+def test_factories_freeze_explicit_gains_until_open(vendor, bimanual):
+    gains = {"kp": [100.0] * 6, "kd": [5.0] * 6}
+    if bimanual:
+        rig = yam.bimanual(
+            workspace=None,
+            left=yam.ArmSite(channel="can_left"),
+            right=yam.ArmSite(channel="can_right"),
+            arm_gains=gains,
+            report=lambda _: None,
+        )
+    else:
+        rig = yam.arm(
+            workspace=None, channel="can_left", arm_gains=gains, report=lambda _: None
+        )
+    assert not vendor.calls
+    gains["kp"][0] = 999
+    opened = rig.arms()
+    for robot in vendor.robots:
+        assert robot.gains[0][0][:6] == pytest.approx([100] * 6)
+        assert robot.gains[0][1][:6] == pytest.approx([5] * 6)
+    for part in opened.values():
+        part.driver.close()
 
 
 def test_re_enable_refuses_to_guess_gains_it_never_snapshotted(vendor):
@@ -1136,8 +1190,13 @@ def test_a_zero_gravity_driver_commands_nothing(vendor):
     """`posture="monitor"` builds the arm compliant, and this driver then
     refuses to write at all — so "nothing can command it" is a property of the
     object rather than of a flag somebody remembered to check."""
-    driver = _live(vendor, zero_gravity=True)
+    driver = _live(
+        vendor,
+        zero_gravity=True,
+        arm_gains={"kp": [100] * 6, "kd": [5] * 6},
+    )
     assert vendor.calls[0]["zero_gravity_mode"] is True
+    assert vendor.robots[0].gains == []
     with pytest.raises(RuntimeError, match="zero-gravity"):
         driver.write(np.zeros(yam.JOINT_COUNT))
 

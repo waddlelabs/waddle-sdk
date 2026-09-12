@@ -154,6 +154,83 @@ I2RT_PIN = "570ef66681ff12bd8298aba34084307cfecc9f05"
 #: The vendor appends its unchanged gripper factor of 1.0.
 DEFAULT_GRAVITY_COMP_FACTOR = (1.0, 1.1, 1.2, 1.3, 1.0, 1.0)
 
+# Pinned I2RT robots/config/{yam,linear_4310}.yml. These are the startup
+# gains used to validate site options before opening CAN, not new defaults.
+_VENDOR_KP = (80.0, 80.0, 80.0, 10.0, 10.0, 10.0, 20.0)
+_VENDOR_KD = (5.0, 5.0, 5.0, 1.5, 1.5, 1.5, 0.5)
+# Both DM4340 and DM4310 use these MIT gain encoding bounds (12 bits),
+# from pinned motor_drivers/utils.py. Bounds are not tuning recommendations.
+_GAIN_MAX = {"kp": 500.0, "kd": 5.0}
+
+
+def _gain_values(values, *, count, maximum, where):
+    try:
+        row = tuple(values)
+    except TypeError as error:
+        raise ValueError(f"{where}: gains need {count} numeric values") from error
+    if len(row) != count:
+        raise ValueError(f"{where}: gains need {count} values, got {len(row)}")
+    for index, value in enumerate(row):
+        if (
+            isinstance(value, (bool, str, bytes))
+            or not isinstance(value, (int, float, np.integer, np.floating))
+            or not math.isfinite(float(value))
+            or not 0 < value <= maximum
+        ):
+            raise ValueError(
+                f"{where}: gain[{index}]={value!r} must be finite and in (0, {maximum}]"
+            )
+    return np.asarray(row, dtype=float)
+
+
+def _gain_vectors(
+    kp=_VENDOR_KP,
+    kd=_VENDOR_KD,
+    *,
+    arm_gains=None,
+    arm_gain_scale=1.0,
+    gripper_gain_scale=1.0,
+    where="YAM",
+):
+    """Resolve requested motor gains, refusing the vendor codec's silent clamp."""
+    arm_scale, hand_scale = _gain_values(
+        (arm_gain_scale, gripper_gain_scale),
+        count=2,
+        maximum=math.inf,
+        where=f"{where} arm/gripper_gain_scale",
+    )
+    if arm_gains is not None:
+        if not isinstance(arm_gains, Mapping) or set(arm_gains) != {"kp", "kd"}:
+            raise ValueError(f"{where}: arm_gains requires exactly kp and kd")
+        if arm_scale != 1.0:
+            raise ValueError(f"{where}: arm_gains conflicts with arm_gain_scale != 1")
+    result = []
+    for name, values in (("kp", kp), ("kd", kd)):
+        row = _gain_values(
+            values,
+            count=JOINT_COUNT,
+            maximum=_GAIN_MAX[name],
+            where=f"{where} vendor {name} gains",
+        )
+        if arm_gains is not None:
+            row[:ARM_JOINT_COUNT] = _gain_values(
+                arm_gains[name],
+                count=ARM_JOINT_COUNT,
+                maximum=_GAIN_MAX[name],
+                where=f"{where} arm_gains.{name}",
+            )
+        row[:ARM_JOINT_COUNT] *= arm_scale
+        row[ARM_JOINT_COUNT] *= hand_scale
+        result.append(
+            _gain_values(
+                row,
+                count=JOINT_COUNT,
+                maximum=_GAIN_MAX[name],
+                where=f"{where} effective {name} gains",
+            )
+        )
+    return tuple(result)
+
 
 def _checked_gravity_comp_factor(values: Sequence[float]) -> tuple[float, ...]:
     try:
@@ -349,12 +426,12 @@ def urdf_text() -> str:
     see ``yam_data/README.md`` for the provenance, the patches and the
     vendor's MIT licence.
     """
-    return (files(__package__) / "yam_data" / "yam.urdf").read_text(
-        encoding="utf-8"
-    )
+    return (files(__package__) / "yam_data" / "yam.urdf").read_text(encoding="utf-8")
 
 
-def model_sources(*, factory: str, part_name: str, part: Mapping) -> ModelSources | None:
+def model_sources(
+    *, factory: str, part_name: str, part: Mapping
+) -> ModelSources | None:
     """Load verified source geometry and hardware relationships without opening.
 
     See :mod:`waddle_sdk.robots.models` for the shared bundle and failure
@@ -598,6 +675,7 @@ class LiveDriver:
         *,
         gripper_limits: Sequence[float] | None = None,
         gravity_comp_factor: Sequence[float] = DEFAULT_GRAVITY_COMP_FACTOR,
+        arm_gains: Mapping[str, Sequence[float]] | None = None,
         arm_gain_scale: float = 1.0,
         gripper_gain_scale: float = 1.0,
         velocity_feedforward: bool = True,
@@ -608,6 +686,17 @@ class LiveDriver:
         report: Callable[[str], None] = base.status,
     ) -> None:
         gravity_factors = _checked_gravity_comp_factor(gravity_comp_factor)
+        requested_kp, requested_kd = _gain_vectors(
+            arm_gains=arm_gains,
+            arm_gain_scale=arm_gain_scale,
+            gripper_gain_scale=gripper_gain_scale,
+            where=f"channel={channel}",
+        )
+        if arm_gains is not None:
+            arm_gains = {
+                "kp": tuple(requested_kp[:ARM_JOINT_COUNT]),
+                "kd": tuple(requested_kd[:ARM_JOINT_COUNT]),
+            }
         try:
             from i2rt.robots.get_robot import get_yam_robot
             from i2rt.robots.utils import GripperType
@@ -682,7 +771,7 @@ class LiveDriver:
                     "silently"
                 )
             self._default_kp, self._default_kd = self._snapshot_gains()
-            self._apply_gain_scales(arm_gain_scale, gripper_gain_scale)
+            self._apply_gain_scales(arm_gain_scale, gripper_gain_scale, arm_gains)
             self._can_command_state = callable(
                 getattr(self._robot, "command_joint_state", None)
             )
@@ -746,9 +835,12 @@ class LiveDriver:
         return kp, kd
 
     def _apply_gain_scales(
-        self, arm_gain_scale: float, gripper_gain_scale: float
+        self,
+        arm_gain_scale: float,
+        gripper_gain_scale: float,
+        arm_gains: Mapping[str, Sequence[float]] | None = None,
     ) -> None:
-        """Apply the site's two disjoint gain scales and retain them for recovery.
+        """Apply the site's arm/hand gains and retain them for recovery.
 
         I2RT exposes one gain vector for the whole motor chain: the first six
         rows are the arm and the last row is the hand.  Apply both changes in
@@ -756,37 +848,34 @@ class LiveDriver:
         scale that cannot be applied is an open failure, not a site setting
         that silently did nothing.
         """
-        arm_scale = float(arm_gain_scale)
-        hand_scale = float(gripper_gain_scale)
-        for name, value in (
-            ("arm_gain_scale", arm_scale),
-            ("gripper_gain_scale", hand_scale),
-        ):
-            if not math.isfinite(value) or value <= 0.0:
-                raise ValueError(f"{name} must be finite and > 0, got {value!r}")
-        if self._zero_gravity or (arm_scale == 1.0 and hand_scale == 1.0):
+        if self._zero_gravity:
             return
         if self._default_kp is None or self._default_kd is None:
+            if (
+                arm_gains is None
+                and arm_gain_scale == 1.0
+                and gripper_gain_scale == 1.0
+            ):
+                return
             raise RuntimeError(
-                f"{self.channel}: gain scaling was requested but I2RT reported no "
+                f"{self.channel}: gain configuration was requested but I2RT reported no "
                 "kp/kd vectors"
             )
-        kp = np.asarray(self._default_kp, dtype=float).copy()
-        kd = np.asarray(self._default_kd, dtype=float).copy()
-        if kp.ndim != 1 or kp.shape != kd.shape or kp.shape != (JOINT_COUNT,):
-            raise RuntimeError(
-                f"{self.channel}: gain vectors have shapes {kp.shape}/{kd.shape}; "
-                f"expected ({JOINT_COUNT},)"
-            )
-        kp[:ARM_JOINT_COUNT] *= arm_scale
-        kd[:ARM_JOINT_COUNT] *= arm_scale
-        kp[ARM_JOINT_COUNT] *= hand_scale
-        kd[ARM_JOINT_COUNT] *= hand_scale
+        kp, kd = _gain_vectors(
+            self._default_kp,
+            self._default_kd,
+            arm_gains=arm_gains,
+            arm_gain_scale=arm_gain_scale,
+            gripper_gain_scale=gripper_gain_scale,
+            where=f"channel={self.channel}",
+        )
+        if arm_gains is None and arm_gain_scale == 1.0 and gripper_gain_scale == 1.0:
+            return
         self._robot.update_kp_kd(kp, kd)
         self._default_kp, self._default_kd = kp, kd
         self._report(
-            f"live {self.channel}: arm gains x{arm_scale:g}; gripper gains "
-            f"x{hand_scale:g}"
+            f"live {self.channel}: requested motor gains kp={kp.tolist()}, kd={kd.tolist()} "
+            "(within MIT encoding limits; 12-bit quantization applies)"
         )
 
     @property
@@ -938,9 +1027,7 @@ class LiveDriver:
                 return False
             cap = self._max_feedforward_vel_rad_s
             bounded = np.zeros(JOINT_COUNT, dtype=float)
-            bounded[:ARM_JOINT_COUNT] = np.clip(
-                velocity[:ARM_JOINT_COUNT], -cap, cap
-            )
+            bounded[:ARM_JOINT_COUNT] = np.clip(velocity[:ARM_JOINT_COUNT], -cap, cap)
             self._robot.command_joint_state({"pos": position, "vel": bounded})
             return True
 
@@ -1041,8 +1128,7 @@ class LiveDriver:
             target = getattr(thread, "_target", None)
             if (
                 getattr(target, "__self__", None) is motor_chain
-                and getattr(target, "__name__", "")
-                == "_set_torques_and_update_state"
+                and getattr(target, "__name__", "") == "_set_torques_and_update_state"
             ):
                 control_thread = thread
                 break
@@ -1176,9 +1262,7 @@ def declaration(
     if declare_urdf and base_frame != URDF_BASE_LINK:
         # Not an identity nobody wrote: the arm's base IS the model's root
         # link, and this states that rename so a consumer can compose the two.
-        declared_frames += (
-            FrameTransform(parent=base_frame, child=URDF_BASE_LINK),
-        )
+        declared_frames += (FrameTransform(parent=base_frame, child=URDF_BASE_LINK),)
 
     return Robot(
         name=name,
@@ -1374,6 +1458,7 @@ def _build_arms(
     joint_limits: Sequence[Sequence[float]],
     rate_hz: float,
     gravity_comp_factor: Sequence[float],
+    arm_gains: Mapping[str, Sequence[float]] | None,
     arm_gain_scale: float,
     gripper_gain_scale: float,
     velocity_feedforward: bool,
@@ -1394,6 +1479,18 @@ def _build_arms(
     So a failure closes what it opened before it re-raises: half a rig is not a
     rig, and the exception is still the news."""
 
+    kp, kd = _gain_vectors(
+        arm_gains=arm_gains,
+        arm_gain_scale=arm_gain_scale,
+        gripper_gain_scale=gripper_gain_scale,
+        where="YAM declaration",
+    )
+    if arm_gains is not None:
+        arm_gains = {
+            "kp": tuple(kp[:ARM_JOINT_COUNT]),
+            "kd": tuple(kd[:ARM_JOINT_COUNT]),
+        }
+
     def build() -> dict[str, base.Arm]:
         arms: dict[str, base.Arm] = {}
         opened: dict[str, base.Driver] = {}
@@ -1412,6 +1509,7 @@ def _build_arms(
                         site.channel,
                         gripper_limits=site.gripper_limits,
                         gravity_comp_factor=gravity_comp_factor,
+                        arm_gains=arm_gains,
                         arm_gain_scale=arm_gain_scale,
                         gripper_gain_scale=gripper_gain_scale,
                         velocity_feedforward=velocity_feedforward,
@@ -1467,6 +1565,7 @@ def bimanual(
     max_joint_speed_rad_s: float = DEFAULT_MAX_JOINT_SPEED_RAD_S,
     max_gripper_speed_per_s: float = DEFAULT_MAX_GRIPPER_SPEED_PER_S,
     gravity_comp_factor: Sequence[float] = DEFAULT_GRAVITY_COMP_FACTOR,
+    arm_gains: Mapping[str, Sequence[float]] | None = None,
     arm_gain_scale: float = 1.0,
     gripper_gain_scale: float = 1.0,
     velocity_feedforward: bool = True,
@@ -1506,6 +1605,15 @@ def bimanual(
     then passed to I2RT before its servo starts. The gripper factor stays 1.0.
     These bench-derived defaults are not a substitute for per-unit calibration;
     ``sim=True`` uses the kinematic simulator and ignores gravity factors.
+
+    ``arm_gains`` optionally supplies separate ``kp`` and ``kd`` vectors for
+    joints 1–6. Each must contain six finite positive numbers, with ``kp <= 500``
+    and ``kd <= 5`` (MIT encoding limits, not tuning recommendations). Explicit
+    arm gains cannot be combined with ``arm_gain_scale != 1``. The independent
+    ``gripper_gain_scale`` still applies only to the hand. All effective gains
+    are validated before CAN opens; settings the vendor codec would clamp are
+    refused. Requested gains are restored after e-stop recovery. Simulation and
+    monitor/zero-gravity modes validate these options but do not apply PD gains.
 
     ``fk`` is the forward kinematics each part reports its TCP from, and it is
     OPT-IN: pass ``None`` (with ``workspace=None``) for a rig that reports
@@ -1578,6 +1686,7 @@ def bimanual(
             joint_limits=joints,
             rate_hz=rate_hz,
             gravity_comp_factor=_checked_gravity_comp_factor(gravity_comp_factor),
+            arm_gains=arm_gains,
             arm_gain_scale=arm_gain_scale,
             gripper_gain_scale=gripper_gain_scale,
             velocity_feedforward=velocity_feedforward,
@@ -1610,6 +1719,7 @@ def arm(
     max_joint_speed_rad_s: float = DEFAULT_MAX_JOINT_SPEED_RAD_S,
     max_gripper_speed_per_s: float = DEFAULT_MAX_GRIPPER_SPEED_PER_S,
     gravity_comp_factor: Sequence[float] = DEFAULT_GRAVITY_COMP_FACTOR,
+    arm_gains: Mapping[str, Sequence[float]] | None = None,
     arm_gain_scale: float = 1.0,
     gripper_gain_scale: float = 1.0,
     velocity_feedforward: bool = True,
@@ -1671,6 +1781,7 @@ def arm(
             joint_limits=joints,
             rate_hz=rate_hz,
             gravity_comp_factor=_checked_gravity_comp_factor(gravity_comp_factor),
+            arm_gains=arm_gains,
             arm_gain_scale=arm_gain_scale,
             gripper_gain_scale=gripper_gain_scale,
             velocity_feedforward=velocity_feedforward,

@@ -9,10 +9,12 @@ from waddle_sdk.cameras.inspection import CameraInspection, CameraInspectionSpec
 from .sdk_live.session import Bench
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture
 def bench(request):
     assert request.config.getoption("--live")
-    with Bench(request.config.live_bench) as owner:
+    params = request.node.callspec.params
+    part = params.get("part") or params["case"]["part"]
+    with Bench(request.config.live_bench, part) as owner:
         yield owner
 
 

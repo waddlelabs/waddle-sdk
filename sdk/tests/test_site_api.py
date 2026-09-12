@@ -255,6 +255,54 @@ def test_static_keepout_rejects_complete_action_before_driver_write(tmp_path):
         assert session._managed.rejected == 1
 
 
+@pytest.mark.parametrize("envelope", ["joint_limit", "tcp_box"])
+def test_refused_commands_retain_exact_envelope_fault_then_writer_fault(
+    tmp_path, monkeypatch, envelope
+):
+    site = waddle_sdk.load_site(_write_site(tmp_path))
+    with (
+        site.open(console=False, _testing=True) as session,
+        session.run(task="envelope-fault", actor="test") as run,
+    ):
+        arm = session._managed.arms["arm"]
+        if envelope == "joint_limit":
+            arm.joint_limits = ((-0.05, 0.05), (-1, 1))
+        else:
+            arm.workspace = ((-1, -1, 0), (1, 1, 1))
+            arm.fk = lambda q: (np.array([q[0], 0, -0.01]), np.eye(3))
+        observation = run.observe()
+        target = np.array([0.1, 0.0])
+        expected = arm.check(target, observation.parts["arm"].joint_position)
+        result = run.step(target, observation)
+        assert result.dispatched is False
+        assert result.gate == "owner_refusal"
+        assert result.part == "arm"
+        assert result.fault.code is FaultCode.SAFETY_REFUSAL
+        assert result.detail == result.fault.detail == expected
+        assert result.fault.context["target"] == target.tolist()
+        assert result.fault.context["measured"] == [0.0, 0.0]
+        json.dumps(result.fault.as_dict(), allow_nan=False)
+        step_event = next(
+            event for event in session.events() if event.kind == "run.step"
+        )
+        assert step_event.data["fault"] == result.fault.as_dict()
+
+        # A later admitted write keeps its distinct device fault unchanged.
+        arm.workspace = None
+        arm.joint_limits = ((-1, 1), (-1, 1))
+        fault = RuntimeFault(
+            FaultCode.MOTOR_FAILURE, "motor 3 on can_left failed", context={"motor": 3}
+        )
+
+        def broken_write(target):
+            raise fault
+
+        monkeypatch.setattr(arm.driver, "write", broken_write)
+        with pytest.raises(RuntimeFault) as captured:
+            run.step([0.05, 0.0], run.observe())
+        assert captured.value is fault
+
+
 def test_self_collision_rejects_unless_named_pair_is_ignored(tmp_path):
     path = _write_site(tmp_path)
     path.write_text(
