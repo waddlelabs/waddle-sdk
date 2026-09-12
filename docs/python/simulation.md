@@ -53,13 +53,16 @@ Each engine accepts `so101`, `yam`, or `xarm7` and these environments:
   and 5 N·s/m native joint damping. The damping dissipates a pull after release;
   there is no spring returning the drawer to its starting position.
 
-MuJoCo also provides five interactive development task environments:
+MuJoCo also provides six interactive development task environments:
 
 - `touch_target`: one red contact target and two blue distractors.
 - `pick_lift`: one free 46 mm cube.
 - `place_in_bin`: one free cube and an open five-sided bin.
 - `push_to_region`: one free cube and a non-colliding visual goal region.
 - `operate_control`: one red and two blue independently sliding push controls.
+- `split_workspace_sorting`: a matched two-arm scene with one cube initially in
+  each arm's outer workspace and two open bins near the center. Each cube's
+  matching bin is on the opposite side.
 
 These environments use the ordinary robot, camera, and lifecycle interfaces.
 Their scene camera exposes every task-relevant object at the starting pose for
@@ -109,10 +112,10 @@ live adapter's 95 mm LINEAR_4310 hand. xArm7 uses UFACTORY's expanded URDF with
 the G2 gripper and its standard TCP. The original visual meshes, link masses,
 centers of mass and inertia tensors are retained. Concave collision meshes are decomposed offline into
 convex pieces so each engine preserves arm recesses, finger geometry and housing
-clearance. Convex meshes remain unchanged. The public YAM planning model keeps its
-exact source collision meshes. SO-101 and xArm7 planning models group complete source
-collision pieces by centroid into deterministic 20 mm bands along each link's longest
-axis and use the convex hull of every piece in a band. This bounds model size while preserving
+clearance. Convex meshes remain unchanged. Planning models for every reference
+family group complete source collision pieces by centroid into deterministic
+20 mm bands along each link's longest axis and use the convex hull of every piece
+in a band. This bounds model size while preserving
 the complete source surface inside each planner hull; the serialized mesh retains
 MuJoCo's hull boundary instead of the much larger input triangle set. Native constraints
 close the xArm linkage; its revolute hand is mapped nonlinearly to jaw travel.
@@ -154,10 +157,12 @@ xArm7 retains its established reference posture.
 The bottle sits to the side of this central region, and the cabinet's closed
 front sits beyond it, so neither prop intersects the starting hand. The drawer
 handle travels from x=0.503 m to x=0.283 m as it opens.
-New drawer and MuJoCo development-task sites place the scene camera in front of
+New drawer and single-arm MuJoCo development-task sites place the scene camera in front of
 the interactive fixture, at
 `(-0.45, -0.55, 0.55)` m looking toward `(0.4, 0, 0.2)` m, so its handle face is
 visible at the reference home and task targets do not face away from the camera.
+The dual-arm sorting scene uses an overhead camera that shows both arms, cubes,
+and bins in the shared workspace.
 The other scenes retain their overhead oblique view. Existing scene files retain
 their explicit camera transforms; updating a transform also requires regenerating
 calibration artifacts bound to that scene.
@@ -408,9 +413,9 @@ also available. No second SDK lifecycle or agent API is introduced.
 
 `reference_model_sources(robot, part_name=...)` supplies a non-opening, hash-bound
 planner model for each generated arm. It uses the same pinned kinematic chain,
-joint limits, base, TCP, and source collision links as the runtime assembly. YAM
-retains exact collision meshes; SO-101 and xArm7 use deterministic spatial hulls of
-complete source collision pieces. The model records the method, source-piece count,
+joint limits, base, TCP, and source collision links as the runtime assembly. Every
+reference family uses deterministic spatial hulls of complete source collision
+pieces. The model records the method, source-piece count,
 planner-geometry count, and spatial bucket width in `collision_proxy` provenance.
 All variants freeze the complete hand at maximum opening and omit task props and
 another arm; those limits remain explicit in provenance and require separate

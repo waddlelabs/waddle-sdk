@@ -13,6 +13,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Add the two-arm `split_workspace_sorting` MuJoCo development environment for
+  every reference family. It presents two independently reachable cubes and two
+  opposite-side bins through the ordinary dual-arm runtime, scene camera, wrist
+  cameras, reset, and evaluator snapshot contracts.
 - Add five MuJoCo development task environments for target contact, cube lift,
   bin placement, region pushing, and control operation. They use ordinary SDK
   robot/camera/reset paths, expose task-relevant objects to every reference
@@ -229,6 +233,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Build YAM planning geometry from the same deterministic spatial convex hulls
+  of complete decomposed source pieces used by the other reference families.
+  This preserves forearm recess clearance that a single convex import of each
+  concave source mesh filled, while retaining known native collision rejection.
 - Replace coarse per-band planner collision boxes for SO-101 and xArm7 with
   deterministic convex hulls of complete source collision pieces. Compact the
   hull boundary without shrinking it, preserve readable geom names and provenance,

@@ -55,8 +55,8 @@ contracts as physical sites. The reference generator selects SO-101, YAM or xArm
 MuJoCo also supports a shared two-arm instance with part-scoped control and wrist
 cameras. Exact physical stream/intrinsics/mount rows can replace the clearly marked
 development camera defaults before publication. Its public planner-source helper
-uses the same pinned chain, retains exact YAM collision meshes, and builds bounded
-deterministic spatial hulls from complete SO-101/xArm source collision pieces. It
+uses the same pinned chain and builds bounded deterministic spatial hulls from
+complete source collision pieces for every reference family. It
 records the proxy method and its fixed-open-hand/no-scene scope. The
 hash-pinned manufacturer assemblies and native
 physics workers are reference implementations, not calibrated actuator or friction
@@ -64,10 +64,11 @@ models. Engine-specific acceptance stays in `sdk/tests/test_simulation.py`; a
 skipped optional-engine case is not evidence that the engine passed. Reference
 worlds preserve state across ordinary runs and reset only when the site explicitly
 sets `reset_on_episode: true`.
-The five MuJoCo-only development task environments are built-in interactive
-fixtures using the same runtime surface. Keep their task-relevant objects visible
-from the scene camera for every reference embodiment, and verify mechanics without
-adding task routes or success logic to the simulator.
+The six MuJoCo-only development task environments are built-in interactive
+fixtures using the same runtime surface. Five are single-arm and
+`split_workspace_sorting` is a matched two-arm scene. Keep their task-relevant
+objects visible from the scene camera for every reference embodiment, and verify
+mechanics without adding task routes or success logic to the simulator.
 
 ## Repo map
 

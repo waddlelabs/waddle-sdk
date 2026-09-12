@@ -29,6 +29,7 @@ from waddle_sdk.simulators.description import (
 )
 from waddle_sdk.simulators.scene import (
     BACKENDS,
+    DUAL_ARM_TASK_ENVIRONMENTS,
     ENVIRONMENTS,
     REFERENCE_ENVIRONMENTS,
     RENDER_QUALITIES,
@@ -46,7 +47,11 @@ ENVIRONMENT_BACKENDS = tuple(
     (backend, environment)
     for environment in REFERENCE_ENVIRONMENTS
     for backend in BACKENDS
-) + tuple(("mujoco", environment) for environment in TASK_ENVIRONMENTS)
+) + tuple(
+    ("mujoco", environment)
+    for environment in TASK_ENVIRONMENTS
+    if environment not in DUAL_ARM_TASK_ENVIRONMENTS
+)
 
 
 def documents(
@@ -91,6 +96,33 @@ def test_all_reference_declarations_validate_without_opening(
     action_space = assembly.rig.robot().action_space.parts["arm"]
     assert action_space.rate_hz == site["parts"]["arm"]["options"]["rate_hz"]
     assert assembly.rig.rate_hz == action_space.rate_hz
+
+
+@pytest.mark.parametrize("robot", ROBOTS)
+def test_dual_task_declarations_have_two_parts_and_three_cameras(tmp_path, robot):
+    site, sim = documents(
+        tmp_path,
+        "mujoco",
+        robot,
+        "split_workspace_sorting",
+        arms=2,
+    )
+    loaded = load_site(tmp_path / "site.yaml")
+    assert loaded.id == "physics-test"
+    assert set(site["parts"]) == {"left", "right"}
+    assert set(site["cameras"]) == {"scene", "left_wrist", "right_wrist"}
+    assert set(sim["parts"]) == {"left", "right"}
+    assert sim["environment"] == "split_workspace_sorting"
+
+
+def test_dual_task_environment_requires_two_arms():
+    with pytest.raises(ValueError, match="require arms=2"):
+        make_site(
+            "invalid-dual-task",
+            backend="mujoco",
+            robot="so101",
+            environment="split_workspace_sorting",
+        )
 
 
 @pytest.mark.parametrize("backend", ("isaac", "sapien"))
@@ -272,12 +304,8 @@ def test_reference_planning_source_retains_arm_contract_without_scene_joints(
     proxy = bundle.provenance["collision_proxy"]
     assert proxy["planner_geometry_count"] == model.ngeom
     assert proxy["source_piece_count"] >= proxy["planner_geometry_count"]
-    assert proxy["method"] == (
-        "exact_source_meshes"
-        if robot == "yam"
-        else "spatial_convex_hulls_of_complete_source_collision_pieces"
-    )
-    assert proxy["bucket_width_m"] == (None if robot == "yam" else 0.02)
+    assert proxy["method"] == "spatial_convex_hulls_of_complete_source_collision_pieces"
+    assert proxy["bucket_width_m"] == 0.02
 
 
 def _minimum_body_distance(mujoco, model, data, first, second):
@@ -389,6 +417,101 @@ def test_xarm_planner_source_matches_valid_pull_and_retains_true_collision(tmp_p
         runtime_distance, planning_distance = compare(true_collision, ("base", "link5"))
         assert runtime_distance < -0.02
         assert planning_distance < -0.02
+    finally:
+        runtime.close()
+
+
+def test_yam_planner_source_accepts_native_clearance_and_retains_true_collision(
+    tmp_path,
+):
+    """Concave source meshes must not become one false convex planning hull."""
+
+    mujoco = pytest.importorskip("mujoco")
+    bundle = reference_model_sources("yam", part_name="arm")
+    planner_root = tmp_path / "planner-yam"
+    planner_root.mkdir()
+    model_path = planner_root / "model.xml"
+    model_path.write_bytes(bundle.model)
+    for name, content in bundle.assets.items():
+        path = planner_root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+    planning_model = mujoco.MjModel.from_xml_path(str(model_path))
+    planning_data = mujoco.MjData(planning_model)
+
+    from waddle_sdk.simulators.mujoco import Engine
+
+    _, config = make_site(
+        "yam-planner-parity",
+        backend="mujoco",
+        robot="yam",
+        environment="two_cubes",
+        width=32,
+        height=24,
+    )
+    runtime_root = tmp_path / "runtime-yam"
+    runtime_root.mkdir()
+    runtime = Engine(config, runtime_root)
+
+    def compare(q, bodies):
+        runtime.home((*q, 1.0))
+        runtime_distance = _minimum_body_distance(
+            mujoco, runtime.model, runtime.data, *bodies
+        )
+        for name, value in zip(profile("yam").names[:-1], q, strict=True):
+            planning_data.qpos[int(planning_model.joint(name).qposadr[0])] = value
+        mujoco.mj_forward(planning_model, planning_data)
+        planning_distance = _minimum_body_distance(
+            mujoco, planning_model, planning_data, *bodies
+        )
+        return runtime_distance, planning_distance
+
+    try:
+        clear_targets = (
+            (
+                (
+                    -0.1645073941,
+                    0.8466620062,
+                    0.3973416481,
+                    -0.3213553208,
+                    0.0978822564,
+                    -0.5,
+                ),
+                (0.26, -0.06, 0.08),
+            ),
+            (
+                (
+                    0.8728566265,
+                    1.9691198157,
+                    1.1706587770,
+                    0.3026730298,
+                    -0.2423370779,
+                    -0.5,
+                ),
+                (0.32, 0.445, 0.10),
+            ),
+        )
+        for q, expected_tcp in clear_targets:
+            runtime_distance, planning_distance = compare(q, ("base", "link_2"))
+            assert runtime_distance > 0.001
+            assert planning_distance > 0.001
+            np.testing.assert_allclose(
+                runtime.native_tcp()[0], expected_tcp, atol=3e-5, rtol=0
+            )
+
+        true_collision = (
+            1.6142213825,
+            0.0750332025,
+            0.6630894444,
+            -1.4551047427,
+            0.5088703553,
+            1.8968663964,
+        )
+        runtime_distance, planning_distance = compare(
+            true_collision, ("link_1", "tip_right")
+        )
+        assert runtime_distance < -0.003
+        assert planning_distance < -0.003
     finally:
         runtime.close()
 
@@ -1044,7 +1167,14 @@ def _native_thread_compiler_dependency(tmp_path):
     from waddle_sdk.simulators.mujoco import Engine
 
     for environment in ENVIRONMENTS:
-        _, config = documents(tmp_path, "mujoco", "yam", environment)
+        dual = environment in DUAL_ARM_TASK_ENVIRONMENTS
+        _, config = documents(
+            tmp_path,
+            "mujoco",
+            "yam",
+            environment,
+            arms=2 if dual else 1,
+        )
         if environment == "bottle_cap":
             with pytest.raises(RuntimeError, match="requires a C\\+\\+17 compiler"):
                 Engine(config, tmp_path)
@@ -1052,7 +1182,7 @@ def _native_thread_compiler_dependency(tmp_path):
             engine = Engine(config, tmp_path)
             try:
                 engine.step()
-                assert np.isfinite(engine.read()[0]).all()
+                assert np.isfinite(engine.read("left" if dual else None)[0]).all()
             finally:
                 engine.close()
 
@@ -1870,6 +2000,111 @@ def _wave_a_prop_conformance(engine, advance, config, environment):
     data.qfrc_applied[target_dof] = 0
     assert data.qpos[target_qpos] > 0.008
     assert all(abs(data.qpos[int(joint.qposadr[0])]) < 1e-5 for joint in distractors)
+
+
+@pytest.mark.parametrize("robot", ROBOTS)
+def test_native_split_workspace_sorting_scene(tmp_path, monkeypatch, robot):
+    mujoco = pytest.importorskip("mujoco")
+    monkeypatch.setenv("MUJOCO_GL", "egl")
+    from waddle_sdk.simulators.mujoco import Engine
+
+    _, config = documents(
+        tmp_path,
+        "mujoco",
+        robot,
+        "split_workspace_sorting",
+        arms=2,
+    )
+    engine = Engine(config, tmp_path)
+    model, data = engine.model, engine.data
+
+    def advance(seconds):
+        for _ in range(round(seconds / config["timestep"])):
+            engine.step()
+
+    def place(name, xyz):
+        body = model.body(name)
+        joint_id = int(body.jntadr[0])
+        assert model.jnt_type[joint_id] == mujoco.mjtJoint.mjJNT_FREE
+        qpos = int(model.jnt_qposadr[joint_id])
+        dof = int(model.jnt_dofadr[joint_id])
+        data.qpos[qpos : qpos + 7] = (*xyz, 1.0, 0.0, 0.0, 0.0)
+        data.qvel[dof : dof + 6] = 0
+
+    try:
+        assert np.isfinite(engine.read("left")[0]).all()
+        assert np.isfinite(engine.read("right")[0]).all()
+        for contact in data.contact:
+            bodies = [
+                model.body(int(model.geom(int(geom)).bodyid[0])).name
+                for geom in contact.geom
+            ]
+            assert not (
+                bodies[0].startswith("left__")
+                and bodies[1].startswith("right__")
+                or bodies[0].startswith("right__")
+                and bodies[1].startswith("left__")
+            ), bodies
+
+        camera = config["cameras"]["scene"]
+        world_from_camera = np.asarray(camera["transform"])
+        intrinsics = camera["intrinsics"]
+        rgb, _ = engine.capture("scene")
+        for point, classify in (
+            (
+                (0.26, -0.44, 0.04),
+                lambda red, green, blue: red > 1.5 * green and green > 2 * blue,
+            ),
+            (
+                (0.26, 0.44, 0.04),
+                lambda red, green, blue: green > 3 * max(red, blue),
+            ),
+        ):
+            camera_point = np.linalg.inv(world_from_camera) @ [*point, 1.0]
+            u = round(
+                intrinsics["fx"] * camera_point[0] / camera_point[2] + intrinsics["cx"]
+            )
+            v = round(
+                intrinsics["fy"] * camera_point[1] / camera_point[2] + intrinsics["cy"]
+            )
+            assert 0 <= u < rgb.shape[1] and 0 <= v < rgb.shape[0]
+            pixels = rgb[max(0, v - 2) : v + 3, max(0, u - 2) : u + 3]
+            assert any(classify(*map(int, pixel)) for pixel in pixels.reshape(-1, 3)), (
+                point,
+                rgb[v, u],
+            )
+
+        place("left_object", (0.32, 0.065, 0.06))
+        place("right_object", (0.32, -0.065, 0.06))
+        mujoco.mj_forward(model, data)
+        advance(1.0)
+        np.testing.assert_allclose(
+            data.xpos[int(model.body("left_object").id), :2],
+            (0.32, 0.065),
+            atol=0.005,
+        )
+        np.testing.assert_allclose(
+            data.xpos[int(model.body("right_object").id), :2],
+            (0.32, -0.065),
+            atol=0.005,
+        )
+        for name in ("left_object", "right_object"):
+            assert 0.025 < data.xpos[int(model.body(name).id), 2] < 0.04
+        assert engine.evaluation_snapshot()["identity"]["arm_count"] == 2
+
+        assert engine.evaluation_reset(seed=7)
+        np.testing.assert_allclose(
+            data.xpos[int(model.body("left_object").id)],
+            (0.26, -0.44, 0.02),
+            atol=1e-6,
+        )
+        np.testing.assert_allclose(
+            data.xpos[int(model.body("right_object").id)],
+            (0.26, 0.44, 0.02),
+            atol=1e-6,
+        )
+    finally:
+        engine.close()
 
 
 @pytest.mark.parametrize("durations", [[0.1], [1 / 60] * 6, [0.0005] * 200])

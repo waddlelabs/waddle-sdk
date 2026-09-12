@@ -94,6 +94,46 @@ def objects(environment: str) -> list[list[Link]]:
                 )
             ],
         ]
+    if environment == "split_workspace_sorting":
+        orange = (0.95, 0.35, 0.05, 1.0)
+        green = (0.08, 0.72, 0.18, 1.0)
+
+        def cube(name, y, color):
+            return Link(
+                name,
+                xyz=(0.26, y, 0.02),
+                kind="free",
+                mass=0.04,
+                inertia=(0.0000107, 0.0000107, 0.0000107, 0.0, 0.0, 0.0),
+                shapes=[Shape("box", (0.04, 0.04, 0.04), color=color)],
+            )
+
+        def goal_bin(name, y, color):
+            return Link(
+                name,
+                xyz=(0.32, y, 0.0),
+                shapes=[
+                    Shape("box", (0.11, 0.11, 0.01), (0.0, 0.0, 0.005), color=color),
+                    Shape(
+                        "box", (0.008, 0.11, 0.07), (-0.051, 0.0, 0.035), color=color
+                    ),
+                    Shape("box", (0.008, 0.11, 0.07), (0.051, 0.0, 0.035), color=color),
+                    Shape(
+                        "box", (0.094, 0.008, 0.07), (0.0, -0.051, 0.035), color=color
+                    ),
+                    Shape(
+                        "box", (0.094, 0.008, 0.07), (0.0, 0.051, 0.035), color=color
+                    ),
+                ],
+            )
+
+        return [
+            table,
+            [cube("left_object", -0.44, orange)],
+            [cube("right_object", 0.44, green)],
+            [goal_bin("right_goal_bin", 0.065, orange)],
+            [goal_bin("left_goal_bin", -0.065, green)],
+        ]
     if environment == "touch_target":
         pads = (
             ("distractor_pad_left", -0.12, (0.15, 0.35, 0.95, 1.0)),

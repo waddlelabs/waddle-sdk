@@ -130,26 +130,6 @@ def _collision_geometry(name: str, scratch: Path):
     source_pieces = 0
     planner_geometries = 0
     for link in _fixed_hand(name):
-        yam_mesh = {
-            "base": "base_link_collision.stl",
-            **{f"link_{index}": f"link_{index}_collision.stl" for index in range(1, 6)},
-            "gripper": "gripper.stl",
-            "tip_left": "tip_left.stl",
-            "tip_right": "tip_right.stl",
-        }.get(link.name)
-        if name == "yam" and yam_mesh is not None:
-            path = files(__package__).joinpath(f"data/yam/assets/{yam_mesh}")
-            source_pieces += 1
-            planner_geometries += 1
-            result.append(
-                replace(
-                    link,
-                    shapes=[
-                        Shape("mesh", (1.0, 1.0, 1.0), mesh=str(path), visual=False)
-                    ],
-                )
-            )
-            continue
         pieces = []
         for shape in link.shapes:
             if not shape.collision:
@@ -193,12 +173,8 @@ def _collision_geometry(name: str, scratch: Path):
         result,
         generated,
         {
-            "method": (
-                "exact_source_meshes"
-                if name == "yam"
-                else "spatial_convex_hulls_of_complete_source_collision_pieces"
-            ),
-            "bucket_width_m": None if name == "yam" else _HULL_BUCKET_WIDTH_M,
+            "method": "spatial_convex_hulls_of_complete_source_collision_pieces",
+            "bucket_width_m": _HULL_BUCKET_WIDTH_M,
             "source_piece_count": source_pieces,
             "planner_geometry_count": planner_geometries,
         },

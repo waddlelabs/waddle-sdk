@@ -101,8 +101,10 @@ and a task object. Native equalities, linkage constraints, and the SAPIEN couple
 jaw controller implement the hand's relations.
 
 Planning bounds conservatively cover complete triangles per physical link,
-independently of how native collision meshes are partitioned. They use the same
-URDF transforms. Manufacturer masses, COM offsets and full
+independently of how native collision meshes are partitioned. For every reference
+family, complete decomposed source pieces are grouped into deterministic 20 mm
+spatial bands and each group becomes a convex hull. They use the same URDF
+transforms. Manufacturer masses, COM offsets and full
 inertia tensors are preserved. Reference position servos, gravity compensation
 and contact friction are simulation settings, not measured actuator dynamics.
 Known trajectory velocity uses the existing SDK optional driver port; no velocity

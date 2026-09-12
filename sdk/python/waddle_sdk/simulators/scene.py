@@ -25,13 +25,15 @@ from ..robots.site import PartConfig
 BACKENDS = ("mujoco", "isaac", "sapien")
 ROBOTS = ("so101", "yam", "xarm7")
 REFERENCE_ENVIRONMENTS = ("two_cubes", "bottle_cap", "drawer")
-TASK_ENVIRONMENTS = (
+SINGLE_ARM_TASK_ENVIRONMENTS = (
     "touch_target",
     "pick_lift",
     "place_in_bin",
     "push_to_region",
     "operate_control",
 )
+DUAL_ARM_TASK_ENVIRONMENTS = ("split_workspace_sorting",)
+TASK_ENVIRONMENTS = (*SINGLE_ARM_TASK_ENVIRONMENTS, *DUAL_ARM_TASK_ENVIRONMENTS)
 ENVIRONMENTS = (*REFERENCE_ENVIRONMENTS, *TASK_ENVIRONMENTS)
 RENDER_QUALITIES = ("fast", "standard", "high")
 REFERENCE_SCENE_REVISION = "1.0.0"
@@ -301,6 +303,8 @@ def make_site(
         raise ValueError(f"render_quality must be one of {RENDER_QUALITIES}")
     if type(arms) is not int or arms not in (1, 2):
         raise ValueError("arms must be 1 or 2")
+    if environment in DUAL_ARM_TASK_ENVIRONMENTS and arms != 2:
+        raise ValueError("dual-arm task environments require arms=2")
     if arms == 2 and backend != "mujoco":
         raise ValueError("two-arm reference scenes currently require MuJoCo")
     if (
@@ -326,11 +330,16 @@ def make_site(
     connection = {"simulation": "simulation.json"}
     cameras = {}
     arm_names = ("arm",) if arms == 1 else ("left", "right")
+    dual_offset = (
+        {"so101": 0.20, "yam": 0.38, "xarm7": 0.50}[robot]
+        if environment in DUAL_ARM_TASK_ENVIRONMENTS
+        else 0.28
+    )
     placements = {
         name: {
             "xyz": [
                 0.0,
-                0.0 if arms == 1 else (-0.28 if name == "left" else 0.28),
+                0.0 if arms == 1 else (-dual_offset if name == "left" else dual_offset),
                 0.0,
             ],
             "rpy": [0.0, 0.0, 0.0],
@@ -342,6 +351,8 @@ def make_site(
     if environment == "drawer" or environment in TASK_ENVIRONMENTS:
         # See the interactive face instead of looking from behind fixtures.
         mounts["scene"] = look_at((-0.45, -0.55, 0.55), (0.4, 0, 0.2)).tolist()
+    if environment in DUAL_ARM_TASK_ENVIRONMENTS:
+        mounts["scene"] = look_at((0.10, 0, 2.00), (0.30, 0, 0)).tolist()
     if robot == "yam":
         # I2RT's optical frame for the LINEAR_4310 D405 bracket, expressed
         # relative to the unchanged SDK TCP rather than the native hand frame.
