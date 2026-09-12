@@ -2293,6 +2293,184 @@ def test_native_split_workspace_sorting_scene(tmp_path, monkeypatch, robot):
         engine.close()
 
 
+@pytest.mark.parametrize("robot", ROBOTS)
+@pytest.mark.parametrize(
+    "environment",
+    (
+        "handover-block",
+        "stabilize-open-drawer",
+        "hold-container-place",
+        "stabilize-remove-lid",
+    ),
+)
+def test_native_medium_dual_arm_task_scenes(
+    tmp_path, monkeypatch, robot, environment
+):
+    mujoco = pytest.importorskip("mujoco")
+    monkeypatch.setenv("MUJOCO_GL", "egl")
+    from waddle_sdk.simulators.mujoco import Engine
+
+    _, config = documents(
+        tmp_path,
+        "mujoco",
+        robot,
+        environment,
+        arms=2,
+    )
+    engine = Engine(config, tmp_path)
+    model, data = engine.model, engine.data
+
+    def advance(seconds):
+        for _ in range(round(seconds / config["timestep"])):
+            engine.step()
+
+    def place_free(name, xyz):
+        body = model.body(name)
+        joint_id = int(body.jntadr[0])
+        assert model.jnt_type[joint_id] == mujoco.mjtJoint.mjJNT_FREE
+        qpos = int(model.jnt_qposadr[joint_id])
+        dof = int(model.jnt_dofadr[joint_id])
+        data.qpos[qpos : qpos + 7] = (*xyz, 1.0, 0.0, 0.0, 0.0)
+        data.qvel[dof : dof + 6] = 0.0
+        mujoco.mj_forward(model, data)
+        return int(body.id)
+
+    witnesses = {
+        "handover-block": (
+            ((0.28, -0.30, 0.046), "orange"),
+            ((0.32, 0.30, 0.002), "blue"),
+        ),
+        "stabilize-open-drawer": (((0.503, 0.0, 0.14), "bright"),),
+        "hold-container-place": (
+            ((0.30, -0.23, 0.046), "orange"),
+            ((0.38, 0.245, 0.06), "blue"),
+        ),
+        "stabilize-remove-lid": (
+            ((0.36, -0.08, 0.115), "orange"),
+            ((0.36, 0.25, 0.002), "blue"),
+        ),
+    }
+    classifiers = {
+        "blue": lambda r, g, b: b > 1.5 * max(r, g),
+        "orange": lambda r, g, b: r > 1.4 * g and g > 1.5 * b,
+        "bright": lambda r, g, b: min(r, g, b) > 100,
+    }
+
+    try:
+        assert np.isfinite(engine.read("left")[0]).all()
+        assert np.isfinite(engine.read("right")[0]).all()
+        for contact in data.contact:
+            first, second = (
+                model.body(int(model.geom(int(geom)).bodyid[0])).name
+                for geom in contact.geom
+            )
+            assert not (
+                first.startswith("left__")
+                and second.startswith("right__")
+                or first.startswith("right__")
+                and second.startswith("left__")
+            ), (first, second)
+
+        camera = config["cameras"]["scene"]
+        world_from_camera = np.asarray(camera["transform"])
+        intrinsics = camera["intrinsics"]
+        rgb, _ = engine.capture("scene")
+        for point, expected_color in witnesses[environment]:
+            camera_point = np.linalg.inv(world_from_camera) @ [*point, 1.0]
+            u = round(
+                intrinsics["fx"] * camera_point[0] / camera_point[2]
+                + intrinsics["cx"]
+            )
+            v = round(
+                intrinsics["fy"] * camera_point[1] / camera_point[2]
+                + intrinsics["cy"]
+            )
+            assert 0 <= u < rgb.shape[1] and 0 <= v < rgb.shape[0]
+            pixels = rgb[max(0, v - 3) : v + 4, max(0, u - 3) : u + 4]
+            assert any(
+                classifiers[expected_color](*map(int, pixel))
+                for pixel in pixels.reshape(-1, 3)
+            ), (point, expected_color, rgb[v, u])
+        assert engine.evaluation_snapshot()["identity"]["arm_count"] == 2
+
+        if environment == "handover-block":
+            block = place_free("handover_block", (0.32, 0.30, 0.08))
+            advance(1.0)
+            np.testing.assert_allclose(
+                data.xpos[block, :2], (0.32, 0.30), atol=0.005
+            )
+            assert 0.02 < data.xpos[block, 2] < 0.03
+        elif environment == "stabilize-open-drawer":
+            cabinet = model.body("movable_cabinet")
+            drawer = model.body("drawer")
+            assert model.jnt_type[int(cabinet.jntadr[0])] == mujoco.mjtJoint.mjJNT_FREE
+            initial = data.body("movable_cabinet").xpos.copy()
+            data.xfrc_applied[int(drawer.id), 0] = -8.0
+            advance(1.0)
+            assert data.joint("drawer_slide").qpos[0] > 0.09
+            assert (
+                np.linalg.norm(data.body("movable_cabinet").xpos[:2] - initial[:2])
+                > 0.01
+            )
+        elif environment == "hold-container-place":
+            container = model.body("movable_container")
+            assert model.jnt_type[int(container.jntadr[0])] == mujoco.mjtJoint.mjJNT_FREE
+            initial = data.body("movable_container").xpos.copy()
+            data.xfrc_applied[int(container.id), 1] = 3.0
+            advance(0.5)
+            assert data.body("movable_container").xpos[1] > initial[1] + 0.01
+            assert engine.reset() is True
+            target = place_free("target_object", (0.38, 0.16, 0.12))
+            advance(1.0)
+            np.testing.assert_allclose(
+                data.xpos[target, :2], (0.38, 0.16), atol=0.005
+            )
+            assert 0.025 < data.xpos[target, 2] < 0.04
+        else:
+            assert environment == "stabilize-remove-lid"
+            box = model.body("movable_box")
+            lid = model.body("box_lid")
+            advance(0.5)
+            for name in ("lid_grip_left", "lid_grip_right"):
+                assert 0.003 < data.joint(name).qpos[0] < 0.006
+
+            initial_box_z = float(data.body("movable_box").xpos[2])
+            data.xfrc_applied[int(lid.id), 2] = 5.0
+            advance(0.5)
+            assert data.body("movable_box").xpos[2] > initial_box_z + 0.02
+
+            assert engine.reset() is True
+            initial_separation = float(
+                data.body("box_lid").xpos[2] - data.body("movable_box").xpos[2]
+            )
+            data.xfrc_applied[int(box.id), 2] = -10.0
+            data.xfrc_applied[int(lid.id), 2] = 6.0
+            for _ in range(round(0.5 / config["timestep"])):
+                engine.step()
+                if (
+                    data.body("box_lid").xpos[2]
+                    - data.body("movable_box").xpos[2]
+                    > initial_separation + 0.05
+                ):
+                    break
+            data.xfrc_applied[:] = 0.0
+            assert (
+                data.body("box_lid").xpos[2]
+                - data.body("movable_box").xpos[2]
+                > initial_separation + 0.05
+            )
+            lid_id = place_free("box_lid", (0.36, 0.25, 0.08))
+            advance(1.0)
+            np.testing.assert_allclose(
+                data.xpos[lid_id, :2], (0.36, 0.25), atol=0.006
+            )
+            assert 0.025 < data.xpos[lid_id, 2] < 0.035
+
+        assert engine.evaluation_reset(seed=7)
+    finally:
+        engine.close()
+
+
 @pytest.mark.parametrize("durations", [[0.1], [1 / 60] * 6, [0.0005] * 200])
 def test_explicit_worker_advances_only_on_the_shared_sdk_clock(monkeypatch, durations):
     from waddle_sdk.simulators import worker

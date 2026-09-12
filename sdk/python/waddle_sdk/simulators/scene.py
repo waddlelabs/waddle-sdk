@@ -38,7 +38,13 @@ SINGLE_ARM_TASK_ENVIRONMENTS = (
     "use-hook",
     "open-hinged-door",
 )
-DUAL_ARM_TASK_ENVIRONMENTS = ("split_workspace_sorting",)
+DUAL_ARM_TASK_ENVIRONMENTS = (
+    "split_workspace_sorting",
+    "handover-block",
+    "stabilize-open-drawer",
+    "hold-container-place",
+    "stabilize-remove-lid",
+)
 TASK_ENVIRONMENTS = (*SINGLE_ARM_TASK_ENVIRONMENTS, *DUAL_ARM_TASK_ENVIRONMENTS)
 ENVIRONMENTS = (*REFERENCE_ENVIRONMENTS, *TASK_ENVIRONMENTS)
 RENDER_QUALITIES = ("fast", "standard", "high")

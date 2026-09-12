@@ -14,6 +14,12 @@ Their dimensions, masses, inertias, joints, colors, and collision participation
 are declared there and covered by native scene tests. They are development
 fixtures rather than measurements of a particular physical installation.
 
+The built-in two-arm development fixtures also use programmatic primitives. They
+cover split-workspace sorting, block handover, a free drawer cabinet, a movable
+container, and a removable friction-fit lid. The lid's bounded passive pads use
+native joint springs and contact friction; no task callback attaches or releases
+it.
+
 | Assembly | Source revision | License |
 | --- | --- | --- |
 | SO-101 arm, hand and camera housing | [Robot Studio SO-ARM100](https://github.com/TheRobotStudio/SO-ARM100/tree/eecbe3e0a9ebb23e25ad7b2759b03884c6660903) | `so101/LICENSE`, Apache-2.0 |

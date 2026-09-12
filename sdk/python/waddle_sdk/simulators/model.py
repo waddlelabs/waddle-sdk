@@ -47,6 +47,8 @@ class Link:
     mimic: tuple[str, float, float] | None = None
     damping: float = 0.0  # passive joint resistance in SI units
     initial: float = 0.0  # passive joint initial position in metres/radians
+    stiffness: float = 0.0  # passive joint spring in SI units
+    spring_reference: float = 0.0  # spring rest position in metres/radians
 
 
 def robot_links(p: Profile) -> list[Link]:
@@ -86,10 +88,20 @@ def objects(environment: str) -> list[list[Link]]:
             shapes=[Shape("box", (size, size, size), color=color)],
         )
 
-    def open_bin(name, xyz, color=(0.1, 0.3, 0.85, 1.0)):
+    def open_bin(
+        name,
+        xyz,
+        color=(0.1, 0.3, 0.85, 1.0),
+        *,
+        kind="fixed",
+        mass=0.3,
+    ):
         return Link(
             name,
             xyz=xyz,
+            kind=kind,
+            mass=mass,
+            inertia=(0.0017, 0.0017, 0.0017, 0.0, 0.0, 0.0),
             shapes=[
                 Shape("box", (0.18, 0.18, 0.01), (0.0, 0.0, 0.005), color=color),
                 Shape("box", (0.01, 0.18, 0.08), (-0.085, 0.0, 0.04), color=color),
@@ -203,6 +215,157 @@ def objects(environment: str) -> list[list[Link]]:
             [goal_bin("right_goal_bin", 0.065, orange)],
             [goal_bin("left_goal_bin", -0.065, green)],
         ]
+    if environment == "handover-block":
+        return [
+            table,
+            [
+                free_box(
+                    "handover_block",
+                    (0.28, -0.30, 0.023),
+                    (0.95, 0.45, 0.08, 1.0),
+                )
+            ],
+            [
+                Link(
+                    "goal_region",
+                    xyz=(0.32, 0.30, 0.0005),
+                    shapes=[
+                        Shape(
+                            "box",
+                            (0.16, 0.16, 0.001),
+                            color=(0.12, 0.35, 0.95, 1.0),
+                            collision=False,
+                        )
+                    ],
+                )
+            ],
+        ]
+    if environment == "stabilize-open-drawer":
+        return [
+            table,
+            drawer_fixture(
+                cabinet_kind="free",
+                cabinet_name="movable_cabinet",
+            ),
+        ]
+    if environment == "hold-container-place":
+        return [
+            table,
+            [
+                open_bin(
+                    "movable_container",
+                    (0.38, 0.16, 0.0),
+                    kind="free",
+                    mass=0.3,
+                )
+            ],
+            [
+                free_box(
+                    "target_object",
+                    (0.30, -0.23, 0.023),
+                    (0.95, 0.45, 0.08, 1.0),
+                )
+            ],
+        ]
+    if environment == "stabilize-remove-lid":
+        box = Link(
+            "movable_box",
+            xyz=(0.36, -0.08, 0.0),
+            kind="free",
+            mass=0.35,
+            inertia=(0.0012, 0.0012, 0.0015, 0.0, 0.0, 0.0),
+            shapes=[
+                Shape("box", (0.16, 0.16, 0.01), (0.0, 0.0, 0.005)),
+                Shape("box", (0.01, 0.16, 0.08), (-0.075, 0.0, 0.04)),
+                Shape("box", (0.01, 0.16, 0.08), (0.075, 0.0, 0.04)),
+                Shape("box", (0.14, 0.01, 0.08), (0.0, -0.075, 0.04)),
+                Shape("box", (0.14, 0.01, 0.08), (0.0, 0.075, 0.04)),
+            ],
+        )
+        lid_grips = [
+            Link(
+                f"lid_grip_{side}",
+                parent="movable_box",
+                xyz=(sign * 0.081, 0.0, 0.06),
+                joint=f"lid_grip_{side}",
+                kind="prismatic",
+                axis=(-sign, 0.0, 0.0),
+                limits=(0.0, 0.01),
+                mass=0.01,
+                damping=0.2,
+                initial=0.0044,
+                stiffness=400.0,
+                inertia=(0.000002, 0.0000002, 0.000002, 0.0, 0.0, 0.0),
+                shapes=[
+                    Shape(
+                        "box",
+                        (0.01, 0.05, 0.02),
+                        color=(0.72, 0.75, 0.8, 1.0),
+                    )
+                ],
+            )
+            for side, sign in (("left", -1.0), ("right", 1.0))
+        ]
+        lid = Link(
+            "box_lid",
+            xyz=(0.36, -0.08, 0.0875),
+            kind="free",
+            mass=0.12,
+            inertia=(0.00033, 0.00033, 0.00064, 0.0, 0.0, 0.0),
+            shapes=[
+                Shape(
+                    "box",
+                    (0.18, 0.18, 0.015),
+                    color=(0.95, 0.45, 0.08, 1.0),
+                ),
+                Shape(
+                    "box",
+                    (0.06, 0.03, 0.025),
+                    (0.0, 0.0, 0.02),
+                    color=(0.95, 0.45, 0.08, 1.0),
+                ),
+                # The skirt clears the rigid box walls but compresses the two
+                # passive spring pads. Their finite normal load supplies the
+                # friction fit without requiring either rigid body to deform.
+                Shape(
+                    "box",
+                    (0.008, 0.18, 0.03),
+                    (-0.085, 0.0, -0.015),
+                    color=(0.95, 0.45, 0.08, 1.0),
+                ),
+                Shape(
+                    "box",
+                    (0.008, 0.18, 0.03),
+                    (0.085, 0.0, -0.015),
+                    color=(0.95, 0.45, 0.08, 1.0),
+                ),
+                Shape(
+                    "box",
+                    (0.158, 0.008, 0.03),
+                    (0.0, -0.085, -0.015),
+                    color=(0.95, 0.45, 0.08, 1.0),
+                ),
+                Shape(
+                    "box",
+                    (0.158, 0.008, 0.03),
+                    (0.0, 0.085, -0.015),
+                    color=(0.95, 0.45, 0.08, 1.0),
+                ),
+            ],
+        )
+        goal = Link(
+            "lid_goal_region",
+            xyz=(0.36, 0.25, 0.0005),
+            shapes=[
+                Shape(
+                    "box",
+                    (0.22, 0.20, 0.001),
+                    color=(0.12, 0.35, 0.95, 1.0),
+                    collision=False,
+                )
+            ],
+        )
+        return [table, [box, *lid_grips], [lid], [goal]]
     if environment == "touch_target":
         pads = (
             ("distractor_pad_left", -0.12, (0.15, 0.35, 0.95, 1.0)),
@@ -820,6 +983,12 @@ def mjcf(p: Profile, config: dict) -> str:
     for group in props:
         if group[0].kind == "free":
             ET.SubElement(bodies[group[0].name], "freejoint")
+        for link in group:
+            if not link.joint or not link.stiffness:
+                continue
+            joint = bodies[link.name].find("joint")
+            joint.set("stiffness", str(link.stiffness))
+            joint.set("springref", str(link.spring_reference))
     # Collision visuals are hidden by the camera renderer; actual CAD remains.
     for geom in world.iter("geom"):
         geom.set("group", "2" if geom.get("contype") == "0" else "3")

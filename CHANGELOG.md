@@ -13,6 +13,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Add four medium two-arm MuJoCo development environments for block handover,
+  stabilizing a movable drawer cabinet, holding a movable container during
+  placement, and stabilizing a friction-fit box while removing its lid. Native
+  tests cover both-arm startup, overhead visibility, free fixtures, containment,
+  load transfer, separation, goal placement, and reset for all reference families.
 - Add the single-arm `open-hinged-door` MuJoCo development environment. A passive
   lever retracts its sliding bolt through a native joint constraint; the extended
   bolt contacts a fixed strike and blocks the same opening load that moves the
