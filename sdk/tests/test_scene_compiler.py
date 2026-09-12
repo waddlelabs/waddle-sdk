@@ -214,6 +214,94 @@ def _write_rigid_body_scene(tmp_path):
     return path
 
 
+def _write_articulated_scene(tmp_path):
+    path = _write_scene(tmp_path)
+    document = yaml.safe_load(path.read_text())
+
+    def shape(size, color):
+        return {
+            "geometry": {"kind": "box", "size_m": size},
+            "pose": {
+                "position_m": [0.0, 0.0, 0.0],
+                "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0],
+            },
+            "material": {"rgba": [*color, 1.0]},
+            "collision": {"friction": [0.7, 0.01, 0.001]},
+        }
+
+    document["bodies"] = {
+        # Declare children first to verify parent-order independence.
+        "drawer": {
+            "motion": "slide",
+            "parent": "cabinet",
+            "pose": {
+                "position_m": [0.0, 0.0, 0.06],
+                "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0],
+            },
+            "inertial": {
+                "mass_kg": 0.08,
+                "center_of_mass_m": [0.0, 0.0, 0.0],
+                "inertia_kg_m2": [
+                    0.0000533333,
+                    0.0000533333,
+                    0.0000853333,
+                    0.0,
+                    0.0,
+                    0.0,
+                ],
+            },
+            "joint": {
+                "axis": [2.0, 0.0, 0.0],
+                "range": [0.0, 0.2],
+                "initial_position": 0.03,
+                "damping": 1.0,
+                "friction_loss": 0.01,
+                "stiffness": 4.0,
+                "spring_reference": 0.03,
+            },
+            "geometries": [shape([0.08, 0.08, 0.04], [0.2, 0.4, 0.8])],
+        },
+        "door": {
+            "motion": "hinge",
+            "parent": "cabinet",
+            "pose": {
+                "position_m": [-0.1, 0.0, 0.12],
+                "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0],
+            },
+            "inertial": {
+                "mass_kg": 0.1,
+                "center_of_mass_m": [0.1, 0.0, 0.075],
+                "inertia_kg_m2": [
+                    0.0002708333,
+                    0.0001908333,
+                    0.0000866667,
+                    0.0,
+                    0.0,
+                    0.0,
+                ],
+            },
+            "joint": {
+                "axis": [0.0, 0.0, 1.0],
+                "anchor_m": [0.0, 0.0, 0.0],
+                "range": [0.0, 1.57],
+                "initial_position": 0.1,
+                "damping": 0.2,
+            },
+            "geometries": [shape([0.02, 0.1, 0.15], [0.8, 0.5, 0.2])],
+        },
+        "cabinet": {
+            "motion": "fixed",
+            "pose": {
+                "position_m": [0.65, 0.5, 0.1],
+                "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0],
+            },
+            "geometries": [shape([0.3, 0.2, 0.02], [0.3, 0.3, 0.3])],
+        },
+    }
+    path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    return path
+
+
 def test_portable_scene_validation_is_nonopening_and_seeded(tmp_path, monkeypatch):
     path = _write_scene(tmp_path)
     imported = []
@@ -235,7 +323,7 @@ def test_portable_scene_validation_is_nonopening_and_seeded(tmp_path, monkeypatc
 
 
 def test_mujoco_compiler_emits_complete_ordinary_site(tmp_path):
-    pytest.importorskip("mujoco")
+    mujoco = pytest.importorskip("mujoco")
     build = load_scene(_write_scene(tmp_path)).compile(
         backend="mujoco", output_dir=tmp_path / "build"
     )
@@ -251,6 +339,8 @@ def test_mujoco_compiler_emits_complete_ordinary_site(tmp_path):
     assert manifest["frames"]["scene_camera_optical"]["parent"] == "world"
     assert manifest["calibration"] == {"artifacts": "calib/"}
     assert waddle_sdk.load_site(build.site_path).id == "portable-cell"
+    model = mujoco.MjModel.from_xml_path(str(build.world_path))
+    assert model.joint("arm/shoulder").range == pytest.approx([-1.5, 1.5])
 
     calibration = json.loads(
         (build.output_dir / "calib" / "scene_camera.json").read_text()
@@ -408,6 +498,74 @@ def test_invalid_rigid_body_physics_fails_before_mujoco_import(
     monkeypatch.setattr("waddle_sdk.robots.mujoco_scene._mujoco_module", fail_import)
     with pytest.raises(SceneValidationError, match=message):
         load_scene(path).compile(backend="mujoco", output_dir=tmp_path / "bad-body")
+
+
+def test_portable_parented_slide_and_hinge_have_passive_native_mechanics(tmp_path):
+    mujoco = pytest.importorskip("mujoco")
+    build = load_scene(_write_articulated_scene(tmp_path)).compile(
+        backend="mujoco", output_dir=tmp_path / "articulated-build"
+    )
+    model = mujoco.MjModel.from_xml_path(str(build.world_path))
+    data = mujoco.MjData(model)
+    drawer = model.joint("body/drawer/joint")
+    door = model.joint("body/door/joint")
+    cabinet = model.body("body/cabinet")
+    assert drawer.type == mujoco.mjtJoint.mjJNT_SLIDE
+    assert door.type == mujoco.mjtJoint.mjJNT_HINGE
+    assert drawer.axis == pytest.approx([1.0, 0.0, 0.0])
+    assert drawer.range == pytest.approx([0.0, 0.2])
+    assert door.range == pytest.approx([0.0, 1.57])
+    assert model.body("body/drawer").parentid == cabinet.id
+    assert model.body("body/door").parentid == cabinet.id
+    assert data.qpos[int(drawer.qposadr[0])] == pytest.approx(0.03)
+    assert data.qpos[int(door.qposadr[0])] == pytest.approx(0.1)
+
+    drawer_qpos = int(drawer.qposadr[0])
+    data.qpos[drawer_qpos] = 0.15
+    mujoco.mj_forward(model, data)
+    for _ in range(500):
+        mujoco.mj_step(model, data)
+    assert abs(float(data.qpos[drawer_qpos]) - 0.03) < 0.02
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("axis", [0.0, 0.0, 0.0], "axis must be non-zero"),
+        ("range", [0.2, 0.0], "lower must be less than upper"),
+        ("initial_position", 0.3, "initial_position must be within range"),
+        ("damping", -1.0, "damping must be non-negative"),
+    ],
+)
+def test_invalid_passive_joint_physics_fails_before_mujoco_import(
+    tmp_path, monkeypatch, field, value, message
+):
+    path = _write_articulated_scene(tmp_path)
+    document = yaml.safe_load(path.read_text())
+    document["bodies"]["drawer"]["joint"][field] = value
+    path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+
+    def fail_import():
+        raise AssertionError("invalid joints must fail before importing MuJoCo")
+
+    monkeypatch.setattr("waddle_sdk.robots.mujoco_scene._mujoco_module", fail_import)
+    with pytest.raises(SceneValidationError, match=message):
+        load_scene(path).compile(backend="mujoco", output_dir=tmp_path / "bad-joint")
+
+
+@pytest.mark.parametrize("cycle", [False, True])
+def test_portable_body_parent_graph_refuses_unknowns_and_cycles(tmp_path, cycle):
+    path = _write_articulated_scene(tmp_path)
+    document = yaml.safe_load(path.read_text())
+    if cycle:
+        document["bodies"]["cabinet"]["parent"] = "drawer"
+        message = "parent graph contains a cycle"
+    else:
+        document["bodies"]["drawer"]["parent"] = "missing"
+        message = "parent names unknown body"
+    path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    with pytest.raises(SceneValidationError, match=message):
+        load_scene(path)
 
 
 def test_compiler_refuses_envelope_widening_and_escaping_assets(tmp_path, monkeypatch):

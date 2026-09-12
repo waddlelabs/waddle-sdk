@@ -568,20 +568,19 @@ def _preflight_bodies(config: SceneConfig) -> None:
 
     for name, body in config.document.get("bodies", {}).items():
         motion = str(body["motion"])
+        _pose(body.get("pose"))
         for index, row in enumerate(body["geometries"]):
             if row["geometry"]["kind"] == "plane":
                 raise SceneValidationError(
                     f"bodies.{name}.geometries[{index}] cannot be a plane"
                 )
             collision = row.get("collision", {})
-            if motion == "free" and (
-                "mass_kg" in collision or "density_kg_m3" in collision
-            ):
+            if "mass_kg" in collision or "density_kg_m3" in collision:
                 raise SceneValidationError(
                     f"bodies.{name}.geometries[{index}].collision cannot declare "
-                    "mass or density; free bodies use their explicit inertial"
+                    "mass or density; moving bodies use the body's explicit inertial"
                 )
-        if motion != "free":
+        if motion == "fixed":
             continue
         inertial = body["inertial"]
         mass = float(inertial["mass_kg"])
@@ -608,23 +607,83 @@ def _preflight_bodies(config: SceneConfig) -> None:
             raise SceneValidationError(
                 f"bodies.{name}.inertial.inertia_kg_m2 violates the triangle inequality"
             )
+        if motion in {"slide", "hinge"}:
+            joint = body["joint"]
+            axis = _vector(joint["axis"], (), width=3)
+            if float(np.linalg.norm(axis)) <= 1e-12:
+                raise SceneValidationError(f"bodies.{name}.joint.axis must be non-zero")
+            _vector(joint.get("anchor_m"), (0.0, 0.0, 0.0), width=3)
+            lower, upper = _vector(joint["range"], (), width=2)
+            if lower >= upper:
+                raise SceneValidationError(
+                    f"bodies.{name}.joint.range lower must be less than upper"
+                )
+            initial = float(joint["initial_position"])
+            if not lower <= initial <= upper:
+                raise SceneValidationError(
+                    f"bodies.{name}.joint.initial_position must be within range"
+                )
+            if "spring_reference" in joint:
+                reference = float(joint["spring_reference"])
+                if not lower <= reference <= upper:
+                    raise SceneValidationError(
+                        f"bodies.{name}.joint.spring_reference must be within range"
+                    )
+            for field in ("damping", "friction_loss", "stiffness"):
+                value = float(joint.get(field, 0.0))
+                if value < 0.0:
+                    raise SceneValidationError(
+                        f"bodies.{name}.joint.{field} must be non-negative"
+                    )
 
 
 def _add_bodies(mj: Any, *, spec: Any, config: SceneConfig, output_dir: Path) -> None:
-    """Add portable fixed geometry groups and free rigid bodies to a scene."""
+    """Add portable fixed, free, and one-joint bodies to a scene."""
 
-    for name, row in config.document.get("bodies", {}).items():
-        position, quaternion = _pose(row.get("pose"))
-        body = spec.worldbody.add_body(
-            name=f"body/{name}", pos=position, quat=quaternion
+    pending = dict(config.document.get("bodies", {}))
+    added: dict[str, Any] = {}
+    while pending:
+        name, row = next(
+            (name, row)
+            for name, row in pending.items()
+            if row.get("parent") is None or row["parent"] in added
         )
-        if row["motion"] == "free":
+        position, quaternion = _pose(row.get("pose"))
+        parent_name = row.get("parent")
+        parent = spec.worldbody if parent_name is None else added[str(parent_name)]
+        body = parent.add_body(name=f"body/{name}", pos=position, quat=quaternion)
+        motion = str(row["motion"])
+        if motion != "fixed":
             inertial = row["inertial"]
-            body.add_freejoint(name=f"body/{name}/free")
             body.explicitinertial = True
             body.mass = float(inertial["mass_kg"])
             body.ipos = _vector(inertial["center_of_mass_m"], (), width=3)
             body.fullinertia = _vector(inertial["inertia_kg_m2"], (), width=6)
+        if motion == "free":
+            body.add_freejoint(name=f"body/{name}/free")
+        elif motion in {"slide", "hinge"}:
+            joint = row["joint"]
+            axis = np.asarray(_vector(joint["axis"], (), width=3), dtype=np.float64)
+            axis /= np.linalg.norm(axis)
+            arguments: dict[str, Any] = {
+                "name": f"body/{name}/joint",
+                "type": (
+                    mj.mjtJoint.mjJNT_SLIDE
+                    if motion == "slide"
+                    else mj.mjtJoint.mjJNT_HINGE
+                ),
+                "pos": _vector(joint.get("anchor_m"), (0.0, 0.0, 0.0), width=3),
+                "axis": axis.tolist(),
+                "limited": 1,
+                "range": _vector(joint["range"], (), width=2),
+                "ref": float(joint["initial_position"]),
+                "damping": float(joint.get("damping", 0.0)),
+                "frictionloss": float(joint.get("friction_loss", 0.0)),
+                "stiffness": float(joint.get("stiffness", 0.0)),
+            }
+            if "spring_reference" in joint:
+                arguments["springref"] = float(joint["spring_reference"])
+            body.add_joint(**arguments)
         for index, geometry in enumerate(row["geometries"]):
             _add_geometry(
                 mj,
@@ -636,6 +695,8 @@ def _add_bodies(mj: Any, *, spec: Any, config: SceneConfig, output_dir: Path) ->
                 output_dir=output_dir,
                 category=f"body_{name}",
             )
+        added[str(name)] = body
+        del pending[name]
 
 
 def compile_scene(*, config: SceneConfig, output_dir: Path) -> SceneArtifacts:
@@ -653,6 +714,9 @@ def compile_scene(*, config: SceneConfig, output_dir: Path) -> SceneArtifacts:
     scene = mj.MjSpec()
     scene.modelname = config.name
     scene.modelfiledir = str(output_dir)
+    # Portable hinge values are radians. MjSpec's programmatic default accepts
+    # angular fields as degrees even though compiled XML is emitted in radians.
+    scene.compiler.degree = False
     physics = config.document.get("physics", {})
     scene.option.timestep = float(physics.get("timestep_s", 0.002))
     scene.option.gravity = _vector(

@@ -427,14 +427,42 @@
         }
       }
     },
+    "bodyJoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["axis", "range", "initial_position"],
+      "dependentRequired": {
+        "stiffness": ["spring_reference"],
+        "spring_reference": ["stiffness"]
+      },
+      "properties": {
+        "axis": {"$ref": "#/$defs/vector3"},
+        "anchor_m": {"$ref": "#/$defs/vector3"},
+        "range": {
+          "type": "array",
+          "prefixItems": [
+            {"$ref": "#/$defs/sampleNumber"},
+            {"$ref": "#/$defs/sampleNumber"}
+          ],
+          "items": false
+        },
+        "initial_position": {"$ref": "#/$defs/sampleNumber"},
+        "damping": {"$ref": "#/$defs/sampleNumber"},
+        "friction_loss": {"$ref": "#/$defs/sampleNumber"},
+        "stiffness": {"$ref": "#/$defs/sampleNumber"},
+        "spring_reference": {"$ref": "#/$defs/sampleNumber"}
+      }
+    },
     "rigidBody": {
       "type": "object",
       "additionalProperties": false,
       "required": ["motion", "pose", "geometries"],
       "properties": {
-        "motion": {"enum": ["fixed", "free"]},
+        "motion": {"enum": ["fixed", "free", "slide", "hinge"]},
+        "parent": {"$ref": "#/$defs/name"},
         "pose": {"$ref": "#/$defs/pose"},
         "inertial": {"$ref": "#/$defs/bodyInertial"},
+        "joint": {"$ref": "#/$defs/bodyJoint"},
         "geometries": {
           "type": "array",
           "minItems": 1,
@@ -445,11 +473,39 @@
       "allOf": [
         {
           "if": {
+            "properties": {"motion": {"const": "fixed"}},
+            "required": ["motion"]
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {"required": ["inertial"]},
+                {"required": ["joint"]}
+              ]
+            }
+          }
+        },
+        {
+          "if": {
             "properties": {"motion": {"const": "free"}},
             "required": ["motion"]
           },
-          "then": {"required": ["inertial"]},
-          "else": {"not": {"required": ["inertial"]}}
+          "then": {
+            "required": ["inertial"],
+            "not": {
+              "anyOf": [
+                {"required": ["parent"]},
+                {"required": ["joint"]}
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {"motion": {"enum": ["slide", "hinge"]}},
+            "required": ["motion"]
+          },
+          "then": {"required": ["inertial", "joint"]}
         }
       ]
     },

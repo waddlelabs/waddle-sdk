@@ -408,10 +408,12 @@ and closes it after devices. The reference reset hook preserves state unless
 independently. Each opening gets independent physics state. Worker
 isolation keeps incompatible engine/Python runtimes out of the control process.
 
-These presets add coupled grippers and articulated objects beyond the generic URDF
-compiler's supported scene subset. For custom URDF bundles, use the existing portable
-scene compiler; for an already configured Isaac stage, the existing ROS 2 backend is
-also available. No second SDK lifecycle or agent API is introduced.
+These presets add coupled grippers and specialized threaded objects beyond the
+generic URDF compiler's supported scene subset. The portable compiler supports
+fixed/free bodies and passive one-axis slide/hinge fixture composition. For custom
+URDF bundles, use that portable scene compiler; for an already configured Isaac
+stage, the existing ROS 2 backend is also available. No second SDK lifecycle or
+agent API is introduced.
 
 `reference_model_sources(robot, part_name=...)` supplies a non-opening, hash-bound
 planner model for each generated arm. It uses the same pinned kinematic chain,

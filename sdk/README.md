@@ -176,8 +176,9 @@ waddle-sdk sim compile portable-scene/scene.yaml \
 `waddle.scene/v1` declares robot placement and reviewed limits, scene/wrist camera
 optical poses, RGB-D streams, lights, material/link overrides, visual or physical
 coating geometry, fixed geometry, free rigid bodies with explicit inertia, and seeded
-variation. Compilation is atomic and emits an ordinary `site.yaml`, a native world,
-normalized inputs, and resolved hash evidence.
+variation. Named parent-child bodies can add passive bounded slide or hinge fixture
+joints with damping, friction, and optional springs. Compilation is atomic and emits
+an ordinary `site.yaml`, a native world, normalized inputs, and resolved hash evidence.
 Physical coatings require an explicit conservative safety sphere. Installed simulator
 packages can register short names under `waddle_sdk.simulation_backends` and
 `waddle_sdk.simulation_compilers`; applications need no simulator-specific runtime.

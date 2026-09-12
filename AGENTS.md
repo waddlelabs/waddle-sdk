@@ -149,7 +149,8 @@ waddle-sdk/
                              #   `waddle.scene/v1` schema own the non-opening,
                              #   backend-compiled portable URDF scene build and
                              #   deterministic evidence contract, including
-                             #   fixed/free rigid bodies with explicit inertia.
+                             #   fixed/free/slide/hinge rigid bodies with explicit
+                             #   moving-body inertia and parent composition.
                              #   `simulation.py`
                              #   defines the
                              #   public lazy WorldConfig/SimulationBackend
@@ -372,7 +373,8 @@ waddle-sdk/
                              #   evaluator-only named state/reset, and local e-stop
         mujoco_scene.py      # strict portable-URDF-to-MJCF compiler: staged
                              #   inputs/assets, multi-robot attachment, reviewed
-                             #   limits/materials/coatings, fixed/free bodies,
+                             #   limits/materials/coatings, composed fixed/free/
+                             #   passive slide/hinge bodies,
                              #   cameras/lights,
                              #   ordinary site.yaml, and hash evidence
         ros2.py              # lazy ROS 2 simulator-world bridge: one private

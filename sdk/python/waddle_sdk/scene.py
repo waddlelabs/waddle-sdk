@@ -413,7 +413,13 @@ def _validate_semantics(document: Mapping[str, Any], root: Path) -> None:
             )
             if not mesh.is_file():
                 raise ScenePathError(f"geometry mesh does not exist: {mesh}")
-    for body_name, body in document.get("bodies", {}).items():
+    bodies = document.get("bodies", {})
+    for body_name, body in bodies.items():
+        parent = body.get("parent")
+        if parent is not None and parent not in bodies:
+            raise SceneValidationError(
+                f"bodies.{body_name}.parent names unknown body {parent!r}"
+            )
         for index, row in enumerate(body["geometries"]):
             geometry = row["geometry"]
             if geometry["kind"] == "mesh":
@@ -424,6 +430,19 @@ def _validate_semantics(document: Mapping[str, Any], root: Path) -> None:
                 )
                 if not mesh.is_file():
                     raise ScenePathError(f"body mesh does not exist: {mesh}")
+    remaining = set(bodies)
+    resolved: set[str] = set()
+    while remaining:
+        ready = {
+            name
+            for name in remaining
+            if bodies[name].get("parent") is None or bodies[name]["parent"] in resolved
+        }
+        if not ready:
+            cycle = ", ".join(sorted(remaining))
+            raise SceneValidationError(f"bodies parent graph contains a cycle: {cycle}")
+        resolved.update(ready)
+        remaining.difference_update(ready)
 
 
 def _resolve_randomized(

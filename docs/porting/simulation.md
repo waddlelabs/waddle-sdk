@@ -168,14 +168,57 @@ joint envelope.
 ### Rigid bodies
 
 `geometry` attaches fixed shapes directly to the world. `bodies` groups one or more
-shapes under a named body with a world pose and `motion: fixed` or `motion: free`.
-Free bodies receive a six-degree-of-freedom joint and must declare one explicit
+shapes under a named body. A body may use `motion: fixed`, `free`, `slide`, or
+`hinge`. A top-level pose is in the world; a body with `parent: cabinet` uses a
+pose local to that named parent. Free bodies receive a six-degree-of-freedom joint
+and cannot have a parent. Slide and hinge bodies receive one passive joint and may
+attach to the world or another body. Every moving body must declare one explicit
 inertial record. `inertia_kg_m2` is `[ixx, iyy, izz, ixy, ixz, iyz]` about the
 declared center of mass in body axes. Its matrix must be positive definite and obey
-the rigid-body triangle inequality. A free body's geometry cannot also declare mass
-or density, so there is one reviewed source for its dynamics. Planes remain world
+the rigid-body triangle inequality. Body geometry cannot also declare mass or
+density, so there is one reviewed source for moving-body dynamics. Planes remain world
 geometry; body shapes may be boxes, spheres, capsules, cylinders, or confined meshes.
 Shape poses are local to the body.
+
+A slide or hinge `joint` declares a nonzero local axis, a closed range, and an
+initial position. Slide positions and ranges use metres; hinge values use radians.
+The compiler normalizes the axis. An optional local `anchor_m`, nonnegative
+`damping`, and nonnegative `friction_loss` describe the passive constraint. A
+nonnegative `stiffness` and `spring_reference` must be supplied together, with the
+reference inside the joint range. These fixture joints have no actuator or
+participant-only control path: a robot moves them through ordinary physical contact.
+Parent references may appear in any document order; unknown parents and cycles are
+refused before a backend is imported.
+
+```yaml
+bodies:
+  cabinet:
+    motion: fixed
+    pose: {position_m: [0.5, 0.0, 0.15]}
+    geometries:
+      - geometry: {kind: box, size_m: [0.02, 0.3, 0.3]}
+        pose: {position_m: [0.0, 0.0, 0.0]}
+        material: {rgba: [0.3, 0.3, 0.3, 1.0]}
+        collision: {friction: [0.7, 0.01, 0.001]}
+  drawer:
+    motion: slide
+    parent: cabinet
+    pose: {position_m: [0.1, 0.0, 0.1]}
+    inertial:
+      mass_kg: 0.4
+      center_of_mass_m: [0.0, 0.0, 0.0]
+      inertia_kg_m2: [0.002, 0.003, 0.004, 0.0, 0.0, 0.0]
+    joint:
+      axis: [1.0, 0.0, 0.0]
+      range: [0.0, 0.22]
+      initial_position: 0.0
+      damping: 5.0
+    geometries:
+      - geometry: {kind: box, size_m: [0.3, 0.25, 0.08]}
+        pose: {position_m: [0.0, 0.0, 0.0]}
+        material: {rgba: [0.6, 0.4, 0.2, 1.0]}
+        collision: {friction: [0.7, 0.01, 0.001]}
+```
 
 The generated MuJoCo backend exposes these named joints, body poses and contacts only
 through a separately retained `SimulationAdministration`. Reset restores the resolved

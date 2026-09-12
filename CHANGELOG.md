@@ -166,6 +166,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 - Extend portable scenes with fixed geometry groups and free rigid bodies whose
   explicit mass, center of mass, full inertia, collision shapes, named state, and
   deterministic reset compile into the ordinary shared-world MuJoCo backend.
+- Add parent-order-independent body composition and passive bounded slide/hinge
+  joints with explicit initial state, axis/anchor, damping, friction, and optional
+  springs. Portable hinge values are explicitly compiled as radians.
 - Add installed simulator extension points through the
   `waddle_sdk.simulation_backends` and `waddle_sdk.simulation_compilers` entry-point
   groups while retaining explicit `module:callable` targets.
