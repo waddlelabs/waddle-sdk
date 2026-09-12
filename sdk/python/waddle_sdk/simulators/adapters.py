@@ -194,10 +194,25 @@ class World:
                     process.wait()
 
 
+class AdministrativeWorld(World):
+    """Reference MuJoCo world with a separate trusted evaluation facet."""
+
+    def evaluation_snapshot(self):
+        return self.call("evaluation_snapshot")
+
+    def evaluation_reset(self, *, seed: int) -> bool:
+        if isinstance(seed, bool) or not isinstance(seed, int):
+            raise TypeError("simulation reset seed must be an integer")
+        if seed < 0 or seed > 2**63 - 1:
+            raise ValueError("simulation reset seed must be between 0 and 2^63-1")
+        return self.call("evaluation_reset", seed)
+
+
 def backend(*, config: WorldConfig) -> World:
     """Declare a reference scene through the public SimulationBackend contract."""
     _, definition = load_scene(config.site_root, config.connection.get("simulation"))
-    return World(
+    world_type = AdministrativeWorld if definition["backend"] == "mujoco" else World
+    return world_type(
         definition,
         reset_on_episode=config.options.get("reset_on_episode", False),
         real_time=config.options.get("real_time", True),

@@ -147,6 +147,13 @@ waddle-sdk/
                              #   defines the
                              #   public lazy WorldConfig/SimulationBackend
                              #   lifecycle plus optional part/camera facets;
+                             #   a separately retained SimulationAdministration
+                             #   capability binds only to fully simulated sites
+                             #   with its optional trusted backend facet. It
+                             #   serializes snapshot/reset with SDK dispatch and
+                             #   lifecycle and never enters the participant
+                             #   runtime. Reference MuJoCo reports named ground
+                             #   truth state through that facet.
                              #   Site opens a world once after authorization,
                              #   advances it once per composite SDK tick, resets
                              #   it once per episode, and closes it after devices.

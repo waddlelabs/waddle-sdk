@@ -50,6 +50,7 @@ from .runtime import (
     SupportRow,
 )
 from .simulation import (
+    SimulationAdministration,
     SimulationBackend,
     SimulationCameraBackend,
     SimulationFactoryError,
@@ -729,6 +730,7 @@ class _SiteAssembly:
     worlds: Mapping[str, SimulationBackend]
     _opened: list[tuple[str, SimulationBackend]]
     _lifecycle_lock: threading.RLock
+    fully_simulated: bool
 
     def open(self) -> None:
         try:
@@ -787,6 +789,7 @@ class Site:
         secrets: Mapping[str, str] | Callable[[str], str] | None = None,
         _testing: bool = False,
         authorization_timeout_s: float = 15.0,
+        simulation_administration: SimulationAdministration | None = None,
     ) -> SiteSession:
         """Return an unopened session context; hardware opens in ``__enter__``."""
         return SiteSession(
@@ -797,6 +800,7 @@ class Site:
             secrets=secrets,
             _testing=_testing,
             authorization_timeout_s=authorization_timeout_s,
+            simulation_administration=simulation_administration,
         )
 
     def _assembly(
@@ -916,7 +920,17 @@ class Site:
             simulation_lock,
             on_part_fault,
         )
-        return _SiteAssembly(rig, simulation_backends, [], simulation_lock)
+        fully_simulated = (
+            bool(simulation_backends)
+            and all(part.get("world") is not None for part in raw["parts"].values())
+            and all(
+                camera.get("world") is not None
+                for camera in raw.get("cameras", {}).values()
+            )
+        )
+        return _SiteAssembly(
+            rig, simulation_backends, [], simulation_lock, fully_simulated
+        )
 
 
 # Retain uncertain sessions and their locks even if a caller loses its handle.
@@ -934,6 +948,7 @@ class SiteSession:
         secrets,
         _testing,
         authorization_timeout_s,
+        simulation_administration,
     ):
         self.site = site
         self._transport = transport
@@ -948,6 +963,13 @@ class SiteSession:
         if authorization_timeout_s <= 0:
             raise ValueError("authorization_timeout_s must be positive")
         self._authorization_timeout_s = float(authorization_timeout_s)
+        if simulation_administration is not None and not isinstance(
+            simulation_administration, SimulationAdministration
+        ):
+            raise TypeError(
+                "simulation_administration must be a SimulationAdministration"
+            )
+        self._simulation_administration = simulation_administration
         self._ownership: _SiteLock | None = None
         self._teardown_failed = False
         self._closing = False
@@ -1062,6 +1084,14 @@ class SiteSession:
         assembly.open()
         self._managed = managed
         managed._open(create_core_session)
+        if self._simulation_administration is not None:
+            self._simulation_administration._bind(
+                assembly.worlds,
+                lifecycle_lock=assembly._lifecycle_lock,
+                dispatch_lock=self._dispatch_lock,
+                owner=self,
+                fully_simulated=assembly.fully_simulated,
+            )
         self._service_stop.clear()
         self._service_thread = threading.Thread(
             target=self._serve_calibration_requests,
@@ -1100,6 +1130,8 @@ class SiteSession:
         if managed is None and assembly is None and self._ownership is None:
             return False
         self._closing = True
+        if self._simulation_administration is not None:
+            self._simulation_administration._unbind(self)
         try:
             try:
                 if self._active is not None:

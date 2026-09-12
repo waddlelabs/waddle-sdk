@@ -13,6 +13,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Add a separately retained `SimulationAdministration` capability for trusted
+  evaluators. It binds only to complete supported simulation sites, snapshots
+  finite privileged state, performs deterministic seeded reset without replacing
+  the active SDK run, advances an episode revision, and fails closed on partial
+  support or uncertain reset. The reference MuJoCo worker reports named joints,
+  bodies, velocities, contacts, and simulation time through this optional facet.
 - Add SO-101 to the pinned reference simulation family, including its maintained
   CAD/inertias, five arm joints, normalized physical gripper mapping, RGB-only
   scene/wrist cameras, camera mount, source hashes and license.

@@ -87,6 +87,16 @@ The contracts live in `waddle_sdk.simulation`:
 def backend(*, config: WorldConfig) -> SimulationBackend: ...
 ```
 
+A trusted task-evaluation runner can separately retain a
+`SimulationAdministration` passed to `Site.open(simulation_administration=...)`.
+Never give that object to participant code. A backend may opt in through
+`SimulationAdministrationBackend.evaluation_snapshot()` and
+`evaluation_reset(seed=...)`. The snapshot is finite JSON ground truth; reset must
+be deterministic for the supplied seed and reset the complete world. The SDK
+serializes the facet against dispatch and world lifecycle, while the runner must
+first drain its higher-level tool and motion operations. Refuse administration
+for partial physical/simulated sites or incomplete world support.
+
 Calling the factory must not import a heavyweight runtime, load a scene, start a
 process/thread, connect a socket, or allocate a renderer. The backend provides
 `open()`, exactly-once `step(dt)`, `reset() -> bool`, and idempotent `close()`. Optional

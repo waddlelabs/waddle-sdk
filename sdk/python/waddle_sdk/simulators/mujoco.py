@@ -106,6 +106,102 @@ class Engine:
             self.home(part, self.profile.home)
         return True
 
+    def evaluation_reset(self, *, seed):
+        # Current canonical scenes are deterministic. The explicit seed is part
+        # of the stable facet now and will drive task randomizers as they land.
+        if isinstance(seed, bool) or not isinstance(seed, int):
+            raise TypeError("simulation reset seed must be an integer")
+        if seed < 0 or seed > 2**63 - 1:
+            raise ValueError("simulation reset seed must be between 0 and 2^63-1")
+        return self.reset()
+
+    def evaluation_snapshot(self):
+        """Return backend ground truth to the isolated trusted evaluator."""
+
+        self.mj.mj_forward(self.model, self.data)
+        joint_types = {
+            int(self.mj.mjtJoint.mjJNT_FREE): "free",
+            int(self.mj.mjtJoint.mjJNT_BALL): "ball",
+            int(self.mj.mjtJoint.mjJNT_SLIDE): "slide",
+            int(self.mj.mjtJoint.mjJNT_HINGE): "hinge",
+        }
+        joints = {}
+        for index in range(self.model.njnt):
+            name = self.mj.mj_id2name(self.model, self.mj.mjtObj.mjOBJ_JOINT, index)
+            qpos_start = int(self.model.jnt_qposadr[index])
+            qpos_end = (
+                int(self.model.jnt_qposadr[index + 1])
+                if index + 1 < self.model.njnt
+                else self.model.nq
+            )
+            dof_start = int(self.model.jnt_dofadr[index])
+            dof_end = (
+                int(self.model.jnt_dofadr[index + 1])
+                if index + 1 < self.model.njnt
+                else self.model.nv
+            )
+            joints[name or f"joint:{index}"] = {
+                "type": joint_types[int(self.model.jnt_type[index])],
+                "qpos": [float(value) for value in self.data.qpos[qpos_start:qpos_end]],
+                "qvel": [float(value) for value in self.data.qvel[dof_start:dof_end]],
+            }
+
+        bodies = {}
+        for index in range(self.model.nbody):
+            name = self.mj.mj_id2name(self.model, self.mj.mjtObj.mjOBJ_BODY, index)
+            velocity = np.zeros(6, dtype=float)
+            self.mj.mj_objectVelocity(
+                self.model,
+                self.data,
+                self.mj.mjtObj.mjOBJ_BODY,
+                index,
+                velocity,
+                0,
+            )
+            bodies[name or f"body:{index}"] = {
+                "position_m": [float(value) for value in self.data.xpos[index]],
+                "orientation_wxyz": [float(value) for value in self.data.xquat[index]],
+                "angular_velocity_rad_s": [float(value) for value in velocity[:3]],
+                "linear_velocity_m_s": [float(value) for value in velocity[3:]],
+            }
+
+        contacts = []
+        for index in range(self.data.ncon):
+            contact = self.data.contact[index]
+            force = np.zeros(6, dtype=float)
+            self.mj.mj_contactForce(self.model, self.data, index, force)
+            first_geom, second_geom = int(contact.geom1), int(contact.geom2)
+
+            def geom(identifier):
+                name = self.mj.mj_id2name(
+                    self.model, self.mj.mjtObj.mjOBJ_GEOM, identifier
+                )
+                body_id = int(self.model.geom_bodyid[identifier])
+                body = self.mj.mj_id2name(
+                    self.model, self.mj.mjtObj.mjOBJ_BODY, body_id
+                )
+                return {
+                    "geom": name or f"geom:{identifier}",
+                    "body": body or f"body:{body_id}",
+                }
+
+            contacts.append(
+                {
+                    "first": geom(first_geom),
+                    "second": geom(second_geom),
+                    "distance_m": float(contact.dist),
+                    "normal_force_n": float(force[0]),
+                }
+            )
+        return {
+            "schema": "waddle.simulation-state/mujoco-v1",
+            "backend": "mujoco",
+            "time_s": float(self.data.time),
+            "joints": joints,
+            "bodies": bodies,
+            "contacts": contacts,
+        }
+
     def capture(self, name):
         row = self.config["cameras"][name]
         if name not in self.renderers:

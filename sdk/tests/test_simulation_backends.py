@@ -9,6 +9,10 @@ import simulation_fixtures
 import waddle_sdk
 from waddle_sdk import simulation
 from waddle_sdk.runtime import SdkRuntimePort, SupportFact
+from waddle_sdk.simulation import (
+    SimulationAdministration,
+    SimulationAdministrationError,
+)
 
 
 def _write_site(
@@ -154,6 +158,54 @@ def test_world_reset_is_composed_before_the_normal_arm_reset(tmp_path):
             assert simulation_fixtures.worlds[0].resets == 1
         finally:
             run.__exit__(None, None, None)
+
+
+def test_trusted_administration_resets_world_without_replacing_active_run(tmp_path):
+    administration = SimulationAdministration()
+    with waddle_sdk.load_site(_write_site(tmp_path)).open(
+        console=False,
+        _testing=True,
+        simulation_administration=administration,
+    ) as session:
+        assert not hasattr(session, "simulation_administration")
+        run = session.begin_run(task="repeat the task", actor="test")
+        run_id = run.id
+        try:
+            initial = administration.snapshot()
+            assert initial.episode_revision == 0
+            assert initial.worlds["cell"]["seed"] is None
+            reset = administration.reset(seed=17)
+            assert reset.episode_revision == 1
+            assert reset.worlds["cell"]["seed"] == 17
+            assert reset.digest != initial.digest
+            assert run.id == run_id
+            assert not run.done
+        finally:
+            run.__exit__(None, None, None)
+
+    with pytest.raises(SimulationAdministrationError, match="not bound"):
+        administration.snapshot()
+
+
+def test_administration_refuses_a_world_without_the_optional_facet(tmp_path):
+    administration = SimulationAdministration()
+    path = _write_site(
+        tmp_path, backend="simulation_fixtures:no_administration_backend"
+    )
+    with (
+        pytest.raises(SimulationAdministrationError, match="do not provide"),
+        waddle_sdk.load_site(path).open(
+            console=False,
+            _testing=True,
+            simulation_administration=administration,
+        ),
+    ):
+        pass
+    assert simulation_fixtures.events[-3:] == [
+        "camera.close",
+        "arm.close",
+        "world.close",
+    ]
 
 
 def test_world_references_and_optional_facets_fail_closed(tmp_path):

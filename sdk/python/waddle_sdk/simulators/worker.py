@@ -86,6 +86,8 @@ def serve(connection: Connection) -> None:
                     "write_part",
                     "hold_part",
                     "home_part",
+                    "evaluation_snapshot",
+                    "evaluation_reset",
                 }:
                     raise ValueError("unsupported simulation operation")
                 try:
@@ -95,6 +97,12 @@ def serve(connection: Connection) -> None:
                         if not real_time:
                             advance(arguments[0])
                         result = None
+                    elif operation == "evaluation_snapshot":
+                        result = engine.evaluation_snapshot()
+                    elif operation == "evaluation_reset":
+                        result = engine.evaluation_reset(seed=arguments[0])
+                        pending_time = 0.0
+                        last_time = time.monotonic()
                     else:
                         if operation.endswith("_part"):
                             method = getattr(engine, operation.removesuffix("_part"))

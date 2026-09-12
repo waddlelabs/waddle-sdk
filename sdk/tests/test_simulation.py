@@ -19,6 +19,7 @@ import pytest
 import yaml
 from waddle_sdk import load_site
 from waddle_sdk.robots import yam
+from waddle_sdk.simulation import SimulationAdministration
 from waddle_sdk.simulators import reference_model_sources
 from waddle_sdk.simulators.adapters import World
 from waddle_sdk.simulators.description import (
@@ -1908,6 +1909,41 @@ def test_episode_boundary_preserves_state_unless_reset_requested(
             actual = session.observe().parts["arm"].joint_position
             expected = profile("yam").home if reset_on_episode else moved
             np.testing.assert_allclose(actual, expected, atol=0.002)
+
+
+def test_mujoco_administration_reports_ground_truth_and_resets_inside_run(
+    tmp_path, monkeypatch
+):
+    interpreter = _native_python("mujoco", "drawer")
+    monkeypatch.setenv("MUJOCO_GL", "egl")
+    documents(
+        tmp_path,
+        backend="mujoco",
+        environment="drawer",
+        worker_python=interpreter,
+    )
+    administration = SimulationAdministration()
+    with load_site(tmp_path / "site.yaml").open(
+        console=False,
+        _testing=True,
+        simulation_administration=administration,
+    ) as session:
+        run = session.begin_run(task="open the drawer", actor="test")
+        run_id = run.id
+        try:
+            initial = administration.snapshot()
+            world = initial.worlds["cell"]
+            assert world["schema"] == "waddle.simulation-state/mujoco-v1"
+            assert "drawer_slide" in world["joints"]
+            assert "drawer" in world["bodies"]
+            assert world["joints"]["drawer_slide"]["type"] == "slide"
+
+            reset = administration.reset(seed=23)
+            assert reset.episode_revision == 1
+            assert reset.worlds["cell"]["joints"]["drawer_slide"]["qpos"] == [0.0]
+            assert run.id == run_id and not run.done
+        finally:
+            run.__exit__(None, None, None)
 
 
 @pytest.mark.parametrize("invalid", ["false", 0, 1, None])

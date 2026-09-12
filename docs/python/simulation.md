@@ -195,6 +195,53 @@ runs preserve the scene by default, while `worlds.cell.options.reset_on_episode:
 true` restores native snapshots for each rollout. Reopening creates a fresh scene.
 Both modes use the same model, renderer, sensors and SDK lifecycle.
 
+## Trusted task-evaluator control
+
+An automated task evaluator may retain an explicit administration capability
+while giving its participant only the ordinary SDK runtime:
+
+```python
+from waddle_sdk import load_site
+from waddle_sdk.simulation import SimulationAdministration
+
+administration = SimulationAdministration()
+with load_site("site.yaml").open(
+    simulation_administration=administration,
+) as session:
+    # Give only `session` (or an SdkRuntimePort facade over it) to the participant.
+    initial = administration.snapshot()
+    # After the participant's tool and every admitted motion are terminal:
+    next_initial = administration.reset(seed=1234)
+```
+
+The capability binds only to a fully simulated site whose worlds implement the
+optional `SimulationAdministrationBackend` facet. It is unavailable before site
+open and after close. A failed or refused reset becomes uncertain and latches the
+capability until the site is reopened; it is never retried automatically.
+
+`snapshot()` returns immutable evaluator-owned state plus a content digest and an
+episode revision. The reference MuJoCo facet reports named joint position and
+velocity vectors, named body poses and velocities, contacts, simulation time, and
+its schema version. This state is privileged ground truth. Do not pass the
+capability, snapshot, seed, predicate, or resolved initial state to participant
+code, prompts, tools, workspaces, errors, camera metadata, or participant traces.
+Process and filesystem isolation remain evaluator responsibilities.
+
+`reset(seed=...)` serializes against SDK action dispatch, world stepping, capture,
+and shutdown; resets simulated robots, props, sensors, controls, and clock; then
+returns the new initial snapshot. It does not end or replace the active SDK run,
+clear a caller's trace or counters, or drain a higher-level motion executor. The
+evaluator must pause participant dispatch and confirm that the current tool call
+and all admitted operations are terminal before reset. A reset advances only the
+administration episode revision, so prepared plans from a higher layer must bind
+and check that revision themselves.
+
+The built-in trusted facet is currently available for MuJoCo. Other installed
+worlds remain valid interactive simulations and can opt in by implementing
+`evaluation_snapshot()` and `evaluation_reset(seed=...)` on their backend. An
+evaluation that requests administration fails closed if any selected world or
+device is outside that complete simulated authority.
+
 Position servos, gravity compensation,
 friction and the primitive task props remain
 simulation settings. Manufacturer CAD and inertial properties do not establish

@@ -66,6 +66,7 @@ class World:
         self.closed = False
         self.steps = 0
         self.resets = 0
+        self.evaluation_seed = None
 
     def part(self, *, config) -> base.Rig:
         events.append("world.part")
@@ -93,9 +94,7 @@ class World:
         return base.Rig(
             declaration=descriptors.Robot(
                 name=config.name,
-                action_space=descriptors.JointSpace(
-                    joints=("j0", "j1"), rate_hz=20.0
-                ),
+                action_space=descriptors.JointSpace(joints=("j0", "j1"), rate_hz=20.0),
             ),
             build_arms=build_arms,
             rate_hz=20.0,
@@ -128,6 +127,22 @@ class World:
         self.resets += 1
         return True
 
+    def evaluation_snapshot(self):
+        events.append("world.evaluation_snapshot")
+        return {
+            "schema": "test.simulation-state/v1",
+            "steps": self.steps,
+            "resets": self.resets,
+            "seed": self.evaluation_seed,
+        }
+
+    def evaluation_reset(self, *, seed: int) -> bool:
+        events.append("world.evaluation_reset")
+        self.evaluation_seed = seed
+        self.resets += 1
+        self.steps = 0
+        return True
+
     def close(self) -> None:
         if not self.closed:
             events.append("world.close")
@@ -150,6 +165,15 @@ class NoCameraWorld(World):
 
 def no_camera_backend(*, config):
     return NoCameraWorld(config)
+
+
+class NoAdministrationWorld(World):
+    evaluation_snapshot = None
+    evaluation_reset = None
+
+
+def no_administration_backend(*, config):
+    return NoAdministrationWorld(config)
 
 
 class BrokenCameraWorld(World):

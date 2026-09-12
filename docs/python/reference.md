@@ -83,6 +83,10 @@ Griffe. Documentation builds do not import the native extension or any vendor SD
         - SimulationBackend
         - SimulationPartBackend
         - SimulationCameraBackend
+        - SimulationAdministrationBackend
+        - SimulationAdministration
+        - SimulationSnapshot
+        - SimulationAdministrationError
         - SimulationFactoryError
         - resolve_simulation_factory
         - build_simulation_backend
