@@ -20,7 +20,7 @@ pub mod session;
 pub mod verbs;
 
 pub use jog::{JogAxis, JogRefusal, JogRequest};
-pub use media_uplink::{FrameData, FramePixels};
+pub use media_uplink::{FrameData, FramePixels, MediaTrackStatus};
 pub use mirror::{AgentTaskKind, AgentTaskStatus, ResetProgressPhase, ResetProgressStatus, Status};
 pub use pumps::STALL_THRESHOLD_NS;
 pub use session::{
@@ -48,6 +48,8 @@ pub enum RuntimeError {
     InvalidTaskMetadata(String),
     #[error("invalid hold request: {0}")]
     InvalidHoldRequest(String),
+    #[error("invalid scoped action: {0}")]
+    InvalidScopedAction(String),
     #[error("invalid chat request: {0}")]
     InvalidChat(String),
     #[error("chat unavailable: {0}")]

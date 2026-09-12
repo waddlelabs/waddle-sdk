@@ -8,7 +8,7 @@ every release depends on.
 
 ## What ships
 
-Two distributions, built from one source tree (CLAUDE.md, "Two distributions from one
+Two distributions, built from one source tree (AGENTS.md, "Two distributions from one
 source tree"):
 
 | Distribution | Project file | Module | Cargo features |
@@ -76,7 +76,9 @@ projects in; the trusted publisher configuration travels with each project.
 
 ## Cutting a release
 
-Everything below happens on `main`, with the tree clean and the full local gate green.
+Prepare release changes on a feature branch with a clean tree and the full local
+gate green. Publication requires explicit authorization; tag the reviewed release
+commit only after it has landed on `main`.
 
 1. **Bump the version in both places.** The version lives in
    `sdk/rust/Cargo.toml` (`[package] version`), and maturin derives both wheels' version
@@ -92,10 +94,10 @@ Everything below happens on `main`, with the tree clean and the full local gate 
    fails until the two agree, and the publish job re-checks the built wheels against the
    tag.
 
-2. **Run the gates** (CLAUDE.md, "Build & test") — at minimum, from `sdk/`:
+2. **Run the gates** (AGENTS.md, "Build & test") — at minimum, from `sdk/`:
 
    ```sh
-   uv sync --dev && uv run pytest
+   uv sync --dev --extra mujoco && uv run --no-sync pytest
    cargo clippy --manifest-path rust/Cargo.toml --all-targets -- -D warnings
    cargo fmt --manifest-path rust/Cargo.toml --check
    ```
@@ -117,9 +119,9 @@ Everything below happens on `main`, with the tree clean and the full local gate 
    workflow before any wheel or Agent Skills build and before either publishing
    identity can run.
 
-3. **Stow the changelog.** Move the `[Unreleased]` content into
-   `docs/changelogs/CHANGELOG-X.Y.Z.md`, reset root `CHANGELOG.md` to `[Unreleased]`
-   plus the pointer list (standing obligation 2 in CLAUDE.md).
+3. **Review the pending changelog.** Keep the finished notes under `[Unreleased]`
+   while preparing and publishing the release. A tag alone is not a publication;
+   failed publishing must leave these notes intact.
 
 4. **Commit, tag, push:**
 
@@ -165,6 +167,12 @@ Everything below happens on `main`, with the tree clean and the full local gate 
    `port-waddle-hardware/SKILL.md` below its one versioned top-level directory. Also
    confirm Read the Docs built the tag and that `stable` now resolves to the intended
    newest release; `latest` continues to document `main`.
+
+7. **Archive only after publication is confirmed.** Copy the finished release
+   notes to `docs/changelogs/CHANGELOG-X.Y.Z.md`, including version and date.
+   Preserve all older archives. Reset root `CHANGELOG.md` to a fresh `[Unreleased]`
+   plus the archive index, and commit this cleanup without rewriting the published
+   tag. Unrelated repositories retain their own pending notes.
 
 ## What is honestly supported, right now
 

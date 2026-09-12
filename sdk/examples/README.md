@@ -22,7 +22,7 @@ The same program can select a remote waddle.v0 control transport:
     with site.open(transport=transport) as session:
         ...
 
-Metal owns task graphs, skills, and hosted-run orchestration. The SDK example
+Applications own task orchestration above the public SDK runtime. The SDK example
 therefore demonstrates only the Site/SiteSession/Run hardware contract.
 
 `portable-simulation/` is the higher-level URDF workflow. Its strict

@@ -30,8 +30,7 @@ Waddle.
 - [`conformance/scenario-format.md`](conformance/scenario-format.md) — the
   behavioral-scenario schema that `fixtures/behaviors/` files follow.
 
-The design rationale (including its adversarial stress-test history) is
-preserved unchanged at
+The public design rationale and amendment history are preserved at
 [`docs/rationale/waddle_api_design_doc.md`](docs/rationale/waddle_api_design_doc.md).
 Where rationale and normative docs diverge, the normative docs win.
 

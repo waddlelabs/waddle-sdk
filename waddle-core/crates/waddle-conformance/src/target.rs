@@ -180,6 +180,7 @@ struct GateParts {
     velocity_feedforward: VelocityFeedforwardPolicy,
     interp: Interp,
     last_output: Option<GateOutput>,
+    last_caller_part: Option<Arc<str>>,
     /// The Noop reason of the most recent tick, captured from the plan mode
     /// that produced it (`GateOutput::Noop` deliberately carries no reason —
     /// the reducer's marker translation owns it; here the harness plays
@@ -289,6 +290,7 @@ impl Target {
                     velocity_feedforward: velocity_feedforward_policy(scenario),
                     interp,
                     last_output: None,
+                    last_caller_part: None,
                     last_noop_reason: None,
                     last_tick_ns: None,
                     traffic: false,
@@ -997,18 +999,36 @@ impl Target {
             Some(action) => self.flatten_action_value(action)?,
             None => (vec![0.0; self.default_dims()], None),
         };
+        let part = payload
+            .get("action")
+            .and_then(|a| a.get("part"))
+            .and_then(Value::as_str)
+            .filter(|p| !p.is_empty())
+            .map(Arc::<str>::from);
+        if part.is_some() {
+            let action = self
+                .codec
+                .parse::<pb::Action>("waddle.v0.Action", &payload["action"])?;
+            let space = self
+                .gate
+                .as_ref()
+                .and_then(|g| g.space.as_ref())
+                .ok_or_else(|| scenario_err("named caller action requires a declaration"))?;
+            waddle_types::action::flatten_action(&action, space, PartPolicy::Honor)
+                .map_err(|e| scenario_err(e.to_string()))?;
+        }
         let now = self.now;
         {
             let gp = self.gate_mut("gate_tick")?;
             gp.clock.set(MonoNs(now));
             // The scenario schema has no `obs` field on gate_tick yet;
             // adding one is protocol work.
-            let output = gp.gate.gate(&values, gripper, None);
+            let output = gp.gate.gate_scoped(&values, gripper, None, part.clone());
+            gp.last_caller_part = part.clone();
             match &output {
-                // The caller's own action always commands the whole declared
-                // space; an intervention action carries the part it
-                // addresses, or none for a whole-robot one.
-                GateOutput::Pass { .. } => gp.commanded.record(None, &values),
+                // Both caller and intervention actions retain their declared
+                // part, or none for a whole-robot action.
+                GateOutput::Pass { .. } => gp.commanded.record(part.as_deref(), &values),
                 GateOutput::Substitute { action, .. } | GateOutput::Blend { action, .. } => {
                     gp.commanded.record(action.part.as_deref(), &action.values);
                 }
@@ -1497,6 +1517,7 @@ impl Target {
         let value = match output {
             GateOutput::Pass { provenance } => json!({
                 "kind": "pass",
+                "part": gp.last_caller_part.as_deref().unwrap_or(""),
                 "provenance": self.provenance_json(provenance)?,
             }),
             // `part` (flag `waddle.v0.parts`) rides the two kinds that

@@ -1048,6 +1048,21 @@ impl PySession {
             .map_err(runtime_err)
     }
 
+    /// Native publication evidence; no media naming or availability inference in Python.
+    fn media_tracks<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
+        let out = PyList::empty(py);
+        for track in self.inner.media_tracks() {
+            let row = PyDict::new(py);
+            row.set_item("camera_id", track.camera_id)?;
+            row.set_item("stream", track.stream)?;
+            row.set_item("track_name", track.track_name)?;
+            row.set_item("status", track.status)?;
+            row.set_item("frames_dropped", track.frames_dropped)?;
+            out.append(row)?;
+        }
+        Ok(out)
+    }
+
     /// Report a richer proprioceptive sample than the bare `joint_pos`
     /// every `gate(action, obs)` call already records. Every argument
     /// PATCHES the core's latest known sample — omit one (or pass `None`)

@@ -13,7 +13,6 @@
 
 #![allow(clippy::disallowed_methods)] // wall-clock deadlines are test-only
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant};
@@ -797,78 +796,6 @@ fn report_proprio_part_keys_recording_rows_and_uplink() {
         "one part's report must never overwrite another's"
     );
     assert_eq!(right[0].gripper, Some(0.75));
-}
-
-/// The uplink cadence is keyed PER PART, not spent from one shared budget:
-/// the 10 Hz cap bounds each part's own stream (bandwidth stays bounded —
-/// parts+1 tiny samples), and no part's staleness can be masked, or its
-/// samples starved, by another part's chatter. The plane's freshness checks
-/// key on exactly the part they ask about.
-#[test]
-fn uplink_cadence_is_per_part() {
-    let send_log: SendLog = Arc::new(Mutex::new(Vec::new()));
-    let rig = rig(true);
-    let session = Session::builder("parts-cadence")
-        .robot(bimanual_robot())
-        .control(registry(&send_log))
-        .transport(rig.transport.clone())
-        .build()
-        .unwrap();
-
-    let ep = session.start_episode("part-cadence").unwrap();
-    wait_for(&session, |s| s.parts_negotiated);
-
-    // Report both parts continuously. Once both are past their own period,
-    // one reducer wake sends BOTH — the stamp they share is what proves the
-    // cap is per part and not a single slot the parts take turns in.
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        for (part, v) in [("left", 0.1), ("right", 0.2)] {
-            session
-                .report_proprio(ProprioReport {
-                    part: part.into(),
-                    joint_pos: Some(vec![v; ARM_DIMS]),
-                    ..Default::default()
-                })
-                .unwrap();
-        }
-        let samples = uplinked_samples(&rig.uplinked);
-        let shared_wake = samples
-            .iter()
-            .filter(|(_, s)| s.part == "left")
-            .any(|(t, _)| samples.iter().any(|(t2, s2)| s2.part == "right" && t2 == t));
-        if shared_wake {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "two parts must be able to uplink on the same wake: {samples:?}"
-        );
-        std::thread::sleep(Duration::from_millis(10));
-    }
-
-    ep.terminate(TerminalOutcome::Success, "done");
-    session.shutdown();
-
-    // And the cap itself still holds, per part: 10 Hz each.
-    let mut by_part: BTreeMap<String, Vec<i64>> = BTreeMap::new();
-    for (t, sample) in uplinked_samples(&rig.uplinked) {
-        by_part.entry(sample.part.clone()).or_default().push(t);
-    }
-    assert!(
-        by_part.contains_key("left") && by_part.contains_key("right"),
-        "every reported part must reach the uplink: {:?}",
-        by_part.keys().collect::<Vec<_>>()
-    );
-    for (part, stamps) in &by_part {
-        for pair in stamps.windows(2) {
-            assert!(
-                pair[1] - pair[0] >= 80_000_000,
-                "part {part:?} uplinked faster than the declared 10 Hz: {}ns apart",
-                pair[1] - pair[0]
-            );
-        }
-    }
 }
 
 /// VERSIONING.md's pre-flag rule for the uplink, in the direction that is

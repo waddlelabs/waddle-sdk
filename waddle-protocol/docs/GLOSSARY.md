@@ -1,8 +1,8 @@
 # GLOSSARY — the Waddle vocabulary
 
 This document is **normative**. It is the **single vocabulary, internal and
-external**: the same word means the same thing in the cell codebase, the
-protocol, every SDK and frontend, and customer-facing documentation. It is
+external**: the same word means the same thing in the protocol, every SDK and
+frontend, and customer-facing documentation. It is
 **frozen in `waddle-protocol` v0** and is amended **only by reviewed pull
 request** against this repository. Every word in code, comments, fixtures, and
 docs MUST conform to this table; where any other document (including the

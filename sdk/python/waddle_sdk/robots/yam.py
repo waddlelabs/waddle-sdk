@@ -75,6 +75,8 @@ import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from importlib.resources import files
+from time import monotonic
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -87,10 +89,14 @@ from ..descriptors import (
     JointSpace,
     Robot,
 )
+from ..runtime import FaultCode, RuntimeFault
 from . import base
 from ._i2rt_patches import apply_command_state_atomic_patch, apply_recv_starvation_patch
 from .base import CrossArm
 from .socketcan import ensure_socketcan_up
+
+if TYPE_CHECKING:
+    from .models import ModelSources
 
 __all__ = [
     "ARM_JOINT_COUNT",
@@ -100,6 +106,7 @@ __all__ = [
     "CHAIN_AXIS",
     "CHAIN_ORIGIN_RPY_RAD",
     "CHAIN_ORIGIN_XYZ_M",
+    "DEFAULT_GRAVITY_COMP_FACTOR",
     "DEFAULT_MAX_FEEDFORWARD_VEL_RAD_S",
     "DEFAULT_MAX_GRIPPER_SPEED_PER_S",
     "DEFAULT_MAX_JOINT_SPEED_RAD_S",
@@ -130,6 +137,7 @@ __all__ = [
     "bimanual",
     "declaration",
     "forward_kinematics",
+    "model_sources",
     "safety_presets",
     "urdf_text",
 ]
@@ -139,6 +147,108 @@ __all__ = [
 #: package is installed by the same pin (it is not on PyPI), so a module that
 #: drives an arm and a model that describes one cannot drift apart silently.
 I2RT_PIN = "570ef66681ff12bd8298aba34084307cfecc9f05"
+
+#: Absolute gravity torque factors for the six arm joints, passed to I2RT
+#: before its servo starts. Joints 3/4 use rounded two-arm bench calibration;
+#: these are SDK control defaults, not vendor ratings or universal calibration.
+#: The vendor appends its unchanged gripper factor of 1.0.
+DEFAULT_GRAVITY_COMP_FACTOR = (1.0, 1.1, 1.2, 1.3, 1.0, 1.0)
+
+# Pinned I2RT robots/config/{yam,linear_4310}.yml. These are the startup
+# gains used to validate site options before opening CAN, not new defaults.
+_VENDOR_KP = (80.0, 80.0, 80.0, 10.0, 10.0, 10.0, 20.0)
+_VENDOR_KD = (5.0, 5.0, 5.0, 1.5, 1.5, 1.5, 0.5)
+# Both DM4340 and DM4310 use these MIT gain encoding bounds (12 bits),
+# from pinned motor_drivers/utils.py. Bounds are not tuning recommendations.
+_GAIN_MAX = {"kp": 500.0, "kd": 5.0}
+
+
+def _gain_values(values, *, count, maximum, where):
+    try:
+        row = tuple(values)
+    except TypeError as error:
+        raise ValueError(f"{where}: gains need {count} numeric values") from error
+    if len(row) != count:
+        raise ValueError(f"{where}: gains need {count} values, got {len(row)}")
+    for index, value in enumerate(row):
+        if (
+            isinstance(value, (bool, str, bytes))
+            or not isinstance(value, (int, float, np.integer, np.floating))
+            or not math.isfinite(float(value))
+            or not 0 < value <= maximum
+        ):
+            raise ValueError(
+                f"{where}: gain[{index}]={value!r} must be finite and in (0, {maximum}]"
+            )
+    return np.asarray(row, dtype=float)
+
+
+def _gain_vectors(
+    kp=_VENDOR_KP,
+    kd=_VENDOR_KD,
+    *,
+    arm_gains=None,
+    arm_gain_scale=1.0,
+    gripper_gain_scale=1.0,
+    where="YAM",
+):
+    """Resolve requested motor gains, refusing the vendor codec's silent clamp."""
+    arm_scale, hand_scale = _gain_values(
+        (arm_gain_scale, gripper_gain_scale),
+        count=2,
+        maximum=math.inf,
+        where=f"{where} arm/gripper_gain_scale",
+    )
+    if arm_gains is not None:
+        if not isinstance(arm_gains, Mapping) or set(arm_gains) != {"kp", "kd"}:
+            raise ValueError(f"{where}: arm_gains requires exactly kp and kd")
+        if arm_scale != 1.0:
+            raise ValueError(f"{where}: arm_gains conflicts with arm_gain_scale != 1")
+    result = []
+    for name, values in (("kp", kp), ("kd", kd)):
+        row = _gain_values(
+            values,
+            count=JOINT_COUNT,
+            maximum=_GAIN_MAX[name],
+            where=f"{where} vendor {name} gains",
+        )
+        if arm_gains is not None:
+            row[:ARM_JOINT_COUNT] = _gain_values(
+                arm_gains[name],
+                count=ARM_JOINT_COUNT,
+                maximum=_GAIN_MAX[name],
+                where=f"{where} arm_gains.{name}",
+            )
+        row[:ARM_JOINT_COUNT] *= arm_scale
+        row[ARM_JOINT_COUNT] *= hand_scale
+        result.append(
+            _gain_values(
+                row,
+                count=JOINT_COUNT,
+                maximum=_GAIN_MAX[name],
+                where=f"{where} effective {name} gains",
+            )
+        )
+    return tuple(result)
+
+
+def _checked_gravity_comp_factor(values: Sequence[float]) -> tuple[float, ...]:
+    try:
+        row = tuple(values)
+    except TypeError as exc:
+        raise ValueError(
+            "gravity_comp_factor needs six finite positive numbers"
+        ) from exc
+    if len(row) != ARM_JOINT_COUNT or any(
+        isinstance(value, (bool, str, bytes))
+        or not isinstance(value, (int, float, np.integer, np.floating))
+        or not math.isfinite(float(value))
+        or float(value) <= 0.0
+        for value in row
+    ):
+        raise ValueError("gravity_comp_factor needs six finite positive numbers")
+    return tuple(float(value) for value in row)
+
 
 #: Where that commit lives, and the ONE command that installs it.
 #:
@@ -316,9 +426,20 @@ def urdf_text() -> str:
     see ``yam_data/README.md`` for the provenance, the patches and the
     vendor's MIT licence.
     """
-    return (files(__package__) / "yam_data" / "yam.urdf").read_text(
-        encoding="utf-8"
-    )
+    return (files(__package__) / "yam_data" / "yam.urdf").read_text(encoding="utf-8")
+
+
+def model_sources(
+    *, factory: str, part_name: str, part: Mapping
+) -> ModelSources | None:
+    """Load verified source geometry and hardware relationships without opening.
+
+    See :mod:`waddle_sdk.robots.models` for the shared bundle and failure
+    contract. The optional pinned I2RT dependency is inspected only on this call.
+    """
+    from .yam_model import model_sources as load_sources
+
+    return load_sources(factory=factory, part_name=part_name, part=part)
 
 
 # ---------------------------------------------------------------------------
@@ -384,7 +505,7 @@ DEFAULT_MAX_GRIPPER_SPEED_PER_S = 2.5
 
 #: Ceiling on a supplied arm velocity feedforward.  This is a motor command
 #: applied before position error is measured, so a bad value is less
-#: self-correcting than an ordinary position target.  Metal's declared ramps
+#: self-correcting than an ordinary position target.  The application's declared ramps
 #: are normally far below it; the bound is the adapter's last line of defense.
 DEFAULT_MAX_FEEDFORWARD_VEL_RAD_S = 3.0
 
@@ -403,8 +524,8 @@ DEFAULT_SIM_HOME = (
 def safety_presets(*, factory: str, options: Mapping[str, object]):
     """Return configuration-only YAM workspace starting points.
 
-    The tabletop box is the conservative single-arm starter shipped in the SDK
-    example.  It is expressed in each selected arm's base frame.  Mount height,
+    The tabletop box spans 0.7 m in each horizontal direction and 0 to 1 m
+    vertically, expressed in each selected arm's base frame.  Mount height,
     table geometry, tooling, payload, and neighboring arms remain site facts and
     therefore require explicit review in the initializer.
     """
@@ -419,8 +540,8 @@ def safety_presets(*, factory: str, options: Mapping[str, object]):
             identifier="yam-tabletop",
             label="YAM tabletop starter",
             workspace_bounds={
-                "min": [0.05, -0.45, 0.05],
-                "max": [0.60, 0.45, 0.70],
+                "min": [-0.7, -0.7, 0.0],
+                "max": [0.7, 0.7, 1.0],
             },
             review=(
                 "Measure the mounted base, table plane, tool length, and neighboring "
@@ -508,6 +629,10 @@ class LiveDriver:
       it is the number the envelope measures the next command's per-step cap
       against, so guessing it would let a large uncommanded jaw motion through
       the check that exists to refuse one.
+      When the pinned vendor exposes its CAN cache, reads and commands also
+      refuse a stopped writer/server or a cache that has not been replaced
+      across 0.5 seconds of observation. The vendor's read-time timestamps do
+      not prove that a new motor reply arrived.
     * ``robot.zero_torque_mode()`` is the stop the vendor offers, and it is
       HONEST about what it is: the arm goes compliant and FLOATS under the
       always-on gravity compensation. It does not freeze in place. The site's
@@ -542,12 +667,15 @@ class LiveDriver:
     """
 
     kind = "live"
+    _MAX_FEEDBACK_STALL_S = 0.5
 
     def __init__(
         self,
         channel: str,
         *,
         gripper_limits: Sequence[float] | None = None,
+        gravity_comp_factor: Sequence[float] = DEFAULT_GRAVITY_COMP_FACTOR,
+        arm_gains: Mapping[str, Sequence[float]] | None = None,
         arm_gain_scale: float = 1.0,
         gripper_gain_scale: float = 1.0,
         velocity_feedforward: bool = True,
@@ -557,6 +685,18 @@ class LiveDriver:
         zero_gravity: bool = False,
         report: Callable[[str], None] = base.status,
     ) -> None:
+        gravity_factors = _checked_gravity_comp_factor(gravity_comp_factor)
+        requested_kp, requested_kd = _gain_vectors(
+            arm_gains=arm_gains,
+            arm_gain_scale=arm_gain_scale,
+            gripper_gain_scale=gripper_gain_scale,
+            where=f"channel={channel}",
+        )
+        if arm_gains is not None:
+            arm_gains = {
+                "kp": tuple(requested_kp[:ARM_JOINT_COUNT]),
+                "kd": tuple(requested_kd[:ARM_JOINT_COUNT]),
+            }
         try:
             from i2rt.robots.get_robot import get_yam_robot
             from i2rt.robots.utils import GripperType
@@ -581,6 +721,9 @@ class LiveDriver:
         self._zero_gravity = bool(zero_gravity)
         self._report = report
         self._lock = threading.Lock()
+        self._feedback_lock = threading.Lock()
+        self._last_feedback_state: object | None = None
+        self._last_feedback_update = monotonic()
         self._estopped = False
         self._velocity_feedforward = bool(velocity_feedforward)
         self._max_feedforward_vel_rad_s = float(max_feedforward_vel_rad_s)
@@ -611,6 +754,7 @@ class LiveDriver:
             gripper_type=GripperType.LINEAR_4310,
             zero_gravity_mode=self._zero_gravity,
             gripper_limits_override=gripper_limits_override,
+            gravity_comp_factor=np.asarray(gravity_factors, dtype=float),
         )
         try:
             # I2RT's constructor latches its initial measured pose with the
@@ -627,7 +771,7 @@ class LiveDriver:
                     "silently"
                 )
             self._default_kp, self._default_kd = self._snapshot_gains()
-            self._apply_gain_scales(arm_gain_scale, gripper_gain_scale)
+            self._apply_gain_scales(arm_gain_scale, gripper_gain_scale, arm_gains)
             self._can_command_state = callable(
                 getattr(self._robot, "command_joint_state", None)
             )
@@ -691,9 +835,12 @@ class LiveDriver:
         return kp, kd
 
     def _apply_gain_scales(
-        self, arm_gain_scale: float, gripper_gain_scale: float
+        self,
+        arm_gain_scale: float,
+        gripper_gain_scale: float,
+        arm_gains: Mapping[str, Sequence[float]] | None = None,
     ) -> None:
-        """Apply the site's two disjoint gain scales and retain them for recovery.
+        """Apply the site's arm/hand gains and retain them for recovery.
 
         I2RT exposes one gain vector for the whole motor chain: the first six
         rows are the arm and the last row is the hand.  Apply both changes in
@@ -701,44 +848,101 @@ class LiveDriver:
         scale that cannot be applied is an open failure, not a site setting
         that silently did nothing.
         """
-        arm_scale = float(arm_gain_scale)
-        hand_scale = float(gripper_gain_scale)
-        for name, value in (
-            ("arm_gain_scale", arm_scale),
-            ("gripper_gain_scale", hand_scale),
-        ):
-            if not math.isfinite(value) or value <= 0.0:
-                raise ValueError(f"{name} must be finite and > 0, got {value!r}")
-        if self._zero_gravity or (arm_scale == 1.0 and hand_scale == 1.0):
+        if self._zero_gravity:
             return
         if self._default_kp is None or self._default_kd is None:
+            if (
+                arm_gains is None
+                and arm_gain_scale == 1.0
+                and gripper_gain_scale == 1.0
+            ):
+                return
             raise RuntimeError(
-                f"{self.channel}: gain scaling was requested but I2RT reported no "
+                f"{self.channel}: gain configuration was requested but I2RT reported no "
                 "kp/kd vectors"
             )
-        kp = np.asarray(self._default_kp, dtype=float).copy()
-        kd = np.asarray(self._default_kd, dtype=float).copy()
-        if kp.ndim != 1 or kp.shape != kd.shape or kp.shape != (JOINT_COUNT,):
-            raise RuntimeError(
-                f"{self.channel}: gain vectors have shapes {kp.shape}/{kd.shape}; "
-                f"expected ({JOINT_COUNT},)"
-            )
-        kp[:ARM_JOINT_COUNT] *= arm_scale
-        kd[:ARM_JOINT_COUNT] *= arm_scale
-        kp[ARM_JOINT_COUNT] *= hand_scale
-        kd[ARM_JOINT_COUNT] *= hand_scale
+        kp, kd = _gain_vectors(
+            self._default_kp,
+            self._default_kd,
+            arm_gains=arm_gains,
+            arm_gain_scale=arm_gain_scale,
+            gripper_gain_scale=gripper_gain_scale,
+            where=f"channel={self.channel}",
+        )
+        if arm_gains is None and arm_gain_scale == 1.0 and gripper_gain_scale == 1.0:
+            return
         self._robot.update_kp_kd(kp, kd)
         self._default_kp, self._default_kd = kp, kd
         self._report(
-            f"live {self.channel}: arm gains x{arm_scale:g}; gripper gains "
-            f"x{hand_scale:g}"
+            f"live {self.channel}: requested motor gains kp={kp.tolist()}, kd={kd.tolist()} "
+            "(within MIT encoding limits; 12-bit quantization applies)"
         )
 
     @property
     def estopped(self) -> bool:
         return self._estopped
 
+    def _check_feedback(self) -> None:
+        """Reject stopped or demonstrably stale pinned-I2RT feedback.
+
+        I2RT replaces ``motor_chain.state`` under ``state_lock`` only after
+        successful CAN transactions. Its public observations and even its
+        internal joint-state timestamp can instead be rebuilt from that same
+        old cache. Retain the object itself to prevent identity reuse, and
+        measure how long repeated checks see it with our monotonic clock.
+        Identical joint values in newly acquired feedback remain valid.
+
+        Alternate vendor objects without this optional telemetry retain their
+        existing read/write contract. A first observation, or a new snapshot
+        after an observation gap, establishes a baseline rather than proving
+        the snapshot's acquisition time, which I2RT does not expose.
+        """
+        server = getattr(self._robot, "_server_thread", None)
+        if callable(getattr(server, "is_alive", None)) and not server.is_alive():
+            raise RuntimeFault(
+                FaultCode.MOTOR_FAILURE,
+                f"{self.channel}: I2RT control server has stopped",
+                context={"channel": self.channel, "reason": "control_server_stopped"},
+            )
+        chain = getattr(self._robot, "motor_chain", None)
+        if chain is None:
+            return
+        if getattr(chain, "running", None) is False:
+            raise RuntimeFault(
+                FaultCode.MOTOR_FAILURE,
+                f"{self.channel}: I2RT CAN writer has stopped",
+                context={"channel": self.channel, "reason": "can_writer_stopped"},
+            )
+        state_lock = getattr(chain, "state_lock", None)
+        if state_lock is None or not hasattr(chain, "state"):
+            return
+        with self._feedback_lock:
+            with state_lock:
+                snapshot = chain.state
+            if snapshot is None:
+                raise RuntimeFault(
+                    FaultCode.MOTOR_FAILURE,
+                    f"{self.channel}: I2RT has no CAN feedback",
+                    context={"channel": self.channel, "reason": "missing_feedback"},
+                )
+            now = monotonic()
+            if snapshot is not self._last_feedback_state:
+                self._last_feedback_state = snapshot
+                self._last_feedback_update = now
+            elif now - self._last_feedback_update > self._MAX_FEEDBACK_STALL_S:
+                raise RuntimeFault(
+                    FaultCode.MOTOR_FAILURE,
+                    f"{self.channel}: stale CAN feedback; no new motor replies "
+                    f"observed for {now - self._last_feedback_update:.3f} s",
+                    context={
+                        "channel": self.channel,
+                        "reason": "feedback_stalled",
+                        "stall_s": now - self._last_feedback_update,
+                    },
+                )
+
     def read(self) -> tuple[np.ndarray, np.ndarray]:
+        self._check_feedback()
         obs = self._robot.get_observations() or {}
         joint_pos = obs.get("joint_pos")
         if joint_pos is None:
@@ -781,6 +985,7 @@ class LiveDriver:
                     "with no gains, so a command here would latch a setpoint that "
                     "moves nothing. Clear the latch at the machine."
                 )
+            self._check_feedback()
             self._robot.command_joint_pos(np.asarray(target, dtype=float))
 
     def write_position_velocity(
@@ -816,14 +1021,13 @@ class LiveDriver:
                     "with no gains, so a command here would latch a setpoint that "
                     "moves nothing. Clear the latch at the machine."
                 )
+            self._check_feedback()
             if not self._velocity_feedforward or not self._can_command_state:
                 self._robot.command_joint_pos(position)
                 return False
             cap = self._max_feedforward_vel_rad_s
             bounded = np.zeros(JOINT_COUNT, dtype=float)
-            bounded[:ARM_JOINT_COUNT] = np.clip(
-                velocity[:ARM_JOINT_COUNT], -cap, cap
-            )
+            bounded[:ARM_JOINT_COUNT] = np.clip(velocity[:ARM_JOINT_COUNT], -cap, cap)
             self._robot.command_joint_state({"pos": position, "vel": bounded})
             return True
 
@@ -924,8 +1128,7 @@ class LiveDriver:
             target = getattr(thread, "_target", None)
             if (
                 getattr(target, "__self__", None) is motor_chain
-                and getattr(target, "__name__", "")
-                == "_set_torques_and_update_state"
+                and getattr(target, "__name__", "") == "_set_torques_and_update_state"
             ):
                 control_thread = thread
                 break
@@ -1059,9 +1262,7 @@ def declaration(
     if declare_urdf and base_frame != URDF_BASE_LINK:
         # Not an identity nobody wrote: the arm's base IS the model's root
         # link, and this states that rename so a consumer can compose the two.
-        declared_frames += (
-            FrameTransform(parent=base_frame, child=URDF_BASE_LINK),
-        )
+        declared_frames += (FrameTransform(parent=base_frame, child=URDF_BASE_LINK),)
 
     return Robot(
         name=name,
@@ -1124,7 +1325,7 @@ def _checked_joint_limits(
     the shipped interval is reported by name and by how far. Nothing here
     clamps and nothing here quietly accepts — this is the number the envelope
     will judge every command by, and the same number the declaration carries
-    to the plane, so a teleoperator and a Waddle-hosted agent are shown the
+    to the plane, so a teleoperator and an application-hosted agent are shown the
     range this rig really has."""
     if limits is None:
         return JOINT_LIMITS
@@ -1256,6 +1457,8 @@ def _build_arms(
     step_caps: Sequence[float],
     joint_limits: Sequence[Sequence[float]],
     rate_hz: float,
+    gravity_comp_factor: Sequence[float],
+    arm_gains: Mapping[str, Sequence[float]] | None,
     arm_gain_scale: float,
     gripper_gain_scale: float,
     velocity_feedforward: bool,
@@ -1276,6 +1479,18 @@ def _build_arms(
     So a failure closes what it opened before it re-raises: half a rig is not a
     rig, and the exception is still the news."""
 
+    kp, kd = _gain_vectors(
+        arm_gains=arm_gains,
+        arm_gain_scale=arm_gain_scale,
+        gripper_gain_scale=gripper_gain_scale,
+        where="YAM declaration",
+    )
+    if arm_gains is not None:
+        arm_gains = {
+            "kp": tuple(kp[:ARM_JOINT_COUNT]),
+            "kd": tuple(kd[:ARM_JOINT_COUNT]),
+        }
+
     def build() -> dict[str, base.Arm]:
         arms: dict[str, base.Arm] = {}
         opened: dict[str, base.Driver] = {}
@@ -1293,6 +1508,8 @@ def _build_arms(
                     driver = LiveDriver(
                         site.channel,
                         gripper_limits=site.gripper_limits,
+                        gravity_comp_factor=gravity_comp_factor,
+                        arm_gains=arm_gains,
                         arm_gain_scale=arm_gain_scale,
                         gripper_gain_scale=gripper_gain_scale,
                         velocity_feedforward=velocity_feedforward,
@@ -1347,6 +1564,8 @@ def bimanual(
     rate_hz: float = DEFAULT_RATE_HZ,
     max_joint_speed_rad_s: float = DEFAULT_MAX_JOINT_SPEED_RAD_S,
     max_gripper_speed_per_s: float = DEFAULT_MAX_GRIPPER_SPEED_PER_S,
+    gravity_comp_factor: Sequence[float] = DEFAULT_GRAVITY_COMP_FACTOR,
+    arm_gains: Mapping[str, Sequence[float]] | None = None,
     arm_gain_scale: float = 1.0,
     gripper_gain_scale: float = 1.0,
     velocity_feedforward: bool = True,
@@ -1361,7 +1580,7 @@ def bimanual(
     report: Callable[[str], None] = base.status,
 ) -> base.Rig:
     """Two YAMs, declared as ONE robot with two named parts, so a teleoperator
-    or a Waddle-hosted agent can address either arm by name.
+    or an application-hosted agent can address either arm by name.
 
     Declaration only: this opens no bus and starts no thread. ``rig.arms()``
     is where the hardware opens.
@@ -1380,6 +1599,21 @@ def bimanual(
     `waddle_sdk.robots.base.POSTURES`), and on live hardware ``"monitor"``
     additionally opens the arms compliant, so nothing can command them at
     either end.
+
+    ``gravity_comp_factor`` is an absolute six-joint vector, defaulting to
+    :data:`DEFAULT_GRAVITY_COMP_FACTOR`. It is validated and frozen at declaration,
+    then passed to I2RT before its servo starts. The gripper factor stays 1.0.
+    These bench-derived defaults are not a substitute for per-unit calibration;
+    ``sim=True`` uses the kinematic simulator and ignores gravity factors.
+
+    ``arm_gains`` optionally supplies separate ``kp`` and ``kd`` vectors for
+    joints 1–6. Each must contain six finite positive numbers, with ``kp <= 500``
+    and ``kd <= 5`` (MIT encoding limits, not tuning recommendations). Explicit
+    arm gains cannot be combined with ``arm_gain_scale != 1``. The independent
+    ``gripper_gain_scale`` still applies only to the hand. All effective gains
+    are validated before CAN opens; settings the vendor codec would clamp are
+    refused. Requested gains are restored after e-stop recovery. Simulation and
+    monitor/zero-gravity modes validate these options but do not apply PD gains.
 
     ``fk`` is the forward kinematics each part reports its TCP from, and it is
     OPT-IN: pass ``None`` (with ``workspace=None``) for a rig that reports
@@ -1451,6 +1685,8 @@ def bimanual(
             step_caps=caps,
             joint_limits=joints,
             rate_hz=rate_hz,
+            gravity_comp_factor=_checked_gravity_comp_factor(gravity_comp_factor),
+            arm_gains=arm_gains,
             arm_gain_scale=arm_gain_scale,
             gripper_gain_scale=gripper_gain_scale,
             velocity_feedforward=velocity_feedforward,
@@ -1482,6 +1718,8 @@ def arm(
     rate_hz: float = DEFAULT_RATE_HZ,
     max_joint_speed_rad_s: float = DEFAULT_MAX_JOINT_SPEED_RAD_S,
     max_gripper_speed_per_s: float = DEFAULT_MAX_GRIPPER_SPEED_PER_S,
+    gravity_comp_factor: Sequence[float] = DEFAULT_GRAVITY_COMP_FACTOR,
+    arm_gains: Mapping[str, Sequence[float]] | None = None,
     arm_gain_scale: float = 1.0,
     gripper_gain_scale: float = 1.0,
     velocity_feedforward: bool = True,
@@ -1542,6 +1780,8 @@ def arm(
             step_caps=caps,
             joint_limits=joints,
             rate_hz=rate_hz,
+            gravity_comp_factor=_checked_gravity_comp_factor(gravity_comp_factor),
+            arm_gains=arm_gains,
             arm_gain_scale=arm_gain_scale,
             gripper_gain_scale=gripper_gain_scale,
             velocity_feedforward=velocity_feedforward,

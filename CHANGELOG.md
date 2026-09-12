@@ -41,11 +41,82 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 - Reference YAM and xArm7 workspaces for MuJoCo, Isaac Sim, and SAPIEN, with shared
   scene/wrist RGB-D profiles, normalized grippers, two cubes, a threaded cap, and a drawer.
   Optional engines run in isolated workers behind the existing shared-world lifecycle.
+- Background part-read failures persist as structured `robot.part_fault` runtime
+  events while healthy streams continue. Live comparisons retain selected-part
+  fault history and reject recovered transient failures before further commands
+  or successful completion.
+
+- SDK-owned live two-arm acceptance measures device feedback, independent arrival
+  and reuse, neighbor reference retention, timing under load, envelope refusal and
+  explicit Hold/e-stop response. Reviewed profiles select hardware and test-only
+  feedback probes; evidence retains original faults and per-arm startup details.
+
+- Optional named-part observations and supervised joint submissions retain healthy results beside exact device faults. Sparse commands preserve native scope/recording, owner envelopes and configured neighbor collision dependencies; existing composite submissions retain their contract.
+
+
+- Optional YAM `arm_gains` configures independent six-joint KP/KD values while
+  preserving hand gains and recovery behavior. Paired raw/SDK benchmarks apply
+  the same settings and distinguish requested gains from predicted MIT encoding.
+  Explicit and scaled gains are validated before CAN startup; unrepresentable
+  requests now fail instead of being silently clamped by the vendor codec.
+
+- Real-camera RGB/depth publication and reconnect tests through the native SDK
+  and configured LiveKit service, using isolated camera ownership without opening
+  physical arms. Reports distinguish source dimensions from adaptive video sizes.
+
+- Opt-in paired YAM benchmarks run pristine I2RT and SDK processes with matching
+  controller settings and sampled trajectories. Reports preserve measured joint
+  and TCP arrival, timing, vendor diagnostics, failures and cleanup; explicit
+  comparison margins enforce accuracy and settling-time noninferiority.
+  Optional reviewed rest targets return healthy trials to supported parking before
+  backend hand-off. Parking remains separate measured evidence; parking failures
+  block the next backend, and original motion/background faults prohibit further
+  trajectory commands.
+  Both backends now require observable post-start CAN feedback before timing a
+  trajectory, preserving startup evidence separately and refusing stale startup
+  within a bounded deadline without moving or changing envelope checks.
+  Comparison rejects nonzero child exits, missing or unequal manifest hashes,
+  and missing, duplicated or reordered phases even when recorded arrivals pass.
+  Optional per-case `minimum_settle_s` retains a target-commanded observation
+  window before arrival/Hold without extending the total settling deadline or
+  bypassing faults, tracking checks or three consecutive arrival observations.
+
+- Unify software and live behavior tests under `sdk/tests`; `pytest --live` selects
+  viable camera/robot checks from metadata and optional motion profiles, reports
+  missing prerequisites and stays disabled in CI/releases.
+- Explicit `SiteSession.close(torque_release_authorized=True)` for authorized
+  headless teardown, sharing context-exit resource and ownership handling.
+
+- Shared site-ID process ownership in `Site.open()`, acquired before adapter
+  construction and retained after uncertain teardown. Applications using the
+  same site ID now coordinate through the same SDK lock.
+- Optional `MediaRuntimePort` and `SiteSession.media_tracks()` expose native
+  publisher identities, per-stream last-attempt status and drop counts without
+  reconstructing track facts from observations.
+
+- Shared optional `ModelSourceProvider` and immutable `ModelSources` bundle for
+  complete source geometry, assets, named bindings and attribution. Any robot
+  adapter can expose the same non-opening module extension without registry edits;
+  absent support and selected failures remain distinct.
+
+- Public non-opening robot/camera metadata helpers: named part action spaces,
+  validated physical gripper mappings with reversed action ranges, effective
+  camera declarations and intrinsics with explicit optional depth scaling.
+- The YAM `model_sources` extension provides verified source geometry, attribution,
+  TCP attachment and coupled finger travel from the exact optional I2RT pin,
+  without opening hardware or selecting a planner.
+
+- Export public `waddle_sdk.FEATURES` as the selected native core's feature set,
+  allowing applications to check media support without importing SDK internals.
+- Add opt-in public SDK camera/LiveKit acceptance using scoped grants, actual RGB
+  and depth-display frames, native signaling reconnect with the same SiteSession
+  and Run, and independent viewer rejoin. Document matching media dependencies
+  and the explicit test lifecycle without changing hardware/media lifecycle behavior.
 
 - Add manifest-selected shared simulation worlds through the public
   `WorldConfig`/`SimulationBackend` contract. World-backed parts and cameras reuse the
   ordinary SDK runtime, support matrix, owner envelope, observations, and RGB-D sample
-  path.
+  path consumed by applications.
 - Add a shared-world MuJoCo reference backend with one physics state for all attached
   parts and cameras, exactly-once world stepping, episode reset, derived camera
   intrinsics, and aligned metric Z16 rendering.
@@ -81,6 +152,41 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   clipping, custom solver overrides and cap force callbacks. Reuse the SDK
   shared-world physics clock instead of running an independent worker clock. Derive the LINEAR_4310 pinch
   offset from the manufacturer's corrected grasp site without changing SDK FK.
+- Owner-envelope refusals preserve their originating safety fault, exact reason,
+  part, measured/commanded values and bounds in the submission receipt and event.
+  Independent hold failures remain separate diagnostics.
+
+- Native binding API 4 adds publisher snapshots; rebuild base and media extensions
+  together. Camera/arm/world teardown failures now prevent site ownership release.
+
+- YAM source loading implements the shared adapter contract and returns complete
+  articulated MJCF, preserving physical slide coordinates and coupling. Remove
+  the unpublished YAM-specific bundle fields from the public source boundary.
+- Document and regression-test xArm G2's physical millimetre API boundary. Vendor
+  code owns nonlinear motor-pulse conversion; parallel opening mappings stay linear.
+
+- Camera depth resolution shares metadata validation and refuses malformed
+  distortion coefficients before calling a vendor resolver.
+- Correct the documented root-export regression to include the existing public
+  `FEATURES` export.
+
+- Make `AGENTS.md` the canonical guide and `CLAUDE.md` its relative symlink; keep
+  build and public-contract guidance together, with publication-confirmed changelog
+  archiving. Clarify public runtime documentation, examples, diagnostic messages,
+  and historical notes without changing SDK APIs or execution behavior.
+- Keep public rationale and amendment history while removing unrelated
+  implementation and naming roadmaps; clarify its informative status.
+- Document the optional MuJoCo prerequisite for the complete scene-compiler test
+  suite and headless Linux rendering configuration.
+
+- Set YAM absolute arm gravity factors to `[1.0, 1.1, 1.2, 1.3, 1.0, 1.0]`, using
+  rounded two-arm bench calibration for joints 3/4. A validated, declaration-frozen
+  `gravity_comp_factor` option overrides all six values per arm. Pass it into I2RT
+  before its servo starts; retain the vendor gripper factor, PD gains, and friction.
+
+- Expand the YAM tabletop initializer preset and example to workspace bounds
+  `[-0.7, -0.7, 0.0]` through `[0.7, 0.7, 1.0]` metres in each arm base frame.
+  Existing site declarations remain authoritative and are not rewritten.
 
 - Preserve the existing `waddle_sdk.robots.mujoco:arm` factory as a compatible
   private-world adapter while documenting `waddle_sdk.robots.mujoco:backend` for
@@ -229,6 +335,22 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   select `worlds.cell.options.reset_on_episode: true` for native scene reset.
 - Reject invalid portable-scene robot base frames and unsafe URDF joint-limit
   widening before loading the optional MuJoCo compiler dependency.
+- Replace a scheduler-dependent per-part uplink test with controlled reducer
+  admission times, verifying independent 10 Hz budgets and nonstarvation without
+  requiring unrelated streams to have identical phases.
+
+- Preserve original runtime exception text, JSON metadata and nested causes through
+  `RuntimeFault.from_exception`; existing typed faults pass through unchanged and
+  only credential material is redacted. Teardown/reporting failures no longer
+  replace the primary live motion failure.
+
+- Refuse YAM reads and commands when its CAN/server writer has stopped or real
+  feedback cache updates stall, even if vendor observation timestamps advance.
+
+- Accept optional grasp metadata alongside the standard YAM physical gripper
+  mapping when resolving model sources; retain rejection of changed jaw/action
+  mappings and all source geometry/provenance validation.
+
 - Keep MuJoCo renderer creation and destruction on its owning camera-pump thread so
   EGL/OpenGL RGB-D capture closes without cross-thread context failures.
 - Transform link-local conservative collision-sphere offsets with each simulated

@@ -18,8 +18,8 @@ def test_yam_publishes_a_non_opening_tabletop_workspace_preset() -> None:
     preset = report.presets[0]
     assert preset.identifier == "yam-tabletop"
     assert dict(preset.workspace_bounds) == {
-        "min": (0.05, -0.45, 0.05),
-        "max": (0.60, 0.45, 0.70),
+        "min": (-0.7, -0.7, 0.0),
+        "max": (0.7, 0.7, 1.0),
     }
     assert preset.static_keepouts == ()
     assert dict(preset.self_collision) == {}

@@ -43,7 +43,7 @@ This file preserves the coordinated `0.1.0` release of the repository.
 
 - Resolve RealSense camera selectors through non-streaming librealsense enumeration
   during hardware discovery. Raw USB-interface sysfs serials are now retained only as
-  non-executable evidence, preventing `waddle-metal init` from generating freshly
+  non-executable evidence, preventing configuration initializers from generating freshly
   invalid `site.yaml` camera connections.
 - Normalize integral YAML camera rates such as `30.0` for built-in vendor APIs that
   require integer FPS, and stop misclassifying exceptions raised inside camera
@@ -79,7 +79,7 @@ This file preserves the coordinated `0.1.0` release of the repository.
   structural SDK ports for hardware-specific forward kinematics and conservative
   body geometry. Open `SiteSession` descriptions now carry the exact registered
   action space and grants alongside per-part and per-camera support facts, allowing
-  Metal to choose a compatible generic fallback without widening permissions or
+  applications to choose a compatible generic fallback without widening permissions or
   disabling unrelated skills. Scope-specific embodiment digests keep exact custom
   implementation matching stable across unrelated camera/robot changes while the
   matrix digest continues to identify the complete public site embodiment. Robot
@@ -87,7 +87,7 @@ This file preserves the coordinated `0.1.0` release of the repository.
   reject any digest outside exact lowercase `[0-9a-f]{64}`.
 - Add a customer hardware/simulator porting guide that defines the tested minimal
   declaration, factory, driver, camera, optional kinematics/geometry, fallback, and
-  embodiment-identity surfaces without introducing a Metal or Waddle dependency.
+  embodiment-identity surfaces without introducing an application dependency.
 
 ### Fixed
 
@@ -104,9 +104,9 @@ This file preserves the coordinated `0.1.0` release of the repository.
 - Stamp each composite SDK observation after snapshotting its robot parts and
   concurrently published camera samples. Fresh camera frames can no longer appear a
   few milliseconds newer than their enclosing observation and be falsely rejected by
-  Metal as stale.
+  applications as stale.
 
-- Preserve live camera calibration across the SDK/Metal extraction. Camera
+- Preserve live camera calibration across the SDK extraction. Camera
   drivers may implement the optional `CameraCalibrationDriver.intrinsics()`
   extension; `RigSession` folds those active-stream facts into the registered
   robot declaration before transport starts while explicit `site.yaml`
@@ -165,31 +165,22 @@ This file preserves the coordinated `0.1.0` release of the repository.
 - Add an optional, strict hardware-neutral gripper geometry fact set to
   `site.yaml`: the TCP-frame closing axis, TCP-to-pinch offset in metres, and
   canonical pointing-down `wxyz` orientation. The three fields are declared
-  together and validated for finite/unit geometry so Metal can compose generic
+  together and validated for finite/unit geometry so applications can compose generic
   grasp skills without embedding a YAM or other vendor-specific convention.
 - **BREAKING:** make `Site`, `SiteSession`, `Run`, `load_site`, transport selection, outcomes, and manifest errors the only root API. Site sessions use a private non-global builder with fixed hold-first, core-enforced safety wiring.
 - Apply configured workspace bounds to the TCP and every adapter-supplied
   conservative collision sphere. Commands are rejected whole instead of
   clamped, and 28 one-for-one historical body-boundary cases pin both this
-  replacement and the deliberate removal of Waddle-specific face-ignore,
+  replacement and the deliberate removal of application-specific face-ignore,
   recovery, end-effector-only, and split-body envelope knobs.
 - Set the SDK and native shim release version to 0.1.0 and keep the teleop companion pin exact.
 - **BREAKING (pre-release): the importable package is now `waddle_sdk`, not
   `waddle`.** `pip install waddle-sdk` then `import waddle_sdk`; the
   distribution name is unchanged. The extension module is `waddle_sdk._core`.
 
-  WHY. The closed backend's own Python package is also named `waddle`, and the
-  two must share one environment — `waddle` depends on `waddle-metal`, which
-  imports this SDK (`from waddle_sdk.robots.base import Rig, CrossArm, ...`).
-  Two distributions cannot both own a top-level `waddle/`. Co-installed, the
-  result was not an error but something worse: `import waddle` resolved to
-  whichever landed in `site-packages` while submodules still resolved through
-  the other's editable finder — a silent HYBRID, masked whenever the cwd
-  happened to be a repo root. It cost an evening to find.
-
-  The SDK yields rather than the backend because the blast radius is 26 import
-  sites against 481, and because nothing is released: this is `v0.0.0` with an
-  empty `docs/changelogs/`, so no installed user is broken.
+  The distinct `waddle_sdk` import prevents top-level package collisions when SDK
+  customers install several distributions in one environment. The namespace change
+  occurred before publication; the distribution name remained unchanged.
 
   What did NOT move, deliberately:
   - `waddle.execution.v1` did not move during the package rename because it was a string contract, not an import. The 0.1.0 Site cutover below subsequently removes that upward-discovery contract.
@@ -206,7 +197,7 @@ This file preserves the coordinated `0.1.0` release of the repository.
   global-session test helper, their legacy-only tests, and the old
   `toy_robot.py`/`yam_bimanual.py` programs. A subprocess-tested simulated
   `site.yaml` example now exercises the sole Site lifecycle.
-- Delete the SDK-local authenticated web UI, its bundled assets, and the hosted task/artifact/execution facades. Guided calibration and product task state now live exclusively in closed Waddle and Metal; SDK retains only local RGB-D measurement plumbing.
+- Delete the SDK-local authenticated web UI, its bundled assets, and the hosted task/artifact/execution facades. Guided calibration and product task state now live exclusively in applications; SDK retains only local RGB-D measurement plumbing.
 
 - Remove lease-enforcement and handoff choice from the primary Site API; both remain native implementation details.
 
@@ -219,12 +210,12 @@ This file preserves the coordinated `0.1.0` release of the repository.
 - Add a strict driver-neutral `parts.*.gripper` Site mapping from physical jaw
   opening metres to a declared action row. The mapping is public runtime
   metadata and is not forwarded into adapter factories, so YAM manifests can
-  support Metal `grip()` without passing an unknown `gripper` keyword to the
+  support application gripper commands without passing an unknown `gripper` keyword to the
   hardware constructor.
-- Open `SiteSession.describe()` responses now include the canonical robot action descriptor so Metal can map named part commands onto the complete SDK action vector using public data.
+- Open `SiteSession.describe()` responses now include the canonical robot action descriptor so applications can map named part commands onto the complete SDK action vector using public data.
 - Add the canonical `waddle-sdk connect` process and `waddle.v0.connector.binding` registration. An authorization-only probe authenticates the exact customer/project/workspace tuple and must negotiate the binding feature before SiteSession invokes any arm or camera builder; reconnect clears and re-establishes that authorization, while authorization probes cannot negotiate hosted runs. Registered runtimes emit 500 ms v0 heartbeats so API-key revocation becomes a transport partition and requests the existing core-owned hold/abort path.
 
-- Add strict Draft 2020-12 `waddle.site/v1` loading with confined relative paths, named secret references, lazy driver construction, deterministic half-open cleanup, local RGB-D measurements, and an SDK-owned structural runtime port shared by local and remote Metal adapters.
+- Add strict Draft 2020-12 `waddle.site/v1` loading with confined relative paths, named secret references, lazy driver construction, deterministic half-open cleanup, local RGB-D measurements, and an SDK-owned structural runtime port shared by local and remote application adapters.
 - Add deterministic SDK-owned static hard safety: strict box/sphere keep-outs, named conservative `CollisionSphere` body geometry from driver adapters, within-arm and cross-part self-collision with explicit adjacent-body exclusions, shared-frame validation, and reject-whole/fail-closed dispatch before any driver write.
 - Extract the dependency-free deterministic mock RGB-D camera and lazy OpenCV USB/UVC adapter into the SDK, including BGR-to-RGB conversion, half-open cleanup, idempotent close, fake-vendor tests, a `usb` extra, and USB composition in `cameras`.
 - Add a dependency-free manifest-native mock/sim arm with configurable limits, rate, step caps and home, planar forward kinematics, conservative body geometry, and full Site/keep-out lifecycle coverage.
@@ -255,7 +246,7 @@ This file preserves the coordinated `0.1.0` release of the repository.
   reference but never archive bytes. The Python SDK provides typed facades and
   the authenticated UI adds named sessions, live history, interjection,
   interrupt, cameras, calibration, recordings, and Hosted/Local selection.
-  That local-runtime discovery was subsequently removed by the Site cutover; Metal now consumes the SDK-owned `SdkRuntimePort` directly.
+  That local-runtime discovery was subsequently removed by the Site cutover; applications now consume the SDK-owned `SdkRuntimePort` directly.
 - **exclusive remote-to-local control handoff**: waddle-core now owns the
   operation that releases an active remote claim through normative E8, waits
   for lease handback and RUNNING/no-claim mirrors, and only then permits a
@@ -293,7 +284,7 @@ This file preserves the coordinated `0.1.0` release of the repository.
   rig accepts are the OWNER's to state, and the shipped model's `JOINT_LIMITS` are
   the default rather than a ceiling. One table reaches both readers — the envelope
   `base.Arm` enforces and the `Joint.min_position`/`max_position` the declaration
-  carries to the plane — so a teleoperator or a Waddle-hosted agent is shown the
+  carries to the plane — so a teleoperator or an application-hosted agent is shown the
   range the rig really has. Rows wider than the shipped model's are reported by
   name and by how far, at every start, so nobody inherits a widened envelope
   silently; malformed tables are refused by argument name, in sim as on metal.
@@ -2524,7 +2515,7 @@ This file preserves the coordinated `0.1.0` release of the repository.
   cannot spin forever after `waddle_sdk.shutdown()`. New
   `Episode::records_dropped()` surfaces ring overflow (training-data
   loss). A gated action that does not fit the declared space (raw teleop
-  stream ahead of closed-side retargeting) now records an action-less
+  stream ahead of application retargeting) now records an action-less
   chunk instead of silently skipping the tick, keeping `/waddle/actions`
   obs-aligned. The Python shim's `Session` also shuts the core down safely
   when dropped without `shutdown()`, and `terminate` no longer holds the
@@ -2641,4 +2632,4 @@ This file preserves the coordinated `0.1.0` release of the repository.
   side's existing behavior. `pre_reset` on successors is unchanged (the
   reset pump already fell back to the session default for the PRE phase;
   a declared `Remote` PRE spec on a successor remains the known gap noted
-  above, pending the closed-side retake/hand-reset flow).
+  above, pending the application retake/hand-reset flow).

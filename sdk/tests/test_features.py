@@ -71,6 +71,12 @@ def _camera_robot() -> descriptors.Robot:
 # --- What this build is ----------------------------------------------------
 
 
+def test_public_features_describe_the_selected_native_core():
+    assert waddle_sdk.FEATURES is _native.FEATURES
+    assert isinstance(waddle_sdk.FEATURES, frozenset)
+    assert "FEATURES" in waddle_sdk.__all__
+
+
 def test_the_default_build_carries_the_control_transport():
     """`sdk/pyproject.toml`'s `[tool.maturin] features` — what `uv sync
     --dev` builds and what the published `waddle-sdk` wheel ships. A

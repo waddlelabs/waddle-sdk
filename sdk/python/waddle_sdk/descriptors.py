@@ -418,7 +418,7 @@ class StreamPolicy:
     high-bandwidth touches the control plane" (protocol flag
     ``waddle.v0.obs.stills``): published frames are sampled at this rate
     into low-rate JPEG stills that ride the control plane, so a
-    Waddle-hosted agent (a hosted Metal run) can see the scene without a
+    application-hosted agent (an application run) can see the scene without a
     media plane wired at all. It is bounded by declaration and is never a
     video path — for live video to a human teleoperator, declare
     ``uplink`` and wire ``media=`` instead. ``None`` (the default) and

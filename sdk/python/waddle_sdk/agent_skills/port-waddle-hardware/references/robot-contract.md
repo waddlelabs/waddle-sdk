@@ -56,3 +56,14 @@ source repository for profiles, native gripper mapping and engine validation.
 Reference worlds preserve state across runs unless
 `worlds.cell.options.reset_on_episode: true` explicitly requests rollout reset.
 World-owned arms do not independently home in the per-arm episode hook.
+
+## Initializer safety suggestions
+
+Adapters may expose the optional, non-opening `safety_presets(factory=, options=)`
+contract from `waddle_sdk.robots`. The YAM reference suggests an arm-base workspace
+from `[-0.7, -0.7, 0.0]` to `[0.7, 0.7, 1.0]` metres, without keepouts or a
+self-collision configuration. These are site-operator-reviewed starting values,
+not vendor joint limits or evidence that a particular mounting is collision-free.
+Preserve existing site declarations and validate the selected envelope normally.
+
+Applications can use `waddle_sdk.robots.metadata.part_action_spaces` and `gripper_mapping` without vendor imports or topology assumptions. Supply an explicit physical gripper mapping when supported; reversed action ranges are valid. Every adapter can expose the optional `model_sources(*, factory, part_name, part)` extension returning `robots.models.ModelSources`. YAM implements this same contract. Missing support returns `None`; selected failure raises `ModelSourceError`. Source inspection never opens a driver or selects a planner. See the public source-models guide for asset and binding requirements.

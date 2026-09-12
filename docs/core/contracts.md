@@ -11,8 +11,8 @@ first:
    define append-only protocol evolution and feature negotiation.
 4. Protobuf schemas define the wire shape; golden fixtures and behavioral scenarios
    pin it to executable conformance.
-5. The older rationale document explains design history. It is informative where the
-   fresh normative documents are silent.
+5. The public rationale document summarizes design decisions and amendment history.
+   It is informative where the normative documents are silent.
 
 This site is explanatory. It links to the normative documents rather than copying
 their guard tables, so there is one place to change protocol behavior.

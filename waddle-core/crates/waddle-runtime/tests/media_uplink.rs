@@ -894,3 +894,85 @@ fn no_still_fps_and_no_media_is_still_a_cheap_noop_with_a_transport() {
         "a camera that declared no still_fps must never produce stills"
     );
 }
+
+/// Failure is held explicitly until the test allows publication to recover.
+struct RecoveringMedia {
+    inner: Arc<LoopbackMedia>,
+    failure: std::sync::atomic::AtomicU8,
+}
+
+impl MediaPlane for RecoveringMedia {
+    fn publish_track(&self, camera: &str) -> Result<TrackHandle, MediaError> {
+        if self.failure.load(std::sync::atomic::Ordering::Relaxed) == 1 {
+            return Err(MediaError::Transport("synthetic publish failure".into()));
+        }
+        self.inner.publish_track(camera)
+    }
+    fn push_frame(&self, track: &TrackHandle, frame: EncodedFrame) -> Result<(), MediaError> {
+        if self.failure.load(std::sync::atomic::Ordering::Relaxed) == 2 {
+            return Err(MediaError::Transport("synthetic push failure".into()));
+        }
+        self.inner.push_frame(track, frame)
+    }
+    fn open_data_rx(&self, topic: DataTopic) -> Result<DataRx, MediaError> {
+        self.inner.open_data_rx(topic)
+    }
+    fn open_data_tx(&self, topic: DataTopic) -> Result<DataTx, MediaError> {
+        self.inner.open_data_tx(topic)
+    }
+}
+
+#[test]
+fn native_track_status_reports_failures_recovery_and_lazy_depth() {
+    use std::sync::atomic::Ordering;
+    let (inner, _) = LoopbackMedia::new();
+    let media = Arc::new(RecoveringMedia {
+        inner,
+        failure: 1.into(),
+    });
+    let session = Session::builder("publisher-evidence")
+        .robot(robot(vec![camera("custom_camera", None)]))
+        .control(registry())
+        .media(media.clone())
+        .build()
+        .unwrap();
+    let tracks = session.media_tracks();
+    assert_eq!(tracks.len(), 1);
+    assert_eq!(tracks[0].camera_id, "custom_camera");
+    assert_eq!(tracks[0].status, "pending");
+    session
+        .publish_frame("custom_camera", frame_4x4(1))
+        .unwrap();
+    assert!(wait_until(
+        || session.media_tracks()[0].status == "publish_failed",
+        Duration::from_secs(2)
+    ));
+    media.failure.store(2, Ordering::Relaxed);
+    session
+        .publish_frame("custom_camera", frame_4x4(2))
+        .unwrap();
+    assert!(wait_until(
+        || session.media_tracks()[0].status == "push_failed",
+        Duration::from_secs(2)
+    ));
+    media.failure.store(0, Ordering::Relaxed);
+    session
+        .publish_frame("custom_camera", frame_4x4(3))
+        .unwrap();
+    session
+        .publish_depth_preview("custom_camera", frame_4x4(4))
+        .unwrap();
+    assert!(wait_until(
+        || {
+            let tracks = session.media_tracks();
+            tracks.len() == 2 && tracks.iter().all(|t| t.status == "published")
+        },
+        Duration::from_secs(2)
+    ));
+    let tracks = session.media_tracks();
+    assert_eq!(tracks[0].frames_dropped, 2);
+    assert_eq!(tracks[1].track_name, "custom_camera/depth");
+    assert_eq!(tracks[1].stream, "depth");
+    assert_eq!(session.media_tracks(), tracks); // No observation polling needed.
+    session.shutdown();
+}

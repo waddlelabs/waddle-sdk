@@ -277,21 +277,22 @@ class CameraSample:
         if x < 0 or x >= width or y < 0 or y >= height:
             raise ValueError(f"pixel ({x}, {y}) is outside the {width}x{height} frame")
 
-        try:
-            fx = float(intrinsics.fx)
-            fy = float(intrinsics.fy)
-            cx = float(intrinsics.cx)
-            cy = float(intrinsics.cy)
-            scale_mm = float(intrinsics.depth_scale_mm)
-            distortion = tuple(float(value) for value in intrinsics.distortion)
-        except (AttributeError, TypeError, ValueError) as exc:
-            raise TypeError(
-                "intrinsics must declare finite fx/fy/cx/cy and depth_scale_mm"
-            ) from exc
-        if not all(math.isfinite(value) for value in (fx, fy, cx, cy, scale_mm)):
-            raise ValueError("camera intrinsics and depth scale must be finite")
-        if fx <= 0.0 or fy <= 0.0 or scale_mm <= 0.0:
-            raise ValueError("camera fx, fy, and depth_scale_mm must be > 0")
+        from .metadata import camera_intrinsics
+
+        checked = camera_intrinsics(
+            {
+                "fx": intrinsics.fx,
+                "fy": intrinsics.fy,
+                "cx": intrinsics.cx,
+                "cy": intrinsics.cy,
+                "depth_scale_mm": intrinsics.depth_scale_mm,
+                "distortion": intrinsics.distortion,
+                "distortion_model": intrinsics.distortion_model,
+            },
+            require_depth_scale=True,
+        )
+        fx, fy, cx, cy = checked.fx, checked.fy, checked.cx, checked.cy
+        scale_mm, distortion = checked.depth_scale_mm, checked.distortion
         if self.point_resolver is None and any(value != 0.0 for value in distortion):
             raise ValueError(
                 "local pixel resolution requires rectified depth; non-zero distortion "

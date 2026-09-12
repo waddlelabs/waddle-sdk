@@ -318,8 +318,8 @@ pub fn reset_window(
     ev
 }
 
-/// The agent-invite emission (flag `waddle.v0.agent`, E23): the open asked a
-/// Waddle-hosted agent to drive this episode. Carries the ask, never
+/// The agent-invite emission (flag `waddle.v0.agent`, E23): the open asked an
+/// application-hosted agent to drive this episode. Carries the ask, never
 /// authority — the agent claims via the ordinary machinery (C8).
 pub fn agent_invite(
     at: MonoNs,

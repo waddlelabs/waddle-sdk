@@ -19,6 +19,46 @@ example manifest, and a site-specific commissioning record. Optional forward
 kinematics, conservative body spheres, camera intrinsics, and point resolution add
 support facts without changing the required seam.
 
+## Reading hardware metadata without opening devices
+
+`waddle_sdk.robots.metadata.part_action_spaces(description)` resolves the named
+part action spaces in a public `describe()` result. It supports arbitrary joint
+counts and explicit composite parts; an unnamed multi-part space is not guessed.
+`gripper_mapping(raw, joints)` validates an optional jaw-metres/action mapping
+against its named action row and returns an immutable `GripperMapping`, or `None`
+when unavailable. `opening(action)` preserves out-of-range measurements;
+`action(opening_m)` refuses targets outside the physical range. Reversed action
+ranges work without adapter-specific conversion code. Timing, command admission
+and completion remain the application's responsibility and all actions still
+cross the SDK gate.
+
+`waddle_sdk.cameras.metadata.camera_declarations(description)` merges effective
+runtime declarations with explicit site mounts/configuration. The runtime has
+already applied explicit site intrinsics over optional driver intrinsics.
+`camera_intrinsics(raw)` parses manifest and wire fields, retaining distortion
+model identity. RGB-only calibration may omit a depth scale; metric consumers
+must pass `require_depth_scale=True`. Missing/invalid values raise
+`CameraMetadataError` with `intrinsics_missing` or `intrinsics_invalid`; callers
+can disable only the dependent behavior for that camera. `CameraSample.point_at`
+uses the same validation before resolving paired depth. No helper infers a mount,
+rectifies distortion or substitutes another camera.
+
+Robot source assets use the optional shared `ModelSourceProvider`/`ModelSources`
+contract. The same resolver loads any configured adapter's source extension;
+YAM is one implementation. See [source models](porting/source-models.md) for the
+contract, independent adapter example, absence/failure behavior and source evidence.
+
+The xArm G2 adapter uses UFactory's `get/set_gripper_g2_position` millimetre APIs.
+Its underlying motor-pulse/linkage relationship is nonlinear: the vendor getter
+uses a sine conversion and its setter the inverse arcsine conversion. That stays
+inside the vendor API; our normalized action maps linearly to 0–84 mm opening.
+Do not substitute the older raw-pulse `get/set_gripper_position` methods.
+UFactory's [Python API](https://github.com/xArm-Developer/xArm-Python-SDK/blob/master/xarm/wrapper/xarm_api.py)
+and [implementation](https://github.com/xArm-Developer/xArm-Python-SDK/blob/master/xarm/x3/gripper.py)
+were reviewed on 2026-09-10. The current getter returns integer millimetres, so
+this API does not establish sub-millimetre measurement precision. Physical jaw
+calibration and replaceable-finger geometry still require site-specific evidence.
+
 ## Non-negotiable boundaries
 
 - Importing the package and calling a part factory open no bus, device, or thread.

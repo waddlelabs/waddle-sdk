@@ -7,6 +7,7 @@ import importlib
 import inspect
 import json
 import re
+import sys
 import threading
 import time
 import warnings
@@ -29,6 +30,7 @@ from .cameras._factory import (
     resolve_camera_factory,
 )
 from .cameras.site import CameraConfig, CameraMount
+from .ownership import SiteOwnershipError, _SiteLock
 from .robots import base
 from .robots.site import PartConfig
 from .runtime import (
@@ -84,12 +86,6 @@ class ConnectorRegistrationError(RuntimeError):
         super().__init__(f"{code}: {detail}")
 
 
-def _exception_type(error: BaseException) -> str:
-    """Return a bounded identifier without serializing an untrusted exception."""
-    name = re.sub(r"[^0-9A-Za-z_.-]", "_", type(error).__name__)
-    return name[:80] or "Exception"
-
-
 def _operation_fault(
     operation: str,
     error: Exception,
@@ -97,29 +93,11 @@ def _operation_fault(
     code: FaultCode = FaultCode.INTERNAL,
     context: Mapping[str, JSONValue] | None = None,
 ) -> RuntimeFault:
-    """Classify an untyped implementation error at the public runtime boundary.
-
-    Arbitrary vendor exception strings can contain device paths, URLs, or
-    credentials.  Keep the original exception in Python's ``__cause__`` for
-    owner-side logs, but carry only its type plus SDK-owned operation/scope
-    fields over Metal's transport.
-    """
-    if isinstance(error, RuntimeFault):
-        return error
-    error_type = _exception_type(error)
-    safe_context: dict[str, JSONValue] = {
-        "operation": operation,
-        "error_type": error_type,
-    }
-    if context is not None:
-        safe_context.update(context)
-    if isinstance(error, OSError) and error.errno is not None:
-        safe_context["errno"] = int(error.errno)
-    return RuntimeFault(
-        code,
-        f"{operation} failed ({error_type})",
-        retryable=isinstance(error, TimeoutError),
-        context=safe_context,
+    """Add operation/scope without replacing the original diagnostic."""
+    return RuntimeFault.from_exception(
+        error,
+        code=code,
+        context={"operation": operation, **dict(context or {})},
     )
 
 
@@ -598,6 +576,7 @@ def _combine_rigs(
     simulation_backends: Mapping[str, SimulationBackend],
     part_worlds: Mapping[str, str],
     simulation_lock: threading.RLock,
+    on_part_fault: Callable[[str, Exception], None] | None = None,
 ) -> base.Rig:
     rates = {float(rig.rate_hz) for rig in components.values()}
     if len(rates) != 1:
@@ -626,16 +605,20 @@ def _combine_rigs(
             for name, rig in components.items():
                 arms = rig.arms()
                 if len(arms) != 1:
-                    base.close_all(arms, report=rig.report)
+                    if not base.close_all(arms, report=rig.report):
+                        raise SiteOwnershipError(
+                            "site_close_unknown",
+                            "Invalid part assembly did not confirm teardown",
+                        )
                     raise ManifestValidationError(
                         f"part {name!r} factory returned a rig with {len(arms)} arms; "
                         "a site part factory must return exactly one"
                     )
                 arm = next(iter(arms.values()))
+                opened[name] = arm
                 arm.part = name
                 expected_base = part_base_frames.get(name)
                 if expected_base is not None and arm.base_frame != expected_base:
-                    arm.close()
                     raise ManifestValidationError(
                         f"part {name!r} driver returned base frame {arm.base_frame!r}, "
                         f"not declared base_frame {expected_base!r}"
@@ -646,11 +629,9 @@ def _combine_rigs(
                         self_collision=envelope.get("self_collision", {}),
                     )
                 except (TypeError, ValueError) as exc:
-                    arm.close()
                     raise ManifestValidationError(
                         f"part {name!r} cannot enforce the site envelope: {exc}"
                     ) from exc
-                opened[name] = arm
             collision_frames = {
                 arm.collision_frame
                 for arm in opened.values()
@@ -662,7 +643,11 @@ def _combine_rigs(
                     f"collision frame, got {sorted(collision_frames)!r}"
                 )
         except BaseException:
-            base.close_all(opened)
+            if not base.close_all(opened):
+                raise SiteOwnershipError(
+                    "site_close_unknown",
+                    "Partial site assembly did not confirm teardown",
+                )
             raise
         return opened
 
@@ -672,7 +657,11 @@ def _combine_rigs(
             for name, factory in camera_factories.items():
                 opened[name] = factory()
         except BaseException:
-            base.close_all(opened)
+            if not base.close_all(opened):
+                raise SiteOwnershipError(
+                    "site_close_unknown",
+                    "Partial site assembly did not confirm teardown",
+                )
             raise
         return opened
 
@@ -694,10 +683,23 @@ def _combine_rigs(
         )
     posture = postures.pop()
 
-    tick_builder = None
-    if simulation_backends:
+    def tick_builder(session, arms):
+        last_faults = {}
 
-        def build_simulation_tick(session, arms):
+        def on_fault(part, error):
+            fault = _operation_fault(
+                "observe robot part", error, context={"part": part}
+            ).as_dict()
+            if last_faults.get(part) != fault:
+                if on_part_fault is None:
+                    arms[part].report(str(fault))
+                else:
+                    on_part_fault(part, error)
+                last_faults[part] = fault
+
+        advance = None
+        if simulation_backends:
+
             def advance(dt: float) -> None:
                 with simulation_lock:
                     for backend in simulation_backends.values():
@@ -706,9 +708,7 @@ def _combine_rigs(
                         if part not in part_worlds:
                             arm.step(dt)
 
-            return base.proprio_tick(session, arms, advance=advance)
-
-        tick_builder = build_simulation_tick
+        return base.proprio_tick(session, arms, advance=advance, on_part_fault=on_fault)
 
     return base.Rig(
         declaration=declaration,
@@ -747,15 +747,21 @@ class _SiteAssembly:
             return self.rig.pre_reset(arms)(task)
 
     def close(self) -> None:
+        failed = False
         while self._opened:
             name, backend = self._opened.pop()
             try:
                 backend.close()
             except Exception as exc:  # noqa: BLE001 -- backend close is isolated
+                failed = True
                 self.rig.report(
                     f"close world={name} raised {exc!r} — this simulation may "
                     "still be running"
                 )
+        if failed:
+            raise SiteOwnershipError(
+                "site_close_unknown", "A simulation world did not confirm teardown"
+            )
 
 
 @dataclass(frozen=True)
@@ -781,7 +787,7 @@ class Site:
         secrets: Mapping[str, str] | Callable[[str], str] | None = None,
         _testing: bool = False,
         authorization_timeout_s: float = 15.0,
-    ) -> "SiteSession":
+    ) -> SiteSession:
         """Return an unopened session context; hardware opens in ``__enter__``."""
         return SiteSession(
             self,
@@ -794,7 +800,10 @@ class Site:
         )
 
     def _assembly(
-        self, resolver: Mapping[str, str] | Callable[[str], str] | None
+        self,
+        resolver: Mapping[str, str] | Callable[[str], str] | None,
+        *,
+        on_part_fault: Callable[[str, Exception], None] | None = None,
     ) -> _SiteAssembly:
         raw = _resolve_secrets(self.manifest, resolver)
         assert isinstance(raw, Mapping)
@@ -880,7 +889,9 @@ class Site:
                 site_root=self.path.parent,
             )
             camera_descriptions[name] = _camera_description(camera)
-            camera_factories[name] = partial(_call_camera_factory, target, camera_config)
+            camera_factories[name] = partial(
+                _call_camera_factory, target, camera_config
+            )
 
         frame_descriptions = [
             descriptors.FrameTransform(
@@ -895,10 +906,7 @@ class Site:
         rig = _combine_rigs(
             self.id,
             components,
-            {
-                str(name): part.get("base_frame")
-                for name, part in raw["parts"].items()
-            },
+            {str(name): part.get("base_frame") for name, part in raw["parts"].items()},
             camera_descriptions,
             camera_factories,
             frame_descriptions,
@@ -906,8 +914,13 @@ class Site:
             simulation_backends,
             part_worlds,
             simulation_lock,
+            on_part_fault,
         )
         return _SiteAssembly(rig, simulation_backends, [], simulation_lock)
+
+
+# Retain uncertain sessions and their locks even if a caller loses its handle.
+_OWNED_SITES: set[SiteSession] = set()
 
 
 class SiteSession:
@@ -935,11 +948,15 @@ class SiteSession:
         if authorization_timeout_s <= 0:
             raise ValueError("authorization_timeout_s must be positive")
         self._authorization_timeout_s = float(authorization_timeout_s)
+        self._ownership: _SiteLock | None = None
+        self._teardown_failed = False
+        self._closing = False
         self._managed: base.RigSession | None = None
         self._assembly: _SiteAssembly | None = None
         self._active: Run | None = None
         self._events: list[RuntimeEvent] = []
         self._event_lock = threading.Lock()
+        self._dispatch_lock = threading.RLock()
         self._service_stop = threading.Event()
         self._service_thread: threading.Thread | None = None
 
@@ -1006,10 +1023,25 @@ class SiteSession:
         finally:
             probe.shutdown()
 
-    def __enter__(self) -> "SiteSession":
-        if self._managed is not None:
-            raise RuntimeError("this SiteSession is already open")
-        assembly = self.site._assembly(self._secrets)
+    def __enter__(self) -> SiteSession:
+        if self._ownership is not None or self._teardown_failed:
+            raise SiteOwnershipError(
+                "site_owned", "This site session already owns or retains its resources"
+            )
+        self._ownership = _SiteLock(self.site.id)
+        self._closing = False
+        _OWNED_SITES.add(self)
+        try:
+            return self._open()
+        except BaseException:
+            # Opening and teardown share the same path, including partial starts.
+            self.__exit__(*sys.exc_info())
+            raise
+
+    def _open(self) -> SiteSession:
+        assembly = self.site._assembly(
+            self._secrets, on_part_fault=self._record_part_fault
+        )
         rig = assembly.rig
         self._authorize_connector(rig)
         managed = base.RigSession(
@@ -1026,14 +1058,10 @@ class SiteSession:
             console=self._console,
             _testing=self._testing,
         )
-        assembly.open()
-        try:
-            managed._open(create_core_session)
-        except BaseException:
-            assembly.close()
-            raise
-        self._managed = managed
         self._assembly = assembly
+        assembly.open()
+        self._managed = managed
+        managed._open(create_core_session)
         self._service_stop.clear()
         self._service_thread = threading.Thread(
             target=self._serve_calibration_requests,
@@ -1044,33 +1072,90 @@ class SiteSession:
         self._event("session.opened", {"site_id": self.site.id})
         return self
 
+    def close(self, *, torque_release_authorized: bool = False) -> None:
+        """Finish the run and release this session's devices and ownership.
+
+        Normal close preserves the site operator's parking/support wait. Pass
+        ``torque_release_authorized=True`` only when the site operator has
+        explicitly authorized releasing motor holding torque for this shutdown.
+        This permits attended test harnesses without a console to close cleanly;
+        it does not establish that the robot has reached a safe pose.
+        """
+        if not isinstance(torque_release_authorized, bool):
+            raise TypeError("torque_release_authorized must be a boolean")
+        self._close(
+            None, None, None, torque_release_authorized=torque_release_authorized
+        )
+
     def __exit__(self, exc_type, exc, tb) -> bool:
-        managed = self._managed
-        assembly = self._assembly
+        return self._close(exc_type, exc, tb)
+
+    def _close(self, exc_type, exc, tb, *, torque_release_authorized=False) -> bool:
+        if self._teardown_failed:
+            raise SiteOwnershipError(
+                "site_close_unknown",
+                "Site teardown was not confirmed; ownership remains held",
+            )
+        managed, assembly = self._managed, self._assembly
+        if managed is None and assembly is None and self._ownership is None:
+            return False
+        self._closing = True
         try:
-            if self._active is not None:
-                self._active.__exit__(exc_type, exc, tb)
-        finally:
-            self._service_stop.set()
-            service_thread = self._service_thread
-            self._service_thread = None
-            if service_thread is not None:
-                service_thread.join(timeout=5.0)
-            self._managed = None
-            self._assembly = None
             try:
-                if managed is not None:
-                    managed.close(
-                        interrupted=(
-                            exc_type is not None
-                            and issubclass(exc_type, KeyboardInterrupt)
-                        )
-                    )
+                if self._active is not None:
+                    self._active.__exit__(exc_type, exc, tb)
             finally:
-                if assembly is not None:
-                    assembly.close()
-            self._event("session.closed", {"site_id": self.site.id})
+                self._service_stop.set()
+                if self._service_thread is not None:
+                    self._service_thread.join(timeout=5.0)
+                    if self._service_thread.is_alive():
+                        raise SiteOwnershipError(
+                            "site_close_unknown",
+                            "Site service did not stop; ownership remains held",
+                        )
+                try:
+                    if managed is not None:
+                        managed.close(
+                            interrupted=(
+                                torque_release_authorized
+                                or (
+                                    exc_type is not None
+                                    and issubclass(exc_type, KeyboardInterrupt)
+                                )
+                            )
+                        )
+                finally:
+                    if assembly is not None:
+                        assembly.close()
+                if (
+                    isinstance(exc, SiteOwnershipError)
+                    and exc.code == "site_close_unknown"
+                ):
+                    raise exc
+                if managed is not None and not managed.teardown_confirmed:
+                    raise SiteOwnershipError(
+                        "site_close_unknown",
+                        "Hardware teardown was not confirmed; ownership remains held",
+                    )
+        except BaseException:
+            self._teardown_failed = True
+            raise
+        self._managed = self._assembly = self._service_thread = None
+        if self._ownership is not None:
+            self._ownership.release()
+            self._ownership = None
+        _OWNED_SITES.discard(self)
+        self._event("session.closed", {"site_id": self.site.id})
         return False
+
+    def media_tracks(self) -> list[dict[str, JSONValue]]:
+        """Snapshot native publisher identities and local attempt status.
+
+        No credentials or pixels are returned. Published means a local transport
+        accepted a frame, not that a remote viewer received it. Missing cameras
+        and sessions without media have no tracks; depth appears after intake.
+        """
+        return self._require().core.media_tracks()
 
     def _serve_calibration_requests(self) -> None:
         cursor = 0
@@ -1120,7 +1205,7 @@ class SiteSession:
                     )
 
     def _require(self) -> base.RigSession:
-        if self._managed is None or self._managed.core is None:
+        if self._closing or self._managed is None or self._managed.core is None:
             raise RuntimeFault(FaultCode.NOT_OPEN, "SiteSession is not open")
         return self._managed
 
@@ -1133,6 +1218,17 @@ class SiteSession:
             event = RuntimeEvent(len(self._events) + 1, kind, session_ns, dict(data))
             self._events.append(event)
         return event
+
+    def _record_part_fault(self, part: str, error: Exception) -> None:
+        self._event(
+            "robot.part_fault",
+            {
+                "part": part,
+                "fault": _event_fault(
+                    "observe robot part", error, context={"part": part}
+                ),
+            },
+        )
 
     def describe(self) -> Mapping[str, JSONValue]:
         description = dict(self.site.describe())
@@ -1261,9 +1357,7 @@ class SiteSession:
             }
         )
 
-    def _camera_embodiment_digest(
-        self, camera: Mapping[str, JSONValue]
-    ) -> str:
+    def _camera_embodiment_digest(self, camera: Mapping[str, JSONValue]) -> str:
         return self._digest(
             {
                 "contractVersion": SUPPORT_CONTRACT_VERSION,
@@ -1325,9 +1419,7 @@ class SiteSession:
         base_frames = {name: arm.base_frame for name, arm in managed.arms.items()}
         digest = self._composite_embodiment_digest(robot, base_frames)
         grant_facts = self._grant_facts(grants)
-        part_spaces = self._part_space_descriptions(
-            action_space, tuple(managed.arms)
-        )
+        part_spaces = self._part_space_descriptions(action_space, tuple(managed.arms))
         manifest_parts = self.site.manifest["parts"]
         rows: list[SupportRow] = []
         for name, arm in managed.arms.items():
@@ -1340,6 +1432,7 @@ class SiteSession:
             joint_position = part_space.get("jointPosition")
             if isinstance(joint_position, Mapping):
                 facts.add(SupportFact.JOINT_POSITION_ACTION)
+                facts.update((SupportFact.PART_ACTION, SupportFact.PART_OBSERVATION))
                 joints = joint_position.get("joints", [])
                 if isinstance(joints, list) and joints:
                     if all(
@@ -1443,9 +1536,7 @@ class SiteSession:
             )
         return vector
 
-    def forward_kinematics(
-        self, part: str, joint_position: Sequence[float]
-    ) -> Pose:
+    def forward_kinematics(self, part: str, joint_position: Sequence[float]) -> Pose:
         """Evaluate an opened part's hardware-specific FK implementation."""
         managed = self._require()
         arm = managed.arms.get(part)
@@ -1511,30 +1602,52 @@ class SiteSession:
                 context={"part": part},
             ) from exc
 
-    def run(self, *, task, actor) -> "Run":
+    def run(self, *, task, actor) -> Run:
         return Run(self, task=task, actor=actor)
 
-    def begin_run(self, *, task, actor) -> "Run":
+    def begin_run(self, *, task, actor) -> Run:
         run = self.run(task=task, actor=actor)
         run.__enter__()
         return run
 
     def observe(self) -> Observation:
+        observation = self.observe_parts()
+        if observation.faults:
+            raise next(iter(observation.faults.values()))
+        return observation
+
+    def observe_parts(self, parts: Sequence[str] | None = None) -> Observation:
+        """Read named parts independently, retaining failures beside healthy data.
+
+        Omitted parts means every declared part. No stale or fabricated positions
+        replace failures. An ordinary ``observe()`` remains all-or-error.
+        """
         managed = self._require()
-        parts: dict[str, PartObservation] = {}
-        for name, arm in managed.arms.items():
+        names = tuple(managed.arms) if parts is None else tuple(parts)
+        if len(names) != len(set(names)) or any(
+            name not in managed.arms for name in names
+        ):
+            raise RuntimeFault(
+                FaultCode.INVALID_REQUEST,
+                "Observation parts must be unique declared names",
+            )
+        measured: dict[str, PartObservation] = {}
+        faults: dict[str, RuntimeFault] = {}
+        for name in names:
+            arm = managed.arms[name]
             try:
                 position, velocity = arm.state()
                 pose = arm.ee_pose(position)
-            except RuntimeFault:
-                raise
             except Exception as exc:
-                raise _operation_fault(
+                faults[name] = _operation_fault(
                     "observe robot part",
                     exc,
                     context={"part": name},
-                ) from exc
-            parts[name] = PartObservation(
+                )
+                if faults[name] is not exc:
+                    faults[name].__cause__ = exc
+                continue
+            measured[name] = PartObservation(
                 joint_position=np.asarray(position, dtype=np.float64),
                 joint_velocity=np.asarray(velocity, dtype=np.float64),
                 ee_pose_wxyz=None
@@ -1556,7 +1669,7 @@ class SiteSession:
             raise
         except Exception as exc:
             raise _operation_fault("stamp observation", exc) from exc
-        return Observation(stamp.session_ns, stamp.unix_ns, parts, cameras)
+        return Observation(stamp.session_ns, stamp.unix_ns, measured, cameras, faults)
 
     def submit(self, action, observation=None) -> SubmitResult:
         if self._active is None:
@@ -1705,7 +1818,7 @@ class Run:
     def outcome(self) -> str | None:
         return None if self._episode is None else self._episode.outcome
 
-    def __enter__(self) -> "Run":
+    def __enter__(self) -> Run:
         managed = self._session._require()
         if self._session._active is not None:
             raise RuntimeFault(FaultCode.BUSY, "another run is active")
@@ -1731,7 +1844,7 @@ class Run:
                 reason = (
                     "run exited before a terminal outcome"
                     if exc_type is None
-                    else f"unhandled {_exception_type(exc)}"
+                    else RuntimeFault.from_exception(exc).detail
                 )
                 try:
                     self._episode.terminate("abort", reason)
@@ -1757,6 +1870,54 @@ class Run:
         return self._session.observe()
 
     def step(self, action, observation=None) -> SubmitResult:
+        with self._session._dispatch_lock:
+            return self._step(action, observation)
+
+    def step_parts(self, commands, observation=None) -> Mapping[str, SubmitResult]:
+        """Submit named joint targets independently, preserving per-part outcomes.
+
+        Each addressed part crosses the native gate and owner envelope. A driver
+        exception does not erase prior receipts or skip other submissions. This
+        does not guarantee isolation from shared hardware or envelope dependencies.
+        """
+        arms = self._session._require().arms
+        if not isinstance(commands, Mapping) or not commands:
+            raise RuntimeFault(
+                FaultCode.INVALID_REQUEST, "Provide non-empty named commands"
+            )
+        if any(
+            part not in arms or not isinstance(command, JointPositionCommand)
+            for part, command in commands.items()
+        ):
+            raise RuntimeFault(
+                FaultCode.INVALID_REQUEST,
+                "Commands require declared parts and JointPositionCommand values",
+            )
+        results = {}
+        with self._session._dispatch_lock:
+            for part, command in commands.items():
+                try:
+                    results[part] = self._step(command, observation, part=part)
+                except Exception as exc:
+                    fault = _operation_fault(
+                        "submit robot part", exc, context={"part": part}
+                    )
+                    results[part] = SubmitResult(
+                        False, "error", part=part, detail=fault.detail, fault=fault
+                    )
+                    self._session._event(
+                        "run.step",
+                        {
+                            "run_id": self.id,
+                            "part": part,
+                            "dispatched": False,
+                            "gate": "error",
+                            "fault": fault.as_dict(),
+                        },
+                    )
+        return results
+
+    def _step(self, action, observation=None, *, part=None) -> SubmitResult:
         if self._episode is None:
             raise RuntimeFault(FaultCode.NOT_OPEN, "run has not started")
         if self._episode.done:
@@ -1770,11 +1931,19 @@ class Run:
                     action.velocity_feedforward_rad_s, dtype=np.float64
                 )
         if isinstance(observation, Observation):
-            obs = observation.gate_vector()
+            if part is None:
+                if observation.faults:
+                    raise next(iter(observation.faults.values()))
+                obs = observation.gate_vector()
+            else:
+                if part in observation.faults:
+                    raise observation.faults[part]
+                state = observation.parts.get(part)
+                obs = None if state is None else state.joint_position
         else:
             obs = observation
         try:
-            decided = self._episode.gate(gate_action, obs)
+            decided = self._episode.gate(gate_action, obs, part=part)
         except RuntimeFault:
             raise
         except (TypeError, ValueError) as exc:
@@ -1787,9 +1956,11 @@ class Run:
             raise _operation_fault("gate run action", exc) from exc
         gate = self._episode.last_gate
         kind = "pass" if gate is None else str(gate.kind)
-        part = None if gate is None else gate.part
+        caller_part = part
+        part = caller_part if gate is None else gate.part
         dispatched = decided is not None
         detail = ""
+        refusal_faults: list[RuntimeFault] = []
         if kind != "pass":
             # A non-pass action belongs to the core's selected stream, never
             # to the caller. Clear the caller's hint even when the selected
@@ -1806,6 +1977,10 @@ class Run:
                 )
         if dispatched:
             try:
+                if caller_part is not None and kind == "pass":
+                    decided = {caller_part: decided}
+                    if velocity_feedforward is not None:
+                        velocity_feedforward = {caller_part: velocity_feedforward}
                 dispatched = base.apply_decision(
                     self._session._require().arms,
                     decided,
@@ -1813,6 +1988,8 @@ class Run:
                     # caller on pass, selected stream on substitute/anchorless
                     # blend, absent on an actually interpolated blend.
                     velocity_feedforward_rad_s=velocity_feedforward,
+                    on_refusal=refusal_faults.append,
+                    check_neighbors=caller_part is not None,
                 )
             except RuntimeFault:
                 raise
@@ -1826,13 +2003,22 @@ class Run:
                 raise _operation_fault("dispatch robot action", exc) from exc
             if not dispatched:
                 kind = "owner_refusal"
-                detail = "the owner envelope refused the complete action"
+                if refusal_faults:
+                    detail = refusal_faults[0].detail
+                    part = str(refusal_faults[0].context["part"])
+        fault = refusal_faults[0] if refusal_faults else None
         result = SubmitResult(
-            dispatched=dispatched, gate=kind, part=part, detail=detail
+            dispatched=dispatched, gate=kind, part=part, detail=detail, fault=fault
         )
         self._session._event(
             "run.step",
-            {"run_id": self.id, "dispatched": dispatched, "gate": kind, "part": part},
+            {
+                "run_id": self.id,
+                "dispatched": dispatched,
+                "gate": kind,
+                "part": part,
+                **({"fault": fault.as_dict()} if fault is not None else {}),
+            },
         )
         return result
 

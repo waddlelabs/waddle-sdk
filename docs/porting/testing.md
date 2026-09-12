@@ -43,7 +43,7 @@ For a shared simulation world, also prove that the factory and part declarations
 non-opening, the world opens before its arms and cameras, one composite SDK tick
 advances the world exactly once, RGB and depth come from the same world state, reset
 runs once per episode, and cleanup closes cameras and arms before the world. Run this
-test through `Site.open()` so the result is the same `SdkRuntimePort` that Metal
+test through `Site.open()` so the result is the same `SdkRuntimePort` that applications
 consumes.
 
 ## 4. Hardware-in-loop commissioning
@@ -61,6 +61,19 @@ Hardware tests are attended and site-specific. Before enabling motion, record:
 Begin with the manufacturer's safe mode and the site's smallest reviewed motion.
 Require explicit site-operator approval for each increase in scope. An automated test
 passing is evidence, not certification, and it never authorizes live motion by itself.
+
+## SDK live suite
+
+The opt-in SDK suite also covers two-arm named observations/submissions, reuse of
+an arrived arm while its neighbor moves, timing under simultaneous load, envelope
+refusal and measured explicit Hold/e-stop response. It requires an attended,
+reviewed `named_parts` bench profile and per-device feedback probes. YAM has a
+test-only CAN/ingestion probe; other adapters can provide the same test interface.
+See the [live suite configuration](https://github.com/waddlelabs/waddle-sdk/blob/main/sdk/tests/live/README.md#named-part-acceptance)
+for fields, selection and evidence rules. Acquisition counters must come from
+device feedback, never public observation-envelope timestamps. These tests leave
+SDK runtime contracts unchanged and keep deliberate hardware fault injection out
+of the live suite.
 
 ## Acceptance record
 

@@ -1,0 +1,111 @@
+{
+  "format": "waddle.behavior/v0",
+  "name": "bimanual_caller_parts",
+  "description": "Caller ticks address declared parts independently, under the unchanged whole-robot lease. Pass retains each action scope.",
+  "target": "gate",
+  "requires_features": [
+    "waddle.v0.core",
+    "waddle.v0.agent",
+    "waddle.v0.parts"
+  ],
+  "setup": {
+    "robot_fixture": "../wire/robot_description_bimanual_composite.json",
+    "lease_enforcement": "LEASE_ENFORCEMENT_ENFORCED",
+    "handoff": {
+      "holdFirst": {}
+    },
+    "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING"
+  },
+  "steps": [
+    {
+      "inject": {
+        "kind": "episode_open",
+        "episode_id": "ep-bps-0001",
+        "verification_mode": "RESET_VERIFICATION_MODE_BLOCKING"
+      }
+    },
+    {
+      "advance_ns": "100000000"
+    },
+    {
+      "inject": {
+        "kind": "reset_result",
+        "result": {
+          "ok": true,
+          "strategy": "scripted_home",
+          "verification": {
+            "mode": "RESET_VERIFICATION_MODE_BLOCKING",
+            "verified": true,
+            "judgeId": "judge-reset",
+            "judgeVersion": "2.1.0",
+            "score": 0.97,
+            "tNs": "100000000"
+          }
+        }
+      }
+    },
+    {
+      "expect_state": {
+        "episode.state": "EPISODE_STATE_READY"
+      }
+    },
+    {
+      "advance_ns": "50000000"
+    },
+    {
+      "inject": {
+        "kind": "gate_tick",
+        "action": {
+          "part": "left",
+          "jointPosition": {
+            "values": [
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "tOffsetNs": "0"
+        }
+      }
+    },
+    {
+      "expect_output": {
+        "kind": "pass",
+        "part": "left"
+      }
+    },
+    {
+      "advance_ns": "50000000"
+    },
+    {
+      "inject": {
+        "kind": "gate_tick",
+        "action": {
+          "part": "right",
+          "jointPosition": {
+            "values": [
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "tOffsetNs": "0"
+        }
+      }
+    },
+    {
+      "expect_output": {
+        "kind": "pass",
+        "part": "right"
+      }
+    }
+  ]
+}

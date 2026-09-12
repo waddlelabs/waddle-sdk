@@ -3,8 +3,8 @@
 The module is dependency-free until :meth:`Ros2Backend.open`; ROS distributions
 provide ``rclpy`` and the standard message packages.  One backend owns one
 dedicated ROS context, node, executor thread, joint-state subscriptions,
-position-controller publishers, and paired RGB-D subscriptions.  Metal still
-sees the ordinary SDK runtime and never imports ROS.
+position-controller publishers, and paired RGB-D subscriptions. Applications see
+the ordinary SDK runtime without needing to import ROS.
 """
 
 from __future__ import annotations

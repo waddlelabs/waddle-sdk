@@ -2201,7 +2201,7 @@ impl Session {
 
     /// Publish an RGB8 visualization of a declared camera's aligned metric
     /// depth as the append-only `<camera>/depth` media track. Raw depth is
-    /// not accepted here and remains available to SDK/Metal perception; this
+    /// not accepted here and remains available to SDK perception; this
     /// method is solely the browser-compatible operator presentation seam.
     pub fn publish_depth_preview(
         &self,
@@ -2277,6 +2277,29 @@ impl Session {
             .proprio_tx
             .send(StampedProprioReport { report, stamp });
         Ok(())
+    }
+
+    /// Publisher-owned track identities and last local attempt evidence.
+    /// No-media sessions return no tracks. Depth appears only after preview
+    /// intake; publication evidence persists across sparse frames and reconnects.
+    /// A published frame does not establish remote reception or live connectivity.
+    pub fn media_tracks(&self) -> Vec<crate::MediaTrackStatus> {
+        let mut tracks: Vec<_> = self
+            .inner
+            .camera_uplinks
+            .iter()
+            .filter_map(|(camera, uplink)| uplink.status(camera, "rgb"))
+            .chain(
+                self.inner
+                    .depth_uplinks
+                    .iter()
+                    .filter_map(|(camera, uplink)| uplink.status(camera, "depth")),
+            )
+            .collect();
+        tracks.sort_by(|a, b| {
+            (&a.camera_id, a.stream == "depth").cmp(&(&b.camera_id, b.stream == "depth"))
+        });
+        tracks
     }
 
     /// Frames dropped for `camera` because the uplink pump fell behind (the
@@ -2377,12 +2400,50 @@ impl Episode {
         gripper: Option<f64>,
         obs: Option<&[f64]>,
     ) -> GateOutput {
+        self.gate_scoped(values, gripper, obs, None)
+    }
+
+    /// Gate one declared part without fabricating commands for its neighbors.
+    /// The normal gate still decides every takeover, Hold and bypass outcome.
+    pub fn gate_part(
+        &mut self,
+        part: &str,
+        values: &[f64],
+        obs: Option<&[f64]>,
+    ) -> Result<GateOutput, RuntimeError> {
+        let waddle_types::SpaceSpec::Composite { parts } = &self.session.inner.action_space.spec
+        else {
+            return Err(RuntimeError::InvalidScopedAction(
+                "named actions require a composite declaration".into(),
+            ));
+        };
+        let space = parts
+            .iter()
+            .find(|(name, _)| name == part)
+            .map(|(_, space)| space)
+            .ok_or_else(|| RuntimeError::InvalidScopedAction(format!("unknown part {part:?}")))?;
+        if space.dims() != Some(values.len()) || values.iter().any(|v| !v.is_finite()) {
+            return Err(RuntimeError::InvalidScopedAction(format!(
+                "part {part:?} requires {:?} finite values",
+                space.dims()
+            )));
+        }
+        Ok(self.gate_scoped(values, None, obs, Some(Arc::from(part))))
+    }
+
+    fn gate_scoped(
+        &mut self,
+        values: &[f64],
+        gripper: Option<f64>,
+        obs: Option<&[f64]>,
+        part: Option<Arc<str>>,
+    ) -> GateOutput {
         if !self.started {
             self.started = true;
             let at = self.session.inner.clock.stamp_now().mono_ns();
             self.session.inject(SessionEvent::GateTick { at });
         }
-        self.gate.gate(values, gripper, obs)
+        self.gate.gate_scoped(values, gripper, obs, part)
     }
 
     /// Flips when a judge, a directive, a timeout, `terminate`, or session

@@ -264,6 +264,7 @@ pub(crate) fn runtime_err(e: RuntimeError) -> PyErr {
         | RuntimeError::Types(_)
         | RuntimeError::InvalidTaskMetadata(_)
         | RuntimeError::InvalidHoldRequest(_)
+        | RuntimeError::InvalidScopedAction(_)
         | RuntimeError::InvalidChat(_)
         | RuntimeError::InvalidPlaneRequest(_) => PyValueError::new_err(e.to_string()),
         _ => PyRuntimeError::new_err(e.to_string()),

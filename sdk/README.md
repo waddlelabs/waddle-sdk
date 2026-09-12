@@ -2,8 +2,8 @@
 
 The Python frontend owns one customer site: strict configuration, hardware and
 camera lifecycle, the owner envelope, paired timestamps, and raw recordings.
-Metal consumes the structural `waddle_sdk.runtime.SdkRuntimePort`; the SDK never
-imports or discovers Metal.
+Applications consume the structural `waddle_sdk.runtime.SdkRuntimePort`; the SDK
+never imports or discovers application implementations.
 
 ## Site lifecycle
 
@@ -12,7 +12,7 @@ import waddle_sdk
 
 site = waddle_sdk.load_site("site.yaml")
 with site.open(transport=waddle_sdk.Grpc(url, token)) as session:
-    with session.run(task={"id": "pick"}, actor={"id": "metal"}) as run:
+    with session.run(task={"id": "pick"}, actor={"id": "controller"}) as run:
         observation = run.observe()
         result = run.step(action, observation)
         if not result.dispatched:
@@ -102,6 +102,7 @@ parts:
       pointing_down_wxyz: [0.0, 0.0, 1.0, 0.0]
     options:
       gripper_limits: [1.7, 0.1]
+      gravity_comp_factor: [1.0, 1.1, 1.2, 1.3, 1.0, 1.0]
       arm_gain_scale: 1.0
       gripper_gain_scale: 1.0
       velocity_feedforward: true
@@ -125,7 +126,7 @@ The Draft 2020-12 schema rejects unknown fields. Site paths are relative,
 portable, normalized, and confined beneath the manifest directory. Values with
 credential-like names must be `{secret: NAME}` and are resolved only while the
 site is being opened. A site manifest cannot contain graphs, skills, models,
-chat configuration, API keys, lease modes, or Metal workspace paths.
+chat configuration, API keys, lease modes, or application workspace paths.
 
 `parts.*.base_frame` names the coordinate frame in which that opened arm reports
 poses. Built-in adapters consume it directly, and the site lifecycle rejects a custom
@@ -178,7 +179,7 @@ coating geometry, scene objects, and seeded variation. Compilation is atomic and
 an ordinary `site.yaml`, a native world, normalized inputs, and resolved hash evidence.
 Physical coatings require an explicit conservative safety sphere. Installed simulator
 packages can register short names under `waddle_sdk.simulation_backends` and
-`waddle_sdk.simulation_compilers`; Metal remains unchanged.
+`waddle_sdk.simulation_compilers`; applications need no simulator-specific runtime.
 
 The shipped `ros2` world backend connects Gazebo, Isaac Sim, or another ROS graph. It
 consumes named joint state, RGB, depth, and CameraInfo topics and publishes either
@@ -206,10 +207,28 @@ live hardware opens. That calibration moves the jaws at connection time;
 supplying a measured pair skips it. The driver-neutral `gripper` record remains
 independent and describes normalized actions and physical jaw geometry to
 higher layers.
-`arm_gain_scale` changes only the first six I2RT kp/kd rows;
-`gripper_gain_scale` changes only the seventh. Both default to the vendor's
-gains and, when configured, are restored unchanged after an e-stop recovery.
-When Metal supplies a trajectory's known joint velocity, the YAM adapter uses
+`gravity_comp_factor` sets the six absolute arm gravity-torque factors, in joint
+order. The SDK defaults are `[1.0, 1.1, 1.2, 1.3, 1.0, 1.0]`: joints 3 and 4 use
+rounded two-arm bench calibration; the remaining rows retain the pinned vendor
+values. These are control defaults, not universal per-unit calibration. For a
+specific arm, put its six finite positive values in `parts.<part>.options`; the
+vector replaces these defaults rather than multiplying them. I2RT receives the
+vector before its servo starts and appends its unchanged gripper factor of 1.0.
+Changing configuration takes effect on the next hardware open. The kinematic
+`sim: true` driver does not model gravity and is unaffected.
+
+`arm_gains` optionally supplies separate six-element `kp` and `kd` vectors under
+`parts.<part>.options`, so position stiffness can change independently of damping.
+It is mutually exclusive with `arm_gain_scale != 1`; that legacy scale multiplies
+both gains for all six arm joints. `gripper_gain_scale` affects only the seventh
+motor. Defaults remain the vendor's gains. Effective values must be finite and
+positive, with KP at most 500 and KD at most 5. Configuration is checked before
+CAN starts; a request the vendor would silently clamp now fails. In particular,
+default arm KD is already 5 on joints 1–3, so increasing `arm_gain_scale` is refused.
+These are encoding limits, not recommended tuning values. Requested gains survive
+e-stop recovery; simulation and monitor modes validate but do not apply PD gains.
+See [YAM gain configuration](../docs/porting/robot.md#yam-gain-configuration).
+When an application supplies a trajectory's known joint velocity, the YAM adapter uses
 I2RT `command_joint_state` for simultaneous position/velocity control. It
 never differentiates measurements or an IK stream to invent velocity, always
 sets the gripper's velocity to zero, and degrades to `command_joint_pos` on an
@@ -244,7 +263,7 @@ An opened local `SiteSession` also implements three additive, structural
 facets: `SdkSupportPort`, `SdkKinematicsPort`, and `SdkGeometryPort`. The
 support port returns an immutable `SupportMatrix` and `describe()` publishes
 the same data under `support` using `waddle.sdk.support/v1`. Its rows report
-SDK support facts, not robot skill capabilities: Metal intersects them with
+SDK support facts, not robot skill capabilities: applications intersect them with
 the exact registered action space and grants before enabling a skill. A
 hardware-specific FK or body-geometry implementation can therefore refine one
 facet without manufacturing motion permission or making unrelated tools fail.
@@ -256,7 +275,7 @@ and unit/site identity are excluded, so changing an unrelated camera cannot
 invalidate a hardware-specific robot implementation match.
 Existing vendor modules need no extra adapter surface: `Arm.fk` and
 `Arm.collision_spheres` back the optional runtime facets automatically. Missing
-facets remain honestly absent so Metal can select a generic implementation
+facets remain honestly absent so applications can select a generic implementation
 whose declared prerequisites are present or mark only the dependent skill
 unavailable. Camera rows intentionally do not advertise aligned depth until a
 stable depth declaration exists; observing one transient RGB-D sample is not a
@@ -289,7 +308,7 @@ replays motion.
 
 RGB-D calibration resolves the selected pixel against the exact latest local
 depth frame and transmits only the bounded 3-D measurement. Image/depth arrays
-remain customer-side. Guided calibration orchestration belongs to Metal and the
+remain customer-side. Guided calibration orchestration belongs to applications and the
 hosted UI, not to an SDK-local web server.
 
 ## Robot modules (`waddle_sdk.robots`)
@@ -300,7 +319,7 @@ A vendor module is facts plus a lazy driver factory over the vendor-neutral
 Alicia-M, Alicia-D, MuJoCo, ROS 2, and camera adapters import vendor SDKs lazily, so ordinary
 imports require no hardware packages. The three manifest-native physical
 families expose a single joint space with a normalized 0..1 gripper row;
-Metal owns IK and planning above this boundary.
+Applications own IK and planning above this boundary.
 For no-hardware work, `waddle_sdk.robots.mock:arm` is a manifest-native
 configurable simulated arm with planar FK and conservative body geometry.
 `waddle_sdk.robots.mujoco:arm` keeps the compatible private-world factory.
@@ -477,7 +496,7 @@ back to the bundled core. `WADDLE_NO_MEDIA=1` remains an explicit opt-out.
 ### Third-party content in the wheel
 
 This repo is Apache-2.0 and the wheel carries one deliberate exception:
-`waddle/robots/yam_data/` is a vendored snapshot of I2RT's YAM robot
+`waddle_sdk/robots/yam_data/` is a vendored snapshot of I2RT's YAM robot
 description, shipped under its own MIT licence (`yam_data/LICENSE`, verbatim
 from the source repo) and pinned to the upstream commit its README names. It
 is data rather than code, text only — the STL meshes are not shipped — and it
@@ -489,11 +508,15 @@ constant in that module against the vendor's own numbers in it.
 
 ```bash
 cd sdk
-uv sync --dev && uv run pytest              # full build + test
-uv run maturin develop --uv && uv run --no-sync pytest   # iterate on Rust
+uv sync --dev --extra mujoco && uv run --no-sync pytest              # full build + test
+uv run --no-sync maturin develop --uv && uv run --no-sync pytest   # iterate on Rust
 cargo clippy --manifest-path rust/Cargo.toml --all-targets -- -D warnings
 cargo fmt --manifest-path rust/Cargo.toml --check
 ```
+
+The full test suite uses the optional MuJoCo scene compiler. On headless Linux,
+set `MUJOCO_GL=egl` before running rendering tests. The base SDK remains usable
+without MuJoCo.
 
 The shim is its own cargo workspace (`rust/`) with path-deps into
 `../waddle-core/crates/*`; pyo3's `extension-module` feature lives only in
@@ -516,7 +539,7 @@ cargo clippy --manifest-path rust/Cargo.toml --features grpc,livekit --all-targe
 Clippy must be clean featureless, `--features grpc`, and
 `--features grpc,livekit`. A build that lacks a feature refuses the
 matching kwarg rather than running offline in silence.
-**`waddle_sdk._native.FEATURES` is the probe**, not `waddle_sdk._core.FEATURES`:
+**`waddle_sdk.FEATURES` is the probe**, not `waddle_sdk._core.FEATURES`:
 `_native` selects which core this process runs on and re-exports that
 core's features, so on a `[media]` install `waddle_sdk._core.FEATURES` still
 reports the bundled core's grpc-only set while the process is running the
@@ -533,6 +556,53 @@ unless the extra is actually installed. The extra's exact pin
 derive from the manifest, so a version bump must edit it too —
 `tests/test_features.py` holds it to `waddle_sdk.__version__` (and the two
 projects to one manifest) rather than to memory.
+
+### Opt-in real camera publication acceptance
+
+`tests/test_livekit_public.py` exercises `Site.open(media=LiveKit(url, token))`
+with a synthetic camera and arm, a real LiveKit service, and an independent RTC
+viewer. Install the matching `[media]` companion plus the test-only
+`livekit==1.1.18` and `websockets==17.0.1` clients. The caller supplies three explicit
+environment values: `WADDLE_TEST_LIVEKIT_URL`,
+`WADDLE_TEST_LIVEKIT_PUBLISHER_TOKEN`, and `WADDLE_TEST_LIVEKIT_VIEWER_TOKEN`.
+The tokens must name the same **fresh** `sdk-media-test-<unique-id>` room with
+different identities: publisher-only camera permission and viewer-only subscribe
+permission. These externally supplied grants leave room creation/deletion with
+the caller. Alternatively, supply `WADDLE_TEST_LIVEKIT_URL`,
+`WADDLE_TEST_LIVEKIT_API_KEY` and `WADDLE_TEST_LIVEKIT_API_SECRET`; the selected
+media fixture creates an isolated room, issues scoped grants and deletes that
+room afterward. Collection and non-media selections issue no service requests.
+Without `--live` and either credential form, it skips before dialing an endpoint.
+This synthetic test opens no physical hardware. Never put signing keys or grants
+in logs.
+
+```bash
+python -m pytest --live -q tests/test_livekit_public.py
+```
+
+The test receives RGB and colorized `<camera>/depth` frames, checks the published
+source resolution and separately confirms local metric depth. Received video may
+adapt resolution to network conditions; reports distinguish those dimensions.
+A loopback-only signaling
+proxy drops this test publisher's sockets; the native transport reconnects while
+the same public SiteSession and entered Run remain owned. A new viewer then
+rediscovers both tracks, followed by normal public SDK shutdown. Proxy handshake
+logging is disabled because headers can contain scoped tokens. This proves media
+transport and session continuity, not browser rendering or physical-camera quality.
+
+With the same credential options and a configured physical site, run
+`python -m pytest --live --live-config=/absolute/bench.json tests/live/test_03_media.py`.
+This tests each selected real camera through the same SDK publication/reconnect
+path, using a mock motion context without opening its physical arm. Camera
+ownership retains the original site ID. See [the live test guide](tests/live/README.md)
+for discovery and evidence requirements.
+
+LiveKit room and publisher identity come from the caller's grant and remain stable
+for the opened session. Native LiveKit manages reconnection and server-issued
+token refresh. The public SDK currently has no API to replace an opened session's
+media URL, room, identity or caller-provided grant. Do not reopen a hardware site
+merely to hand off an application's unrelated connection; retain the SDK owner
+and its media publication.
 
 ## Hollow-frontend checklist
 
@@ -553,7 +623,7 @@ All claim, lease, handoff, gate, timeline, and timestamp decisions live in
 - Calibration deprojects local aligned depth and submits one bounded point.
   It grants no motion and carries no image through the control plane.
 - Driver modules may enforce the owner's physical envelope and lifecycle.
-  They contain no claim, lease, hosted-task, workspace, or Metal logic.
+  They contain no claim, lease, hosted-task, workspace, or application orchestration logic.
 
 Private `_testing` loopback hooks remain only for core conformance tests. They
 are not exported by the package and are not an alternate application API.

@@ -202,7 +202,7 @@ def arm(*, config: PartConfig) -> base.Rig:
 
     if config.workspace_bounds:
         raise ValueError(
-            "Alicia-D workspace_bounds require Metal kinematics and cannot be "
+            "Alicia-D workspace_bounds require forward kinematics and cannot be "
             "enforced by this low-level adapter"
         )
     limits = _limits(config) + ((0.0, 1.0),)

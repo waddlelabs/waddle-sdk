@@ -205,3 +205,40 @@ def test_workspace_and_unknown_models_fail_before_hardware(monkeypatch):
     with pytest.raises(ValueError, match="model must be"):
         xarm.arm(config=_config(options={"model": "xarm42"}))
     assert devices == []
+
+
+@pytest.mark.parametrize("opening_mm", [0.0, 10.5, 21.0, 42.0, 63.0, 84.0])
+def test_g2_boundary_uses_physical_millimetres_not_raw_motor_pulses(
+    monkeypatch, opening_mm
+):
+    from waddle_sdk.robots.metadata import gripper_mapping
+
+    devices = _fake_vendor(monkeypatch)
+    driver = xarm.arm(config=_config()).arms()[""].driver
+    device = devices[0]
+
+    def raw_api_forbidden(*args, **kwargs):
+        pytest.fail("G2 linkage conversion belongs to the vendor's G2 API")
+
+    device.get_gripper_position = raw_api_forbidden
+    device.set_gripper_position = raw_api_forbidden
+    physical = gripper_mapping(
+        {
+            "joint": "gripper",
+            "closed_m": 0.0,
+            "open_m": 0.084,
+            "closed_action": 0.0,
+            "open_action": 1.0,
+        },
+        [{"name": "gripper", "minPosition": 0.0, "maxPosition": 1.0}],
+    )
+    try:
+        target = physical.action(opening_mm / 1000)
+        driver.write(np.asarray([0.0] * 7 + [target]))
+        assert device.gripper_mm == pytest.approx(opening_mm)
+        # Measurement also arrives in millimetres, after vendor pulse conversion.
+        device.gripper_mm = opening_mm
+        measured, _ = driver.read()
+        assert physical.opening(float(measured[-1])) == pytest.approx(opening_mm / 1000)
+    finally:
+        driver.close()

@@ -493,6 +493,12 @@ lease, or handoff. On a connection that did not negotiate the flag, a
 part-scoped action keeps its pre-flag meaning: flattened against the whole
 declared space, hence refused on any real multi-part robot (VERSIONING.md §3).
 
+Local caller ticks MAY also address a declared part using the same width and
+scope rules. Passthrough records retain the caller's part and only replace that
+part's target. The caller's scope is a blend anchor scope, never a lease or
+permission subdivision. Global Hold, substitution and bypass retain their existing
+meaning. `bimanual_caller_parts` pins independent named caller ticks.
+
 Fixtures: `bimanual_part_scoped_substitute`, `bimanual_part_dims_mismatch_faults`,
 `bimanual_unknown_part_refused`,
 `bimanual_part_scoped_refused_without_the_flag` (the pre-flag reading above).

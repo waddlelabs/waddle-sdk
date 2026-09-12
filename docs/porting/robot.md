@@ -135,3 +135,42 @@ the adapter factory. Unit-specific motor calibration stays in `options`.
 A portable URDF can let a higher layer construct generic kinematics. It is independent
 of the adapter's `fk` callback: publish either, both, or neither, and claim only what is
 actually valid.
+
+## YAM gravity compensation
+
+The YAM factories accept `gravity_comp_factor`, an absolute six-joint vector in
+arm joint order. Its default is `[1.0, 1.1, 1.2, 1.3, 1.0, 1.0]`; the third and
+fourth factors are rounded two-arm bench calibration, not vendor ratings or a
+universal calibration. Site owners can override this under `parts.<part>.options`
+for each arm. Values must be finite and positive; invalid vectors fail before
+hardware opens. The declaration freezes the vector, and the live driver passes
+it to I2RT before control threads start. The vendor appends its unchanged gripper
+factor of 1.0. PD gains, friction compensation, and motion limits are independent.
+Reopen the hardware to apply a configuration change. The kinematic YAM simulator
+ignores these factors.
+
+## YAM gain configuration
+
+The YAM factories and `LiveDriver` accept optional
+`arm_gains={"kp": [...], "kd": [...]}`. Each vector names joints 1–6 in order and
+contains six finite positive numbers. In `site.yaml`, place this mapping under
+`parts.<part>.options`. Values are copied at declaration, so mutating the input
+later does not change what opens. Explicit arm gains cannot be combined with
+`arm_gain_scale != 1`. The independent `gripper_gain_scale` still affects only the
+hand; omitted options retain the vendor defaults.
+
+The pinned DM4340/DM4310 MIT encoding supports KP up to 500 and KD up to 5.
+Validate both explicit gains and effective scaled gains before CAN startup, and
+reject requests outside these bounds instead of allowing silent vendor clamping.
+Default KD on joints 1–3 is already 5, so increasing the legacy combined
+`arm_gain_scale` is refused. Use explicit P/D values for reviewed independent
+calibration. Encoding limits are not tuning recommendations; retain the site's
+motion envelope and validate measured tracking, arrival and recovery.
+
+I2RT opens with its original gains holding the measured initial position; the SDK
+then applies valid configured gains through `update_kp_kd`. Reopen to change a site
+configuration. Hold and e-stop recovery retain the configured requested vectors.
+The vendor quantizes gains to 12 bits. Benchmark evidence records requested
+`kp`/`kd` and predicted `encoded_kp`/`encoded_kd` separately; the latter are codec
+calculations, not motor gain readback. Simulation and monitor/zero-gravity modes
+validate the options but do not apply PD gains.

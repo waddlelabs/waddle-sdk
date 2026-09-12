@@ -1,6 +1,6 @@
 """Typed contracts shared by local and remote SDK runtime adapters.
 
-The protocol is deliberately structural: Metal can depend on this public
+The protocol is deliberately structural: applications can depend on this public
 module without importing a transport implementation or any SDK internals.
 Concrete authority, timing, gating, and recording remain native-core owned.
 """
@@ -8,10 +8,12 @@ Concrete authority, timing, gating, and recording remain native-core owned.
 from __future__ import annotations
 
 import enum
+import math
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, TypeAlias, runtime_checkable
 
 import numpy as np
 import numpy.typing as npt
@@ -49,10 +51,10 @@ def _thaw_json(value: object) -> JSONValue:
 
 
 class SupportFact(str, enum.Enum):
-    """One SDK implementation or declaration fact used by Metal.
+    """One SDK implementation or declaration fact used by applications.
 
     These are support facts, not robot skill capabilities. A fact can satisfy
-    one prerequisite of a Metal capability, but it never grants permission or
+    one prerequisite of an application capability, but it never grants permission or
     says that a complete skill is available.
     """
 
@@ -60,6 +62,8 @@ class SupportFact(str, enum.Enum):
     JOINT_VELOCITY_OBSERVATION = "observation.joint_velocity"
     EE_POSE_OBSERVATION = "observation.ee_pose"
     JOINT_POSITION_ACTION = "action.joint_position"
+    PART_OBSERVATION = "observation.named_parts"
+    PART_ACTION = "action.named_parts"
     VELOCITY_FEEDFORWARD = "actuation.velocity_feedforward"
     FORWARD_KINEMATICS = "kinematics.fk"
     BODY_SPHERES = "geometry.body_spheres"
@@ -235,15 +239,15 @@ class JointPositionCommand:
                     "velocity_feedforward_rad_s must have the same width as positions"
                 )
             if not all(np.isfinite(velocity_values)):
-                raise ValueError("velocity_feedforward_rad_s must contain finite values")
+                raise ValueError(
+                    "velocity_feedforward_rad_s must contain finite values"
+                )
         object.__setattr__(self, "positions", position_values)
         object.__setattr__(self, "velocity_feedforward_rad_s", velocity_values)
 
 
 if TYPE_CHECKING:
-    Action: TypeAlias = (
-        Sequence[float] | npt.NDArray[np.float64] | JointPositionCommand
-    )
+    Action: TypeAlias = Sequence[float] | npt.NDArray[np.float64] | JointPositionCommand
 else:
     # Keep clean imports compatible with numpy's minimal runtime surface.
     # Protocol annotations are postponed; only static consumers need the
@@ -260,15 +264,105 @@ class FaultCode(str, enum.Enum):
     UNSUPPORTED = "unsupported"
     SAFETY_REFUSAL = "safety_refusal"
     TRANSPORT_LOST = "transport_lost"
+    MOTOR_FAILURE = "motor_failure"
     INTERNAL = "internal"
+
+
+_CREDENTIAL_FIELD = re.compile(
+    r"(?:.*[_.-])?(?:authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|"
+    r"token|password|passwd|secret|credentials?)$",
+    re.IGNORECASE,
+)
+_CREDENTIAL_TEXT = re.compile(
+    r"(\b(?:authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|"
+    r"token|password|passwd|secret|credentials?)\s*[:=]\s*)"
+    r"(?:Bearer\s+[^\s,;]+|\"[^\"]*\"|'[^']*'|[^\s,;]+)",
+    re.IGNORECASE,
+)
+_BEARER_TEXT = re.compile(r"(\bBearer\s+)[^\s,;]+", re.IGNORECASE)
+
+
+def _diagnostic_text(value: str) -> str:
+    value = _CREDENTIAL_TEXT.sub(r"\1[REDACTED]", value)
+    return _BEARER_TEXT.sub(r"\1[REDACTED]", value)
+
+
+def _diagnostic_json(value: object, depth: int = 0) -> JSONValue:
+    """Copy bounded JSON metadata without serializing arbitrary Python objects."""
+    if depth > 8:
+        raise ValueError("metadata nesting exceeds eight levels")
+    if value is None or isinstance(value, (bool, int)):
+        return value
+    if isinstance(value, str):
+        return _diagnostic_text(value)
+    if isinstance(value, float) and math.isfinite(value):
+        return value
+    if isinstance(value, Mapping) and len(value) <= 128:
+        result = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise TypeError("metadata keys must be strings")
+            result[key] = (
+                "[REDACTED]"
+                if _CREDENTIAL_FIELD.fullmatch(key)
+                else _diagnostic_json(item, depth + 1)
+            )
+        return result
+    if isinstance(value, (list, tuple)) and len(value) <= 128:
+        return [_diagnostic_json(item, depth + 1) for item in value]
+    raise ValueError("metadata must contain bounded JSON values")
+
+
+def _exception_cause(
+    error: BaseException, seen: tuple[int, ...] = ()
+) -> RuntimeFaultCause:
+    if isinstance(error, RuntimeFault):
+        return RuntimeFaultCause(
+            error.code.value, error.detail, error.context, error.causes
+        )
+    if id(error) in seen or len(seen) >= 8:
+        return RuntimeFaultCause(
+            "cause_limit", "Cause chain is cyclic or exceeds eight levels"
+        )
+    error_type = f"{type(error).__module__}.{type(error).__qualname__}"
+    context: dict[str, JSONValue] = {"error_type": error_type}
+    omitted = []
+    for index, (key, value) in enumerate(vars(error).items()):
+        if index >= 128:
+            context["metadata_limit"] = "Exception metadata exceeds 128 attributes"
+            break
+        try:
+            context.update(_diagnostic_json({key: value}))
+        except (TypeError, ValueError):
+            omitted.append(key)
+    if isinstance(error, OSError):
+        for key in ("errno", "filename", "filename2"):
+            if (value := getattr(error, key, None)) is not None:
+                context[key] = _diagnostic_json(value)
+    if omitted:
+        context["omitted_non_json_fields"] = omitted
+    parent = error.__cause__
+    if parent is None and not error.__suppress_context__:
+        parent = error.__context__
+    native_code = getattr(error, "code", error_type)
+    if isinstance(native_code, enum.Enum):
+        native_code = native_code.value
+    return RuntimeFaultCause(
+        code=str(native_code) if isinstance(native_code, (str, int)) else error_type,
+        detail=_diagnostic_text(str(error)),
+        context=context,
+        causes=()
+        if parent is None
+        else (_exception_cause(parent, (*seen, id(error))),),
+    )
 
 
 @dataclass(frozen=True)
 class RuntimeFaultCause:
-    """One structured lower-level cause safe to carry across SDK boundaries.
+    """A lower-level failure retaining its original diagnostic and metadata.
 
-    Implementations must not place credentials, customer paths, or raw vendor
-    exception text in any field.
+    Credentials must not be included; benign device paths and vendor messages
+    are diagnostic information and must not be replaced with generic summaries.
     """
 
     code: str
@@ -287,11 +381,12 @@ class RuntimeFaultCause:
 
 @dataclass
 class RuntimeFault(Exception):
-    """A concise public runtime failure consumable by Metal.
+    """A public runtime failure consumable by applications without information loss.
 
-    ``detail``, ``context``, and ``causes`` cross process and tenant-aware
-    logging boundaries. Implementations must keep them free of credentials,
-    customer paths, and arbitrary vendor exception strings.
+    ``detail``, ``context``, and ``causes`` retain scoped device diagnostics
+    across process boundaries. Typed producers keep credentials out of those
+    fields; ``from_exception`` removes explicitly labelled credentials from
+    otherwise unchanged lower-level text and JSON metadata.
     """
 
     code: FaultCode
@@ -299,6 +394,33 @@ class RuntimeFault(Exception):
     retryable: bool = False
     context: Mapping[str, JSONValue] = field(default_factory=dict)
     causes: tuple[RuntimeFaultCause, ...] = ()
+
+    @classmethod
+    def from_exception(
+        cls,
+        error: Exception,
+        *,
+        code: FaultCode = FaultCode.INTERNAL,
+        context: Mapping[str, JSONValue] | None = None,
+    ) -> RuntimeFault:
+        """Preserve a lower-level failure, redacting only credential material.
+
+        Existing RuntimeFault objects pass through unchanged. Other exceptions
+        retain their message, type, JSON attributes, errno and Python cause
+        chain. Non-JSON metadata fields are named rather than repr-serialized;
+        metadata is bounded to eight levels and 128 entries per container.
+        Credential-named fields/assignments and Bearer values are redacted.
+        """
+        if isinstance(error, cls):
+            return error
+        cause = _exception_cause(error)
+        return cls(
+            code,
+            cause.detail,
+            retryable=isinstance(error, TimeoutError),
+            context=_diagnostic_json(dict(context or {})),
+            causes=(cause,),
+        )
 
     def __str__(self) -> str:
         return f"{self.code.value}: {self.detail}"
@@ -336,6 +458,7 @@ class Observation:
     unix_ns: int
     parts: Mapping[str, PartObservation]
     cameras: Mapping[str, CameraSample]
+    faults: Mapping[str, RuntimeFault] = field(default_factory=dict)
 
     def gate_vector(self) -> npt.NDArray[np.float64]:
         """Flatten joint positions in declaration order for the native gate."""
@@ -348,10 +471,13 @@ class Observation:
 
 @dataclass(frozen=True)
 class SubmitResult:
+    """Dispatch receipt; an owner refusal retains its exact structured fault."""
+
     dispatched: bool
     gate: str
     part: str | None = None
     detail: str = ""
+    fault: RuntimeFault | None = None
 
 
 @runtime_checkable
@@ -364,15 +490,48 @@ class RunPort(Protocol):
     def step(
         self,
         action: Action,
-        observation: Observation | Sequence[float] | npt.NDArray[np.float64] | None = None,
+        observation: Observation
+        | Sequence[float]
+        | npt.NDArray[np.float64]
+        | None = None,
     ) -> SubmitResult: ...
 
     def hold(self, reason: str) -> None: ...
 
 
 @runtime_checkable
+class NamedPartsRunPort(Protocol):
+    """Optional independent submissions through the same supervised run.
+
+    Results belong to individual parts, not an atomic multi-part transaction.
+    A receipt records dispatch, never physical arrival. Global supervision and
+    configured cross-part envelope dependencies can still refuse a submission.
+    """
+
+    def step_parts(
+        self,
+        commands: Mapping[str, JointPositionCommand],
+        observation: Observation | None = None,
+    ) -> Mapping[str, SubmitResult]: ...
+
+
+@runtime_checkable
+class NamedPartsObservationPort(Protocol):
+    """Optional partial observations; missing measurements carry exact faults."""
+
+    def observe_parts(self, parts: Sequence[str] | None = None) -> Observation: ...
+
+
+@runtime_checkable
+class MediaRuntimePort(Protocol):
+    """Optional native publisher evidence, independent of motion support."""
+
+    def media_tracks(self) -> list[dict[str, JSONValue]]: ...
+
+
+@runtime_checkable
 class SdkRuntimePort(Protocol):
-    """The sole surface Metal needs from a local or remote SDK session."""
+    """The structural surface applications need from a local or remote SDK session."""
 
     def describe(self) -> Mapping[str, JSONValue]: ...
 
@@ -388,7 +547,10 @@ class SdkRuntimePort(Protocol):
     def submit(
         self,
         action: Action,
-        observation: Observation | Sequence[float] | npt.NDArray[np.float64] | None = None,
+        observation: Observation
+        | Sequence[float]
+        | npt.NDArray[np.float64]
+        | None = None,
     ) -> SubmitResult: ...
 
     def hold(self, reason: str) -> None: ...
@@ -435,24 +597,27 @@ class SdkGeometryPort(Protocol):
 
 
 __all__ = [
+    "SUPPORT_CONTRACT_VERSION",
     "Action",
     "BodySphere",
     "FaultCode",
-    "JointPositionCommand",
     "JSONValue",
+    "JointPositionCommand",
+    "MediaRuntimePort",
+    "NamedPartsObservationPort",
+    "NamedPartsRunPort",
     "Observation",
     "PartObservation",
     "Pose",
     "RunPort",
-    "SdkGeometryPort",
-    "SdkKinematicsPort",
     "RuntimeEvent",
     "RuntimeFault",
     "RuntimeFaultCause",
+    "SdkGeometryPort",
+    "SdkKinematicsPort",
     "SdkRuntimePort",
     "SdkSupportPort",
     "SubmitResult",
-    "SUPPORT_CONTRACT_VERSION",
     "SupportFact",
     "SupportMatrix",
     "SupportRow",

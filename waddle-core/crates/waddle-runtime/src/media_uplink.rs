@@ -92,7 +92,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU8, AtomicU64, Ordering};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -125,6 +125,24 @@ const QUEUE_CAPACITY: usize = 4;
 /// keeps each `FrameStill` small on the control plane without a per-camera
 /// knob nobody has asked for.
 const STILL_JPEG_QUALITY: u8 = 80;
+
+/// Native publisher evidence for one camera stream, without pixels or credentials.
+/// `status` records the last local attempt: pending, published, publish_failed,
+/// encode_failed, or push_failed. Published does not prove remote delivery or
+/// current connectivity. A quiet camera retains its last attempt status.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MediaTrackStatus {
+    /// Declared source camera identifier.
+    pub camera_id: String,
+    /// RGB or colorized depth preview.
+    pub stream: &'static str,
+    /// Exact transport track identifier, chosen by the publisher.
+    pub track_name: String,
+    /// Last local publication attempt state.
+    pub status: &'static str,
+    /// Count of frames dropped by the local uplink.
+    pub frames_dropped: u64,
+}
 
 /// One raw video frame for [`crate::Session::publish_frame`]. RGB8 only in
 /// this task; `pixels` is an enum (not a bare `Bytes` field) so a future
@@ -275,6 +293,7 @@ pub(crate) struct CameraUplink {
     queue: Mutex<VecDeque<QueuedFrame>>,
     dropped: AtomicU64,
     track: Mutex<Option<TrackHandle>>,
+    publication: AtomicU8,
     /// `StreamPolicy.still_fps`, `0.0` = no stills tee for this camera (see
     /// [`resolve_still_fps`]).
     still_fps: f64,
@@ -312,6 +331,7 @@ impl CameraUplink {
             queue: Mutex::new(VecDeque::with_capacity(QUEUE_CAPACITY)),
             dropped: AtomicU64::new(0),
             track: Mutex::new(None),
+            publication: AtomicU8::new(0),
             still_fps,
             still_slot: Mutex::new(None),
             last_still_ns: AtomicI64::new(i64::MIN),
@@ -395,6 +415,27 @@ impl CameraUplink {
         }
         self.last_still_ns.store(t_ns, Ordering::Relaxed);
         slot.take()
+    }
+
+    pub(crate) fn status(&self, camera: &str, stream: &'static str) -> Option<MediaTrackStatus> {
+        if !self.media_wired
+            || (stream == "depth" && self.last_frame_seq.load(Ordering::Relaxed) == 0)
+        {
+            return None;
+        }
+        Some(MediaTrackStatus {
+            camera_id: camera.to_owned(),
+            stream,
+            track_name: self.name.clone(),
+            status: match self.publication.load(Ordering::Relaxed) {
+                1 => "published",
+                2 => "publish_failed",
+                3 => "encode_failed",
+                4 => "push_failed",
+                _ => "pending",
+            },
+            frames_dropped: self.dropped(),
+        })
     }
 
     pub(crate) fn dropped(&self) -> u64 {
@@ -540,6 +581,7 @@ fn pump_media_frame(
             match media.publish_track(&cam.name) {
                 Ok(t) => *guard = Some(t),
                 Err(err) => {
+                    cam.publication.store(2, Ordering::Relaxed);
                     tracing::warn!(
                         camera = %cam.name,
                         error = %err,
@@ -563,15 +605,19 @@ fn pump_media_frame(
     match encoder.encode(queued.t_ns, queued.frame.as_bytes()) {
         Ok(encoded) => {
             if let Err(err) = media.push_frame(&track, encoded) {
+                cam.publication.store(4, Ordering::Relaxed);
                 tracing::warn!(
                     camera = %cam.name,
                     error = %err,
                     "push_frame failed; dropping frame"
                 );
                 cam.dropped.fetch_add(1, Ordering::Relaxed);
+            } else {
+                cam.publication.store(1, Ordering::Relaxed);
             }
         }
         Err(err) => {
+            cam.publication.store(3, Ordering::Relaxed);
             tracing::warn!(
                 camera = %cam.name,
                 error = %err,

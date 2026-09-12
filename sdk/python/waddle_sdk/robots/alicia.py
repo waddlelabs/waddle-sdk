@@ -19,7 +19,7 @@ __all__ = ["AliciaDriver", "arm"]
 _ARM_DOF = 6
 _GRIPPER_MAX = 1000.0
 # Synriard Alicia_M_v1_1_follower.urdf.  These are controller-facing limits;
-# Metal owns IK and model loading.
+# Application code owns IK and model loading.
 _JOINT_LIMITS = (
     (-2.7475, 2.7475),
     (-3.14, 0.0),
@@ -194,7 +194,7 @@ def arm(*, config: PartConfig) -> base.Rig:
 
     if config.workspace_bounds:
         raise ValueError(
-            "Alicia-M workspace_bounds require Metal kinematics and cannot be "
+            "Alicia-M workspace_bounds require forward kinematics and cannot be "
             "enforced by this low-level adapter"
         )
     limits = _limits(config) + ((0.0, 1.0),)

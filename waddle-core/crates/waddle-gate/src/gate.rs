@@ -218,6 +218,18 @@ impl<C: Clock> Gate<C> {
         gripper: Option<f64>,
         obs: Option<&[f64]>,
     ) -> GateOutput {
+        self.gate_scoped(values, gripper, obs, None)
+    }
+
+    /// Gate a caller action with its validated declaration scope. The caller
+    /// supplies a shared part identity; recording and blend anchors retain it.
+    pub fn gate_scoped(
+        &mut self,
+        values: &[f64],
+        gripper: Option<f64>,
+        obs: Option<&[f64]>,
+        part: Option<Arc<str>>,
+    ) -> GateOutput {
         let stamp = self.clock.stamp_now();
         let now = stamp.mono_ns();
         self.shared.stats.record(now);
@@ -234,10 +246,7 @@ impl<C: Clock> Gate<C> {
                     values: ActionValues::from_slice(values),
                     velocity_feedforward: None,
                     gripper,
-                    // The caller's own action always commands the whole
-                    // declared space; only an intervention action addresses
-                    // one part of it.
-                    part: None,
+                    part,
                 };
                 let provenance = ProvenanceTag::policy();
                 self.record(
@@ -441,6 +450,28 @@ mod tests {
         let rec = records.pop().unwrap();
         assert_eq!(rec.decision, GateDecision::Pass);
         assert_eq!(rec.action.unwrap().values.as_slice(), &[1.0, 2.0]);
+    }
+
+    #[test]
+    fn named_caller_records_retain_scope_and_global_hold() {
+        let (mut gate, shared, _tx, mut records, clock) = setup();
+        for name in ["left", "right"] {
+            clock.advance(1_000);
+            let out = gate.gate_scoped(&[0.1, 0.2], None, None, Some(Arc::from(name)));
+            assert!(matches!(out, GateOutput::Pass { .. }));
+            let action = records.pop().unwrap().action.unwrap();
+            assert_eq!(action.part.as_deref(), Some(name));
+            assert_eq!(action.values.as_slice(), &[0.1, 0.2]);
+        }
+        shared.store_plan(GatePlan {
+            mode: PlanMode::Held,
+            since: MonoNs(0),
+        });
+        assert!(matches!(
+            gate.gate_scoped(&[0.3, 0.4], None, None, Some(Arc::from("left"))),
+            GateOutput::Hold
+        ));
+        assert!(records.pop().unwrap().action.is_none());
     }
 
     #[test]

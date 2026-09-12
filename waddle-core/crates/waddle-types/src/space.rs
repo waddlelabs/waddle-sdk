@@ -454,7 +454,7 @@ impl ActionSpace {
 
 /// The validated robot declaration. Cameras, series, URDF, and frame graph
 /// stay on the `pb::RobotDescription` (they are configuration for capture and
-/// the closed side, not core execution semantics).
+/// application code, not core execution semantics).
 #[derive(Debug, Clone, PartialEq)]
 pub struct RobotDescription {
     pub name: String,

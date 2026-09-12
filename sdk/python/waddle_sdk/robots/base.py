@@ -9,7 +9,7 @@ two things is here, once:
 * :class:`SimDriver` — a rate-limited kinematic twin of any joint robot, so
   the sim run is a rehearsal of the live one rather than an easier version.
 * :class:`Arm` — the ENVELOPE seam. One object every command crosses, whoever
-  sent it: the program's own policy, a teleoperator's jog, a Waddle-hosted
+  sent it: the program's own policy, a teleoperator's jog, an application-hosted
   agent's trajectory. It rejects; it never clamps.
 * :class:`RejectLog`, :class:`ParkGate`, :func:`apply_console_gesture`,
   :func:`start_console_recovery` + :class:`ConsoleRecovery` — bounded
@@ -17,7 +17,7 @@ two things is here, once:
   e-stop latch. One reader per terminal, aimed at the arms of whoever started
   it and retired with them.
 * :class:`RobotPump` + :func:`proprio_tick` — the loop that keeps reporting
-  while the caller's thread is busy (blocked inside `a Metal-hosted run`, say).
+  while the caller's thread is busy (blocked inside `an application run`, say).
 * :func:`chunk_sender`, :func:`apply_decision`, :func:`split_by_part` — the
   `Control.send` verb over a set of arms, and the declared-layout arithmetic
   it routes with.
@@ -60,6 +60,7 @@ from ..cameras import CameraCalibrationDriver, CameraDriver, CameraFrame, Camera
 from ..cameras.base import _depth_preview_rgb
 from ..descriptors import Camera as CameraDescription
 from ..descriptors import FrameTransform, Intrinsics, Robot
+from ..runtime import FaultCode, RuntimeFault
 
 __all__ = [
     "CONSOLE_THREAD_NAME",
@@ -1095,6 +1096,8 @@ def apply_decision(
     velocity_feedforward_rad_s: (
         Mapping[str, Sequence[float]] | Sequence[float] | None
     ) = None,
+    on_refusal: Callable[[RuntimeFault], None] | None = None,
+    check_neighbors: bool = False,
 ) -> bool:
     """Apply one gate decision atomically across every addressed part.
 
@@ -1103,7 +1106,11 @@ def apply_decision(
     every addressed part and rejects the whole decision; a multi-part command
     can therefore never move its first part before discovering that its second
     part is outside the owner envelope.  The return value reports whether the
-    complete decision reached the drivers.
+    complete decision reached the drivers. ``on_refusal`` optionally receives
+    the exact scoped owner-envelope fault after all addressed parts are held;
+    callers that only need the boolean retain the same return contract. If a
+    hold fails, every remaining hold is attempted and the refusal is raised
+    with those independent faults in ``context['hold_errors']``.
     """
     rows = decided if isinstance(decided, dict) else split_by_part(arms, decided)
     velocity_rows: Mapping[str, Sequence[float]]
@@ -1124,6 +1131,7 @@ def apply_decision(
         )
 
     prepared: list[tuple[Arm, np.ndarray, np.ndarray | None]] = []
+    measurements: dict[str, np.ndarray] = {}
     refusal: tuple[Arm, str] | None = None
     for part, values in rows.items():
         arm = arms[part]
@@ -1151,22 +1159,74 @@ def apply_decision(
             )
         else:
             current, _velocity = arm.state()
+            measurements[part] = np.asarray(current, dtype=float).copy()
             reason = arm.check(target, current)
         prepared.append((arm, target, velocity))
         if reason is not None and refusal is None:
             refusal = (arm, reason)
 
+    collision_targets = [(arm, target) for arm, target, _velocity in prepared]
     if refusal is None:
-        refusal = _cross_arm_collision_refusal(
-            [(arm, target) for arm, target, _velocity in prepared]
-        )
+        if check_neighbors and any(
+            arm.self_collision_enabled for arm, _ in collision_targets
+        ):
+            # Sparse caller commands must not bypass configured cross-part
+            # geometry. A required neighbor read remains a real dependency.
+            for name, arm in arms.items():
+                if name not in rows and arm.self_collision_enabled:
+                    position, _ = arm.state()
+                    collision_targets.append((arm, np.asarray(position, dtype=float)))
+        refusal = _cross_arm_collision_refusal(collision_targets)
 
     if refusal is not None:
         failed, reason = refusal
+        failed_part = next(name for name, arm in arms.items() if arm is failed)
+        failed_target = next(
+            target for arm, target in collision_targets if arm is failed
+        )
+
+        def values(array):
+            # Non-finite rejected input still needs transport-safe evidence.
+            return [
+                value if math.isfinite(value) else str(value)
+                for value in array.tolist()
+            ]
+
+        context = {
+            "operation": "admit_joint_target",
+            "part": failed_part,
+            "frame_id": failed.base_frame,
+            "target": values(failed_target),
+            "joint_names": list(failed.joint_names),
+            "joint_limits": [list(pair) for pair in failed.joint_limits],
+            "step_caps": list(failed.step_caps),
+            "workspace_bounds": None
+            if failed.workspace is None
+            else [list(row) for row in failed.workspace],
+            "addressed_parts": list(rows),
+        }
+        if failed_part in measurements:
+            context["measured"] = values(measurements[failed_part])
+        fault = RuntimeFault(FaultCode.SAFETY_REFUSAL, reason, context=context)
         failed.rejected += 1
         failed._reject(reason)
+        hold_errors = []
         for arm, _target, _velocity in prepared:
-            arm.hold()
+            try:
+                arm.hold()
+            except Exception as error:  # noqa: BLE001 -- hold every addressed part, retain each failure
+                hold_errors.append(error)
+        if hold_errors:
+            fault.context = {
+                **context,
+                "hold_errors": [
+                    RuntimeFault.from_exception(error).as_dict()
+                    for error in hold_errors
+                ],
+            }
+            raise fault from hold_errors[0]
+        if on_refusal is not None:
+            on_refusal(fault)
         return False
 
     for arm, target, velocity in prepared:
@@ -1187,7 +1247,7 @@ def chunk_sender(
 
     Waddle drives them through the returned callable, from its own dispatch
     thread, whenever something holds the lease: a teleoperator, a reset agent,
-    or the hosted agent a hosted Metal run invites.
+    or the hosted agent an application run invites.
 
     A step may carry a GRIPPER value on the sidechannel, and this layer models
     a hand as a JOINT row — so there is nowhere to put one. Such a step is
@@ -1319,7 +1379,7 @@ def estop_all(
 
 def close_all(
     units: Mapping[str, Arm | Driver], *, report: Callable[[str], None] = status
-) -> None:
+) -> bool:
     """Drop every one of these connections, even if an earlier one raised.
 
     The same doctrine as :func:`estop_all` — one unit that will not answer is
@@ -1328,18 +1388,23 @@ def close_all(
     on its way out of something that has already gone wrong (a rig that failed
     part-way through opening its arms, a session unwinding), and an exception
     from here would replace the reason it is unwinding with a footnote about a
-    bus that did not answer.
+    bus that did not answer. The return value reports whether every close
+    completed, so the site lifecycle can retain ownership after uncertainty.
 
     What closing COSTS is the unit's own answer, not this function's: see
     :func:`closing_drops_torque`."""
+    confirmed = True
     for part, unit in units.items():
         try:
             unit.close()
         except Exception as e:  # noqa: BLE001 — a vendor call can throw anything
+            confirmed = False
             report(
                 f"close part={part} raised {e!r} — this unit may still be connected "
                 "and energized"
             )
+
+    return confirmed
 
 
 def console_is_at_the_machine() -> bool:
@@ -1761,12 +1826,13 @@ def proprio_tick(
     arms: Mapping[str, Arm],
     *,
     advance: Callable[[float], None] | None = None,
+    on_part_fault: Callable[[str, Exception], None] | None = None,
 ) -> Callable[[float], None]:
     """One turn of the robot's own loop: integrate every part, then report it.
 
     Separate from the gate tick on purpose — this has to keep running on a
     background thread while the caller's thread is blocked inside
-    ``a Metal-hosted run``, because the machine still moves and the agent still
+    ``an application run``, because the machine still moves and the agent still
     needs to see it.
 
     ``joint_pos`` is passed explicitly for every part. A per-part sample
@@ -1779,14 +1845,19 @@ def proprio_tick(
     named here rather than filled in with a frame nobody declared."""
 
     def tick(dt: float) -> None:
-        if advance is None:
-            for arm in arms.values():
-                arm.step(dt)
-        else:
+        if advance is not None:
             advance(dt)
         for part, arm in arms.items():
-            position, velocity = arm.state()
-            pose = arm.ee_pose(position)
+            try:
+                if advance is None:
+                    arm.step(dt)
+                position, velocity = arm.state()
+                pose = arm.ee_pose(position)
+            except Exception as error:
+                if on_part_fault is None:
+                    raise
+                on_part_fault(part, error)
+                continue
             if pose is None:
                 session.report_proprio(
                     part=part, joint_pos=position, joint_vel=velocity
@@ -1811,7 +1882,7 @@ class RobotPump(threading.Thread):
     own tick. The usual one is :func:`proprio_tick`.
 
     It exists because the robot's own housekeeping cannot pause while the
-    caller's thread is elsewhere — blocked inside ``a Metal-hosted run``, or
+    caller's thread is elsewhere — blocked inside ``an application run``, or
     sitting in a monitor-only session with no rollout loop at all. ``stop()``
     joins. A delayed tick resumes the declared cadence without replaying missed
     ticks against a newer command; simulated time may lag under load."""
@@ -1919,6 +1990,7 @@ class CameraPump(threading.Thread):
         self._report = report
         self._stopping = threading.Event()
         self._closed = False
+        self.teardown_confirmed = True
         self._close_lock = threading.Lock()
         self._next_sequence = 0
 
@@ -1979,6 +2051,7 @@ class CameraPump(threading.Thread):
             try:
                 self._driver.close()
             except Exception as exc:  # noqa: BLE001 — vendor close can throw
+                self.teardown_confirmed = False
                 self._report(
                     f"close camera={self._camera_name} on capture thread raised "
                     f"{exc!r} — this camera may still be connected"
@@ -1992,6 +2065,7 @@ class CameraPump(threading.Thread):
                 try:
                     self._driver.close()
                 except Exception as exc:  # noqa: BLE001 — vendor close may throw
+                    self.teardown_confirmed = False
                     self._report(
                         f"close camera={self._camera_name} raised {exc!r} — this "
                         "camera may still be connected"
@@ -1999,6 +2073,7 @@ class CameraPump(threading.Thread):
         if threading.current_thread() is not self:
             self.join(timeout=timeout)
             if self.is_alive():
+                self.teardown_confirmed = False
                 self._report(
                     f"camera={self._camera_name} capture did not stop after {timeout}s"
                 )
@@ -2055,13 +2130,13 @@ RIG_DEFAULT = _RigDefault()
 #:     — choosing between the two is the whole of that decision.
 #: ``"supervised"``
 #:     ``send``, ``hold`` and ``estop``: the ordinary posture, in which a
-#:     teleoperator, a reset agent or a Waddle-hosted agent can drive this
+#:     teleoperator, a reset agent or an application-hosted agent can drive this
 #:     robot through the owner's envelope.
 #:
 #: A posture is NOT an authority decision and adds none: who may command a
 #: robot, when, and under what claim is waddle-core's, unchanged either way.
 #: Whether a rollout is agent-driven or windowed stays a call-site choice —
-#: `a Metal-hosted run` versus `a Site Run` — never a construction one.
+#: `an application run` versus `a Site Run` — never a construction one.
 POSTURES = ("monitor", "supervised")
 
 
@@ -2308,7 +2383,7 @@ class Rig:
 
             rig = yam.bimanual(workspace=..., gripper_limits=..., sim=True)
             with rig.session("my-project", transport=waddle_sdk.Grpc(url, token)) as s:
-                result = a Metal-hosted run("stack the cups")
+                result = run_application(s, "stack the cups")
 
         Every keyword that is not this rig's own goes straight to
         `the Site lifecycle` and means exactly what it means there; ``send``
@@ -2363,6 +2438,7 @@ class RigSession:
         _testing: bool = False,
     ) -> None:
         self._rig = rig
+        self.teardown_confirmed = True
         self._project = project
         self._send = send
         self._init_kwargs = dict(
@@ -2549,6 +2625,13 @@ class RigSession:
             self._finish()
 
     def _finish(self) -> None:
+        try:
+            self._finish_resources()
+        except BaseException:
+            self.teardown_confirmed = False
+            raise
+
+    def _finish_resources(self) -> None:
         """Stop every owner-side activity and close every opened handle once."""
         with self._lifecycle_lock:
             if self._finished:
@@ -2561,10 +2644,12 @@ class RigSession:
         closed_cameras: set[str] = set()
         for name, camera_pump in list(self.camera_pumps.items()):
             camera_pump.stop()
+            self.teardown_confirmed &= camera_pump.teardown_confirmed
             closed_cameras.add(name)
         self.camera_pumps.clear()
         if self.pump is not None:
             self.pump.stop()
+            self.teardown_confirmed &= not self.pump.is_alive()
             self.pump = None
 
         for name, driver in self.cameras.items():
@@ -2573,6 +2658,7 @@ class RigSession:
             try:
                 driver.close()
             except Exception as exc:  # noqa: BLE001 — vendor close can throw anything
+                self.teardown_confirmed = False
                 self._report(
                     f"close camera={name} raised {exc!r} — this camera may still "
                     "be connected"
@@ -2583,4 +2669,4 @@ class RigSession:
             if close_session is not None:
                 close_session()
         finally:
-            close_all(self.arms, report=self._report)
+            self.teardown_confirmed &= close_all(self.arms, report=self._report)

@@ -83,6 +83,8 @@ class Episode:
         action: npt.NDArray[np.float64] | Sequence[float],
         obs: npt.NDArray[np.float64] | Sequence[float] | None = None,
         gripper: float | None = None,
+        *,
+        part: str | None = None,
     ) -> Any: ...
     def terminate(self, outcome: str = "abort", reason: str = "") -> None: ...
 

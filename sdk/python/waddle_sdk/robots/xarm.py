@@ -24,6 +24,10 @@ __all__ = ["XArmDriver", "arm"]
 _MODE_POSITION = 0
 _STATE_READY = 0
 _STATE_STOP = 4
+# UFactory get/set_gripper_g2_position exposes jaw opening in millimetres.
+# Its vendor implementation owns the nonlinear pulse/linkage conversion:
+# https://github.com/xArm-Developer/xArm-Python-SDK/blob/master/xarm/x3/gripper.py
+# Never substitute the older raw get/set_gripper_position APIs here.
 _G2_STROKE_MM = 84.0
 
 _MODEL_LIMITS: dict[str, tuple[tuple[float, float], ...]] = {
