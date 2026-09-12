@@ -52,6 +52,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   Optional per-case `minimum_settle_s` retains a target-commanded observation
   window before arrival/Hold without extending the total settling deadline or
   bypassing faults, tracking checks or three consecutive arrival observations.
+  Optional reviewed `approach_rad` adds reference-entry, approach and reference
+  preparation through the same motion loop. Each must arrive before advancing;
+  failures retain their evidence, allow only healthy configured parking and fence
+  the next backend's target trial. Comparison checks exact preparation order and
+  targets without relaxing initial-state, arrival or performance limits.
 
 - Unify software and live behavior tests under `sdk/tests`; `pytest --live` selects
   viable camera/robot checks from metadata and optional motion profiles, reports

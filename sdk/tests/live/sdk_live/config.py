@@ -61,6 +61,21 @@ def load(path):
             raise ValueError("Target and reference joint widths must match")
         if not all(math.isfinite(v) for v in start + target):
             raise ValueError("Joint targets must be finite")
+        if "approach_rad" in case:
+            approach = case["approach_rad"]
+            if (
+                not isinstance(approach, list)
+                or len(approach) != len(names)
+                or not all(
+                    isinstance(value, (int, float))
+                    and not isinstance(value, bool)
+                    and math.isfinite(value)
+                    for value in approach
+                )
+            ):
+                raise ValueError(
+                    f"{case['case_id']}.approach_rad must match joint_names with finite positions"
+                )
         for key in (
             "velocity_rad_s",
             "acceleration_rad_s2",

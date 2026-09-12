@@ -32,6 +32,22 @@ def reference(case):
     return result
 
 
+def preparation(case):
+    """Reviewed entry and optional approach before the measured reference."""
+    ref = reference(case)
+    if "approach_rad" not in case:
+        return [ref]
+    return [
+        {**ref, "case_id": case["case_id"] + "-reference-entry"},
+        {
+            **ref,
+            "case_id": case["case_id"] + "-approach",
+            "target_rad": case["approach_rad"],
+        },
+        ref,
+    ]
+
+
 def rest_failed(report, config, part):
     """A configured rest must arrive before another backend can own the arm."""
     if part not in config.get("rest_positions", {}):
@@ -91,15 +107,16 @@ def run_backend(config, part, case, mode, output, *, reference_only=False):
     try:
         with owner:
             ref = reference(case)
-            trial = move(case["start_rad"], ref)
-            # Do not advance after a failed reference. The parent can still run
-            # the other backend and retain both bounded nonarrival results.
-            if not reference_only and trial["outcome"] == "arrived":
-                move(case["target_rad"], case)
-                move(
-                    case["start_rad"],
-                    {**ref, "case_id": case["case_id"] + "-return"},
-                )
+            for phase in preparation(case):
+                if move(phase["target_rad"], phase)["outcome"] != "arrived":
+                    break
+            else:
+                if not reference_only:
+                    move(case["target_rad"], case)
+                    move(
+                        case["start_rad"],
+                        {**ref, "case_id": case["case_id"] + "-return"},
+                    )
             rest = config.get("rest_positions", {}).get(part)
             if rest is not None:
                 rest_case = {
@@ -152,9 +169,10 @@ def compare(report, case, *, reference_only=False):
             reasons.append("Both backends must identify the same source manifest")
         if not vendor.get("vendor_pristine"):
             reasons.append("Vendor process was not pristine")
-        expected = [case["case_id"] + "-reference"]
+        expected = {phase["case_id"]: phase for phase in preparation(case)}
         if not reference_only:
-            expected.extend((case["case_id"], case["case_id"] + "-return"))
+            expected[case["case_id"]] = case
+            expected[case["case_id"] + "-return"] = reference(case)
         for run in runs:
             if (
                 run.get("error")
@@ -162,14 +180,19 @@ def compare(report, case, *, reference_only=False):
                 or run.get("background_errors")
             ):
                 reasons.append(f"{run['mode']} had an execution or shutdown fault")
-            if [trial["case_id"] for trial in run["trials"]] != expected:
+            if [trial["case_id"] for trial in run["trials"]] != list(expected):
                 reasons.append(
-                    f"{run['mode']} must complete each requested phase once in order: {expected}"
+                    f"{run['mode']} must complete each requested phase once in order: {list(expected)}"
                 )
             for trial in run["trials"]:
-                limits = (
-                    case if trial["case_id"] == case["case_id"] else reference(case)
-                )
+                limits = expected.get(trial["case_id"], reference(case))
+                if (
+                    "approach_rad" in case
+                    and trial.get("target_rad") != limits["target_rad"]
+                ):
+                    reasons.append(
+                        f"{run['mode']} {trial['case_id']}: target differs from the reviewed phase"
+                    )
                 try:
                     assert_arrived(trial, limits)
                 except AssertionError:
@@ -293,10 +316,17 @@ def paired(config, case, *, reference_only=False):
             "--output",
             str(output),
         ]
-        preceding_reference_failed = bool(report["runs"]) and (
-            report["runs"][0]["trials"][0]["outcome"] != "arrived"
+        preparation_ids = [phase["case_id"] for phase in preparation(case)]
+        preceding_preparation_failed = (
+            bool(report["runs"])
+            and [
+                trial["case_id"]
+                for trial in report["runs"][0]["trials"][: len(preparation_ids)]
+                if trial["outcome"] == "arrived"
+            ]
+            != preparation_ids
         )
-        if reference_only or preceding_reference_failed:
+        if reference_only or preceding_preparation_failed:
             command.append("--reference-only")
         print(
             f"Starting {mode} {case['part']}/{case['case_id']}; evidence {output}",

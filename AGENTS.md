@@ -840,7 +840,15 @@ exits, equal source-manifest hashes, and every requested phase exactly once in
 order; missing paired evidence cannot pass. This does not establish maximum native
 vendor throughput. Each selected-part projection preserves the original site ID
 and ownership lock. Keep raw samples, original faults and uncertain cleanup in
-the evidence; never advance to larger motions after failed reference acquisition.
+the evidence; never advance to target trials after failed preparation.
+Optional per-case `approach_rad` adds reference-entry → approach → reference before
+target/return, using the existing motion loop and unchanged limits. Each preparation
+must arrive; healthy nonarrival retains evidence and allows only configured rest
+in that backend. The parent limits the other backend to preparation diagnostics.
+Reference-only includes all configured preparation. Comparison requires its exact
+phase order and reviewed targets, records separate preparation timing, and keeps
+the original target-start matching and noninferiority margins. SDK-only motion
+uses the same preparation definition; no production driver or gain policy changes.
 Optional per-case `minimum_settle_s` delays arrival/Hold after final-target dispatch
 while retaining three consecutive in-tolerance observations and all safety checks.
 It defaults to zero and cannot extend the total `settle_s` deadline. Preserve the

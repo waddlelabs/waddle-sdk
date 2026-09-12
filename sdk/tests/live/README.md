@@ -41,7 +41,7 @@ must still meet both arrival tolerances. `settle_s` remains the total deadline
 after the planned trajectory; the minimum must be finite, nonnegative and no
 greater than that budget. Allow room for command and sampling latency: equal
 minimum and total budgets can time out. Gates, tracking checks and faults still
-interrupt immediately. Reference, return and configured rest inherit the case's
+interrupt immediately. Preparation, return and configured rest inherit the case's
 minimum. Reports retain `minimum_settle_s` and `target_latched_elapsed_s`; the
 latter is local command completion time, not motor acknowledgement.
 
@@ -64,9 +64,35 @@ The ordinary motion test then compares pristine raw I2RT and SDK child processes
 sequentially. Other robot adapters keep the SDK-only measured test and can add a
 small raw adapter using the same observation/command/hold/pose boundaries.
 Both child processes must exit successfully and identify the same source manifest
-hash. Each must report reference, target and return exactly once in that order;
-reference-only diagnostics require only the reference phase. Missing paired
+hash. Each must report reference, target and return exactly once in that order,
+with any configured approach preparation described below. Missing paired
 measurements fail comparison rather than omitting that phase from the verdict.
+
+Optional per-case `approach_rad` supplies a reviewed joint vector in the case's
+`joint_names` order. Its width must match, and every value must be finite and
+non-boolean. This changes the sequence to **reference-entry → approach → reference
+→ target → return**: first reach `start_rad`, then `approach_rad`, then `start_rad`
+again before the target trial. Entering the reference first preserves that
+transition instead of driving directly from an arbitrary resting pose to the
+approach. Both legs still need site-specific path and clearance review; the
+profile is not a collision-checking planner.
+
+Every preparation phase uses the same measured quintic loop, gains, motion limits,
+arrival tolerances, tracking checks and `minimum_settle_s` as the case. Each must
+arrive before the next begins. A healthy preparation nonarrival retains its failed
+record and proceeds only to configured rest in that backend; the other backend
+may collect its preparation diagnostic, but cannot execute the comparison target.
+Physical faults retain the existing prohibition on automatic rest or further
+trajectories. Reference-only diagnostics execute all configured preparation and
+then rest, omitting target/return; without `approach_rad` their only trial is the
+reference. SDK-only motion tests use the same preparation sequence.
+
+Paired evidence names the additional trials `<case_id>-reference-entry` and
+`<case_id>-approach`. Each has its own measured start/end, samples and timing;
+preparation time is excluded from target performance. The comparator requires
+every requested phase once in order, successful absolute arrival and the reviewed
+targets. The existing initial-state and noninferiority margins still apply to the
+target trial: an approach neither guarantees matched starts nor relaxes a failure.
 
 Each backend uses the same named case, quintic interpolation and external
 command cadence. Starts come from fresh measured joints. Reports compare target
@@ -91,7 +117,7 @@ PYTHONPATH=tests python -m live.sdk_live.paired --config /absolute/bench.json \
 This opt-in command opens hardware. CI is refused. It collects the other backend
 after a healthy bounded nonarrival, records the failed absolute result, and
 returns a failing exit code. A motor fault, unsafe tracking or uncertain shutdown
-blocks the next owner. A failed reference never advances to a larger target.
+blocks the next owner. Failed preparation never advances to a comparison target.
 The SDK benchmark also checks retained `robot.part_fault` events before commands
 and after shutdown. A later healthy read cannot hide an earlier selected-part
 failure: `part_faults` preserves the event cursor, timestamp, part and complete
@@ -103,7 +129,7 @@ Profiles can declare `rest_positions.<part>` with `joint_names` and `position_ra
 arrays copied from a reviewed, physically supported parking pose. Names must match
 that part's case joint set; order may differ. Configuration rejects duplicate names,
 width mismatches and nonfinite or boolean positions before opening hardware.
-After healthy bounded trials, including reference nonarrival, each paired backend
+After healthy bounded trials, including preparation nonarrival, each paired backend
 moves to its configured rest before closing. It uses the case's unchanged motion,
 tracking, arrival and settling limits. `rest_trials` retains measured parking
 evidence separately from comparison `trials`; `rest_error` retains an original
