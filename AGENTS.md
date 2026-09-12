@@ -69,6 +69,11 @@ fixtures using the same runtime surface. Seventeen are single-arm and eleven are
 matched two-arm scenes. Keep their task-relevant
 objects visible from the scene camera for every reference embodiment, and verify
 mechanics without adding task routes or success logic to the simulator.
+Together with the reference drawer they form the 29-task evaluation matrix.
+Trusted evaluator reset applies stable seed-derived bounded XY/yaw variation to
+each scene. Preserve rigid transforms within assembled free fixtures, keep the
+seed and sampled pose outside participant contracts, and retain canonical ordinary
+reset behavior.
 
 ## Repo map
 

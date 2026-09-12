@@ -2474,16 +2474,13 @@ def test_native_split_workspace_sorting_scene(tmp_path, monkeypatch, robot):
         assert engine.evaluation_snapshot()["identity"]["arm_count"] == 2
 
         assert engine.evaluation_reset(seed=7)
-        np.testing.assert_allclose(
-            data.xpos[int(model.body("left_object").id)],
-            (0.26, -0.44, 0.02),
-            atol=1e-6,
-        )
-        np.testing.assert_allclose(
-            data.xpos[int(model.body("right_object").id)],
-            (0.26, 0.44, 0.02),
-            atol=1e-6,
-        )
+        for name, canonical in (
+            ("left_object", (0.26, -0.44, 0.02)),
+            ("right_object", (0.26, 0.44, 0.02)),
+        ):
+            randomized = data.xpos[int(model.body(name).id)]
+            assert np.all(np.abs(randomized[:2] - canonical[:2]) <= 0.012)
+            assert randomized[2] == pytest.approx(canonical[2])
     finally:
         engine.close()
 

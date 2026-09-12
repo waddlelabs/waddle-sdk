@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import sys
 from pathlib import Path
@@ -11,6 +12,7 @@ import numpy as np
 from ..robots.mujoco import _evaluation_snapshot
 from .description import description
 from .model import mjcf, objects
+from .randomization import pose_groups, sample
 from .scene import depth_z16, profile
 
 
@@ -48,9 +50,10 @@ class Engine:
         self._velocity_ratio = np.array(
             [robot.servo(name)[1] / robot.servo(name)[0] for name in native_controls]
         )
+        object_groups = objects(config["environment"])
         self._prop_initial = {
             link.joint: float(link.initial)
-            for group in objects(config["environment"])
+            for group in object_groups
             for link in group
             if link.joint is not None
         }
@@ -58,6 +61,8 @@ class Engine:
         for part in self.parts:
             self.home(part, p.home)
         self._restore_prop_initial()
+        self._pose_groups = pose_groups(config["environment"], object_groups)
+        self._pose_initial = self._capture_pose_initial()
 
     def _restore_prop_initial(self):
         for name, value in self._prop_initial.items():
@@ -116,6 +121,8 @@ class Engine:
         self.mj.mj_step(self.model, self.data)
 
     def reset(self):
+        if hasattr(self, "_pose_initial"):
+            self._restore_pose_initial()
         self.mj.mj_resetData(self.model, self.data)
         for part in self.parts:
             self.home(part, self.profile.home)
@@ -123,13 +130,85 @@ class Engine:
         return True
 
     def evaluation_reset(self, *, seed):
-        # Current canonical scenes are deterministic. The explicit seed is part
-        # of the stable facet now and will drive task randomizers as they land.
         if isinstance(seed, bool) or not isinstance(seed, int):
             raise TypeError("simulation reset seed must be an integer")
         if seed < 0 or seed > 2**63 - 1:
             raise ValueError("simulation reset seed must be between 0 and 2^63-1")
-        return self.reset()
+        self.reset()
+        self._apply_pose_randomization(seed)
+        return True
+
+    def _capture_pose_initial(self):
+        initial = {}
+        for group in self._pose_groups:
+            for name in group.bodies:
+                body = self.model.body(name)
+                joint_id = int(body.jntadr[0]) if int(body.jntnum[0]) else None
+                free = joint_id is not None and int(
+                    self.model.jnt_type[joint_id]
+                ) == int(self.mj.mjtJoint.mjJNT_FREE)
+                if free:
+                    address = int(self.model.jnt_qposadr[joint_id])
+                    pose = self.data.qpos[address : address + 7].copy()
+                    dof_address = int(self.model.jnt_dofadr[joint_id])
+                else:
+                    address = None
+                    pose = np.r_[body.pos.copy(), body.quat.copy()]
+                    dof_address = None
+                initial[name] = (free, address, dof_address, pose)
+        return initial
+
+    def _restore_pose_initial(self):
+        for name, (free, address, _dof_address, pose) in self._pose_initial.items():
+            if free:
+                self.data.qpos[address : address + 7] = pose
+            else:
+                body = self.model.body(name)
+                body.pos[:] = pose[:3]
+                body.quat[:] = pose[3:]
+
+    @staticmethod
+    def _yaw_quaternion(angle):
+        return np.array([math.cos(angle / 2), 0.0, 0.0, math.sin(angle / 2)])
+
+    @staticmethod
+    def _quaternion_multiply(first, second):
+        aw, ax, ay, az = first
+        bw, bx, by, bz = second
+        return np.array(
+            [
+                aw * bw - ax * bx - ay * by - az * bz,
+                aw * bx + ax * bw + ay * bz - az * by,
+                aw * by - ax * bz + ay * bw + az * bx,
+                aw * bz + ax * by - ay * bx + az * bw,
+            ]
+        )
+
+    def _apply_pose_randomization(self, seed):
+        environment = self.config["environment"]
+        for index, group in enumerate(self._pose_groups):
+            dx = sample(seed, environment, index, "x", group.translation_xy_m)
+            dy = sample(seed, environment, index, "y", group.translation_xy_m)
+            yaw = sample(seed, environment, index, "yaw", group.yaw_rad)
+            originals = [self._pose_initial[name][3] for name in group.bodies]
+            anchor = np.mean([pose[:2] for pose in originals], axis=0)
+            cosine, sine = math.cos(yaw), math.sin(yaw)
+            rotation = np.array([[cosine, -sine], [sine, cosine]])
+            yaw_quaternion = self._yaw_quaternion(yaw)
+            for name, original in zip(group.bodies, originals, strict=True):
+                position = original[:3].copy()
+                position[:2] = anchor + rotation @ (position[:2] - anchor) + (dx, dy)
+                orientation = self._quaternion_multiply(yaw_quaternion, original[3:])
+                free, address, dof_address, _pose = self._pose_initial[name]
+                if free:
+                    self.data.qpos[address : address + 3] = position
+                    self.data.qpos[address + 3 : address + 7] = orientation
+                    self.data.qvel[dof_address : dof_address + 6] = 0.0
+                else:
+                    body = self.model.body(name)
+                    body.pos[:] = position
+                    body.quat[:] = orientation
+        self.mj.mj_forward(self.model, self.data)
 
     def evaluation_snapshot(self):
         """Return backend ground truth to the isolated trusted evaluator."""

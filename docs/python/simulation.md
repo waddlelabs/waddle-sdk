@@ -127,10 +127,24 @@ verify upright settled bodies. MuJoCo depth still reports ideal geometry for the
 translucent tubes; D405/D435 invalid-depth behavior remains a sensor-parity gate.
 Hard two-arm tests cover asymmetric tool pose, movable receiver insertion,
 balanced versus one-sided lift, loose-content containment, finite cap retention
-and release, and target-only bottle removal. D07-D10 stay interactive-only until
-the downstream capability matrix supplies atomic multi-part execution.
+and release, and target-only bottle removal. D07-D10 require coordinated
+multi-part execution from the downstream capability matrix.
 They are development fixtures, not calibrated physical twins. Isaac and SAPIEN
 selection is rejected until the same native evidence exists for those backends.
+
+The reference MuJoCo evaluator reset uses the requested integer seed to apply a
+stable bounded XY translation and yaw rotation to every task scene. Separate
+workpieces vary independently. Parts that form one free assembly, such as a box
+and fitted lid or a loaded tray and its contents, transform as one rigid group so
+reset does not break the fixture. Fixed articulated fixtures move through their
+root body. The same seed and environment reproduce the same pose across worker
+restarts; different seeds select a different pose from the finite development
+profile. A normal world `reset()` restores the canonical interactive scene.
+
+This variation is evaluator administration, so neither the seed nor sampled pose
+is added to participant-facing site or observation contracts. Evaluation splits
+choose seeds outside the SDK. These bounded profiles exercise scene variation but
+do not establish that their distribution matches a physical workcell.
 
 MuJoCo's cap reuses its installed first-party nut/bolt SDFs through a small
 dimensional wrapper. Native contact and friction retain the cap under axial

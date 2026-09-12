@@ -96,6 +96,11 @@ be deterministic for the supplied seed and reset the complete world. The SDK
 serializes the facet against dispatch and world lifecycle, while the runner must
 first drain its higher-level tool and motion operations. Refuse administration
 for partial physical/simulated sites or incomplete world support.
+The reference MuJoCo task profiles derive bounded workpiece/fixture XY and yaw
+variation from that seed, preserving assembled bodies as rigid groups. Their
+ordinary reset remains the canonical interactive scene. A custom backend may use
+a different finite distribution, but equal seeds must reproduce equal complete
+initial state and no seed or sampled ground truth may enter participant surfaces.
 
 Calling the factory must not import a heavyweight runtime, load a scene, start a
 process/thread, connect a socket, or allocate a renderer. The backend provides

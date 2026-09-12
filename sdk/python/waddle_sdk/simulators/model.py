@@ -561,10 +561,12 @@ def objects(environment: str) -> list[list[Link]]:
         )
         return [table, [receiver, socket], [peg]]
     if environment == "joint-lift":
-        tray, _ = tray_fixture("two_handle_tray", xyz=(0.36, 0.0, 0.0))
+        tray, _ = tray_fixture("two_handle_tray", xyz=(0.40, 0.0, 0.0))
         return [table, tray]
     if environment == "loaded-tray-transport":
-        tray, contents = tray_fixture("loaded_tray", xyz=(0.34, -0.14, 0.0), loaded=True)
+        tray, contents = tray_fixture(
+            "loaded_tray", xyz=(0.39, -0.14, 0.0), loaded=True
+        )
         return [
             table,
             tray,
