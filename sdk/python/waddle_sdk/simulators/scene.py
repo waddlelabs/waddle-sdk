@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from functools import lru_cache
@@ -25,6 +26,12 @@ BACKENDS = ("mujoco", "isaac", "sapien")
 ROBOTS = ("so101", "yam", "xarm7")
 ENVIRONMENTS = ("two_cubes", "bottle_cap", "drawer")
 RENDER_QUALITIES = ("fast", "standard", "high")
+REFERENCE_SCENE_REVISION = "1.0.0"
+REFERENCE_ASSET_REVISION = "1.0.0"
+REFERENCE_EMBODIMENT_REVISION = "1.0.0"
+_REVISION = re.compile(
+    r"^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$"
+)
 
 
 def rotation(rpy: Any) -> np.ndarray:
@@ -416,6 +423,9 @@ def make_site(
         }
     simulation = {
         "api_version": "waddle.simulation/v1",
+        "scene_revision": REFERENCE_SCENE_REVISION,
+        "asset_revision": REFERENCE_ASSET_REVISION,
+        "embodiment_revision": REFERENCE_EMBODIMENT_REVISION,
         "backend": backend,
         "robot": robot,
         "parts": placements,
@@ -518,6 +528,9 @@ def load_scene(root: Path, relative: Any) -> tuple[Path, dict]:
         "cameras",
         "worker_python",
         "render_quality",
+        "scene_revision",
+        "asset_revision",
+        "embodiment_revision",
     }
     if value.keys() - allowed:
         raise ValueError(
@@ -528,6 +541,14 @@ def load_scene(root: Path, relative: Any) -> tuple[Path, dict]:
         or value.get("environment") not in ENVIRONMENTS
     ):
         raise ValueError("unknown simulation backend or environment")
+    for key in ("scene_revision", "asset_revision", "embodiment_revision"):
+        revision = value.get(key)
+        if key in value and (
+            not isinstance(revision, str)
+            or len(revision) > 128
+            or _REVISION.fullmatch(revision) is None
+        ):
+            raise ValueError(f"simulation {key} must be a semantic revision")
     profile(value.get("robot"))
     parts = value.get("parts")
     if not isinstance(parts, dict) or not parts or len(parts) not in (1, 2):

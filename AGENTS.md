@@ -153,7 +153,8 @@ waddle-sdk/
                              #   serializes snapshot/reset with SDK dispatch and
                              #   lifecycle and never enters the participant
                              #   runtime. Reference MuJoCo reports named ground
-                             #   truth state through that facet.
+                             #   truth state and exact provider/robot/scene/asset
+                             #   evaluation identity through that facet.
                              #   Site opens a world once after authorization,
                              #   advances it once per composite SDK tick, resets
                              #   it once per episode, and closes it after devices.

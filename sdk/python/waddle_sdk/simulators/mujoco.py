@@ -196,6 +196,16 @@ class Engine:
         return {
             "schema": "waddle.simulation-state/mujoco-v1",
             "backend": "mujoco",
+            "identity": {
+                "provider": "mujoco",
+                "provider_revision": self.mj.__version__,
+                "robot_family": self.config["robot"],
+                "embodiment_revision": self.config.get("embodiment_revision"),
+                "arm_count": len(self.parts),
+                "environment_id": self.config["environment"],
+                "scene_revision": self.config.get("scene_revision"),
+                "asset_revision": self.config.get("asset_revision"),
+            },
             "time_s": float(self.data.time),
             "joints": joints,
             "bodies": bodies,

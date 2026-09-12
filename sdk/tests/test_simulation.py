@@ -75,6 +75,9 @@ def test_all_reference_declarations_validate_without_opening(
     loaded = load_site(tmp_path / "site.yaml")
     assert loaded.id == "physics-test"
     assert load_scene(tmp_path, "simulation.json")[1] == sim
+    assert sim["scene_revision"] == "1.0.0"
+    assert sim["asset_revision"] == "1.0.0"
+    assert sim["embodiment_revision"] == "1.0.0"
     assert set(site["cameras"]) == {"scene", "wrist"}
     assert site["parts"]["arm"]["gripper"]["open_m"] == profile(robot).opening
     assembly = loaded._assembly(None)
@@ -606,6 +609,18 @@ def test_invalid_render_quality_is_rejected_before_opening(tmp_path, quality):
     scene["render_quality"] = quality
     (tmp_path / "simulation.json").write_text(json.dumps(scene))
     with pytest.raises(ValueError, match="render_quality"):
+        load_scene(tmp_path, "simulation.json")
+
+
+@pytest.mark.parametrize(
+    "field", ["scene_revision", "asset_revision", "embodiment_revision"]
+)
+@pytest.mark.parametrize("revision", ["1", "v1.0.0", "", None, 1])
+def test_invalid_reference_revision_is_rejected(tmp_path, field, revision):
+    _, scene = documents(tmp_path)
+    scene[field] = revision
+    (tmp_path / "simulation.json").write_text(json.dumps(scene))
+    with pytest.raises(ValueError, match="semantic revision"):
         load_scene(tmp_path, "simulation.json")
 
 
@@ -1934,6 +1949,16 @@ def test_mujoco_administration_reports_ground_truth_and_resets_inside_run(
             initial = administration.snapshot()
             world = initial.worlds["cell"]
             assert world["schema"] == "waddle.simulation-state/mujoco-v1"
+            assert world["identity"] == {
+                "provider": "mujoco",
+                "provider_revision": "3.11.0",
+                "robot_family": "yam",
+                "embodiment_revision": "1.0.0",
+                "arm_count": 1,
+                "environment_id": "drawer",
+                "scene_revision": "1.0.0",
+                "asset_revision": "1.0.0",
+            }
             assert "drawer_slide" in world["joints"]
             assert "drawer" in world["bodies"]
             assert world["joints"]["drawer_slide"]["type"] == "slide"

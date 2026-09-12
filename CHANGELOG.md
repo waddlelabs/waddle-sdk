@@ -19,6 +19,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   the active SDK run, advances an episode revision, and fails closed on partial
   support or uncertain reset. The reference MuJoCo worker reports named joints,
   bodies, velocities, contacts, and simulation time through this optional facet.
+- Bind reference MuJoCo evaluator snapshots to provider/revision, robot family/
+  embodiment revision, arm count, environment, scene revision, and asset revision.
+  Newly generated simulation documents carry the reference revisions; older
+  documents remain interactive but lack the exact task-evaluation identity.
 - Add SO-101 to the pinned reference simulation family, including its maintained
   CAD/inertias, five arm joints, normalized physical gripper mapping, RGB-only
   scene/wrist cameras, camera mount, source hashes and license.
