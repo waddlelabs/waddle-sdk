@@ -215,6 +215,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Replace coarse per-band planner collision boxes for SO-101 and xArm7 with
+  deterministic convex hulls of complete source collision pieces. Compact the
+  hull boundary without shrinking it, preserve readable geom names and provenance,
+  and stop rejecting a collision-free xArm drawer pull while retaining a known
+  base-to-link collision.
 - Bound real-time worker catch-up work while retaining fixed native timesteps.
   Slow physics now warns and discards wall-clock lag instead of accumulating
   an unbounded backlog that disconnects controls and cameras. Explicit rollouts

@@ -216,6 +216,11 @@ def test_reference_planning_source_retains_arm_contract_without_scene_joints(
 ):
     mujoco = pytest.importorskip("mujoco")
     bundle = reference_model_sources(robot, part_name="left")
+    repeated = reference_model_sources(robot, part_name="left")
+    assert repeated.model == bundle.model
+    assert dict(repeated.assets) == dict(bundle.assets)
+    assert len(bundle.assets) <= 127
+    assert all(len(content) <= 32 * 1024 * 1024 for content in bundle.assets.values())
     model_path = tmp_path / "model.xml"
     model_path.write_bytes(bundle.model)
     for name, content in bundle.assets.items():
@@ -233,6 +238,134 @@ def test_reference_planning_source_retains_arm_contract_without_scene_joints(
     assert bundle.tcp_site == "tcp_site"
     assert bundle.tcp_frame == "left_tool"
     assert model.ngeom <= 256 and model.nmeshvert <= 200_000
+    geom_names = [
+        mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, index)
+        for index in range(model.ngeom)
+    ]
+    assert all(geom_names)
+    assert len(set(geom_names)) == len(geom_names)
+    proxy = bundle.provenance["collision_proxy"]
+    assert proxy["planner_geometry_count"] == model.ngeom
+    assert proxy["source_piece_count"] >= proxy["planner_geometry_count"]
+    assert proxy["method"] == (
+        "exact_source_meshes"
+        if robot == "yam"
+        else "spatial_convex_hulls_of_complete_source_collision_pieces"
+    )
+    assert proxy["bucket_width_m"] == (None if robot == "yam" else 0.02)
+
+
+def _minimum_body_distance(mujoco, model, data, first, second):
+    body_ids = [
+        mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, name)
+        for name in (first, second)
+    ]
+    geoms = [
+        [
+            index
+            for index, body in enumerate(model.geom_bodyid)
+            if int(body) == body_id and int(model.geom_contype[index]) != 0
+        ]
+        for body_id in body_ids
+    ]
+    assert all(geoms)
+    distances = [
+        float(mujoco.mj_geomDistance(model, data, a, b, 1.0, None))
+        for a in geoms[0]
+        for b in geoms[1]
+    ]
+    penetrations = [distance for distance in distances if distance < 0]
+    if penetrations:
+        return min(penetrations)
+    # MuJoCo 3.11 reports zero for a degenerate convex-mesh query even when
+    # there is no contact. Positive queries on the remaining complete pieces
+    # provide the physical clearance this regression compares.
+    clearances = [distance for distance in distances if distance > 0]
+    assert clearances
+    return min(clearances)
+
+
+def test_xarm_planner_source_matches_valid_pull_and_retains_true_collision(tmp_path):
+    """The bounded planning proxy keeps the runtime collision classification."""
+
+    mujoco = pytest.importorskip("mujoco")
+    bundle = reference_model_sources("xarm7", part_name="arm")
+    planner_root = tmp_path / "planner"
+    planner_root.mkdir()
+    model_path = planner_root / "model.xml"
+    model_path.write_bytes(bundle.model)
+    for name, content in bundle.assets.items():
+        path = planner_root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+    planning_model = mujoco.MjModel.from_xml_path(str(model_path))
+    planning_data = mujoco.MjData(planning_model)
+
+    from waddle_sdk.simulators.mujoco import Engine
+
+    _, config = make_site(
+        "xarm-planner-parity",
+        backend="mujoco",
+        robot="xarm7",
+        environment="drawer",
+        width=32,
+        height=24,
+    )
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir()
+    runtime = Engine(config, runtime_root)
+
+    def compare(q, bodies):
+        runtime.home((*q, 1.0))
+        runtime_distance = _minimum_body_distance(
+            mujoco, runtime.model, runtime.data, *bodies
+        )
+        for name, value in zip(profile("xarm7").names[:-1], q, strict=True):
+            planning_data.qpos[int(planning_model.joint(name).qposadr[0])] = value
+        mujoco.mj_forward(planning_model, planning_data)
+        planning_distance = _minimum_body_distance(
+            mujoco, planning_model, planning_data, *bodies
+        )
+        return runtime_distance, planning_distance
+
+    try:
+        pull_75 = (
+            -0.47238,
+            0.0921975,
+            0.4527625,
+            0.13521,
+            -3.1627225,
+            1.5215025,
+            1.5433175,
+        )
+        full_pull = (
+            -0.56731,
+            0.04854,
+            0.54599,
+            0.05310,
+            -3.16345,
+            1.55916,
+            1.54585,
+        )
+        for q in (pull_75, full_pull):
+            runtime_distance, planning_distance = compare(q, ("link2", "link4"))
+            assert runtime_distance > 0.03
+            assert planning_distance == pytest.approx(runtime_distance, abs=1e-5)
+
+        true_collision = (
+            2.9480633482992573,
+            -1.071559859638074,
+            -3.500871524453849,
+            -0.0746701755359535,
+            -2.9156410161234247,
+            0.49064709922779604,
+            4.719526272546258,
+        )
+        runtime_distance, planning_distance = compare(true_collision, ("base", "link5"))
+        assert runtime_distance < -0.02
+        assert planning_distance < -0.02
+    finally:
+        runtime.close()
 
 
 @pytest.mark.parametrize("robot", ROBOTS)

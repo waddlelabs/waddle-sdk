@@ -94,9 +94,12 @@ live adapter's 95 mm LINEAR_4310 hand. xArm7 uses UFACTORY's expanded URDF with
 the G2 gripper and its standard TCP. The original visual meshes, link masses,
 centers of mass and inertia tensors are retained. Concave collision meshes are decomposed offline into
 convex pieces so each engine preserves arm recesses, finger geometry and housing
-clearance. Convex meshes remain unchanged. Public planning bounds conservatively
-cover complete collision triangles per physical link, so their number does not
-scale with the importer's convex partition. Native constraints
+clearance. Convex meshes remain unchanged. The public YAM planning model keeps its
+exact source collision meshes. SO-101 and xArm7 planning models group complete source
+collision pieces by centroid into deterministic 20 mm bands along each link's longest
+axis and use the convex hull of every piece in a band. This bounds model size while preserving
+the complete source surface inside each planner hull; the serialized mesh retains
+MuJoCo's hull boundary instead of the much larger input triangle set. Native constraints
 close the xArm linkage; its revolute hand is mapped nonlinearly to jaw travel.
 Isaac marks both loop-closing spherical joints as excluded from the articulation
 tree. They remain enabled physical constraints; all imported manufacturer joints
@@ -336,10 +339,13 @@ also available. No second SDK lifecycle or agent API is introduced.
 
 `reference_model_sources(robot, part_name=...)` supplies a non-opening, hash-bound
 planner model for each generated arm. It uses the same pinned kinematic chain,
-joint limits, base, TCP, and source collision links as the runtime assembly. The
-current planner representation freezes the complete hand at maximum opening and
-does not include task props or another arm; those limits remain explicit in its
-provenance and require separate fixture/inter-arm checks for safety qualification.
+joint limits, base, TCP, and source collision links as the runtime assembly. YAM
+retains exact collision meshes; SO-101 and xArm7 use deterministic spatial hulls of
+complete source collision pieces. The model records the method, source-piece count,
+planner-geometry count, and spatial bucket width in `collision_proxy` provenance.
+All variants freeze the complete hand at maximum opening and omit task props and
+another arm; those limits remain explicit in provenance and require separate
+fixture/inter-arm checks for safety qualification.
 
 The worker advances physics, serializes sensor/control requests, and
 fails closed on startup or connection loss. Recovery requires reopening the site;

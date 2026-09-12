@@ -55,7 +55,9 @@ contracts as physical sites. The reference generator selects SO-101, YAM or xArm
 MuJoCo also supports a shared two-arm instance with part-scoped control and wrist
 cameras. Exact physical stream/intrinsics/mount rows can replace the clearly marked
 development camera defaults before publication. Its public planner-source helper
-uses the same pinned chain and records its fixed-open-hand/no-scene scope. The
+uses the same pinned chain, retains exact YAM collision meshes, and builds bounded
+deterministic spatial hulls from complete SO-101/xArm source collision pieces. It
+records the proxy method and its fixed-open-hand/no-scene scope. The
 hash-pinned manufacturer assemblies and native
 physics workers are reference implementations, not calibrated actuator or friction
 models. Engine-specific acceptance stays in `sdk/tests/test_simulation.py`; a
