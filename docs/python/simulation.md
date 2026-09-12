@@ -53,6 +53,21 @@ Each engine accepts `so101`, `yam`, or `xarm7` and these environments:
   and 5 N·s/m native joint damping. The damping dissipates a pull after release;
   there is no spring returning the drawer to its starting position.
 
+MuJoCo also provides five interactive development task environments:
+
+- `touch_target`: one red contact target and two blue distractors.
+- `pick_lift`: one free 46 mm cube.
+- `place_in_bin`: one free cube and an open five-sided bin.
+- `push_to_region`: one free cube and a non-colliding visual goal region.
+- `operate_control`: one red and two blue independently sliding push controls.
+
+These environments use the ordinary robot, camera, and lifecycle interfaces.
+Their scene camera exposes every task-relevant object at the starting pose for
+SO-101, YAM, and xArm7. Native tests verify visibility, initial separation from
+the robot, free-body mechanics, bin containment, and independent control travel.
+They are development fixtures, not calibrated physical twins. Isaac and SAPIEN
+selection is rejected until the same native evidence exists for those backends.
+
 MuJoCo's cap reuses its installed first-party nut/bolt SDFs through a small
 dimensional wrapper. Native contact and friction retain the cap under axial
 load; no guide or attachment is released by task logic. The roof and packaged
@@ -139,11 +154,13 @@ xArm7 retains its established reference posture.
 The bottle sits to the side of this central region, and the cabinet's closed
 front sits beyond it, so neither prop intersects the starting hand. The drawer
 handle travels from x=0.503 m to x=0.283 m as it opens.
-New drawer sites place the scene camera in front of the cabinet, at
+New drawer and MuJoCo development-task sites place the scene camera in front of
+the interactive fixture, at
 `(-0.45, -0.55, 0.55)` m looking toward `(0.4, 0, 0.2)` m, so its handle face is
-visible at the reference home. The other scenes retain their overhead oblique
-view. Existing scene files retain their explicit camera transforms; updating a
-transform also requires regenerating calibration artifacts bound to that scene.
+visible at the reference home and task targets do not face away from the camera.
+The other scenes retain their overhead oblique view. Existing scene files retain
+their explicit camera transforms; updating a transform also requires regenerating
+calibration artifacts bound to that scene.
 Free-cap tests check axial-load retention, thread pitch, natural exit, subsequent
 free-body motion and reset. SAPIEN and Isaac share the same physical assertions;
 Isaac cases require an explicitly selected licensed test interpreter.

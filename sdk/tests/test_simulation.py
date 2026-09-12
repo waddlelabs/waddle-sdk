@@ -30,8 +30,10 @@ from waddle_sdk.simulators.description import (
 from waddle_sdk.simulators.scene import (
     BACKENDS,
     ENVIRONMENTS,
+    REFERENCE_ENVIRONMENTS,
     RENDER_QUALITIES,
     ROBOTS,
+    TASK_ENVIRONMENTS,
     depth_z16,
     load_scene,
     make_site,
@@ -39,6 +41,12 @@ from waddle_sdk.simulators.scene import (
     rotation,
     transform,
 )
+
+ENVIRONMENT_BACKENDS = tuple(
+    (backend, environment)
+    for environment in REFERENCE_ENVIRONMENTS
+    for backend in BACKENDS
+) + tuple(("mujoco", environment) for environment in TASK_ENVIRONMENTS)
 
 
 def documents(
@@ -65,9 +73,8 @@ def documents(
     return site, sim
 
 
-@pytest.mark.parametrize("backend", BACKENDS)
 @pytest.mark.parametrize("robot", ROBOTS)
-@pytest.mark.parametrize("environment", ENVIRONMENTS)
+@pytest.mark.parametrize(("backend", "environment"), ENVIRONMENT_BACKENDS)
 def test_all_reference_declarations_validate_without_opening(
     tmp_path, backend, robot, environment
 ):
@@ -84,6 +91,20 @@ def test_all_reference_declarations_validate_without_opening(
     action_space = assembly.rig.robot().action_space.parts["arm"]
     assert action_space.rate_hz == site["parts"]["arm"]["options"]["rate_hz"]
     assert assembly.rig.rate_hz == action_space.rate_hz
+
+
+@pytest.mark.parametrize("backend", ("isaac", "sapien"))
+@pytest.mark.parametrize("environment", TASK_ENVIRONMENTS)
+def test_development_task_environments_reject_unvalidated_backends(
+    backend, environment
+):
+    with pytest.raises(ValueError, match="task environments.*MuJoCo"):
+        make_site(
+            "unvalidated-task-backend",
+            backend=backend,
+            robot="so101",
+            environment=environment,
+        )
 
 
 @pytest.mark.parametrize(
@@ -661,9 +682,8 @@ def _native_python(backend, environment):
     return interpreter
 
 
-@pytest.mark.parametrize("backend", BACKENDS)
 @pytest.mark.parametrize("robot", ROBOTS)
-@pytest.mark.parametrize("environment", ENVIRONMENTS)
+@pytest.mark.parametrize(("backend", "environment"), ENVIRONMENT_BACKENDS)
 def test_native_models_rgbd_and_bounded_joint_motion(
     tmp_path, monkeypatch, backend, robot, environment
 ):
@@ -1583,6 +1603,9 @@ def _native_conformance(
             advance(2.0)
             travel, _speed = drawer_state()
             assert 0.20 < travel < 0.225, travel
+        if backend == "mujoco" and environment in TASK_ENVIRONMENTS:
+            assert engine.reset() is True
+            _wave_a_prop_conformance(engine, advance, config, environment)
         assert engine.reset() is True
         np.testing.assert_allclose(engine.read()[0], p.home, atol=1e-6)
         if backend == "mujoco":
@@ -1745,6 +1768,108 @@ def _native_conformance(
             assert len(engine.scene.get_contacts()) < 100
     finally:
         engine.close()
+
+
+def _wave_a_prop_conformance(engine, advance, config, environment):
+    """Probe task-object mechanics directly, without supplying a robot route."""
+
+    model, data = engine.model, engine.data
+    witnesses = {
+        "touch_target": (
+            ((0.492, 0.0, 0.16), "red"),
+            ((0.492, -0.12, 0.16), "blue"),
+            ((0.492, 0.12, 0.16), "blue"),
+        ),
+        "pick_lift": (((0.32, 0.0, 0.046), "green"),),
+        "place_in_bin": (
+            ((0.28, -0.12, 0.046), "orange"),
+            ((0.48, 0.12, 0.012), "blue"),
+        ),
+        "push_to_region": (
+            ((0.28, -0.10, 0.046), "yellow"),
+            ((0.46, 0.10, 0.002), "blue"),
+        ),
+        "operate_control": (
+            ((0.464, 0.0, 0.14), "red"),
+            ((0.464, -0.105, 0.14), "blue"),
+            ((0.464, 0.105, 0.14), "blue"),
+        ),
+    }
+    classifiers = {
+        "red": lambda r, g, b: r > 3 * max(g, b),
+        "green": lambda r, g, b: g > 3 * max(r, b),
+        "blue": lambda r, g, b: b > 2 * max(r, g),
+        "orange": lambda r, g, b: r > 1.5 * g and g > 2 * b,
+        "yellow": lambda r, g, b: r > 1.2 * g and g > 3 * b,
+    }
+    camera = config["cameras"]["scene"]
+    world_from_camera = np.asarray(camera["transform"])
+    intrinsics = camera["intrinsics"]
+    rgb, _ = engine.capture("scene")
+    for world_point, expected_color in witnesses[environment]:
+        point = np.linalg.inv(world_from_camera) @ [*world_point, 1.0]
+        u = round(intrinsics["fx"] * point[0] / point[2] + intrinsics["cx"])
+        v = round(intrinsics["fy"] * point[1] / point[2] + intrinsics["cy"])
+        assert 0 <= u < rgb.shape[1] and 0 <= v < rgb.shape[0]
+        pixels = rgb[max(0, v - 2) : v + 3, max(0, u - 2) : u + 3]
+        assert any(
+            classifiers[expected_color](*map(int, pixel))
+            for pixel in pixels.reshape(-1, 3)
+        ), (world_point, expected_color, rgb[v, u])
+
+    if environment == "touch_target":
+        target = model.body("target_pad")
+        distractor = model.body("distractor_pad_left")
+        target_color = model.geom_rgba[int(target.geomadr[0])]
+        distractor_color = model.geom_rgba[int(distractor.geomadr[0])]
+        assert target_color[0] > 3 * target_color[2]
+        assert distractor_color[2] > 3 * distractor_color[0]
+        return
+
+    if environment in {"pick_lift", "place_in_bin", "push_to_region"}:
+        body = model.body("target_cube")
+        body_id = int(body.id)
+        if environment == "pick_lift":
+            initial_z = float(data.xpos[body_id, 2])
+            data.xfrc_applied[body_id, 2] = 1.0
+            advance(0.1)
+            data.xfrc_applied[body_id] = 0
+            assert data.xpos[body_id, 2] > initial_z + 0.02
+            return
+        if environment == "place_in_bin":
+            joint_id = int(body.jntadr[0])
+            qpos = int(model.jnt_qposadr[joint_id])
+            dof = int(model.jnt_dofadr[joint_id])
+            data.qpos[qpos : qpos + 3] = (0.48, 0.12, 0.08)
+            data.qvel[dof : dof + 6] = 0
+            engine.mj.mj_forward(model, data)
+            advance(1.0)
+            np.testing.assert_allclose(data.xpos[body_id, :2], (0.48, 0.12), atol=0.01)
+            assert 0.03 < data.xpos[body_id, 2] < 0.05
+            return
+        initial_xy = data.xpos[body_id, :2].copy()
+        data.xfrc_applied[body_id, :2] = (0.6, 0.6)
+        advance(0.1)
+        data.xfrc_applied[body_id] = 0
+        assert np.linalg.norm(data.xpos[body_id, :2] - initial_xy) > 0.005
+        return
+
+    assert environment == "operate_control"
+    target = model.joint("target_control")
+    target_qpos, target_dof = int(target.qposadr[0]), int(target.dofadr[0])
+    distractors = [
+        model.joint(name)
+        for name in (
+            "distractor_control_left",
+            "distractor_control_right",
+        )
+    ]
+    assert abs(data.qpos[target_qpos]) < 1e-5
+    data.qfrc_applied[target_dof] = 1.0
+    advance(0.1)
+    data.qfrc_applied[target_dof] = 0
+    assert data.qpos[target_qpos] > 0.008
+    assert all(abs(data.qpos[int(joint.qposadr[0])]) < 1e-5 for joint in distractors)
 
 
 @pytest.mark.parametrize("durations", [[0.1], [1 / 60] * 6, [0.0005] * 200])

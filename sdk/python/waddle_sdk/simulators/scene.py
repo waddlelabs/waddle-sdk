@@ -24,14 +24,20 @@ from ..robots.site import PartConfig
 
 BACKENDS = ("mujoco", "isaac", "sapien")
 ROBOTS = ("so101", "yam", "xarm7")
-ENVIRONMENTS = ("two_cubes", "bottle_cap", "drawer")
+REFERENCE_ENVIRONMENTS = ("two_cubes", "bottle_cap", "drawer")
+TASK_ENVIRONMENTS = (
+    "touch_target",
+    "pick_lift",
+    "place_in_bin",
+    "push_to_region",
+    "operate_control",
+)
+ENVIRONMENTS = (*REFERENCE_ENVIRONMENTS, *TASK_ENVIRONMENTS)
 RENDER_QUALITIES = ("fast", "standard", "high")
 REFERENCE_SCENE_REVISION = "1.0.0"
 REFERENCE_ASSET_REVISION = "1.0.0"
 REFERENCE_EMBODIMENT_REVISION = "1.0.0"
-_REVISION = re.compile(
-    r"^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$"
-)
+_REVISION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$")
 
 
 def rotation(rpy: Any) -> np.ndarray:
@@ -289,6 +295,8 @@ def make_site(
     """
     if backend not in BACKENDS or environment not in ENVIRONMENTS:
         raise ValueError(f"choose backend {BACKENDS} and environment {ENVIRONMENTS}")
+    if environment in TASK_ENVIRONMENTS and backend != "mujoco":
+        raise ValueError("development task environments currently require MuJoCo")
     if render_quality not in RENDER_QUALITIES:
         raise ValueError(f"render_quality must be one of {RENDER_QUALITIES}")
     if type(arms) is not int or arms not in (1, 2):
@@ -331,8 +339,8 @@ def make_site(
     }
     mounts = {"scene": look_at((0.75, -0.9, 0.95), (0.2, 0, 0.25)).tolist()}
     wrist = look_at((-0.10, 0, -0.08), (0, 0, 0.07)).tolist()
-    if environment == "drawer":
-        # See the handle's front face instead of looking from behind the cabinet.
+    if environment == "drawer" or environment in TASK_ENVIRONMENTS:
+        # See the interactive face instead of looking from behind fixtures.
         mounts["scene"] = look_at((-0.45, -0.55, 0.55), (0.4, 0, 0.2)).tolist()
     if robot == "yam":
         # I2RT's optical frame for the LINEAR_4310 D405 bracket, expressed

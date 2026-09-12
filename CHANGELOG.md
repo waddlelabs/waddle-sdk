@@ -13,6 +13,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Add five MuJoCo development task environments for target contact, cube lift,
+  bin placement, region pushing, and control operation. They use ordinary SDK
+  robot/camera/reset paths, expose task-relevant objects to every reference
+  embodiment's scene camera, and include native mechanics and visibility checks.
 - Add a separately retained `SimulationAdministration` capability for trusted
   evaluators. It binds only to complete supported simulation sites, snapshots
   finite privileged state, performs deterministic seeded reset without replacing

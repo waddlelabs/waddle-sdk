@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field, replace
 from importlib.resources import files
@@ -93,6 +94,150 @@ def objects(environment: str) -> list[list[Link]]:
                 )
             ],
         ]
+    if environment == "touch_target":
+        pads = (
+            ("distractor_pad_left", -0.12, (0.15, 0.35, 0.95, 1.0)),
+            ("target_pad", 0.0, (0.95, 0.18, 0.12, 1.0)),
+            ("distractor_pad_right", 0.12, (0.15, 0.35, 0.95, 1.0)),
+        )
+        return [
+            table,
+            *[
+                [
+                    Link(
+                        name,
+                        xyz=(0.50, y, 0.16),
+                        shapes=[Shape("box", (0.015, 0.08, 0.08), color=color)],
+                    )
+                ]
+                for name, y, color in pads
+            ],
+        ]
+    if environment == "pick_lift":
+        return [
+            table,
+            [
+                Link(
+                    "target_cube",
+                    xyz=(0.32, 0.0, 0.023),
+                    kind="free",
+                    mass=0.05,
+                    inertia=(0.0000176, 0.0000176, 0.0000176, 0.0, 0.0, 0.0),
+                    shapes=[
+                        Shape("box", (0.046, 0.046, 0.046), color=(0.1, 0.72, 0.2, 1.0))
+                    ],
+                )
+            ],
+        ]
+    if environment == "place_in_bin":
+        target = Link(
+            "target_cube",
+            xyz=(0.28, -0.12, 0.023),
+            kind="free",
+            mass=0.05,
+            inertia=(0.0000176, 0.0000176, 0.0000176, 0.0, 0.0, 0.0),
+            shapes=[Shape("box", (0.046, 0.046, 0.046), color=(0.95, 0.45, 0.08, 1.0))],
+        )
+        goal = Link(
+            "goal_bin",
+            xyz=(0.48, 0.12, 0.0),
+            shapes=[
+                Shape(
+                    "box",
+                    (0.18, 0.18, 0.01),
+                    (0.0, 0.0, 0.005),
+                    color=(0.1, 0.3, 0.85, 1.0),
+                ),
+                Shape(
+                    "box",
+                    (0.01, 0.18, 0.08),
+                    (-0.085, 0.0, 0.04),
+                    color=(0.1, 0.3, 0.85, 1.0),
+                ),
+                Shape(
+                    "box",
+                    (0.01, 0.18, 0.08),
+                    (0.085, 0.0, 0.04),
+                    color=(0.1, 0.3, 0.85, 1.0),
+                ),
+                Shape(
+                    "box",
+                    (0.16, 0.01, 0.08),
+                    (0.0, -0.085, 0.04),
+                    color=(0.1, 0.3, 0.85, 1.0),
+                ),
+                Shape(
+                    "box",
+                    (0.16, 0.01, 0.08),
+                    (0.0, 0.085, 0.04),
+                    color=(0.1, 0.3, 0.85, 1.0),
+                ),
+            ],
+        )
+        return [table, [target], [goal]]
+    if environment == "push_to_region":
+        target = Link(
+            "target_cube",
+            xyz=(0.28, -0.10, 0.023),
+            kind="free",
+            mass=0.05,
+            inertia=(0.0000176, 0.0000176, 0.0000176, 0.0, 0.0, 0.0),
+            shapes=[Shape("box", (0.046, 0.046, 0.046), color=(0.95, 0.65, 0.08, 1.0))],
+        )
+        region = Link(
+            "goal_region",
+            xyz=(0.46, 0.10, 0.0005),
+            shapes=[
+                Shape(
+                    "box",
+                    (0.14, 0.14, 0.001),
+                    color=(0.12, 0.35, 0.95, 1.0),
+                    collision=False,
+                )
+            ],
+        )
+        return [table, [target], [region]]
+    if environment == "operate_control":
+        panel = Link(
+            "control_panel",
+            xyz=(0.50, 0.0, 0.0),
+            shapes=[
+                Shape(
+                    "box",
+                    (0.03, 0.34, 0.28),
+                    (0.0, 0.0, 0.14),
+                    color=(0.18, 0.2, 0.24, 1.0),
+                )
+            ],
+        )
+        buttons = []
+        for name, y, color in (
+            ("distractor_control_left", -0.105, (0.15, 0.35, 0.95, 1.0)),
+            ("target_control", 0.0, (0.95, 0.16, 0.1, 1.0)),
+            ("distractor_control_right", 0.105, (0.15, 0.35, 0.95, 1.0)),
+        ):
+            buttons.append(
+                Link(
+                    name,
+                    parent="control_panel",
+                    xyz=(-0.025, y, 0.14),
+                    joint=name,
+                    kind="prismatic",
+                    axis=(1.0, 0.0, 0.0),
+                    limits=(0.0, 0.012),
+                    mass=0.02,
+                    damping=1.0,
+                    shapes=[
+                        Shape(
+                            "cylinder",
+                            (0.026, 0.02),
+                            rpy=(0.0, math.pi / 2, 0.0),
+                            color=color,
+                        )
+                    ],
+                )
+            )
+        return [table, [panel, *buttons]]
     if environment == "drawer":
         cabinet = Link(
             "cabinet",
