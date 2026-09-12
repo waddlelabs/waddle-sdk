@@ -50,7 +50,7 @@ class Engine:
         self._velocity_ratio = np.array(
             [robot.servo(name)[1] / robot.servo(name)[0] for name in native_controls]
         )
-        object_groups = objects(config["environment"])
+        object_groups = objects(config["environment"], robot=config["robot"])
         for group in object_groups:
             root = group[0]
             if root.kind != "free" or not root.damping:

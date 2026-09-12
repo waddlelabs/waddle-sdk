@@ -13,6 +13,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Scale the reference task layout to each robot family's reachable workspace.
+  Drawer fixtures keep the existing full-size-arm placement while moving inward
+  for SO-101; control, door, socket, rack, USB, and dual-arm workpieces now have
+  collision-free reachable starts. A higher drawer/rack scene-camera mount exposes
+  the open drawer interior and rear rack row. Native acceptance checks the revised
+  visibility, resting mechanics, and all affected task placements.
 - Add SDK-owned monotonic start/completion bounds to `SubmitResult`. The start is
   captured after acquiring the shared dispatch boundary, allowing a timed caller
   to distinguish dispatch work from prior lock contention while retaining the

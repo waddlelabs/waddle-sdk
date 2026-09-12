@@ -58,7 +58,7 @@ def robot_links(p: Profile) -> list[Link]:
     return description(p.name).native_links()
 
 
-def objects(environment: str) -> list[list[Link]]:
+def objects(environment: str, *, robot: str | None = None) -> list[list[Link]]:
     table = [
         Link(
             "table",
@@ -224,7 +224,7 @@ def objects(environment: str) -> list[list[Link]]:
     ):
         cabinet = Link(
             cabinet_name,
-            xyz=(0.66, 0.0, 0.0),
+            xyz=(0.62 if robot == "so101" else 0.66, 0.0, 0.0),
             kind=cabinet_kind,
             mass=1.5,
             inertia=(0.02, 0.025, 0.015, 0.0, 0.0, 0.0),
@@ -275,6 +275,7 @@ def objects(environment: str) -> list[list[Link]]:
                 )
             )
         return fixture
+
     if environment == "two_cubes":
         return [
             table,
@@ -375,7 +376,7 @@ def objects(environment: str) -> list[list[Link]]:
             [
                 open_bin(
                     "movable_container",
-                    (0.38, 0.16, 0.0),
+                    (0.38, -0.12, 0.0),
                     kind="free",
                     mass=0.3,
                 )
@@ -383,7 +384,7 @@ def objects(environment: str) -> list[list[Link]]:
             [
                 free_box(
                     "target_object",
-                    (0.30, -0.23, 0.023),
+                    (0.30, 0.20, 0.023),
                     (0.95, 0.45, 0.08, 1.0),
                 )
             ],
@@ -531,7 +532,7 @@ def objects(environment: str) -> list[list[Link]]:
     if environment == "two-arm-peg-insertion":
         receiver = Link(
             "receiving_part",
-            xyz=(0.39, 0.20, 0.0),
+            xyz=(0.39, -0.18, 0.0),
             kind="free",
             mass=0.30,
             inertia=(0.0008, 0.0008, 0.0012, 0.0, 0.0, 0.0),
@@ -554,7 +555,7 @@ def objects(environment: str) -> list[list[Link]]:
         )
         peg = free_cylinder(
             "target_peg",
-            (0.29, -0.22, 0.012),
+            (0.29, 0.20, 0.012),
             (0.95, 0.45, 0.08, 1.0),
             radius=0.012,
             length=0.08,
@@ -579,7 +580,7 @@ def objects(environment: str) -> list[list[Link]]:
     if environment == "uncap-return-test-tube":
         tube = free_cylinder(
             "target_test_tube",
-            (0.43, 0.13, 0.06),
+            (0.38, 0.0, 0.06),
             (0.55, 0.88, 0.96, 0.38),
             radius=0.009,
             length=0.10,
@@ -629,7 +630,7 @@ def objects(environment: str) -> list[list[Link]]:
             )
         cap = Link(
             "target_tube_cap",
-            xyz=(0.43, 0.13, 0.125),
+            xyz=(0.38, 0.0, 0.125),
             kind="free",
             mass=0.012,
             inertia=(0.000001, 0.000001, 0.000001, 0.0, 0.0, 0.0),
@@ -637,7 +638,7 @@ def objects(environment: str) -> list[list[Link]]:
         )
         rack = Link(
             "tube_rack",
-            xyz=(0.43, 0.13, 0.0),
+            xyz=(0.38, 0.0, 0.0),
             shapes=[
                 Shape(
                     "box",
@@ -697,7 +698,7 @@ def objects(environment: str) -> list[list[Link]]:
                 [
                     Link(
                         name,
-                        xyz=(0.50, y, 0.16),
+                        xyz=(0.40, y, 0.16),
                         shapes=[Shape("box", (0.015, 0.08, 0.08), color=color)],
                     )
                 ]
@@ -791,7 +792,7 @@ def objects(environment: str) -> list[list[Link]]:
     if environment == "operate_control":
         panel = Link(
             "control_panel",
-            xyz=(0.50, 0.0, 0.0),
+            xyz=(0.45, 0.0, 0.0),
             shapes=[
                 Shape(
                     "box",
@@ -860,16 +861,8 @@ def objects(environment: str) -> list[list[Link]]:
     if environment == "stack-two-cubes":
         return [
             table,
-            [
-                free_box(
-                    "cube_bottom", (0.27, -0.10, 0.023), (0.1, 0.72, 0.2, 1.0)
-                )
-            ],
-            [
-                free_box(
-                    "cube_top", (0.35, 0.08, 0.023), (0.15, 0.35, 0.95, 1.0)
-                )
-            ],
+            [free_box("cube_bottom", (0.27, -0.10, 0.023), (0.1, 0.72, 0.2, 1.0))],
+            [free_box("cube_top", (0.35, 0.08, 0.023), (0.15, 0.35, 0.95, 1.0))],
         ]
     if environment == "ring-on-peg":
         segments = []
@@ -960,7 +953,7 @@ def objects(environment: str) -> list[list[Link]]:
     if environment == "open-hinged-door":
         frame = Link(
             "door_frame",
-            xyz=(0.55, -0.15, 0.0),
+            xyz=(0.43, -0.15, 0.0),
             shapes=[
                 Shape("box", (0.05, 0.05, 0.34), (0.025, -0.025, 0.17)),
                 Shape("box", (0.05, 0.05, 0.34), (0.04, 0.305, 0.17)),
@@ -1049,21 +1042,9 @@ def objects(environment: str) -> list[list[Link]]:
     if environment == "stack-three-cubes":
         return [
             table,
-            [
-                free_box(
-                    "cube_bottom", (0.25, -0.13, 0.023), (0.1, 0.72, 0.2, 1.0)
-                )
-            ],
-            [
-                free_box(
-                    "cube_middle", (0.35, -0.01, 0.023), (0.15, 0.35, 0.95, 1.0)
-                )
-            ],
-            [
-                free_box(
-                    "cube_top", (0.27, 0.13, 0.023), (0.95, 0.45, 0.08, 1.0)
-                )
-            ],
+            [free_box("cube_bottom", (0.25, -0.13, 0.023), (0.1, 0.72, 0.2, 1.0))],
+            [free_box("cube_middle", (0.35, -0.01, 0.023), (0.15, 0.35, 0.95, 1.0))],
+            [free_box("cube_top", (0.27, 0.13, 0.023), (0.95, 0.45, 0.08, 1.0))],
         ]
     if environment == "insert-peg":
         peg = Link(
@@ -1102,12 +1083,12 @@ def objects(environment: str) -> list[list[Link]]:
                     color=(0.12, 0.35, 0.95, 1.0),
                 )
             )
-        socket = Link("target_hole", xyz=(0.43, 0.10, 0.0), shapes=socket_shapes)
+        socket = Link("target_hole", xyz=(0.40, 0.10, 0.0), shapes=socket_shapes)
         return [table, [peg], [socket]]
     if environment == "retrieve-from-drawer":
         target = free_box(
             "target_object",
-            (0.66, 0.0, 0.0735),
+            (0.57, 0.07, 0.0735),
             (0.95, 0.45, 0.08, 1.0),
             size=0.035,
             mass=0.03,
@@ -1171,7 +1152,7 @@ def objects(environment: str) -> list[list[Link]]:
         )
         port = Link(
             "usb_port",
-            xyz=(0.50, 0.10, 0.12),
+            xyz=(0.42, 0.10, 0.12),
             shapes=[
                 Shape("box", (0.04, 0.065, 0.16), (0.0, -0.0475, 0.0)),
                 Shape("box", (0.04, 0.065, 0.16), (0.0, 0.0475, 0.0)),
@@ -1207,7 +1188,7 @@ def objects(environment: str) -> list[list[Link]]:
                 )
             ]
             for index, (x, y) in enumerate(
-                ((0.25, -0.18), (0.30, -0.07), (0.24, 0.05), (0.31, 0.16)),
+                ((0.25, -0.18), (0.30, -0.07), (0.24, 0.05), (0.25, 0.16)),
                 start=1,
             )
         ]
@@ -1216,7 +1197,7 @@ def objects(environment: str) -> list[list[Link]]:
             tube.shapes[0].friction = (1.0, 0.05, 0.01)
         rack = Link(
             "blue_rack",
-            xyz=(0.45, 0.10, 0.0),
+            xyz=(0.39, 0.10, 0.0),
             shapes=[
                 Shape(
                     "box",
@@ -1382,7 +1363,7 @@ def mjcf(p: Profile, config: dict) -> str:
 
     # MuJoCo's maintained URDF importer owns geometry and full inertias. Keep
     # fixed frames for the same camera/TCP names used by the other backends.
-    props = objects(config["environment"])
+    props = objects(config["environment"], robot=config["robot"])
     prefixes = {
         part: "" if len(config["parts"]) == 1 else f"{part}__"
         for part in config["parts"]

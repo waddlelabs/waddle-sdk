@@ -1932,9 +1932,9 @@ def _wave_a_prop_conformance(engine, advance, config, environment):
     model, data = engine.model, engine.data
     witnesses = {
         "touch_target": (
-            ((0.492, 0.0, 0.16), "red"),
-            ((0.492, -0.12, 0.16), "blue"),
-            ((0.492, 0.12, 0.16), "blue"),
+            ((0.392, 0.0, 0.16), "red"),
+            ((0.392, -0.12, 0.16), "blue"),
+            ((0.392, 0.12, 0.16), "blue"),
         ),
         "pick_lift": (((0.32, 0.0, 0.046), "green"),),
         "place_in_bin": (
@@ -1946,9 +1946,9 @@ def _wave_a_prop_conformance(engine, advance, config, environment):
             ((0.46, 0.10, 0.002), "blue"),
         ),
         "operate_control": (
-            ((0.464, 0.0, 0.14), "red"),
-            ((0.464, -0.105, 0.14), "blue"),
-            ((0.464, 0.105, 0.14), "blue"),
+            ((0.414, 0.0, 0.14), "red"),
+            ((0.414, -0.105, 0.14), "blue"),
+            ((0.414, 0.105, 0.14), "blue"),
         ),
     }
     classifiers = {
@@ -2039,7 +2039,12 @@ def _wave_b_single_prop_conformance(engine, advance, config, environment):
             ((0.25, 0.09, 0.046), "purple"),
             ((0.43, 0.13, 0.012), "blue"),
         ),
-        "close-drawer": (((0.353, 0.0, 0.14), "bright"),),
+        "close-drawer": (
+            (
+                (0.313 if config["robot"] == "so101" else 0.353, 0.0, 0.14),
+                "bright",
+            ),
+        ),
         "stack-two-cubes": (
             ((0.27, -0.10, 0.046), "green"),
             ((0.35, 0.08, 0.046), "blue"),
@@ -2054,8 +2059,8 @@ def _wave_b_single_prop_conformance(engine, advance, config, environment):
             ((0.28, 0.15, 0.002), "blue"),
         ),
         "open-hinged-door": (
-            ((0.541, -0.01, 0.165), "blue"),
-            ((0.478, 0.055, 0.14), "orange"),
+            ((0.421, -0.01, 0.165), "blue"),
+            ((0.358, 0.055, 0.14), "orange"),
         ),
     }
     classifiers = {
@@ -2139,6 +2144,9 @@ def _wave_b_single_prop_conformance(engine, advance, config, environment):
         return
 
     if environment == "open-hinged-door":
+        clear = engine.read()[0].copy()
+        clear[0] = np.pi / 2
+        engine.home(clear)
         hinge = model.joint("door_hinge")
         lever = model.joint("door_lever")
         latch = model.joint("door_latch")
@@ -2162,6 +2170,7 @@ def _wave_b_single_prop_conformance(engine, advance, config, environment):
         assert data.qpos[latch_qpos] < 0.002
 
         assert engine.reset() is True
+        engine.home(clear)
         data.qfrc_applied[lever_dof] = 0.08
         advance(1.5)
         assert data.qpos[lever_qpos] > 1.0
@@ -2174,6 +2183,7 @@ def _wave_b_single_prop_conformance(engine, advance, config, environment):
         assert abs(data.qvel[hinge_dof]) < 0.05
 
         assert engine.reset() is True
+        engine.home(clear)
         np.testing.assert_allclose(
             data.qpos[[hinge_qpos, lever_qpos, latch_qpos]], 0.0, atol=1e-8
         )
@@ -2210,26 +2220,40 @@ def _wave_c_single_prop_conformance(engine, advance, config, environment):
         ),
         "insert-peg": (
             ((0.27, -0.12, 0.018), "orange"),
-            ((0.453, 0.10, 0.043), "blue"),
+            ((0.423, 0.10, 0.043), "blue"),
         ),
         "retrieve-from-drawer": (
-            ((0.503, 0.0, 0.14), "bright"),
+            (
+                (
+                    0.463 if config["robot"] == "so101" else 0.503,
+                    0.0,
+                    0.14,
+                ),
+                "bright",
+            ),
             ((0.30, 0.18, 0.002), "blue"),
         ),
         "store-in-drawer": (
             ((0.29, -0.15, 0.04), "orange"),
-            ((0.353, 0.0, 0.14), "bright"),
+            (
+                (
+                    0.313 if config["robot"] == "so101" else 0.353,
+                    0.0,
+                    0.14,
+                ),
+                "bright",
+            ),
         ),
         "insert-usb": (
             ((0.25, -0.12, 0.018), "orange"),
-            ((0.48, 0.10, 0.16), "dark"),
+            ((0.40, 0.10, 0.16), "dark"),
         ),
         "load-clear-test-tubes": (
             ((0.25, -0.18, 0.018), "cyan"),
             ((0.30, -0.07, 0.018), "cyan"),
             ((0.24, 0.05, 0.018), "cyan"),
-            ((0.31, 0.16, 0.018), "cyan"),
-            ((0.45, 0.19, 0.023), "blue"),
+            ((0.25, 0.16, 0.018), "cyan"),
+            ((0.39, 0.19, 0.023), "blue"),
         ),
     }
     classifiers = {
@@ -2293,14 +2317,14 @@ def _wave_c_single_prop_conformance(engine, advance, config, environment):
         )
         assert np.linalg.norm(data.body("target_peg").cvel[3:]) < 0.01
         assert engine.reset() is True
-        peg = place_free("target_peg", (0.43, 0.10, 0.12))
+        peg = place_free("target_peg", (0.40, 0.10, 0.12))
         advance(1.5)
-        np.testing.assert_allclose(data.xpos[peg, :2], (0.43, 0.10), atol=0.004)
+        np.testing.assert_allclose(data.xpos[peg, :2], (0.40, 0.10), atol=0.004)
         assert data.xpos[peg, 2] < 0.055
         assert data.body("target_peg").xmat.reshape(3, 3)[2, 2] > 0.995
 
         assert engine.reset() is True
-        peg = place_free("target_peg", (0.45, 0.10, 0.12))
+        peg = place_free("target_peg", (0.42, 0.10, 0.12))
         advance(1.5)
         assert data.xpos[peg, 2] > 0.075
         return
@@ -2324,7 +2348,7 @@ def _wave_c_single_prop_conformance(engine, advance, config, environment):
         return
 
     if environment == "insert-usb":
-        connector = place_free("usb_connector", (0.43, 0.10, 0.12))
+        connector = place_free("usb_connector", (0.35, 0.10, 0.12))
         data.xfrc_applied[connector, 0] = 3.0
         max_normal_force = 0.0
         for _ in range(round(1.0 / config["timestep"])):
@@ -2335,18 +2359,18 @@ def _wave_c_single_prop_conformance(engine, advance, config, environment):
                 max_normal_force = max(max_normal_force, float(force[0]))
         data.xfrc_applied[connector] = 0.0
         correct_x = float(data.xpos[connector, 0])
-        assert correct_x > 0.484
+        assert correct_x > 0.404
         assert data.body("usb_connector").xmat.reshape(3, 3)[0, 0] > 0.995
         assert max_normal_force < 15.0
 
         assert engine.reset() is True
         connector = place_free(
-            "usb_connector", (0.43, 0.10, 0.12), (0.0, 1.0, 0.0, 0.0)
+            "usb_connector", (0.35, 0.10, 0.12), (0.0, 1.0, 0.0, 0.0)
         )
         data.xfrc_applied[connector, 0] = 3.0
         advance(1.0)
         data.xfrc_applied[connector] = 0.0
-        assert data.xpos[connector, 0] < 0.482
+        assert data.xpos[connector, 0] < 0.402
         assert correct_x - data.xpos[connector, 0] > 0.005
         return
 
@@ -2365,10 +2389,10 @@ def _wave_c_single_prop_conformance(engine, advance, config, environment):
             assert np.linalg.norm(data.body(name).cvel[3:]) < 0.01
         assert engine.reset() is True
         slots = (
-            (0.41, 0.14),
-            (0.49, 0.14),
-            (0.41, 0.06),
-            (0.49, 0.06),
+            (0.35, 0.14),
+            (0.43, 0.14),
+            (0.35, 0.06),
+            (0.43, 0.06),
         )
         for name, (x, y) in zip(tube_names, slots, strict=True):
             place_free(name, (x, y, 0.12))
@@ -2384,7 +2408,8 @@ def _wave_c_single_prop_conformance(engine, advance, config, environment):
 
     assert environment == "store-in-drawer"
     assert data.joint("drawer_slide").qpos[0] == pytest.approx(0.15)
-    target = place_free("target_object", (0.51, 0.0, 0.10))
+    interior = data.body("drawer_interior").xpos.copy()
+    target = place_free("target_object", (*interior[:2], 0.10))
     advance(1.0)
     interior = data.body("drawer_interior").xpos.copy()
     assert np.linalg.norm(data.xpos[target, :2] - interior[:2]) < 0.03
@@ -2548,10 +2573,15 @@ def test_native_medium_dual_arm_task_scenes(
             ((0.28, -0.30, 0.046), "orange"),
             ((0.32, 0.30, 0.002), "blue"),
         ),
-        "stabilize-open-drawer": (((0.503, 0.0, 0.14), "bright"),),
+        "stabilize-open-drawer": (
+            (
+                (0.463 if robot == "so101" else 0.503, 0.0, 0.14),
+                "bright",
+            ),
+        ),
         "hold-container-place": (
-            ((0.30, -0.23, 0.046), "orange"),
-            ((0.38, 0.245, 0.06), "blue"),
+            ((0.30, 0.20, 0.046), "orange"),
+            ((0.38, -0.035, 0.06), "blue"),
         ),
         "stabilize-remove-lid": (
             ((0.36, -0.08, 0.115), "orange"),
@@ -2628,10 +2658,10 @@ def test_native_medium_dual_arm_task_scenes(
             advance(0.5)
             assert data.body("movable_container").xpos[1] > initial[1] + 0.01
             assert engine.reset() is True
-            target = place_free("target_object", (0.38, 0.16, 0.12))
+            target = place_free("target_object", (0.38, -0.12, 0.12))
             advance(1.0)
             np.testing.assert_allclose(
-                data.xpos[target, :2], (0.38, 0.16), atol=0.005
+                data.xpos[target, :2], (0.38, -0.12), atol=0.005
             )
             assert 0.025 < data.xpos[target, 2] < 0.04
         else:
@@ -2733,8 +2763,8 @@ def test_native_hard_dual_arm_task_scenes(tmp_path, monkeypatch, robot, environm
             ((0.32, 0.30, 0.002), "blue"),
         ),
         "two-arm-peg-insertion": (
-            ((0.29, -0.22, 0.018), "orange"),
-            ((0.39, 0.223, 0.052), "blue"),
+            ((0.29, 0.20, 0.018), "orange"),
+            ((0.39, -0.157, 0.052), "blue"),
         ),
         "joint-lift": (
             ((0.36, -0.20, 0.055), "orange"),
@@ -2746,8 +2776,8 @@ def test_native_hard_dual_arm_task_scenes(tmp_path, monkeypatch, robot, environm
             ((0.34, 0.24, 0.002), "blue"),
         ),
         "uncap-return-test-tube": (
-            ((0.43, 0.13, 0.135), "orange"),
-            ((0.43, 0.13, 0.07), "cyan"),
+            ((0.38, 0.0, 0.135), "orange"),
+            ((0.38, 0.0, 0.07), "cyan"),
             ((0.29, 0.18, 0.002), "blue"),
         ),
         "retrieve-bottle-clutter": (
@@ -2810,9 +2840,9 @@ def test_native_hard_dual_arm_task_scenes(tmp_path, monkeypatch, robot, environm
 
             assert engine.reset() is True
             receiver_start = data.body("receiving_part").xpos.copy()
-            peg = place_free("target_peg", (0.39, 0.20, 0.14))
+            peg = place_free("target_peg", (0.39, -0.18, 0.14))
             advance(1.5)
-            np.testing.assert_allclose(data.xpos[peg, :2], (0.39, 0.20), atol=0.004)
+            np.testing.assert_allclose(data.xpos[peg, :2], (0.39, -0.18), atol=0.004)
             assert data.xpos[peg, 2] < 0.06
             assert data.body("target_peg").xmat.reshape(3, 3)[2, 2] > 0.995
             assert (
@@ -2890,11 +2920,11 @@ def test_native_hard_dual_arm_task_scenes(tmp_path, monkeypatch, robot, environm
                 > initial_separation + 0.04
             )
             cap_id = place_free("target_tube_cap", (0.29, 0.18, 0.06))
-            tube_id = place_free("target_test_tube", (0.43, 0.13, 0.12))
+            tube_id = place_free("target_test_tube", (0.38, 0.0, 0.12))
             advance(1.0)
             np.testing.assert_allclose(data.xpos[cap_id, :2], (0.29, 0.18), atol=0.006)
             assert 0.02 < data.xpos[cap_id, 2] < 0.03
-            np.testing.assert_allclose(data.xpos[tube_id, :2], (0.43, 0.13), atol=0.004)
+            np.testing.assert_allclose(data.xpos[tube_id, :2], (0.38, 0.0), atol=0.004)
             assert data.body("target_test_tube").xmat.reshape(3, 3)[2, 2] > 0.985
         else:
             assert environment == "retrieve-bottle-clutter"

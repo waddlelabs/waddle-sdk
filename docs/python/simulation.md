@@ -53,7 +53,7 @@ Each engine accepts `so101`, `yam`, or `xarm7` and these environments:
   and 5 N·s/m native joint damping. The damping dissipates a pull after release;
   there is no spring returning the drawer to its starting position.
 
-MuJoCo also provides twenty-eight interactive development task environments:
+MuJoCo also provides twenty-nine interactive development task environments:
 
 - `touch_target`: one red contact target and two blue distractors.
 - `pick_lift`: one free 46 mm cube.
@@ -131,6 +131,13 @@ and release, and target-only bottle removal. D07-D10 require coordinated
 multi-part execution from the downstream capability matrix.
 They are development fixtures, not calibrated physical twins. Isaac and SAPIEN
 selection is rejected until the same native evidence exists for those backends.
+
+The reference layouts preserve the same task geometry while fitting each robot's
+physical workspace. In particular, SO-101 drawer cabinets sit 40 mm nearer the
+base than the YAM/xArm7 cabinets. Other close-clearance workpieces use common
+positions that all three families can reach. The drawer and rack tasks use an
+elevated scene-camera mount so the open drawer interior and back rack row remain
+visible through the ordinary camera stream.
 
 The reference MuJoCo evaluator reset uses the requested integer seed to apply a
 stable bounded XY translation and yaw rotation to every task scene. Separate

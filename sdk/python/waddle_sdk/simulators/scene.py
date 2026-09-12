@@ -380,8 +380,9 @@ def make_site(
         "store-in-drawer",
         "load-clear-test-tubes",
     }:
-        # Retain the drawer's front face while exposing its interior once open.
-        mounts["scene"] = look_at((-0.35, -0.60, 0.95), (0.48, 0, 0.08)).tolist()
+        # A high tripod view retains the drawer's front face while exposing its
+        # interior once open and the rear row of the test-tube rack.
+        mounts["scene"] = look_at((0.10, -0.65, 1.35), (0.42, 0, 0.05)).tolist()
     if environment in DUAL_ARM_TASK_ENVIRONMENTS:
         mounts["scene"] = look_at((0.10, 0, 2.00), (0.30, 0, 0)).tolist()
     if robot == "yam":
