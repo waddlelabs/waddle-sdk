@@ -15,8 +15,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 - Apply stable, bounded XY and yaw variation when the trusted evaluator resets any
   of the 29 reference task scenes. The same seed reproduces the same world across
-  worker restarts, assembled free fixtures move as rigid groups, and ordinary
-  reset still restores the canonical interactive scene.
+  worker restarts, seed zero selects the canonical pose, assembled free fixtures
+  move as rigid groups, and ordinary reset restores the canonical interactive scene.
 - Add all six hard two-arm MuJoCo development environments: oriented tool
   handover, movable-receiver peg insertion, balanced two-handle lift, loaded tray
   transport, friction-fit test-tube uncapping/return, and target-bottle retrieval

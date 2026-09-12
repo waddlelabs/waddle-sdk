@@ -79,6 +79,7 @@ def test_seeded_evaluation_reset_covers_complete_task_matrix(
 
         assert engine.evaluation_reset(seed=0)
         zero_snapshot = engine.evaluation_snapshot()
+        assert _body_poses(zero_snapshot, names) == canonical
         robot_names = {link.name for link in description(robot).links}
         if arms == 2:
             robot_names = {

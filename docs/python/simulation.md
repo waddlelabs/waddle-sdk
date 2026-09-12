@@ -139,7 +139,9 @@ and fitted lid or a loaded tray and its contents, transform as one rigid group s
 reset does not break the fixture. Fixed articulated fixtures move through their
 root body. The same seed and environment reproduce the same pose across worker
 restarts; different seeds select a different pose from the finite development
-profile. A normal world `reset()` restores the canonical interactive scene.
+profile. Seed `0` is reserved for the canonical pose so an evaluator can run the
+canonical split through the same administration boundary. A normal world
+`reset()` also restores the canonical interactive scene.
 
 This variation is evaluator administration, so neither the seed nor sampled pose
 is added to participant-facing site or observation contracts. Evaluation splits

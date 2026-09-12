@@ -73,7 +73,7 @@ Together with the reference drawer they form the 29-task evaluation matrix.
 Trusted evaluator reset applies stable seed-derived bounded XY/yaw variation to
 each scene. Preserve rigid transforms within assembled free fixtures, keep the
 seed and sampled pose outside participant contracts, and retain canonical ordinary
-reset behavior.
+reset behavior. Evaluator seed zero is reserved for that canonical pose.
 
 ## Repo map
 

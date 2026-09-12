@@ -75,6 +75,8 @@ def pose_groups(environment, object_groups):
 def sample(seed, environment, group_index, field, limit):
     """Map an exact seed/key to a stable closed-open value inside +/- limit."""
 
+    if seed == 0:
+        return 0.0
     payload = f"waddle.mujoco.pose/v1\0{seed}\0{environment}\0{group_index}\0{field}"
     integer = int.from_bytes(hashlib.sha256(payload.encode()).digest()[:8], "big")
     unit = integer / 2**64
