@@ -140,7 +140,7 @@ def objects(environment: str) -> list[list[Link]]:
         )
         goal = Link(
             "goal_bin",
-            xyz=(0.48, 0.12, 0.0),
+            xyz=(0.42, 0.10, 0.0),
             shapes=[
                 Shape(
                     "box",

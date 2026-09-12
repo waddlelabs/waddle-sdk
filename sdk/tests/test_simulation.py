@@ -1783,7 +1783,7 @@ def _wave_a_prop_conformance(engine, advance, config, environment):
         "pick_lift": (((0.32, 0.0, 0.046), "green"),),
         "place_in_bin": (
             ((0.28, -0.12, 0.046), "orange"),
-            ((0.48, 0.12, 0.012), "blue"),
+            ((0.42, 0.10, 0.012), "blue"),
         ),
         "push_to_region": (
             ((0.28, -0.10, 0.046), "yellow"),
@@ -1840,11 +1840,11 @@ def _wave_a_prop_conformance(engine, advance, config, environment):
             joint_id = int(body.jntadr[0])
             qpos = int(model.jnt_qposadr[joint_id])
             dof = int(model.jnt_dofadr[joint_id])
-            data.qpos[qpos : qpos + 3] = (0.48, 0.12, 0.08)
+            data.qpos[qpos : qpos + 3] = (0.42, 0.10, 0.08)
             data.qvel[dof : dof + 6] = 0
             engine.mj.mj_forward(model, data)
             advance(1.0)
-            np.testing.assert_allclose(data.xpos[body_id, :2], (0.48, 0.12), atol=0.01)
+            np.testing.assert_allclose(data.xpos[body_id, :2], (0.42, 0.10), atol=0.01)
             assert 0.03 < data.xpos[body_id, 2] < 0.05
             return
         initial_xy = data.xpos[body_id, :2].copy()
