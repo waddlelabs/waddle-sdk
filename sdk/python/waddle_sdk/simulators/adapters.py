@@ -43,7 +43,7 @@ class World:
         self._process: subprocess.Popen | None = None
         self._connection = None
         self._failed = False
-        self._part_name: str | None = None
+        self._part_names: set[str] = set()
 
     def open(self) -> None:
         with self._lock:
@@ -152,11 +152,18 @@ class World:
         return True
 
     def part(self, *, config: PartConfig) -> base.Rig:
-        if self._part_name is not None and self._part_name != config.name:
-            raise ValueError("a reference simulation world contains one robot part")
+        if config.name not in self.config["parts"]:
+            raise ValueError("robot part is absent from the simulation profile")
+        if config.name in self._part_names:
+            raise ValueError("robot part was declared more than once")
         rig = _arm(self, config=config)
-        self._part_name = config.name
+        self._part_names.add(config.name)
         return rig
+
+    def part_call(self, operation: str, part: str, *arguments):
+        if len(self.config["parts"]) == 1:
+            return self.call(operation, *arguments)
+        return self.call(f"{operation}_part", part, *arguments)
 
     def camera(self, *, config: CameraConfig) -> Camera:
         return _camera(self, config=config)
@@ -200,8 +207,16 @@ def backend(*, config: WorldConfig) -> World:
 class Driver:
     kind = "sim"
 
-    def __init__(self, world: World, *, posture: str, max_joint_speed: float = 0.5):
+    def __init__(
+        self,
+        world: World,
+        *,
+        part: str,
+        posture: str,
+        max_joint_speed: float = 0.5,
+    ):
         self.world = world
+        self.part = part
         self.profile = profile(world.config["robot"])
         self._monitor = posture == "monitor"
         self._closed = False
@@ -213,7 +228,9 @@ class Driver:
         return self._estopped
 
     def read(self):
-        q, dq = (np.asarray(x, dtype=float) for x in self.world.call("read"))
+        q, dq = (
+            np.asarray(x, dtype=float) for x in self.world.part_call("read", self.part)
+        )
         # The public hand channel is a bounded open fraction, like the live
         # adapters. Soft contact limits can overshoot a native slide by microns.
         q[-1] = np.clip(q[-1], 0.0, 1.0)
@@ -244,11 +261,11 @@ class Driver:
             for x, (lo, hi) in zip(values, self.profile.limits, strict=True)
         ):
             raise ValueError("simulation target exceeds the robot's joint limits")
-        self.world.call("write", values, velocity)
+        self.world.part_call("write", self.part, values, velocity)
 
     def hold(self):
         if not self._closed:
-            self.world.call("hold")
+            self.world.part_call("hold", self.part)
 
     def estop(self):
         self._estopped = True
@@ -272,7 +289,7 @@ class Driver:
             for x, (lo, hi) in zip(values, self.profile.limits, strict=True)
         ):
             raise ValueError("simulation home exceeds the robot's joint limits")
-        return self.world.call("home", tuple(values))
+        return self.world.part_call("home", self.part, tuple(values))
 
     def forward_kinematics(self, q):
         values = tuple(q) + ((0.0,) if len(q) == self.profile.dof else ())
@@ -303,6 +320,10 @@ class Driver:
 
 def _arm(owner: World, *, config: PartConfig) -> base.Rig:
     p = profile(owner.config["robot"])
+    # Validate and cache the conservative CAD cover while assembling the site.
+    # The first real-time command must not pay mesh parsing latency inside its
+    # dispatch deadline.
+    collision_bounds(p.name)
     if not isinstance(config.base_frame, str) or not config.base_frame.strip():
         raise ValueError("simulation requires a declared robot base frame")
     if set(config.joint_limits) != set(p.names):
@@ -321,7 +342,12 @@ def _arm(owner: World, *, config: PartConfig) -> base.Rig:
     velocities = (speed,) * p.dof + (hand_speed,)
 
     def build():
-        driver = Driver(owner, posture=config.posture, max_joint_speed=speed)
+        driver = Driver(
+            owner,
+            part=config.name,
+            posture=config.posture,
+            max_joint_speed=speed,
+        )
         try:
             return {
                 "": base.Arm(
@@ -367,11 +393,9 @@ def _arm(owner: World, *, config: PartConfig) -> base.Rig:
             ),
         ),
         build_arms=build,
-        # Separate state reporting from native physics substeps, as in
-        # ManiSkill. Oversample control to avoid whole command-interval jumps,
-        # without a process round trip and FK report for every 2 ms substep.
-        # The action space and owner step limits keep their declared rate.
-        rate_hz=max(100.0, 2 * rate),
+        # Report at the same rate as the physical controller. Native physics
+        # still advances at the scene's fixed substep inside the world worker.
+        rate_hz=rate,
         posture=config.posture,
     )
 
@@ -414,6 +438,7 @@ def _camera(owner: World, *, config: CameraConfig) -> Camera:
         ("intrinsics", dict(config.intrinsics or {})),
         ("frame_id", config.frame_id),
         ("mount", mount),
+        ("options", dict(config.options)),
     ):
         if row[key] != value:
             raise ValueError(

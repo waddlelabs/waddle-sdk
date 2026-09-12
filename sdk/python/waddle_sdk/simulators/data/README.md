@@ -7,9 +7,27 @@ reference robot verifies its packaged files before an engine sees the model.
 
 | Assembly | Source revision | License |
 | --- | --- | --- |
+| SO-101 arm, hand and camera housing | [Robot Studio SO-ARM100](https://github.com/TheRobotStudio/SO-ARM100/tree/eecbe3e0a9ebb23e25ad7b2759b03884c6660903) | `so101/LICENSE`, Apache-2.0 |
 | YAM arm | [I2RT](https://github.com/i2rt-robotics/i2rt/tree/570ef66681ff12bd8298aba34084307cfecc9f05) | `yam/LICENSE`, MIT |
 | LINEAR_4310 hand | [I2RT 1.3.5](https://github.com/i2rt-robotics/i2rt/tree/5b72c47239bd056d0fa6c1a39edeb0537c89443c) | `yam/LICENSE`, MIT |
 | xArm7 and G2 hand | [UFACTORY xarm_ros](https://github.com/xArm-Developer/xarm_ros/tree/aad7e1611c9c46eb719045414394bfdd42dcb0f8) | `xarm7/LICENSE`, BSD-3-Clause |
+
+## SO-101 assembly
+
+`so101/robot.urdf` and its meshes are Robot Studio's maintained calibrated-follower
+SO-101 assembly. The public action has the source joint order
+`shoulder_pan`, `shoulder_lift`, `elbow_flex`, `wrist_flex`, `wrist_roll`, and
+`gripper`; the first five coordinates are radians. The source gripper coordinate is
+mapped linearly to the SDK's normalized zero-closed/one-open action while retaining
+the original moving-jaw mechanics and 129.23 mm nominal fingertip-landmark change.
+The model keeps the source link masses, centers of mass and inertia tensors.
+
+The RGB-only wrist-camera pose is regenerated from the `wrist_cam` and
+`gripperframe` entries in the pinned MuJoCo Menagerie SO-101 model. Its transform
+is converted from MuJoCo camera axes to the SDK optical convention. This preserves
+the maintained physical mount geometry; stream resolution and intrinsics remain
+explicit site calibration. The scene camera is also RGB only. No simulated depth
+channel or depth scale is declared for either camera.
 
 ## YAM assembly
 
@@ -111,12 +129,13 @@ to 0.1 mm over five seconds, and require turning under torque in both directions
 
 ## Maintained implementation references
 
-Reviewed on 2026-09-08. Repositories below had activity in the preceding year;
+Reviewed through 2026-09-11. Repositories below had activity in the preceding year;
 the revision pins make the basis reproducible even as upstream moves.
 
 | Project | Reviewed revision / date | Reused basis |
 | --- | --- | --- |
-| [MuJoCo Menagerie](https://github.com/google-deepmind/mujoco_menagerie/tree/8161bba264d7fa7c99ca301e91e7fb44737676ad) | `8161bba`, 2026-09-04 | Native URDF import, reflected rotor inertia, xArm arm drives and four-bar linkage |
+| [MuJoCo Menagerie](https://github.com/google-deepmind/mujoco_menagerie/tree/8161bba264d7fa7c99ca301e91e7fb44737676ad) | `8161bba`, 2026-09-04 | SO-101 wrist optical mount, native URDF import, reflected rotor inertia, xArm arm drives and four-bar linkage |
+| [Robot Studio SO-ARM100](https://github.com/TheRobotStudio/SO-ARM100/tree/eecbe3e0a9ebb23e25ad7b2759b03884c6660903) | `eecbe3e`, pinned 2026-09-11 | SO-101 calibrated-follower URDF, meshes, inertias and joint limits |
 | [I2RT](https://github.com/i2rt-robotics/i2rt/tree/5b72c47239bd056d0fa6c1a39edeb0537c89443c) | `5b72c47`, 2026-09-07 | LINEAR_4310 model/TCP correction; YAM motor gains and gripper transmission |
 | [mjlab](https://github.com/mujocolab/mjlab/tree/8ee51fbcf806a7419189f706d9e394cbeb7790fa) | `8ee51fb`, 2026-08-31 | Reflection of motor gains/inertia through a gripper transmission |
 | [ManiSkill](https://github.com/mani-skill/ManiSkill/tree/62ff3a5896b4d5b4cf0ac4c8d79afe600c9404a3) | `62ff3a5`, 2026-08-02 | Native PD position/velocity drives, passive linkage closures, scene defaults |
@@ -209,8 +228,9 @@ elapsed monotonic time with the existing target, retaining fixed native substeps
 and fractional remainders. Rendering/IPC delays do not discard simulation time
 or apply new commands retroactively. `worlds.cell.options.real_time: false`
 retains explicit SDK stepping for rollouts. The ordinary SDK reporting pump
-runs at least twice the command rate with a 100 Hz floor; new scenes derive command-rate and speed defaults
-from the physical SDK declarations (YAM 10 Hz, xArm7 50 Hz, both 1 rad/s). Available compute still bounds throughput.
+runs at the declared command rate; new scenes use SO-101 30 Hz, YAM 10 Hz and
+xArm7 50 Hz with a 1 rad/s arm speed limit. Available compute still bounds
+throughput.
 Runs preserve scene state by default.
 Explicit `worlds.cell.options.reset_on_episode: true` uses native state
 reset/snapshots; it does not recompile the robot or restart its renderer. The world

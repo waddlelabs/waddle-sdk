@@ -550,7 +550,7 @@ def _camera_description(raw: Mapping[str, Any]) -> descriptors.Camera:
             cx=intrinsics_raw["cx"],
             cy=intrinsics_raw["cy"],
             distortion=tuple(intrinsics_raw.get("distortion", ())),
-            depth_scale_mm=intrinsics_raw["depth_scale_mm"],
+            depth_scale_mm=intrinsics_raw.get("depth_scale_mm"),
         )
     return descriptors.Camera(
         width=stream["width"],

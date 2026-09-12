@@ -13,6 +13,20 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Add SO-101 to the pinned reference simulation family, including its maintained
+  CAD/inertias, five arm joints, normalized physical gripper mapping, RGB-only
+  scene/wrist cameras, camera mount, source hashes and license.
+- Add matched two-arm MuJoCo sites for SO-101, YAM and xArm7 in one shared world,
+  with independent named parts, base placements, per-arm control/reset/TCP state,
+  one scene camera and one wrist camera per arm. Isaac and SAPIEN remain explicit
+  one-arm reference backends.
+- Generate non-opening planner model sources for every reference robot from the
+  same pinned chain, limits, base/TCP frames and collision links as the runtime
+  assembly. Record the fixed-open-hand, no-prop and no-neighbor geometry scope.
+- Accept an exact per-camera physical profile when generating a simulation site,
+  keeping each camera's stream, rectified intrinsics, depth capability and mount
+  transform identical across the public site and native simulator configuration.
+
 - Include Isaac in the existing rendering-preset, episode-reset, shared-world
   lifecycle/e-stop and custom camera/part-name checks. Use its explicitly selected
   licensed worker interpreter; assertions and other backend behavior are unchanged.

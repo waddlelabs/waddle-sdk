@@ -121,7 +121,7 @@
     "intrinsics": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["fx", "fy", "cx", "cy", "depth_scale_mm"],
+      "required": ["fx", "fy", "cx", "cy"],
       "properties": {
         "fx": {"type": "number", "exclusiveMinimum": 0},
         "fy": {"type": "number", "exclusiveMinimum": 0},

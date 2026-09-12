@@ -228,6 +228,30 @@ def urdf(links: list[Link], name: str) -> str:
     return ET.tostring(root, encoding="unicode")
 
 
+def _robot_instance(links: list[Link], prefix: str, placement: dict) -> list[Link]:
+    """Namespace one robot while retaining its manufacturer-local geometry."""
+
+    result = []
+    for link in links:
+        root = link.parent is None
+        result.append(
+            replace(
+                link,
+                name=prefix + link.name,
+                parent=None if root else prefix + link.parent,
+                xyz=tuple(placement["xyz"]) if root else link.xyz,
+                rpy=tuple(placement["rpy"]) if root else link.rpy,
+                joint=None if link.joint is None else prefix + link.joint,
+                mimic=(
+                    None
+                    if link.mimic is None
+                    else (prefix + link.mimic[0], *link.mimic[1:])
+                ),
+            )
+        )
+    return result
+
+
 def mjcf(p: Profile, config: dict) -> str:
     from .description import description
 
@@ -237,11 +261,21 @@ def mjcf(p: Profile, config: dict) -> str:
     # MuJoCo's maintained URDF importer owns geometry and full inertias. Keep
     # fixed frames for the same camera/TCP names used by the other backends.
     props = objects(config["environment"])
-    groups = [robot.native_links(), *props]
-    master = robot.hand_names[0]
-    hand_drives = [master] + [
-        link.joint for link in groups[0] if link.mimic == (master, 1.0, 0.0)
-    ]
+    prefixes = {
+        part: "" if len(config["parts"]) == 1 else f"{part}__"
+        for part in config["parts"]
+    }
+    robot_groups = {
+        part: _robot_instance(robot.native_links(), prefixes[part], placement)
+        for part, placement in config["parts"].items()
+    }
+    groups = [*robot_groups.values(), *props]
+    masters = {part: f"{prefixes[part]}{robot.hand_names[0]}" for part in robot_groups}
+    hand_drives = {
+        part: [masters[part]]
+        + [link.joint for link in links if link.mimic == (masters[part], 1.0, 0.0)]
+        for part, links in robot_groups.items()
+    }
     scene_links = [Link("scene_root")]
     for group in groups:
         scene_links.extend(
@@ -346,8 +380,9 @@ def mjcf(p: Profile, config: dict) -> str:
     world.extend(container.findall("body"))
     world.remove(container)
     bodies = {body.get("name"): body for body in world.iter("body")}
-    for link in robot.links:
-        bodies[link.name].set("gravcomp", "1")
+    for links in robot_groups.values():
+        for link in links:
+            bodies[link.name].set("gravcomp", "1")
     for group in props:
         if group[0].kind == "free":
             ET.SubElement(bodies[group[0].name], "freejoint")
@@ -357,49 +392,61 @@ def mjcf(p: Profile, config: dict) -> str:
     # Reuse Menagerie's finger-pad contact response on the manufacturer's
     # collision meshes. Default 20 ms contacts let the stiff linear hand
     # penetrate a held cube and oscillate; no material friction is increased.
-    fingers = (
-        ("tip_left", "tip_right")
-        if p.name == "yam"
-        else ("left_finger", "right_finger")
-    )
-    for name in fingers:
-        for geom in bodies[name].findall("geom"):
-            if geom.get("group") == "3":
-                geom.set("solref", "0.004 1")
-                geom.set("solimp", "0.95 0.99 0.001")
-                geom.set("priority", "1")
+    fingers = {
+        "so101": ("gripper_link", "moving_jaw_so101_v1_link"),
+        "yam": ("tip_left", "tip_right"),
+        "xarm7": ("left_finger", "right_finger"),
+    }[p.name]
+    for part in robot_groups:
+        for name in fingers:
+            for geom in bodies[f"{prefixes[part]}{name}"].findall("geom"):
+                if geom.get("group") == "3":
+                    geom.set("solref", "0.004 1")
+                    geom.set("solimp", "0.95 0.99 0.001")
+                    geom.set("priority", "1")
     for geom in bodies["table"].findall("geom"):
         if geom.get("group") == "2":
             geom.set("material", "table_finish")
             geom.set("rgba", "1 1 1 1")
-    for link in robot.links:
-        if link.joint:
+    for part, links in robot_groups.items():
+        drives = hand_drives[part]
+        master = robot.hand_names[0]
+        for native, link in zip(robot.native_links(), links, strict=True):
+            if not native.joint:
+                continue
             joint = bodies[link.name].find("joint")
             joint.set(
                 "armature",
                 str(
-                    robot.armature(master) / len(hand_drives)
-                    if link.joint in hand_drives
-                    else robot.armature(link.joint)
+                    robot.armature(master) / len(drives)
+                    if link.joint in drives
+                    else robot.armature(native.joint)
                 ),
             )
-            if p.name == "xarm7" and link.joint in robot.hand_names:
+            if p.name == "xarm7" and native.joint in robot.hand_names:
                 # Menagerie's follower/spring-link classes inherit the .1
                 # joint armature. Dropping it leaves the soft four-bar closure
                 # supported only by tiny CAD link inertias, so a loaded hand
                 # folds instead of retaining its physical jaw opening.
-                if link.joint not in hand_drives:
+                if link.joint not in drives:
                     joint.set("armature", "0.1")
-                if not link.joint.endswith("inner_knuckle_joint"):
+                if not native.joint.endswith("inner_knuckle_joint"):
                     joint.set("solreflimit", "0.005 1")
     contact = ET.SubElement(root, "contact")
     for group in groups:
         for link in group:
             if link.parent:
                 ET.SubElement(contact, "exclude", body1=link.parent, body2=link.name)
-    for first, second in robot.exclusions:
-        ET.SubElement(contact, "exclude", body1=first, body2=second)
+    for part in robot_groups:
+        for first, second in robot.exclusions:
+            ET.SubElement(
+                contact,
+                "exclude",
+                body1=f"{prefixes[part]}{first}",
+                body2=f"{prefixes[part]}{second}",
+            )
     equality = ET.SubElement(root, "equality")
+    all_hand_drives = {name for names in hand_drives.values() for name in names}
     for link in scene_links:
         if link.mimic:
             master, multiplier, offset = link.mimic
@@ -410,51 +457,62 @@ def mjcf(p: Profile, config: dict) -> str:
                 joint2=master,
                 polycoef=numbers((offset, multiplier, 0, 0, 0)),
             )
-            if link.joint in hand_drives:
+            if link.joint in all_hand_drives:
                 # Match Menagerie's mechanical gripper coupling time constant.
                 coupling.set("solref", "0.005 1")
-    for first, anchor, second, _other in robot.closures():
-        ET.SubElement(
-            equality,
-            "connect",
-            body1=first,
-            body2=second,
-            anchor=numbers(anchor),
-            solref="0.005 1",
-        )
+    for part in robot_groups:
+        for first, anchor, second, _other in robot.closures():
+            ET.SubElement(
+                equality,
+                "connect",
+                body1=f"{prefixes[part]}{first}",
+                body2=f"{prefixes[part]}{second}",
+                anchor=numbers(anchor),
+                solref="0.005 1",
+            )
     # Menagerie's xArm/Robotiq pattern distributes one motor's force through a
     # fixed tendon. The mechanical equality need not transfer the entire load
     # from one jaw to the other, which otherwise shifts the pinch midpoint.
     # Keep the same total gain, force budget and reflected rotor inertia.
-    tendon = ET.SubElement(ET.SubElement(root, "tendon"), "fixed", name="hand_motor")
-    for name in hand_drives:
-        ET.SubElement(tendon, "joint", joint=name, coef=str(1 / len(hand_drives)))
+    tendons = ET.SubElement(root, "tendon")
+    for part, drives in hand_drives.items():
+        tendon = ET.SubElement(tendons, "fixed", name=f"{prefixes[part]}hand_motor")
+        for name in drives:
+            ET.SubElement(tendon, "joint", joint=name, coef=str(1 / len(drives)))
     actuators = ET.SubElement(root, "actuator")
-    ET.SubElement(bodies["tcp"], "site", name="tcp_site", size=".001")
-    for name, limits in zip(p.names[:-1], p.limits[:-1], strict=True):
-        kp, kd, effort = robot.servo(name)
+    for part in robot_groups:
         ET.SubElement(
-            actuators,
-            "position",
-            name=name,
-            joint=name,
-            kp=str(kp),
-            kv=str(kd),
-            ctrlrange=numbers(limits),
-            forcerange=numbers((-effort, effort)),
+            bodies[f"{prefixes[part]}tcp"],
+            "site",
+            name=f"{prefixes[part]}tcp_site",
+            size=".001",
         )
-    for name, limits in zip(robot.hand_names[:1], robot.hand_limits[:1], strict=True):
-        kp, kd, effort = robot.servo(name)
-        ET.SubElement(
-            actuators,
-            "position",
-            name=name,
-            tendon="hand_motor",
-            kp=str(kp),
-            kv=str(kd),
-            ctrlrange=numbers(limits),
-            forcerange=numbers((-effort, effort)),
-        )
+        for name, limits in zip(p.names[:-1], p.limits[:-1], strict=True):
+            kp, kd, effort = robot.servo(name)
+            ET.SubElement(
+                actuators,
+                "position",
+                name=f"{prefixes[part]}{name}",
+                joint=f"{prefixes[part]}{name}",
+                kp=str(kp),
+                kv=str(kd),
+                ctrlrange=numbers(limits),
+                forcerange=numbers((-effort, effort)),
+            )
+        for name, limits in zip(
+            robot.hand_names[:1], robot.hand_limits[:1], strict=True
+        ):
+            kp, kd, effort = robot.servo(name)
+            ET.SubElement(
+                actuators,
+                "position",
+                name=f"{prefixes[part]}{name}",
+                tendon=f"{prefixes[part]}hand_motor",
+                kp=str(kp),
+                kv=str(kd),
+                ctrlrange=numbers(limits),
+                forcerange=numbers((-effort, effort)),
+            )
     for name, row in config["cameras"].items():
         t = np.asarray(row["transform"])
         gl_rotation = t[:3, :3] @ np.diag([1, -1, -1])
@@ -464,7 +522,9 @@ def mjcf(p: Profile, config: dict) -> str:
         # Optical pixel centers are integer coordinates; the first OpenGL
         # raster sample is half a pixel from the edge of the viewport.
         ET.SubElement(
-            bodies["tcp"] if row["mount"]["kind"] == "wrist" else world,
+            bodies[f"{prefixes[row['mount']['part']]}tcp"]
+            if row["mount"]["kind"] == "wrist"
+            else world,
             "camera",
             name=name,
             pos=numbers(t[:3, 3]),

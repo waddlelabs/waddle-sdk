@@ -152,9 +152,14 @@ class Engine:
                 path, (stream["width"], stream["height"])
             )
             rgb = rep.AnnotatorRegistry.get_annotator("rgb")
-            depth = rep.AnnotatorRegistry.get_annotator("distance_to_image_plane")
+            depth = (
+                rep.AnnotatorRegistry.get_annotator("distance_to_image_plane")
+                if row["options"]["depth"]
+                else None
+            )
             rgb.attach([product])
-            depth.attach([product])
+            if depth is not None:
+                depth.attach([product])
             self.cameras[name] = (camera, product, rgb, depth)
 
     def _pose(self, geom, matrix):
@@ -314,13 +319,17 @@ class Engine:
         # axial depth come from the same render product and tick.
         for _ in range(3):
             self.world.render()
-        color, z = np.asarray(rgb.get_data()), np.asarray(depth.get_data())
+        color = np.asarray(rgb.get_data())
         shape = (row["stream"]["height"], row["stream"]["width"])
-        if color.shape[:2] != shape or z.shape != shape:
-            raise RuntimeError("Isaac render product has no complete RGB-D frame")
-        return np.ascontiguousarray(color[..., :3], dtype=np.uint8), depth_z16(
-            z, row["intrinsics"]["depth_scale_mm"]
-        )
+        if color.shape[:2] != shape:
+            raise RuntimeError("Isaac render product has no complete RGB frame")
+        image = np.ascontiguousarray(color[..., :3], dtype=np.uint8)
+        if depth is None:
+            return image, None
+        z = np.asarray(depth.get_data())
+        if z.shape != shape:
+            raise RuntimeError("Isaac render product has no complete depth frame")
+        return image, depth_z16(z, row["intrinsics"]["depth_scale_mm"])
 
     def native_tcp(self):
         # Query the physics view, because USD transforms can lag PhysX/Fabric.
@@ -332,7 +341,8 @@ class Engine:
     def close(self):
         for _camera, product, rgb, depth in self.cameras.values():
             rgb.detach([product])
-            depth.detach([product])
+            if depth is not None:
+                depth.detach([product])
             product.destroy()
         self.world.stop()
         self.app.close()

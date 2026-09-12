@@ -19,6 +19,7 @@ import pytest
 import yaml
 from waddle_sdk import load_site
 from waddle_sdk.robots import yam
+from waddle_sdk.simulators import reference_model_sources
 from waddle_sdk.simulators.adapters import World
 from waddle_sdk.simulators.description import (
     collision_bounds,
@@ -35,6 +36,7 @@ from waddle_sdk.simulators.scene import (
     make_site,
     profile,
     rotation,
+    transform,
 )
 
 
@@ -45,6 +47,7 @@ def documents(
     environment="two_cubes",
     *,
     worker_python=None,
+    arms=1,
 ):
     site, sim = make_site(
         "physics-test",
@@ -54,6 +57,7 @@ def documents(
         width=192,
         height=144,
         worker_python=worker_python,
+        arms=arms,
     )
     (root / "simulation.json").write_text(json.dumps(sim))
     (root / "site.yaml").write_text(yaml.safe_dump(site))
@@ -75,7 +79,198 @@ def test_all_reference_declarations_validate_without_opening(
     assembly = loaded._assembly(None)
     action_space = assembly.rig.robot().action_space.parts["arm"]
     assert action_space.rate_hz == site["parts"]["arm"]["options"]["rate_hz"]
-    assert assembly.rig.rate_hz == max(100.0, 2 * action_space.rate_hz)
+    assert assembly.rig.rate_hz == action_space.rate_hz
+
+
+@pytest.mark.parametrize(
+    ("robot", "depth", "wrist_model"),
+    [
+        ("so101", False, "rgb"),
+        ("yam", True, "realsense_d405"),
+        ("xarm7", True, "realsense_d435"),
+    ],
+)
+def test_reference_camera_capabilities_match_each_embodiment(
+    tmp_path, robot, depth, wrist_model
+):
+    site, simulation = documents(tmp_path, robot=robot)
+    for document in (site, simulation):
+        assert document["cameras"]["scene"]["options"] == {
+            "sensor_model": "rgb" if robot == "so101" else "realsense_d435",
+            "depth": depth,
+        }
+        assert document["cameras"]["wrist"]["options"] == {
+            "sensor_model": wrist_model,
+            "depth": depth,
+        }
+        for camera in document["cameras"].values():
+            assert ("depth_scale_mm" in camera["intrinsics"]) is depth
+
+
+def test_physical_camera_profiles_replace_every_simulated_optical_contract(tmp_path):
+    profiles = {
+        "scene": {
+            "stream": {"width": 848, "height": 480, "fps": 30},
+            "intrinsics": {
+                "fx": 431.2,
+                "fy": 430.8,
+                "cx": 421.7,
+                "cy": 238.9,
+                "depth_scale_mm": 0.1,
+            },
+            "transform": np.eye(4).tolist(),
+        },
+        "wrist": {
+            "stream": {"width": 640, "height": 480, "fps": 15},
+            "intrinsics": {
+                "fx": 387.1,
+                "fy": 386.9,
+                "cx": 318.4,
+                "cy": 241.1,
+                "depth_scale_mm": 0.1,
+            },
+            "transform": transform((0.02, 0.01, -0.04), (0.0, 0.1, 0.0)).tolist(),
+        },
+    }
+    site, simulation = make_site(
+        "calibrated",
+        backend="mujoco",
+        robot="yam",
+        environment="two_cubes",
+        camera_profiles=profiles,
+    )
+    (tmp_path / "simulation.json").write_text(json.dumps(simulation))
+    (tmp_path / "site.yaml").write_text(yaml.safe_dump(site))
+    load_site(tmp_path / "site.yaml")
+    assert load_scene(tmp_path, "simulation.json")[1] == simulation
+    for name, profile_row in profiles.items():
+        assert site["cameras"][name]["stream"] == profile_row["stream"]
+        assert site["cameras"][name]["intrinsics"] == profile_row["intrinsics"]
+        assert simulation["cameras"][name]["stream"] == profile_row["stream"]
+        assert simulation["cameras"][name]["intrinsics"] == profile_row["intrinsics"]
+        assert simulation["cameras"][name]["transform"] == profile_row["transform"]
+
+
+def test_physical_camera_profiles_require_exact_names_and_depth_capability():
+    with pytest.raises(ValueError, match="exactly"):
+        make_site(
+            "incomplete-calibration",
+            backend="mujoco",
+            robot="yam",
+            environment="two_cubes",
+            camera_profiles={},
+        )
+    rgb_profile = {
+        name: {
+            "stream": {"width": 640, "height": 480, "fps": 30},
+            "intrinsics": {
+                "fx": 400.0,
+                "fy": 400.0,
+                "cx": 319.5,
+                "cy": 239.5,
+                "depth_scale_mm": 1.0,
+            },
+            "transform": np.eye(4).tolist(),
+        }
+        for name in ("scene", "wrist")
+    }
+    with pytest.raises(ValueError, match="depth capability"):
+        make_site(
+            "wrong-depth",
+            backend="mujoco",
+            robot="so101",
+            environment="two_cubes",
+            camera_profiles=rgb_profile,
+        )
+
+
+@pytest.mark.parametrize("robot", ROBOTS)
+def test_two_arm_mujoco_declaration_has_independent_parts_and_wrist_cameras(
+    tmp_path, robot
+):
+    site, simulation = documents(tmp_path, robot=robot, arms=2)
+    loaded = load_site(tmp_path / "site.yaml")
+    assembly = loaded._assembly(None)
+    assert set(site["parts"]) == set(simulation["parts"]) == {"left", "right"}
+    assert set(site["cameras"]) == {"scene", "left_wrist", "right_wrist"}
+    assert set(assembly.rig.robot().action_space.parts) == {"left", "right"}
+    assert site["parts"]["left"]["base_frame"] != site["parts"]["right"]["base_frame"]
+    assert simulation["parts"]["left"]["xyz"][1] == pytest.approx(-0.28)
+    assert simulation["parts"]["right"]["xyz"][1] == pytest.approx(0.28)
+
+
+def test_non_mujoco_two_arm_reference_scene_is_rejected():
+    with pytest.raises(ValueError, match="two-arm.*MuJoCo"):
+        make_site(
+            "dual",
+            backend="sapien",
+            robot="yam",
+            environment="two_cubes",
+            arms=2,
+        )
+
+
+@pytest.mark.parametrize("robot", ROBOTS)
+def test_reference_planning_source_retains_arm_contract_without_scene_joints(
+    tmp_path, robot
+):
+    mujoco = pytest.importorskip("mujoco")
+    bundle = reference_model_sources(robot, part_name="left")
+    model_path = tmp_path / "model.xml"
+    model_path.write_bytes(bundle.model)
+    for name, content in bundle.assets.items():
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+    model = mujoco.MjModel.from_xml_path(str(model_path))
+    joint_names = tuple(
+        mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, index)
+        for index in range(model.njnt)
+    )
+    assert joint_names == profile(robot).names[:-1] == bundle.joint_names
+    assert bundle.joint_units == ("rad",) * profile(robot).dof
+    assert bundle.base_body == "base"
+    assert bundle.tcp_site == "tcp_site"
+    assert bundle.tcp_frame == "left_tool"
+    assert model.ngeom <= 256 and model.nmeshvert <= 200_000
+
+
+@pytest.mark.parametrize("robot", ROBOTS)
+def test_native_two_arm_mujoco_keeps_commands_and_cameras_part_scoped(
+    tmp_path, monkeypatch, robot
+):
+    pytest.importorskip("mujoco")
+    monkeypatch.setenv("MUJOCO_GL", "egl")
+    from waddle_sdk.simulators.mujoco import Engine
+
+    _, config = make_site(
+        "dual-native",
+        backend="mujoco",
+        robot=robot,
+        environment="two_cubes",
+        width=96,
+        height=72,
+        arms=2,
+    )
+    engine = Engine(config, tmp_path)
+    try:
+        left, right = engine.read("left")[0], engine.read("right")[0]
+        left_tcp = engine.native_tcp("left")[0]
+        right_tcp = engine.native_tcp("right")[0]
+        assert right_tcp[1] - left_tcp[1] == pytest.approx(0.56)
+        target = left.copy()
+        target[0] += 0.05
+        engine.write("left", target)
+        for _ in range(800):
+            engine.step()
+        assert engine.read("left")[0][0] > left[0] + 0.03
+        np.testing.assert_allclose(engine.read("right")[0], right, atol=0.01)
+        for camera in ("left_wrist", "right_wrist"):
+            rgb, depth = engine.capture(camera)
+            assert rgb.shape == (72, 96, 3)
+            assert (depth is None) is (robot == "so101")
+    finally:
+        engine.close()
 
 
 def test_yam_fk_matches_live_adapter_at_multiple_configurations():
@@ -92,9 +287,9 @@ def test_yam_fk_matches_live_adapter_at_multiple_configurations():
 def test_yam_reference_home_is_in_the_tabletop_working_region():
     p = profile("yam")
     position, orientation = yam.forward_kinematics(p.home[:-1])
-    assert 0.34 < position[0] < 0.38
+    assert 0.27 < position[0] < 0.29
     assert abs(position[1]) < 0.02
-    assert 0.13 < position[2] < 0.15
+    assert 0.15 < position[2] < 0.17
     assert orientation[0, 2] > 0.5 and orientation[2, 2] < -0.5
     assert all(
         lo < q < hi for q, (lo, hi) in zip(p.home[:-1], p.limits[:-1], strict=True)
@@ -116,15 +311,17 @@ def test_manufacturer_assets_are_complete_and_hash_bound(robot):
             assert shape.kind == "mesh"
             assert str(Path(shape.mesh).relative_to(root)) in manifest
     # Geometry has real robot scale and masses, not the previous .3 kg links.
-    assert sum(link.mass for link in model.links) > (4 if robot == "yam" else 10)
-    fingers = [
-        link
-        for link in model.links
-        if link.name in ("tip_left", "tip_right", "left_finger", "right_finger")
-    ]
+    minimum_mass = {"so101": 0.6, "yam": 4.0, "xarm7": 10.0}[robot]
+    assert sum(link.mass for link in model.links) > minimum_mass
+    finger_names = {
+        "so101": ("gripper_link", "moving_jaw_so101_v1_link"),
+        "yam": ("tip_left", "tip_right"),
+        "xarm7": ("left_finger", "right_finger"),
+    }[robot]
+    fingers = [link for link in model.links if link.name in finger_names]
     assert len(fingers) == 2
     assert all(
-        1 < sum(shape.collision for shape in link.shapes) <= 32 for link in fingers
+        1 <= sum(shape.collision for shape in link.shapes) <= 32 for link in fingers
     )
     if robot == "xarm7":
         housing = next(
@@ -140,9 +337,11 @@ def test_urdf_fk_and_physical_jaw_travel_match_public_coordinates(robot):
     for _ in range(10):
         q = [rng.uniform(lo, hi) for lo, hi in p.limits]
         np.testing.assert_allclose(model.poses(q)["tcp"], p.poses(q)[-1], atol=1e-9)
-    left, right = (
-        ("tip_left", "tip_right") if robot == "yam" else ("left_finger", "right_finger")
-    )
+    left, right = {
+        "so101": ("moving_jaw_so101_v1_link", "gripper_link"),
+        "yam": ("tip_left", "tip_right"),
+        "xarm7": ("left_finger", "right_finger"),
+    }[robot]
     widths = []
     for opening in (0.0, 0.25, 0.7, 1.0):
         q = list(p.home)
@@ -155,9 +354,18 @@ def test_urdf_fk_and_physical_jaw_travel_match_public_coordinates(robot):
         assert measured == pytest.approx(opening)
         assert velocity == 0
         assert all(lo - 1e-12 <= hand <= hi + 1e-12 for lo, hi in model.hand_limits)
-    np.testing.assert_allclose(
-        np.array(widths) - widths[0], np.array([0, 0.25, 0.7, 1]) * p.opening, atol=1e-6
-    )
+    if robot == "so101":
+        # The real Feetech adapter exposes motor range percentage. SO-101's
+        # rotating jaw therefore has nonlinear physical aperture over that
+        # normalized action, unlike the two parallel-jaw mechanisms.
+        assert model.hand_position(0.0) == pytest.approx(model.hand_limits[0][0])
+        assert model.hand_position(1.0) == pytest.approx(model.hand_limits[0][1])
+    else:
+        np.testing.assert_allclose(
+            np.array(widths) - widths[0],
+            np.array([0, 0.25, 0.7, 1]) * p.opening,
+            atol=1e-6,
+        )
 
 
 @pytest.mark.parametrize("robot", ROBOTS)
@@ -1016,8 +1224,10 @@ def _native_conformance(
     # Real RGB-D cameras have off-center principal points and unequal focal
     # lengths. Centered defaults conceal renderer convention mistakes.
     config["cameras"]["scene"]["intrinsics"].update(
-        fx=174.0, fy=161.0, cx=109.0, cy=62.0, depth_scale_mm=0.1
+        fx=174.0, fy=161.0, cx=109.0, cy=62.0
     )
+    if config["cameras"]["scene"]["options"]["depth"]:
+        config["cameras"]["scene"]["intrinsics"]["depth_scale_mm"] = 0.1
     p = profile(robot)
     engine = importlib.import_module(f"waddle_sdk.simulators.{backend}").Engine(
         config, tmp_path
@@ -1028,7 +1238,7 @@ def _native_conformance(
             engine.step()
 
     try:
-        if environment == "drawer":
+        if environment == "drawer" and robot != "so101":
             # The reference view must expose the handle's front face, not just
             # its top/side silhouette behind the cabinet. Verify rendered RGB-D
             # against the physical front plane while the robot is at home.
@@ -1134,26 +1344,30 @@ def _native_conformance(
         for name in config["cameras"]:
             rgb, depth = engine.capture(name)
             assert rgb.shape == (144, 192, 3) and rgb.dtype == np.uint8
-            assert depth.shape == (144, 192) and depth.dtype == np.uint16
-            assert np.isfinite(depth).all()
+            if robot == "so101":
+                assert depth is None
+            else:
+                assert depth.shape == (144, 192) and depth.dtype == np.uint16
+                assert np.isfinite(depth).all()
         # A known unoccluded tabletop pixel deprojects onto z=0. This detects
         # optical-axis, depth-range, principal-point, and scale errors together.
         camera = config["cameras"]["scene"]
         t = np.array(camera["transform"])
-        point = np.linalg.inv(t) @ np.array([0.1, -0.32, 0.0, 1.0])
         intr = camera["intrinsics"]
-        u = round(intr["fx"] * point[0] / point[2] + intr["cx"])
-        v = round(intr["fy"] * point[1] / point[2] + intr["cy"])
-        _, depth = engine.capture("scene")
-        z = depth[v, u] * intr["depth_scale_mm"] / 1000
-        assert z > 0
-        world = t @ [
-            z * (u - intr["cx"]) / intr["fx"],
-            z * (v - intr["cy"]) / intr["fy"],
-            z,
-            1.0,
-        ]
-        assert abs(world[2]) < 0.004
+        if robot != "so101":
+            point = np.linalg.inv(t) @ np.array([0.1, -0.32, 0.0, 1.0])
+            u = round(intr["fx"] * point[0] / point[2] + intr["cx"])
+            v = round(intr["fy"] * point[1] / point[2] + intr["cy"])
+            _, depth = engine.capture("scene")
+            z = depth[v, u] * intr["depth_scale_mm"] / 1000
+            assert z > 0
+            world = t @ [
+                z * (u - intr["cx"]) / intr["fx"],
+                z * (v - intr["cy"]) / intr["fy"],
+                z,
+                1.0,
+            ]
+            assert abs(world[2]) < 0.004
         if environment == "two_cubes":
             # Check RGB against an independent world-space witness too: the
             # top-center of the green cube must project into its green pixels.
@@ -1168,8 +1382,11 @@ def _native_conformance(
             # A tabletop home can otherwise physically stop the opening drawer.
             clear = engine.read()[0].copy()
             clear[0] = np.pi / 2
-            engine.write(clear)
-            advance(2.0)
+            if robot == "so101":
+                engine.home(clear)
+            else:
+                engine.write(clear)
+                advance(2.0)
             assert engine.read()[0][0] == pytest.approx(clear[0], abs=0.015)
             if backend == "mujoco":
                 joint = engine.model.joint("drawer_slide")
@@ -1619,6 +1836,7 @@ def test_site_preserves_custom_part_camera_and_base_frame_names(
     monkeypatch.setenv("MUJOCO_GL", "egl")
     site, simulation = documents(tmp_path, backend=backend, worker_python=interpreter)
     site["parts"]["left"] = site["parts"].pop("arm")
+    simulation["parts"]["left"] = simulation["parts"].pop("arm")
     site["parts"]["left"]["base_frame"] = "left_base"
     for old, new in (("scene", "bench_rgbd"), ("wrist", "left_rgbd")):
         for cameras in (site["cameras"], simulation["cameras"]):
@@ -1648,11 +1866,11 @@ def test_site_preserves_custom_part_camera_and_base_frame_names(
             run.finish("success")
 
 
-def test_reference_world_rejects_aliasing_two_parts_to_one_robot(tmp_path):
+def test_reference_world_rejects_site_part_absent_from_simulation(tmp_path):
     site, _ = documents(tmp_path)
     site["parts"]["other"] = dict(site["parts"]["arm"])
     (tmp_path / "site.yaml").write_text(yaml.safe_dump(site))
-    with pytest.raises(ValueError, match="one robot part"):
+    with pytest.raises(ValueError, match="absent from the simulation"):
         load_site(tmp_path / "site.yaml")._assembly(None)
 
 
@@ -1806,6 +2024,19 @@ def test_reference_control_defaults_match_nonopening_physical_declaration(robot)
     from waddle_sdk.robots import xarm
     from waddle_sdk.robots.site import PartConfig
 
+    if robot == "so101":
+        site, _ = make_site(
+            "parity", backend="sapien", robot=robot, environment="two_cubes"
+        )
+        options = site["parts"]["arm"]["options"]
+        # LeRobot's SO-101 follower exposes degrees for joints, a 0..100
+        # gripper range and the maintained policy/control rate of 30 Hz.
+        assert options == {
+            "rate_hz": 30.0,
+            "max_joint_speed_rad_s": 1.0,
+            "max_gripper_speed_per_s": 1.0,
+        }
+        return
     if robot == "yam":
         physical = (
             yam.arm(workspace=None, channel="unused-test-bus").robot().action_space

@@ -103,6 +103,10 @@ class Description:
         if joint in self.hand_names:
             if joint != self.hand_names[0]:
                 return 0.0, 0.0, 0.0
+            if self.name == "so101":
+                # Robot Studio's maintained MuJoCo SO-101 model uses the
+                # Feetech STS3215 position drive for every axis.
+                return 998.22, 2.731, 2.94
             if self.name == "yam":
                 # I2RT linear_4310: 6.57 rad motor stroke / 96 mm jaw stroke.
                 # One driven slide travels half the jaw separation.
@@ -115,6 +119,8 @@ class Description:
             # A constant native torque bound respects the quasi-static rating
             # throughout the stroke without a custom per-step force callback.
             return 100.0, 10.0, 50.0 * 2 * 0.042039
+        if self.name == "so101":
+            return 998.22, 2.731, 2.94
         index = profile(self.name).names.index(joint)
         if self.name == "yam":
             return (80.0, 5.0, 28.0) if index < 3 else (10.0, 1.5, 10.0)
@@ -131,7 +137,11 @@ class Description:
         if joint in self.hand_names:
             if joint != self.hand_names[0]:
                 return 0.0
+            if self.name == "so101":
+                return 0.028
             return (0.0018 / (0.096 / (2 * 6.57)) ** 2) if self.name == "yam" else 0.005
+        if self.name == "so101":
+            return 0.028
         return (
             (0.032 if profile(self.name).names.index(joint) < 3 else 0.0018)
             if self.name == "yam"
@@ -139,6 +149,9 @@ class Description:
         )
 
     def hand_position(self, opening: float) -> float:
+        if self.name == "so101":
+            lower, upper = self.hand_limits[0]
+            return lower + opening * (upper - lower)
         if self.name == "yam":
             return opening * profile(self.name).opening / 2
         # G2 parallelogram: outer knuckle pivot (y,z)=(.035465,.042039).
@@ -151,6 +164,9 @@ class Description:
         )
 
     def hand_state(self, q: float, dq: float) -> tuple[float, float]:
+        if self.name == "so101":
+            lower, upper = self.hand_limits[0]
+            return (q - lower) / (upper - lower), dq / (upper - lower)
         width = profile(self.name).opening
         if self.name == "yam":
             return q * 2 / width, dq * 2 / width
@@ -184,7 +200,7 @@ class Description:
         return result
 
 
-@lru_cache(maxsize=2)
+@lru_cache(maxsize=3)
 def description(name: str) -> Description:
     p = profile(name)
     data = Path(str(files(__package__).joinpath("data")))
@@ -197,11 +213,11 @@ def description(name: str) -> Description:
                 raise ValueError(f"reference robot asset hash mismatch: {relative}")
     source = data / name / "robot.urdf"
     root = ET.parse(source).getroot()
-    aliases = (
-        {"base_link": "base", "grasp_link": "tcp"}
-        if name == "yam"
-        else {"link_base": "base", "link_tcp": "tcp"}
-    )
+    aliases = {
+        "so101": {"base_link": "base", "gripper_frame_link": "tcp"},
+        "yam": {"base_link": "base", "grasp_link": "tcp"},
+        "xarm7": {"link_base": "base", "link_tcp": "tcp"},
+    }[name]
     materials = {
         m.get("name"): vector(m.find("color"), "rgba", "0.8 0.8 0.8 1")
         for m in root.findall("material")
@@ -300,7 +316,9 @@ def description(name: str) -> Description:
     # Mechanical connections inside the hand that a URDF tree cannot express
     # as parent/child: opposing linear fingers and the G2 four-bar loop pins.
     exclusions = (
-        (("tip_left", "tip_right"),)
+        ()
+        if name == "so101"
+        else (("tip_left", "tip_right"),)
         if name == "yam"
         else (
             ("left_finger", "left_inner_knuckle"),
@@ -341,7 +359,7 @@ def description(name: str) -> Description:
     )
 
 
-@lru_cache(maxsize=2)
+@lru_cache(maxsize=3)
 def collision_bounds(name: str):
     """Conservative sphere cover of complete mesh triangles, in each link frame."""
     result = []

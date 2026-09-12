@@ -254,8 +254,10 @@ class Engine:
         self.scene.update_render()
         camera.take_picture()
         color = camera.get_picture("Color")
-        position = camera.get_picture("Position")
         rgb = np.rint(np.clip(color[..., :3], 0, 1) * 255).astype(np.uint8)
+        if not row["options"]["depth"]:
+            return rgb, None
+        position = camera.get_picture("Position")
         depth = -position[..., 2]
         depth[position[..., 3] >= 1] = 0
         return rgb, depth_z16(depth, row["intrinsics"]["depth_scale_mm"])

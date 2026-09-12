@@ -40,7 +40,7 @@ or camera API is needed. For native GPU tests, set `WADDLE_SAPIEN_GPU_TEST_PYTHO
 to that interpreter with pytest installed. An available CUDA device is required;
 missing support raises a startup error instead of substituting a guided cap.
 
-Each engine accepts `yam` or `xarm7` and these environments:
+Each engine accepts `so101`, `yam`, or `xarm7` and these environments:
 
 - `two_cubes`: two free 60 g, 50 mm rigid cubes on a table, with frictional
   grasp contacts and the inertia of a uniform solid cube.
@@ -86,12 +86,13 @@ names an operator-prepared, licensed interpreter. From the SDK Python project,
 select it explicitly when running `pytest tests/test_simulation.py -k isaac`.
 Collecting these tests or skipping them does not qualify that installation.
 
-The reference robot models preserve the live adapters' joint names, order, limits,
-radian units, FK, and normalized hand action (0 closed, 1 open). YAM uses the SDK's
-pinned I2RT URDF and tool convention, assembled with the live adapter's 95 mm
-LINEAR_4310 hand. xArm7 uses UFACTORY's expanded URDF with the G2 gripper and its
-standard TCP. The original visual meshes, link masses, centers of mass and inertia
-tensors are retained. Concave collision meshes are decomposed offline into
+The reference robot profiles preserve their source joint names, order, limits,
+radian units, FK, and normalized hand action (0 closed, 1 open). SO-101
+uses Robot Studio's maintained five-axis arm, Feetech gripper range and wrist-camera
+mount. YAM uses the SDK's pinned I2RT URDF and tool convention, assembled with the
+live adapter's 95 mm LINEAR_4310 hand. xArm7 uses UFACTORY's expanded URDF with
+the G2 gripper and its standard TCP. The original visual meshes, link masses,
+centers of mass and inertia tensors are retained. Concave collision meshes are decomposed offline into
 convex pieces so each engine preserves arm recesses, finger geometry and housing
 clearance. Convex meshes remain unchanged. Public planning bounds conservatively
 cover complete collision triangles per physical link, so their number does not
@@ -127,12 +128,11 @@ Finger collisions also use Menagerie's pad contact response (`solref="0.004 1"`,
 This prevents the default soft contacts from producing excessive jaw penetration
 and oscillation under a grasp. Material friction and the 2 ms timestep are unchanged.
 
-The YAM reference scene starts with its TCP near `(0.36, 0, 0.14)` m and the open
-hand pitched 45 degrees down. This lies in the overlap of the model's forward and
-downward reach, with room for nearby tabletop motion. The previous near-neutral
-pose sat at the inner boundary for forward approaches. This is a reference
-working pose; the manufacturer's model and joint limits are unchanged, and it
-does not specify a physical arm's resting configuration.
+The YAM reference scene uses a collision-clear tabletop working pose with its TCP
+near `(0.28, 0, 0.16)` m. This is a reference working pose; the manufacturer's
+model and joint limits are unchanged, and it does not specify a physical arm's
+resting configuration. SO-101 uses Robot Studio's maintained box-pickup posture;
+xArm7 retains its established reference posture.
 The bottle sits to the side of this central region, and the cabinet's closed
 front sits beyond it, so neither prop intersects the starting hand. The drawer
 handle travels from x=0.503 m to x=0.283 m as it opens.
@@ -176,9 +176,10 @@ sensors keep responding while simulated motion runs slower than real time.
 This follows [PhysX's overload guidance](https://nvidia-omniverse.github.io/PhysX/physx/5.7.0/docs/BestPractices.html#the-well-of-despair).
 Native timesteps, forces and measured velocities are preserved. Explicit rollouts
 execute every requested substep without this budget. Fractional substeps carry
-between requests unless overload rebases the clock. State reporting uses the ordinary SDK
-pump at twice the declared control rate, with a 100 Hz floor. New scenes use the physical SDK control defaults: YAM 10 Hz, xArm7 50 Hz,
-and 1 rad/s joint speed for both. Explicit site settings remain authoritative. Available compute still bounds achievable throughput.
+between requests unless overload rebases the clock. State reporting uses the
+ordinary SDK pump at the declared physical command rate: SO-101 30 Hz, YAM 10 Hz,
+and xArm7 50 Hz. New scenes use a 1 rad/s joint-speed limit. Explicit site settings
+remain authoritative. Available compute still bounds achievable throughput.
 Queued state/control requests take priority over queued camera captures, retaining
 FIFO order within each group and one native transaction at a time. An in-progress
 capture cannot be interrupted. Real-time pump ticks need no extra clock request:
@@ -238,7 +239,7 @@ root = Path("cube-site")
 root.mkdir()
 site, simulation = make_site(
     "cube-site", backend="mujoco", robot="yam", environment="two_cubes",
-    width=640, height=480, render_quality="standard",
+    width=640, height=480, render_quality="standard", arms=1,
 )
 (root / "site.yaml").write_text(yaml.safe_dump(site, sort_keys=False))
 (root / "simulation.json").write_text(json.dumps(simulation, indent=2))
@@ -246,23 +247,43 @@ with load_site(root / "site.yaml").open(console=False) as session:
     print(session.observe())
 ```
 
-`make_site()` is non-opening. Its site has one part, `arm`, and two cameras, `scene`
-and `wrist`. Every backend uses those same names and profiles. Names, resolutions,
-intrinsics, and optical transforms are explicit configuration, not engine defaults.
-Edit camera declarations and their matching simulation profiles together. Robot
-part names and base-frame labels also come from the site; when renaming a part,
-update its wrist-camera owner in both documents. A base-frame label names the
-robot's existing base coordinates and does not transform them. The reference
-scene has a single robot; multi-arm/custom arrangements can use ordinary
-external SDK adapter packages without an SDK registry change.
+`make_site()` is non-opening. One-arm sites expose part `arm` and cameras `scene`
+and `wrist`. `arms=2` creates a shared MuJoCo world with `left` and `right`, base
+frames for each placement, and cameras `scene`, `left_wrist`, and `right_wrist`.
+The other reference engines currently accept one arm. Part-scoped reads, writes,
+holds, resets, TCP poses, and wrist images address the same shared physics state.
+
+Names, resolutions, intrinsics, and optical transforms are explicit configuration,
+not engine defaults. Pass `camera_profiles` with exactly one row per generated
+camera to bind a physical calibration. Each row has `stream`, `intrinsics`, and a
+4x4 `transform`; the transform is world-from-camera for `scene` and TCP-from-camera
+for a wrist camera. The site and simulator documents are generated from the same
+rows so they cannot silently drift. Omitting the profile selects visible reference
+defaults that are useful for development but are not physical calibration evidence.
+Robot part names and base-frame labels also come from the site; when renaming a
+part, update its wrist-camera owner in both documents. A base-frame label names the
+robot's existing base coordinates and does not transform them.
+
+| Robot family | Wrist camera | Scene camera | Depth |
+| --- | --- | --- | --- |
+| SO-101 | Configured RGB camera | Configured RGB camera | Unavailable |
+| YAM | RealSense D405 | RealSense D435 | Available |
+| xArm7 | RealSense D435 | RealSense D435 | Available |
+
+Dual sites repeat the wrist-camera row for `left` and `right`; they never mix arm
+families. Sensor model labels and depth capability are fixed by the robot profile.
+The calibration profile supplies device-specific stream and optical values.
 
 ## Sensor and frame contract
 
-RGB is RGB8, depth is Z16 axial optical depth, and each pair comes from one frozen
-physics state. `depth_scale_mm=1` means millimetres per integer; zero denotes missing
-or out-of-range depth. Intrinsics are rectified pinhole intrinsics. The default
-resolution is 640×480 at a requested 15 Hz, with explicit focal lengths and principal
-point. Actual frame rate depends on rendering performance. If capture or publication
+RGB is RGB8. YAM and xArm7 also expose Z16 axial optical depth, and each RGB-D pair
+comes from one frozen physics state. Their `depth_scale_mm=1` reference default means
+millimetres per integer; zero denotes missing or out-of-range depth. SO-101 scene
+and wrist cameras expose RGB only, return no depth sample, and omit depth scale.
+Intrinsics are rectified pinhole intrinsics. The development defaults are 640×480
+at 30 Hz for SO-101 and 15 Hz for YAM/xArm7, with explicit focal lengths and
+principal point. Replace these with measured profiles for physical parity. Actual
+frame rate depends on rendering performance. If capture or publication
 misses a scheduled frame, the camera pump resumes at the next future frame slot.
 It never builds a backlog of render requests that can starve shared physics/control.
 Every acquired frame still follows the ordinary publication and recording path.
@@ -290,7 +311,8 @@ when it is off-center. These reference cameras require rectified input profiles;
 copying a distorted lens's coefficients into a pinhole renderer is not supported.
 
 Optical frames use +X right, +Y down, +Z forward. Robot poses use metres and wxyz
-quaternions, in the site's declared base frame (`yam_base` or `xarm_base` by default).
+quaternions, in the site's declared base frame (`so101_base`, `yam_base`, or
+`xarm_base` by default; dual sites prefix the part name).
 A scene-camera transform is
 `base_from_camera`; a wrist transform is `tcp_from_camera` and follows the robot.
 Renderer-specific camera axes, depth conventions, joint ordering, and two-finger
@@ -311,6 +333,13 @@ These presets add coupled grippers and articulated objects beyond the generic UR
 compiler's supported scene subset. For custom URDF bundles, use the existing portable
 scene compiler; for an already configured Isaac stage, the existing ROS 2 backend is
 also available. No second SDK lifecycle or agent API is introduced.
+
+`reference_model_sources(robot, part_name=...)` supplies a non-opening, hash-bound
+planner model for each generated arm. It uses the same pinned kinematic chain,
+joint limits, base, TCP, and source collision links as the runtime assembly. The
+current planner representation freezes the complete hand at maximum opening and
+does not include task props or another arm; those limits remain explicit in its
+provenance and require separate fixture/inter-arm checks for safety qualification.
 
 The worker advances physics, serializes sensor/control requests, and
 fails closed on startup or connection loss. Recovery requires reopening the site;
@@ -334,8 +363,9 @@ pipeline to evaluate as an asset source, rather than a fourth interchangeable
 physics runtime.
 
 The implementation review uses repositories maintained during the preceding year
-(reviewed 2026-09-08): MuJoCo Menagerie (2026-09-04), I2RT 1.3.5 (2026-09-07),
-mjlab (2026-08-31), ManiSkill (2026-08-02), and Isaac Lab (2026-09-04).
+(reviewed through 2026-09-11): Robot Studio's pinned SO-ARM100 assembly, MuJoCo
+Menagerie (2026-09-04), I2RT 1.3.5 (2026-09-07), mjlab (2026-08-31), ManiSkill
+(2026-08-02), and Isaac Lab (2026-09-04).
 Exact revisions, source paths, mechanism choices and limitations are recorded in
 the packaged `waddle_sdk/simulators/data/README.md`.
 All three backends use native URDF import and physics constraints. Engine-specific

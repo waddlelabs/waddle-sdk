@@ -22,7 +22,7 @@ from ..robots import xarm, yam
 from ..robots.site import PartConfig
 
 BACKENDS = ("mujoco", "isaac", "sapien")
-ROBOTS = ("yam", "xarm7")
+ROBOTS = ("so101", "yam", "xarm7")
 ENVIRONMENTS = ("two_cubes", "bottle_cap", "drawer")
 RENDER_QUALITIES = ("fast", "standard", "high")
 
@@ -128,8 +128,61 @@ class Profile:
         return result
 
 
-@lru_cache(maxsize=2)
+@lru_cache(maxsize=3)
 def profile(name: str) -> Profile:
+    if name == "so101":
+        root = ET.fromstring(
+            files(__package__).joinpath("data/so101/robot.urdf").read_text()
+        )
+        names = (
+            "shoulder_pan",
+            "shoulder_lift",
+            "elbow_flex",
+            "wrist_flex",
+            "wrist_roll",
+            "gripper",
+        )
+        joints = {joint.get("name"): joint for joint in root.findall("joint")}
+        arm = [joints[name] for name in names[:-1]]
+
+        def values(joint, element, field, default="0 0 0"):
+            node = joint.find(element)
+            return tuple(
+                map(
+                    float,
+                    (default if node is None else node.get(field, default)).split(),
+                )
+            )
+
+        limits = tuple(
+            (
+                float(joints[name].find("limit").get("lower")),
+                float(joints[name].find("limit").get("upper")),
+            )
+            for name in names
+        )
+        tool = joints["gripper_frame_joint"]
+        return Profile(
+            name,
+            names,
+            limits,
+            tuple(values(joint, "origin", "xyz") for joint in arm),
+            tuple(values(joint, "origin", "rpy") for joint in arm),
+            values(tool, "origin", "xyz"),
+            values(tool, "origin", "rpy"),
+            # Robot Studio's maintained box-pickup posture, with the public
+            # gripper row expressed as a normalized open fraction.
+            (0.0, 0.000381818, 0.473496, 1.17717, 1.58437, 1.0),
+            # Difference between the maintained model's open/closed fingertip
+            # landmark separation. The physical action still remains 0..1.
+            0.12923294585570118,
+            "so101_base",
+            (0.0, 0.0, 1.0),
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0, 0.0),
+            30.0,
+            1.0,
+        )
     if name == "yam":
         hand = ET.fromstring(
             files(__package__).joinpath("data/yam/linear_4310.xml").read_text()
@@ -147,10 +200,9 @@ def profile(name: str) -> Profile:
             yam.CHAIN_ORIGIN_RPY_RAD,
             yam.TOOL_ORIGIN_XYZ_M,
             yam.TOOL_ORIGIN_RPY_RAD,
-            # Tabletop working pose: TCP at (.36, 0, .14) m, pitched 45 degrees
-            # down. This sits in the overlap of the model's downward and
-            # forward workspaces, with clearance for neighboring jog targets.
-            (0.0, 1.25842, 0.84818, -0.37516, 0.0, 0.0, 1.0),
+            # Collision-clear tabletop working pose shared by runtime reset and
+            # the selected planning model.
+            (0.0, 0.7, 0.5, -0.35, 0.0, -0.5, 1.0),
             yam.GRIPPER_MAX_OPENING_M,
             yam.BASE_FRAME,
             (0.0, 1.0, 0.0),
@@ -219,16 +271,23 @@ def make_site(
     height: int = 480,
     worker_python: str | None = None,
     render_quality: str = "standard",
+    arms: int = 1,
+    camera_profiles: dict[str, dict] | None = None,
 ) -> tuple[dict, dict]:
     """Return a strict site declaration and its separate simulator configuration.
 
-    This is non-opening and performs no downloads. Names and stream calibration
-    can be edited together in the returned documents before validation/publication.
+    This is non-opening and performs no downloads. ``camera_profiles`` may carry
+    the exact stream, rectified intrinsics and mount transform measured for every
+    declared physical camera. Omit it only for the explicit reference defaults.
     """
     if backend not in BACKENDS or environment not in ENVIRONMENTS:
         raise ValueError(f"choose backend {BACKENDS} and environment {ENVIRONMENTS}")
     if render_quality not in RENDER_QUALITIES:
         raise ValueError(f"render_quality must be one of {RENDER_QUALITIES}")
+    if type(arms) is not int or arms not in (1, 2):
+        raise ValueError("arms must be 1 or 2")
+    if arms == 2 and backend != "mujoco":
+        raise ValueError("two-arm reference scenes currently require MuJoCo")
     if (
         type(width) is not int
         or type(height) is not int
@@ -240,20 +299,31 @@ def make_site(
     ):
         raise ValueError("worker_python must be an absolute interpreter path")
     p = profile(robot)
-    intrinsic = dict(
-        fx=width * 0.9,
-        fy=width * 0.9,
-        cx=(width - 1) / 2,
-        cy=(height - 1) / 2,
-        depth_scale_mm=1.0,
-    )
+    intrinsic = {
+        "fx": width * 0.9,
+        "fy": width * 0.9,
+        "cx": (width - 1) / 2,
+        "cy": (height - 1) / 2,
+    }
+    depth = robot != "so101"
+    if depth:
+        intrinsic["depth_scale_mm"] = 1.0
     connection = {"simulation": "simulation.json"}
     cameras = {}
-    mounts = {
-        "scene": look_at((0.75, -0.9, 0.95), (0.2, 0, 0.25)).tolist(),
-        # View through the jaw gap, perpendicular to the closing axis.
-        "wrist": look_at((-0.10, 0, -0.08), (0, 0, 0.07)).tolist(),
+    arm_names = ("arm",) if arms == 1 else ("left", "right")
+    placements = {
+        name: {
+            "xyz": [
+                0.0,
+                0.0 if arms == 1 else (-0.28 if name == "left" else 0.28),
+                0.0,
+            ],
+            "rpy": [0.0, 0.0, 0.0],
+        }
+        for name in arm_names
     }
+    mounts = {"scene": look_at((0.75, -0.9, 0.95), (0.2, 0, 0.25)).tolist()}
+    wrist = look_at((-0.10, 0, -0.08), (0, 0, 0.07)).tolist()
     if environment == "drawer":
         # See the handle's front face instead of looking from behind the cabinet.
         mounts["scene"] = look_at((-0.45, -0.55, 0.55), (0.4, 0, 0.2)).tolist()
@@ -263,78 +333,159 @@ def make_site(
         mount = json.loads(
             files(__package__).joinpath("data/yam/wrist_camera.json").read_text()
         )
-        mounts["wrist"] = (
+        wrist = (
             transform(-np.asarray(p.tool_xyz), (math.pi, 0, 0))
             @ transform(mount["xyz"], mount["rpy"])
         ).tolist()
+    elif robot == "so101":
+        wrist = json.loads(
+            files(__package__).joinpath("data/so101/wrist_camera.json").read_text()
+        )["transform"]
+    for part in arm_names:
+        mounts["wrist" if arms == 1 else f"{part}_wrist"] = wrist
+    if camera_profiles is not None:
+        try:
+            camera_profiles = json.loads(json.dumps(camera_profiles, allow_nan=False))
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                "camera_profiles must contain finite JSON values"
+            ) from error
+        if not isinstance(camera_profiles, dict) or set(camera_profiles) != set(mounts):
+            raise ValueError(
+                "camera_profiles must name exactly the generated simulation cameras"
+            )
+        for name, row in camera_profiles.items():
+            if not isinstance(row, dict) or set(row) != {
+                "stream",
+                "intrinsics",
+                "transform",
+            }:
+                raise ValueError(
+                    f"camera profile {name} requires stream, intrinsics, and transform"
+                )
+            if not isinstance(row["stream"], dict) or not isinstance(
+                row["intrinsics"], dict
+            ):
+                raise ValueError(  # noqa: TRY004 -- one configuration contract
+                    f"camera profile {name} stream and intrinsics must be mappings"
+                )
+            if depth != ("depth_scale_mm" in row["intrinsics"]):
+                raise ValueError(
+                    f"camera profile {name} depth capability disagrees with {robot}"
+                )
+            mounts[name] = row["transform"]
+    wrist_model = {
+        "so101": "rgb",
+        "yam": "realsense_d405",
+        "xarm7": "realsense_d435",
+    }[robot]
     for name in mounts:
-        cameras[name] = dict(
-            world="cell",
-            connection={},
-            stream=dict(width=width, height=height, fps=15),
-            frame_id=f"cam_{name}",
-            intrinsics=intrinsic.copy(),
-            mount={"kind": name, **({"part": "arm"} if name == "wrist" else {})},
+        part = (
+            None
+            if name == "scene"
+            else "arm"
+            if arms == 1
+            else name.removesuffix("_wrist")
         )
-    simulation = dict(
-        api_version="waddle.simulation/v1",
-        backend=backend,
-        robot=robot,
-        environment=environment,
-        render_quality=render_quality,
+        sensor_model = (
+            "rgb"
+            if robot == "so101"
+            else ("realsense_d435" if name == "scene" else wrist_model)
+        )
+        calibrated = None if camera_profiles is None else camera_profiles[name]
+        cameras[name] = {
+            "world": "cell",
+            "connection": {},
+            "stream": (
+                {
+                    "width": width,
+                    "height": height,
+                    "fps": 30 if robot == "so101" else 15,
+                }
+                if calibrated is None
+                else calibrated["stream"]
+            ),
+            "frame_id": f"cam_{name}",
+            "intrinsics": (
+                intrinsic.copy() if calibrated is None else calibrated["intrinsics"]
+            ),
+            "mount": {"kind": "scene"}
+            if part is None
+            else {"kind": "wrist", "part": part},
+            "options": {"sensor_model": sensor_model, "depth": depth},
+        }
+    simulation = {
+        "api_version": "waddle.simulation/v1",
+        "backend": backend,
+        "robot": robot,
+        "parts": placements,
+        "environment": environment,
+        "render_quality": render_quality,
         # Resolve the native hand's coupled drives and contact at 500 Hz.
         # SDK command and camera declarations remain independent.
-        timestep=0.002,
-        cameras={
-            name: dict(**row, transform=mounts[name]) for name, row in cameras.items()
+        "timestep": 0.002,
+        "cameras": {
+            name: {**row, "transform": mounts[name]} for name, row in cameras.items()
         },
-    )
+    }
     if worker_python is not None:
         simulation["worker_python"] = worker_python
-    site = dict(
-        api_version="waddle.site/v1",
-        kind="Site",
-        metadata={"id": site_id},
-        worlds={
+    site = {
+        "api_version": "waddle.site/v1",
+        "kind": "Site",
+        "metadata": {"id": site_id},
+        "worlds": {
             "cell": {
                 "driver": "waddle_sdk.simulators.adapters:backend",
                 "connection": connection,
                 "options": {"real_time": True},
             }
         },
-        parts={
-            "arm": dict(
-                world="cell",
-                posture="supervised",
-                connection={},
-                base_frame=p.frame,
-                joint_limits=dict(zip(p.names, p.limits)),
-                gripper=dict(
-                    joint="gripper",
-                    closed_m=0.0,
-                    open_m=p.opening,
-                    closed_action=0.0,
-                    open_action=1.0,
-                    closing_axis_tcp=list(p.closing_axis),
-                    pinch_offset_tcp_m=list(p.pinch_offset),
-                    pointing_down_wxyz=list(p.pointing_down),
-                ),
-                options=dict(
-                    rate_hz=p.rate_hz,
-                    max_joint_speed_rad_s=p.max_joint_speed_rad_s,
-                    max_gripper_speed_per_s=(
+        "parts": {
+            name: {
+                "world": "cell",
+                "posture": "supervised",
+                "connection": {},
+                "base_frame": p.frame if arms == 1 else f"{name}_{p.frame}",
+                "joint_limits": dict(zip(p.names, p.limits)),
+                "gripper": {
+                    "joint": "gripper",
+                    "closed_m": 0.0,
+                    "open_m": p.opening,
+                    "closed_action": 0.0,
+                    "open_action": 1.0,
+                    "closing_axis_tcp": list(p.closing_axis),
+                    "pinch_offset_tcp_m": list(p.pinch_offset),
+                    "pointing_down_wxyz": list(p.pointing_down),
+                },
+                "options": {
+                    "rate_hz": p.rate_hz,
+                    "max_joint_speed_rad_s": p.max_joint_speed_rad_s,
+                    "max_gripper_speed_per_s": (
                         yam.DEFAULT_MAX_GRIPPER_SPEED_PER_S if robot == "yam" else 1.0
                     ),
-                ),
-            )
+                },
+            }
+            for name in arm_names
         },
-        cameras=cameras,
-        frames={},
-        calibration={"artifacts": "calib/"},
-        workspace_bounds={"min": [-1.0, -1.0, -0.12], "max": [1.0, 1.0, 1.5]},
-        envelope={"static_keepouts": [], "self_collision": {}},
-        recording={"root": "recordings/", "format": "mcap"},
-    )
+        "cameras": cameras,
+        "frames": {
+            f"{name}_{p.frame}": {
+                "parent": "world",
+                "position": placements[name]["xyz"],
+                "quaternion_wxyz": list(
+                    map(float, quaternion(rotation(placements[name]["rpy"])))
+                ),
+            }
+            for name in arm_names
+        }
+        if arms == 2
+        else {},
+        "calibration": {"artifacts": "calib/"},
+        "workspace_bounds": {"min": [-1.0, -1.0, -0.12], "max": [1.0, 1.0, 1.5]},
+        "envelope": {"static_keepouts": [], "self_collision": {}},
+        "recording": {"root": "recordings/", "format": "mcap"},
+    }
     return site, simulation
 
 
@@ -361,6 +512,7 @@ def load_scene(root: Path, relative: Any) -> tuple[Path, dict]:
         "api_version",
         "backend",
         "robot",
+        "parts",
         "environment",
         "timestep",
         "cameras",
@@ -377,6 +529,22 @@ def load_scene(root: Path, relative: Any) -> tuple[Path, dict]:
     ):
         raise ValueError("unknown simulation backend or environment")
     profile(value.get("robot"))
+    parts = value.get("parts")
+    if not isinstance(parts, dict) or not parts or len(parts) not in (1, 2):
+        raise ValueError("simulation requires one or two named robot parts")
+    if len(parts) == 2 and value.get("backend") != "mujoco":
+        raise ValueError("two-arm reference scenes currently require MuJoCo")
+    for name, placement in parts.items():
+        if not isinstance(name, str) or not name or not isinstance(placement, dict):
+            raise ValueError("simulation robot parts must be named objects")
+        if set(placement) != {"xyz", "rpy"}:
+            raise ValueError(f"simulation part {name} needs xyz and rpy")
+        if any(
+            np.asarray(placement[key]).shape != (3,)
+            or not np.isfinite(np.asarray(placement[key], dtype=float)).all()
+            for key in ("xyz", "rpy")
+        ):
+            raise ValueError(f"simulation part {name} needs finite xyz and rpy triples")
     if value.get("render_quality", "standard") not in RENDER_QUALITIES:
         raise ValueError(f"render_quality must be one of {RENDER_QUALITIES}")
     dt = value.get("timestep")
@@ -424,11 +592,24 @@ def load_scene(root: Path, relative: Any) -> tuple[Path, dict]:
             raise ValueError(
                 f"camera {name} requires a scene mount or wrist mount on a named part"
             )
+        if wrist and mount["part"] not in parts:
+            raise ValueError(f"camera {name} names an absent robot part")
         if not isinstance(row.get("frame_id"), str) or not row["frame_id"]:
             raise ValueError(f"camera {name} requires an optical frame id")
-        for key in ("fx", "fy", "cx", "cy", "depth_scale_mm"):
+        for key in ("fx", "fy", "cx", "cy"):
             if type(intr.get(key)) not in (int, float) or not math.isfinite(intr[key]):
                 raise ValueError(f"camera {name} needs finite numeric {key}")
+        options = row.get("options")
+        if (
+            not isinstance(options, dict)
+            or set(options) != {"sensor_model", "depth"}
+            or not isinstance(options["sensor_model"], str)
+            or not options["sensor_model"]
+            or type(options["depth"]) is not bool
+        ):
+            raise ValueError(f"camera {name} needs sensor_model and depth options")
+        if options["depth"] != ("depth_scale_mm" in intr):
+            raise ValueError(f"camera {name} depth capability and intrinsics disagree")
         matrix = np.asarray(row["transform"], dtype=float)
         if (
             matrix.shape != (4, 4)
@@ -446,7 +627,7 @@ def load_scene(root: Path, relative: Any) -> tuple[Path, dict]:
             raise ValueError(
                 "reference simulation cameras require rectified intrinsics"
             )
-        for key in ("fx", "fy", "depth_scale_mm"):
+        for key in ("fx", "fy") + (("depth_scale_mm",) if options["depth"] else ()):
             if not math.isfinite(intr[key]) or intr[key] <= 0:
                 raise ValueError(f"camera {name} needs positive {key}")
     return resolved, value

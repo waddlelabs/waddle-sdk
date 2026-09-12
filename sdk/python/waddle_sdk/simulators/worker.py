@@ -82,6 +82,10 @@ def serve(connection: Connection) -> None:
                     "capture",
                     "step",
                     "reset",
+                    "read_part",
+                    "write_part",
+                    "hold_part",
+                    "home_part",
                 }:
                     raise ValueError("unsupported simulation operation")
                 try:
@@ -92,7 +96,11 @@ def serve(connection: Connection) -> None:
                             advance(arguments[0])
                         result = None
                     else:
-                        result = getattr(engine, operation)(*arguments)
+                        if operation.endswith("_part"):
+                            method = getattr(engine, operation.removesuffix("_part"))
+                            result = method(*arguments)
+                        else:
+                            result = getattr(engine, operation)(*arguments)
                         if operation == "reset":
                             pending_time = 0.0
                             last_time = time.monotonic()

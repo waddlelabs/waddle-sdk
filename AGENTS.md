@@ -51,7 +51,12 @@ and interfaces above this boundary; no application package is an SDK dependency.
 Reference physics sites are documented in `docs/python/simulation.md` and live in
 `sdk/python/waddle_sdk/simulators/`. They use the same public
 `SimulationBackend`, named-part, camera, action, gripper, safety, and observation
-contracts as physical sites. Their hash-pinned manufacturer assemblies and native
+contracts as physical sites. The reference generator selects SO-101, YAM or xArm7;
+MuJoCo also supports a shared two-arm instance with part-scoped control and wrist
+cameras. Exact physical stream/intrinsics/mount rows can replace the clearly marked
+development camera defaults before publication. Its public planner-source helper
+uses the same pinned chain and records its fixed-open-hand/no-scene scope. The
+hash-pinned manufacturer assemblies and native
 physics workers are reference implementations, not calibrated actuator or friction
 models. Engine-specific acceptance stays in `sdk/tests/test_simulation.py`; a
 skipped optional-engine case is not evidence that the engine passed. Reference

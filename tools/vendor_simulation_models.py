@@ -27,6 +27,8 @@ DATA = ROOT / "sdk/python/waddle_sdk/simulators/data"
 I2RT = "570ef66681ff12bd8298aba34084307cfecc9f05"
 I2RT_HAND = "5b72c47239bd056d0fa6c1a39edeb0537c89443c"
 XARM = "aad7e1611c9c46eb719045414394bfdd42dcb0f8"
+SO101 = "eecbe3e0a9ebb23e25ad7b2759b03884c6660903"
+MENAGERIE = "8161bba264d7fa7c99ca301e91e7fb44737676ad"
 SOURCES: dict[str, str] = {}
 
 
@@ -263,12 +265,68 @@ def xarm7() -> None:
     (dest / "LICENSE").write_bytes(fetch("xArm-Developer/xarm_ros", XARM, "LICENSE"))
 
 
+def so101() -> None:
+    """Vendor Robot Studio's calibrated follower URDF and exact mesh inputs."""
+    dest = DATA / "so101"
+    (dest / "assets").mkdir(parents=True, exist_ok=True)
+    repo = "TheRobotStudio/SO-ARM100"
+    prefix = "Simulation/SO101/"
+    source = fetch(repo, SO101, prefix + "so101_new_calib_camera.urdf")
+    robot = ET.fromstring(source)
+    for relative in sorted({mesh.get("filename") for mesh in robot.iter("mesh")}):
+        if not relative or not relative.startswith("assets/"):
+            raise ValueError("SO-101 meshes must stay in the model asset directory")
+        target = dest / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(fetch(repo, SO101, prefix + relative))
+    write(robot, dest / "robot.urdf")
+    (dest / "LICENSE").write_bytes(fetch(repo, SO101, "LICENSE"))
+    menagerie = ET.fromstring(
+        fetch(
+            "google-deepmind/mujoco_menagerie",
+            MENAGERIE,
+            "robotstudio_so101/so101.xml",
+        )
+    )
+    tcp = menagerie.find(".//site[@name='gripperframe']")
+    camera = menagerie.find(".//camera[@name='wrist_cam']")
+    if tcp is None or camera is None:
+        raise ValueError("Menagerie SO-101 camera frames changed")
+    tcp_pose = np.eye(4)
+    tcp_quaternion = np.fromstring(tcp.get("quat"), sep=" ")
+    tcp_pose[:3, :3] = Rotation.from_quat(tcp_quaternion[[1, 2, 3, 0]]).as_matrix()
+    tcp_pose[:3, 3] = np.fromstring(tcp.get("pos"), sep=" ")
+    camera_pose = np.eye(4)
+    camera_pose[:3, :3] = Rotation.from_euler(
+        "xyz", np.fromstring(camera.get("euler"), sep=" ")
+    ).as_matrix()
+    camera_pose[:3, 3] = np.fromstring(camera.get("pos"), sep=" ")
+    # MuJoCo cameras look along -Z with +Y up. Public optical frames look
+    # along +Z with +Y down.
+    optical = np.diag([1.0, -1.0, -1.0, 1.0])
+    wrist = np.linalg.inv(tcp_pose) @ camera_pose @ optical
+    (dest / "wrist_camera.json").write_text(
+        json.dumps(
+            {
+                "transform": wrist.tolist(),
+                "source": (
+                    "MuJoCo Menagerie robotstudio_so101 wrist_cam relative to "
+                    f"gripperframe at {MENAGERIE}"
+                ),
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+
+
 if __name__ == "__main__":
     yam()
     xarm7()
+    so101()
     outputs = {
         str(p.relative_to(DATA)): hashlib.sha256(p.read_bytes()).hexdigest()
-        for name in ("yam", "xarm7")
+        for name in ("yam", "xarm7", "so101")
         for p in sorted((DATA / name).rglob("*"))
         if p.is_file()
     }
