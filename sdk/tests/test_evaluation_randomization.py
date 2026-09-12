@@ -287,3 +287,76 @@ def test_physics_profile_varies_passive_fixture_damping(tmp_path, monkeypatch):
         assert np.all(changed[canonical > 0] > 0)
     finally:
         engine.close()
+
+
+def test_contact_events_retain_a_physics_step_contact_until_reset(
+    tmp_path, monkeypatch
+):
+    pytest.importorskip("mujoco")
+    monkeypatch.setenv("MUJOCO_GL", "egl")
+    from waddle_sdk.simulators.mujoco import Engine
+
+    _, config = make_site(
+        "contact-event-test",
+        backend="mujoco",
+        robot="so101",
+        environment="insert-usb",
+        width=192,
+        height=144,
+        arms=1,
+        render_quality="fast",
+    )
+    engine = Engine(config, tmp_path)
+    try:
+        body = engine.model.body("usb_connector")
+        joint_id = int(body.jntadr[0])
+        qpos = int(engine.model.jnt_qposadr[joint_id])
+        dof = int(engine.model.jnt_dofadr[joint_id])
+        engine.data.qpos[qpos : qpos + 7] = (0.35, 0.10, 0.12, 1.0, 0.0, 0.0, 0.0)
+        engine.data.qvel[dof : dof + 6] = 0.0
+        engine.data.xfrc_applied[int(body.id), 0] = 3.0
+        engine.mj.mj_forward(engine.model, engine.data)
+        for _ in range(round(1.0 / config["timestep"])):
+            engine.step()
+        engine.data.xfrc_applied[int(body.id)] = 0.0
+
+        engine.data.qpos[qpos : qpos + 7] = (
+            0.25,
+            -0.12,
+            0.05,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+        )
+        engine.data.qvel[dof : dof + 6] = 0.0
+        engine.mj.mj_forward(engine.model, engine.data)
+        state = engine.evaluation_snapshot()
+        assert not any(
+            {row["first"]["body"], row["second"]["body"]}
+            == {"usb_connector", "usb_port"}
+            for row in state["contacts"]
+        )
+        event = next(
+            row
+            for row in state["contact_events"]["pairs"]
+            if {row["first"]["body"], row["second"]["body"]}
+            == {"usb_connector", "usb_port"}
+        )
+        assert event["maximum_normal_force_n"] > 0.0
+        assert event["minimum_distance_m"] <= 0.0
+        assert event["contact_samples"] > 0
+        assert (
+            0.0
+            <= event["first_time_s"]
+            <= event["last_time_s"]
+            <= state["contact_events"]["through_time_s"]
+            <= state["time_s"]
+        )
+
+        assert engine.reset()
+        reset = engine.evaluation_snapshot()
+        assert reset["contact_events"]["pairs"] == []
+        assert reset["contact_events"]["through_time_s"] == 0.0
+    finally:
+        engine.close()

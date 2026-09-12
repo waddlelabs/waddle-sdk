@@ -11,7 +11,10 @@ from pathlib import Path
 
 import numpy as np
 
-from ..robots.mujoco import _evaluation_snapshot
+from ..robots.mujoco import (
+    _evaluation_geometry,
+    _evaluation_snapshot,
+)
 from ..simulation import SimulationVariation
 from .description import description
 from .model import mjcf, objects
@@ -121,6 +124,8 @@ class Engine:
         self._variation_initial = self._capture_variation_initial()
         self._active_variation = dict(SimulationVariation().as_dict())
         self._active_variation_digest = self._variation_digest()
+        self._contact_force_buffer = np.zeros(6, dtype=float)
+        self._clear_contact_events()
 
     def _restore_prop_initial(self):
         for name, value in self._prop_initial.items():
@@ -177,6 +182,42 @@ class Engine:
 
     def step(self):
         self.mj.mj_step(self.model, self.data)
+        self._latch_contact_events()
+
+    def _clear_contact_events(self):
+        self._contact_events = {}
+        self._contact_events_through_s = float(self.data.time)
+
+    def _latch_contact_events(self):
+        now = float(self.data.time)
+        for index in range(self.data.ncon):
+            contact = self.data.contact[index]
+            self.mj.mj_contactForce(
+                self.model, self.data, index, self._contact_force_buffer
+            )
+            force = max(0.0, float(self._contact_force_buffer[0]))
+            if force == 0.0:
+                continue
+            key = tuple(sorted((int(contact.geom1), int(contact.geom2))))
+            event = self._contact_events.get(key)
+            if event is None:
+                event = {
+                    "first_time_s": now,
+                    "last_time_s": now,
+                    "minimum_distance_m": float(contact.dist),
+                    "maximum_normal_force_n": force,
+                    "contact_samples": 0,
+                }
+                self._contact_events[key] = event
+            event["last_time_s"] = now
+            event["minimum_distance_m"] = min(
+                event["minimum_distance_m"], float(contact.dist)
+            )
+            event["maximum_normal_force_n"] = max(
+                event["maximum_normal_force_n"], force
+            )
+            event["contact_samples"] += 1
+        self._contact_events_through_s = now
 
     def reset(self):
         if hasattr(self, "_variation_initial"):
@@ -192,6 +233,8 @@ class Engine:
         self._active_variation = dict(SimulationVariation().as_dict())
         if hasattr(self, "_variation_initial"):
             self._active_variation_digest = self._variation_digest()
+        if hasattr(self, "_contact_events"):
+            self._clear_contact_events()
         return True
 
     def evaluation_reset(self, *, seed, variation=None):
@@ -495,6 +538,22 @@ class Engine:
         snapshot["variation"] = {
             "profile": dict(self._active_variation),
             "resolved_digest": self._active_variation_digest,
+        }
+        snapshot["contact_events"] = {
+            "schema": "waddle.simulation-contact-events/mujoco-v1",
+            "through_time_s": self._contact_events_through_s,
+            "pairs": [
+                {
+                    **self._contact_events[key],
+                    "first": _evaluation_geometry(
+                        mj=self.mj, model=self.model, identifier=key[0]
+                    ),
+                    "second": _evaluation_geometry(
+                        mj=self.mj, model=self.model, identifier=key[1]
+                    ),
+                }
+                for key in sorted(self._contact_events)
+            ],
         }
         return snapshot
 

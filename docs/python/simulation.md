@@ -346,6 +346,13 @@ capability until the site is reopened; it is never retried automatically.
 `snapshot()` returns immutable evaluator-owned state plus a content digest and an
 episode revision. MuJoCo facets report named joint position and velocity vectors,
 named body poses and velocities, contacts, simulation time, and a schema version.
+Reference task engines additionally report an evaluator-only contact-event summary
+accumulated at every physics step in the current episode. Each finite named-geometry
+pair retains its first and latest observed time, minimum distance, maximum normal
+force, and sample count. This lets a slower evaluator recognize a brief contact or
+force peak after it has ended. The summary is bounded by the model's geometry pairs
+and reset clears it. It is event evidence only: current grasp, release, pose,
+velocity, and dwell predicates must continue to use the current snapshot.
 Reference task presets also bind the provider/revision, robot family/embodiment
 revision, arm count, environment ID, scene revision, and asset revision used to
 resolve the world, so a higher-level evaluator can fail closed on a mismatched run

@@ -135,6 +135,39 @@ def _evidence_identity(config: WorldConfig) -> dict[str, Any] | None:
     return _runtime_identity({**identity, "arm_count": len(robots)})
 
 
+def _evaluation_geometry(*, mj: Any, model: Any, identifier: int) -> dict[str, str]:
+    name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_GEOM, identifier)
+    body_id = int(model.geom_bodyid[identifier])
+    body = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, body_id)
+    return {
+        "geom": name or f"geom:{identifier}",
+        "body": body or f"body:{body_id}",
+    }
+
+
+def _evaluation_contacts(*, mj: Any, model: Any, data: Any) -> list[dict[str, Any]]:
+    """Read the current named contacts without traversing unrelated state."""
+
+    contacts = []
+    for index in range(data.ncon):
+        contact = data.contact[index]
+        force = np.zeros(6, dtype=float)
+        mj.mj_contactForce(model, data, index, force)
+        contacts.append(
+            {
+                "first": _evaluation_geometry(
+                    mj=mj, model=model, identifier=int(contact.geom1)
+                ),
+                "second": _evaluation_geometry(
+                    mj=mj, model=model, identifier=int(contact.geom2)
+                ),
+                "distance_m": float(contact.dist),
+                "normal_force_n": float(force[0]),
+            }
+        )
+    return contacts
+
+
 def _evaluation_snapshot(*, mj: Any, model: Any, data: Any) -> dict[str, Any]:
     """Read complete named MuJoCo state for a retained trusted evaluator."""
 
@@ -181,36 +214,13 @@ def _evaluation_snapshot(*, mj: Any, model: Any, data: Any) -> dict[str, Any]:
             "linear_velocity_m_s": [float(value) for value in velocity[3:]],
         }
 
-    contacts = []
-    for index in range(data.ncon):
-        contact = data.contact[index]
-        force = np.zeros(6, dtype=float)
-        mj.mj_contactForce(model, data, index, force)
-
-        def geometry(identifier: int) -> dict[str, str]:
-            name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_GEOM, identifier)
-            body_id = int(model.geom_bodyid[identifier])
-            body = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, body_id)
-            return {
-                "geom": name or f"geom:{identifier}",
-                "body": body or f"body:{body_id}",
-            }
-
-        contacts.append(
-            {
-                "first": geometry(int(contact.geom1)),
-                "second": geometry(int(contact.geom2)),
-                "distance_m": float(contact.dist),
-                "normal_force_n": float(force[0]),
-            }
-        )
     return {
         "schema": "waddle.simulation-state/mujoco-v1",
         "backend": "mujoco",
         "time_s": float(data.time),
         "joints": joints,
         "bodies": bodies,
-        "contacts": contacts,
+        "contacts": _evaluation_contacts(mj=mj, model=model, data=data),
     }
 
 

@@ -13,6 +13,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Add evaluator-only per-physics-step contact summaries to reference MuJoCo task
+  snapshots. Named geometry pairs retain first/latest time, minimum distance,
+  maximum normal force, and sample count until reset, allowing a lower-rate trusted
+  scorer to observe transient contact and peak-force events without changing the
+  participant interface.
 - Add an engine-neutral `SimulationVariation` profile to trusted evaluator reset,
   with independent canonical, bounded, and held-out pose, appearance, physics,
   and geometry dimensions. Reference MuJoCo task scenes deterministically vary
