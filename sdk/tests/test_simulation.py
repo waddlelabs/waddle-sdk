@@ -2666,6 +2666,236 @@ def test_native_medium_dual_arm_task_scenes(
         engine.close()
 
 
+@pytest.mark.parametrize("robot", ROBOTS)
+@pytest.mark.parametrize(
+    "environment",
+    (
+        "oriented-tool-handover",
+        "two-arm-peg-insertion",
+        "joint-lift",
+        "loaded-tray-transport",
+        "uncap-return-test-tube",
+        "retrieve-bottle-clutter",
+    ),
+)
+def test_native_hard_dual_arm_task_scenes(tmp_path, monkeypatch, robot, environment):
+    mujoco = pytest.importorskip("mujoco")
+    monkeypatch.setenv("MUJOCO_GL", "egl")
+    from waddle_sdk.simulators.mujoco import Engine
+
+    _, config = documents(
+        tmp_path,
+        "mujoco",
+        robot,
+        environment,
+        arms=2,
+    )
+    engine = Engine(config, tmp_path)
+    model, data = engine.model, engine.data
+
+    def advance(seconds):
+        for _ in range(round(seconds / config["timestep"])):
+            engine.step()
+
+    def place_free(name, xyz, quaternion=(1.0, 0.0, 0.0, 0.0)):
+        body = model.body(name)
+        joint_id = int(body.jntadr[0])
+        assert model.jnt_type[joint_id] == mujoco.mjtJoint.mjJNT_FREE
+        qpos = int(model.jnt_qposadr[joint_id])
+        dof = int(model.jnt_dofadr[joint_id])
+        data.qpos[qpos : qpos + 7] = (*xyz, *quaternion)
+        data.qvel[dof : dof + 6] = 0.0
+        mujoco.mj_forward(model, data)
+        return int(body.id)
+
+    def park_arms_outward():
+        for part, angle in (("left", -1.2), ("right", 1.2)):
+            parked = np.asarray(profile(robot).home).copy()
+            parked[0] = angle
+            engine.home(part, parked)
+
+    witnesses = {
+        "oriented-tool-handover": (
+            ((0.25, -0.30, 0.025), "orange"),
+            ((0.32, 0.30, 0.002), "blue"),
+        ),
+        "two-arm-peg-insertion": (
+            ((0.29, -0.22, 0.018), "orange"),
+            ((0.39, 0.223, 0.052), "blue"),
+        ),
+        "joint-lift": (
+            ((0.36, -0.20, 0.055), "orange"),
+            ((0.36, 0.20, 0.055), "orange"),
+        ),
+        "loaded-tray-transport": (
+            ((0.285, -0.20, 0.065), "green"),
+            ((0.395, -0.08, 0.065), "purple"),
+            ((0.34, 0.24, 0.002), "blue"),
+        ),
+        "uncap-return-test-tube": (
+            ((0.43, 0.13, 0.135), "orange"),
+            ((0.43, 0.13, 0.07), "cyan"),
+            ((0.29, 0.18, 0.002), "blue"),
+        ),
+        "retrieve-bottle-clutter": (
+            ((0.42, -0.025, 0.12), "orange"),
+            ((0.46, -0.035, 0.12), "green"),
+            ((0.29, 0.26, 0.002), "blue"),
+        ),
+    }
+    classifiers = {
+        "green": lambda r, g, b: g > 2 * max(r, b),
+        "blue": lambda r, g, b: b > 1.5 * max(r, g),
+        "orange": lambda r, g, b: r > 1.4 * g and g > 1.5 * b,
+        "purple": lambda r, g, b: r > 1.5 * g and b > 1.5 * g,
+        "cyan": lambda r, g, b: b > 1.04 * r and g > 1.03 * r,
+    }
+
+    try:
+        assert np.isfinite(engine.read("left")[0]).all()
+        assert np.isfinite(engine.read("right")[0]).all()
+        camera = config["cameras"]["scene"]
+        world_from_camera = np.asarray(camera["transform"])
+        intrinsics = camera["intrinsics"]
+        rgb, _ = engine.capture("scene")
+        for point, expected_color in witnesses[environment]:
+            camera_point = np.linalg.inv(world_from_camera) @ [*point, 1.0]
+            u = round(
+                intrinsics["fx"] * camera_point[0] / camera_point[2]
+                + intrinsics["cx"]
+            )
+            v = round(
+                intrinsics["fy"] * camera_point[1] / camera_point[2]
+                + intrinsics["cy"]
+            )
+            assert 0 <= u < rgb.shape[1] and 0 <= v < rgb.shape[0]
+            pixels = rgb[max(0, v - 4) : v + 5, max(0, u - 4) : u + 5]
+            assert any(
+                classifiers[expected_color](*map(int, pixel))
+                for pixel in pixels.reshape(-1, 3)
+            ), (point, expected_color, rgb[v, u])
+        assert engine.evaluation_snapshot()["identity"]["arm_count"] == 2
+
+        if environment == "oriented-tool-handover":
+            tool = place_free("handled_tool", (0.32, 0.30, 0.10))
+            advance(1.0)
+            np.testing.assert_allclose(data.xpos[tool, :2], (0.32, 0.30), atol=0.006)
+            assert data.body("handled_tool").xmat.reshape(3, 3)[0, 0] > 0.98
+        elif environment == "two-arm-peg-insertion":
+            receiver = model.body("receiving_part")
+            initial = data.body("receiving_part").xpos.copy()
+            data.xfrc_applied[int(receiver.id), 1] = 3.0
+            advance(0.5)
+            assert data.body("receiving_part").xpos[1] > initial[1] + 0.008
+
+            assert engine.reset() is True
+            receiver_start = data.body("receiving_part").xpos.copy()
+            peg = place_free("target_peg", (0.39, 0.20, 0.14))
+            advance(1.5)
+            np.testing.assert_allclose(data.xpos[peg, :2], (0.39, 0.20), atol=0.004)
+            assert data.xpos[peg, 2] < 0.06
+            assert data.body("target_peg").xmat.reshape(3, 3)[2, 2] > 0.995
+            assert (
+                np.linalg.norm(
+                    data.body("receiving_part").xpos[:2] - receiver_start[:2]
+                )
+                < 0.008
+            )
+        elif environment == "joint-lift":
+            park_arms_outward()
+            tray_start = data.body("two_handle_tray").xpos.copy()
+            for name in (
+                "two_handle_tray_handle_left",
+                "two_handle_tray_handle_right",
+            ):
+                data.xfrc_applied[int(model.body(name).id), 2] = 4.0
+            advance(0.2)
+            data.xfrc_applied[:] = 0.0
+            assert data.body("two_handle_tray").xpos[2] > tray_start[2] + 0.08
+            assert data.body("two_handle_tray").xmat.reshape(3, 3)[2, 2] > 0.99
+
+            assert engine.reset() is True
+            park_arms_outward()
+            left = model.body("two_handle_tray_handle_left")
+            data.xfrc_applied[int(left.id), 2] = 4.0
+            advance(0.2)
+            assert data.body("two_handle_tray").xmat.reshape(3, 3)[2, 2] < 0.9
+        elif environment == "loaded-tray-transport":
+            park_arms_outward()
+            tray = place_free("loaded_tray", (0.34, 0.24, 0.08))
+            first = place_free("tray_content_1", (0.285, 0.18, 0.145))
+            second = place_free("tray_content_2", (0.395, 0.30, 0.145))
+            advance(1.5)
+            np.testing.assert_allclose(data.xpos[tray, :2], (0.34, 0.24), atol=0.006)
+            assert data.body("loaded_tray").xmat.reshape(3, 3)[2, 2] > 0.99
+            for content, expected in (
+                (first, (0.285, 0.18)),
+                (second, (0.395, 0.30)),
+            ):
+                np.testing.assert_allclose(data.xpos[content, :2], expected, atol=0.006)
+                assert 0.035 < data.xpos[content, 2] < 0.045
+        elif environment == "uncap-return-test-tube":
+            advance(0.5)
+            for name in ("tube_cap_grip_left", "tube_cap_grip_right"):
+                assert 0.003 < data.joint(name).qpos[0] < 0.0055
+            tube = model.body("target_test_tube")
+            cap = model.body("target_tube_cap")
+            initial_separation = float(
+                data.xpos[int(cap.id), 2] - data.xpos[int(tube.id), 2]
+            )
+            data.xfrc_applied[int(cap.id), 2] = 2.0
+            data.xfrc_applied[int(tube.id), 2] = -5.0
+            advance(0.5)
+            assert (
+                data.xpos[int(cap.id), 2] - data.xpos[int(tube.id), 2]
+                < initial_separation + 0.01
+            )
+
+            assert engine.reset() is True
+            initial_separation = float(
+                data.xpos[int(cap.id), 2] - data.xpos[int(tube.id), 2]
+            )
+            data.xfrc_applied[int(cap.id), 2] = 3.0
+            data.xfrc_applied[int(tube.id), 2] = -5.0
+            for _ in range(round(0.5 / config["timestep"])):
+                engine.step()
+                if (
+                    data.xpos[int(cap.id), 2] - data.xpos[int(tube.id), 2]
+                    > initial_separation + 0.04
+                ):
+                    break
+            data.xfrc_applied[:] = 0.0
+            assert (
+                data.xpos[int(cap.id), 2] - data.xpos[int(tube.id), 2]
+                > initial_separation + 0.04
+            )
+            cap_id = place_free("target_tube_cap", (0.29, 0.18, 0.06))
+            tube_id = place_free("target_test_tube", (0.43, 0.13, 0.12))
+            advance(1.0)
+            np.testing.assert_allclose(data.xpos[cap_id, :2], (0.29, 0.18), atol=0.006)
+            assert 0.02 < data.xpos[cap_id, 2] < 0.03
+            np.testing.assert_allclose(data.xpos[tube_id, :2], (0.43, 0.13), atol=0.004)
+            assert data.body("target_test_tube").xmat.reshape(3, 3)[2, 2] > 0.985
+        else:
+            assert environment == "retrieve-bottle-clutter"
+            distractors = {
+                name: data.body(name).xpos.copy()
+                for name in ("other_bottle_1", "other_bottle_2", "other_bottle_3")
+            }
+            target = place_free("target_bottle", (0.29, 0.26, 0.12))
+            advance(1.5)
+            np.testing.assert_allclose(data.xpos[target, :2], (0.29, 0.26), atol=0.006)
+            assert data.body("target_bottle").xmat.reshape(3, 3)[2, 2] > 0.99
+            for name, initial in distractors.items():
+                np.testing.assert_allclose(data.body(name).xpos, initial, atol=0.003)
+                assert abs(data.body(name).xpos[0] - 0.44) < 0.075
+                assert abs(data.body(name).xpos[1]) < 0.075
+
+        assert engine.evaluation_reset(seed=7)
+    finally:
+        engine.close()
+
+
 @pytest.mark.parametrize("durations", [[0.1], [1 / 60] * 6, [0.0005] * 200])
 def test_explicit_worker_advances_only_on_the_shared_sdk_clock(monkeypatch, durations):
     from waddle_sdk.simulators import worker

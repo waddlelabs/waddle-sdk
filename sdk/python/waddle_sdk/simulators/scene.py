@@ -50,6 +50,12 @@ DUAL_ARM_TASK_ENVIRONMENTS = (
     "stabilize-open-drawer",
     "hold-container-place",
     "stabilize-remove-lid",
+    "oriented-tool-handover",
+    "two-arm-peg-insertion",
+    "joint-lift",
+    "loaded-tray-transport",
+    "uncap-return-test-tube",
+    "retrieve-bottle-clutter",
 )
 TASK_ENVIRONMENTS = (*SINGLE_ARM_TASK_ENVIRONMENTS, *DUAL_ARM_TASK_ENVIRONMENTS)
 ENVIRONMENTS = (*REFERENCE_ENVIRONMENTS, *TASK_ENVIRONMENTS)

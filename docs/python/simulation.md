@@ -53,7 +53,7 @@ Each engine accepts `so101`, `yam`, or `xarm7` and these environments:
   and 5 N·s/m native joint damping. The damping dissipates a pull after release;
   there is no spring returning the drawer to its starting position.
 
-MuJoCo also provides twenty-two interactive development task environments:
+MuJoCo also provides twenty-eight interactive development task environments:
 
 - `touch_target`: one red contact target and two blue distractors.
 - `pick_lift`: one free 46 mm cube.
@@ -97,6 +97,18 @@ MuJoCo also provides twenty-two interactive development task environments:
 - `stabilize-remove-lid`: a matched two-arm scene with a movable box, removable
   lid, and lid goal. Bounded spring-loaded pads press on the lid skirt, so native
   friction transfers removal load to the unstabilized box.
+- `oriented-tool-handover`: a handled asymmetric tool and a marked final-pose
+  silhouette in the receiving arm's workspace.
+- `two-arm-peg-insertion`: a free receiving body with a physical socket and a
+  separate peg; insertion load can move the receiver unless it is stabilized.
+- `joint-lift`: a free tray with two opposite named handles. Balanced handle loads
+  lift it level while a single-handle load tilts it.
+- `loaded-tray-transport`: a two-handle tray, two free contents, and a marked
+  transport goal.
+- `uncap-return-test-tube`: a translucent tube in a named rack slot, a separate
+  cap, and a cap goal. Preloaded passive pads create finite cap-removal resistance.
+- `retrieve-bottle-clutter`: a target and three distractor bottles in a physical
+  bin plus a table goal region.
 
 These environments use the ordinary robot, camera, and lifecycle interfaces.
 Their scene camera exposes every task-relevant object at the starting pose for
@@ -113,6 +125,10 @@ USB tests compare correct and reversed roll under the same load and retain nativ
 contact force. Tube tests fill distinct back-row slots before front-row slots and
 verify upright settled bodies. MuJoCo depth still reports ideal geometry for the
 translucent tubes; D405/D435 invalid-depth behavior remains a sensor-parity gate.
+Hard two-arm tests cover asymmetric tool pose, movable receiver insertion,
+balanced versus one-sided lift, loose-content containment, finite cap retention
+and release, and target-only bottle removal. D07-D10 stay interactive-only until
+the downstream capability matrix supplies atomic multi-part execution.
 They are development fixtures, not calibrated physical twins. Isaac and SAPIEN
 selection is rejected until the same native evidence exists for those backends.
 

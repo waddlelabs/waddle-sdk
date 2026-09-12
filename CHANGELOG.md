@@ -13,6 +13,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Add all six hard two-arm MuJoCo development environments: oriented tool
+  handover, movable-receiver peg insertion, balanced two-handle lift, loaded tray
+  transport, friction-fit test-tube uncapping/return, and target-bottle retrieval
+  from clutter. Native tests cover visibility and task mechanics across every
+  matched reference family; D07-D10 remain interactive until atomic multi-part
+  execution exists downstream.
 - Add the hard single-arm USB-insertion and clear-test-tube loading development
   environments. The close-clearance connector has a native missing-quadrant key
   and internal port tab; four translucent physical tubes fit distinct named

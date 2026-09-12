@@ -88,6 +88,109 @@ def objects(environment: str) -> list[list[Link]]:
             shapes=[Shape("box", (size, size, size), color=color)],
         )
 
+    def free_cylinder(
+        name,
+        xyz,
+        color,
+        *,
+        radius=0.018,
+        length=0.10,
+        mass=0.05,
+        rpy=(0.0, 0.0, 0.0),
+    ):
+        transverse = mass * (3 * radius**2 + length**2) / 12
+        axial = mass * radius**2 / 2
+        return Link(
+            name,
+            xyz=xyz,
+            rpy=rpy,
+            kind="free",
+            mass=mass,
+            inertia=(transverse, transverse, axial, 0.0, 0.0, 0.0),
+            shapes=[Shape("cylinder", (radius, length), color=color)],
+        )
+
+    def marked_region(name, xyz, *, size=(0.16, 0.16)):
+        return Link(
+            name,
+            xyz=xyz,
+            shapes=[
+                Shape(
+                    "box",
+                    (*size, 0.001),
+                    color=(0.12, 0.35, 0.95, 1.0),
+                    collision=False,
+                )
+            ],
+        )
+
+    def collar_shapes(*, radius=0.016, height=0.025, color=(0.1, 0.3, 0.85, 1.0)):
+        shapes = []
+        for index in range(12):
+            angle = 2 * math.pi * index / 12
+            shapes.append(
+                Shape(
+                    "box",
+                    (0.012, 0.008, height),
+                    (radius * math.cos(angle), radius * math.sin(angle), height / 2),
+                    (0.0, 0.0, angle + math.pi / 2),
+                    color=color,
+                )
+            )
+        return shapes
+
+    def tray_fixture(name, *, xyz, loaded=False):
+        tray = Link(
+            name,
+            xyz=xyz,
+            kind="free",
+            mass=0.5,
+            inertia=(0.0045, 0.0032, 0.0072, 0.0, 0.0, 0.0),
+            shapes=[
+                Shape("box", (0.26, 0.32, 0.02), (0.0, 0.0, 0.01)),
+                Shape("box", (0.26, 0.012, 0.05), (0.0, -0.154, 0.035)),
+                Shape("box", (0.26, 0.012, 0.05), (0.0, 0.154, 0.035)),
+                Shape("box", (0.012, 0.296, 0.05), (-0.124, 0.0, 0.035)),
+                Shape("box", (0.012, 0.296, 0.05), (0.124, 0.0, 0.035)),
+            ],
+        )
+        handles = [
+            Link(
+                f"{name}_handle_{side}",
+                parent=name,
+                xyz=(0.0, sign * 0.20, 0.055),
+                mass=1e-6,
+                inertia=(1e-9, 1e-9, 1e-9, 0.0, 0.0, 0.0),
+                shapes=[
+                    Shape(
+                        "box",
+                        (0.12, 0.022, 0.022),
+                        color=(0.95, 0.45, 0.08, 1.0),
+                    )
+                ],
+            )
+            for side, sign in (("left", -1.0), ("right", 1.0))
+        ]
+        if not loaded:
+            return [tray, *handles], []
+        contents = [
+            free_box(
+                f"tray_content_{index}",
+                (xyz[0] + x, xyz[1] + y, 0.045),
+                color,
+                size=0.04,
+                mass=0.04,
+            )
+            for index, (x, y, color) in enumerate(
+                (
+                    (-0.055, -0.06, (0.1, 0.72, 0.2, 1.0)),
+                    (0.055, 0.06, (0.68, 0.16, 0.82, 1.0)),
+                ),
+                start=1,
+            )
+        ]
+        return [tray, *handles], contents
+
     def open_bin(
         name,
         xyz,
@@ -383,6 +486,200 @@ def objects(environment: str) -> list[list[Link]]:
             ],
         )
         return [table, [box, *lid_grips], [lid], [goal]]
+    if environment == "oriented-tool-handover":
+        tool = Link(
+            "handled_tool",
+            xyz=(0.30, -0.30, 0.012),
+            kind="free",
+            mass=0.16,
+            inertia=(0.00035, 0.0012, 0.0012, 0.0, 0.0, 0.0),
+            shapes=[
+                Shape(
+                    "box",
+                    (0.16, 0.022, 0.022),
+                    color=(0.95, 0.45, 0.08, 1.0),
+                ),
+                Shape(
+                    "box",
+                    (0.045, 0.11, 0.035),
+                    (0.065, 0.0, 0.012),
+                    color=(0.72, 0.75, 0.8, 1.0),
+                ),
+            ],
+        )
+        marker = Link(
+            "tool_goal_pose",
+            xyz=(0.32, 0.30, 0.0005),
+            shapes=[
+                Shape(
+                    "box",
+                    (0.18, 0.03, 0.001),
+                    color=(0.12, 0.35, 0.95, 1.0),
+                    collision=False,
+                ),
+                Shape(
+                    "box",
+                    (0.045, 0.12, 0.001),
+                    (0.065, 0.0, 0.0),
+                    color=(0.12, 0.35, 0.95, 1.0),
+                    collision=False,
+                ),
+            ],
+        )
+        return [table, [tool], [marker]]
+    if environment == "two-arm-peg-insertion":
+        receiver = Link(
+            "receiving_part",
+            xyz=(0.39, 0.20, 0.0),
+            kind="free",
+            mass=0.30,
+            inertia=(0.0008, 0.0008, 0.0012, 0.0, 0.0, 0.0),
+            shapes=[
+                Shape(
+                    "box",
+                    (0.12, 0.12, 0.012),
+                    (0.0, 0.0, 0.006),
+                    color=(0.12, 0.35, 0.95, 1.0),
+                )
+            ],
+        )
+        socket = Link(
+            "target_socket",
+            parent="receiving_part",
+            xyz=(0.0, 0.0, 0.012),
+            mass=1e-6,
+            inertia=(1e-9, 1e-9, 1e-9, 0.0, 0.0, 0.0),
+            shapes=collar_shapes(radius=0.023, height=0.04),
+        )
+        peg = free_cylinder(
+            "target_peg",
+            (0.29, -0.22, 0.012),
+            (0.95, 0.45, 0.08, 1.0),
+            radius=0.012,
+            length=0.08,
+            rpy=(0.0, math.pi / 2, 0.0),
+        )
+        return [table, [receiver, socket], [peg]]
+    if environment == "joint-lift":
+        tray, _ = tray_fixture("two_handle_tray", xyz=(0.36, 0.0, 0.0))
+        return [table, tray]
+    if environment == "loaded-tray-transport":
+        tray, contents = tray_fixture("loaded_tray", xyz=(0.34, -0.14, 0.0), loaded=True)
+        return [
+            table,
+            tray,
+            *[[content] for content in contents],
+            [marked_region("goal_region", (0.34, 0.24, 0.0005), size=(0.32, 0.36))],
+        ]
+    if environment == "uncap-return-test-tube":
+        tube = free_cylinder(
+            "target_test_tube",
+            (0.43, 0.13, 0.06),
+            (0.55, 0.88, 0.96, 0.38),
+            radius=0.009,
+            length=0.10,
+            mass=0.015,
+        )
+        cap_grips = [
+            Link(
+                f"tube_cap_grip_{side}",
+                parent="target_test_tube",
+                xyz=(sign * 0.010, 0.0, 0.045),
+                joint=f"tube_cap_grip_{side}",
+                kind="prismatic",
+                axis=(-sign, 0.0, 0.0),
+                limits=(0.0, 0.006),
+                mass=0.004,
+                damping=0.1,
+                initial=0.002,
+                stiffness=180.0,
+                inertia=(2e-7, 2e-8, 2e-7, 0.0, 0.0, 0.0),
+                shapes=[
+                    Shape(
+                        "box",
+                        (0.006, 0.012, 0.012),
+                        color=(0.72, 0.75, 0.8, 1.0),
+                    )
+                ],
+            )
+            for side, sign in (("left", -1.0), ("right", 1.0))
+        ]
+        cap_shapes = [
+            Shape(
+                "cylinder",
+                (0.014, 0.020),
+                color=(0.95, 0.45, 0.08, 1.0),
+            )
+        ]
+        for index in range(12):
+            angle = 2 * math.pi * index / 12
+            cap_shapes.append(
+                Shape(
+                    "box",
+                    (0.010, 0.005, 0.025),
+                    (0.012 * math.cos(angle), 0.012 * math.sin(angle), -0.0125),
+                    (0.0, 0.0, angle + math.pi / 2),
+                    color=(0.95, 0.45, 0.08, 1.0),
+                )
+            )
+        cap = Link(
+            "target_tube_cap",
+            xyz=(0.43, 0.13, 0.125),
+            kind="free",
+            mass=0.012,
+            inertia=(0.000001, 0.000001, 0.000001, 0.0, 0.0, 0.0),
+            shapes=cap_shapes,
+        )
+        rack = Link(
+            "tube_rack",
+            xyz=(0.43, 0.13, 0.0),
+            shapes=[
+                Shape(
+                    "box",
+                    (0.10, 0.10, 0.01),
+                    (0.0, 0.0, 0.005),
+                    color=(0.10, 0.30, 0.85, 1.0),
+                )
+            ],
+        )
+        slot = Link(
+            "assigned_rack_slot",
+            parent="tube_rack",
+            xyz=(0.0, 0.0, 0.01),
+            mass=1e-6,
+            inertia=(1e-9, 1e-9, 1e-9, 0.0, 0.0, 0.0),
+            shapes=collar_shapes(),
+        )
+        return [
+            table,
+            [rack, slot],
+            [tube, *cap_grips],
+            [cap],
+            [marked_region("cap_table_region", (0.29, 0.18, 0.0005))],
+        ]
+    if environment == "retrieve-bottle-clutter":
+        bottles = [
+            free_cylinder(
+                name,
+                (x, y, 0.065),
+                color,
+                radius=0.016,
+                length=0.11,
+                mass=0.06,
+            )
+            for name, x, y, color in (
+                ("target_bottle", 0.42, -0.025, (0.95, 0.45, 0.08, 1.0)),
+                ("other_bottle_1", 0.46, -0.035, (0.1, 0.72, 0.2, 1.0)),
+                ("other_bottle_2", 0.415, 0.025, (0.68, 0.16, 0.82, 1.0)),
+                ("other_bottle_3", 0.46, 0.030, (0.15, 0.35, 0.95, 1.0)),
+            )
+        ]
+        return [
+            table,
+            [open_bin("bottle_bin", (0.44, 0.0, 0.0))],
+            *[[bottle] for bottle in bottles],
+            [marked_region("table_goal_region", (0.29, 0.26, 0.0005))],
+        ]
     if environment == "touch_target":
         pads = (
             ("distractor_pad_left", -0.12, (0.15, 0.35, 0.95, 1.0)),

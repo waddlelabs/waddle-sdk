@@ -16,10 +16,12 @@ are declared there and covered by native scene tests. They are development
 fixtures rather than measurements of a particular physical installation.
 
 The built-in two-arm development fixtures also use programmatic primitives. They
-cover split-workspace sorting, block handover, a free drawer cabinet, a movable
-container, and a removable friction-fit lid. The lid's bounded passive pads use
-native joint springs and contact friction; no task callback attaches or releases
-it.
+cover sorting, handovers, free stabilized fixtures, two-handle lift/transport,
+movable-receiver insertion, friction-fit test-tube uncapping, and bottle clutter.
+Bounded passive pads use native joint springs and contact friction; no task
+callback attaches or releases a lid or tube cap. D07-D10 scenes do not imply that
+the downstream stack supports the atomic multi-part execution required to score
+them.
 
 | Assembly | Source revision | License |
 | --- | --- | --- |
