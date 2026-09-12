@@ -132,6 +132,21 @@ geometry:
     pose: {position_m: [0.0, 0.0, 0.0]}
     material: {rgba: [0.3, 0.3, 0.3, 1.0], roughness: 0.8}
     collision: {friction: [0.8, 0.01, 0.001]}
+bodies:
+  cube:
+    motion: free
+    pose:
+      position_m: [{uniform: [0.3, 0.4]}, 0.0, 0.025]
+      quaternion_wxyz: [1.0, 0.0, 0.0, 0.0]
+    inertial:
+      mass_kg: 0.06
+      center_of_mass_m: [0.0, 0.0, 0.0]
+      inertia_kg_m2: [0.000025, 0.000025, 0.000025, 0.0, 0.0, 0.0]
+    geometries:
+      - geometry: {kind: box, size_m: [0.05, 0.05, 0.05]}
+        pose: {position_m: [0.0, 0.0, 0.0]}
+        material: {rgba: [0.1, 0.55, 0.9, 1.0]}
+        collision: {friction: [0.8, 0.01, 0.001]}
 randomization: {seed: 42}
 ```
 
@@ -149,6 +164,25 @@ Numeric camera positions, light properties, material components, and geometry va
 may use `{uniform: [min, max]}` or `{choice: [...]}`. `--seed` selects a replayable
 build; omitted seeds use `randomization.seed`. Sampled values never apply to the owner
 joint envelope.
+
+### Rigid bodies
+
+`geometry` attaches fixed shapes directly to the world. `bodies` groups one or more
+shapes under a named body with a world pose and `motion: fixed` or `motion: free`.
+Free bodies receive a six-degree-of-freedom joint and must declare one explicit
+inertial record. `inertia_kg_m2` is `[ixx, iyy, izz, ixy, ixz, iyz]` about the
+declared center of mass in body axes. Its matrix must be positive definite and obey
+the rigid-body triangle inequality. A free body's geometry cannot also declare mass
+or density, so there is one reviewed source for its dynamics. Planes remain world
+geometry; body shapes may be boxes, spheres, capsules, cylinders, or confined meshes.
+Shape poses are local to the body.
+
+The generated MuJoCo backend exposes these named joints, body poses and contacts only
+through a separately retained `SimulationAdministration`. Reset restores the resolved
+initial body state, robot state, controls, sensors, and simulation clock without
+reopening the participant's SDK session. Portable scene metadata does not yet declare
+the complete versioned task and embodiment identity required by an exact evaluation
+admission check, so the trusted snapshot does not invent one.
 
 ### Appearance and coatings
 

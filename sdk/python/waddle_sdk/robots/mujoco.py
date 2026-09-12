@@ -64,6 +64,85 @@ def _model_path(config: PartConfig | WorldConfig) -> Path:
     return resolved
 
 
+def _evaluation_snapshot(*, mj: Any, model: Any, data: Any) -> dict[str, Any]:
+    """Read complete named MuJoCo state for a retained trusted evaluator."""
+
+    mj.mj_forward(model, data)
+    joint_types = {
+        int(mj.mjtJoint.mjJNT_FREE): "free",
+        int(mj.mjtJoint.mjJNT_BALL): "ball",
+        int(mj.mjtJoint.mjJNT_SLIDE): "slide",
+        int(mj.mjtJoint.mjJNT_HINGE): "hinge",
+    }
+    joints = {}
+    for index in range(model.njnt):
+        name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_JOINT, index)
+        qpos_start = int(model.jnt_qposadr[index])
+        qpos_end = (
+            int(model.jnt_qposadr[index + 1]) if index + 1 < model.njnt else model.nq
+        )
+        dof_start = int(model.jnt_dofadr[index])
+        dof_end = (
+            int(model.jnt_dofadr[index + 1]) if index + 1 < model.njnt else model.nv
+        )
+        joints[name or f"joint:{index}"] = {
+            "type": joint_types[int(model.jnt_type[index])],
+            "qpos": [float(value) for value in data.qpos[qpos_start:qpos_end]],
+            "qvel": [float(value) for value in data.qvel[dof_start:dof_end]],
+        }
+
+    bodies = {}
+    for index in range(model.nbody):
+        name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, index)
+        velocity = np.zeros(6, dtype=float)
+        mj.mj_objectVelocity(
+            model,
+            data,
+            mj.mjtObj.mjOBJ_BODY,
+            index,
+            velocity,
+            0,
+        )
+        bodies[name or f"body:{index}"] = {
+            "position_m": [float(value) for value in data.xpos[index]],
+            "orientation_wxyz": [float(value) for value in data.xquat[index]],
+            "angular_velocity_rad_s": [float(value) for value in velocity[:3]],
+            "linear_velocity_m_s": [float(value) for value in velocity[3:]],
+        }
+
+    contacts = []
+    for index in range(data.ncon):
+        contact = data.contact[index]
+        force = np.zeros(6, dtype=float)
+        mj.mj_contactForce(model, data, index, force)
+
+        def geometry(identifier: int) -> dict[str, str]:
+            name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_GEOM, identifier)
+            body_id = int(model.geom_bodyid[identifier])
+            body = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, body_id)
+            return {
+                "geom": name or f"geom:{identifier}",
+                "body": body or f"body:{body_id}",
+            }
+
+        contacts.append(
+            {
+                "first": geometry(int(contact.geom1)),
+                "second": geometry(int(contact.geom2)),
+                "distance_m": float(contact.dist),
+                "normal_force_n": float(force[0]),
+            }
+        )
+    return {
+        "schema": "waddle.simulation-state/mujoco-v1",
+        "backend": "mujoco",
+        "time_s": float(data.time),
+        "joints": joints,
+        "bodies": bodies,
+        "contacts": contacts,
+    }
+
+
 class MujocoBackend:
     """One shared, lazily opened MuJoCo physics and rendering world."""
 
@@ -144,6 +223,22 @@ class MujocoBackend:
             self.mj.mj_resetData(self.model, self.data)
             self.mj.mj_forward(self.model, self.data)
             return True
+
+    def evaluation_reset(self, *, seed: int) -> bool:
+        """Reset deterministic state through the evaluator-only capability."""
+
+        if isinstance(seed, bool) or not isinstance(seed, int):
+            raise TypeError("simulation reset seed must be an integer")
+        if seed < 0 or seed > 2**63 - 1:
+            raise ValueError("simulation reset seed must be between 0 and 2^63-1")
+        return self.reset()
+
+    def evaluation_snapshot(self) -> Mapping[str, Any]:
+        """Return privileged state through the retained evaluator capability."""
+
+        with self._lock:
+            self._require_open()
+            return _evaluation_snapshot(mj=self.mj, model=self.model, data=self.data)
 
     def close(self) -> None:
         with self._lock:

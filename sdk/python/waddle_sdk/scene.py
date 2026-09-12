@@ -413,6 +413,17 @@ def _validate_semantics(document: Mapping[str, Any], root: Path) -> None:
             )
             if not mesh.is_file():
                 raise ScenePathError(f"geometry mesh does not exist: {mesh}")
+    for body_name, body in document.get("bodies", {}).items():
+        for index, row in enumerate(body["geometries"]):
+            geometry = row["geometry"]
+            if geometry["kind"] == "mesh":
+                mesh = _confined_path(
+                    root,
+                    geometry["path"],
+                    field=(f"bodies.{body_name}.geometries[{index}].geometry.path"),
+                )
+                if not mesh.is_file():
+                    raise ScenePathError(f"body mesh does not exist: {mesh}")
 
 
 def _resolve_randomized(

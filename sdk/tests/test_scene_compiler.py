@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import textwrap
+import time
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,7 @@ from waddle_sdk.scene import (
     initialize_scene,
     load_scene,
 )
+from waddle_sdk.simulation import SimulationAdministration
 
 SDK = Path(__file__).resolve().parents[1]
 
@@ -155,6 +157,63 @@ def _write_scene(tmp_path, *, lower=-1.0):
     return path
 
 
+def _write_rigid_body_scene(tmp_path):
+    path = _write_scene(tmp_path)
+    document = yaml.safe_load(path.read_text())
+    document["bodies"] = {
+        "pedestal": {
+            "motion": "fixed",
+            "pose": {
+                "position_m": [0.75, 0.75, 0.05],
+                "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0],
+            },
+            "geometries": [
+                {
+                    "geometry": {"kind": "box", "size_m": [0.1, 0.1, 0.1]},
+                    "pose": {
+                        "position_m": [0.0, 0.0, 0.0],
+                        "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0],
+                    },
+                    "material": {"rgba": [0.2, 0.2, 0.2, 1.0]},
+                    "collision": {"friction": [0.8, 0.01, 0.001]},
+                }
+            ],
+        },
+        "cube": {
+            "motion": "free",
+            "pose": {
+                "position_m": [0.65, 0.0, 0.3],
+                "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0],
+            },
+            "inertial": {
+                "mass_kg": 0.04,
+                "center_of_mass_m": [0.0, 0.0, 0.0],
+                "inertia_kg_m2": [
+                    0.0000106666667,
+                    0.0000106666667,
+                    0.0000106666667,
+                    0.0,
+                    0.0,
+                    0.0,
+                ],
+            },
+            "geometries": [
+                {
+                    "geometry": {"kind": "box", "size_m": [0.04, 0.04, 0.04]},
+                    "pose": {
+                        "position_m": [0.0, 0.0, 0.0],
+                        "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0],
+                    },
+                    "material": {"rgba": [0.9, 0.2, 0.1, 1.0]},
+                    "collision": {"friction": [0.8, 0.01, 0.001]},
+                }
+            ],
+        },
+    }
+    path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    return path
+
+
 def test_portable_scene_validation_is_nonopening_and_seeded(tmp_path, monkeypatch):
     path = _write_scene(tmp_path)
     imported = []
@@ -247,6 +306,108 @@ def test_compiled_scene_opens_as_an_ordinary_rgbd_sdk_site(tmp_path):
         assert sample.depth is not None
         assert sample.depth.shape == (48, 64)
         assert session.describe()["robot"]["name"] == "portable-cell"
+
+
+def test_portable_rigid_bodies_compile_step_and_reset_through_retained_admin(
+    tmp_path,
+):
+    mujoco = pytest.importorskip("mujoco")
+    build = load_scene(_write_rigid_body_scene(tmp_path)).compile(
+        backend="mujoco", output_dir=tmp_path / "body-build"
+    )
+    model = mujoco.MjModel.from_xml_path(str(build.world_path))
+    assert model.body("body/cube").mass == pytest.approx([0.04])
+    assert model.body("body/cube").inertia == pytest.approx(
+        [0.0000106666667, 0.0000106666667, 0.0000106666667], rel=1e-5
+    )
+    assert model.joint("body/cube/free").type == mujoco.mjtJoint.mjJNT_FREE
+    assert model.body("body/pedestal").jntnum == 0
+
+    administration = SimulationAdministration()
+    with waddle_sdk.load_site(build.site_path).open(
+        console=False,
+        _testing=True,
+        simulation_administration=administration,
+    ):
+        initial = administration.reset(seed=31)
+        world = initial.worlds["cell"]
+        assert "identity" not in world
+        assert world["joints"]["body/cube/free"]["type"] == "free"
+        assert world["bodies"]["body/cube"]["position_m"] == pytest.approx(
+            [0.65, 0.0, 0.3]
+        )
+
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            fallen = administration.snapshot().worlds["cell"]
+            cube = fallen["bodies"]["body/cube"]
+            touching = any(
+                row["first"]["body"] == "body/cube"
+                or row["second"]["body"] == "body/cube"
+                for row in fallen["contacts"]
+            )
+            if (
+                abs(cube["position_m"][2] - 0.02) < 0.003
+                and abs(cube["linear_velocity_m_s"][2]) < 0.03
+                and touching
+            ):
+                break
+            time.sleep(0.01)
+        assert fallen["time_s"] > 0.0
+        assert fallen["bodies"]["body/cube"]["position_m"][2] == pytest.approx(
+            0.02, abs=0.003
+        )
+        assert touching
+
+        reset = administration.reset(seed=31)
+        assert reset.episode_revision == 2
+        assert reset.worlds["cell"]["time_s"] == 0.0
+        assert reset.worlds["cell"]["bodies"]["body/cube"][
+            "position_m"
+        ] == pytest.approx([0.65, 0.0, 0.3])
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (
+            lambda body: body["inertial"].__setitem__("mass_kg", 0.0),
+            "mass_kg must be positive",
+        ),
+        (
+            lambda body: body["inertial"].__setitem__(
+                "inertia_kg_m2", [1.0, 1.0, 3.0, 0.0, 0.0, 0.0]
+            ),
+            "triangle inequality",
+        ),
+        (
+            lambda body: body["geometries"][0].__setitem__(
+                "geometry", {"kind": "plane", "size_m": [1.0, 1.0]}
+            ),
+            "cannot be a plane",
+        ),
+        (
+            lambda body: body["geometries"][0]["collision"].__setitem__(
+                "mass_kg", 0.04
+            ),
+            "cannot declare mass or density",
+        ),
+    ],
+)
+def test_invalid_rigid_body_physics_fails_before_mujoco_import(
+    tmp_path, monkeypatch, mutate, message
+):
+    path = _write_rigid_body_scene(tmp_path)
+    document = yaml.safe_load(path.read_text())
+    mutate(document["bodies"]["cube"])
+    path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+
+    def fail_import():
+        raise AssertionError("invalid bodies must fail before importing MuJoCo")
+
+    monkeypatch.setattr("waddle_sdk.robots.mujoco_scene._mujoco_module", fail_import)
+    with pytest.raises(SceneValidationError, match=message):
+        load_scene(path).compile(backend="mujoco", output_dir=tmp_path / "bad-body")
 
 
 def test_compiler_refuses_envelope_widening_and_escaping_assets(tmp_path, monkeypatch):

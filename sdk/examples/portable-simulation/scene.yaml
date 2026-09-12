@@ -74,11 +74,21 @@ geometry:
     pose: {position_m: [0.0, 0.0, 0.0]}
     material: {rgba: [0.32, 0.34, 0.36, 1.0], roughness: 0.85}
     collision: {friction: [0.9, 0.01, 0.001]}
+bodies:
   workpiece:
-    geometry: {kind: box, size_m: [0.12, 0.12, 0.12]}
-    pose: {position_m: [0.35, 0.0, 0.06]}
-    material: {rgba: [0.1, 0.55, 0.9, 1.0], roughness: 0.5}
-    collision: {mass_kg: 0.1, friction: [0.8, 0.01, 0.001]}
+    motion: free
+    pose:
+      position_m: [{uniform: [0.3, 0.4]}, 0.0, 0.06]
+      quaternion_wxyz: [1.0, 0.0, 0.0, 0.0]
+    inertial:
+      mass_kg: 0.1
+      center_of_mass_m: [0.0, 0.0, 0.0]
+      inertia_kg_m2: [0.00024, 0.00024, 0.00024, 0.0, 0.0, 0.0]
+    geometries:
+      - geometry: {kind: box, size_m: [0.12, 0.12, 0.12]}
+        pose: {position_m: [0.0, 0.0, 0.0]}
+        material: {rgba: [0.1, 0.55, 0.9, 1.0], roughness: 0.5}
+        collision: {friction: [0.8, 0.01, 0.001]}
 site:
   workspace_bounds:
     min: [-0.8, -0.8, 0.0]

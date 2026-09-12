@@ -2,8 +2,9 @@
 
 This is a complete backend-neutral source scene: one URDF arm, reviewed joint
 limits, visual appearance, a visual-only tool coating, conservative body spheres,
-scene and wrist RGB-D cameras, two lights, and environment geometry. Seeded color
-and intensity ranges are resolved into recorded build evidence.
+scene and wrist RGB-D cameras, two lights, fixed environment geometry, and a free
+rigid workpiece with explicit mass and inertia. Seeded pose, color, and intensity
+ranges are resolved into recorded build evidence.
 
 From `sdk/`:
 

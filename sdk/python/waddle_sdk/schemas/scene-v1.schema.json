@@ -40,6 +40,12 @@
       "propertyNames": {"$ref": "#/$defs/name"},
       "additionalProperties": {"$ref": "#/$defs/sceneGeometry"}
     },
+    "bodies": {
+      "type": "object",
+      "default": {},
+      "propertyNames": {"$ref": "#/$defs/name"},
+      "additionalProperties": {"$ref": "#/$defs/rigidBody"}
+    },
     "frames": {
       "type": "object",
       "default": {},
@@ -399,6 +405,53 @@
         "material": {"$ref": "#/$defs/material"},
         "collision": {"$ref": "#/$defs/collisionSurface"}
       }
+    },
+    "bodyInertial": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mass_kg", "center_of_mass_m", "inertia_kg_m2"],
+      "properties": {
+        "mass_kg": {"$ref": "#/$defs/sampleNumber"},
+        "center_of_mass_m": {"$ref": "#/$defs/vector3"},
+        "inertia_kg_m2": {
+          "type": "array",
+          "prefixItems": [
+            {"$ref": "#/$defs/sampleNumber"},
+            {"$ref": "#/$defs/sampleNumber"},
+            {"$ref": "#/$defs/sampleNumber"},
+            {"$ref": "#/$defs/sampleNumber"},
+            {"$ref": "#/$defs/sampleNumber"},
+            {"$ref": "#/$defs/sampleNumber"}
+          ],
+          "items": false
+        }
+      }
+    },
+    "rigidBody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["motion", "pose", "geometries"],
+      "properties": {
+        "motion": {"enum": ["fixed", "free"]},
+        "pose": {"$ref": "#/$defs/pose"},
+        "inertial": {"$ref": "#/$defs/bodyInertial"},
+        "geometries": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {"$ref": "#/$defs/sceneGeometry"}
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"motion": {"const": "free"}},
+            "required": ["motion"]
+          },
+          "then": {"required": ["inertial"]},
+          "else": {"not": {"required": ["inertial"]}}
+        }
+      ]
     },
     "frame": {
       "type": "object",

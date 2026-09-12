@@ -242,11 +242,13 @@ open and after close. A failed or refused reset becomes uncertain and latches th
 capability until the site is reopened; it is never retried automatically.
 
 `snapshot()` returns immutable evaluator-owned state plus a content digest and an
-episode revision. The reference MuJoCo facet reports named joint position and
-velocity vectors, named body poses and velocities, contacts, simulation time, and
-its schema version. It also binds the provider/revision, robot family/embodiment
-revision, arm count, environment ID, scene revision, and asset revision used to resolve the world, so
-a higher-level evaluator can fail closed on a mismatched run request. Generated
+episode revision. MuJoCo facets report named joint position and velocity vectors,
+named body poses and velocities, contacts, simulation time, and a schema version.
+Reference task presets also bind the provider/revision, robot family/embodiment
+revision, arm count, environment ID, scene revision, and asset revision used to
+resolve the world, so a higher-level evaluator can fail closed on a mismatched run
+request. Portable compiled scenes expose state and reset but omit that identity until
+their public metadata can declare every required revision. Generated
 `simulation.json` files carry the scene, asset, and embodiment revisions; older files still run
 interactively but report missing revisions and cannot satisfy an exact task-run
 identity check. This state is privileged ground truth. Do not pass the

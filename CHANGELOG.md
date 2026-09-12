@@ -163,6 +163,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   compiler covers robot placement, reviewed joint limits, scene geometry, camera
   optical poses, lights, materials, visual/physical coatings, and link-local safety
   spheres while emitting an ordinary `site.yaml`.
+- Extend portable scenes with fixed geometry groups and free rigid bodies whose
+  explicit mass, center of mass, full inertia, collision shapes, named state, and
+  deterministic reset compile into the ordinary shared-world MuJoCo backend.
 - Add installed simulator extension points through the
   `waddle_sdk.simulation_backends` and `waddle_sdk.simulation_compilers` entry-point
   groups while retaining explicit `module:callable` targets.

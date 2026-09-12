@@ -563,10 +563,86 @@ def _preflight_robot_sources(config: SceneConfig) -> None:
         _joints(name=str(part_name), root=root, robot=robot)
 
 
+def _preflight_bodies(config: SceneConfig) -> None:
+    """Validate portable rigid-body physics before loading MuJoCo."""
+
+    for name, body in config.document.get("bodies", {}).items():
+        motion = str(body["motion"])
+        for index, row in enumerate(body["geometries"]):
+            if row["geometry"]["kind"] == "plane":
+                raise SceneValidationError(
+                    f"bodies.{name}.geometries[{index}] cannot be a plane"
+                )
+            collision = row.get("collision", {})
+            if motion == "free" and (
+                "mass_kg" in collision or "density_kg_m3" in collision
+            ):
+                raise SceneValidationError(
+                    f"bodies.{name}.geometries[{index}].collision cannot declare "
+                    "mass or density; free bodies use their explicit inertial"
+                )
+        if motion != "free":
+            continue
+        inertial = body["inertial"]
+        mass = float(inertial["mass_kg"])
+        if not math.isfinite(mass) or mass <= 0.0:
+            raise SceneValidationError(
+                f"bodies.{name}.inertial.mass_kg must be positive"
+            )
+        _vector(inertial["center_of_mass_m"], (), width=3)
+        inertia = _vector(inertial["inertia_kg_m2"], (), width=6)
+        matrix = np.asarray(
+            [
+                [inertia[0], inertia[3], inertia[4]],
+                [inertia[3], inertia[1], inertia[5]],
+                [inertia[4], inertia[5], inertia[2]],
+            ],
+            dtype=np.float64,
+        )
+        principal = np.linalg.eigvalsh(matrix)
+        if np.any(principal <= 0.0):
+            raise SceneValidationError(
+                f"bodies.{name}.inertial.inertia_kg_m2 must be positive definite"
+            )
+        if principal[0] + principal[1] < principal[2] - 1e-12:
+            raise SceneValidationError(
+                f"bodies.{name}.inertial.inertia_kg_m2 violates the triangle inequality"
+            )
+
+
+def _add_bodies(mj: Any, *, spec: Any, config: SceneConfig, output_dir: Path) -> None:
+    """Add portable fixed geometry groups and free rigid bodies to a scene."""
+
+    for name, row in config.document.get("bodies", {}).items():
+        position, quaternion = _pose(row.get("pose"))
+        body = spec.worldbody.add_body(
+            name=f"body/{name}", pos=position, quat=quaternion
+        )
+        if row["motion"] == "free":
+            inertial = row["inertial"]
+            body.add_freejoint(name=f"body/{name}/free")
+            body.explicitinertial = True
+            body.mass = float(inertial["mass_kg"])
+            body.ipos = _vector(inertial["center_of_mass_m"], (), width=3)
+            body.fullinertia = _vector(inertial["inertia_kg_m2"], (), width=6)
+        for index, geometry in enumerate(row["geometries"]):
+            _add_geometry(
+                mj,
+                spec=spec,
+                body=body,
+                name=f"shape_{index}",
+                row=geometry,
+                scene_root=config.scene_root,
+                output_dir=output_dir,
+                category=f"body_{name}",
+            )
+
+
 def compile_scene(*, config: SceneConfig, output_dir: Path) -> SceneArtifacts:
     """Compile one portable scene into MJCF, site.yaml, and replay evidence."""
 
     _preflight_robot_sources(config)
+    _preflight_bodies(config)
     mj = _mujoco_module()
     if not hasattr(mj, "MjSpec"):
         raise SceneCompilerError(
@@ -757,6 +833,8 @@ def compile_scene(*, config: SceneConfig, output_dir: Path) -> SceneArtifacts:
             output_dir=output_dir,
             category="scene",
         )
+
+    _add_bodies(mj, spec=scene, config=config, output_dir=output_dir)
 
     frames: dict[str, Any] = {}
     for name, row in config.document.get("frames", {}).items():
