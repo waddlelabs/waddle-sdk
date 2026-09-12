@@ -475,6 +475,95 @@ def objects(environment: str) -> list[list[Link]]:
             ],
         )
         return [table, [hook], [target], [region]]
+    if environment == "open-hinged-door":
+        frame = Link(
+            "door_frame",
+            xyz=(0.55, -0.15, 0.0),
+            shapes=[
+                Shape("box", (0.05, 0.05, 0.34), (0.025, -0.025, 0.17)),
+                Shape("box", (0.05, 0.05, 0.34), (0.04, 0.305, 0.17)),
+                Shape("box", (0.05, 0.38, 0.04), (0.025, 0.14, 0.34)),
+                # The negative-x strike lip captures the extended bolt. A
+                # 10 mm throat leaves the closed bolt unloaded but blocks the
+                # door as soon as it rotates toward the robot.
+                Shape(
+                    "box",
+                    (0.012, 0.055, 0.06),
+                    (-0.025, 0.292, 0.17),
+                    color=(0.72, 0.75, 0.8, 1.0),
+                ),
+            ],
+        )
+        door = Link(
+            "door",
+            parent="door_frame",
+            joint="door_hinge",
+            kind="revolute",
+            axis=(0.0, 0.0, 1.0),
+            limits=(0.0, 1.35),
+            mass=0.8,
+            damping=0.35,
+            inertia=(0.011633, 0.006428, 0.005248, 0.0, 0.0, 0.0),
+            com=(0.0, 0.14, 0.165),
+            shapes=[
+                Shape(
+                    "box",
+                    (0.018, 0.28, 0.31),
+                    (0.0, 0.14, 0.165),
+                    color=(0.18, 0.42, 0.72, 1.0),
+                )
+            ],
+        )
+        lever = Link(
+            "door_lever",
+            parent="door",
+            xyz=(-0.02, 0.205, 0.18),
+            joint="door_lever",
+            kind="revolute",
+            axis=(1.0, 0.0, 0.0),
+            limits=(0.0, 1.05),
+            mass=0.08,
+            damping=0.08,
+            inertia=(0.00008, 0.00008, 0.00002, 0.0, 0.0, 0.0),
+            com=(-0.02, 0.0, -0.035),
+            shapes=[
+                Shape(
+                    "cylinder",
+                    (0.014, 0.05),
+                    (-0.025, 0.0, 0.0),
+                    (0.0, math.pi / 2, 0.0),
+                    color=(0.95, 0.48, 0.08, 1.0),
+                ),
+                Shape(
+                    "box",
+                    (0.018, 0.018, 0.09),
+                    (-0.052, 0.0, -0.04),
+                    color=(0.95, 0.48, 0.08, 1.0),
+                ),
+            ],
+        )
+        latch = Link(
+            "latch_bolt",
+            parent="door",
+            xyz=(0.0, 0.245, 0.17),
+            joint="door_latch",
+            kind="prismatic",
+            axis=(0.0, -1.0, 0.0),
+            limits=(0.0, 0.06),
+            mass=0.06,
+            damping=0.1,
+            inertia=(0.0000261, 0.00000324, 0.0000261, 0.0, 0.0, 0.0),
+            mimic=("door_lever", 0.06 / 1.05, 0.0),
+            shapes=[
+                Shape(
+                    "box",
+                    (0.018, 0.07, 0.018),
+                    (0.0, 0.035, 0.0),
+                    color=(0.72, 0.75, 0.8, 1.0),
+                )
+            ],
+        )
+        return [table, [frame, door, lever, latch]]
     if environment == "drawer":
         # Keep the closed front clear of the robot's starting hand. The
         # handle travels from x=.503 to .283 m as the drawer opens.

@@ -1748,6 +1748,7 @@ def _native_conformance(
             "stack-two-cubes",
             "ring-on-peg",
             "use-hook",
+            "open-hinged-door",
         }:
             assert engine.reset() is True
             _wave_b_single_prop_conformance(engine, advance, config, environment)
@@ -2042,6 +2043,10 @@ def _wave_b_single_prop_conformance(engine, advance, config, environment):
             ((0.44, 0.04, 0.03), "green"),
             ((0.28, 0.15, 0.002), "blue"),
         ),
+        "open-hinged-door": (
+            ((0.541, -0.01, 0.165), "blue"),
+            ((0.478, 0.055, 0.14), "orange"),
+        ),
     }
     classifiers = {
         "green": lambda r, g, b: g > 2 * max(r, b),
@@ -2121,6 +2126,47 @@ def _wave_b_single_prop_conformance(engine, advance, config, environment):
         advance(1.5)
         np.testing.assert_allclose(data.xpos[ring, :2], (0.43, 0.10), atol=0.006)
         assert data.xpos[ring, 2] < 0.025
+        return
+
+    if environment == "open-hinged-door":
+        hinge = model.joint("door_hinge")
+        lever = model.joint("door_lever")
+        latch = model.joint("door_latch")
+        hinge_qpos, hinge_dof = int(hinge.qposadr[0]), int(hinge.dofadr[0])
+        lever_qpos, lever_dof = int(lever.qposadr[0]), int(lever.dofadr[0])
+        latch_qpos = int(latch.qposadr[0])
+        assert not any(
+            {
+                model.body(int(model.geom(int(geom)).bodyid[0])).name
+                for geom in contact.geom
+            }
+            == {"door_frame", "latch_bolt"}
+            for contact in data.contact
+        )
+
+        # The extended bolt reaches the fixed strike and stops the same opening
+        # load that moves the door after the lever physically retracts it.
+        data.qfrc_applied[hinge_dof] = 2.0
+        advance(1.0)
+        assert 0.02 < data.qpos[hinge_qpos] < 0.05
+        assert data.qpos[latch_qpos] < 0.002
+
+        assert engine.reset() is True
+        data.qfrc_applied[lever_dof] = 0.08
+        advance(1.5)
+        assert data.qpos[lever_qpos] > 1.0
+        assert data.qpos[latch_qpos] > 0.055
+        data.qfrc_applied[hinge_dof] = 2.0
+        advance(1.5)
+        data.qfrc_applied[:] = 0.0
+        advance(0.5)
+        assert data.qpos[hinge_qpos] > 0.8
+        assert abs(data.qvel[hinge_dof]) < 0.05
+
+        assert engine.reset() is True
+        np.testing.assert_allclose(
+            data.qpos[[hinge_qpos, lever_qpos, latch_qpos]], 0.0, atol=1e-8
+        )
         return
 
     assert environment == "use-hook"

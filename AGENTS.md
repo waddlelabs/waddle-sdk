@@ -64,8 +64,8 @@ models. Engine-specific acceptance stays in `sdk/tests/test_simulation.py`; a
 skipped optional-engine case is not evidence that the engine passed. Reference
 worlds preserve state across ordinary runs and reset only when the site explicitly
 sets `reset_on_episode: true`.
-The eleven MuJoCo-only development task environments are built-in interactive
-fixtures using the same runtime surface. Ten are single-arm and
+The twelve MuJoCo-only development task environments are built-in interactive
+fixtures using the same runtime surface. Eleven are single-arm and
 `split_workspace_sorting` is a matched two-arm scene. Keep their task-relevant
 objects visible from the scene camera for every reference embodiment, and verify
 mechanics without adding task routes or success logic to the simulator.

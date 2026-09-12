@@ -13,6 +13,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Add the single-arm `open-hinged-door` MuJoCo development environment. A passive
+  lever retracts its sliding bolt through a native joint constraint; the extended
+  bolt contacts a fixed strike and blocks the same opening load that moves the
+  released door. No callback changes the latch or door state.
 - Add five medium single-arm MuJoCo development environments for distractor
   selection, drawer closing, two-cube stacking, ring placement, and hook use.
   Their ordinary reset path restores declared passive-joint initial positions;

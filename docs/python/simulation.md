@@ -53,7 +53,7 @@ Each engine accepts `so101`, `yam`, or `xarm7` and these environments:
   and 5 N·s/m native joint damping. The damping dissipates a pull after release;
   there is no spring returning the drawer to its starting position.
 
-MuJoCo also provides eleven interactive development task environments:
+MuJoCo also provides twelve interactive development task environments:
 
 - `touch_target`: one red contact target and two blue distractors.
 - `pick_lift`: one free 46 mm cube.
@@ -68,6 +68,9 @@ MuJoCo also provides eleven interactive development task environments:
 - `ring-on-peg`: a free compound ring and a fixed vertical peg with physical
   clearance between them.
 - `use-hook`: a free compound hook, a movable target, and a marked goal region.
+- `open-hinged-door`: a passive lever and sliding bolt on a hinged door. The
+  extended bolt physically contacts a fixed strike; holding the lever retracts
+  it so the door can open.
 - `split_workspace_sorting`: a matched two-arm scene with one cube initially in
   each arm's outer workspace and two open bins near the center. Each cube's
   matching bin is on the opposite side.
@@ -77,6 +80,8 @@ Their scene camera exposes every task-relevant object at the starting pose for
 SO-101, YAM, and xArm7. Native tests verify visibility, initial separation from
 the robot, free-body mechanics, bin containment, passive-joint initialization,
 stacking, ring/peg clearance, tool contact, and independent control travel.
+The door test applies the same opening load before and after lever retraction to
+verify that native latch contact, rather than task logic, controls its motion.
 They are development fixtures, not calibrated physical twins. Isaac and SAPIEN
 selection is rejected until the same native evidence exists for those backends.
 

@@ -36,6 +36,7 @@ SINGLE_ARM_TASK_ENVIRONMENTS = (
     "stack-two-cubes",
     "ring-on-peg",
     "use-hook",
+    "open-hinged-door",
 )
 DUAL_ARM_TASK_ENVIRONMENTS = ("split_workspace_sorting",)
 TASK_ENVIRONMENTS = (*SINGLE_ARM_TASK_ENVIRONMENTS, *DUAL_ARM_TASK_ENVIRONMENTS)
