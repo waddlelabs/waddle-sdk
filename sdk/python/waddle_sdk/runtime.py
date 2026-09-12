@@ -62,6 +62,8 @@ class SupportFact(str, enum.Enum):
     JOINT_VELOCITY_OBSERVATION = "observation.joint_velocity"
     EE_POSE_OBSERVATION = "observation.ee_pose"
     JOINT_POSITION_ACTION = "action.joint_position"
+    PART_OBSERVATION = "observation.named_parts"
+    PART_ACTION = "action.named_parts"
     VELOCITY_FEEDFORWARD = "actuation.velocity_feedforward"
     FORWARD_KINEMATICS = "kinematics.fk"
     BODY_SPHERES = "geometry.body_spheres"
@@ -456,6 +458,7 @@ class Observation:
     unix_ns: int
     parts: Mapping[str, PartObservation]
     cameras: Mapping[str, CameraSample]
+    faults: Mapping[str, RuntimeFault] = field(default_factory=dict)
 
     def gate_vector(self) -> npt.NDArray[np.float64]:
         """Flatten joint positions in declaration order for the native gate."""
@@ -494,6 +497,29 @@ class RunPort(Protocol):
     ) -> SubmitResult: ...
 
     def hold(self, reason: str) -> None: ...
+
+
+@runtime_checkable
+class NamedPartsRunPort(Protocol):
+    """Optional independent submissions through the same supervised run.
+
+    Results belong to individual parts, not an atomic multi-part transaction.
+    A receipt records dispatch, never physical arrival. Global supervision and
+    configured cross-part envelope dependencies can still refuse a submission.
+    """
+
+    def step_parts(
+        self,
+        commands: Mapping[str, JointPositionCommand],
+        observation: Observation | None = None,
+    ) -> Mapping[str, SubmitResult]: ...
+
+
+@runtime_checkable
+class NamedPartsObservationPort(Protocol):
+    """Optional partial observations; missing measurements carry exact faults."""
+
+    def observe_parts(self, parts: Sequence[str] | None = None) -> Observation: ...
 
 
 @runtime_checkable
@@ -571,25 +597,27 @@ class SdkGeometryPort(Protocol):
 
 
 __all__ = [
+    "SUPPORT_CONTRACT_VERSION",
     "Action",
     "BodySphere",
     "FaultCode",
-    "JointPositionCommand",
     "JSONValue",
+    "JointPositionCommand",
+    "MediaRuntimePort",
+    "NamedPartsObservationPort",
+    "NamedPartsRunPort",
     "Observation",
     "PartObservation",
     "Pose",
     "RunPort",
-    "SdkGeometryPort",
-    "SdkKinematicsPort",
     "RuntimeEvent",
     "RuntimeFault",
     "RuntimeFaultCause",
+    "SdkGeometryPort",
+    "SdkKinematicsPort",
     "SdkRuntimePort",
-    "MediaRuntimePort",
     "SdkSupportPort",
     "SubmitResult",
-    "SUPPORT_CONTRACT_VERSION",
     "SupportFact",
     "SupportMatrix",
     "SupportRow",

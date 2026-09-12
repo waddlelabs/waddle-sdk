@@ -91,3 +91,27 @@ hardware. A preset is a configuration suggestion and grants no runtime capabilit
 Site opening now coordinates ownership across applications. See
 [site ownership and publisher evidence](ownership-and-media.md) for lock scope,
 uncertain teardown and the optional native media-track contract.
+
+## Independent named parts
+
+`SiteSession.observe_parts(parts=None)` returns fresh successful measurements in
+`Observation.parts` and exact failures in `Observation.faults`, keyed by part.
+Omitting names reads every declared part. `observe()` retains its all-or-error
+contract; missing measurements are never replaced with cached or invented values.
+The site reporting loop retains individual device failures while continuing other
+parts; a blocked device call or shared simulator failure is not isolated.
+
+`Run.step_parts({part: JointPositionCommand(...)}, observation)` returns one
+`SubmitResult` per addressed part. Each command crosses the native gate and owner
+envelope and is recorded with its declared part identity. Driver exceptions do not
+erase neighboring receipts. This is not an atomic multi-part transaction. Dispatch
+receipts establish neither arrival nor a confirmed physical stop. A failed write
+can have an unknown physical outcome, even when no successful dispatch was reported.
+
+The optional `NamedPartsObservationPort` and `NamedPartsRunPort` contracts are
+advertised as `observation.named_parts` and `action.named_parts` support facts.
+The existing site lease, explicit Hold/e-stop and native supervision remain shared.
+Configured cross-part collision checks still require fresh neighbor geometry; a
+missing required neighbor can refuse an otherwise healthy part's command. Applications
+own trajectory scheduling, completion and cancellation; this API adds no automatic
+sibling cancellation, motion replay or fault-domain policy.

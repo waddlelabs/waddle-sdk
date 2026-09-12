@@ -682,10 +682,20 @@ def _combine_rigs(
         )
     posture = postures.pop()
 
-    tick_builder = None
-    if simulation_backends:
+    def tick_builder(session, arms):
+        last_faults = {}
 
-        def build_simulation_tick(session, arms):
+        def on_fault(part, error):
+            fault = _operation_fault(
+                "observe robot part", error, context={"part": part}
+            ).as_dict()
+            if last_faults.get(part) != fault:
+                arms[part].report(str(fault))
+                last_faults[part] = fault
+
+        advance = None
+        if simulation_backends:
+
             def advance(dt: float) -> None:
                 with simulation_lock:
                     for backend in simulation_backends.values():
@@ -694,9 +704,7 @@ def _combine_rigs(
                         if part not in part_worlds:
                             arm.step(dt)
 
-            return base.proprio_tick(session, arms, advance=advance)
-
-        tick_builder = build_simulation_tick
+        return base.proprio_tick(session, arms, advance=advance, on_part_fault=on_fault)
 
     return base.Rig(
         declaration=declaration,
@@ -940,6 +948,7 @@ class SiteSession:
         self._active: Run | None = None
         self._events: list[RuntimeEvent] = []
         self._event_lock = threading.Lock()
+        self._dispatch_lock = threading.RLock()
         self._service_stop = threading.Event()
         self._service_thread: threading.Thread | None = None
 
@@ -1402,6 +1411,7 @@ class SiteSession:
             joint_position = part_space.get("jointPosition")
             if isinstance(joint_position, Mapping):
                 facts.add(SupportFact.JOINT_POSITION_ACTION)
+                facts.update((SupportFact.PART_ACTION, SupportFact.PART_OBSERVATION))
                 joints = joint_position.get("joints", [])
                 if isinstance(joints, list) and joints:
                     if all(
@@ -1580,21 +1590,43 @@ class SiteSession:
         return run
 
     def observe(self) -> Observation:
+        observation = self.observe_parts()
+        if observation.faults:
+            raise next(iter(observation.faults.values()))
+        return observation
+
+    def observe_parts(self, parts: Sequence[str] | None = None) -> Observation:
+        """Read named parts independently, retaining failures beside healthy data.
+
+        Omitted parts means every declared part. No stale or fabricated positions
+        replace failures. An ordinary ``observe()`` remains all-or-error.
+        """
         managed = self._require()
-        parts: dict[str, PartObservation] = {}
-        for name, arm in managed.arms.items():
+        names = tuple(managed.arms) if parts is None else tuple(parts)
+        if len(names) != len(set(names)) or any(
+            name not in managed.arms for name in names
+        ):
+            raise RuntimeFault(
+                FaultCode.INVALID_REQUEST,
+                "Observation parts must be unique declared names",
+            )
+        measured: dict[str, PartObservation] = {}
+        faults: dict[str, RuntimeFault] = {}
+        for name in names:
+            arm = managed.arms[name]
             try:
                 position, velocity = arm.state()
                 pose = arm.ee_pose(position)
-            except RuntimeFault:
-                raise
             except Exception as exc:
-                raise _operation_fault(
+                faults[name] = _operation_fault(
                     "observe robot part",
                     exc,
                     context={"part": name},
-                ) from exc
-            parts[name] = PartObservation(
+                )
+                if faults[name] is not exc:
+                    faults[name].__cause__ = exc
+                continue
+            measured[name] = PartObservation(
                 joint_position=np.asarray(position, dtype=np.float64),
                 joint_velocity=np.asarray(velocity, dtype=np.float64),
                 ee_pose_wxyz=None
@@ -1616,7 +1648,7 @@ class SiteSession:
             raise
         except Exception as exc:
             raise _operation_fault("stamp observation", exc) from exc
-        return Observation(stamp.session_ns, stamp.unix_ns, parts, cameras)
+        return Observation(stamp.session_ns, stamp.unix_ns, measured, cameras, faults)
 
     def submit(self, action, observation=None) -> SubmitResult:
         if self._active is None:
@@ -1817,6 +1849,54 @@ class Run:
         return self._session.observe()
 
     def step(self, action, observation=None) -> SubmitResult:
+        with self._session._dispatch_lock:
+            return self._step(action, observation)
+
+    def step_parts(self, commands, observation=None) -> Mapping[str, SubmitResult]:
+        """Submit named joint targets independently, preserving per-part outcomes.
+
+        Each addressed part crosses the native gate and owner envelope. A driver
+        exception does not erase prior receipts or skip other submissions. This
+        does not guarantee isolation from shared hardware or envelope dependencies.
+        """
+        arms = self._session._require().arms
+        if not isinstance(commands, Mapping) or not commands:
+            raise RuntimeFault(
+                FaultCode.INVALID_REQUEST, "Provide non-empty named commands"
+            )
+        if any(
+            part not in arms or not isinstance(command, JointPositionCommand)
+            for part, command in commands.items()
+        ):
+            raise RuntimeFault(
+                FaultCode.INVALID_REQUEST,
+                "Commands require declared parts and JointPositionCommand values",
+            )
+        results = {}
+        with self._session._dispatch_lock:
+            for part, command in commands.items():
+                try:
+                    results[part] = self._step(command, observation, part=part)
+                except Exception as exc:
+                    fault = _operation_fault(
+                        "submit robot part", exc, context={"part": part}
+                    )
+                    results[part] = SubmitResult(
+                        False, "error", part=part, detail=fault.detail, fault=fault
+                    )
+                    self._session._event(
+                        "run.step",
+                        {
+                            "run_id": self.id,
+                            "part": part,
+                            "dispatched": False,
+                            "gate": "error",
+                            "fault": fault.as_dict(),
+                        },
+                    )
+        return results
+
+    def _step(self, action, observation=None, *, part=None) -> SubmitResult:
         if self._episode is None:
             raise RuntimeFault(FaultCode.NOT_OPEN, "run has not started")
         if self._episode.done:
@@ -1830,11 +1910,19 @@ class Run:
                     action.velocity_feedforward_rad_s, dtype=np.float64
                 )
         if isinstance(observation, Observation):
-            obs = observation.gate_vector()
+            if part is None:
+                if observation.faults:
+                    raise next(iter(observation.faults.values()))
+                obs = observation.gate_vector()
+            else:
+                if part in observation.faults:
+                    raise observation.faults[part]
+                state = observation.parts.get(part)
+                obs = None if state is None else state.joint_position
         else:
             obs = observation
         try:
-            decided = self._episode.gate(gate_action, obs)
+            decided = self._episode.gate(gate_action, obs, part=part)
         except RuntimeFault:
             raise
         except (TypeError, ValueError) as exc:
@@ -1847,7 +1935,8 @@ class Run:
             raise _operation_fault("gate run action", exc) from exc
         gate = self._episode.last_gate
         kind = "pass" if gate is None else str(gate.kind)
-        part = None if gate is None else gate.part
+        caller_part = part
+        part = caller_part if gate is None else gate.part
         dispatched = decided is not None
         detail = ""
         refusal_faults: list[RuntimeFault] = []
@@ -1867,6 +1956,10 @@ class Run:
                 )
         if dispatched:
             try:
+                if caller_part is not None and kind == "pass":
+                    decided = {caller_part: decided}
+                    if velocity_feedforward is not None:
+                        velocity_feedforward = {caller_part: velocity_feedforward}
                 dispatched = base.apply_decision(
                     self._session._require().arms,
                     decided,
@@ -1875,6 +1968,7 @@ class Run:
                     # blend, absent on an actually interpolated blend.
                     velocity_feedforward_rad_s=velocity_feedforward,
                     on_refusal=refusal_faults.append,
+                    check_neighbors=caller_part is not None,
                 )
             except RuntimeFault:
                 raise

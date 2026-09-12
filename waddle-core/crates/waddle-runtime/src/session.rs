@@ -2400,12 +2400,50 @@ impl Episode {
         gripper: Option<f64>,
         obs: Option<&[f64]>,
     ) -> GateOutput {
+        self.gate_scoped(values, gripper, obs, None)
+    }
+
+    /// Gate one declared part without fabricating commands for its neighbors.
+    /// The normal gate still decides every takeover, Hold and bypass outcome.
+    pub fn gate_part(
+        &mut self,
+        part: &str,
+        values: &[f64],
+        obs: Option<&[f64]>,
+    ) -> Result<GateOutput, RuntimeError> {
+        let waddle_types::SpaceSpec::Composite { parts } = &self.session.inner.action_space.spec
+        else {
+            return Err(RuntimeError::InvalidScopedAction(
+                "named actions require a composite declaration".into(),
+            ));
+        };
+        let space = parts
+            .iter()
+            .find(|(name, _)| name == part)
+            .map(|(_, space)| space)
+            .ok_or_else(|| RuntimeError::InvalidScopedAction(format!("unknown part {part:?}")))?;
+        if space.dims() != Some(values.len()) || values.iter().any(|v| !v.is_finite()) {
+            return Err(RuntimeError::InvalidScopedAction(format!(
+                "part {part:?} requires {:?} finite values",
+                space.dims()
+            )));
+        }
+        Ok(self.gate_scoped(values, None, obs, Some(Arc::from(part))))
+    }
+
+    fn gate_scoped(
+        &mut self,
+        values: &[f64],
+        gripper: Option<f64>,
+        obs: Option<&[f64]>,
+        part: Option<Arc<str>>,
+    ) -> GateOutput {
         if !self.started {
             self.started = true;
             let at = self.session.inner.clock.stamp_now().mono_ns();
             self.session.inject(SessionEvent::GateTick { at });
         }
-        self.gate.gate(values, gripper, obs)
+        self.gate.gate_scoped(values, gripper, obs, part)
     }
 
     /// Flips when a judge, a directive, a timeout, `terminate`, or session

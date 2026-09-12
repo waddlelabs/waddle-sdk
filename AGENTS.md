@@ -106,8 +106,9 @@ waddle-sdk/
                              #   exception types, structured metadata and causes
                              #   with the failed operation and device scope,
                              #   plus an immutable `waddle.sdk.support/v1` matrix and
-                             #   independent optional support/FK/body-geometry
-                             #   ports. SiteSession derives those facts from
+                             #   independent optional named-part observation/submission and support/FK/body-geometry
+                             #   ports. Named commands retain per-part faults and native gate provenance;
+                             #   completion policy belongs to the caller. SiteSession derives those facts from
                              #   opened Arm/camera implementations, publishes
                              #   the exact registered action space and grants,
                              #   gives the complete site and each robot/camera
@@ -176,7 +177,7 @@ waddle-sdk/
                              #   uncertain teardown retains it for process lifetime.
                              #   SiteSession.media_tracks() exposes native publisher
                              #   identities and last-attempt evidence via optional
-                             #   MediaRuntimePort (binding API 4). See
+                             #   MediaRuntimePort (binding API 5). See
                              #   docs/python/ownership-and-media.md.
                              #   Hardware opens only in SiteSession.__enter__; a
                              #   bound Grpc connector first completes an

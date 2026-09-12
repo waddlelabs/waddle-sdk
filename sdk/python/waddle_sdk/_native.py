@@ -37,11 +37,10 @@ import warnings
 from typing import TYPE_CHECKING
 
 
-# This Python surface consumes GateInfo.velocity_feedforward and the matching
-# chunk/action additions. A semantic package version cannot distinguish two
+# This Python surface consumes named caller gate actions and their part identity. A semantic package version cannot distinguish two
 # local wheels built from different commits, so the native shim carries this
 # deliberately small compatibility epoch as well.
-_REQUIRED_BINDING_API_VERSION = 4
+_REQUIRED_BINDING_API_VERSION = 5
 
 
 def _binding_api(module: object) -> int | None:

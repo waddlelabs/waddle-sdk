@@ -31,3 +31,13 @@ run. `SiteOwnershipError.code` distinguishes contention and uncertain teardown;
 uncertain teardown retains ownership. The optional `MediaRuntimePort.media_tracks()`
 returns native publisher identities and last local attempt status, not proof of
 viewer delivery. See the public site ownership/media guide for scope and limits.
+
+## Named-part operations
+
+Optional `NamedPartsObservationPort.observe_parts()` retains healthy measurements
+and exact per-part faults. `NamedPartsRunPort.step_parts()` submits named
+`JointPositionCommand` values through the native gate and returns per-part receipts.
+Check `observation.named_parts` / `action.named_parts` support facts. These are
+independent submissions under one site lease, not an atomic multi-arm transaction
+or a promise of hardware fault containment. Configured cross-part envelope checks
+remain mandatory. See `docs/python/site.md` for completion and failure semantics.

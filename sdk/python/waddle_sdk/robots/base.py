@@ -1097,6 +1097,7 @@ def apply_decision(
         Mapping[str, Sequence[float]] | Sequence[float] | None
     ) = None,
     on_refusal: Callable[[RuntimeFault], None] | None = None,
+    check_neighbors: bool = False,
 ) -> bool:
     """Apply one gate decision atomically across every addressed part.
 
@@ -1164,16 +1165,24 @@ def apply_decision(
         if reason is not None and refusal is None:
             refusal = (arm, reason)
 
+    collision_targets = [(arm, target) for arm, target, _velocity in prepared]
     if refusal is None:
-        refusal = _cross_arm_collision_refusal(
-            [(arm, target) for arm, target, _velocity in prepared]
-        )
+        if check_neighbors and any(
+            arm.self_collision_enabled for arm, _ in collision_targets
+        ):
+            # Sparse caller commands must not bypass configured cross-part
+            # geometry. A required neighbor read remains a real dependency.
+            for name, arm in arms.items():
+                if name not in rows and arm.self_collision_enabled:
+                    position, _ = arm.state()
+                    collision_targets.append((arm, np.asarray(position, dtype=float)))
+        refusal = _cross_arm_collision_refusal(collision_targets)
 
     if refusal is not None:
         failed, reason = refusal
         failed_part = next(name for name, arm in arms.items() if arm is failed)
         failed_target = next(
-            target for arm, target, _velocity in prepared if arm is failed
+            target for arm, target in collision_targets if arm is failed
         )
 
         def values(array):
@@ -1817,6 +1826,7 @@ def proprio_tick(
     arms: Mapping[str, Arm],
     *,
     advance: Callable[[float], None] | None = None,
+    on_part_fault: Callable[[str, Exception], None] | None = None,
 ) -> Callable[[float], None]:
     """One turn of the robot's own loop: integrate every part, then report it.
 
@@ -1835,14 +1845,19 @@ def proprio_tick(
     named here rather than filled in with a frame nobody declared."""
 
     def tick(dt: float) -> None:
-        if advance is None:
-            for arm in arms.values():
-                arm.step(dt)
-        else:
+        if advance is not None:
             advance(dt)
         for part, arm in arms.items():
-            position, velocity = arm.state()
-            pose = arm.ee_pose(position)
+            try:
+                if advance is None:
+                    arm.step(dt)
+                position, velocity = arm.state()
+                pose = arm.ee_pose(position)
+            except Exception as error:
+                if on_part_fault is None:
+                    raise
+                on_part_fault(part, error)
+                continue
             if pose is None:
                 session.report_proprio(
                     part=part, joint_pos=position, joint_vel=velocity

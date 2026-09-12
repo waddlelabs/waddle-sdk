@@ -48,6 +48,8 @@ pub enum RuntimeError {
     InvalidTaskMetadata(String),
     #[error("invalid hold request: {0}")]
     InvalidHoldRequest(String),
+    #[error("invalid scoped action: {0}")]
+    InvalidScopedAction(String),
     #[error("invalid chat request: {0}")]
     InvalidChat(String),
     #[error("chat unavailable: {0}")]

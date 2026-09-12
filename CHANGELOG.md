@@ -13,6 +13,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Optional named-part observations and supervised joint submissions retain healthy results beside exact device faults. Sparse commands preserve native scope/recording, owner envelopes and configured neighbor collision dependencies; existing composite submissions retain their contract.
+
+
 - Optional YAM `arm_gains` configures independent six-joint KP/KD values while
   preserving hand gains and recovery behavior. Paired raw/SDK benchmarks apply
   the same settings and distinguish requested gains from predicted MIT encoding.

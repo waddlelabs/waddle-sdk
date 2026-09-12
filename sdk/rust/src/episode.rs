@@ -13,7 +13,7 @@ use parking_lot::Mutex;
 use pyo3::prelude::*;
 use waddle_gate::gate::GateOutput;
 
-use crate::convert::{PartsLayout, extract_f64s, outcome_str, parse_outcome};
+use crate::convert::{PartsLayout, extract_f64s, outcome_str, parse_outcome, runtime_err};
 
 /// What the last `gate()` call decided (marshalled from the core decision —
 /// Python never computes any of this).
@@ -38,7 +38,7 @@ pub(crate) struct GateInfo {
     /// blend may retain it because the target path is unchanged.
     #[pyo3(get)]
     velocity_feedforward: Option<Vec<f64>>,
-    /// The declared PART a substitute/blend action addressed, when it
+    /// The declared PART a caller or substitute/blend action addressed, when it
     /// addressed one (`Action.part`, flag `waddle.v0.parts`): the returned
     /// array is that part's rows, in that part's order — not the whole
     /// declared space. `None` means the whole robot, which is every action
@@ -139,21 +139,33 @@ impl PyEpisode {
     /// The record captures the values at call time; mutating the array
     /// afterwards (before your `send`) makes the dispatched action diverge
     /// from the recorded one.
-    #[pyo3(signature = (action, obs=None, gripper=None))]
+    #[pyo3(signature = (action, obs=None, gripper=None, *, part=None))]
     fn gate(
         &self,
         py: Python<'_>,
         action: &Bound<'_, PyAny>,
         obs: Option<&Bound<'_, PyAny>>,
         gripper: Option<f64>,
+        part: Option<&str>,
     ) -> PyResult<Py<PyAny>> {
         let action_row = extract_f64s(action)?;
         let obs_row = obs.map(extract_f64s).transpose()?;
-        let output = self.inner.lock().gate(
-            action_row.as_slice(),
-            gripper,
-            obs_row.as_ref().map(crate::convert::F64s::as_slice),
-        );
+        let observation = obs_row.as_ref().map(crate::convert::F64s::as_slice);
+        let output = if let Some(part) = part {
+            if gripper.is_some() {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "named caller actions use declared joint rows, not the gripper sidechannel",
+                ));
+            }
+            self.inner
+                .lock()
+                .gate_part(part, action_row.as_slice(), observation)
+                .map_err(runtime_err)?
+        } else {
+            self.inner
+                .lock()
+                .gate(action_row.as_slice(), gripper, observation)
+        };
 
         let (result, info) = match output {
             GateOutput::Pass { provenance } => (
@@ -164,7 +176,7 @@ impl PyEpisode {
                     progress: None,
                     gripper: None,
                     velocity_feedforward: None,
-                    part: None,
+                    part: part.map(str::to_owned),
                 },
             ),
             GateOutput::Substitute { action, provenance } => (
