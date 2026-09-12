@@ -13,6 +13,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Extend native initial-collision acceptance to every matched dual-arm task cell.
+  D01-D11 now reject penetration between either robot and the tabletop or any
+  task prop for SO-101, YAM, and xArm7, alongside the existing inter-arm and
+  single-arm checks.
 - Add a native-mechanics coverage guard for all 29 MuJoCo evaluation task
   environments. Every catalog scene must remain assigned to the isolated
   single-arm conformance path or an explicit dual-arm physics acceptance group.

@@ -115,6 +115,9 @@ Their scene camera exposes every task-relevant object at the starting pose for
 SO-101, YAM, and xArm7. Native tests verify visibility, initial separation from
 the robot, free-body mechanics, bin containment, passive-joint initialization,
 stacking, ring/peg clearance, tool contact, and independent control travel.
+The initial native-contact gate covers all 87 task/family cells and rejects
+penetration between a robot body and the tabletop or any task prop. Dual-arm
+scenes additionally reject contact between the two robot assemblies.
 The door test applies the same opening load before and after lever retraction to
 verify that native latch contact, rather than task logic, controls its motion.
 The two-arm fixture tests verify that drawer/container loads can move their free

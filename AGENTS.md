@@ -68,7 +68,9 @@ The twenty-eight MuJoCo-only development task environments are built-in interact
 fixtures using the same runtime surface. Seventeen are single-arm and eleven are
 matched two-arm scenes. Keep their task-relevant
 objects visible from the scene camera for every reference embodiment, and verify
-mechanics without adding task routes or success logic to the simulator.
+mechanics without adding task routes or success logic to the simulator. Native
+initial-state acceptance must reject robot/table, robot/prop, and dual-arm
+inter-robot penetration across the complete task/family matrix.
 Together with the reference drawer they form the 29-task evaluation matrix.
 Trusted evaluator reset applies an explicit engine-neutral profile over pose,
 appearance, physics, and geometry. Reference MuJoCo task scenes implement stable

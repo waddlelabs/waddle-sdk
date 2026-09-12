@@ -1545,6 +1545,25 @@ def _usd_model_conformance(tmp_path, robot):
         )
 
 
+def _assert_no_robot_workcell_penetration(engine):
+    """Reject initial robot penetration into a task prop or the tabletop."""
+
+    model = engine.model
+    prop_bodies = set(engine._prop_body_ids)
+    workcell_bodies = set(prop_bodies)
+    workcell_bodies.add(int(model.body("table").id))
+    robot_bodies = set(range(1, model.nbody)) - workcell_bodies
+    for contact in engine.data.contact:
+        bodies = tuple(
+            int(model.geom(int(geom)).bodyid[0]) for geom in contact.geom
+        )
+        if (bodies[0] in robot_bodies) != (bodies[1] in robot_bodies):
+            assert contact.dist >= 0, (
+                tuple(model.body(body).name for body in bodies),
+                contact.dist,
+            )
+
+
 def _native_conformance(
     tmp_path, backend, robot, environment, render_quality="standard"
 ):
@@ -1610,16 +1629,9 @@ def _native_conformance(
                 assert mass == pytest.approx(0.06)
                 np.testing.assert_allclose(inertia, np.full(3, 0.000025), rtol=1e-5)
         if backend == "mujoco":
-            robot_bodies = {link.name for link in description(robot).links}
             # Reference scenes must start without the hand embedded in a prop.
             # Check native contacts, independently of the layout declarations.
-            for contact in engine.data.contact:
-                bodies = [
-                    engine.model.body(engine.model.geom(int(g)).bodyid[0]).name
-                    for g in contact.geom
-                ]
-                if (bodies[0] in robot_bodies) != (bodies[1] in robot_bodies):
-                    assert contact.dist >= 0, (bodies, contact.dist)
+            _assert_no_robot_workcell_penetration(engine)
             # Check the compiled engine model, not just the source URDF: the
             # exporter must retain COM and the complete non-diagonal inertia.
             for link in description(robot).links:
@@ -2484,6 +2496,7 @@ def test_native_split_workspace_sorting_scene(tmp_path, monkeypatch, robot):
         data.qvel[dof : dof + 6] = 0
 
     try:
+        _assert_no_robot_workcell_penetration(engine)
         assert np.isfinite(engine.read("left")[0]).all()
         assert np.isfinite(engine.read("right")[0]).all()
         for contact in data.contact:
@@ -2620,6 +2633,7 @@ def test_native_medium_dual_arm_task_scenes(
     }
 
     try:
+        _assert_no_robot_workcell_penetration(engine)
         assert np.isfinite(engine.read("left")[0]).all()
         assert np.isfinite(engine.read("right")[0]).all()
         for contact in data.contact:
@@ -2677,7 +2691,10 @@ def test_native_medium_dual_arm_task_scenes(
             )
         elif environment == "hold-container-place":
             container = model.body("movable_container")
-            assert model.jnt_type[int(container.jntadr[0])] == mujoco.mjtJoint.mjJNT_FREE
+            assert (
+                model.jnt_type[int(container.jntadr[0])]
+                == mujoco.mjtJoint.mjJNT_FREE
+            )
             initial = data.body("movable_container").xpos.copy()
             data.xfrc_applied[int(container.id), 1] = 3.0
             advance(0.5)
@@ -2813,6 +2830,7 @@ def test_native_hard_dual_arm_task_scenes(tmp_path, monkeypatch, robot, environm
     }
 
     try:
+        _assert_no_robot_workcell_penetration(engine)
         assert np.isfinite(engine.read("left")[0]).all()
         assert np.isfinite(engine.read("right")[0]).all()
         camera = config["cameras"]["scene"]
