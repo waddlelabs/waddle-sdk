@@ -150,7 +150,8 @@ waddle-sdk/
                              #   backend-compiled portable URDF scene build and
                              #   deterministic evidence contract, including
                              #   fixed/free/slide/hinge rigid bodies with explicit
-                             #   moving-body inertia and parent composition.
+                             #   moving-body inertia, parent composition, and
+                             #   optional complete trusted runtime identity.
                              #   `simulation.py`
                              #   defines the
                              #   public lazy WorldConfig/SimulationBackend
@@ -370,7 +371,8 @@ waddle-sdk/
                              #   one physics state and tick across attached
                              #   parts/cameras, aligned RGB-D rendering, derived
                              #   intrinsics, scratch-state FK/body spheres,
-                             #   evaluator-only named state/reset, and local e-stop
+                             #   evaluator-only named state/reset/identity, and
+                             #   local e-stop
         mujoco_scene.py      # strict portable-URDF-to-MJCF compiler: staged
                              #   inputs/assets, multi-robot attachment, reviewed
                              #   limits/materials/coatings, composed fixed/free/

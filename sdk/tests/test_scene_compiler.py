@@ -157,7 +157,7 @@ def _write_scene(tmp_path, *, lower=-1.0):
     return path
 
 
-def _write_rigid_body_scene(tmp_path):
+def _write_rigid_body_scene(tmp_path, *, identity=False):
     path = _write_scene(tmp_path)
     document = yaml.safe_load(path.read_text())
     document["bodies"] = {
@@ -210,6 +210,14 @@ def _write_rigid_body_scene(tmp_path):
             ],
         },
     }
+    if identity:
+        document["metadata"]["identity"] = {
+            "robot_family": "portable_arm",
+            "embodiment_revision": "1.2.0",
+            "environment_id": "falling_cube",
+            "scene_revision": "2.0.0",
+            "asset_revision": "sha256.demo",
+        }
     path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
     return path
 
@@ -455,6 +463,50 @@ def test_portable_rigid_bodies_compile_step_and_reset_through_retained_admin(
         assert reset.worlds["cell"]["bodies"]["body/cube"][
             "position_m"
         ] == pytest.approx([0.65, 0.0, 0.3])
+
+
+def test_complete_portable_identity_stays_out_of_the_participant_runtime(tmp_path):
+    mujoco = pytest.importorskip("mujoco")
+    build = load_scene(_write_rigid_body_scene(tmp_path, identity=True)).compile(
+        backend="mujoco", output_dir=tmp_path / "identified-build"
+    )
+    manifest = yaml.safe_load(build.site_path.read_text())
+    assert manifest["worlds"]["cell"]["options"] == {
+        "evidence": "resolved-scene.json"
+    }
+    evidence = json.loads(build.evidence_path.read_text())
+    declared = evidence["resolved_scene"]["metadata"]["identity"]
+    assert declared == {
+        "robot_family": "portable_arm",
+        "embodiment_revision": "1.2.0",
+        "environment_id": "falling_cube",
+        "scene_revision": "2.0.0",
+        "asset_revision": "sha256.demo",
+    }
+
+    administration = SimulationAdministration()
+    with waddle_sdk.load_site(build.site_path).open(
+        console=False,
+        _testing=True,
+        simulation_administration=administration,
+    ) as session:
+        assert "identity" not in session.describe()
+        assert "falling_cube" not in json.dumps(session.describe())
+        assert administration.snapshot().worlds["cell"]["identity"] == {
+            "provider": "mujoco",
+            "provider_revision": mujoco.__version__,
+            **declared,
+            "arm_count": 1,
+        }
+
+
+def test_partial_portable_runtime_identity_is_refused(tmp_path):
+    path = _write_scene(tmp_path)
+    document = yaml.safe_load(path.read_text())
+    document["metadata"]["identity"] = {"robot_family": "portable_arm"}
+    path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    with pytest.raises(SceneValidationError, match="required propert"):
+        load_scene(path)
 
 
 @pytest.mark.parametrize(

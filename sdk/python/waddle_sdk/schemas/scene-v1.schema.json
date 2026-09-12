@@ -229,7 +229,41 @@
       "required": ["id"],
       "properties": {
         "id": {"$ref": "#/$defs/name"},
-        "description": {"type": "string", "maxLength": 1024}
+        "description": {"type": "string", "maxLength": 1024},
+        "identity": {"$ref": "#/$defs/runtimeIdentity"}
+      }
+    },
+    "runtimeIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "robot_family",
+        "embodiment_revision",
+        "environment_id",
+        "scene_revision",
+        "asset_revision"
+      ],
+      "properties": {
+        "robot_family": {"$ref": "#/$defs/name"},
+        "embodiment_revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^\\S+$"
+        },
+        "environment_id": {"$ref": "#/$defs/name"},
+        "scene_revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^\\S+$"
+        },
+        "asset_revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^\\S+$"
+        }
       }
     },
     "physics": {

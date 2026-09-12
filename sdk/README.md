@@ -179,6 +179,9 @@ coating geometry, fixed geometry, free rigid bodies with explicit inertia, and s
 variation. Named parent-child bodies can add passive bounded slide or hinge fixture
 joints with damping, friction, and optional springs. Compilation is atomic and emits
 an ordinary `site.yaml`, a native world, normalized inputs, and resolved hash evidence.
+Optional complete scene/embodiment identity reaches only the generated evidence and
+retained simulation-administration snapshot; ordinary participant runtime descriptions
+remain backend-neutral.
 Physical coatings require an explicit conservative safety sphere. Installed simulator
 packages can register short names under `waddle_sdk.simulation_backends` and
 `waddle_sdk.simulation_compilers`; applications need no simulator-specific runtime.

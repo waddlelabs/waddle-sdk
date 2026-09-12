@@ -10,6 +10,7 @@ stepping, rendering, and hard-safety geometry.
 from __future__ import annotations
 
 import importlib
+import json
 import math
 import threading
 from collections.abc import Mapping, Sequence
@@ -62,6 +63,76 @@ def _model_path(config: PartConfig | WorldConfig) -> Path:
     if not resolved.is_file():
         raise ValueError(f"MuJoCo model does not exist: {resolved}")
     return resolved
+
+
+_IDENTITY_FIELDS = frozenset(
+    {
+        "robot_family",
+        "embodiment_revision",
+        "arm_count",
+        "environment_id",
+        "scene_revision",
+        "asset_revision",
+    }
+)
+
+
+def _runtime_identity(value: object | None) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping) or set(value) != _IDENTITY_FIELDS:
+        raise ValueError(
+            "MuJoCo options.identity must contain the complete runtime identity"
+        )
+    result = dict(value)
+    for field in _IDENTITY_FIELDS - {"arm_count"}:
+        item = result[field]
+        if (
+            not isinstance(item, str)
+            or not item
+            or any(character.isspace() for character in item)
+        ):
+            raise ValueError(f"MuJoCo options.identity.{field} must be a nonempty token")
+    arm_count = result["arm_count"]
+    if isinstance(arm_count, bool) or not isinstance(arm_count, int) or arm_count < 1:
+        raise ValueError("MuJoCo options.identity.arm_count must be a positive integer")
+    return result
+
+
+def _evidence_identity(config: WorldConfig) -> dict[str, Any] | None:
+    value = config.options.get("evidence")
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value or "\x00" in value or "\\" in value:
+        raise ValueError("MuJoCo options.evidence must be a portable relative path")
+    relative = Path(value)
+    if relative.is_absolute() or any(part == ".." for part in relative.parts):
+        raise ValueError("MuJoCo options.evidence must stay beneath the site root")
+    root = config.site_root.resolve()
+    path = (root / relative).resolve(strict=False)
+    try:
+        path.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("MuJoCo options.evidence escapes the site root") from exc
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError("MuJoCo options.evidence is not valid build evidence") from exc
+    if not isinstance(document, Mapping) or document.get("schema") != "waddle.simulation-build/v1":
+        raise ValueError("MuJoCo options.evidence has an unsupported schema")
+    resolved = document.get("resolved_scene")
+    if not isinstance(resolved, Mapping):
+        raise TypeError("MuJoCo options.evidence lacks its resolved scene")
+    metadata = resolved.get("metadata")
+    robots = resolved.get("robots")
+    if not isinstance(metadata, Mapping) or not isinstance(robots, Mapping):
+        raise TypeError("MuJoCo options.evidence has invalid resolved scene metadata")
+    identity = metadata.get("identity")
+    if identity is None:
+        return None
+    if not isinstance(identity, Mapping):
+        raise TypeError("MuJoCo options.evidence identity must be an object")
+    return _runtime_identity({**identity, "arm_count": len(robots)})
 
 
 def _evaluation_snapshot(*, mj: Any, model: Any, data: Any) -> dict[str, Any]:
@@ -146,8 +217,12 @@ def _evaluation_snapshot(*, mj: Any, model: Any, data: Any) -> dict[str, Any]:
 class MujocoBackend:
     """One shared, lazily opened MuJoCo physics and rendering world."""
 
-    def __init__(self, *, model_path: Path) -> None:
+    def __init__(
+        self, *, model_path: Path, identity: Mapping[str, Any] | None = None
+    ) -> None:
         self._model_path = model_path
+        self._identity = _runtime_identity(identity)
+        self._declared_parts: set[str] = set()
         self._lock = threading.RLock()
         self._mj = None
         self._model = None
@@ -184,6 +259,13 @@ class MujocoBackend:
         with self._lock:
             if self._opened or self._closed:
                 raise RuntimeError("MuJoCo world instances may be opened only once")
+            if (
+                self._identity is not None
+                and self._identity["arm_count"] != len(self._declared_parts)
+            ):
+                raise RuntimeError(
+                    "MuJoCo runtime identity arm_count does not match declared parts"
+                )
             mj = _mujoco_module()
             model = mj.MjModel.from_xml_path(str(self._model_path))
             data = mj.MjData(model)
@@ -198,6 +280,11 @@ class MujocoBackend:
     def part(self, *, config: PartConfig) -> base.Rig:
         """Return one declaration-only part backed by this shared world."""
 
+        if self._opened or self._closed:
+            raise RuntimeError("MuJoCo parts must be declared before world open")
+        if config.name in self._declared_parts:
+            raise ValueError(f"MuJoCo world already declares part {config.name!r}")
+        self._declared_parts.add(config.name)
         return _arm_rig(config, world=self)
 
     def camera(self, *, config: CameraConfig) -> MujocoCameraDriver:
@@ -238,7 +325,16 @@ class MujocoBackend:
 
         with self._lock:
             self._require_open()
-            return _evaluation_snapshot(mj=self.mj, model=self.model, data=self.data)
+            snapshot = _evaluation_snapshot(
+                mj=self.mj, model=self.model, data=self.data
+            )
+            if self._identity is not None:
+                snapshot["identity"] = {
+                    "provider": "mujoco",
+                    "provider_revision": self.mj.__version__,
+                    **self._identity,
+                }
+            return snapshot
 
     def close(self) -> None:
         with self._lock:
@@ -801,4 +897,6 @@ def arm(*, config: PartConfig) -> base.Rig:
 def backend(*, config: WorldConfig) -> MujocoBackend:
     """Build one unopened shared MuJoCo world selected by ``site.yaml``."""
 
-    return MujocoBackend(model_path=_model_path(config))
+    return MujocoBackend(
+        model_path=_model_path(config), identity=_evidence_identity(config)
+    )

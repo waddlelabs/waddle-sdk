@@ -248,7 +248,8 @@ Reference task presets also bind the provider/revision, robot family/embodiment
 revision, arm count, environment ID, scene revision, and asset revision used to
 resolve the world, so a higher-level evaluator can fail closed on a mismatched run
 request. Portable compiled scenes expose state and reset but omit that identity until
-their public metadata can declare every required revision. Generated
+their optional `metadata.identity` declares every required revision; the compiler
+adds the robot count and the backend refuses a mismatch. Generated
 `simulation.json` files carry the scene, asset, and embodiment revisions; older files still run
 interactively but report missing revisions and cannot satisfy an exact task-run
 identity check. This state is privileged ground truth. Do not pass the

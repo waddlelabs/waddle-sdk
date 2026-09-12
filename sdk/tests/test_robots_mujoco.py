@@ -334,6 +334,31 @@ def test_modular_world_shares_physics_with_rgbd_camera(tmp_path):
     world.close()
 
 
+def test_modular_world_runtime_identity_must_be_complete_and_match_parts(tmp_path):
+    model = tmp_path / "cell.xml"
+    model.write_text("<mujoco/>", encoding="utf-8")
+    with pytest.raises(ValueError, match="complete runtime identity"):
+        mujoco.MujocoBackend(
+            model_path=model, identity={"robot_family": "yam"}
+        )
+
+    world = mujoco.MujocoBackend(
+        model_path=model,
+        identity={
+            "robot_family": "yam",
+            "embodiment_revision": "1.0.0",
+            "arm_count": 2,
+            "environment_id": "drawer",
+            "scene_revision": "1.0.0",
+            "asset_revision": "1.0.0",
+        },
+    )
+    world.part(config=_config(tmp_path, connection={}, world="cell"))
+    with pytest.raises(RuntimeError, match="arm_count does not match"):
+        world.open()
+    assert FakeModel.loaded_paths == []
+
+
 def test_modular_camera_refuses_conflicting_depth_units(tmp_path):
     model = tmp_path / "cell.xml"
     model.write_text("<mujoco/>", encoding="utf-8")

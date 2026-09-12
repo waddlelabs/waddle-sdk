@@ -223,9 +223,29 @@ bodies:
 The generated MuJoCo backend exposes these named joints, body poses and contacts only
 through a separately retained `SimulationAdministration`. Reset restores the resolved
 initial body state, robot state, controls, sensors, and simulation clock without
-reopening the participant's SDK session. Portable scene metadata does not yet declare
-the complete versioned task and embodiment identity required by an exact evaluation
-admission check, so the trusted snapshot does not invent one.
+reopening the participant's SDK session.
+
+An authored scene may add a complete non-secret runtime identity when a trusted
+controller must admit only an exact scene/embodiment combination:
+
+```yaml
+metadata:
+  id: customer-cell-sim
+  identity:
+    robot_family: yam
+    embodiment_revision: 1.0.0
+    environment_id: drawer
+    scene_revision: 1.0.0
+    asset_revision: sha256.4f81a2
+```
+
+The compiler adds the declared robot count, while the opened backend adds its own
+provider and installed provider revision. It refuses incomplete identity and a count
+that disagrees with the parts actually attached to that world. Identity appears in
+the generated source evidence and trusted snapshot, never the participant runtime
+description or a new simulator tool. When `metadata.identity` is absent, interactive
+simulation and trusted reset/state still work, but the snapshot omits identity so an
+exact higher-level admission check fails closed rather than accepting invented data.
 
 ### Appearance and coatings
 

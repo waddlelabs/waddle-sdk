@@ -169,6 +169,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 - Add parent-order-independent body composition and passive bounded slide/hinge
   joints with explicit initial state, axis/anchor, damping, friction, and optional
   springs. Portable hinge values are explicitly compiled as radians.
+- Allow portable scenes to declare complete versioned runtime identity. The compiler
+  adds and verifies the actual arm count, the backend adds its provider revision, and
+  identity remains outside the ordinary participant runtime description.
 - Add installed simulator extension points through the
   `waddle_sdk.simulation_backends` and `waddle_sdk.simulation_compilers` entry-point
   groups while retaining explicit `module:callable` targets.
