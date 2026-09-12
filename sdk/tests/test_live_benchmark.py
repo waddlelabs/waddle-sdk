@@ -677,13 +677,19 @@ def test_startup_waits_for_hold_can_feedback_and_host_ingestion_without_pose_gat
         assert evidence["position_rad"][2] == -0.0017
 
 
-def backend_result(mode, *, outcome="arrived", error=0.001):
+def backend_result(mode, *, outcome="arrived", error=0.001, case=CASE):
     trials = []
-    for case_id in (
-        CASE["case_id"] + "-reference",
-        CASE["case_id"],
-        CASE["case_id"] + "-return",
-    ):
+    phases = [
+        (case["case_id"] + "-reference", case["start_rad"]),
+        (case["case_id"], case["target_rad"]),
+        (case["case_id"] + "-return", case["start_rad"]),
+    ]
+    if "approach_rad" in case:
+        phases[:0] = [
+            (case["case_id"] + "-reference-entry", case["start_rad"]),
+            (case["case_id"] + "-approach", case["approach_rad"]),
+        ]
+    for case_id, target in phases:
         trials.append(
             {
                 "mode": mode,
@@ -691,6 +697,7 @@ def backend_result(mode, *, outcome="arrived", error=0.001):
                 "case_id": case_id,
                 "outcome": outcome,
                 "start_rad": [0.0],
+                "target_rad": target,
                 "joint_error_rad": error,
                 "tcp_error_m": error * 0.1,
                 "displacement_m": 0.004,
@@ -710,6 +717,132 @@ def backend_result(mode, *, outcome="arrived", error=0.001):
     }
 
 
+@pytest.mark.parametrize(
+    ("failure", "reference_only"),
+    [
+        (None, False),
+        (None, True),
+        ("reference-entry", False),
+        ("approach", False),
+        ("reference", False),
+        ("motor", False),
+    ],
+)
+def test_approach_requires_preparation_arrival_and_preserves_safe_rest(
+    monkeypatch, tmp_path, failure, reference_only
+):
+    case = {**CASE, "approach_rad": [-0.2], "minimum_settle_s": 0.2}
+    calls = []
+    origin = RuntimeFault(FaultCode.MOTOR_FAILURE, "motor 3 stopped in approach")
+    rest = {"joint_names": ["joint1"], "position_rad": [-0.03]}
+
+    class Owner:
+        def __init__(self, config, part):
+            self.report = {"trials": []}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            calls.append("closed")
+
+        def move(self, part, target, motion_case, *, report_key="trials"):
+            phase = motion_case["case_id"].removeprefix(CASE["case_id"] + "-")
+            calls.append((phase, target))
+            for field in (
+                "velocity_rad_s",
+                "acceleration_rad_s2",
+                "jerk_rad_s3",
+                "joint_tolerance_rad",
+                "tcp_tolerance_m",
+                "minimum_settle_s",
+            ):
+                assert motion_case[field] == case[field]
+            result = {"case_id": motion_case["case_id"], "outcome": "arrived"}
+            self.report.setdefault(report_key, []).append(result)
+            if failure == "motor" and phase == "approach":
+                result.update(outcome="failed", error=origin.as_dict())
+                raise origin
+            if phase == failure:
+                result["outcome"] = "not_arrived"
+            return result
+
+    monkeypatch.setattr(paired, "Bench", Owner)
+    output = tmp_path / "approach.json"
+    try:
+        paired.run_backend(
+            {"rest_positions": {"left": rest}},
+            "left",
+            case,
+            "sdk",
+            output,
+            reference_only=reference_only,
+        )
+    except RuntimeFault as error:
+        assert failure == "motor" and error is origin
+    else:
+        assert failure != "motor", "the originating motor fault must propagate"
+    expected = [
+        ("reference-entry", [0]),
+        ("approach", [-0.2]),
+        ("reference", [0]),
+        (CASE["case_id"], [0.04]),
+        ("return", [0]),
+    ]
+    if reference_only:
+        expected = expected[:3]
+    if failure is not None:
+        failed_phase = "approach" if failure == "motor" else failure
+        expected = expected[
+            : next(i for i, row in enumerate(expected) if row[0] == failed_phase) + 1
+        ]
+    if failure != "motor":
+        expected.append(("rest", rest["position_rad"]))
+    assert calls == [*expected, "closed"]
+    report = json.loads(output.read_text())
+    if failure == "motor":
+        assert report["error"] == origin.as_dict()
+    elif failure is not None:
+        assert report["trials"][-1]["outcome"] == "not_arrived"
+        assert report["rest_trials"][0]["outcome"] == "arrived"
+
+
+def test_sdk_only_approach_uses_the_existing_measured_motion_loop(monkeypatch):
+    from live.test_02_motion import measured_case
+
+    owner = measured_bench(monkeypatch)
+    case = {**CASE, "approach_rad": [-0.2], "minimum_settle_s": 0.2}
+    measured_case(owner, case)
+    assert [trial["target_rad"] for trial in owner.report["trials"]] == [
+        [0],
+        [-0.2],
+        [0],
+        [0.04],
+        [0],
+    ]
+    assert all(trial["outcome"] == "arrived" for trial in owner.report["trials"])
+    assert owner.report["trials"][2]["start_rad"] == pytest.approx([-0.2])
+
+
+@pytest.mark.parametrize("approach", [None, [], [0, 1], [True], [float("nan")]])
+def test_invalid_approach_fails_before_hardware(tmp_path, approach):
+    path = tmp_path / "bench.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema": "waddle.live-bench/v1",
+                "site": "site.yaml",
+                "evidence_directory": "evidence",
+                "parts": ["left"],
+                "cases": [{**CASE, "approach_rad": approach}],
+                "max_tracking_error_rad": 0.12,
+            }
+        )
+    )
+    with pytest.raises(ValueError, match="approach_rad"):
+        bench_config.load(path)
+
+
 COMPARISON = {
     "vendor": "i2rt",
     "initial_tolerance_rad": 0.02,
@@ -717,6 +850,80 @@ COMPARISON = {
     "tcp_error_margin_m": 0.002,
     "settling_margin_s": 0.1,
 }
+
+
+@pytest.mark.parametrize("phase", ["reference-entry", "approach", "reference"])
+def test_failed_approach_preparation_fences_the_next_backend_target(
+    monkeypatch, tmp_path, phase
+):
+    case = {**CASE, "approach_rad": [-0.2]}
+    modes = []
+
+    def child(command, **kwargs):
+        mode = command[command.index("--backend") + 1]
+        modes.append(mode)
+        result = backend_result(mode, case=case)
+        if mode == "vendor":
+            failed = next(
+                i
+                for i, trial in enumerate(result["trials"])
+                if trial["case_id"] == case["case_id"] + "-" + phase
+            )
+            result["trials"] = result["trials"][: failed + 1]
+            result["trials"][-1]["outcome"] = "not_arrived"
+        else:
+            assert "--reference-only" in command
+            result["trials"] = result["trials"][:3]
+        Path(command[command.index("--output") + 1]).write_text(json.dumps(result))
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(paired.subprocess, "run", child)
+    monkeypatch.setattr(paired, "reject_ci", lambda: None)
+    report = paired.paired(
+        {
+            "evidence_directory": str(tmp_path),
+            "torque_release_authorized": True,
+            "comparison": COMPARISON,
+        },
+        case,
+    )
+    assert modes == ["vendor", "sdk"]
+    assert not report["verdict"]["passed"]
+    assert all(trial["case_id"] != case["case_id"] for trial in report["trials"])
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "missing",
+        "reordered",
+        "duplicate",
+        "nonarrival",
+        "wrong_target",
+        "start_mismatch",
+    ],
+)
+def test_approach_cannot_hide_incomplete_preparation_or_unmatched_start(failure):
+    case = {**CASE, "approach_rad": [-0.2]}
+    report = {
+        "config": {"comparison": {**COMPARISON, "initial_tolerance_rad": 0.005}},
+        "runs": [backend_result(mode, case=case) for mode in ("vendor", "sdk")],
+    }
+    assert paired.compare(report, case)["passed"]
+    trials = report["runs"][1]["trials"]
+    if failure == "missing":
+        del trials[0]
+    elif failure == "reordered":
+        trials[0], trials[1] = trials[1], trials[0]
+    elif failure == "duplicate":
+        trials[1] = trials[0]
+    elif failure == "nonarrival":
+        trials[1]["outcome"] = "not_arrived"
+    elif failure == "wrong_target":
+        trials[1]["target_rad"] = [0]
+    else:
+        trials[3]["start_rad"] = [0.005340657663847281]
+    assert not paired.compare(report, case)["passed"]
 
 
 def test_pair_preserves_nonarrival_runs_other_backend_and_reuses_calibration(

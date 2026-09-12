@@ -64,6 +64,13 @@ passing is evidence, not certification, and it never authorizes live motion by i
 
 ## SDK live suite
 
+Single-arm SDK/vendor comparisons can specify a reviewed `approach_rad` to reach
+the reference through a common approach. Entry, approach and reference must each
+arrive before the target trial. Preparation has separate measured timing and does
+not relax target-start matching or accuracy limits. See the
+[live motion profile](https://github.com/waddlelabs/waddle-sdk/blob/feat/minimal-stack/sdk/tests/live/README.md)
+for sequencing, fault containment and parking requirements.
+
 The opt-in SDK suite also covers two-arm named observations/submissions, reuse of
 an arrived arm while its neighbor moves, timing under simultaneous load, envelope
 refusal and measured explicit Hold/e-stop response. It requires an attended,
