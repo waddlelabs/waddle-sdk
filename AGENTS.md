@@ -841,11 +841,20 @@ order; missing paired evidence cannot pass. This does not establish maximum nati
 vendor throughput. Each selected-part projection preserves the original site ID
 and ownership lock. Keep raw samples, original faults and uncertain cleanup in
 the evidence; never advance to larger motions after failed reference acquisition.
+Optional per-case `minimum_settle_s` delays arrival/Hold after final-target dispatch
+while retaining three consecutive in-tolerance observations and all safety checks.
+It defaults to zero and cannot extend the total `settle_s` deadline. Preserve the
+requested minimum and first final-target dispatch timing in trial evidence.
 Optional `rest_positions` supplies reviewed named-joint parking targets. Paired
 backends return there after healthy bounded trials, including nonarrival, before
 closing; parking evidence stays outside comparison trials. Parking failure blocks
 the next owner. Driver, gate and captured background faults prohibit further
 trajectory commands, including automatic parking; never infer a resting pose.
+Background part-read failures enter the existing runtime event stream as
+`robot.part_fault` with original structured fault and part. Healthy streams
+continue, but recovery does not erase history. The live motion benchmarks
+retain and check those events before commands and after teardown, so a
+transient failure cannot become a passing comparison.
 `SiteSession.close(torque_release_authorized=True)` permits headless teardown only
 with explicit site-operator authorization to release holding torque. Normal close
 and context exit keep the parking/support wait; uncertain teardown retains ownership.

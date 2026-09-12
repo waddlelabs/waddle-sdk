@@ -34,6 +34,17 @@ Use `site`, `evidence_directory`, `parts`, `cameras`, `cases`, and explicit
 from the streamed reference. `velocity_feedforward` explicitly selects that
 command path. Targets are local rig inputs, not guessed from USB or CAN discovery.
 
+Optional per-case `minimum_settle_s` defaults to zero. A positive value keeps the
+final target commanded for at least that many seconds after its first successful
+dispatch before accepting arrival or issuing Hold. The latest three observations
+must still meet both arrival tolerances. `settle_s` remains the total deadline
+after the planned trajectory; the minimum must be finite, nonnegative and no
+greater than that budget. Allow room for command and sampling latency: equal
+minimum and total budgets can time out. Gates, tracking checks and faults still
+interrupt immediately. Reference, return and configured rest inherit the case's
+minimum. Reports retain `minimum_settle_s` and `target_latched_elapsed_s`; the
+latter is local command completion time, not motor acknowledgement.
+
 Single-arm tests project the selected part into a public SiteSession and keep the
 original site ID and ownership lock. An unrelated arm is never opened merely to
 hold it during another arm's trial. The native gate and manifest envelope still
@@ -62,7 +73,8 @@ command cadence. Starts come from fresh measured joints. Reports compare target
 start states and reject differences beyond the declared bound, or trajectory
 durations differing by more than one command period. `motion_elapsed_s` (also
 `elapsed_s`) ends at the motion loop's terminal decision; `arrival_elapsed_s`
-identifies the third settled observation or is null on nonarrival. The measured
+identifies the accepted observation after three consecutive in-tolerance samples
+and any minimum settling window, or is null on nonarrival. The measured
 endpoint is that target-phase observation. `hold_elapsed_s`, `total_elapsed_s`
 and `post_hold_measured_rad` separately record cleanup latency and any later
 drift. Settling after the trajectory is used for the configured timing regression
@@ -80,6 +92,10 @@ This opt-in command opens hardware. CI is refused. It collects the other backend
 after a healthy bounded nonarrival, records the failed absolute result, and
 returns a failing exit code. A motor fault, unsafe tracking or uncertain shutdown
 blocks the next owner. A failed reference never advances to a larger target.
+The SDK benchmark also checks retained `robot.part_fault` events before commands
+and after shutdown. A later healthy read cannot hide an earlier selected-part
+failure: `part_faults` preserves the event cursor, timestamp, part and complete
+fault, and that part receives no further diagnostic trajectories.
 Reference-only evidence reports independently measured starting states and is
 diagnostic evidence, not a matched target throughput baseline.
 

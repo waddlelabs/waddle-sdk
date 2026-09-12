@@ -2,16 +2,15 @@
 
 from dataclasses import replace
 from threading import Event
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 import yaml
-
+from test_site_api import _write_site
 from waddle_sdk import load_site
 from waddle_sdk.robots import mock
 from waddle_sdk.runtime import FaultCode, JointPositionCommand, RuntimeFault
-
-from test_site_api import _write_site
 
 DRIVERS = {}
 
@@ -91,7 +90,9 @@ def test_local_fault_retains_neighbor_receipt_and_original_error(
             np.testing.assert_allclose(DRIVERS["right"]._target, [0.01, 0.0])
 
 
-def test_named_commands_keep_global_hold_and_reject_unknown_parts(site_path, monkeypatch):
+def test_named_commands_keep_global_hold_and_reject_unknown_parts(
+    site_path, monkeypatch
+):
     with load_site(site_path).open() as sdk, sdk.run(task="hold", actor="test") as run:
         with pytest.raises(RuntimeFault):
             run.step_parts({"absent": JointPositionCommand([0.0, 0.0])})
@@ -114,3 +115,34 @@ def test_named_commands_keep_global_hold_and_reject_unknown_parts(site_path, mon
         assert all(not result.dispatched for result in receipts.values())
         for driver in DRIVERS.values():
             np.testing.assert_allclose(driver._target, [0.0, 0.0])
+
+
+def test_transient_pump_fault_remains_structured_after_read_recovery(
+    site_path, monkeypatch
+):
+    with load_site(site_path).open() as sdk:
+        managed = sdk._managed
+        managed.pump.stop()
+        reported = []
+        tick = managed._rig.build_tick(
+            SimpleNamespace(report_proprio=lambda **row: reported.append(row["part"])),
+            managed.arms,
+        )
+        origin = RuntimeFault(
+            FaultCode.MOTOR_FAILURE,
+            "left motor 2 returned an invalid feedback frame",
+            context={"motor": 2, "channel": "fake_left"},
+        )
+
+        def fail():
+            raise origin
+
+        with monkeypatch.context() as patch:
+            patch.setattr(DRIVERS["left"], "read", fail)
+            tick(0.1)
+        tick(0.1)
+        assert reported == ["right", "left", "right"]
+        assert set(sdk.observe().parts) == {"left", "right"}
+        faults = [event for event in sdk.events() if event.kind == "robot.part_fault"]
+        assert len(faults) == 1
+        assert faults[0].data == {"part": "left", "fault": origin.as_dict()}

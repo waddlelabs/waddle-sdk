@@ -100,6 +100,10 @@ Omitting names reads every declared part. `observe()` retains its all-or-error
 contract; missing measurements are never replaced with cached or invented values.
 The site reporting loop retains individual device failures while continuing other
 parts; a blocked device call or shared simulator failure is not isolated.
+Background part failures remain in `SiteSession.events()` as `robot.part_fault`
+events containing `part` and the original structured `fault`, including its cause
+chain. Later successful reads do not erase that history. Unchanged repeated fault
+payloads are coalesced per part; applications choose their response policy.
 
 `Run.step_parts({part: JointPositionCommand(...)}, observation)` returns one
 `SubmitResult` per addressed part. Each command crosses the native gate and owner

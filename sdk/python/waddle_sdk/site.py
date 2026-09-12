@@ -576,6 +576,7 @@ def _combine_rigs(
     simulation_backends: Mapping[str, SimulationBackend],
     part_worlds: Mapping[str, str],
     simulation_lock: threading.RLock,
+    on_part_fault: Callable[[str, Exception], None] | None = None,
 ) -> base.Rig:
     rates = {float(rig.rate_hz) for rig in components.values()}
     if len(rates) != 1:
@@ -690,7 +691,10 @@ def _combine_rigs(
                 "observe robot part", error, context={"part": part}
             ).as_dict()
             if last_faults.get(part) != fault:
-                arms[part].report(str(fault))
+                if on_part_fault is None:
+                    arms[part].report(str(fault))
+                else:
+                    on_part_fault(part, error)
                 last_faults[part] = fault
 
         advance = None
@@ -796,7 +800,10 @@ class Site:
         )
 
     def _assembly(
-        self, resolver: Mapping[str, str] | Callable[[str], str] | None
+        self,
+        resolver: Mapping[str, str] | Callable[[str], str] | None,
+        *,
+        on_part_fault: Callable[[str, Exception], None] | None = None,
     ) -> _SiteAssembly:
         raw = _resolve_secrets(self.manifest, resolver)
         assert isinstance(raw, Mapping)
@@ -907,6 +914,7 @@ class Site:
             simulation_backends,
             part_worlds,
             simulation_lock,
+            on_part_fault,
         )
         return _SiteAssembly(rig, simulation_backends, [], simulation_lock)
 
@@ -1031,7 +1039,9 @@ class SiteSession:
             raise
 
     def _open(self) -> SiteSession:
-        assembly = self.site._assembly(self._secrets)
+        assembly = self.site._assembly(
+            self._secrets, on_part_fault=self._record_part_fault
+        )
         rig = assembly.rig
         self._authorize_connector(rig)
         managed = base.RigSession(
@@ -1208,6 +1218,17 @@ class SiteSession:
             event = RuntimeEvent(len(self._events) + 1, kind, session_ns, dict(data))
             self._events.append(event)
         return event
+
+    def _record_part_fault(self, part: str, error: Exception) -> None:
+        self._event(
+            "robot.part_fault",
+            {
+                "part": part,
+                "fault": _event_fault(
+                    "observe robot part", error, context={"part": part}
+                ),
+            },
+        )
 
     def describe(self) -> Mapping[str, JSONValue]:
         description = dict(self.site.describe())

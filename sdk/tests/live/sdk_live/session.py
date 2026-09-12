@@ -11,9 +11,32 @@ from uuid import uuid4
 import numpy as np
 from waddle_sdk import load_site
 from waddle_sdk.robots.metadata import part_action_spaces
-from waddle_sdk.runtime import FaultCode, JointPositionCommand, RuntimeFault
+from waddle_sdk.runtime import (
+    FaultCode,
+    JointPositionCommand,
+    RuntimeFault,
+    RuntimeFaultCause,
+)
 
 from .metrics import duration, endpoint, quintic, write_report
+
+
+def _recorded_fault(value):
+    def cause(row):
+        return RuntimeFaultCause(
+            row["code"],
+            row["detail"],
+            row["context"],
+            tuple(cause(parent) for parent in row["causes"]),
+        )
+
+    return RuntimeFault(
+        FaultCode(value["code"]),
+        value["detail"],
+        value["retryable"],
+        value["context"],
+        tuple(cause(row) for row in value["causes"]),
+    )
 
 
 class Bench:
@@ -45,6 +68,8 @@ class Bench:
             selected, manifest={**manifest, "parts": parts, "cameras": {}}
         )
         self.session = None
+        self._event_cursor = 0
+        self._part_faults = {}
         self.report = {
             "schema": "waddle.live-benchmark/v1",
             "run_id": uuid4().hex,
@@ -94,6 +119,7 @@ class Bench:
                                     "startup_evidence", None
                                 ),
                             }
+            self._check_part_faults()
         except BaseException as error:
             self.__exit__(type(error), error, error.__traceback__)
             raise
@@ -120,6 +146,11 @@ class Bench:
             RuntimeFault.from_exception(error).as_dict() for error in errors
         ]
         try:
+            self._check_part_faults()
+        except BaseException as error:
+            if error is not exc:
+                errors.append(error)
+        try:
             self.save()
         except BaseException as error:
             errors.append(error)
@@ -131,6 +162,24 @@ class Bench:
                     )
         elif errors:
             raise errors[0]
+
+    def _check_part_faults(self, part=None):
+        if self.session is None:
+            return
+        for event in self.session.events(self._event_cursor):
+            self._event_cursor = event.cursor
+            if event.kind != "robot.part_fault":
+                continue
+            self.report.setdefault("part_faults", []).append(
+                {"cursor": event.cursor, "session_ns": event.session_ns, **event.data}
+            )
+            self._part_faults.setdefault(
+                event.data["part"], _recorded_fault(event.data["fault"])
+            )
+        selected = self.site.manifest["parts"] if part is None else (part,)
+        for name in selected:
+            if name in self._part_faults:
+                raise self._part_faults[name]
 
     def positions(self, part):
         return self.run.observe().parts[part].joint_position.copy()
@@ -207,6 +256,7 @@ class Bench:
         return None
 
     def move(self, part, target, case, *, report_key="trials"):
+        self._check_part_faults(part)
         initial, _ = self.observe(part)
         names = [row["name"] for row in self.spaces[part]["jointPosition"]["joints"]]
         indices = [names.index(name) for name in case["joint_names"]]
@@ -216,6 +266,9 @@ class Bench:
         samples = []
         started = time.monotonic()
         deadline = started + seconds + case["settle_s"]
+        minimum_settle = case.get("minimum_settle_s", 0.0)
+        target_latched_at = None
+        accepted = False
         settled = 0
         measured = initial
         target_pose = self.pose(part, target_full)
@@ -254,8 +307,12 @@ class Bench:
                 command_started = time.monotonic()
                 if getattr(self, "_background_error", None) is not None:
                     raise self._background_error
+                self._check_part_faults(part)
                 self.command(part, q, v)
-                samples[-1]["command_latency_s"] = time.monotonic() - command_started
+                command_finished = time.monotonic()
+                samples[-1]["command_latency_s"] = command_finished - command_started
+                if target_latched_at is None and now - started >= seconds:
+                    target_latched_at = command_finished
                 arrived = (
                     error <= case["joint_tolerance_rad"]
                     and np.linalg.norm(self.pose(part, measured) - target_pose)
@@ -264,10 +321,16 @@ class Bench:
                 settled = (
                     settled + 1 if observed_at - started >= seconds and arrived else 0
                 )
-                if settled >= 3:
+                window_complete = minimum_settle == 0 or (
+                    target_latched_at is not None
+                    and observed_at - target_latched_at >= minimum_settle
+                )
+                if settled >= 3 and window_complete:
+                    accepted = True
                     break
                 # Missed periods stay missed: never burst old commands to catch up.
                 time.sleep(max(0, now + self.period - time.monotonic()))
+            self._check_part_faults(part)
         except BaseException as error:
             failure = error
         motion_elapsed = time.monotonic() - started
@@ -308,14 +371,18 @@ class Bench:
             outcome="failed"
             if failure or errors
             else "arrived"
-            if settled >= 3
+            if accepted
             else "not_arrived",
             settled_samples=settled,
+            minimum_settle_s=minimum_settle,
+            target_latched_elapsed_s=None
+            if target_latched_at is None
+            else target_latched_at - started,
             cleanup_errors=[
                 RuntimeFault.from_exception(error).as_dict() for error in errors
             ],
             tcp_frame_id=self.site.manifest["parts"][part]["base_frame"],
-            arrival_elapsed_s=samples[-1]["elapsed_s"] if settled >= 3 else None,
+            arrival_elapsed_s=samples[-1]["elapsed_s"] if accepted else None,
             motion_elapsed_s=motion_elapsed,
             endpoint_measurement_elapsed_s=samples[-1]["elapsed_s"] if samples else 0,
             hold_elapsed_s=hold_elapsed,

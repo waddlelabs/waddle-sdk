@@ -14,6 +14,7 @@ from waddle_sdk.runtime import (
     JointPositionCommand,
     Observation,
     PartObservation,
+    RuntimeEvent,
     RuntimeFault,
     SubmitResult,
 )
@@ -100,6 +101,8 @@ def plant(monkeypatch):
         for p, names in axes.items()
     }
     bench.report = {"named": {"samples": [], "submissions": [], "arrivals": []}}
+    bench._event_cursor = 0
+    bench._part_faults = {}
     bench.period = 0.05
     bench.fresh, bench.last_commands = {}, {}
     bench.save = lambda: None
@@ -118,6 +121,7 @@ def plant(monkeypatch):
         bad_frame=False,
         latency=0.0,
         runaway=False,
+        events=[],
     )
 
     def advance():
@@ -189,7 +193,12 @@ def plant(monkeypatch):
         state.stop_at = clock.now + bench.period
 
     bench.session = SimpleNamespace(
-        observe_parts=read, hold=lambda _: stop("hold"), estop=lambda _: stop("estop")
+        observe_parts=read,
+        hold=lambda _: stop("hold"),
+        estop=lambda _: stop("estop"),
+        events=lambda after: tuple(
+            event for event in state.events if event.cursor > after
+        ),
     )
     bench.run = SimpleNamespace(step_parts=submit)
     return bench, state
@@ -351,16 +360,32 @@ def test_projected_pair_retains_identity_without_opening_other_parts(tmp_path):
     assert not bench.site.manifest["cameras"] and bench.session is None
 
 
-def test_submit_fault_is_saved_without_rewrapping_or_followup_command(monkeypatch):
-    bench, _ = plant(monkeypatch)
+@pytest.mark.parametrize("historical", [False, True])
+def test_submit_fault_is_saved_without_rewrapping_or_followup_command(
+    monkeypatch, historical
+):
+    bench, state = plant(monkeypatch)
     origin = RuntimeFault(
         FaultCode.MOTOR_FAILURE, "motor 2 write failed", context={"part": "left"}
     )
-    bench.run.step_parts = lambda *_: {
-        "left": SubmitResult(False, "owner_refusal", "left", fault=origin)
-    }
+    observed = bench.read()
+    if historical:
+        state.events.append(
+            RuntimeEvent(
+                1, "robot.part_fault", 42, {"part": "left", "fault": origin.as_dict()}
+            )
+        )
+    else:
+        bench.run.step_parts = lambda *_: {
+            "left": SubmitResult(False, "owner_refusal", "left", fault=origin)
+        }
     with pytest.raises(RuntimeFault) as captured:
-        bench.submit({"left": JointPositionCommand([0, 0])}, bench.read())
+        bench.submit({"left": JointPositionCommand([0, 0])}, observed)
+    if historical:
+        assert captured.value.as_dict() == origin.as_dict()
+        assert not bench.report["named"]["submissions"]
+        assert bench.report["part_faults"][0]["fault"] == origin.as_dict()
+        return
     assert captured.value is origin
     assert (
         bench.report["named"]["submissions"][0]["receipts"]["left"]["fault"]
@@ -524,6 +549,7 @@ def test_pair_startup_evidence_keeps_each_arm_including_original_failure(
         run=lambda **_: SimpleNamespace(__enter__=lambda: None),
         describe=dict,
         close=lambda **_: None,
+        events=lambda after_cursor: (),
     )
     owner.site = SimpleNamespace(
         manifest=owner.site.manifest,

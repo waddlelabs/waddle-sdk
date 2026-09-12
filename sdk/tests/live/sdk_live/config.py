@@ -71,6 +71,16 @@ def load(path):
         ):
             if not math.isfinite(case[key]) or case[key] <= 0:
                 raise ValueError(f"{key} must be positive and finite")
+        minimum_settle = case.get("minimum_settle_s", 0.0)
+        if (
+            not isinstance(minimum_settle, (int, float))
+            or isinstance(minimum_settle, bool)
+            or not math.isfinite(minimum_settle)
+            or not 0 <= minimum_settle <= case["settle_s"]
+        ):
+            raise ValueError(
+                "minimum_settle_s must be finite and between 0 and settle_s"
+            )
         displacement = case["min_displacement_m"]
         if not math.isfinite(displacement) or displacement < 0:
             raise ValueError("min_displacement_m must be nonnegative and finite")

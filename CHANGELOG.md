@@ -13,6 +13,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Background part-read failures persist as structured `robot.part_fault` runtime
+  events while healthy streams continue. Live comparisons retain selected-part
+  fault history and reject recovered transient failures before further commands
+  or successful completion.
+
 - SDK-owned live two-arm acceptance measures device feedback, independent arrival
   and reuse, neighbor reference retention, timing under load, envelope refusal and
   explicit Hold/e-stop response. Reviewed profiles select hardware and test-only
@@ -44,6 +49,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   within a bounded deadline without moving or changing envelope checks.
   Comparison rejects nonzero child exits, missing or unequal manifest hashes,
   and missing, duplicated or reordered phases even when recorded arrivals pass.
+  Optional per-case `minimum_settle_s` retains a target-commanded observation
+  window before arrival/Hold without extending the total settling deadline or
+  bypassing faults, tracking checks or three consecutive arrival observations.
 
 - Unify software and live behavior tests under `sdk/tests`; `pytest --live` selects
   viable camera/robot checks from metadata and optional motion profiles, reports

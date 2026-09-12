@@ -10,7 +10,13 @@ import numpy as np
 import pytest
 from live.sdk_live import config as bench_config
 from live.sdk_live import paired, session, vendor
-from waddle_sdk.runtime import FaultCode, RuntimeFault, SubmitResult
+from waddle_sdk.runtime import (
+    FaultCode,
+    RuntimeEvent,
+    RuntimeFault,
+    RuntimeFaultCause,
+    SubmitResult,
+)
 
 CASE = {
     "part": "left",
@@ -43,6 +49,9 @@ def measured_bench(monkeypatch, *, bias=0.0):
     owner.spaces = {"left": {"jointPosition": {"joints": [{"name": "joint1"}]}}}
     owner.period = 0.1
     owner.report = {"trials": []}
+    owner.session = None
+    owner._event_cursor = 0
+    owner._part_faults = {}
     owner.q = np.zeros(1)
     owner.command_count = 0
     owner.held = False
@@ -122,6 +131,74 @@ def test_background_failure_interrupts_stream_before_another_command(monkeypatch
     assert owner.report["trials"][0]["error"] == origin.as_dict()
 
 
+@pytest.mark.parametrize("fault_part", ["left", "right"])
+def test_recovered_pump_fault_blocks_only_the_affected_part(monkeypatch, fault_part):
+    owner = measured_bench(monkeypatch)
+    origin = RuntimeFault(
+        FaultCode.MOTOR_FAILURE,
+        "one CAN feedback transaction failed",
+        context={"motor": 2},
+        causes=(RuntimeFaultCause("receive", "invalid frame", {"errno": 5}),),
+    )
+    events = []
+    owner.session = SimpleNamespace(
+        events=lambda after: tuple(event for event in events if event.cursor > after)
+    )
+    command = owner.command
+
+    def command_then_transient_fault(*args):
+        command(*args)
+        if owner.command_count == 3:
+            events.append(
+                RuntimeEvent(
+                    1,
+                    "robot.part_fault",
+                    42,
+                    {"part": fault_part, "fault": origin.as_dict()},
+                )
+            )
+
+    owner.command = command_then_transient_fault
+    if fault_part == "left":
+        with pytest.raises(RuntimeFault) as captured:
+            owner.move("left", CASE["target_rad"], CASE)
+        assert captured.value.as_dict() == origin.as_dict()
+        assert owner.command_count == 3 and owner.held
+        assert owner.report["trials"][0]["error"] == origin.as_dict()
+        with pytest.raises(RuntimeFault):
+            owner.move("left", CASE["target_rad"], CASE)
+        assert owner.command_count == 3
+    else:
+        assert owner.move("left", CASE["target_rad"], CASE)["outcome"] == "arrived"
+    assert owner.report["part_faults"][0] == {
+        "cursor": 1,
+        "session_ns": 42,
+        "part": fault_part,
+        "fault": origin.as_dict(),
+    }
+
+
+def test_fault_reported_during_shutdown_cannot_leave_successful_evidence(monkeypatch):
+    owner = measured_bench(monkeypatch)
+    owner.config["torque_release_authorized"] = True
+    events = []
+    origin = RuntimeFault(FaultCode.MOTOR_FAILURE, "last pump read failed")
+
+    def close(**kwargs):
+        events.append(
+            RuntimeEvent(
+                1, "robot.part_fault", 42, {"part": "left", "fault": origin.as_dict()}
+            )
+        )
+
+    owner.session = SimpleNamespace(events=lambda after: tuple(events), close=close)
+    with pytest.raises(RuntimeFault) as captured:
+        owner.__exit__(None, None, None)
+    assert captured.value.as_dict() == origin.as_dict()
+    assert owner.report["part_faults"][0]["fault"] == origin.as_dict()
+    assert owner.report["shutdown_errors"] == []
+
+
 def test_arrival_timing_and_endpoint_exclude_later_hold_delay_and_drift(monkeypatch):
     owner = measured_bench(monkeypatch)
 
@@ -138,6 +215,74 @@ def test_arrival_timing_and_endpoint_exclude_later_hold_delay_and_drift(monkeypa
     assert result["hold_elapsed_s"] == pytest.approx(0.7)
     assert result["total_elapsed_s"] - result["elapsed_s"] == pytest.approx(0.7)
     assert result["post_hold_measured_rad"] == [0.0]
+
+
+def test_minimum_settle_keeps_target_latched_before_accepting_arrival(monkeypatch):
+    owner = measured_bench(monkeypatch)
+    case = {**CASE, "minimum_settle_s": 1.0, "settle_s": 2.0}
+    commands = []
+    command = owner.command
+
+    def record_command(part, q, velocity):
+        commands.append((session.time.monotonic(), q.copy()))
+        command(part, q, velocity)
+
+    owner.command = record_command
+    result = owner.move("left", case["target_rad"], case)
+    first_target = next(i for i, (_, q) in enumerate(commands) if q[0] == 0.04)
+    target_time = commands[first_target][0]
+    assert result["outcome"] == "arrived" and owner.held
+    assert result["arrival_elapsed_s"] - target_time >= 1.0
+    assert result["arrival_elapsed_s"] - target_time < 1.0 + 2 * owner.period
+    assert all(q.tolist() == case["target_rad"] for _, q in commands[first_target:])
+    assert result["minimum_settle_s"] == 1.0
+    assert result["target_latched_elapsed_s"] == target_time
+    assert result["settled_samples"] >= 3
+
+
+@pytest.mark.parametrize("failure", ["nonarrival", "motor"])
+def test_minimum_settle_continues_checks_until_timeout_or_fault(monkeypatch, failure):
+    owner = measured_bench(monkeypatch)
+    case = {**CASE, "minimum_settle_s": 1.0, "settle_s": 2.0}
+    origin = RuntimeFault(FaultCode.MOTOR_FAILURE, "CAN writer stopped during settling")
+    command = owner.command
+    target_commands = 0
+
+    def interrupted_command(part, q, velocity):
+        nonlocal target_commands
+        target_commands += int(q[0] == 0.04)
+        if target_commands >= 4 and failure == "motor":
+            raise origin
+        command(part, q, velocity)
+        if target_commands >= 4:
+            owner.q += 0.024376
+
+    owner.command = interrupted_command
+    if failure == "motor":
+        with pytest.raises(RuntimeFault) as captured:
+            owner.move("left", case["target_rad"], case)
+        assert captured.value is origin
+        result = owner.report["trials"][0]
+        assert result["outcome"] == "failed" and result["error"] == origin.as_dict()
+    else:
+        result = owner.move("left", case["target_rad"], case)
+        assert result["outcome"] == "not_arrived"
+        deadline = result["trajectory_duration_s"] + case["settle_s"]
+        assert deadline <= result["elapsed_s"] <= deadline + owner.period
+    assert target_commands >= 4 and owner.held
+    assert result["arrival_elapsed_s"] is None
+
+
+def test_minimum_settle_does_not_extend_total_deadline(monkeypatch):
+    owner = measured_bench(monkeypatch)
+    case = {**CASE, "minimum_settle_s": CASE["settle_s"]}
+    result = owner.move("left", case["target_rad"], case)
+    assert result["settled_samples"] >= 3
+    assert result["outcome"] == "not_arrived"
+    assert result["arrival_elapsed_s"] is None and owner.held
+    assert result["elapsed_s"] <= (
+        result["trajectory_duration_s"] + case["settle_s"] + owner.period
+    )
 
 
 @pytest.mark.parametrize("outcome", ["arrived", "not_arrived"])
@@ -270,6 +415,25 @@ def test_invalid_rest_target_fails_during_configuration_before_hardware(
         )
     )
     with pytest.raises(ValueError, match="rest_positions.left"):
+        bench_config.load(path)
+
+
+@pytest.mark.parametrize("minimum", [-0.1, float("nan"), float("inf"), True, "1", 0.6])
+def test_invalid_minimum_settle_fails_before_hardware(tmp_path, minimum):
+    path = tmp_path / "bench.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema": "waddle.live-bench/v1",
+                "site": "site.yaml",
+                "evidence_directory": "evidence",
+                "parts": ["left"],
+                "cases": [{**CASE, "minimum_settle_s": minimum}],
+                "max_tracking_error_rad": 0.12,
+            }
+        )
+    )
+    with pytest.raises(ValueError, match="minimum_settle_s"):
         bench_config.load(path)
 
 

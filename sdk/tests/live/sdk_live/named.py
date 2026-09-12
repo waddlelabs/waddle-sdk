@@ -62,6 +62,8 @@ class NamedBench(Bench):
 
     def read(self, parts=None):
         parts = self.parts if parts is None else parts
+        for part in parts:
+            self._check_part_faults(part)
         before = time.monotonic()
         devices = {part: self.probes[part].sample() for part in parts}
         observation = self.session.observe_parts(parts)
@@ -137,6 +139,8 @@ class NamedBench(Bench):
         ), self.fresh
 
     def submit(self, commands, observed, *, refusal=False):
+        for part in commands:
+            self._check_part_faults(part)
         started = time.monotonic()
         receipts = self.run.step_parts(commands, observed)
         finished = time.monotonic()
