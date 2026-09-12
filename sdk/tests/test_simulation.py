@@ -1752,6 +1752,14 @@ def _native_conformance(
         }:
             assert engine.reset() is True
             _wave_b_single_prop_conformance(engine, advance, config, environment)
+        if backend == "mujoco" and environment in {
+            "stack-three-cubes",
+            "insert-peg",
+            "retrieve-from-drawer",
+            "store-in-drawer",
+        }:
+            assert engine.reset() is True
+            _wave_c_single_prop_conformance(engine, advance, config, environment)
         assert engine.reset() is True
         np.testing.assert_allclose(engine.read()[0], p.home, atol=1e-6)
         if backend == "mujoco":
@@ -2186,6 +2194,128 @@ def _wave_b_single_prop_conformance(engine, advance, config, environment):
     data.xfrc_applied[hook] = 0.0
     assert contacted
     assert data.xpos[target, 0] < initial_target_x - 0.01
+
+
+def _wave_c_single_prop_conformance(engine, advance, config, environment):
+    """Probe hard single-arm task mechanics without supplying a robot route."""
+
+    model, data = engine.model, engine.data
+    witnesses = {
+        "stack-three-cubes": (
+            ((0.25, -0.13, 0.046), "green"),
+            ((0.35, -0.01, 0.046), "blue"),
+            ((0.27, 0.13, 0.046), "orange"),
+        ),
+        "insert-peg": (
+            ((0.27, -0.12, 0.018), "orange"),
+            ((0.453, 0.10, 0.043), "blue"),
+        ),
+        "retrieve-from-drawer": (
+            ((0.503, 0.0, 0.14), "bright"),
+            ((0.30, 0.18, 0.002), "blue"),
+        ),
+        "store-in-drawer": (
+            ((0.29, -0.15, 0.04), "orange"),
+            ((0.353, 0.0, 0.14), "bright"),
+        ),
+    }
+    classifiers = {
+        "green": lambda r, g, b: g > 2 * max(r, b),
+        "blue": lambda r, g, b: b > 1.5 * max(r, g),
+        "orange": lambda r, g, b: r > 1.4 * g and g > 1.5 * b,
+        "bright": lambda r, g, b: min(r, g, b) > 100,
+    }
+    camera = config["cameras"]["scene"]
+    world_from_camera = np.asarray(camera["transform"])
+    intrinsics = camera["intrinsics"]
+
+    def assert_visible(rgb, point, expected_color):
+        camera_point = np.linalg.inv(world_from_camera) @ [*point, 1.0]
+        u = round(
+            intrinsics["fx"] * camera_point[0] / camera_point[2] + intrinsics["cx"]
+        )
+        v = round(
+            intrinsics["fy"] * camera_point[1] / camera_point[2] + intrinsics["cy"]
+        )
+        assert 0 <= u < rgb.shape[1] and 0 <= v < rgb.shape[0]
+        pixels = rgb[max(0, v - 4) : v + 5, max(0, u - 4) : u + 5]
+        assert any(
+            classifiers[expected_color](*map(int, pixel))
+            for pixel in pixels.reshape(-1, 3)
+        ), (point, expected_color, rgb[v, u])
+
+    rgb, _ = engine.capture("scene")
+    for point, expected_color in witnesses[environment]:
+        assert_visible(rgb, point, expected_color)
+
+    def place_free(name, xyz, quaternion=(1.0, 0.0, 0.0, 0.0)):
+        body = model.body(name)
+        joint_id = int(body.jntadr[0])
+        assert model.jnt_type[joint_id] == engine.mj.mjtJoint.mjJNT_FREE
+        qpos = int(model.jnt_qposadr[joint_id])
+        dof = int(model.jnt_dofadr[joint_id])
+        data.qpos[qpos : qpos + 7] = (*xyz, *quaternion)
+        data.qvel[dof : dof + 6] = 0.0
+        engine.mj.mj_forward(model, data)
+        return int(body.id)
+
+    if environment == "stack-three-cubes":
+        names = ("cube_bottom", "cube_middle", "cube_top")
+        for name, z in zip(names, (0.023, 0.085, 0.147), strict=True):
+            place_free(name, (0.31, 0.0, z))
+        advance(1.5)
+        positions = [data.body(name).xpos.copy() for name in names]
+        for lower, upper in zip(positions[:-1], positions[1:], strict=True):
+            assert upper[2] - lower[2] == pytest.approx(0.046, abs=0.004)
+            assert np.linalg.norm(upper[:2] - lower[:2]) < 0.008
+        return
+
+    if environment == "insert-peg":
+        peg = place_free("target_peg", (0.43, 0.10, 0.12))
+        advance(1.5)
+        np.testing.assert_allclose(data.xpos[peg, :2], (0.43, 0.10), atol=0.004)
+        assert data.xpos[peg, 2] < 0.055
+        assert data.body("target_peg").xmat.reshape(3, 3)[2, 2] > 0.995
+
+        assert engine.reset() is True
+        peg = place_free("target_peg", (0.45, 0.10, 0.12))
+        advance(1.5)
+        assert data.xpos[peg, 2] > 0.075
+        return
+
+    if environment == "retrieve-from-drawer":
+        drawer = model.joint("drawer_slide")
+        drawer_dof = int(drawer.dofadr[0])
+        data.qfrc_applied[drawer_dof] = 5.0
+        advance(1.0)
+        data.qfrc_applied[drawer_dof] = 0.0
+        assert data.joint("drawer_slide").qpos[0] > 0.09
+        assert data.body("target_object").xpos[0] < 0.55
+        opened_target = data.body("target_object").xpos.copy()
+        rgb, _ = engine.capture("scene")
+        assert_visible(rgb, (*opened_target[:2], opened_target[2] + 0.0175), "orange")
+
+        target = place_free("target_object", (0.30, 0.18, 0.06))
+        advance(1.0)
+        np.testing.assert_allclose(data.xpos[target, :2], (0.30, 0.18), atol=0.005)
+        assert 0.012 < data.xpos[target, 2] < 0.023
+        return
+
+    assert environment == "store-in-drawer"
+    assert data.joint("drawer_slide").qpos[0] == pytest.approx(0.15)
+    target = place_free("target_object", (0.51, 0.0, 0.10))
+    advance(1.0)
+    interior = data.body("drawer_interior").xpos.copy()
+    assert np.linalg.norm(data.xpos[target, :2] - interior[:2]) < 0.03
+    drawer = model.joint("drawer_slide")
+    drawer_dof = int(drawer.dofadr[0])
+    data.qfrc_applied[drawer_dof] = -5.0
+    advance(1.0)
+    data.qfrc_applied[drawer_dof] = 0.0
+    assert abs(data.joint("drawer_slide").qpos[0]) < 0.005
+    interior = data.body("drawer_interior").xpos
+    assert abs(data.xpos[target, 0] - interior[0]) < 0.10
+    assert abs(data.xpos[target, 1] - interior[1]) < 0.10
 
 
 @pytest.mark.parametrize("robot", ROBOTS)

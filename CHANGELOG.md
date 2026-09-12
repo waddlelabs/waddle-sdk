@@ -13,6 +13,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Add four hard single-arm MuJoCo development environments for a released
+  three-cube stack, close-clearance peg insertion, retrieving an object from a
+  physical drawer, and storing an object before closing that drawer. Native tests
+  cover visibility, aperture contact, composed object/articulation motion,
+  containment, stability, and reset for all reference families.
 - Add four medium two-arm MuJoCo development environments for block handover,
   stabilizing a movable drawer cabinet, holding a movable container during
   placement, and stabilizing a friction-fit box while removing its lid. Native

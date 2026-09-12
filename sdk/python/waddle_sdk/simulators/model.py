@@ -111,7 +111,13 @@ def objects(environment: str) -> list[list[Link]]:
             ],
         )
 
-    def drawer_fixture(*, initial=0.0, cabinet_kind="fixed", cabinet_name="cabinet"):
+    def drawer_fixture(
+        *,
+        initial=0.0,
+        cabinet_kind="fixed",
+        cabinet_name="cabinet",
+        include_interior=False,
+    ):
         cabinet = Link(
             cabinet_name,
             xyz=(0.66, 0.0, 0.0),
@@ -153,7 +159,18 @@ def objects(environment: str) -> list[list[Link]]:
                 ),
             ],
         )
-        return [cabinet, drawer]
+        fixture = [cabinet, drawer]
+        if include_interior:
+            fixture.append(
+                Link(
+                    "drawer_interior",
+                    parent="drawer",
+                    xyz=(0.0, 0.0, 0.055),
+                    mass=1e-6,
+                    inertia=(1e-9, 1e-9, 1e-9, 0.0, 0.0, 0.0),
+                )
+            )
+        return fixture
     if environment == "two_cubes":
         return [
             table,
@@ -727,6 +744,96 @@ def objects(environment: str) -> list[list[Link]]:
             ],
         )
         return [table, [frame, door, lever, latch]]
+    if environment == "stack-three-cubes":
+        return [
+            table,
+            [
+                free_box(
+                    "cube_bottom", (0.25, -0.13, 0.023), (0.1, 0.72, 0.2, 1.0)
+                )
+            ],
+            [
+                free_box(
+                    "cube_middle", (0.35, -0.01, 0.023), (0.15, 0.35, 0.95, 1.0)
+                )
+            ],
+            [
+                free_box(
+                    "cube_top", (0.27, 0.13, 0.023), (0.95, 0.45, 0.08, 1.0)
+                )
+            ],
+        ]
+    if environment == "insert-peg":
+        peg = Link(
+            "target_peg",
+            xyz=(0.27, -0.12, 0.012),
+            rpy=(0.0, math.pi / 2, 0.0),
+            kind="free",
+            mass=0.05,
+            inertia=(0.000027, 0.000027, 0.0000036, 0.0, 0.0, 0.0),
+            shapes=[
+                Shape(
+                    "cylinder",
+                    (0.012, 0.08),
+                    color=(0.95, 0.45, 0.08, 1.0),
+                )
+            ],
+        )
+        socket_shapes = [
+            Shape(
+                "box",
+                (0.10, 0.10, 0.006),
+                (0.0, 0.0, 0.003),
+                color=(0.12, 0.35, 0.95, 1.0),
+            )
+        ]
+        for index in range(16):
+            angle = 2 * math.pi * index / 16
+            socket_shapes.append(
+                Shape(
+                    "box",
+                    (0.020, 0.012, 0.04),
+                    (0.023 * math.cos(angle), 0.023 * math.sin(angle), 0.023),
+                    (0.0, 0.0, angle + math.pi / 2),
+                    color=(0.12, 0.35, 0.95, 1.0),
+                )
+            )
+        socket = Link("target_hole", xyz=(0.43, 0.10, 0.0), shapes=socket_shapes)
+        return [table, [peg], [socket]]
+    if environment == "retrieve-from-drawer":
+        target = free_box(
+            "target_object",
+            (0.66, 0.0, 0.0735),
+            (0.95, 0.45, 0.08, 1.0),
+            size=0.035,
+            mass=0.03,
+        )
+        goal = Link(
+            "goal_region",
+            xyz=(0.30, 0.18, 0.0005),
+            shapes=[
+                Shape(
+                    "box",
+                    (0.14, 0.14, 0.001),
+                    color=(0.12, 0.35, 0.95, 1.0),
+                    collision=False,
+                )
+            ],
+        )
+        return [table, drawer_fixture(), [target], [goal]]
+    if environment == "store-in-drawer":
+        target = free_box(
+            "target_object",
+            (0.29, -0.15, 0.02),
+            (0.95, 0.45, 0.08, 1.0),
+            size=0.04,
+            mass=0.04,
+        )
+        return [
+            table,
+            drawer_fixture(initial=0.15, include_interior=True),
+            [target],
+        ]
     if environment == "drawer":
         # Keep the closed front clear of the robot's starting hand. The
         # handle travels from x=.503 to .283 m as the drawer opens.
