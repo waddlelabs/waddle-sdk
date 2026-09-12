@@ -139,21 +139,32 @@ positions that all three families can reach. The drawer and rack tasks use an
 elevated scene-camera mount so the open drawer interior and back rack row remain
 visible through the ordinary camera stream.
 
-The reference MuJoCo evaluator reset uses the requested integer seed to apply a
-stable bounded XY translation and yaw rotation to every task scene. Separate
-workpieces vary independently. Parts that form one free assembly, such as a box
-and fitted lid or a loaded tray and its contents, transform as one rigid group so
-reset does not break the fixture. Fixed articulated fixtures move through their
-root body. The same seed and environment reproduce the same pose across worker
-restarts; different seeds select a different pose from the finite development
-profile. Seed `0` is reserved for the canonical pose so an evaluator can run the
-canonical split through the same administration boundary. A normal world
-`reset()` also restores the canonical interactive scene.
+The reference MuJoCo evaluator reset accepts an explicit `SimulationVariation`
+profile with independent `pose`, `appearance`, `physics`, and `geometry`
+dimensions. Each dimension is `canonical`, `bounded`, or `held_out`. The
+development implementation provides:
 
-This variation is evaluator administration, so neither the seed nor sampled pose
-is added to participant-facing site or observation contracts. Evaluation splits
-choose seeds outside the SDK. These bounded profiles exercise scene variation but
-do not establish that their distribution matches a physical workcell.
+- bounded XY/yaw changes for each task pose group, preserving a fitted or loaded
+  free assembly as one rigid group;
+- per-prop RGB factors within 14% and a shared lighting factor within 12%;
+- per-prop mass/inertia, friction, and passive-joint damping factors within 15%;
+  and
+- one task-prop geometry scale within 2%, or a disjoint held-out scale between 2%
+  and 4% from canonical.
+
+The same seed, environment, and profile reproduce the same resolved initial state
+across worker restarts. Appearance does not alter mechanics, physics does not
+alter geometry or appearance, and ordinary `reset()` restores every model and
+state array to the canonical interactive scene. Seed `0` is reserved for the
+fully canonical profile. These ranges are development settings pending physical
+measurement; `held_out` identifies a disjoint development range and does not by
+itself make a private benchmark distribution.
+
+Variation is evaluator administration, so neither the seed nor the resolved
+parameters are added to participant-facing site or observation contracts. The
+privileged snapshot records only the selected profile and a digest of the resolved
+initial variation alongside ordinary ground truth. Evaluation layers choose
+profiles and seeds outside the participant runtime.
 
 MuJoCo's cap reuses its installed first-party nut/bolt SDFs through a small
 dimensional wrapper. Native contact and friction retain the cap under axial
@@ -308,7 +319,7 @@ while giving its participant only the ordinary SDK runtime:
 
 ```python
 from waddle_sdk import load_site
-from waddle_sdk.simulation import SimulationAdministration
+from waddle_sdk.simulation import SimulationAdministration, SimulationVariation
 
 administration = SimulationAdministration()
 with load_site("site.yaml").open(
@@ -317,7 +328,14 @@ with load_site("site.yaml").open(
     # Give only `session` (or an SdkRuntimePort facade over it) to the participant.
     initial = administration.snapshot()
     # After the participant's tool and every admitted motion are terminal:
-    next_initial = administration.reset(seed=1234)
+    next_initial = administration.reset(
+        seed=1234,
+        variation=SimulationVariation(
+            pose="bounded",
+            appearance="bounded",
+            physics="bounded",
+        ),
+    )
 ```
 
 The capability binds only to a fully simulated site whose worlds implement the
@@ -341,18 +359,21 @@ capability, snapshot, seed, predicate, or resolved initial state to participant
 code, prompts, tools, workspaces, errors, camera metadata, or participant traces.
 Process and filesystem isolation remain evaluator responsibilities.
 
-`reset(seed=...)` serializes against SDK action dispatch, world stepping, capture,
-and shutdown; resets simulated robots, props, sensors, controls, and clock; then
-returns the new initial snapshot. It does not end or replace the active SDK run,
-clear a caller's trace or counters, or drain a higher-level motion executor. The
-evaluator must pause participant dispatch and confirm that the current tool call
-and all admitted operations are terminal before reset. A reset advances only the
-administration episode revision, so prepared plans from a higher layer must bind
-and check that revision themselves.
+`reset(seed=..., variation=...)` validates and copies an optional complete
+variation profile, then serializes against SDK action dispatch, world stepping,
+capture, and shutdown. A backend that does not implement the selected profile
+must refuse it. Reset restores and varies simulated robots, props, sensors,
+controls, and clock, then returns the new initial snapshot. It does not end or
+replace the active SDK run, clear a caller's trace or counters, or drain a
+higher-level motion executor. The evaluator must pause participant dispatch and
+confirm that the current tool call and all admitted operations are terminal before
+reset. A reset advances only the administration episode revision, so prepared
+plans from a higher layer must bind and check that revision themselves.
 
 The built-in trusted facet is currently available for MuJoCo. Other installed
 worlds remain valid interactive simulations and can opt in by implementing
-`evaluation_snapshot()` and `evaluation_reset(seed=...)` on their backend. An
+`evaluation_snapshot()` and `evaluation_reset(seed=..., variation=...)` on their
+backend. An
 evaluation that requests administration fails closed if any selected world or
 device is outside that complete simulated authority.
 

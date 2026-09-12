@@ -13,6 +13,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Add an engine-neutral `SimulationVariation` profile to trusted evaluator reset,
+  with independent canonical, bounded, and held-out pose, appearance, physics,
+  and geometry dimensions. Reference MuJoCo task scenes deterministically vary
+  material/lighting, mass/friction/damping, and task-prop scale, restore canonical
+  model arrays on ordinary reset, and record a stable resolved-variation digest
+  only in privileged snapshots.
 - Scale the reference task layout to each robot family's reachable workspace.
   Drawer fixtures keep the existing full-size-arm placement while moving inward
   for SO-101; control, door, socket, rack, USB, and dual-arm workpieces now have

@@ -70,10 +70,13 @@ matched two-arm scenes. Keep their task-relevant
 objects visible from the scene camera for every reference embodiment, and verify
 mechanics without adding task routes or success logic to the simulator.
 Together with the reference drawer they form the 29-task evaluation matrix.
-Trusted evaluator reset applies stable seed-derived bounded XY/yaw variation to
-each scene. Preserve rigid transforms within assembled free fixtures, keep the
-seed and sampled pose outside participant contracts, and retain canonical ordinary
-reset behavior. Evaluator seed zero is reserved for that canonical pose.
+Trusted evaluator reset applies an explicit engine-neutral profile over pose,
+appearance, physics, and geometry. Reference MuJoCo task scenes implement stable
+seed-derived bounded pose/material/lighting/mass/friction/damping variation and
+bounded or disjoint development geometry scales. Preserve rigid transforms within
+assembled free fixtures, keep the seed and resolved variation outside participant
+contracts, and retain canonical ordinary reset behavior. Evaluator seed zero is
+reserved for the fully canonical profile.
 
 ## Repo map
 

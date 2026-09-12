@@ -12,6 +12,7 @@ from waddle_sdk.runtime import SdkRuntimePort, SupportFact
 from waddle_sdk.simulation import (
     SimulationAdministration,
     SimulationAdministrationError,
+    SimulationVariation,
 )
 
 
@@ -185,6 +186,24 @@ def test_trusted_administration_resets_world_without_replacing_active_run(tmp_pa
 
     with pytest.raises(SimulationAdministrationError, match="not bound"):
         administration.snapshot()
+
+
+def test_trusted_administration_validates_and_forwards_reset_variation(tmp_path):
+    administration = SimulationAdministration()
+    with waddle_sdk.load_site(_write_site(tmp_path)).open(
+        console=False,
+        _testing=True,
+        simulation_administration=administration,
+    ) as session:
+        profile = SimulationVariation(appearance="bounded")
+        reset = administration.reset(seed=23, variation=profile)
+        assert reset.worlds["cell"]["variation"] == dict(profile.as_dict())
+        assert "variation" not in str(session.describe()).lower()
+
+        with pytest.raises(ValueError, match="must contain"):
+            administration.reset(seed=24, variation={"pose": "bounded"})
+        with pytest.raises(ValueError, match="geometry"):
+            SimulationVariation(geometry="unknown")
 
 
 def test_administration_refuses_a_world_without_the_optional_facet(tmp_path):

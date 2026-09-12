@@ -6,6 +6,7 @@ import math
 
 import numpy as np
 import pytest
+from waddle_sdk.simulation import SimulationVariation
 from waddle_sdk.simulators.description import description
 from waddle_sdk.simulators.scene import (
     DUAL_ARM_TASK_ENVIRONMENTS,
@@ -69,13 +70,26 @@ def test_seeded_evaluation_reset_covers_complete_task_matrix(
         assert engine.evaluation_reset(seed=712)
         first_snapshot = engine.evaluation_snapshot()
         first = _body_poses(first_snapshot, names)
+        first_variation_digest = first_snapshot["variation"]["resolved_digest"]
         assert engine.evaluation_reset(seed=712)
         assert _body_poses(engine.evaluation_snapshot(), names) == first
+        assert (
+            engine.evaluation_snapshot()["variation"]["resolved_digest"]
+            == first_variation_digest
+        )
 
         assert engine.evaluation_reset(seed=713)
         second_snapshot = engine.evaluation_snapshot()
         second = _body_poses(second_snapshot, names)
         assert second != first
+        assert second_snapshot["variation"]["resolved_digest"] != first_variation_digest
+
+        engine.data.qpos[0] += 0.001
+        engine.mj.mj_forward(engine.model, engine.data)
+        assert (
+            engine.evaluation_snapshot()["variation"]["resolved_digest"]
+            == second_snapshot["variation"]["resolved_digest"]
+        )
 
         assert engine.evaluation_reset(seed=0)
         zero_snapshot = engine.evaluation_snapshot()
@@ -136,5 +150,140 @@ def test_seeded_evaluation_reset_covers_complete_task_matrix(
         assert engine.reset()
         restored = _body_poses(engine.evaluation_snapshot(), names)
         assert restored == canonical
+    finally:
+        engine.close()
+
+
+def test_reset_profiles_change_only_the_selected_trusted_dimension(
+    tmp_path, monkeypatch
+):
+    pytest.importorskip("mujoco")
+    monkeypatch.setenv("MUJOCO_GL", "egl")
+    from waddle_sdk.simulators.mujoco import Engine
+
+    _, config = make_site(
+        "variation-test",
+        backend="mujoco",
+        robot="so101",
+        environment="insert-usb",
+        width=192,
+        height=144,
+        arms=1,
+        render_quality="fast",
+    )
+    engine = Engine(config, tmp_path)
+    try:
+        prop_geoms = np.asarray(engine._prop_geom_ids)
+        prop_bodies = np.asarray(engine._prop_body_ids)
+        canonical_rgba = engine.model.geom_rgba[prop_geoms].copy()
+        canonical_size = engine.model.geom_size[prop_geoms].copy()
+        canonical_mass = engine.model.body_mass[prop_bodies].copy()
+        canonical_friction = engine.model.geom_friction[prop_geoms].copy()
+        canonical_pose = _body_poses(
+            engine.evaluation_snapshot(), tuple(engine._prop_links)
+        )
+        canonical_rgb, _ = engine.capture("scene")
+
+        appearance = SimulationVariation(appearance="bounded")
+        assert engine.evaluation_reset(seed=712, variation=appearance.as_dict())
+        appearance_snapshot = engine.evaluation_snapshot()
+        assert appearance_snapshot["variation"]["profile"] == dict(appearance.as_dict())
+        appearance_digest = appearance_snapshot["variation"]["resolved_digest"]
+        assert appearance_digest.startswith("sha256:")
+        assert not np.array_equal(engine.model.geom_rgba[prop_geoms], canonical_rgba)
+        assert np.array_equal(engine.model.geom_size[prop_geoms], canonical_size)
+        np.testing.assert_allclose(engine.model.body_mass[prop_bodies], canonical_mass)
+        assert (
+            _body_poses(appearance_snapshot, tuple(engine._prop_links))
+            == canonical_pose
+        )
+        changed_rgb, _ = engine.capture("scene")
+        assert not np.array_equal(changed_rgb, canonical_rgb)
+        first_rgba = engine.model.geom_rgba[prop_geoms].copy()
+        assert engine.evaluation_reset(seed=712, variation=appearance.as_dict())
+        np.testing.assert_array_equal(engine.model.geom_rgba[prop_geoms], first_rgba)
+        assert (
+            engine.evaluation_snapshot()["variation"]["resolved_digest"]
+            == appearance_digest
+        )
+        assert engine.evaluation_reset(seed=711, variation=appearance.as_dict())
+        assert (
+            engine.evaluation_snapshot()["variation"]["resolved_digest"]
+            != appearance_digest
+        )
+
+        physics = SimulationVariation(physics="bounded")
+        assert engine.evaluation_reset(seed=713, variation=physics.as_dict())
+        np.testing.assert_array_equal(
+            engine.model.geom_rgba[prop_geoms], canonical_rgba
+        )
+        np.testing.assert_array_equal(
+            engine.model.geom_size[prop_geoms], canonical_size
+        )
+        assert not np.array_equal(engine.model.body_mass[prop_bodies], canonical_mass)
+        assert not np.array_equal(
+            engine.model.geom_friction[prop_geoms], canonical_friction
+        )
+        first_mass = engine.model.body_mass[prop_bodies].copy()
+        assert engine.evaluation_reset(seed=713, variation=physics.as_dict())
+        np.testing.assert_array_equal(engine.model.body_mass[prop_bodies], first_mass)
+
+        geometry = SimulationVariation(geometry="held_out")
+        assert engine.evaluation_reset(seed=714, variation=geometry.as_dict())
+        changed_size = engine.model.geom_size[prop_geoms]
+        ratios = changed_size[canonical_size > 0] / canonical_size[canonical_size > 0]
+        np.testing.assert_allclose(ratios, ratios[0], atol=1e-12)
+        assert 0.96 <= ratios[0] <= 0.98 or 1.02 <= ratios[0] <= 1.04
+        np.testing.assert_array_equal(
+            engine.model.geom_rgba[prop_geoms], canonical_rgba
+        )
+        np.testing.assert_allclose(engine.model.body_mass[prop_bodies], canonical_mass)
+        first_size = engine.model.geom_size[prop_geoms].copy()
+        assert engine.evaluation_reset(seed=714, variation=geometry.as_dict())
+        np.testing.assert_array_equal(engine.model.geom_size[prop_geoms], first_size)
+
+        with pytest.raises(ValueError, match="nonzero seed"):
+            engine.evaluation_reset(seed=0, variation=appearance.as_dict())
+
+        assert engine.reset()
+        np.testing.assert_array_equal(
+            engine.model.geom_rgba[prop_geoms], canonical_rgba
+        )
+        np.testing.assert_array_equal(
+            engine.model.geom_size[prop_geoms], canonical_size
+        )
+        np.testing.assert_allclose(engine.model.body_mass[prop_bodies], canonical_mass)
+        assert engine.evaluation_snapshot()["variation"]["profile"] == dict(
+            SimulationVariation().as_dict()
+        )
+    finally:
+        engine.close()
+
+
+def test_physics_profile_varies_passive_fixture_damping(tmp_path, monkeypatch):
+    pytest.importorskip("mujoco")
+    monkeypatch.setenv("MUJOCO_GL", "egl")
+    from waddle_sdk.simulators.mujoco import Engine
+
+    _, config = make_site(
+        "damping-variation-test",
+        backend="mujoco",
+        robot="so101",
+        environment="drawer",
+        width=192,
+        height=144,
+        arms=1,
+        render_quality="fast",
+    )
+    engine = Engine(config, tmp_path)
+    try:
+        prop_dofs = np.asarray(engine._prop_dof_ids)
+        canonical = engine.model.dof_damping[prop_dofs].copy()
+        assert np.any(canonical > 0)
+        variation = SimulationVariation(physics="bounded")
+        assert engine.evaluation_reset(seed=715, variation=variation.as_dict())
+        changed = engine.model.dof_damping[prop_dofs]
+        assert not np.array_equal(changed, canonical)
+        assert np.all(changed[canonical > 0] > 0)
     finally:
         engine.close()

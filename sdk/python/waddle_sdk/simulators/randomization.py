@@ -81,3 +81,28 @@ def sample(seed, environment, group_index, field, limit):
     integer = int.from_bytes(hashlib.sha256(payload.encode()).digest()[:8], "big")
     unit = integer / 2**64
     return (2.0 * unit - 1.0) * limit
+
+
+def variation_sample(seed, environment, group, field, limit):
+    """Return a stable bounded value for non-pose variation dimensions."""
+
+    if seed == 0:
+        return 0.0
+    payload = f"waddle.mujoco.variation/v1\0{seed}\0{environment}\0{group}\0{field}"
+    integer = int.from_bytes(hashlib.sha256(payload.encode()).digest()[:8], "big")
+    unit = integer / 2**64
+    return (2.0 * unit - 1.0) * limit
+
+
+def held_out_sample(seed, environment, field, inner, outer):
+    """Select a stable signed value outside the open interval +/- ``inner``."""
+
+    if seed == 0:
+        raise ValueError("held-out variation requires a nonzero seed")
+    if not 0 <= inner < outer:
+        raise ValueError("held-out bounds must satisfy 0 <= inner < outer")
+    payload = f"waddle.mujoco.held-out/v1\0{seed}\0{environment}\0{field}"
+    digest = hashlib.sha256(payload.encode()).digest()
+    unit = int.from_bytes(digest[:8], "big") / 2**64
+    sign = -1.0 if digest[8] & 1 else 1.0
+    return sign * (inner + unit * (outer - inner))

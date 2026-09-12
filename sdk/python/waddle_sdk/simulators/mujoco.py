@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import os
 import sys
@@ -10,9 +12,10 @@ from pathlib import Path
 import numpy as np
 
 from ..robots.mujoco import _evaluation_snapshot
+from ..simulation import SimulationVariation
 from .description import description
 from .model import mjcf, objects
-from .randomization import pose_groups, sample
+from .randomization import held_out_sample, pose_groups, sample, variation_sample
 from .scene import depth_z16, profile
 
 
@@ -51,6 +54,51 @@ class Engine:
             [robot.servo(name)[1] / robot.servo(name)[0] for name in native_controls]
         )
         object_groups = objects(config["environment"], robot=config["robot"])
+        self._prop_links = {
+            link.name: link
+            for group in object_groups
+            for link in group
+            if link.name != "table"
+        }
+        self._prop_body_ids = tuple(
+            sorted(int(self.model.body(name).id) for name in self._prop_links)
+        )
+        self._prop_geom_ids = tuple(
+            index
+            for body_id in self._prop_body_ids
+            for index in range(
+                int(self.model.body_geomadr[body_id]),
+                int(
+                    self.model.body_geomadr[body_id] + self.model.body_geomnum[body_id]
+                ),
+            )
+        )
+        self._prop_joint_ids = tuple(
+            index
+            for body_id in self._prop_body_ids
+            for index in range(
+                int(self.model.body_jntadr[body_id]),
+                int(self.model.body_jntadr[body_id] + self.model.body_jntnum[body_id]),
+            )
+        )
+        self._prop_dof_ids = tuple(
+            dof
+            for joint_id in self._prop_joint_ids
+            for dof in range(
+                int(self.model.jnt_dofadr[joint_id]),
+                (
+                    int(self.model.jnt_dofadr[joint_id + 1])
+                    if joint_id + 1 < self.model.njnt
+                    else self.model.nv
+                ),
+            )
+        )
+        self._prop_child_body_ids = tuple(
+            int(self.model.body(name).id)
+            for group in object_groups
+            if group and group[0].name != "table"
+            for name in (link.name for link in group[1:])
+        )
         for group in object_groups:
             root = group[0]
             if root.kind != "free" or not root.damping:
@@ -70,6 +118,9 @@ class Engine:
         self._restore_prop_initial()
         self._pose_groups = pose_groups(config["environment"], object_groups)
         self._pose_initial = self._capture_pose_initial()
+        self._variation_initial = self._capture_variation_initial()
+        self._active_variation = dict(SimulationVariation().as_dict())
+        self._active_variation_digest = self._variation_digest()
 
     def _restore_prop_initial(self):
         for name, value in self._prop_initial.items():
@@ -128,22 +179,202 @@ class Engine:
         self.mj.mj_step(self.model, self.data)
 
     def reset(self):
+        if hasattr(self, "_variation_initial"):
+            self._restore_variation_initial()
         if hasattr(self, "_pose_initial"):
             self._restore_pose_initial()
         self.mj.mj_resetData(self.model, self.data)
+        if hasattr(self, "_variation_initial"):
+            self.mj.mj_setConst(self.model, self.data)
         for part in self.parts:
             self.home(part, self.profile.home)
         self._restore_prop_initial()
+        self._active_variation = dict(SimulationVariation().as_dict())
+        if hasattr(self, "_variation_initial"):
+            self._active_variation_digest = self._variation_digest()
         return True
 
-    def evaluation_reset(self, *, seed):
+    def evaluation_reset(self, *, seed, variation=None):
         if isinstance(seed, bool) or not isinstance(seed, int):
             raise TypeError("simulation reset seed must be an integer")
         if seed < 0 or seed > 2**63 - 1:
             raise ValueError("simulation reset seed must be between 0 and 2^63-1")
+        profile = (
+            SimulationVariation(pose="canonical" if seed == 0 else "bounded")
+            if variation is None
+            else SimulationVariation.parse(variation)
+        )
+        if seed == 0 and profile != SimulationVariation():
+            raise ValueError("noncanonical variation requires a nonzero seed")
         self.reset()
-        self._apply_pose_randomization(seed)
+        if profile.geometry != "canonical":
+            self._apply_geometry_randomization(seed, profile.geometry)
+        if profile.pose != "canonical":
+            self._apply_pose_randomization(seed, profile.pose)
+        if profile.appearance != "canonical":
+            self._apply_appearance_randomization(seed, profile.appearance)
+        if profile.physics != "canonical":
+            self._apply_physics_randomization(seed, profile.physics)
+        self._active_variation = dict(profile.as_dict())
+        self.mj.mj_forward(self.model, self.data)
+        self._active_variation_digest = self._variation_digest()
         return True
+
+    def _capture_variation_initial(self):
+        return {
+            name: getattr(self.model, name).copy()
+            for name in (
+                "body_pos",
+                "body_mass",
+                "body_inertia",
+                "dof_damping",
+                "geom_pos",
+                "geom_size",
+                "geom_rgba",
+                "geom_friction",
+                "jnt_pos",
+                "jnt_range",
+                "light_ambient",
+                "light_diffuse",
+                "light_specular",
+            )
+        }
+
+    def _restore_variation_initial(self):
+        for name, value in self._variation_initial.items():
+            getattr(self.model, name)[:] = value
+
+    def _refresh_model_constants(self):
+        qpos = self.data.qpos.copy()
+        qvel = self.data.qvel.copy()
+        act = self.data.act.copy()
+        ctrl = self.data.ctrl.copy()
+        time_s = float(self.data.time)
+        self.mj.mj_setConst(self.model, self.data)
+        self.data.qpos[:] = qpos
+        self.data.qvel[:] = qvel
+        self.data.act[:] = act
+        self.data.ctrl[:] = ctrl
+        self.data.time = time_s
+        self.mj.mj_forward(self.model, self.data)
+
+    @staticmethod
+    def _level_sample(seed, environment, group, field, level, bound):
+        if level == "bounded":
+            return variation_sample(seed, environment, group, field, bound)
+        return held_out_sample(seed, environment, f"{group}:{field}", bound, bound * 2)
+
+    def _apply_geometry_randomization(self, seed, level):
+        environment = self.config["environment"]
+        delta = self._level_sample(
+            seed, environment, "scene", "geometry_scale", level, 0.02
+        )
+        scale = 1.0 + delta
+        initial = self._variation_initial
+        for geom_id in self._prop_geom_ids:
+            self.model.geom_size[geom_id] = initial["geom_size"][geom_id] * scale
+            self.model.geom_pos[geom_id] = initial["geom_pos"][geom_id] * scale
+        for body_id in self._prop_child_body_ids:
+            self.model.body_pos[body_id] = initial["body_pos"][body_id] * scale
+        for joint_id in self._prop_joint_ids:
+            kind = int(self.model.jnt_type[joint_id])
+            self.model.jnt_pos[joint_id] = initial["jnt_pos"][joint_id] * scale
+            if kind == int(self.mj.mjtJoint.mjJNT_SLIDE):
+                self.model.jnt_range[joint_id] = initial["jnt_range"][joint_id] * scale
+                address = int(self.model.jnt_qposadr[joint_id])
+                self.data.qpos[address] *= scale
+        self._refresh_model_constants()
+
+    def _apply_appearance_randomization(self, seed, level):
+        environment = self.config["environment"]
+        initial = self._variation_initial
+        bound = 0.14
+        for geom_id in self._prop_geom_ids:
+            rgba = initial["geom_rgba"][geom_id].copy()
+            for channel in range(3):
+                delta = self._level_sample(
+                    seed,
+                    environment,
+                    geom_id,
+                    f"appearance_{channel}",
+                    level,
+                    bound,
+                )
+                rgba[channel] = np.clip(rgba[channel] * (1.0 + delta), 0.0, 1.0)
+            self.model.geom_rgba[geom_id] = rgba
+        lighting_delta = self._level_sample(
+            seed, environment, "scene", "lighting", level, 0.12
+        )
+        lighting = 1.0 + lighting_delta
+        for name in ("light_ambient", "light_diffuse", "light_specular"):
+            getattr(self.model, name)[:] = np.clip(initial[name] * lighting, 0.0, 1.0)
+
+    def _apply_physics_randomization(self, seed, level):
+        environment = self.config["environment"]
+        initial = self._variation_initial
+        for body_id in self._prop_body_ids:
+            delta = self._level_sample(seed, environment, body_id, "mass", level, 0.15)
+            factor = 1.0 + delta
+            self.model.body_mass[body_id] = initial["body_mass"][body_id] * factor
+            self.model.body_inertia[body_id] = initial["body_inertia"][body_id] * factor
+        for geom_id in self._prop_geom_ids:
+            delta = self._level_sample(
+                seed, environment, geom_id, "friction", level, 0.15
+            )
+            self.model.geom_friction[geom_id] = np.maximum(
+                initial["geom_friction"][geom_id] * (1.0 + delta), 1e-6
+            )
+        prop_bodies = set(self._prop_body_ids)
+        for joint_id in self._prop_joint_ids:
+            address = int(self.model.jnt_dofadr[joint_id])
+            next_address = (
+                int(self.model.jnt_dofadr[joint_id + 1])
+                if joint_id + 1 < self.model.njnt
+                else self.model.nv
+            )
+            body_id = int(self.model.jnt_bodyid[joint_id])
+            if body_id not in prop_bodies:
+                continue
+            delta = self._level_sample(
+                seed, environment, joint_id, "damping", level, 0.15
+            )
+            self.model.dof_damping[address:next_address] = initial["dof_damping"][
+                address:next_address
+            ] * (1.0 + delta)
+        self._refresh_model_constants()
+
+    def _variation_digest(self):
+        digest = hashlib.sha256(
+            json.dumps(
+                self._active_variation, sort_keys=True, separators=(",", ":")
+            ).encode()
+        )
+        selections = (
+            ("body_pos", self._prop_body_ids),
+            ("body_mass", self._prop_body_ids),
+            ("body_inertia", self._prop_body_ids),
+            ("dof_damping", self._prop_dof_ids),
+            ("geom_pos", self._prop_geom_ids),
+            ("geom_size", self._prop_geom_ids),
+            ("geom_rgba", self._prop_geom_ids),
+            ("geom_friction", self._prop_geom_ids),
+            ("jnt_pos", self._prop_joint_ids),
+            ("jnt_range", self._prop_joint_ids),
+        )
+        for name, indices in selections:
+            digest.update(name.encode())
+            values = np.asarray(getattr(self.model, name)[list(indices)], dtype="<f8")
+            digest.update(values.tobytes())
+        for name in ("light_ambient", "light_diffuse", "light_specular"):
+            digest.update(name.encode())
+            digest.update(np.asarray(getattr(self.model, name), dtype="<f8").tobytes())
+        for group in self._pose_groups:
+            for name in group.bodies:
+                digest.update(name.encode())
+                digest.update(
+                    np.asarray(self._current_pose(name), dtype="<f8").tobytes()
+                )
+        return "sha256:" + digest.hexdigest()
 
     def _capture_pose_initial(self):
         initial = {}
@@ -191,13 +422,43 @@ class Engine:
             ]
         )
 
-    def _apply_pose_randomization(self, seed):
+    def _current_pose(self, name):
+        free, address, _dof_address, _pose = self._pose_initial[name]
+        if free:
+            return self.data.qpos[address : address + 7].copy()
+        body = self.model.body(name)
+        return np.r_[body.pos.copy(), body.quat.copy()]
+
+    def _apply_pose_randomization(self, seed, level="bounded"):
         environment = self.config["environment"]
         for index, group in enumerate(self._pose_groups):
-            dx = sample(seed, environment, index, "x", group.translation_xy_m)
-            dy = sample(seed, environment, index, "y", group.translation_xy_m)
-            yaw = sample(seed, environment, index, "yaw", group.yaw_rad)
-            originals = [self._pose_initial[name][3] for name in group.bodies]
+            if level == "bounded":
+                dx = sample(seed, environment, index, "x", group.translation_xy_m)
+                dy = sample(seed, environment, index, "y", group.translation_xy_m)
+                yaw = sample(seed, environment, index, "yaw", group.yaw_rad)
+            else:
+                dx = held_out_sample(
+                    seed,
+                    environment,
+                    f"pose:{index}:x",
+                    group.translation_xy_m,
+                    group.translation_xy_m * 1.5,
+                )
+                dy = held_out_sample(
+                    seed,
+                    environment,
+                    f"pose:{index}:y",
+                    group.translation_xy_m,
+                    group.translation_xy_m * 1.5,
+                )
+                yaw = held_out_sample(
+                    seed,
+                    environment,
+                    f"pose:{index}:yaw",
+                    group.yaw_rad,
+                    group.yaw_rad * 1.5,
+                )
+            originals = [self._current_pose(name) for name in group.bodies]
             anchor = np.mean([pose[:2] for pose in originals], axis=0)
             cosine, sine = math.cos(yaw), math.sin(yaw)
             rotation = np.array([[cosine, -sine], [sine, cosine]])
@@ -230,6 +491,10 @@ class Engine:
             "environment_id": self.config["environment"],
             "scene_revision": self.config.get("scene_revision"),
             "asset_revision": self.config.get("asset_revision"),
+        }
+        snapshot["variation"] = {
+            "profile": dict(self._active_variation),
+            "resolved_digest": self._active_variation_digest,
         }
         return snapshot
 

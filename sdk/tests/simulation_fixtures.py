@@ -17,7 +17,7 @@ def reset() -> None:
 
 
 class _Driver(base.SimDriver):
-    def __init__(self, world: "World") -> None:
+    def __init__(self, world: World) -> None:
         self._world = world
         super().__init__(
             [0.0, 0.0],
@@ -36,7 +36,7 @@ class _Driver(base.SimDriver):
 
 
 class _Camera:
-    def __init__(self, world: "World") -> None:
+    def __init__(self, world: World) -> None:
         self._world = world
         self._closing = threading.Event()
 
@@ -67,6 +67,7 @@ class World:
         self.steps = 0
         self.resets = 0
         self.evaluation_seed = None
+        self.evaluation_variation = None
 
     def part(self, *, config) -> base.Rig:
         events.append("world.part")
@@ -134,11 +135,13 @@ class World:
             "steps": self.steps,
             "resets": self.resets,
             "seed": self.evaluation_seed,
+            "variation": self.evaluation_variation,
         }
 
-    def evaluation_reset(self, *, seed: int) -> bool:
+    def evaluation_reset(self, *, seed: int, variation=None) -> bool:
         events.append("world.evaluation_reset")
         self.evaluation_seed = seed
+        self.evaluation_variation = variation
         self.resets += 1
         self.steps = 0
         return True

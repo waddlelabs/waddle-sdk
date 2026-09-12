@@ -100,7 +100,10 @@ def serve(connection: Connection) -> None:
                     elif operation == "evaluation_snapshot":
                         result = engine.evaluation_snapshot()
                     elif operation == "evaluation_reset":
-                        result = engine.evaluation_reset(seed=arguments[0])
+                        variation = arguments[1] if len(arguments) > 1 else None
+                        result = engine.evaluation_reset(
+                            seed=arguments[0], variation=variation
+                        )
                         pending_time = 0.0
                         last_time = time.monotonic()
                     else:

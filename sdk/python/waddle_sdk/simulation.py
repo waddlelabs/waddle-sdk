@@ -40,6 +40,54 @@ class WorldConfig:
     site_root: Path = Path(".")
 
 
+@dataclass(frozen=True)
+class SimulationVariation:
+    """Trusted, engine-neutral variation selected for one evaluator reset."""
+
+    pose: str = "canonical"
+    appearance: str = "canonical"
+    physics: str = "canonical"
+    geometry: str = "canonical"
+
+    def __post_init__(self) -> None:
+        levels = {"canonical", "bounded", "held_out"}
+        for name in ("pose", "appearance", "physics", "geometry"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or value not in levels:
+                raise ValueError(
+                    f"simulation variation {name} must be canonical, bounded, "
+                    "or held_out"
+                )
+
+    @classmethod
+    def parse(
+        cls, value: SimulationVariation | Mapping[str, Any]
+    ) -> SimulationVariation:
+        """Validate a complete variation mapping without retaining caller state."""
+
+        if isinstance(value, cls):
+            return value
+        if not isinstance(value, Mapping):
+            raise TypeError("simulation variation must be a mapping")
+        names = {"pose", "appearance", "physics", "geometry"}
+        if set(value) != names:
+            raise ValueError(
+                "simulation variation must contain pose, appearance, physics, "
+                "and geometry"
+            )
+        return cls(**{name: value[name] for name in names})
+
+    def as_dict(self) -> Mapping[str, str]:
+        return MappingProxyType(
+            {
+                "pose": self.pose,
+                "appearance": self.appearance,
+                "physics": self.physics,
+                "geometry": self.geometry,
+            }
+        )
+
+
 @runtime_checkable
 class SimulationBackend(Protocol):
     """Lifecycle and clock surface required for every simulated world.
@@ -85,7 +133,9 @@ class SimulationAdministrationBackend(Protocol):
 
     def evaluation_snapshot(self) -> Mapping[str, Any]: ...
 
-    def evaluation_reset(self, *, seed: int) -> bool: ...
+    def evaluation_reset(
+        self, *, seed: int, variation: Mapping[str, str] | None = None
+    ) -> bool: ...
 
 
 class SimulationAdministrationError(RuntimeError):
@@ -212,19 +262,36 @@ class SimulationAdministration:
                 ) from error
             return self._snapshot(worlds)
 
-    def reset(self, *, seed: int) -> SimulationSnapshot:
+    def reset(
+        self,
+        *,
+        seed: int,
+        variation: SimulationVariation | Mapping[str, Any] | None = None,
+    ) -> SimulationSnapshot:
         """Reset only the bound simulation and return its new initial state."""
 
         if isinstance(seed, bool) or not isinstance(seed, int):
             raise TypeError("simulation reset seed must be an integer")
         if seed < 0 or seed > 2**63 - 1:
             raise ValueError("simulation reset seed must be between 0 and 2^63-1")
+        profile = (
+            None
+            if variation is None
+            else dict(SimulationVariation.parse(variation).as_dict())
+        )
         with self._lock:
             binding = self._require()
             try:
                 with binding.dispatch_lock, binding.lifecycle_lock:
                     for backend in binding.worlds.values():
-                        if not backend.evaluation_reset(seed=seed):
+                        accepted = (
+                            backend.evaluation_reset(seed=seed)
+                            if profile is None
+                            else backend.evaluation_reset(
+                                seed=seed, variation=copy.deepcopy(profile)
+                            )
+                        )
+                        if not accepted:
                             raise SimulationAdministrationError(
                                 "a simulation world refused reset"
                             )
@@ -393,6 +460,7 @@ __all__ = [
     "SimulationFactoryError",
     "SimulationPartBackend",
     "SimulationSnapshot",
+    "SimulationVariation",
     "WorldConfig",
     "build_simulation_backend",
     "resolve_simulation_factory",

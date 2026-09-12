@@ -311,13 +311,15 @@ class MujocoBackend:
             self.mj.mj_forward(self.model, self.data)
             return True
 
-    def evaluation_reset(self, *, seed: int) -> bool:
+    def evaluation_reset(self, *, seed: int, variation=None) -> bool:
         """Reset deterministic state through the evaluator-only capability."""
 
         if isinstance(seed, bool) or not isinstance(seed, int):
             raise TypeError("simulation reset seed must be an integer")
         if seed < 0 or seed > 2**63 - 1:
             raise ValueError("simulation reset seed must be between 0 and 2^63-1")
+        if variation is not None:
+            raise ValueError("portable MuJoCo worlds do not declare reset variation")
         return self.reset()
 
     def evaluation_snapshot(self) -> Mapping[str, Any]:

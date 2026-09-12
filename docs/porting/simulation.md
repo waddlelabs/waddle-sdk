@@ -15,9 +15,12 @@ contracts.
 A backend may separately implement `SimulationAdministrationBackend` for a trusted
 task evaluator. Its finite-JSON snapshot and deterministic seeded reset are bound
 through an explicit `SimulationAdministration` object retained outside participant
-code. This optional facet must cover the complete simulated site and must never be
-added to `SdkRuntimePort`, robot/camera support facts, or ordinary application tools.
-The SDK serializes it with dispatch and world lifecycle; the evaluator remains
+code. Reset may receive a complete engine-neutral `SimulationVariation` profile
+whose pose, appearance, physics, and geometry dimensions independently select
+`canonical`, `bounded`, or `held_out`; unsupported selections fail closed. This
+optional facet must cover the complete simulated site and must never be added to
+`SdkRuntimePort`, robot/camera support facts, or ordinary application tools. The
+SDK serializes it with dispatch and world lifecycle; the evaluator remains
 responsible for stopping participant dispatch and draining higher-level operations.
 
 The base wheel currently discovers these built-ins without opening either runtime:
