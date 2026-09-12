@@ -34,6 +34,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   Both backends now require observable post-start CAN feedback before timing a
   trajectory, preserving startup evidence separately and refusing stale startup
   within a bounded deadline without moving or changing envelope checks.
+  Comparison rejects nonzero child exits, missing or unequal manifest hashes,
+  and missing, duplicated or reordered phases even when recorded arrivals pass.
 
 - Unify software and live behavior tests under `sdk/tests`; `pytest --live` selects
   viable camera/robot checks from metadata and optional motion profiles, reports

@@ -133,6 +133,10 @@ def compare(report, case, *, reference_only=False):
         reasons.append("Full comparison requires explicit noninferiority margins")
     runs = report["runs"]
     for run in runs:
+        if run.get("process_returncode", 0) != 0:
+            reasons.append(
+                f"{run['mode']} process exited with code {run['process_returncode']}"
+            )
         if rest_failed(run, report["config"], case["part"]):
             reasons.append(f"{run['mode']} did not reach its configured rest position")
     if len(runs) != 2:
@@ -142,8 +146,15 @@ def compare(report, case, *, reference_only=False):
         for key in ("control_settings", "command_period_s", "velocity_feedforward"):
             if key not in vendor or key not in sdk or vendor[key] != sdk[key]:
                 reasons.append(f"Backend settings differ: {key}")
+        if not vendor.get("source_manifest_sha256") or vendor.get(
+            "source_manifest_sha256"
+        ) != sdk.get("source_manifest_sha256"):
+            reasons.append("Both backends must identify the same source manifest")
         if not vendor.get("vendor_pristine"):
             reasons.append("Vendor process was not pristine")
+        expected = [case["case_id"] + "-reference"]
+        if not reference_only:
+            expected.extend((case["case_id"], case["case_id"] + "-return"))
         for run in runs:
             if (
                 run.get("error")
@@ -151,9 +162,10 @@ def compare(report, case, *, reference_only=False):
                 or run.get("background_errors")
             ):
                 reasons.append(f"{run['mode']} had an execution or shutdown fault")
-            expected = 1 if reference_only else 3
-            if len(run["trials"]) != expected:
-                reasons.append(f"{run['mode']} stopped before all requested arrivals")
+            if [trial["case_id"] for trial in run["trials"]] != expected:
+                reasons.append(
+                    f"{run['mode']} must complete each requested phase once in order: {expected}"
+                )
             for trial in run["trials"]:
                 limits = (
                     case if trial["case_id"] == case["case_id"] else reference(case)
@@ -180,6 +192,9 @@ def compare(report, case, *, reference_only=False):
                     "trajectory_duration_s",
                 )
             ):
+                reasons.append(
+                    f"Missing paired measurements for SDK phase {trial['case_id']}"
+                )
                 continue
             difference = float(
                 np.max(np.abs(np.asarray(trial["start_rad"]) - other["start_rad"]))

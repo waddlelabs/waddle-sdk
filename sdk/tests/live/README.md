@@ -52,6 +52,10 @@ these margins before measuring; the case's absolute arrival limits still apply.
 The ordinary motion test then compares pristine raw I2RT and SDK child processes
 sequentially. Other robot adapters keep the SDK-only measured test and can add a
 small raw adapter using the same observation/command/hold/pose boundaries.
+Both child processes must exit successfully and identify the same source manifest
+hash. Each must report reference, target and return exactly once in that order;
+reference-only diagnostics require only the reference phase. Missing paired
+measurements fail comparison rather than omitting that phase from the verdict.
 
 Each backend uses the same named case, quintic interpolation and external
 command cadence. Starts come from fresh measured joints. Reports compare target

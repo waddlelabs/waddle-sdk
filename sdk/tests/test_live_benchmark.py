@@ -537,6 +537,8 @@ def backend_result(mode, *, outcome="arrived", error=0.001):
     return {
         "mode": mode,
         "trials": trials,
+        "process_returncode": 0,
+        "source_manifest_sha256": "a" * 64,
         "vendor_pristine": mode == "vendor",
         "velocity_feedforward": False,
         "control_settings": {"kp": [80], "gripper_limits": [0.04, -1.8]},
@@ -651,6 +653,47 @@ def test_absolute_arrival_alone_cannot_pass_vendor_regression_or_mismatched_setu
     mismatch = deepcopy(baseline)
     mismatch["runs"][1]["control_settings"]["kp"] = [100]
     assert not paired.compare(mismatch, CASE)["passed"]
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "process_exit",
+        "missing_manifest",
+        "changed_manifest",
+        "wrong_phase",
+        "duplicate_phase",
+        "reordered_phases",
+        "reference_only_wrong_phase",
+    ],
+)
+def test_pair_requires_successful_processes_and_the_same_complete_case(failure):
+    report = {
+        "config": {"comparison": COMPARISON},
+        "runs": [backend_result("vendor"), backend_result("sdk")],
+    }
+    sdk = report["runs"][1]
+    reference_only = failure == "reference_only_wrong_phase"
+    if reference_only:
+        for run in report["runs"]:
+            run["trials"] = run["trials"][:1]
+    assert paired.compare(report, CASE, reference_only=reference_only)["passed"]
+    if failure == "process_exit":
+        sdk["process_returncode"] = 1
+    elif failure == "missing_manifest":
+        for run in report["runs"]:
+            del run["source_manifest_sha256"]
+    elif failure == "changed_manifest":
+        sdk["source_manifest_sha256"] = "b" * 64
+    elif failure == "wrong_phase":
+        sdk["trials"][1]["case_id"] = "unrelated-target"
+    elif failure == "duplicate_phase":
+        sdk["trials"][1]["case_id"] = sdk["trials"][0]["case_id"]
+    elif failure == "reordered_phases":
+        sdk["trials"].reverse()
+    else:
+        sdk["trials"][0]["case_id"] = CASE["case_id"]
+    assert not paired.compare(report, CASE, reference_only=reference_only)["passed"]
 
 
 def test_raw_measurements_reject_stalled_can_cache_without_trusting_read_timestamps(

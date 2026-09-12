@@ -822,7 +822,9 @@ Motion profiles may select `comparison.vendor = "i2rt"` with explicit endpoint,
 settling-time and initial-state margins. The paired runner opens pristine vendor
 and SDK subprocesses sequentially, measures the same trajectories and checks
 absolute arrival separately from comparative accuracy. Controller settings and
-external command cadence must match; this does not establish maximum native
+external command cadence must match. Comparison also requires successful child
+exits, equal source-manifest hashes, and every requested phase exactly once in
+order; missing paired evidence cannot pass. This does not establish maximum native
 vendor throughput. Each selected-part projection preserves the original site ID
 and ownership lock. Keep raw samples, original faults and uncertain cleanup in
 the evidence; never advance to larger motions after failed reference acquisition.
