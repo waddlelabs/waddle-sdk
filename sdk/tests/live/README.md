@@ -34,7 +34,7 @@ Use `site`, `evidence_directory`, `parts`, `cameras`, `cases`, and explicit
 from the streamed reference. `velocity_feedforward` explicitly selects that
 command path. Targets are local rig inputs, not guessed from USB or CAN discovery.
 
-Robot tests project the selected part into a public SiteSession and keep the
+Single-arm tests project the selected part into a public SiteSession and keep the
 original site ID and ownership lock. An unrelated arm is never opened merely to
 hold it during another arm's trial. The native gate and manifest envelope still
 apply. Camera inspection
@@ -170,3 +170,99 @@ physical arms are never opened. Source resolution and raw metric depth remain
 checked independently of WebRTC's adaptive received-frame dimensions. Reports
 record frame counts and received sizes; passing synthetic transport alone does
 not establish physical camera publication.
+
+## Named-part acceptance
+
+`test_04_named_parts.py` tests the SDK directly with two arms in one site/run.
+Only `named_parts.parts` open, retaining the original site ID, lock and envelopes.
+All cases need both discovered devices, authorized teardown and device feedback
+probes. Execution checks the support matrix: named observations, named actions/send
+permission where needed, FK for trajectories, and the selected stop grant. Missing
+requirements skip the dependent test; malformed profiles and device faults fail.
+This harness introduces no runtime or SDK contract changes.
+
+```bash
+python -m pytest --live --live-config=/absolute/bench.json \
+  tests/live/test_04_named_parts.py --collect-only -q
+python -m pytest --live --live-config=/absolute/bench.json \
+  -m 'named_parts and not motion' -x
+python -m pytest --live --live-config=/absolute/bench.json -m named_motion -x
+```
+
+Add an optional `named_parts` object to the existing bench JSON. Numeric limits
+are mandatory, positive, finite, and chosen before execution for the actual bench:
+
+| Field | Meaning |
+|---|---|
+| `parts` | Exactly two distinct names from top-level `parts`, first arm then neighbor. |
+| `observation_s` | Read window, at least twice `max_feedback_gap_s`. |
+| `max_observation_latency_s` | Maximum complete probe + named SDK read latency, including test instrumentation. |
+| `max_feedback_gap_s` | Maximum observed time without a new device generation or ingested state; not exact acquisition age. |
+| `mapping_tolerance_rad` | Bound between named public arm positions and probe positions; also the neighbor reference comparison bound. |
+| `motion_cases` | Optional three `{part, case_id}` references: first arm, neighbor, first arm again. |
+| `max_command_latency_s` | Maximum `step_parts` latency; required with motions. |
+| `max_command_gap_s` | Maximum interval between submissions for each active arm; required with motions. Missed periods are never replayed. |
+| `min_progress_rad` | Minimum measured neighbor progress after reusing the first arm; required with motions. |
+
+The repeated case starts at the first case's target, matched by joint name. The
+neighbor duration must exceed the first trajectory plus its settling budget. Both
+parts need explicit top-level `rest_positions`. The test acquires reviewed
+references, streams both arms, requires three measured joint/TCP arrival samples
+on the first arm while the neighbor remains outside tolerance, then sends a sparse
+command to reuse the arrived arm. It checks the neighbor's retained controller
+reference against its last submission and verifies that the sparse command leaves
+it intact. Later encoder progress and measured arrival provide physical evidence;
+a retained reference alone cannot pass. Choose enough separation to observe these
+events on the real bench.
+
+Ordinary per-arm completion issues no Hold. Healthy trials return both arms to
+reviewed rest positions with unchanged limits. Any failed reference, tracking or
+latency violation, nonarrival or device/gate fault goes straight to existing site
+teardown, without further trajectories or automatic parking. This test stops on
+an error; injected fault isolation remains a deterministic software test, without
+inducing motor or bus failures.
+
+Reads sample both parts together and each exact subset, checking declared joint
+order/width, base frames, finite positions/velocities and device feedback. YAM
+includes a test-only probe of actual CAN cache replacement and robot-state
+ingestion, bounded locks and worker liveness. Startup readiness/settings are
+recorded per arm. SDK envelope timestamps prove ordering only. The controller
+reference is local I2RT state, not motor acknowledgement.
+
+Other adapters declare `feedback_probes: {"part": "module:factory"}` inside
+`named_parts`. Collection checks declaration without importing or opening probes.
+Execution calls `factory(bench, part)`; its read-only, bounded `sample()` returns
+JSON-safe `source`, increasing integer `generation` and `ingestion`, `joint_names`,
+corresponding `position_rad`, and `command_position_rad` for the retained local
+reference. Counters reflect device updates/ingestion, never sample calls or SDK
+envelope timestamps. Probes open no additional owner and send no commands. Probe
+errors fail. A probe can compare a declared subset of axes (YAM compares six arm
+joints, excluding the gripper's different motor coordinates); public shapes still
+cover all axes.
+
+Two optional profiles enable supervisory checks:
+
+- `envelope`: `{part, joint_name, rejected_position_rad, observe_s,
+  max_drift_rad}`. The finite reviewed target must be outside that joint's declared
+  range. One named submission must retain a safety refusal while both measured
+  arms stay within the drift bound. No return command follows this deliberate
+  refusal. Select with `-m named_envelope`.
+- `stops`: a list of `{method, supported, after_s, response_s, observe_s,
+  min_velocity_rad_s, max_velocity_rad_s, max_drift_rad}`. `method` is `hold` or
+  `estop`; `supported` must be explicitly `true` for reviewed physical support of
+  both arms, including possible torque release. `after_s` must interrupt both
+  trajectories. Both arms must be moving above `min_velocity_rad_s` before the
+  stop. Afterward, measured speed must fall below `max_velocity_rad_s` within
+  `response_s` and remain below it through `observe_s`, with drift bounded from
+  the pre-stop pose. The observation window exceeds the response deadline; the
+  moving threshold exceeds the stopped threshold. Each entry opens its own
+  session. No targets, recovery or automatic parking follow the stop. Select with
+  `-k explicit_stop`; missing profiles skip those cases.
+
+`sdk-named-<run-id>.json` and latest `sdk-named-report.json` retain the source
+manifest hash, configuration/support, raw named samples and device provenance,
+command times/gaps and exact receipts, tracking/arrival/reuse evidence, stop
+response/drift, original failures and independent shutdown errors. FK poses are
+encoder-derived, not external metrology. Timing bounds establish acceptance under
+configured two-arm load, not raw-vendor throughput comparison. Software plant and
+native-mock results must never be reported as physical acceptance.

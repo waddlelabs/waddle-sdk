@@ -806,6 +806,18 @@ commands above remain the pre-commit gate and the fastest way to diagnose a fail
 
 ## Live local acceptance
 
+`sdk/tests/live/test_04_named_parts.py` exercises two selected arms through the
+public named ports: device-fresh observations/subsets, independent trajectories
+and measured reuse, explicit cadence/latency bounds, envelope refusal and measured
+Hold/e-stop response. Its optional `named_parts` profile and test-only feedback
+probe contract are documented in the [live guide](sdk/tests/live/README.md#named-part-acceptance).
+Only the selected pair opens, preserving site identity/envelopes. YAM startup
+evidence is per part. Never treat envelope stamps or controller targets as measured
+arrival/freshness. Stop profiles require explicit supported setup; after a stop,
+refusal or failed motion, no automatic parking or further targets are sent. Normal
+per-arm completion sends no shared Hold. Software harness/native-mock tests prove
+verdict behavior, not physical acceptance; induced device faults stay in software.
+
 Per-part uplink cadence is tested with explicit reducer admission times and a FIFO
 transport barrier. Independently phased streams need not share a timestamp; never
 make scheduler coincidence or a longer sleep the proof of separate 10 Hz budgets.

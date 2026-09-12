@@ -13,6 +13,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- SDK-owned live two-arm acceptance measures device feedback, independent arrival
+  and reuse, neighbor reference retention, timing under load, envelope refusal and
+  explicit Hold/e-stop response. Reviewed profiles select hardware and test-only
+  feedback probes; evidence retains original faults and per-arm startup details.
+
 - Optional named-part observations and supervised joint submissions retain healthy results beside exact device faults. Sparse commands preserve native scope/recording, owner envelopes and configured neighbor collision dependencies; existing composite submissions retain their contract.
 
 

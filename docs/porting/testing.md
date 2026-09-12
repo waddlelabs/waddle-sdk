@@ -62,6 +62,19 @@ Begin with the manufacturer's safe mode and the site's smallest reviewed motion.
 Require explicit site-operator approval for each increase in scope. An automated test
 passing is evidence, not certification, and it never authorizes live motion by itself.
 
+## SDK live suite
+
+The opt-in SDK suite also covers two-arm named observations/submissions, reuse of
+an arrived arm while its neighbor moves, timing under simultaneous load, envelope
+refusal and measured explicit Hold/e-stop response. It requires an attended,
+reviewed `named_parts` bench profile and per-device feedback probes. YAM has a
+test-only CAN/ingestion probe; other adapters can provide the same test interface.
+See the [live suite configuration](https://github.com/waddlelabs/waddle-sdk/blob/main/sdk/tests/live/README.md#named-part-acceptance)
+for fields, selection and evidence rules. Acquisition counters must come from
+device feedback, never public observation-envelope timestamps. These tests leave
+SDK runtime contracts unchanged and keep deliberate hardware fault injection out
+of the live suite.
+
 ## Acceptance record
 
 A supported port should leave behind a reviewable record containing the facts sources,

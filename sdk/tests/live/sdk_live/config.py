@@ -97,6 +97,9 @@ def load(path):
             if not math.isfinite(comparison[key]) or comparison[key] < 0:
                 raise ValueError(f"comparison.{key} must be nonnegative and finite")
     config["config_path"] = str(path)
+    from .named_config import validate
+
+    validate(config)
     return config
 
 

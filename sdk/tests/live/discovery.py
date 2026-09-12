@@ -35,6 +35,9 @@ def pytest_configure(config):
         ("motion", "commands physical motion"),
         ("requires_env", "named environment prerequisites for a live service test"),
         ("requires_site", "needs an explicitly configured site manifest"),
+        ("named_parts", "two selected arms and device feedback probes"),
+        ("named_motion", "reviewed independent motion and timing profile"),
+        ("named_envelope", "reviewed out-of-envelope refusal profile"),
     ):
         config.addinivalue_line("markers", f"{name}: {text}")
     config.live_bench = {"parts": [], "cameras": [], "cases": []}
@@ -116,6 +119,13 @@ def pytest_generate_tests(metafunc):
     if Path(__file__).parent not in Path(metafunc.definition.path).parents:
         return
     values = metafunc.config.live_bench
+    if "named_stop" in metafunc.fixturenames:
+        stops = values.get("named_parts", {}).get("stops", []) or [None]
+        metafunc.parametrize(
+            "named_stop",
+            stops,
+            ids=[row["method"] if row else "unconfigured" for row in stops],
+        )
     for name, key in (("part", "parts"), ("camera", "cameras"), ("case", "cases")):
         if name in metafunc.fixturenames:
             rows = values[key] or [None]
@@ -169,7 +179,34 @@ def reason(item):
         return None
     if "site" in missing:
         return missing["site"]
-    # Each robot test projects one part, retaining the original site lock ID.
+    named = (
+        item.get_closest_marker("named_parts")
+        if hasattr(item, "get_closest_marker")
+        else None
+    )
+    if named:
+        from .sdk_live.feedback import factory_path
+
+        profile = item.config.live_bench.get("named_parts")
+        if not profile:
+            return "two-arm acceptance needs a named_parts profile"
+        for part in profile["parts"]:
+            if f"parts:{part}" in missing:
+                return missing[f"parts:{part}"]
+        if "shutdown" in missing:
+            return missing["shutdown"]
+        if item.get_closest_marker("named_motion") and not profile.get("motion_cases"):
+            return "named motion needs reviewed motion_cases and timing limits"
+        if item.get_closest_marker("named_envelope") and not profile.get("envelope"):
+            return "named envelope test needs a reviewed refusal target"
+        if "named_stop" in params and params["named_stop"] is None:
+            return "named stopping needs reviewed stops with physical support"
+        site = load_site(item.config.live_bench["site"])
+        for part in profile["parts"]:
+            if factory_path(item.config.live_bench, site.manifest, part) is None:
+                return f"{part}: device acquisition freshness needs a feedback probe"
+        return None
+    # Single-part tests retain the original site lock ID as well.
     selected_part = params.get("part") or (params.get("case") or {}).get("part")
     if f"parts:{selected_part}" in missing:
         return missing[f"parts:{selected_part}"]

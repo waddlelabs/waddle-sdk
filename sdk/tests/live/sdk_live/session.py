@@ -19,12 +19,15 @@ from .metrics import duration, endpoint, quintic, write_report
 class Bench:
     mode = "sdk"
 
-    def __init__(self, config, part=None):
+    def __init__(self, config, part=None, *, parts=None):
         self.config = config
         selected = load_site(config["site"])
         manifest = dict(selected.describe())
         # Camera-only tests own their independent lifecycle; joint tests need no
         # camera dependencies. Keep the site identity and robot envelope intact.
+        if part is not None and parts is not None:
+            raise ValueError("Select part or parts, not both")
+        selected_parts = [part] if part is not None else parts
         parts = {
             name: {
                 **row,
@@ -34,9 +37,10 @@ class Bench:
                 },
             }
             for name, row in manifest["parts"].items()
+            if selected_parts is None or name in selected_parts
         }
-        if part is not None:
-            parts = {part: parts[part]}
+        if selected_parts is not None and set(parts) != set(selected_parts):
+            raise ValueError("Selected bench parts are absent from the site")
         self.site = replace(
             selected, manifest={**manifest, "parts": parts, "cameras": {}}
         )
@@ -70,8 +74,7 @@ class Bench:
             self.report["velocity_feedforward"] = self.config.get(
                 "velocity_feedforward", False
             )
-            if len(self.spaces) == 1:
-                part = next(iter(self.spaces))
+            for part in self.spaces:
                 if (
                     self.site.manifest["parts"][part].get("driver")
                     == "waddle_sdk.robots.yam:arm"
@@ -80,7 +83,17 @@ class Bench:
 
                     driver = self.session._managed.arms[part].driver
                     self.report["control_settings"] = settings(driver._robot)
-                    wait_for_startup(self, driver._robot, driver.channel)
+                    try:
+                        wait_for_startup(self, driver._robot, driver.channel)
+                    finally:
+                        if len(self.spaces) > 1:
+                            evidence = self.report.setdefault("part_startup", {})
+                            evidence[part] = {
+                                "control_settings": self.report.pop("control_settings"),
+                                "startup_evidence": self.report.pop(
+                                    "startup_evidence", None
+                                ),
+                            }
         except BaseException as error:
             self.__exit__(type(error), error, error.__traceback__)
             raise
