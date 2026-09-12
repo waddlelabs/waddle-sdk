@@ -834,6 +834,117 @@ def objects(environment: str) -> list[list[Link]]:
             drawer_fixture(initial=0.15, include_interior=True),
             [target],
         ]
+    if environment == "insert-usb":
+        connector = Link(
+            "usb_connector",
+            xyz=(0.28, -0.12, 0.009),
+            kind="free",
+            mass=0.025,
+            inertia=(0.000006, 0.000025, 0.000025, 0.0, 0.0, 0.0),
+            shapes=[
+                Shape(
+                    "box",
+                    (0.06, 0.04, 0.018),
+                    (-0.03, 0.0, 0.0),
+                    color=(0.95, 0.45, 0.08, 1.0),
+                ),
+                Shape(
+                    "box",
+                    (0.035, 0.028, 0.004),
+                    (0.0175, 0.0, -0.0025),
+                    color=(0.72, 0.75, 0.8, 1.0),
+                ),
+                # The upper-left rail leaves the upper-right quadrant empty.
+                # A matching port key fills that quadrant, so the lower plate
+                # collides with it after a 180-degree roll.
+                Shape(
+                    "box",
+                    (0.035, 0.006, 0.005),
+                    (0.0175, -0.011, 0.002),
+                    color=(0.72, 0.75, 0.8, 1.0),
+                ),
+            ],
+        )
+        port = Link(
+            "usb_port",
+            xyz=(0.50, 0.10, 0.12),
+            shapes=[
+                Shape("box", (0.04, 0.065, 0.16), (0.0, -0.0475, 0.0)),
+                Shape("box", (0.04, 0.065, 0.16), (0.0, 0.0475, 0.0)),
+                Shape("box", (0.04, 0.03, 0.075), (0.0, 0.0, -0.0425)),
+                Shape("box", (0.04, 0.03, 0.075), (0.0, 0.0, 0.0425)),
+                Shape(
+                    "box",
+                    (0.025, 0.010, 0.005),
+                    (0.0075, 0.008, 0.002),
+                    color=(0.72, 0.75, 0.8, 1.0),
+                ),
+                Shape(
+                    "box",
+                    (0.006, 0.03, 0.011),
+                    (0.033, 0.0, 0.0),
+                    color=(0.72, 0.75, 0.8, 1.0),
+                ),
+            ],
+        )
+        return [table, [connector], [port]]
+    if environment == "load-clear-test-tubes":
+        tube_color = (0.55, 0.88, 0.96, 0.38)
+        tubes = [
+            [
+                Link(
+                    f"clear_test_tube_{index}",
+                    xyz=(x, y, 0.009),
+                    rpy=(0.0, math.pi / 2, 0.0),
+                    kind="free",
+                    mass=0.015,
+                    inertia=(0.0000128, 0.0000128, 0.00000061, 0.0, 0.0, 0.0),
+                    shapes=[Shape("cylinder", (0.009, 0.10), color=tube_color)],
+                )
+            ]
+            for index, (x, y) in enumerate(
+                ((0.25, -0.18), (0.30, -0.07), (0.24, 0.05), (0.31, 0.16)),
+                start=1,
+            )
+        ]
+        rack = Link(
+            "blue_rack",
+            xyz=(0.45, 0.10, 0.0),
+            shapes=[
+                Shape(
+                    "box",
+                    (0.16, 0.18, 0.01),
+                    (0.0, 0.0, 0.005),
+                    color=(0.10, 0.30, 0.85, 1.0),
+                )
+            ],
+        )
+        slots = []
+        for row, y in (("front", -0.04), ("back", 0.04)):
+            for column, x in (("left", -0.04), ("right", 0.04)):
+                segments = []
+                for index in range(12):
+                    angle = 2 * math.pi * index / 12
+                    segments.append(
+                        Shape(
+                            "box",
+                            (0.012, 0.008, 0.025),
+                            (0.016 * math.cos(angle), 0.016 * math.sin(angle), 0.0225),
+                            (0.0, 0.0, angle + math.pi / 2),
+                            color=(0.10, 0.30, 0.85, 1.0),
+                        )
+                    )
+                slots.append(
+                    Link(
+                        f"rack_slot_{row}_{column}",
+                        parent="blue_rack",
+                        xyz=(x, y, 0.0),
+                        mass=1e-6,
+                        inertia=(1e-9, 1e-9, 1e-9, 0.0, 0.0, 0.0),
+                        shapes=segments,
+                    )
+                )
+        return [table, *tubes, [rack, *slots]]
     if environment == "drawer":
         # Keep the closed front clear of the robot's starting hand. The
         # handle travels from x=.503 to .283 m as the drawer opens.

@@ -41,6 +41,8 @@ SINGLE_ARM_TASK_ENVIRONMENTS = (
     "insert-peg",
     "retrieve-from-drawer",
     "store-in-drawer",
+    "insert-usb",
+    "load-clear-test-tubes",
 )
 DUAL_ARM_TASK_ENVIRONMENTS = (
     "split_workspace_sorting",
@@ -367,7 +369,11 @@ def make_site(
     if environment == "drawer" or environment in TASK_ENVIRONMENTS:
         # See the interactive face instead of looking from behind fixtures.
         mounts["scene"] = look_at((-0.45, -0.55, 0.55), (0.4, 0, 0.2)).tolist()
-    if environment in {"retrieve-from-drawer", "store-in-drawer"}:
+    if environment in {
+        "retrieve-from-drawer",
+        "store-in-drawer",
+        "load-clear-test-tubes",
+    }:
         # Retain the drawer's front face while exposing its interior once open.
         mounts["scene"] = look_at((-0.35, -0.60, 0.95), (0.48, 0, 0.08)).tolist()
     if environment in DUAL_ARM_TASK_ENVIRONMENTS:

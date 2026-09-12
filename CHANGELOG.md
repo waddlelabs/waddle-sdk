@@ -13,6 +13,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Add the hard single-arm USB-insertion and clear-test-tube loading development
+  environments. The close-clearance connector has a native missing-quadrant key
+  and internal port tab; four translucent physical tubes fit distinct named
+  two-row rack collars. Tests cover correct/reversed insertion, contact load,
+  ordered slot placement, visibility, stability, and reset for every family.
 - Add four hard single-arm MuJoCo development environments for a released
   three-cube stack, close-clearance peg insertion, retrieving an object from a
   physical drawer, and storing an object before closing that drawer. Native tests

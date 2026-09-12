@@ -1757,6 +1757,8 @@ def _native_conformance(
             "insert-peg",
             "retrieve-from-drawer",
             "store-in-drawer",
+            "insert-usb",
+            "load-clear-test-tubes",
         }:
             assert engine.reset() is True
             _wave_c_single_prop_conformance(engine, advance, config, environment)
@@ -2218,12 +2220,25 @@ def _wave_c_single_prop_conformance(engine, advance, config, environment):
             ((0.29, -0.15, 0.04), "orange"),
             ((0.353, 0.0, 0.14), "bright"),
         ),
+        "insert-usb": (
+            ((0.25, -0.12, 0.018), "orange"),
+            ((0.48, 0.10, 0.16), "dark"),
+        ),
+        "load-clear-test-tubes": (
+            ((0.25, -0.18, 0.018), "cyan"),
+            ((0.30, -0.07, 0.018), "cyan"),
+            ((0.24, 0.05, 0.018), "cyan"),
+            ((0.31, 0.16, 0.018), "cyan"),
+            ((0.45, 0.19, 0.023), "blue"),
+        ),
     }
     classifiers = {
         "green": lambda r, g, b: g > 2 * max(r, b),
         "blue": lambda r, g, b: b > 1.5 * max(r, g),
         "orange": lambda r, g, b: r > 1.4 * g and g > 1.5 * b,
         "bright": lambda r, g, b: min(r, g, b) > 100,
+        "dark": lambda r, g, b: max(r, g, b) < 100,
+        "cyan": lambda r, g, b: b > 1.04 * r and g > 1.03 * r,
     }
     camera = config["cameras"]["scene"]
     world_from_camera = np.asarray(camera["transform"])
@@ -2299,6 +2314,56 @@ def _wave_c_single_prop_conformance(engine, advance, config, environment):
         advance(1.0)
         np.testing.assert_allclose(data.xpos[target, :2], (0.30, 0.18), atol=0.005)
         assert 0.012 < data.xpos[target, 2] < 0.023
+        return
+
+    if environment == "insert-usb":
+        connector = place_free("usb_connector", (0.43, 0.10, 0.12))
+        data.xfrc_applied[connector, 0] = 3.0
+        max_normal_force = 0.0
+        for _ in range(round(1.0 / config["timestep"])):
+            engine.step()
+            for index in range(data.ncon):
+                force = np.zeros(6)
+                engine.mj.mj_contactForce(model, data, index, force)
+                max_normal_force = max(max_normal_force, float(force[0]))
+        data.xfrc_applied[connector] = 0.0
+        correct_x = float(data.xpos[connector, 0])
+        assert correct_x > 0.484
+        assert data.body("usb_connector").xmat.reshape(3, 3)[0, 0] > 0.995
+        assert max_normal_force < 15.0
+
+        assert engine.reset() is True
+        connector = place_free(
+            "usb_connector", (0.43, 0.10, 0.12), (0.0, 1.0, 0.0, 0.0)
+        )
+        data.xfrc_applied[connector, 0] = 3.0
+        advance(1.0)
+        data.xfrc_applied[connector] = 0.0
+        assert data.xpos[connector, 0] < 0.482
+        assert correct_x - data.xpos[connector, 0] > 0.005
+        return
+
+    if environment == "load-clear-test-tubes":
+        tube_names = tuple(f"clear_test_tube_{index}" for index in range(1, 5))
+        for name in tube_names:
+            axis = data.body(name).xmat.reshape(3, 3)[:, 2]
+            assert abs(axis[2]) < 0.05
+        slots = (
+            (0.41, 0.14),
+            (0.49, 0.14),
+            (0.41, 0.06),
+            (0.49, 0.06),
+        )
+        for name, (x, y) in zip(tube_names, slots, strict=True):
+            place_free(name, (x, y, 0.12))
+            advance(1.0)
+        for name, (x, y) in zip(tube_names, slots, strict=True):
+            np.testing.assert_allclose(
+                data.body(name).xpos[:2], (x, y), atol=0.004
+            )
+            assert data.body(name).xpos[2] == pytest.approx(0.06, abs=0.004)
+            axis = data.body(name).xmat.reshape(3, 3)[:, 2]
+            assert axis[2] > 0.985
         return
 
     assert environment == "store-in-drawer"

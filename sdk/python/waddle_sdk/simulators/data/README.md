@@ -8,8 +8,8 @@ reference robot verifies its packaged files before an engine sees the model.
 The built-in single-arm MuJoCo development environments for target contact, cube
 lift, bin placement, region pushing, control operation, distractor selection,
 drawer closing, two- and three-cube stacking, ring and peg placement, hook use, a
-lever-latched hinged door, and composed drawer storage/retrieval are built from
-programmatic primitive geometry in
+lever-latched hinged door, composed drawer storage/retrieval, keyed USB insertion,
+and a clear-tube rack are built from programmatic primitive geometry in
 `simulators/model.py`; they do not add third-party assets.
 Their dimensions, masses, inertias, joints, colors, and collision participation
 are declared there and covered by native scene tests. They are development

@@ -53,7 +53,7 @@ Each engine accepts `so101`, `yam`, or `xarm7` and these environments:
   and 5 N·s/m native joint damping. The damping dissipates a pull after release;
   there is no spring returning the drawer to its starting position.
 
-MuJoCo also provides twenty interactive development task environments:
+MuJoCo also provides twenty-two interactive development task environments:
 
 - `touch_target`: one red contact target and two blue distractors.
 - `pick_lift`: one free 46 mm cube.
@@ -79,6 +79,12 @@ MuJoCo also provides twenty interactive development task environments:
   after the drawer opens.
 - `store-in-drawer`: an initially open physical drawer, a free target object, and
   a named interior frame that moves with the drawer.
+- `insert-usb`: a free handled connector with a missing-quadrant tongue and a
+  fixed close-clearance port. An internal tab admits the correct roll and blocks
+  the reversed roll through ordinary native contact.
+- `load-clear-test-tubes`: four translucent free tubes and a blue rack with two
+  named rows of physical slot collars. The elevated scene camera exposes the row
+  order.
 - `split_workspace_sorting`: a matched two-arm scene with one cube initially in
   each arm's outer workspace and two open bins near the center. Each cube's
   matching bin is on the opposite side.
@@ -103,6 +109,10 @@ The two-arm fixture tests verify that drawer/container loads can move their free
 bases and that the box lid's finite friction fit transfers load before separation.
 Hard single-arm tests verify stable three-body support, aligned versus rim-blocked
 peg motion, object transport with the drawer, and containment through closing.
+USB tests compare correct and reversed roll under the same load and retain native
+contact force. Tube tests fill distinct back-row slots before front-row slots and
+verify upright settled bodies. MuJoCo depth still reports ideal geometry for the
+translucent tubes; D405/D435 invalid-depth behavior remains a sensor-parity gate.
 They are development fixtures, not calibrated physical twins. Isaac and SAPIEN
 selection is rejected until the same native evidence exists for those backends.
 
