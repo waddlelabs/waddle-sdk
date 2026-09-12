@@ -13,6 +13,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Add a native-mechanics coverage guard for all 29 MuJoCo evaluation task
+  environments. Every catalog scene must remain assigned to the isolated
+  single-arm conformance path or an explicit dual-arm physics acceptance group.
 - Add evaluator-only per-physics-step contact summaries to reference MuJoCo task
   snapshots. Named geometry pairs retain first/latest time, minimum distance,
   maximum normal force, and sample count until reset, allowing a lower-rate trusted

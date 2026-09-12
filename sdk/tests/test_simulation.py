@@ -53,6 +53,36 @@ ENVIRONMENT_BACKENDS = tuple(
     if environment not in DUAL_ARM_TASK_ENVIRONMENTS
 )
 
+DUAL_ARM_MEDIUM_TASK_ENVIRONMENTS = (
+    "handover-block",
+    "stabilize-open-drawer",
+    "hold-container-place",
+    "stabilize-remove-lid",
+)
+DUAL_ARM_HARD_TASK_ENVIRONMENTS = (
+    "oriented-tool-handover",
+    "two-arm-peg-insertion",
+    "joint-lift",
+    "loaded-tray-transport",
+    "uncap-return-test-tube",
+    "retrieve-bottle-clutter",
+)
+
+
+def test_every_task_environment_has_native_mechanics_acceptance():
+    single_arm = {
+        environment
+        for backend, environment in ENVIRONMENT_BACKENDS
+        if backend == "mujoco" and environment in TASK_ENVIRONMENTS
+    }
+    dual_arm = {
+        "split_workspace_sorting",
+        *DUAL_ARM_MEDIUM_TASK_ENVIRONMENTS,
+        *DUAL_ARM_HARD_TASK_ENVIRONMENTS,
+    }
+    assert single_arm == set(TASK_ENVIRONMENTS) - set(DUAL_ARM_TASK_ENVIRONMENTS)
+    assert dual_arm == set(DUAL_ARM_TASK_ENVIRONMENTS)
+
 
 def documents(
     root: Path,
@@ -2529,12 +2559,7 @@ def test_native_split_workspace_sorting_scene(tmp_path, monkeypatch, robot):
 @pytest.mark.parametrize("robot", ROBOTS)
 @pytest.mark.parametrize(
     "environment",
-    (
-        "handover-block",
-        "stabilize-open-drawer",
-        "hold-container-place",
-        "stabilize-remove-lid",
-    ),
+    DUAL_ARM_MEDIUM_TASK_ENVIRONMENTS,
 )
 def test_native_medium_dual_arm_task_scenes(
     tmp_path, monkeypatch, robot, environment
@@ -2712,14 +2737,7 @@ def test_native_medium_dual_arm_task_scenes(
 @pytest.mark.parametrize("robot", ROBOTS)
 @pytest.mark.parametrize(
     "environment",
-    (
-        "oriented-tool-handover",
-        "two-arm-peg-insertion",
-        "joint-lift",
-        "loaded-tray-transport",
-        "uncap-return-test-tube",
-        "retrieve-bottle-clutter",
-    ),
+    DUAL_ARM_HARD_TASK_ENVIRONMENTS,
 )
 def test_native_hard_dual_arm_task_scenes(tmp_path, monkeypatch, robot, environment):
     mujoco = pytest.importorskip("mujoco")
