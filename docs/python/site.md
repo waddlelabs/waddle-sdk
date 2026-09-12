@@ -111,6 +111,9 @@ envelope and is recorded with its declared part identity. Driver exceptions do n
 erase neighboring receipts. This is not an atomic multi-part transaction. Dispatch
 receipts establish neither arrival nor a confirmed physical stop. A failed write
 can have an unknown physical outcome, even when no successful dispatch was reported.
+Each SDK-owned receipt also bounds the local synchronous dispatch call with
+monotonic start and completion values. Time spent waiting to acquire the shared
+dispatch boundary precedes that interval.
 
 The optional `NamedPartsObservationPort` and `NamedPartsRunPort` contracts are
 advertised as `observation.named_parts` and `action.named_parts` support facts.

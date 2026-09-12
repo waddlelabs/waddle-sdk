@@ -41,3 +41,6 @@ Check `observation.named_parts` / `action.named_parts` support facts. These are
 independent submissions under one site lease, not an atomic multi-arm transaction
 or a promise of hardware fault containment. Configured cross-part envelope checks
 remain mandatory. See `docs/python/site.md` for completion and failure semantics.
+SDK-owned receipts include local monotonic bounds for the dispatch call after it
+acquires the shared dispatch boundary; applications may use the start bound for
+cadence without counting unrelated lock wait as driver execution.

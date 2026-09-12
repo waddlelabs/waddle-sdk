@@ -66,6 +66,9 @@ pass decision then crosses the owner envelope and reaches the addressed driver.
   failed the envelope.
 - `part` identifies a part-addressed native decision when present.
 - `detail` carries a concise public reason where the Python layer has one.
+- `dispatch_started_monotonic_s` and `dispatch_completed_monotonic_s` bound the
+  synchronous gate and driver call after the SDK acquires its dispatch boundary.
+  They are local cadence evidence rather than wall-clock timestamps.
 
 The envelope validates width, finiteness, joint limits, per-command travel, optional
 workspace bounds, and configured static/body-collision rules. It rejects the complete

@@ -51,6 +51,13 @@ class Engine:
             [robot.servo(name)[1] / robot.servo(name)[0] for name in native_controls]
         )
         object_groups = objects(config["environment"])
+        for group in object_groups:
+            root = group[0]
+            if root.kind != "free" or not root.damping:
+                continue
+            joint_id = int(self.model.body(root.name).jntadr[0])
+            dof = int(self.model.jnt_dofadr[joint_id])
+            self.model.dof_damping[dof : dof + 6] = root.damping
         self._prop_initial = {
             link.joint: float(link.initial)
             for group in object_groups

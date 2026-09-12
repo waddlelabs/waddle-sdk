@@ -1903,7 +1903,13 @@ class Run:
 
     def step(self, action, observation=None) -> SubmitResult:
         with self._session._dispatch_lock:
-            return self._step(action, observation)
+            started = time.monotonic()
+            result = self._step(action, observation)
+            return replace(
+                result,
+                dispatch_started_monotonic_s=started,
+                dispatch_completed_monotonic_s=time.monotonic(),
+            )
 
     def step_parts(self, commands, observation=None) -> Mapping[str, SubmitResult]:
         """Submit named joint targets independently, preserving per-part outcomes.
@@ -1928,13 +1934,14 @@ class Run:
         results = {}
         with self._session._dispatch_lock:
             for part, command in commands.items():
+                started = time.monotonic()
                 try:
-                    results[part] = self._step(command, observation, part=part)
+                    result = self._step(command, observation, part=part)
                 except Exception as exc:
                     fault = _operation_fault(
                         "submit robot part", exc, context={"part": part}
                     )
-                    results[part] = SubmitResult(
+                    result = SubmitResult(
                         False, "error", part=part, detail=fault.detail, fault=fault
                     )
                     self._session._event(
@@ -1947,6 +1954,11 @@ class Run:
                             "fault": fault.as_dict(),
                         },
                     )
+                results[part] = replace(
+                    result,
+                    dispatch_started_monotonic_s=started,
+                    dispatch_completed_monotonic_s=time.monotonic(),
+                )
         return results
 
     def _step(self, action, observation=None, *, part=None) -> SubmitResult:

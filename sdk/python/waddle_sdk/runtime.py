@@ -478,6 +478,8 @@ class SubmitResult:
     part: str | None = None
     detail: str = ""
     fault: RuntimeFault | None = None
+    dispatch_started_monotonic_s: float | None = None
+    dispatch_completed_monotonic_s: float | None = None
 
 
 @runtime_checkable

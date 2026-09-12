@@ -1,5 +1,6 @@
 """Independent addressed commands retain native supervision and scoped failures."""
 
+import time
 from dataclasses import replace
 from threading import Event
 from types import SimpleNamespace
@@ -48,6 +49,12 @@ def test_named_dispatch_does_not_overwrite_neighbor_and_observes_arrival(site_pa
         receipts = run.step_parts({"left": left, "right": right}, sdk.observe_parts())
         assert all(
             result.dispatched and result.gate == "pass" for result in receipts.values()
+        )
+        assert all(
+            result.dispatch_started_monotonic_s
+            <= result.dispatch_completed_monotonic_s
+            <= time.monotonic()
+            for result in receipts.values()
         )
         np.testing.assert_allclose(DRIVERS["left"]._target, left.positions)
         np.testing.assert_allclose(DRIVERS["right"]._target, right.positions)

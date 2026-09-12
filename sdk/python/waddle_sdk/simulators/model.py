@@ -28,6 +28,7 @@ class Shape:
     visual: bool = True
     collision: bool = True
     texture: str | None = None
+    friction: tuple[float, float, float] | None = None
 
 
 @dataclass
@@ -559,6 +560,8 @@ def objects(environment: str) -> list[list[Link]]:
             length=0.08,
             rpy=(0.0, math.pi / 2, 0.0),
         )
+        peg.damping = 0.001
+        peg.shapes[0].friction = (1.0, 0.05, 0.01)
         return [table, [receiver, socket], [peg]]
     if environment == "joint-lift":
         tray, _ = tray_fixture("two_handle_tray", xyz=(0.40, 0.0, 0.0))
@@ -1078,6 +1081,8 @@ def objects(environment: str) -> list[list[Link]]:
                 )
             ],
         )
+        peg.damping = 0.001
+        peg.shapes[0].friction = (1.0, 0.05, 0.01)
         socket_shapes = [
             Shape(
                 "box",
@@ -1206,6 +1211,9 @@ def objects(environment: str) -> list[list[Link]]:
                 start=1,
             )
         ]
+        for (tube,) in tubes:
+            tube.damping = 0.001
+            tube.shapes[0].friction = (1.0, 0.05, 0.01)
         rack = Link(
             "blue_rack",
             xyz=(0.45, 0.10, 0.0),
@@ -1509,6 +1517,25 @@ def mjcf(p: Profile, config: dict) -> str:
     # Collision visuals are hidden by the camera renderer; actual CAD remains.
     for geom in world.iter("geom"):
         geom.set("group", "2" if geom.get("contype") == "0" else "3")
+    for group in props:
+        for link in group:
+            if not any(shape.friction is not None for shape in link.shapes):
+                continue
+            collision_shapes = [shape for shape in link.shapes if shape.collision]
+            collision_geometries = [
+                geom
+                for geom in bodies[link.name].findall("geom")
+                if geom.get("group") == "3"
+            ]
+            if len(collision_shapes) != len(collision_geometries):
+                raise RuntimeError(
+                    f"Native collision geometry count changed for {link.name!r}"
+                )
+            for shape, geometry in zip(
+                collision_shapes, collision_geometries, strict=True
+            ):
+                if shape.friction is not None:
+                    geometry.set("friction", numbers(shape.friction))
     # Reuse Menagerie's finger-pad contact response on the manufacturer's
     # collision meshes. Default 20 ms contacts let the stiff linear hand
     # penetrate a held cube and oscillate; no material friction is increased.

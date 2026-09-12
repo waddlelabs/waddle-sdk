@@ -13,6 +13,15 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Add SDK-owned monotonic start/completion bounds to `SubmitResult`. The start is
+  captured after acquiring the shared dispatch boundary, allowing a timed caller
+  to distinguish dispatch work from prior lock contention while retaining the
+  existing per-part gate, fault, and non-arrival semantics.
+- Add explicit rolling/torsional contact friction and small passive free-body
+  damping to loose horizontal cylinders in the insertion and clear-test-tube
+  fixtures. Their canonical tabletop poses now remain at rest for a six-second
+  native soak instead of gaining rolling energy and leaving the evaluation
+  workspace before a participant acts.
 - Apply stable, bounded XY and yaw variation when the trusted evaluator resets any
   of the 29 reference task scenes. The same seed reproduces the same world across
   worker restarts, seed zero selects the canonical pose, assembled free fixtures

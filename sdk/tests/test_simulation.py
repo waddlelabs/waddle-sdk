@@ -2286,6 +2286,13 @@ def _wave_c_single_prop_conformance(engine, advance, config, environment):
         return
 
     if environment == "insert-peg":
+        peg_start = data.body("target_peg").xpos.copy()
+        advance(6.0)
+        np.testing.assert_allclose(
+            data.body("target_peg").xpos[:2], peg_start[:2], atol=0.004
+        )
+        assert np.linalg.norm(data.body("target_peg").cvel[3:]) < 0.01
+        assert engine.reset() is True
         peg = place_free("target_peg", (0.43, 0.10, 0.12))
         advance(1.5)
         np.testing.assert_allclose(data.xpos[peg, :2], (0.43, 0.10), atol=0.004)
@@ -2345,9 +2352,18 @@ def _wave_c_single_prop_conformance(engine, advance, config, environment):
 
     if environment == "load-clear-test-tubes":
         tube_names = tuple(f"clear_test_tube_{index}" for index in range(1, 5))
+        tube_starts = {}
         for name in tube_names:
             axis = data.body(name).xmat.reshape(3, 3)[:, 2]
             assert abs(axis[2]) < 0.05
+            tube_starts[name] = data.body(name).xpos.copy()
+        advance(6.0)
+        for name in tube_names:
+            np.testing.assert_allclose(
+                data.body(name).xpos[:2], tube_starts[name][:2], atol=0.004
+            )
+            assert np.linalg.norm(data.body(name).cvel[3:]) < 0.01
+        assert engine.reset() is True
         slots = (
             (0.41, 0.14),
             (0.49, 0.14),
@@ -2779,6 +2795,13 @@ def test_native_hard_dual_arm_task_scenes(tmp_path, monkeypatch, robot, environm
             np.testing.assert_allclose(data.xpos[tool, :2], (0.32, 0.30), atol=0.006)
             assert data.body("handled_tool").xmat.reshape(3, 3)[0, 0] > 0.98
         elif environment == "two-arm-peg-insertion":
+            peg_start = data.body("target_peg").xpos.copy()
+            advance(6.0)
+            np.testing.assert_allclose(
+                data.body("target_peg").xpos[:2], peg_start[:2], atol=0.004
+            )
+            assert np.linalg.norm(data.body("target_peg").cvel[3:]) < 0.01
+            assert engine.reset() is True
             receiver = model.body("receiving_part")
             initial = data.body("receiving_part").xpos.copy()
             data.xfrc_applied[int(receiver.id), 1] = 3.0
