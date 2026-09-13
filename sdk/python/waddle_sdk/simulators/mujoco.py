@@ -261,6 +261,29 @@ class Engine:
         self._active_variation = dict(profile.as_dict())
         self.mj.mj_forward(self.model, self.data)
         self._active_variation_digest = self._variation_digest()
+        return self._initial_robot_clearance_valid()
+
+    def _initial_robot_clearance_valid(self):
+        """Reject reset states that penetrate a robot into the workcell or peer."""
+
+        workcell_bodies = {*self._prop_body_ids, int(self.model.body("table").id)}
+        robot_bodies = set(range(1, self.model.nbody)) - workcell_bodies
+        for contact in self.data.contact:
+            if contact.dist >= 0:
+                continue
+            bodies = tuple(
+                int(self.model.geom(int(geom)).bodyid[0]) for geom in contact.geom
+            )
+            if (bodies[0] in robot_bodies) != (bodies[1] in robot_bodies):
+                return False
+            names = tuple(self.model.body(body).name for body in bodies)
+            if (
+                names[0].startswith("left__")
+                and names[1].startswith("right__")
+                or names[0].startswith("right__")
+                and names[1].startswith("left__")
+            ):
+                return False
         return True
 
     def _capture_variation_initial(self):

@@ -309,6 +309,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Refuse evaluator resets whose compiled MuJoCo contacts contain robot/table,
+  robot/prop, or dual-arm cross-arm penetration. The trusted administration layer
+  fences a refused world and requires the site to reopen before further use.
 - Build YAM planning geometry from the same deterministic spatial convex hulls
   of complete decomposed source pieces used by the other reference families.
   This preserves forearm recess clearance that a single convex import of each

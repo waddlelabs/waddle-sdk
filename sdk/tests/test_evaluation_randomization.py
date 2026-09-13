@@ -154,6 +154,78 @@ def test_seeded_evaluation_reset_covers_complete_task_matrix(
         engine.close()
 
 
+def test_evaluation_reset_refuses_compiled_robot_prop_penetration(
+    tmp_path, monkeypatch
+):
+    pytest.importorskip("mujoco")
+    monkeypatch.setenv("MUJOCO_GL", "egl")
+    from waddle_sdk.simulators.mujoco import Engine
+
+    _, config = make_site(
+        "invalid-reset-test",
+        backend="mujoco",
+        robot="so101",
+        environment="pick_lift",
+        width=192,
+        height=144,
+        arms=1,
+        render_quality="fast",
+    )
+    engine = Engine(config, tmp_path)
+    original_randomize = engine._apply_pose_randomization
+
+    def place_prop_inside_robot(seed, level):
+        original_randomize(seed, level)
+        prop = engine.model.body("target_cube")
+        joint_id = int(prop.jntadr[0])
+        address = int(engine.model.jnt_qposadr[joint_id])
+        robot_geom = next(
+            geom_id
+            for geom_id in range(engine.model.ngeom)
+            if int(engine.model.geom_bodyid[geom_id])
+            not in {*engine._prop_body_ids, int(engine.model.body("table").id)}
+        )
+        engine.data.qpos[address : address + 3] = engine.data.geom_xpos[robot_geom]
+
+    monkeypatch.setattr(engine, "_apply_pose_randomization", place_prop_inside_robot)
+    try:
+        assert not engine.evaluation_reset(seed=1)
+    finally:
+        engine.close()
+
+
+def test_evaluation_reset_refuses_compiled_cross_arm_penetration(tmp_path, monkeypatch):
+    pytest.importorskip("mujoco")
+    monkeypatch.setenv("MUJOCO_GL", "egl")
+    from waddle_sdk.simulators.mujoco import Engine
+
+    _, config = make_site(
+        "invalid-dual-reset-test",
+        backend="mujoco",
+        robot="so101",
+        environment="handover-block",
+        width=192,
+        height=144,
+        arms=2,
+        render_quality="fast",
+    )
+    engine = Engine(config, tmp_path)
+    original_randomize = engine._apply_pose_randomization
+
+    def overlap_robot_bases(seed, level):
+        original_randomize(seed, level)
+        left = engine.model.body("left__base")
+        right = engine.model.body("right__base")
+        right.pos[:] = left.pos
+        right.quat[:] = left.quat
+
+    monkeypatch.setattr(engine, "_apply_pose_randomization", overlap_robot_bases)
+    try:
+        assert not engine.evaluation_reset(seed=1)
+    finally:
+        engine.close()
+
+
 def test_reset_profiles_change_only_the_selected_trusted_dimension(
     tmp_path, monkeypatch
 ):

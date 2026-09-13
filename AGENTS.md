@@ -70,7 +70,9 @@ matched two-arm scenes. Keep their task-relevant
 objects visible from the scene camera for every reference embodiment, and verify
 mechanics without adding task routes or success logic to the simulator. Native
 initial-state acceptance must reject robot/table, robot/prop, and dual-arm
-inter-robot penetration across the complete task/family matrix.
+inter-robot penetration across the complete task/family matrix. Reference MuJoCo
+also refuses an evaluator reset when its resolved compiled contacts contain one of
+those penetrations; trusted administration fences the refused world until reopen.
 Together with the reference drawer they form the 29-task evaluation matrix.
 Trusted evaluator reset applies an explicit engine-neutral profile over pose,
 appearance, physics, and geometry. Reference MuJoCo task scenes implement stable

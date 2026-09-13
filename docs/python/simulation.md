@@ -169,6 +169,13 @@ privileged snapshot records only the selected profile and a digest of the resolv
 initial variation alongside ordinary ground truth. Evaluation layers choose
 profiles and seeds outside the participant runtime.
 
+Before confirming an evaluator reset, reference MuJoCo checks the resolved native
+contact set and refuses robot/table, robot/prop, or dual-arm cross-arm penetration.
+The trusted administration boundary treats that refusal as a failed simulation and
+requires the site to reopen. Complete-matrix acceptance additionally advances each
+noncanonical state for 250 ms and verifies that the same clearance still holds
+after gravity and contact settling.
+
 MuJoCo's cap reuses its installed first-party nut/bolt SDFs through a small
 dimensional wrapper. Native contact and friction retain the cap under axial
 load; no guide or attachment is released by task logic. The roof and packaged

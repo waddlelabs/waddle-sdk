@@ -68,6 +68,7 @@ class World:
         self.resets = 0
         self.evaluation_seed = None
         self.evaluation_variation = None
+        self.refuse_evaluation_reset = False
 
     def part(self, *, config) -> base.Rig:
         events.append("world.part")
@@ -144,7 +145,7 @@ class World:
         self.evaluation_variation = variation
         self.resets += 1
         self.steps = 0
-        return True
+        return not self.refuse_evaluation_reset
 
     def close(self) -> None:
         if not self.closed:

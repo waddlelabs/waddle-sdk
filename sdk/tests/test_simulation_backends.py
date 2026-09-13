@@ -206,6 +206,20 @@ def test_trusted_administration_validates_and_forwards_reset_variation(tmp_path)
             SimulationVariation(geometry="unknown")
 
 
+def test_trusted_administration_fences_a_refused_reset(tmp_path):
+    administration = SimulationAdministration()
+    with waddle_sdk.load_site(_write_site(tmp_path)).open(
+        console=False,
+        _testing=True,
+        simulation_administration=administration,
+    ):
+        simulation_fixtures.worlds[0].refuse_evaluation_reset = True
+        with pytest.raises(SimulationAdministrationError, match="refused reset"):
+            administration.reset(seed=23)
+        with pytest.raises(SimulationAdministrationError, match="failed; reopen"):
+            administration.snapshot()
+
+
 def test_administration_refuses_a_world_without_the_optional_facet(tmp_path):
     administration = SimulationAdministration()
     path = _write_site(
