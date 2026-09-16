@@ -158,6 +158,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- YAM's pinned I2RT adapter accepts the expected CAN reply in either the original
+  10 ms receive or 9 ms recovery window instead of discarding a valid late reply.
+  Unrelated IDs do not restart those deadlines; explicit encoder reply IDs,
+  matching motor errors, retry counts and scoped communication failures remain
+  intact. Both patched methods are signature-checked before installation.
+
 - Replace a scheduler-dependent per-part uplink test with controlled reducer
   admission times, verifying independent 10 Hz budgets and nonstarvation without
   requiring unrelated streams to have identical phases.

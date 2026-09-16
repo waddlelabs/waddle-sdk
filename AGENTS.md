@@ -405,7 +405,17 @@ waddle-sdk/
                              #   kernel wait plus a final socket drain. This
                              #   prevents a Python scheduling stall from leaving
                              #   a healthy reply queued to poison the next motor
-                             #   transaction; vendor drift fails closed. Keep
+                             #   transaction. Transactions match the explicit
+                             #   expected reply ID through the original 10 ms
+                             #   receive plus 9 ms recovery budget, accepting
+                             #   late replies rather than discarding them and
+                             #   never restarting deadlines for unrelated IDs.
+                             #   Matching motor error frames remain errors;
+                             #   retry counts and command bytes are unchanged.
+                             #   Both method signatures are verified before
+                             #   installation; repeated opens preserve marked
+                             #   patches and their instrumentation. Vendor drift
+                             #   fails closed. Keep
                              #   this workaround YAM-local, never in base.py.
                              #   The same narrow module replaces the pinned
                              #   command_joint_state implementation: build a
