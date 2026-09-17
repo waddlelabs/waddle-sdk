@@ -71,6 +71,7 @@ class SupportFact(str, enum.Enum):
     URDF_MODEL = "model.urdf"
     BASE_FRAME = "frame.base"
     POSITION_LIMITS = "limits.position"
+    POSITION_ERROR_LIMITS = "limits.position_error"
     VELOCITY_LIMITS = "limits.velocity"
     GRIPPER_MAPPING = "gripper.mapping"
     GRIPPER_GEOMETRY = "gripper.geometry"

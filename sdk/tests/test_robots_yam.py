@@ -1175,6 +1175,53 @@ def test_factories_freeze_explicit_gains_until_open(vendor, bimanual):
         part.driver.close()
 
 
+@pytest.mark.parametrize("factory", [yam.arm, yam.bimanual])
+@pytest.mark.parametrize("cap", [0, -0.1, float("inf"), float("nan"), True, "0.1"])
+def test_position_error_option_is_validated_before_hardware_construction(
+    vendor, monkeypatch, factory, cap
+):
+    configured = []
+    monkeypatch.setattr(
+        yam, "ensure_socketcan_up", lambda *args, **kwargs: configured.append(True)
+    )
+    connection = (
+        {"channel": "can_left"}
+        if factory is yam.arm
+        else {"left": yam.ArmSite(channel="can_left"),
+              "right": yam.ArmSite(channel="can_right")}
+    )
+    with pytest.raises(ValueError, match="max_joint_position_error_rad"):
+        factory(workspace=None, configure_can=True,
+                max_joint_position_error_rad=cap, **connection)
+    assert not configured and not vendor.calls
+
+
+@pytest.mark.parametrize("rate_hz", [10.0, 50.0])
+@pytest.mark.parametrize("factory", [_arm_rig, _bimanual])
+def test_explicit_yam_error_allowance_preserves_gripper_and_simulated_speed(factory, rate_hz):
+    rig = factory(
+        workspace=None,
+        rate_hz=rate_hz,
+        max_joint_speed_rad_s=1.0,
+        max_joint_position_error_rad=0.2,
+        max_gripper_speed_per_s=0.5,
+        report=lambda _: None,
+    )
+    for arm in rig.arms().values():
+        measured, _ = arm.state()
+        target = measured.copy()
+        target[0] += 0.15
+        assert arm.command(target)
+        arm.driver.step(0.01)
+        later, velocity = arm.state()
+        assert later[0] - measured[0] == pytest.approx(0.01)
+        assert velocity[0] == pytest.approx(1.0)
+        assert tuple(arm.position_error_caps) == (0.2,) * 6 + (0.5 / rate_hz,)
+        target[-1] = later[-1] + 0.5 / rate_hz + 0.001
+        assert arm.check(target, later) is not None
+        arm.driver.close()
+
+
 def test_re_enable_refuses_to_guess_gains_it_never_snapshotted(vendor):
     """A made-up kp is how a demo arm slams. Refusing leaves the latch set and
     the arm floating, which is the state the site operator can already see."""

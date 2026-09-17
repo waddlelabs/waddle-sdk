@@ -594,9 +594,14 @@ class Arm:
     ``joint_names``/``joint_limits``
         This part's declared rows, and the box each one may be commanded in.
     ``step_caps``
-        The largest jump a SINGLE accepted command may make per row, measured
-        against where the unit actually is. This is the speed cap: at the
-        declared rate it bounds the unit to ``cap * rate_hz`` per second.
+        Legacy maximum target displacement from the measured position per row.
+        It is commonly derived from declared speed/rate, but it is a position
+        error bound, not a measurement of physical velocity.
+    ``position_error_caps``
+        Optional explicit target-to-measurement bounds, independent of command
+        rate. These replace ``step_caps`` for admission, allowing a position
+        servo to track a smooth stream with nonzero lag. The caller still owns
+        reference timing; the SDK neither interpolates nor converges targets.
     ``workspace``
         ``((min_x, min_y, min_z), (max_x, max_y, max_z))`` in metres, applied
         to the forward kinematics of a command and every adapter-supplied
@@ -629,6 +634,7 @@ class Arm:
     joint_names: Sequence[str]
     joint_limits: Sequence[Sequence[float]]
     step_caps: Sequence[float]
+    position_error_caps: Sequence[float] | None = None
     base_frame: str = ""
     workspace: Sequence[Sequence[float]] | None = None
     fk: Callable[[Sequence[float]], tuple[np.ndarray, np.ndarray]] | None = None
@@ -664,6 +670,20 @@ class Arm:
                 f"part {self.part!r}: {len(self.step_caps)} step_caps for {width} "
                 "joints — one per-step cap per declared joint"
             )
+        if self.position_error_caps is not None:
+            caps = tuple(self.position_error_caps)
+            if len(caps) != width or any(
+                isinstance(c, (bool, np.bool_))
+                or not isinstance(c, (int, float, np.integer, np.floating))
+                or not math.isfinite(c)
+                or c <= 0
+                for c in caps
+            ):
+                raise ValueError(
+                    f"part {self.part!r}: position_error_caps needs one finite "
+                    "positive bound per joint"
+                )
+            self.position_error_caps = tuple(float(c) for c in caps)
         for name, (lo, hi) in zip(self.joint_names, self.joint_limits, strict=True):
             if lo > hi:
                 raise ValueError(f"joint {name!r}: lower limit {lo} above upper {hi}")
@@ -898,8 +918,14 @@ class Arm:
                     f"[{lo:.4f}, {hi:.4f}]"
                 )
         step = np.abs(target - measured)
-        for i, (moved, cap) in enumerate(zip(step, self.step_caps, strict=True)):
+        caps = self.position_error_caps or self.step_caps
+        for i, (moved, cap) in enumerate(zip(step, caps, strict=True)):
             if moved > cap:
+                if self.position_error_caps is not None:
+                    return (
+                        f"{self.joint_names[i]} target is {moved:.4f} from measured "
+                        f"position, position-error cap {cap:.4f}"
+                    )
                 # Both rates, each named as what it is. The cap is a
                 # PER-COMMAND number, and the speed it stands for is what the
                 # owner actually chose — so a line that converted only the ask
@@ -1200,6 +1226,7 @@ def apply_decision(
             "joint_names": list(failed.joint_names),
             "joint_limits": [list(pair) for pair in failed.joint_limits],
             "step_caps": list(failed.step_caps),
+            "max_position_error": list(failed.position_error_caps or failed.step_caps),
             "workspace_bounds": None
             if failed.workspace is None
             else [list(row) for row in failed.workspace],

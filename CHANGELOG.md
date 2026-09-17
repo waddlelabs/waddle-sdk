@@ -13,6 +13,14 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Optional per-row `Arm.position_error_caps` and YAM
+  `max_joint_position_error_rad` let a reviewed owner envelope bound servo
+  tracking error independently of command cadence. Defaults, gripper bounds,
+  simulated speed and vendor dispatch remain unchanged. Open descriptions and
+  `limits.position_error` support report the actual ordered allowance; refusal
+  context retains it alongside the target and latest measurement. This adds no
+  interpolation, convergence, or physical velocity/torque guarantee.
+
 - Background part-read failures persist as structured `robot.part_fault` runtime
   events while healthy streams continue. Live comparisons retain selected-part
   fault history and reject recovered transient failures before further commands

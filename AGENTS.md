@@ -367,8 +367,10 @@ waddle-sdk/
                              #   only what a wheel-holder can open (gated).
                              #   Also the LiveDriver + the bimanual()/arm()
                              #   factories. Their declaration publishes separate
-                             #   arm and gripper velocity rows matching the same
-                             #   profile the owner envelope enforces. GOTCHA:
+                             #   arm and gripper reference velocity rows; the legacy
+                             #   owner position-error allowance derives from rate
+                             #   and those speeds. Optional explicit arm error bounds
+                             #   are independent of cadence. GOTCHA:
                              #   driving metal needs the
                              #   vendor package, which is NOT a dependency and
                              #   cannot be an extra (not on PyPI; direct refs
@@ -889,3 +891,14 @@ Before YAM benchmark motion, a test-only bounded readiness check observes the
 constructor hold command, two subsequent CAN cache generations and later robot
 state ingestion. Preserve `startup_evidence` independently of motion timing;
 never wait for an in-envelope pose or infer physical settling from readiness.
+
+`Arm.position_error_caps` optionally replaces the legacy `step_caps` target-to-
+measurement allowance; omission preserves existing admission. Both are position
+error bounds, not physical velocity or torque enforcement. YAM's optional
+`max_joint_position_error_rad` applies only to six arm joints, retaining gripper
+limits, declared reference speeds and simulated speed. It validates before opening.
+Open runtime descriptions expose ordered `command_limits[part].max_position_error`
+and the `limits.position_error` support fact; exact refusal context retains the
+enforced vector. Callers own reference timing/convergence; no extra SDK controller
+or vendor interpolation is introduced. See
+[position tracking allowance](docs/porting/robot.md#position-tracking-allowance).

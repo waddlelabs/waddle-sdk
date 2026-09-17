@@ -33,7 +33,7 @@ An optional `write_position_velocity(target, velocity_feedforward_rad_s) -> bool
 
 ## Owner envelope
 
-Every command crosses `Arm`. Supply exact joint limits and per-command step caps. The default seam checks declared width, finite values, limits, step caps, optional workspace bounds, and configured geometry rules; it rejects whole and never clamps.
+Every command crosses `Arm`. Supply exact joint limits and `step_caps`, the legacy target-to-measurement allowance. An optional `position_error_caps` vector replaces that allowance independently of cadence; neither is physical velocity or torque enforcement. The default seam checks declared width, finite values, limits, the applicable allowance, optional workspace bounds, and configured geometry rules; it rejects whole and never clamps. Reference timing and convergence belong to the caller.
 
 Workspace bounds require FK. Static keep-outs and self/cross-part collision require deterministic conservative `CollisionSphere` values and compatible frames. Omit unsupported optional geometry rather than fabricating it. If a configured envelope rule depends on absent geometry, opening must fail closed.
 
