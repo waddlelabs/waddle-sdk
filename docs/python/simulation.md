@@ -53,7 +53,7 @@ Each engine accepts `so101`, `yam`, or `xarm7` and these environments:
   and 5 N·s/m native joint damping. The damping dissipates a pull after release;
   there is no spring returning the drawer to its starting position.
 
-MuJoCo also provides twenty-nine interactive development task environments:
+MuJoCo also provides thirty interactive development task environments:
 
 - `touch_target`: one red contact target and two blue distractors.
 - `pick_lift`: one free 46 mm cube.
@@ -85,14 +85,15 @@ MuJoCo also provides twenty-nine interactive development task environments:
 - `load-clear-test-tubes`: four translucent free tubes and a blue rack with two
   named rows of physical slot collars. The elevated scene camera exposes the row
   order.
-- `candy-bin-transfer`: eighteen same-color candy-sized wrapped objects scattered
-  and piled irregularly in a shallow tray beside a blue destination cup. Each
-  candy is an independent rigid
+- `candy-bin-transfer`: eighteen same-color 24 mm candy cubes scattered and piled
+  irregularly in a shallow tray beside a blue destination cup. Each candy cube is
+  an independent rigid
   body, so clutter contacts, grasping, lifting, and released placement are native
   physics rather than a task-specific transfer shortcut. Appearance variation
   changes their shared color together rather than creating color distractors.
-  Native acceptance requires both reference fingers to contact one candy and
-  carry it upward by at least 45 mm for every reference robot family.
+  Native acceptance requires both reference fingers to retain contact with one
+  cube, carry it upward by at least 45 mm, and hold it at the lifted pinch for
+  500 ms for every reference robot family.
 - `split_workspace_sorting`: a matched two-arm scene with one cube initially in
   each arm's outer workspace and two open bins near the center. Each cube's
   matching bin is on the opposite side.

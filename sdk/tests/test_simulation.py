@@ -118,8 +118,11 @@ def test_all_reference_declarations_validate_without_opening(
     loaded = load_site(tmp_path / "site.yaml")
     assert loaded.id == "physics-test"
     assert load_scene(tmp_path, "simulation.json")[1] == sim
-    assert sim["scene_revision"] == "1.0.0"
-    assert sim["asset_revision"] == "1.0.0"
+    expected_scene_revision = (
+        "1.1.0" if environment == "candy-bin-transfer" else "1.0.0"
+    )
+    assert sim["scene_revision"] == expected_scene_revision
+    assert sim["asset_revision"] == expected_scene_revision
     assert sim["embodiment_revision"] == "1.0.0"
     assert set(site["cameras"]) == {"scene", "wrist"}
     assert site["parts"]["arm"]["gripper"]["open_m"] == profile(robot).opening
@@ -2514,7 +2517,7 @@ def _wave_c_single_prop_conformance(engine, advance, config, environment):
         candy = place_free("candy_1", (0.43, 0.13, 0.08))
         advance(1.5)
         np.testing.assert_allclose(data.xpos[candy, :2], (0.43, 0.13), atol=0.004)
-        assert data.xpos[candy, 2] == pytest.approx(0.016, abs=0.004)
+        assert data.xpos[candy, 2] == pytest.approx(0.022, abs=0.004)
 
         # A centered physical pinch must carry the small rigid body upward.
         # This probes robot/candy contacts rather than inferring mechanics from
@@ -2524,19 +2527,19 @@ def _wave_c_single_prop_conformance(engine, advance, config, environment):
         grasp, lift = {
             "so101": (
                 (
-                    0.6854864157,
-                    0.3375857115,
-                    0.0920964305,
-                    0.6232012436,
-                    0.0005080088,
-                    0.2476149142,
+                    0.6111116363,
+                    0.2058768679,
+                    0.2887797362,
+                    -0.47794756798,
+                    -1.6836794621,
+                    0.15,
                 ),
                 (
-                    0.6850793876,
-                    -0.0814121703,
-                    0.0647178542,
-                    0.8048320133,
-                    0.0006633674,
+                    0.6111028479,
+                    0.0851971464,
+                    -0.1595262347,
+                    0.0910381109,
+                    -1.6865021762,
                     0.0,
                 ),
             ),
@@ -2591,7 +2594,7 @@ def _wave_c_single_prop_conformance(engine, advance, config, environment):
         if robot == "xarm7":
             # Its TCP is at the fingertip plane; load the long pads above it.
             center += (0.0, 0.0, 0.03)
-        center[2] = max(center[2], 0.016)
+        center[2] = max(center[2], 0.022)
         closing = tcp[:3, :3] @ np.asarray(p.closing_axis)
         closing /= np.linalg.norm(closing)
         vertical = np.asarray((0.0, 0.0, 1.0))
@@ -2614,7 +2617,17 @@ def _wave_c_single_prop_conformance(engine, advance, config, environment):
             for _ in range(round(0.01 / config["timestep"])):
                 engine.step()
                 maximum_z = max(maximum_z, float(data.xpos[candy, 2]))
+        advance(0.5)
         assert maximum_z > initial_z + 0.045
+        lifted_tcp = p.poses(lift)[-1]
+        retained_center = (
+            lifted_tcp[:3, 3]
+            + lifted_tcp[:3, :3] @ np.asarray(p.pinch_offset)
+        )
+        if robot == "xarm7":
+            retained_center += (0.0, 0.0, 0.03)
+        assert np.linalg.norm(data.xpos[candy] - retained_center) < 0.04
+        assert data.xpos[candy, 2] > initial_z + 0.04
         fingers = {
             "so101": {"gripper_link", "moving_jaw_so101_v1_link"},
             "yam": {"tip_left", "tip_right"},
@@ -2626,6 +2639,15 @@ def _wave_c_single_prop_conformance(engine, advance, config, environment):
             if "candy_1" in bodies and event["maximum_normal_force_n"] > 0:
                 touched.update(bodies & fingers)
         assert touched == fingers
+        current_touch = set()
+        for contact in data.contact:
+            bodies = {
+                model.body(int(model.geom(int(geom)).bodyid[0])).name
+                for geom in contact.geom
+            }
+            if "candy_1" in bodies:
+                current_touch.update(bodies & fingers)
+        assert current_touch == fingers
         return
 
     assert environment == "store-in-drawer"

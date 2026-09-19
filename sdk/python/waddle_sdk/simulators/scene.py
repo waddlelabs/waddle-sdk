@@ -64,6 +64,9 @@ RENDER_QUALITIES = ("fast", "standard", "high")
 REFERENCE_SCENE_REVISION = "1.0.0"
 REFERENCE_ASSET_REVISION = "1.0.0"
 REFERENCE_EMBODIMENT_REVISION = "1.0.0"
+_ENVIRONMENT_REVISIONS = {
+    "candy-bin-transfer": ("1.1.0", "1.1.0"),
+}
 _REVISION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$")
 
 
@@ -218,7 +221,9 @@ def profile(name: str) -> Profile:
             0.12923294585570118,
             "so101_base",
             (0.0, 0.0, 1.0),
-            (0.0, 0.0, 0.0),
+            # Center of the opposed load-bearing finger surfaces in the
+            # maintained manufacturer mesh, expressed in the SDK TCP frame.
+            (0.0, 0.03, -0.03),
             (0.0, 0.0, 1.0, 0.0),
             30.0,
             1.0,
@@ -474,10 +479,14 @@ def make_site(
             else {"kind": "wrist", "part": part},
             "options": {"sensor_model": sensor_model, "depth": depth},
         }
+    scene_revision, asset_revision = _ENVIRONMENT_REVISIONS.get(
+        environment,
+        (REFERENCE_SCENE_REVISION, REFERENCE_ASSET_REVISION),
+    )
     simulation = {
         "api_version": "waddle.simulation/v1",
-        "scene_revision": REFERENCE_SCENE_REVISION,
-        "asset_revision": REFERENCE_ASSET_REVISION,
+        "scene_revision": scene_revision,
+        "asset_revision": asset_revision,
         "embodiment_revision": REFERENCE_EMBODIMENT_REVISION,
         "backend": backend,
         "robot": robot,
