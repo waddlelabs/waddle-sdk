@@ -357,11 +357,16 @@ class Engine:
         bound = 0.14
         for geom_id in self._prop_geom_ids:
             rgba = initial["geom_rgba"][geom_id].copy()
+            variation_group = geom_id
+            if environment == "candy-bin-transfer":
+                body_id = int(self.model.geom_bodyid[geom_id])
+                if self.model.body(body_id).name.startswith("candy_"):
+                    variation_group = "candies"
             for channel in range(3):
                 delta = self._level_sample(
                     seed,
                     environment,
-                    geom_id,
+                    variation_group,
                     f"appearance_{channel}",
                     level,
                     bound,

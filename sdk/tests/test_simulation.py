@@ -2344,9 +2344,9 @@ def _wave_c_single_prop_conformance(engine, advance, config, environment):
             ((0.39, 0.19, 0.023), "blue"),
         ),
         "candy-bin-transfer": (
-            ((0.268, -0.222, 0.022), "red"),
-            ((0.300, -0.200, 0.022), "purple"),
-            ((0.332, -0.178, 0.022), "yellow"),
+            ((0.229, -0.248, 0.022), "orange"),
+            ((0.316, -0.244, 0.022), "orange"),
+            ((0.361, -0.168, 0.022), "orange"),
             ((0.43, 0.13, 0.075), "blue"),
         ),
     }
@@ -2502,14 +2502,13 @@ def _wave_c_single_prop_conformance(engine, advance, config, environment):
         return
 
     if environment == "candy-bin-transfer":
-        starts = {
-            f"candy_{index}": data.body(f"candy_{index}").xpos.copy()
-            for index in range(1, 10)
-        }
         advance(3.0)
-        for name, start in starts.items():
-            np.testing.assert_allclose(data.body(name).xpos[:2], start[:2], atol=0.004)
-            assert np.linalg.norm(data.body(name).cvel[3:]) < 0.01
+        for index in range(1, 19):
+            candy_body = data.body(f"candy_{index}")
+            position = candy_body.xpos
+            assert abs(position[0] - 0.30) <= 0.074
+            assert abs(position[1] + 0.20) <= 0.055
+            assert np.linalg.norm(candy_body.cvel[3:]) < 0.01
         assert engine.reset() is True
         candy = place_free("candy_1", (0.43, 0.13, 0.08))
         advance(1.5)

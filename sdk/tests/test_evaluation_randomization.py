@@ -194,6 +194,39 @@ def test_evaluation_reset_refuses_compiled_robot_prop_penetration(
         engine.close()
 
 
+def test_candy_bin_transfer_keeps_one_color_under_appearance_variation(
+    tmp_path, monkeypatch
+):
+    pytest.importorskip("mujoco")
+    monkeypatch.setenv("MUJOCO_GL", "egl")
+    from waddle_sdk.simulators.mujoco import Engine
+
+    _, config = make_site(
+        "candy-color-test",
+        backend="mujoco",
+        robot="xarm7",
+        environment="candy-bin-transfer",
+        width=192,
+        height=144,
+    )
+    engine = Engine(config, tmp_path)
+    try:
+        assert engine.evaluation_reset(
+            seed=712,
+            variation=SimulationVariation(appearance="bounded").as_dict(),
+        )
+        colors = []
+        for index in range(1, 19):
+            body = engine.model.body(f"candy_{index}")
+            for geom_id in range(
+                int(body.geomadr[0]), int(body.geomadr[0] + body.geomnum[0])
+            ):
+                colors.append(engine.model.geom_rgba[geom_id])
+        np.testing.assert_allclose(colors, np.repeat(colors[:1], len(colors), axis=0))
+    finally:
+        engine.close()
+
+
 def test_evaluation_reset_refuses_compiled_cross_arm_penetration(tmp_path, monkeypatch):
     pytest.importorskip("mujoco")
     monkeypatch.setenv("MUJOCO_GL", "egl")

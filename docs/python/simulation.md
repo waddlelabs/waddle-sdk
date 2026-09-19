@@ -85,10 +85,12 @@ MuJoCo also provides twenty-nine interactive development task environments:
 - `load-clear-test-tubes`: four translucent free tubes and a blue rack with two
   named rows of physical slot collars. The elevated scene camera exposes the row
   order.
-- `candy-bin-transfer`: nine candy-sized wrapped objects packed into a shallow
-  tray and a separate blue destination cup. Each candy is an independent rigid
+- `candy-bin-transfer`: eighteen same-color candy-sized wrapped objects scattered
+  and piled irregularly in a shallow tray beside a blue destination cup. Each
+  candy is an independent rigid
   body, so clutter contacts, grasping, lifting, and released placement are native
-  physics rather than a task-specific transfer shortcut.
+  physics rather than a task-specific transfer shortcut. Appearance variation
+  changes their shared color together rather than creating color distractors.
 - `split_workspace_sorting`: a matched two-arm scene with one cube initially in
   each arm's outer workspace and two open bins near the center. Each cube's
   matching bin is on the opposite side.
