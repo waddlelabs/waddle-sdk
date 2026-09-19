@@ -77,6 +77,9 @@ inter-robot penetration across the complete task/family matrix. Reference MuJoCo
 also refuses an evaluator reset when its resolved compiled contacts contain one of
 those penetrations; trusted administration fences the refused world until reopen.
 Together with the reference drawer they form the 30-task evaluation matrix.
+The S19 reference fixture uses eighteen same-color 24 mm cubes in one irregular
+source pile and a separate adjacent wide destination bin sized for all eighteen;
+the SDK scene does not reset individual transfers or define their success/order.
 Trusted evaluator reset applies an explicit engine-neutral profile over pose,
 appearance, physics, and geometry. Reference MuJoCo task scenes implement stable
 seed-derived bounded pose/material/lighting/mass/friction/damping variation and

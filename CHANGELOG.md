@@ -11,6 +11,13 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+### Changed
+
+- Revise the `candy-bin-transfer` scene to version 1.2.0 with an adjacent wide
+  blue destination bin. Its physical floor can retain all eighteen 24 mm cubes
+  in one evolving scene, enabling continuous transfer-throughput evaluation
+  without per-cube resets.
+
 ### Added
 
 - Allow a validated near-base XY pose profile for the YAM pick-and-lift reference

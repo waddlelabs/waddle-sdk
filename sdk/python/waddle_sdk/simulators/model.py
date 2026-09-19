@@ -1307,26 +1307,47 @@ def objects(environment: str, *, robot: str | None = None) -> list[list[Link]]:
                 shape.friction = (1.0, 0.03, 0.005)
             candies.append([candy])
 
+        # The adjacent wide bin makes S19 a continuous small-object throughput
+        # task.  Its usable floor holds all eighteen cubes without requiring a
+        # reset or a physically implausible tower, while the 35 mm gap from the
+        # source tray keeps the two fixtures mechanically distinct.
         cup_shapes = [
             Shape(
-                "cylinder",
-                (0.055, 0.01),
+                "box",
+                (0.22, 0.12, 0.01),
                 (0.0, 0.0, 0.005),
                 color=(0.10, 0.30, 0.85, 1.0),
             )
         ]
-        for index in range(16):
-            angle = 2 * math.pi * index / 16
-            cup_shapes.append(
+        cup_shapes.extend(
+            (
                 Shape(
                     "box",
-                    (0.024, 0.007, 0.075),
-                    (0.052 * math.cos(angle), 0.052 * math.sin(angle), 0.0375),
-                    (0.0, 0.0, angle + math.pi / 2),
+                    (0.008, 0.12, 0.07),
+                    (-0.106, 0.0, 0.035),
                     color=(0.10, 0.30, 0.85, 1.0),
-                )
+                ),
+                Shape(
+                    "box",
+                    (0.008, 0.12, 0.07),
+                    (0.106, 0.0, 0.035),
+                    color=(0.10, 0.30, 0.85, 1.0),
+                ),
+                Shape(
+                    "box",
+                    (0.204, 0.008, 0.07),
+                    (0.0, -0.056, 0.035),
+                    color=(0.10, 0.30, 0.85, 1.0),
+                ),
+                Shape(
+                    "box",
+                    (0.204, 0.008, 0.07),
+                    (0.0, 0.056, 0.035),
+                    color=(0.10, 0.30, 0.85, 1.0),
+                ),
             )
-        cup = Link("destination_cup", xyz=(0.43, 0.13, 0.0), shapes=cup_shapes)
+        )
+        cup = Link("destination_cup", xyz=(0.42, -0.03, 0.0), shapes=cup_shapes)
         return [table, [tray], *candies, [cup]]
     if environment == "drawer":
         # Keep the closed front clear of the robot's starting hand. The

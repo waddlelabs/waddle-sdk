@@ -119,7 +119,7 @@ def test_all_reference_declarations_validate_without_opening(
     assert loaded.id == "physics-test"
     assert load_scene(tmp_path, "simulation.json")[1] == sim
     expected_scene_revision = (
-        "1.1.0" if environment == "candy-bin-transfer" else "1.0.0"
+        "1.2.0" if environment == "candy-bin-transfer" else "1.0.0"
     )
     assert sim["scene_revision"] == expected_scene_revision
     assert sim["asset_revision"] == expected_scene_revision
@@ -2351,7 +2351,7 @@ def _wave_c_single_prop_conformance(engine, advance, config, environment):
             ((0.229, -0.248, 0.022), "orange"),
             ((0.316, -0.244, 0.022), "orange"),
             ((0.361, -0.168, 0.022), "orange"),
-            ((0.43, 0.13, 0.075), "blue"),
+            ((0.42, -0.03, 0.07), "blue"),
         ),
     }
     classifiers = {
@@ -2514,9 +2514,9 @@ def _wave_c_single_prop_conformance(engine, advance, config, environment):
             assert abs(position[1] + 0.20) <= 0.055
             assert np.linalg.norm(candy_body.cvel[3:]) < 0.01
         assert engine.reset() is True
-        candy = place_free("candy_1", (0.43, 0.13, 0.08))
+        candy = place_free("candy_1", (0.42, -0.03, 0.08))
         advance(1.5)
-        np.testing.assert_allclose(data.xpos[candy, :2], (0.43, 0.13), atol=0.004)
+        np.testing.assert_allclose(data.xpos[candy, :2], (0.42, -0.03), atol=0.004)
         assert data.xpos[candy, 2] == pytest.approx(0.022, abs=0.004)
 
         # A centered physical pinch must carry the small rigid body upward.
