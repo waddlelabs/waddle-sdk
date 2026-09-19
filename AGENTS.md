@@ -69,7 +69,9 @@ fixtures using the same runtime surface. Eighteen are single-arm and eleven are
 matched two-arm scenes. Keep their task-relevant
 objects visible from the scene camera for every reference embodiment, and verify
 mechanics without adding task routes or success logic to the simulator. Native
-initial-state acceptance must reject robot/table, robot/prop, and dual-arm
+small-object acceptance must establish bilateral finger contact and measured
+object lift, not infer a grasp from commanded or measured gripper closure alone.
+Native initial-state acceptance must reject robot/table, robot/prop, and dual-arm
 inter-robot penetration across the complete task/family matrix. Reference MuJoCo
 also refuses an evaluator reset when its resolved compiled contacts contain one of
 those penetrations; trusted administration fences the refused world until reopen.

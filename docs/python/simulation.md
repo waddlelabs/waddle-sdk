@@ -91,6 +91,8 @@ MuJoCo also provides twenty-nine interactive development task environments:
   body, so clutter contacts, grasping, lifting, and released placement are native
   physics rather than a task-specific transfer shortcut. Appearance variation
   changes their shared color together rather than creating color distractors.
+  Native acceptance requires both reference fingers to contact one candy and
+  carry it upward by at least 45 mm for every reference robot family.
 - `split_workspace_sorting`: a matched two-arm scene with one cube initially in
   each arm's outer workspace and two open bins near the center. Each cube's
   matching bin is on the opposite side.
