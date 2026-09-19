@@ -43,6 +43,9 @@ _BOUNDS = {
     "open-hinged-door": (0.012, 0.035),
     "retrieve-bottle-clutter": (0.003, 0.06),
     "uncap-return-test-tube": (0.001, 0.035),
+    # Keep densely packed candy starts physically separated while retaining
+    # seed-dependent grasp choices and orientations.
+    "candy-bin-transfer": (0.002, 0.05),
 }
 
 

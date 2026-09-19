@@ -43,6 +43,7 @@ SINGLE_ARM_TASK_ENVIRONMENTS = (
     "store-in-drawer",
     "insert-usb",
     "load-clear-test-tubes",
+    "candy-bin-transfer",
 )
 DUAL_ARM_TASK_ENVIRONMENTS = (
     "split_workspace_sorting",
@@ -379,6 +380,7 @@ def make_site(
         "retrieve-from-drawer",
         "store-in-drawer",
         "load-clear-test-tubes",
+        "candy-bin-transfer",
     }:
         # A high tripod view retains the drawer's front face while exposing its
         # interior once open and the rear row of the test-tube rack.

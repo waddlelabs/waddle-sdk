@@ -1846,6 +1846,7 @@ def _native_conformance(
             "store-in-drawer",
             "insert-usb",
             "load-clear-test-tubes",
+            "candy-bin-transfer",
         }:
             assert engine.reset() is True
             _wave_c_single_prop_conformance(engine, advance, config, environment)
@@ -2342,6 +2343,12 @@ def _wave_c_single_prop_conformance(engine, advance, config, environment):
             ((0.25, 0.16, 0.018), "cyan"),
             ((0.39, 0.19, 0.023), "blue"),
         ),
+        "candy-bin-transfer": (
+            ((0.268, -0.222, 0.022), "red"),
+            ((0.300, -0.200, 0.022), "purple"),
+            ((0.332, -0.178, 0.022), "yellow"),
+            ((0.43, 0.13, 0.075), "blue"),
+        ),
     }
     classifiers = {
         "green": lambda r, g, b: g > 2 * max(r, b),
@@ -2350,6 +2357,9 @@ def _wave_c_single_prop_conformance(engine, advance, config, environment):
         "bright": lambda r, g, b: min(r, g, b) > 100,
         "dark": lambda r, g, b: max(r, g, b) < 100,
         "cyan": lambda r, g, b: b > 1.04 * r and g > 1.03 * r,
+        "red": lambda r, g, b: r > 2 * max(g, b),
+        "purple": lambda r, g, b: r > 1.4 * g and b > 1.4 * g,
+        "yellow": lambda r, g, b: min(r, g) > 2 * b,
     }
     camera = config["cameras"]["scene"]
     world_from_camera = np.asarray(camera["transform"])
@@ -2489,6 +2499,22 @@ def _wave_c_single_prop_conformance(engine, advance, config, environment):
             assert data.body(name).xpos[2] == pytest.approx(0.06, abs=0.004)
             axis = data.body(name).xmat.reshape(3, 3)[:, 2]
             assert axis[2] > 0.985
+        return
+
+    if environment == "candy-bin-transfer":
+        starts = {
+            f"candy_{index}": data.body(f"candy_{index}").xpos.copy()
+            for index in range(1, 10)
+        }
+        advance(3.0)
+        for name, start in starts.items():
+            np.testing.assert_allclose(data.body(name).xpos[:2], start[:2], atol=0.004)
+            assert np.linalg.norm(data.body(name).cvel[3:]) < 0.01
+        assert engine.reset() is True
+        candy = place_free("candy_1", (0.43, 0.13, 0.08))
+        advance(1.5)
+        np.testing.assert_allclose(data.xpos[candy, :2], (0.43, 0.13), atol=0.004)
+        assert data.xpos[candy, 2] == pytest.approx(0.016, abs=0.004)
         return
 
     assert environment == "store-in-drawer"

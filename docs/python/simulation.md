@@ -85,6 +85,10 @@ MuJoCo also provides twenty-nine interactive development task environments:
 - `load-clear-test-tubes`: four translucent free tubes and a blue rack with two
   named rows of physical slot collars. The elevated scene camera exposes the row
   order.
+- `candy-bin-transfer`: nine candy-sized wrapped objects packed into a shallow
+  tray and a separate blue destination cup. Each candy is an independent rigid
+  body, so clutter contacts, grasping, lifting, and released placement are native
+  physics rather than a task-specific transfer shortcut.
 - `split_workspace_sorting`: a matched two-arm scene with one cube initially in
   each arm's outer workspace and two open bins near the center. Each cube's
   matching bin is on the opposite side.
@@ -115,7 +119,7 @@ Their scene camera exposes every task-relevant object at the starting pose for
 SO-101, YAM, and xArm7. Native tests verify visibility, initial separation from
 the robot, free-body mechanics, bin containment, passive-joint initialization,
 stacking, ring/peg clearance, tool contact, and independent control travel.
-The initial native-contact gate covers all 87 task/family cells and rejects
+The initial native-contact gate covers all 90 task/family cells and rejects
 penetration between a robot body and the tabletop or any task prop. Dual-arm
 scenes additionally reject contact between the two robot assemblies.
 The door test applies the same opening load before and after lever retraction to

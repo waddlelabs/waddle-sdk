@@ -64,8 +64,8 @@ models. Engine-specific acceptance stays in `sdk/tests/test_simulation.py`; a
 skipped optional-engine case is not evidence that the engine passed. Reference
 worlds preserve state across ordinary runs and reset only when the site explicitly
 sets `reset_on_episode: true`.
-The twenty-eight MuJoCo-only development task environments are built-in interactive
-fixtures using the same runtime surface. Seventeen are single-arm and eleven are
+The twenty-nine MuJoCo-only development task environments are built-in interactive
+fixtures using the same runtime surface. Eighteen are single-arm and eleven are
 matched two-arm scenes. Keep their task-relevant
 objects visible from the scene camera for every reference embodiment, and verify
 mechanics without adding task routes or success logic to the simulator. Native
@@ -73,7 +73,7 @@ initial-state acceptance must reject robot/table, robot/prop, and dual-arm
 inter-robot penetration across the complete task/family matrix. Reference MuJoCo
 also refuses an evaluator reset when its resolved compiled contacts contain one of
 those penetrations; trusted administration fences the refused world until reopen.
-Together with the reference drawer they form the 29-task evaluation matrix.
+Together with the reference drawer they form the 30-task evaluation matrix.
 Trusted evaluator reset applies an explicit engine-neutral profile over pose,
 appearance, physics, and geometry. Reference MuJoCo task scenes implement stable
 seed-derived bounded pose/material/lighting/mass/friction/damping variation and
