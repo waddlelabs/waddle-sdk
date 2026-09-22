@@ -102,6 +102,39 @@ or explicit unit measurement.
 owner's declaration and refuses whole. The adapter should not add a second command
 path around it.
 
+### Position tracking allowance
+
+`Arm.step_caps` historically bounds each target's displacement from the latest
+measured position. It does not compare consecutive commands or measure physical
+velocity. A servo can therefore exhaust a speed/rate-derived allowance while
+following a smooth reference with ordinary tracking lag.
+
+Adapters may pass keyword-only `position_error_caps`: one finite positive number
+per declared action row, in that row's units. These replace `step_caps` for
+target admission; omission preserves the existing bound and refusal behavior.
+Joint limits, workspace/collision checks, Hold and e-stop are unchanged. A refused
+command's `RuntimeFault.context.max_position_error` records the actual enforced
+vector alongside the legacy `step_caps`, target and measured positions.
+
+An open `SiteSession.describe()` publishes `command_limits[part]` with
+`joint_names` and `max_position_error` in matching order. The support matrix
+advertises `limits.position_error` for these opened parts. Consume the reported
+limits rather than reconstructing them from the action-space rate and velocity.
+These are local runtime metadata; they add no protocol field or separate writer.
+
+YAM `arm()` and `bimanual()` accept `max_joint_position_error_rad`, also available
+under `parts.<part>.options` in `site.yaml`. It applies the explicit bound to the
+six arm joints and retains the existing gripper bound. Invalid values fail during
+factory construction, before CAN or vendor drivers open. Omission continues to
+use `max_joint_speed_rad_s / rate_hz` for arm rows. Declared velocity, simulator
+speed, vendor gains and command bytes remain unchanged.
+
+Select this allowance as part of the site's reviewed envelope. It is not a
+velocity, acceleration, force or torque limit: a larger error can request more
+effort from the vendor's position controller. Callers remain responsible for
+reference timing, interpolation and convergence; the SDK does not add a motion
+controller or prove physical arrival.
+
 ## Optional extensions
 
 ### Position and known velocity

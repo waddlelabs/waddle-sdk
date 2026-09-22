@@ -491,10 +491,9 @@ def forward_kinematics(
 #: more slowly than one at 100.
 DEFAULT_RATE_HZ = 10.0
 
-#: The joint speed a rig declares and holds itself to, rad/s. Well under the
-#: arm's own ceiling — the per-step cap the envelope enforces is DERIVED from
-#: this and the rate (``speed / rate_hz``), so raising one raises the other
-#: and there is no pair of numbers here that can disagree with itself.
+#: The declared reference speed, rad/s. The legacy owner envelope derives its
+#: target-to-measurement bound from ``speed / rate_hz``. An explicit position-
+#: error allowance can replace that bound; neither bounds physical velocity.
 DEFAULT_MAX_JOINT_SPEED_RAD_S = 1.0
 
 #: The same rule for the hand, in its normalized units per second. At the
@@ -1392,12 +1391,11 @@ def _checked_workspace(
 def _step_caps(
     rate_hz: float, max_joint_speed_rad_s: float, max_gripper_speed_per_s: float
 ) -> tuple[float, ...]:
-    """The largest jump a SINGLE accepted command may make, per row.
+    """Legacy target-to-measurement limits, derived from speed and cadence.
 
-    DERIVED from the declared speeds and rate rather than stated beside them:
-    one number cannot then disagree with the other, and the declaration a
-    teleoperator reads (``Joint.max_velocity``) is the same statement the
-    envelope enforces."""
+    These also set the kinematic simulator's speed. They do not measure or
+    independently enforce physical joint velocity on a position servo.
+    """
     if rate_hz <= 0:
         raise ValueError("rate_hz must be > 0")
     if max_joint_speed_rad_s <= 0 or max_gripper_speed_per_s <= 0:
@@ -1455,6 +1453,7 @@ def _build_arms(
     workspace,
     fk,
     step_caps: Sequence[float],
+    max_joint_position_error_rad: float | None,
     joint_limits: Sequence[Sequence[float]],
     rate_hz: float,
     gravity_comp_factor: Sequence[float],
@@ -1479,6 +1478,18 @@ def _build_arms(
     So a failure closes what it opened before it re-raises: half a rig is not a
     rig, and the exception is still the news."""
 
+    position_error_caps = None
+    if max_joint_position_error_rad is not None:
+        if (
+            isinstance(max_joint_position_error_rad, bool)
+            or not isinstance(max_joint_position_error_rad, (int, float))
+            or not math.isfinite(max_joint_position_error_rad)
+            or max_joint_position_error_rad <= 0
+        ):
+            raise ValueError("max_joint_position_error_rad must be finite and positive")
+        position_error_caps = (float(max_joint_position_error_rad),) * ARM_JOINT_COUNT + (
+            step_caps[-1],
+        )
     kp, kd = _gain_vectors(
         arm_gains=arm_gains,
         arm_gain_scale=arm_gain_scale,
@@ -1527,6 +1538,7 @@ def _build_arms(
                     joint_limits=joint_limits,
                     step_caps=step_caps,
                     base_frame=site.base_frame,
+                    position_error_caps=position_error_caps,
                     workspace=workspace,
                     fk=fk,
                     arm_dof=ARM_JOINT_COUNT,
@@ -1563,6 +1575,7 @@ def bimanual(
     joint_limits: Sequence[Sequence[float]] | None = None,
     rate_hz: float = DEFAULT_RATE_HZ,
     max_joint_speed_rad_s: float = DEFAULT_MAX_JOINT_SPEED_RAD_S,
+    max_joint_position_error_rad: float | None = None,
     max_gripper_speed_per_s: float = DEFAULT_MAX_GRIPPER_SPEED_PER_S,
     gravity_comp_factor: Sequence[float] = DEFAULT_GRAVITY_COMP_FACTOR,
     arm_gains: Mapping[str, Sequence[float]] | None = None,
@@ -1614,6 +1627,12 @@ def bimanual(
     are validated before CAN opens; settings the vendor codec would clamp are
     refused. Requested gains are restored after e-stop recovery. Simulation and
     monitor/zero-gravity modes validate these options but do not apply PD gains.
+
+    ``max_joint_position_error_rad`` optionally sets the owner-authorized
+    target-to-measurement bound for the six arm joints independently of
+    ``rate_hz``. Omission preserves the legacy speed/rate bound. Declared
+    reference speed, gripper bounds and vendor behavior remain unchanged;
+    callers own interpolation and convergence. This is not a torque limit.
 
     ``fk`` is the forward kinematics each part reports its TCP from, and it is
     OPT-IN: pass ``None`` (with ``workspace=None``) for a rig that reports
@@ -1683,6 +1702,7 @@ def bimanual(
             workspace=box,
             fk=fk,
             step_caps=caps,
+            max_joint_position_error_rad=max_joint_position_error_rad,
             joint_limits=joints,
             rate_hz=rate_hz,
             gravity_comp_factor=_checked_gravity_comp_factor(gravity_comp_factor),
@@ -1717,6 +1737,7 @@ def arm(
     joint_limits: Sequence[Sequence[float]] | None = None,
     rate_hz: float = DEFAULT_RATE_HZ,
     max_joint_speed_rad_s: float = DEFAULT_MAX_JOINT_SPEED_RAD_S,
+    max_joint_position_error_rad: float | None = None,
     max_gripper_speed_per_s: float = DEFAULT_MAX_GRIPPER_SPEED_PER_S,
     gravity_comp_factor: Sequence[float] = DEFAULT_GRAVITY_COMP_FACTOR,
     arm_gains: Mapping[str, Sequence[float]] | None = None,
@@ -1778,6 +1799,7 @@ def arm(
             workspace=box,
             fk=fk,
             step_caps=caps,
+            max_joint_position_error_rad=max_joint_position_error_rad,
             joint_limits=joints,
             rate_hz=rate_hz,
             gravity_comp_factor=_checked_gravity_comp_factor(gravity_comp_factor),

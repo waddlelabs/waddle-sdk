@@ -1269,6 +1269,13 @@ class SiteSession:
             try:
                 description["runtime"] = dict(managed.core.status())
                 description["robot"] = self._registered_robot_description(managed)
+                description["command_limits"] = {
+                    name: {
+                        "joint_names": list(arm.joint_names),
+                        "max_position_error": list(arm.position_error_caps or arm.step_caps),
+                    }
+                    for name, arm in managed.arms.items()
+                }
                 description["support"] = self.support().as_dict()
             except RuntimeFault:
                 raise
@@ -1458,6 +1465,7 @@ class SiteSession:
             facts = {
                 SupportFact.JOINT_POSITION_OBSERVATION,
                 SupportFact.JOINT_VELOCITY_OBSERVATION,
+                SupportFact.POSITION_ERROR_LIMITS,
                 *grant_facts,
             }
             part_space = part_spaces.get(name, {})

@@ -6,8 +6,10 @@ import logging
 import sys
 import time
 import types
+from functools import wraps
 
 import pytest
+from waddle_sdk.robots import _i2rt_patches as patches
 from waddle_sdk.robots._i2rt_patches import (
     _command_joint_state_atomic,
     _receive_message_starvation_tolerant,
@@ -42,6 +44,229 @@ class _StubInterface:
 
 
 _FRAME = object()
+
+
+class _Clock:
+    now = 0.0
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, delay):
+        self.now += delay
+
+
+class _TransactionBus:
+    channel_info = "socketcan channel 'test_can'"
+
+    def __init__(self, clock):
+        self.clock = clock
+        self.script = []
+        self.sent = []
+        self.waits = []
+        self.unrelated = None
+
+    def send(self, message):
+        self.sent.append(message)
+
+    def recv(self, timeout):
+        self.waits.append(timeout)
+        if self.script:
+            elapsed, reply = self.script.pop(0)
+            self.clock.sleep(elapsed)
+            return reply
+        if self.unrelated is not None:
+            self.clock.sleep(0.002)
+            return self.unrelated
+        self.clock.sleep(timeout)
+        return None
+
+
+def _install_interface(monkeypatch, interface):
+    for name in ("i2rt", "i2rt.motor_drivers", "i2rt.motor_drivers.can_interface"):
+        monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
+    sys.modules["i2rt.motor_drivers.can_interface"].CanInterface = interface
+
+
+@pytest.fixture
+def transaction(monkeypatch):
+    clock = _Clock()
+    monkeypatch.setattr(patches, "time", clock)
+    can = types.ModuleType("can")
+    can.Message = lambda **kwargs: types.SimpleNamespace(**kwargs)
+    can.CanError = type("CanError", (Exception,), {})
+    monkeypatch.setitem(sys.modules, "can", can)
+
+    class CanInterface:
+        use_buffered_reader = False
+        name = "yam_test"
+        receive_mode = types.SimpleNamespace(get_receive_id=lambda motor: motor + 16)
+        _receive_message = _receive_message_starvation_tolerant
+
+        def _send_message_get_response(
+            self, id, motor_id, data, max_retry=5, expected_id=None
+        ):
+            # Pinned vendor's first-frame match plus discarded recovery receive.
+            for _ in range(max_retry):
+                self.bus.send(
+                    can.Message(arbitration_id=id, data=data, is_extended_id=False)
+                )
+                reply = _receive_message_starvation_tolerant(self, motor_id, 0.01)
+                expected = motor_id + 16 if expected_id is None else expected_id
+                if reply is not None and reply.arbitration_id == expected:
+                    return reply
+                _receive_message_starvation_tolerant(self, motor_id, 0.009, True)
+                clock.sleep(0.001)
+            raise AssertionError(
+                f"fail to communicate with the motor {id} on {self.name} "
+                f"at can channel {self.bus.channel_info}"
+            )
+
+    _install_interface(monkeypatch, CanInterface)
+    original_transaction = CanInterface._send_message_get_response
+    apply_recv_starvation_patch()
+    interface = CanInterface()
+    interface.bus = _TransactionBus(clock)
+    interface.original_transaction = original_transaction.__get__(interface)
+    return interface, clock
+
+
+@pytest.mark.parametrize("status", [0x15, 0xD5])
+def test_transaction_returns_matching_frame_unchanged(transaction, status):
+    interface, _ = transaction
+    reply = types.SimpleNamespace(arbitration_id=21, data=bytes([status]))
+    interface.bus.script = [(0.0005, reply)]
+
+    assert interface._send_message_get_response(5, 5, [3, 4]) is reply
+    sent = interface.bus.sent
+    assert [(m.arbitration_id, m.data, m.is_extended_id) for m in sent] == [
+        (5, [3, 4], False)
+    ]
+
+
+@pytest.mark.parametrize("expected_id", [None, 0x50F, 0])
+def test_transaction_skips_unrelated_reply_without_resending(transaction, expected_id):
+    interface, _ = transaction
+    expected = 21 if expected_id is None else expected_id
+    reply = types.SimpleNamespace(arbitration_id=expected)
+    interface.bus.script = [
+        (0.003, types.SimpleNamespace(arbitration_id=18)),
+        (0.001, reply),
+    ]
+
+    assert (
+        interface._send_message_get_response(5, 5, [3], expected_id=expected_id)
+        is reply
+    )
+    assert len(interface.bus.sent) == 1
+    assert interface.bus.waits == pytest.approx([0.01, 0.007])
+
+
+def test_transaction_accepts_queued_matching_reply_after_scheduling_delay(transaction):
+    interface, _ = transaction
+    reply = types.SimpleNamespace(arbitration_id=21)
+    interface.bus.script = [(0.020, None), (0, reply)]
+
+    assert interface._send_message_get_response(5, 5, [3]) is reply
+    assert len(interface.bus.sent) == 1
+    assert interface.bus.waits == pytest.approx([0.01, 0])
+
+
+@pytest.mark.parametrize("recovery_delay", [0.001, 0.008])
+@pytest.mark.parametrize("status", [0x15, 0xD5])
+def test_transaction_accepts_matching_reply_in_original_recovery_budget(
+    transaction, recovery_delay, status
+):
+    interface, clock = transaction
+    reply = types.SimpleNamespace(arbitration_id=21, data=bytes([status]))
+    interface.bus.script = [(0.010, None), (0, None), (recovery_delay, reply)]
+
+    with pytest.raises(AssertionError, match="fail to communicate with the motor 5"):
+        interface.original_transaction(5, 5, [3], max_retry=1)
+    interface.bus.sent.clear()
+    interface.bus.waits.clear()
+    interface.bus.script = [(0.010, None), (0, None), (recovery_delay, reply)]
+    start = clock.now
+    assert interface._send_message_get_response(5, 5, [3]) is reply
+    assert len(interface.bus.sent) == 1
+    assert clock.now - start == pytest.approx(0.010 + recovery_delay)
+    assert interface.bus.waits == pytest.approx([0.010, 0, 0.009])
+
+
+def test_transaction_does_not_restart_recovery_budget_after_late_initial_wait(
+    transaction,
+):
+    interface, clock = transaction
+    interface.bus.script = [(0.015, None), (0, None)]
+
+    with pytest.raises(AssertionError, match="fail to communicate with the motor 5"):
+        interface._send_message_get_response(5, 5, [3], max_retry=1)
+
+    assert interface.bus.waits == pytest.approx([0.010, 0, 0.004, 0])
+    assert clock.now == pytest.approx(0.020)  # Original 19 ms plus retry sleep.
+
+
+@pytest.mark.parametrize("unrelated", [False, True])
+def test_transaction_exhausts_original_retry_budget_with_scoped_error(
+    transaction, unrelated
+):
+    interface, clock = transaction
+    if unrelated:
+        interface.bus.unrelated = types.SimpleNamespace(arbitration_id=18)
+
+    with pytest.raises(AssertionError) as caught:
+        interface._send_message_get_response(5, 5, [3], max_retry=3)
+
+    assert (
+        str(caught.value)
+        == "fail to communicate with the motor 5 on yam_test at can channel socketcan channel 'test_can'"
+    )
+    assert len(interface.bus.sent) == 3
+    assert clock.now <= 0.070
+    assert max(interface.bus.waits) <= 0.010000001
+
+
+def test_reapplying_preserves_transaction_instrumentation(transaction, monkeypatch):
+    interface, _ = transaction
+    cls = type(interface)
+    original = cls._send_message_get_response
+    calls = []
+
+    @wraps(original)
+    def recorded(self, *args, **kwargs):
+        calls.append(args)
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(cls, "_send_message_get_response", recorded)
+    apply_recv_starvation_patch()
+    reply = types.SimpleNamespace(arbitration_id=21)
+    interface.bus.script = [(0, reply)]
+    assert interface._send_message_get_response(5, 5, [3]) is reply
+    assert calls == [(5, 5, [3])]
+
+
+@pytest.mark.parametrize("receive_already_patched", [False, True])
+def test_transaction_signature_drift_refuses_without_partial_install(
+    monkeypatch, receive_already_patched
+):
+    class CanInterface:
+        def _receive_message(self, motor_id=None, timeout=0.009, supress_warning=False):
+            raise AssertionError("unpatched receive must not be called")
+
+        def _send_message_get_response(self, id, motor_id, data):
+            raise AssertionError("unknown transaction must not be called")
+
+    if receive_already_patched:
+        CanInterface._receive_message = _receive_message_starvation_tolerant
+    original_receive = CanInterface._receive_message
+    original_send = CanInterface._send_message_get_response
+    _install_interface(monkeypatch, CanInterface)
+    with pytest.raises(
+        RuntimeError, match=r"CanInterface\._send_message_get_response signature"
+    ):
+        apply_recv_starvation_patch()
+    assert CanInterface._receive_message is original_receive
+    assert CanInterface._send_message_get_response is original_send
 
 
 def test_receive_uses_one_kernel_wait_for_the_remaining_budget() -> None:
@@ -102,6 +327,11 @@ def test_apply_is_exact_signature_checked_and_idempotent(monkeypatch) -> None:
         ):
             del self, motor_id, timeout, supress_warning
 
+        def _send_message_get_response(
+            self, id, motor_id, data, max_retry=5, expected_id=None
+        ):
+            del self, id, motor_id, data, max_retry, expected_id
+
     i2rt = types.ModuleType("i2rt")
     motor_drivers = types.ModuleType("i2rt.motor_drivers")
     can_interface = types.ModuleType("i2rt.motor_drivers.can_interface")
@@ -112,10 +342,13 @@ def test_apply_is_exact_signature_checked_and_idempotent(monkeypatch) -> None:
 
     apply_recv_starvation_patch()
     installed = CanInterface._receive_message
+    transaction_installed = CanInterface._send_message_get_response
     apply_recv_starvation_patch()
 
     assert getattr(installed, "_waddle_starvation_patch", False)
     assert CanInterface._receive_message is installed
+    assert CanInterface._send_message_get_response is transaction_installed
+    assert getattr(transaction_installed, "_waddle_matching_patch", False)
 
 
 def test_apply_refuses_an_unverified_vendor_signature(monkeypatch) -> None:
@@ -187,7 +420,9 @@ def test_command_state_builds_complete_command_before_locked_publication() -> No
     assert robot._commands.kd == "default-kd"
 
 
-def test_apply_command_state_patch_is_signature_checked_and_idempotent(monkeypatch) -> None:
+def test_apply_command_state_patch_is_signature_checked_and_idempotent(
+    monkeypatch,
+) -> None:
     class MotorChainRobot:
         def command_joint_state(self, joint_state):
             del self, joint_state

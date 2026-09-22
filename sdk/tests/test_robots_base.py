@@ -346,6 +346,71 @@ def test_the_envelope_applies_a_command_it_admits():
     assert arm.accepted == 1 and arm.rejected == 0
 
 
+@pytest.mark.parametrize("rate_hz", [10.0, 50.0])
+def test_explicit_position_error_allows_servo_lag_without_resampling_targets(rate_hz):
+    driver = _CountingDriver()
+    arm = _arm(
+        driver,
+        step_caps=(1 / rate_hz, 1 / rate_hz, 0.25),
+        position_error_caps=(0.2, 0.2, 0.25),
+        rate_hz=rate_hz,
+    )
+    # The driver keeps reporting the same position: neither SDK convergence
+    # nor a command-to-command difference may replace this measured error.
+    for q in (0.12, 0.18):
+        assert base.apply_decision({"toy": arm}, {"toy": [q, 0.0, 1.0]})
+    assert np.asarray(driver.writes) == pytest.approx(
+        np.asarray([[0.12, 0.0, 1.0], [0.18, 0.0, 1.0]])
+    )
+    faults = []
+    assert not base.apply_decision(
+        {"toy": arm}, {"toy": [0.21, 0.0, 1.0]}, on_refusal=faults.append
+    )
+    assert len(driver.writes) == 2 and driver.holds == 1
+    assert "position-error cap 0.2000" in str(faults[0])
+    assert faults[0].context["max_position_error"] == [0.2, 0.2, 0.25]
+    assert faults[0].context["measured"] == [0.0, 0.0, 1.0]
+    assert faults[0].context["step_caps"] == [1 / rate_hz, 1 / rate_hz, 0.25]
+
+
+def test_explicit_position_error_does_not_relax_joint_or_workspace_limits():
+    arm = _arm(
+        _CountingDriver(),
+        position_error_caps=(2.0, 2.0, 0.25),
+        fk=_flat_fk,
+        workspace=((-0.02, -1.0, -1.0), (0.02, 1.0, 1.0)),
+    )
+    for target, reason in (
+        ([1.1, 0.0, 1.0], "outside its declared limits"),
+        ([0.03, 0.0, 1.0], "outside the declared workspace"),
+    ):
+        faults = []
+        assert not base.apply_decision(
+            {"toy": arm}, {"toy": target}, on_refusal=faults.append
+        )
+        assert reason in str(faults[0])
+    assert not arm.driver.writes
+
+
+@pytest.mark.parametrize(
+    "caps",
+    [(0.2,), (0.2, 0.2, 0.0), (0.2, -1.0, 0.2), (True, 0.2, 0.2),
+     ("0.2", 0.2, 0.2), (float("inf"), 0.2, 0.2), (float("nan"), 0.2, 0.2)],
+)
+def test_invalid_position_error_limits_are_rejected_before_dispatch(caps):
+    with pytest.raises(ValueError, match="position_error_caps"):
+        _arm(position_error_caps=caps)
+
+
+def test_omitting_position_error_limits_keeps_the_legacy_allowance():
+    arm = _arm(_CountingDriver())
+    faults = []
+    assert not base.apply_decision(
+        {"toy": arm}, {"toy": [0.11, 0.0, 1.0]}, on_refusal=faults.append
+    )
+    assert faults[0].context["max_position_error"] == list(STEPS)
+
+
 def test_an_empty_action_row_is_a_hold_not_a_refusal():
     """The wire's "hold this part" — a step addressing this part with no
     motion for it. Nothing is written, nothing is refused, and the arm keeps

@@ -151,8 +151,15 @@ workaround for the pinned vendor receive loop. The stock loop polls SocketCAN in
 one-millisecond slices and can abandon a healthy reply if Python is descheduled
 across its wall-clock deadline, leaving that reply to poison the next motor
 transaction. The adapter instead makes one kernel wait plus a final non-blocking
-drain. An unknown I2RT signature is refused, and the workaround remains local to
-the YAM adapter; custom drivers are unchanged.
+poll for each receive deadline. Transactions accept the expected reply throughout
+the existing 10 ms initial and 9 ms recovery windows, including a valid late reply
+that the stock recovery path discards. Unrelated reply IDs do not restart those
+deadlines. Explicit reply IDs for passive encoders, matching motor-error frames,
+command bytes, retry counts and communication-error text are preserved. Both
+vendor method signatures must match before installation; repeated arm opens retain
+installed patches and marked instrumentation. These workarounds are local to the
+YAM adapter; custom drivers are unchanged. They do not establish a real-time
+scheduling guarantee or cure physical CAN, USB or motor faults.
 
 A simulator that owns one shared scene, clock, and renderer declares a `worlds` entry.
 Its parts and cameras name `world: <name>` instead of separate device drivers. The SDK

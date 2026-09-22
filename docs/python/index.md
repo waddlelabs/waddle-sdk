@@ -29,7 +29,11 @@ The reference YAM adapter also installs the exact-signature workaround required 
 the pinned I2RT receive loop before opening SocketCAN. The workaround makes one
 kernel wait for the receive budget and one final non-blocking drain; it refuses an
 unverified vendor signature rather than silently running with starvation-created
-motor timeouts. This is adapter-local and does not alter custom robot drivers.
+motor timeouts. Transactions also retain matching late replies throughout their
+existing 10 ms initial and 9 ms recovery windows, skipping unrelated IDs without
+restarting either deadline. Explicit encoder reply IDs, matching motor errors,
+retry counts and scoped communication failures are preserved. This is adapter-local
+and does not alter custom robot drivers.
 
 The package root exports only the lifecycle, transport declarations, outcomes, and
 manifest errors. Hardware extension contracts live under `waddle_sdk.robots` and

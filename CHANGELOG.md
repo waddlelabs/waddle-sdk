@@ -140,6 +140,14 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 - Reference YAM and xArm7 workspaces for MuJoCo, Isaac Sim, and SAPIEN, with shared
   scene/wrist RGB-D profiles, normalized grippers, two cubes, a threaded cap, and a drawer.
   Optional engines run in isolated workers behind the existing shared-world lifecycle.
+- Optional per-row `Arm.position_error_caps` and YAM
+  `max_joint_position_error_rad` let a reviewed owner envelope bound servo
+  tracking error independently of command cadence. Defaults, gripper bounds,
+  simulated speed and vendor dispatch remain unchanged. Open descriptions and
+  `limits.position_error` support report the actual ordered allowance; refusal
+  context retains it alongside the target and latest measurement. This adds no
+  interpolation, convergence, or physical velocity/torque guarantee.
+
 - Background part-read failures persist as structured `robot.part_fault` runtime
   events while healthy streams continue. Live comparisons retain selected-part
   fault history and reject recovered transient failures before further commands
@@ -460,6 +468,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   select `worlds.cell.options.reset_on_episode: true` for native scene reset.
 - Reject invalid portable-scene robot base frames and unsafe URDF joint-limit
   widening before loading the optional MuJoCo compiler dependency.
+- YAM's pinned I2RT adapter accepts the expected CAN reply in either the original
+  10 ms receive or 9 ms recovery window instead of discarding a valid late reply.
+  Unrelated IDs do not restart those deadlines; explicit encoder reply IDs,
+  matching motor errors, retry counts and scoped communication failures remain
+  intact. Both patched methods are signature-checked before installation.
+
 - Replace a scheduler-dependent per-part uplink test with controlled reducer
   admission times, verifying independent 10 Hz budgets and nonstarvation without
   requiring unrelated streams to have identical phases.

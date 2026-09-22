@@ -28,7 +28,7 @@ Construction and authorization probes must remain non-opening. Hardware adapters
 
 ## Safety and posture
 
-The ordinary `Arm` seam rejects a complete target and never clamps it into a command nobody requested. Owner inputs include joint limits, per-command step caps, optional workspace bounds, and optional static collision rules. Workspace checks require usable FK; configured collision checks require conservative geometry in a compatible frame and fail closed when unavailable.
+The ordinary `Arm` seam rejects a complete target and never clamps it into a command nobody requested. Owner inputs include joint limits, target-to-measurement allowances, optional workspace bounds, and optional static collision rules. Optional `position_error_caps` replaces the legacy `step_caps` allowance without changing the other checks; neither measures physical velocity or bounds torque. Consume the open runtime's ordered `command_limits[part].max_position_error` when `limits.position_error` is advertised rather than deriving an allowance from rate. Workspace checks require usable FK; configured collision checks require conservative geometry in a compatible frame and fail closed when unavailable.
 
 `monitor` and `supervised` describe which verbs a session registers. They do not decide authority. Only `"sim"` identifies a harmless twin; every other driver `kind` is treated conservatively as live hardware.
 

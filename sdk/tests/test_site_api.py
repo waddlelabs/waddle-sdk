@@ -396,6 +396,7 @@ def test_open_session_exposes_immutable_support_and_optional_sdk_facets(tmp_path
         arm_facts = set(rows["robot:arm"].facts)
         assert SupportFact.JOINT_POSITION_OBSERVATION in arm_facts
         assert SupportFact.JOINT_VELOCITY_OBSERVATION in arm_facts
+        assert SupportFact.POSITION_ERROR_LIMITS in arm_facts
         assert SupportFact.JOINT_POSITION_ACTION in arm_facts
         assert SupportFact.SEND_GRANT in arm_facts
         assert SupportFact.HOLD_GRANT in arm_facts
@@ -422,6 +423,14 @@ def test_open_session_exposes_immutable_support_and_optional_sdk_facets(tmp_path
         assert fault.value.code is FaultCode.UNSUPPORTED
 
         arm = session._managed.arms["arm"]
+        assert description["command_limits"]["arm"] == {
+            "joint_names": ["j0", "j1"], "max_position_error": [0.2, 0.2]
+        }
+        arm.position_error_caps = (0.3, 0.4)
+        command_limits = session.describe()["command_limits"]["arm"]
+        assert command_limits["max_position_error"] == [0.3, 0.4]
+        assert arm.check(np.array([0.25, 0.35]), np.zeros(2)) is None
+        assert arm.check(np.array([0.31, 0.35]), np.zeros(2)) is not None
         arm.base_frame = "cell_changed"
         base_frame_matrix = session.support()
         original_rows = {row.scope: row for row in matrix.rows}
