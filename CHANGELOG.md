@@ -317,6 +317,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Gate the native camera-profile mismatch test on its optional MuJoCo runtime,
+  keeping the default SDK test suite valid without simulation extras.
 - Refuse evaluator resets whose compiled MuJoCo contacts contain robot/table,
   robot/prop, or dual-arm cross-arm penetration. The trusted administration layer
   fences a refused world and requires the site to reopen before further use.

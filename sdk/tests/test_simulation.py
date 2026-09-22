@@ -3249,6 +3249,7 @@ def test_site_owns_one_world_and_reopens_an_independent_world(
 
 
 def test_camera_profile_mismatch_fails_before_open(tmp_path):
+    pytest.importorskip("mujoco")
     site, _ = documents(tmp_path)
     site["cameras"]["scene"]["intrinsics"]["fx"] += 1
     (tmp_path / "site.yaml").write_text(yaml.safe_dump(site))
