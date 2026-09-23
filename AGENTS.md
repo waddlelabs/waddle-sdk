@@ -80,11 +80,14 @@ seed-derived bounded pose/material/lighting/mass/friction/damping variation and
 bounded or disjoint development geometry scales. Preserve rigid transforms within
 assembled free fixtures, keep the seed and resolved variation outside participant
 contracts, and retain canonical ordinary reset behavior. Evaluator seed zero is
-reserved for the fully canonical profile. Reference MuJoCo task engines also retain
-bounded per-physics-step contact summaries for the current evaluator episode so a
-slower hidden-state sampler can score transient contact and peak-force events.
-Clear those summaries on every reset and never expose them through participant
-observations, capabilities, or tools.
+reserved for the fully canonical profile. The `pick_lift` development distribution
+uses +/-40 mm in each tabletop axis and +/-10 degrees yaw so repeated grasp trials
+cannot assume the canonical cube pose; preserve its native reset-clearance and
+planner-reachability checks when changing those bounds. Reference MuJoCo task
+engines also retain bounded per-physics-step contact summaries for the current
+evaluator episode so a slower hidden-state sampler can score transient contact and
+peak-force events. Clear those summaries on every reset and never expose them
+through participant observations, capabilities, or tools.
 
 ## Repo map
 

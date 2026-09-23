@@ -36,6 +36,7 @@ _COUPLED_FREE_GROUPS = {
 }
 
 _BOUNDS = {
+    "pick_lift": (0.040, 0.17453292519943295),
     "drawer": (0.012, 0.035),
     "touch_target": (0.015, 0.035),
     "operate_control": (0.015, 0.035),

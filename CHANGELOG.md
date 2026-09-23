@@ -11,6 +11,13 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+### Changed
+
+- Widen the MuJoCo `pick_lift` evaluator distribution from the generic +/-12 mm,
+  +/-5 degree pose range to a task-specific +/-40 mm in both tabletop axes and
+  +/-10 degrees yaw. Trusted reset still rejects native robot/prop penetration;
+  the seed and resolved pose remain outside participant-facing contracts.
+
 ### Added
 
 - Extend native initial-collision acceptance to every matched dual-arm task cell.

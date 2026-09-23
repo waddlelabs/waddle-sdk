@@ -148,7 +148,10 @@ dimensions. Each dimension is `canonical`, `bounded`, or `held_out`. The
 development implementation provides:
 
 - bounded XY/yaw changes for each task pose group, preserving a fitted or loaded
-  free assembly as one rigid group;
+  free assembly as one rigid group. `pick_lift` uses a wider tabletop range of
+  +/-40 mm in each horizontal axis and +/-10 degrees in yaw; the other ordinary
+  task groups retain their task-specific bounds or the +/-12 mm, +/-5 degree
+  default;
 - per-prop RGB factors within 14% and a shared lighting factor within 12%;
 - per-prop mass/inertia, friction, and passive-joint damping factors within 15%;
   and

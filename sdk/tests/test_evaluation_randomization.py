@@ -41,6 +41,48 @@ def _multiply_quaternions(first, second):
     )
 
 
+def test_pick_lift_uses_wider_bounded_tabletop_distribution(tmp_path, monkeypatch):
+    pytest.importorskip("mujoco")
+    monkeypatch.setenv("MUJOCO_GL", "egl")
+    from waddle_sdk.simulators.mujoco import Engine
+
+    _, config = make_site(
+        "pick-lift-randomization-test",
+        backend="mujoco",
+        robot="yam",
+        environment="pick_lift",
+        width=192,
+        height=144,
+        arms=1,
+        render_quality="fast",
+    )
+    engine = Engine(config, tmp_path)
+    try:
+        assert len(engine._pose_groups) == 1
+        group = engine._pose_groups[0]
+        assert group.bodies == ("target_cube",)
+        assert group.translation_xy_m == pytest.approx(0.040)
+        assert group.yaw_rad == pytest.approx(math.radians(10.0))
+
+        positions = []
+        for seed in range(1, 65):
+            assert engine.evaluation_reset(seed=seed)
+            position = engine.evaluation_snapshot()["bodies"]["target_cube"][
+                "position_m"
+            ]
+            assert 0.280 <= position[0] <= 0.360
+            assert -0.040 <= position[1] <= 0.040
+            assert position[2] == pytest.approx(0.023)
+            positions.append(position)
+
+        offsets = np.asarray(positions)[:, :2] - np.array([0.320, 0.0])
+        assert np.all(np.abs(offsets) < 0.040)
+        assert np.max(np.abs(offsets[:, 0])) > 0.030
+        assert np.max(np.abs(offsets[:, 1])) > 0.030
+    finally:
+        engine.close()
+
+
 @pytest.mark.parametrize("robot", ROBOTS)
 @pytest.mark.parametrize("environment", EVALUATION_ENVIRONMENTS)
 def test_seeded_evaluation_reset_covers_complete_task_matrix(
