@@ -3682,6 +3682,52 @@ def test_reference_control_defaults_match_nonopening_physical_declaration(robot)
 
 
 @pytest.mark.parametrize("robot", ROBOTS)
+def test_chocolate_packing_camera_resolves_pocket_floors(tmp_path, robot):
+    pytest.importorskip("mujoco")
+    from waddle_sdk.simulators.mujoco import Engine
+
+    _, config = make_site(
+        "chocolate-pocket-view",
+        backend="mujoco",
+        robot=robot,
+        environment="chocolate-packing",
+        width=640,
+        height=480,
+    )
+    engine = Engine(config, tmp_path)
+    try:
+        engine.evaluation_reset(seed=0)
+        rgb, depth = engine.capture("scene")
+        camera = config["cameras"]["scene"]
+        world_from_camera = np.asarray(camera["transform"])
+        camera_from_world = np.linalg.inv(world_from_camera)
+        intr = camera["intrinsics"]
+        for index in range(1, 7):
+            center = engine.data.body(f"packing_slot_{index}").xpos.copy()
+            # A center selected from the visible pocket mouth must see the blue
+            # floor, not the gold collar. Test actual native pixels and depth.
+            center[2] += 0.024
+            point = camera_from_world @ np.r_[center, 1.0]
+            u = round(intr["fx"] * point[0] / point[2] + intr["cx"])
+            v = round(intr["fy"] * point[1] / point[2] + intr["cy"])
+            assert 0 <= u < 640 and 0 <= v < 480
+            red, _green, blue = map(int, rgb[v, u])
+            assert blue > red * 1.5
+            if depth is not None:
+                z = float(depth[v, u]) * intr["depth_scale_mm"] / 1000
+                projected = world_from_camera @ [
+                    z * (u - intr["cx"]) / intr["fx"],
+                    z * (v - intr["cy"]) / intr["fy"],
+                    z,
+                    1.0,
+                ]
+                assert abs(projected[2] - 0.004) < 0.002
+                assert np.linalg.norm(projected[:2] - center[:2]) < 0.0025
+    finally:
+        engine.close()
+
+
+@pytest.mark.parametrize("robot", ROBOTS)
 def test_chocolate_packing_native_slots_and_source_continuation(tmp_path, robot):
     pytest.importorskip("mujoco")
     from waddle_sdk.simulators.mujoco import Engine

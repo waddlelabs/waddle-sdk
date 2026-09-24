@@ -97,8 +97,9 @@ MuJoCo also provides thirty-one interactive development task environments:
 - `chocolate-packing`: twenty 20 mm diameter, 14 mm tall, 6 g cylinders in a
   single layer on a source tray, with 16 mm clear gaps for finger access. A blue
   box has six physical 23 mm diameter pockets with floors and collars. Each
-  chocolate has explicit sliding, torsional, and rolling friction. The close
-  scene camera resolves the source and all six pockets. A trusted evaluator can
+  chocolate has explicit sliding, torsional, and rolling friction. Scene revision
+  1.0.1 places the camera above the box, with both trays across the image, so
+  pocket mouth centers resolve to their floors rather than the collar walls. A trusted evaluator can
   replace a full box while preserving the remaining source chocolates, then
   finish after the final two fill the last box. The SDK does not decide when a
   box is complete.

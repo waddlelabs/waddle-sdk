@@ -82,7 +82,9 @@ The S19 reference fixture uses eighteen same-color 24 mm cubes in one irregular
 source pile and a separate adjacent wide destination bin sized for all eighteen;
 the SDK scene does not reset individual transfers or define their success/order.
 The S20 chocolate-packing scene has twenty single-layer 20 mm cylinders in a
-source tray and a six-pocket box. Its ordinary runtime remains task-neutral.
+source tray and a six-pocket box. Scene revision 1.0.1 views the pockets from
+above so their visible mouth centers resolve to the floor in RGB-D. Its ordinary
+runtime remains task-neutral.
 Trusted continuation reset can preserve measured free-body poses and retire packed
 bodies while resetting the box and robot; only the private evaluator chooses the
 sets and completion boundary. Keep retired state out of participant observations.

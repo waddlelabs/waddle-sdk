@@ -13,6 +13,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Changed
 
+- Move the chocolate-packing camera above the box in scene revision 1.0.1,
+  keeping both trays visible while reducing pocket-mouth depth parallax.
+
 - Make the near-base, wider YAM `pick_lift` cube distribution the built-in
   noncanonical evaluation behavior under scene revision 1.1.0; an external pose
   profile is no longer needed.

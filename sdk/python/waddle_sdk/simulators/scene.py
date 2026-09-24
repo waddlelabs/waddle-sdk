@@ -68,7 +68,7 @@ REFERENCE_EMBODIMENT_REVISION = "1.0.0"
 _ENVIRONMENT_REVISIONS = {
     "pick_lift": ("1.1.0", "1.0.0"),
     "candy-bin-transfer": ("1.2.0", "1.2.0"),
-    "chocolate-packing": ("1.0.0", "1.0.0"),
+    "chocolate-packing": ("1.0.1", "1.0.0"),
 }
 _REVISION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$")
 
@@ -394,7 +394,13 @@ def make_site(
         # interior once open and the rear row of the test-tube rack.
         mounts["scene"] = look_at((0.10, -0.65, 1.35), (0.42, 0, 0.05)).tolist()
     if environment == "chocolate-packing":
-        mounts["scene"] = look_at((0.10, -0.42, 0.72), (0.35, -0.07, 0.02)).tolist()
+        # View down into the snug pockets: an oblique ray through the visible
+        # mouth center can hit a collar wall instead of the floor. Roll the
+        # optical frame so both trays fit along the image's wider dimension.
+        mounts["scene"] = (
+            look_at((0.41, 0.13, 0.62), (0.30, -0.06, 0.02))
+            @ transform((0, 0, 0), (0, 0, math.pi / 2))
+        ).tolist()
     if environment in DUAL_ARM_TASK_ENVIRONMENTS:
         mounts["scene"] = look_at((0.10, 0, 2.00), (0.30, 0, 0)).tolist()
     if robot == "yam":
