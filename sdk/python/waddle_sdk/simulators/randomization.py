@@ -7,6 +7,14 @@ from dataclasses import dataclass
 
 from .scene import TASK_ENVIRONMENTS
 
+# The standard YAM S02 pose distribution keeps the cube close to the base while
+# covering the reachable tray-free tabletop area on repeated evaluation resets.
+YAM_PICK_LIFT_POSE = {
+    "x_offset_m": -0.03,
+    "x_half_range_m": 0.04,
+    "y_half_range_m": 0.06,
+}
+
 
 @dataclass(frozen=True)
 class PoseGroup:
@@ -43,6 +51,9 @@ _BOUNDS = {
     "open-hinged-door": (0.012, 0.035),
     "retrieve-bottle-clutter": (0.003, 0.06),
     "uncap-return-test-tube": (0.001, 0.035),
+    # Keep densely packed candy starts physically separated while retaining
+    # seed-dependent grasp choices and orientations.
+    "candy-bin-transfer": (0.002, 0.05),
 }
 
 

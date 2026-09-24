@@ -18,7 +18,13 @@ from ..robots.mujoco import (
 from ..simulation import SimulationVariation
 from .description import description
 from .model import mjcf, objects
-from .randomization import held_out_sample, pose_groups, sample, variation_sample
+from .randomization import (
+    YAM_PICK_LIFT_POSE,
+    held_out_sample,
+    pose_groups,
+    sample,
+    variation_sample,
+)
 from .scene import depth_z16, profile
 
 
@@ -357,11 +363,16 @@ class Engine:
         bound = 0.14
         for geom_id in self._prop_geom_ids:
             rgba = initial["geom_rgba"][geom_id].copy()
+            variation_group = geom_id
+            if environment == "candy-bin-transfer":
+                body_id = int(self.model.geom_bodyid[geom_id])
+                if self.model.body(body_id).name.startswith("candy_"):
+                    variation_group = "candies"
             for channel in range(3):
                 delta = self._level_sample(
                     seed,
                     environment,
-                    geom_id,
+                    variation_group,
                     f"appearance_{channel}",
                     level,
                     bound,
@@ -498,6 +509,12 @@ class Engine:
     def _apply_pose_randomization(self, seed, level="bounded"):
         environment = self.config["environment"]
         pose_profile = self.config.get("pose_profile")
+        if (
+            pose_profile is None
+            and self.config["robot"] == "yam"
+            and environment == "pick_lift"
+        ):
+            pose_profile = YAM_PICK_LIFT_POSE
         for index, group in enumerate(self._pose_groups):
             x_limit = (
                 pose_profile["x_half_range_m"]

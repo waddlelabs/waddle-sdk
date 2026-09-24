@@ -64,25 +64,33 @@ models. Engine-specific acceptance stays in `sdk/tests/test_simulation.py`; a
 skipped optional-engine case is not evidence that the engine passed. Reference
 worlds preserve state across ordinary runs and reset only when the site explicitly
 sets `reset_on_episode: true`.
-The twenty-eight MuJoCo-only development task environments are built-in interactive
-fixtures using the same runtime surface. Seventeen are single-arm and eleven are
+The thirty MuJoCo-only development task environments are built-in interactive
+fixtures using the same runtime surface. Nineteen are single-arm and eleven are
 matched two-arm scenes. Keep their task-relevant
 objects visible from the scene camera for every reference embodiment, and verify
 mechanics without adding task routes or success logic to the simulator. Native
-initial-state acceptance must reject robot/table, robot/prop, and dual-arm
+small-object acceptance must establish retained bilateral finger contact and
+measured object lift, not infer a grasp from commanded or measured gripper
+closure alone.
+Native initial-state acceptance must reject robot/table, robot/prop, and dual-arm
 inter-robot penetration across the complete task/family matrix. Reference MuJoCo
 also refuses an evaluator reset when its resolved compiled contacts contain one of
 those penetrations; trusted administration fences the refused world until reopen.
-Together with the reference drawer they form the 29-task evaluation matrix.
+Together with the reference drawer they form the 30-task evaluation matrix.
+The S19 reference fixture uses eighteen same-color 24 mm cubes in one irregular
+source pile and a separate adjacent wide destination bin sized for all eighteen;
+the SDK scene does not reset individual transfers or define their success/order.
 Trusted evaluator reset applies an explicit engine-neutral profile over pose,
 appearance, physics, and geometry. Reference MuJoCo task scenes implement stable
 seed-derived bounded pose/material/lighting/mass/friction/damping variation and
 bounded or disjoint development geometry scales. Preserve rigid transforms within
 assembled free fixtures, keep the seed and resolved variation outside participant
 contracts, and retain canonical ordinary reset behavior. Evaluator seed zero is
-reserved for the fully canonical profile. Reference MuJoCo task engines accept
-an optional validated near-base XY pose profile for the YAM pick-and-lift cube;
-without it the original bounded placement distribution remains authoritative.
+reserved for the fully canonical profile. Reference MuJoCo task engines use the
+near-base XY pose distribution by default for YAM pick-and-lift on noncanonical
+evaluator resets under scene revision 1.1.0: X spans 0.25–0.33 m and Y spans
+±0.06 m. A validated explicit profile remains available for previously frozen
+evaluation configurations.
 They also retain
 bounded per-physics-step contact summaries for the current evaluator episode so a
 slower hidden-state sampler can score transient contact and peak-force events.

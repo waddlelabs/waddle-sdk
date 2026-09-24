@@ -39,6 +39,7 @@ from waddle_sdk.simulators.scene import (
     load_scene,
     make_site,
     profile,
+    quaternion,
     rotation,
     transform,
 )
@@ -117,8 +118,14 @@ def test_all_reference_declarations_validate_without_opening(
     loaded = load_site(tmp_path / "site.yaml")
     assert loaded.id == "physics-test"
     assert load_scene(tmp_path, "simulation.json")[1] == sim
-    assert sim["scene_revision"] == "1.0.0"
-    assert sim["asset_revision"] == "1.0.0"
+    expected_scene_revision = {
+        "candy-bin-transfer": "1.2.0",
+        "pick_lift": "1.1.0",
+    }.get(environment, "1.0.0")
+    assert sim["scene_revision"] == expected_scene_revision
+    assert sim["asset_revision"] == (
+        "1.2.0" if environment == "candy-bin-transfer" else "1.0.0"
+    )
     assert sim["embodiment_revision"] == "1.0.0"
     assert set(site["cameras"]) == {"scene", "wrist"}
     assert site["parts"]["arm"]["gripper"]["open_m"] == profile(robot).opening
@@ -155,17 +162,13 @@ def test_dual_task_environment_requires_two_arms():
         )
 
 
-def test_yam_pick_lift_near_base_pose_profile(tmp_path, monkeypatch):
+def test_yam_pick_lift_near_base_pose_distribution_is_default(tmp_path, monkeypatch):
     pytest.importorskip("mujoco")
     monkeypatch.setenv("MUJOCO_GL", "egl")
     from waddle_sdk.simulators.mujoco import Engine
 
     _, config = documents(tmp_path, "mujoco", "yam", "pick_lift")
-    config["pose_profile"] = {
-        "x_offset_m": -0.03,
-        "x_half_range_m": 0.04,
-        "y_half_range_m": 0.06,
-    }
+    assert "pose_profile" not in config
     (tmp_path / "simulation.json").write_text(json.dumps(config))
     assert load_scene(tmp_path, "simulation.json")[1] == config
     engine = Engine(config, tmp_path)
@@ -1846,6 +1849,7 @@ def _native_conformance(
             "store-in-drawer",
             "insert-usb",
             "load-clear-test-tubes",
+            "candy-bin-transfer",
         }:
             assert engine.reset() is True
             _wave_c_single_prop_conformance(engine, advance, config, environment)
@@ -2296,7 +2300,7 @@ def _wave_b_single_prop_conformance(engine, advance, config, environment):
 
 
 def _wave_c_single_prop_conformance(engine, advance, config, environment):
-    """Probe hard single-arm task mechanics without supplying a robot route."""
+    """Probe hard single-arm mechanics without adding routes to the engine."""
 
     model, data = engine.model, engine.data
     witnesses = {
@@ -2342,6 +2346,12 @@ def _wave_c_single_prop_conformance(engine, advance, config, environment):
             ((0.25, 0.16, 0.018), "cyan"),
             ((0.39, 0.19, 0.023), "blue"),
         ),
+        "candy-bin-transfer": (
+            ((0.229, -0.248, 0.022), "orange"),
+            ((0.316, -0.244, 0.022), "orange"),
+            ((0.361, -0.168, 0.022), "orange"),
+            ((0.42, -0.03, 0.07), "blue"),
+        ),
     }
     classifiers = {
         "green": lambda r, g, b: g > 2 * max(r, b),
@@ -2350,6 +2360,9 @@ def _wave_c_single_prop_conformance(engine, advance, config, environment):
         "bright": lambda r, g, b: min(r, g, b) > 100,
         "dark": lambda r, g, b: max(r, g, b) < 100,
         "cyan": lambda r, g, b: b > 1.04 * r and g > 1.03 * r,
+        "red": lambda r, g, b: r > 2 * max(g, b),
+        "purple": lambda r, g, b: r > 1.4 * g and b > 1.4 * g,
+        "yellow": lambda r, g, b: min(r, g) > 2 * b,
     }
     camera = config["cameras"]["scene"]
     world_from_camera = np.asarray(camera["transform"])
@@ -2489,6 +2502,150 @@ def _wave_c_single_prop_conformance(engine, advance, config, environment):
             assert data.body(name).xpos[2] == pytest.approx(0.06, abs=0.004)
             axis = data.body(name).xmat.reshape(3, 3)[:, 2]
             assert axis[2] > 0.985
+        return
+
+    if environment == "candy-bin-transfer":
+        advance(3.0)
+        for index in range(1, 19):
+            candy_body = data.body(f"candy_{index}")
+            position = candy_body.xpos
+            assert abs(position[0] - 0.30) <= 0.074
+            assert abs(position[1] + 0.20) <= 0.055
+            assert np.linalg.norm(candy_body.cvel[3:]) < 0.01
+        assert engine.reset() is True
+        candy = place_free("candy_1", (0.42, -0.03, 0.08))
+        advance(1.5)
+        np.testing.assert_allclose(data.xpos[candy, :2], (0.42, -0.03), atol=0.004)
+        assert data.xpos[candy, 2] == pytest.approx(0.022, abs=0.004)
+
+        # A centered physical pinch must carry the small rigid body upward.
+        # This probes robot/candy contacts rather than inferring mechanics from
+        # gripper closure or an external force applied directly to the prop.
+        assert engine.reset() is True
+        robot = config["robot"]
+        grasp, lift = {
+            "so101": (
+                (
+                    0.6111116363,
+                    0.2058768679,
+                    0.2887797362,
+                    -0.47794756798,
+                    -1.6836794621,
+                    0.15,
+                ),
+                (
+                    0.6111028479,
+                    0.0851971464,
+                    -0.1595262347,
+                    0.0910381109,
+                    -1.6865021762,
+                    0.0,
+                ),
+            ),
+            "yam": (
+                (
+                    -0.5073011758,
+                    1.9527587169,
+                    1.3864839788,
+                    -1.0045904466,
+                    -0.0003258847,
+                    0.0162585578,
+                    0.3999989982,
+                ),
+                (
+                    -0.5073832518,
+                    1.9063926729,
+                    1.5698738174,
+                    -1.2342777578,
+                    -0.00000725,
+                    0.0162300983,
+                    0.0,
+                ),
+            ),
+            "xarm7": (
+                (
+                    0.3545473497,
+                    0.0280239344,
+                    -0.7897804566,
+                    0.5556825795,
+                    0.0389480318,
+                    0.5362834975,
+                    -3.0865124481,
+                    0.25,
+                ),
+                (
+                    0.3118233049,
+                    -0.3061679102,
+                    -0.7296058080,
+                    0.6683255177,
+                    -0.2561315532,
+                    0.9158303896,
+                    -2.85398900596,
+                    0.0,
+                ),
+            ),
+        }[robot]
+        grasp, lift = np.asarray(grasp), np.asarray(lift)
+        engine.home(grasp)
+        p = profile(robot)
+        tcp = p.poses(grasp)[-1]
+        center = tcp[:3, 3] + tcp[:3, :3] @ np.asarray(p.pinch_offset)
+        if robot == "xarm7":
+            # Its TCP is at the fingertip plane; load the long pads above it.
+            center += (0.0, 0.0, 0.03)
+        center[2] = max(center[2], 0.022)
+        closing = tcp[:3, :3] @ np.asarray(p.closing_axis)
+        closing /= np.linalg.norm(closing)
+        vertical = np.asarray((0.0, 0.0, 1.0))
+        lengthwise = np.cross(closing, vertical)
+        lengthwise /= np.linalg.norm(lengthwise)
+        vertical = np.cross(lengthwise, closing)
+        candy = place_free(
+            "candy_1",
+            center,
+            quaternion(np.column_stack((lengthwise, closing, vertical))),
+        )
+        initial_z = float(data.xpos[candy, 2])
+        closed = grasp.copy()
+        closed[-1] = 0.0
+        engine.write(closed)
+        advance(1.5)
+        maximum_z = float(data.xpos[candy, 2])
+        for fraction in np.linspace(0.01, 1.0, 150):
+            engine.write(closed + fraction * (lift - closed))
+            for _ in range(round(0.01 / config["timestep"])):
+                engine.step()
+                maximum_z = max(maximum_z, float(data.xpos[candy, 2]))
+        advance(0.5)
+        assert maximum_z > initial_z + 0.045
+        lifted_tcp = p.poses(lift)[-1]
+        retained_center = lifted_tcp[:3, 3] + lifted_tcp[:3, :3] @ np.asarray(
+            p.pinch_offset
+        )
+        if robot == "xarm7":
+            retained_center += (0.0, 0.0, 0.03)
+        assert np.linalg.norm(data.xpos[candy] - retained_center) < 0.04
+        assert data.xpos[candy, 2] > initial_z + 0.04
+        fingers = {
+            "so101": {"gripper_link", "moving_jaw_so101_v1_link"},
+            "yam": {"tip_left", "tip_right"},
+            "xarm7": {"left_finger", "right_finger"},
+        }[robot]
+        touched = set()
+        for event in engine.evaluation_snapshot()["contact_events"]["pairs"]:
+            bodies = {event["first"]["body"], event["second"]["body"]}
+            if "candy_1" in bodies and event["maximum_normal_force_n"] > 0:
+                touched.update(bodies & fingers)
+        assert touched == fingers
+        current_touch = set()
+        for contact in data.contact:
+            bodies = {
+                model.body(int(model.geom(int(geom)).bodyid[0])).name
+                for geom in contact.geom
+            }
+            if "candy_1" in bodies:
+                current_touch.update(bodies & fingers)
+        assert current_touch == fingers
         return
 
     assert environment == "store-in-drawer"

@@ -1233,6 +1233,122 @@ def objects(environment: str, *, robot: str | None = None) -> list[list[Link]]:
                     )
                 )
         return [table, *tubes, [rack, *slots]]
+    if environment == "candy-bin-transfer":
+        tray = Link(
+            "candy_tray",
+            xyz=(0.30, -0.20, 0.0),
+            shapes=[
+                Shape(
+                    "box",
+                    (0.20, 0.15, 0.01),
+                    (0.0, 0.0, 0.005),
+                    color=(0.82, 0.84, 0.88, 1.0),
+                ),
+                Shape(
+                    "box",
+                    (0.008, 0.15, 0.05),
+                    (-0.096, 0.0, 0.025),
+                    color=(0.82, 0.84, 0.88, 1.0),
+                ),
+                Shape(
+                    "box",
+                    (0.008, 0.15, 0.05),
+                    (0.096, 0.0, 0.025),
+                    color=(0.82, 0.84, 0.88, 1.0),
+                ),
+                Shape(
+                    "box",
+                    (0.184, 0.008, 0.05),
+                    (0.0, -0.071, 0.025),
+                    color=(0.82, 0.84, 0.88, 1.0),
+                ),
+                Shape(
+                    "box",
+                    (0.184, 0.008, 0.05),
+                    (0.0, 0.071, 0.025),
+                    color=(0.82, 0.84, 0.88, 1.0),
+                ),
+            ],
+        )
+        candy_color = (0.96, 0.28, 0.08, 1.0)
+        placements = (
+            (0.229, -0.247, 0.022, 0.0, 0.0, 0.12),
+            (0.271, -0.249, 0.022, 0.0, 0.0, -0.21),
+            (0.316, -0.244, 0.022, 0.0, 0.0, 0.34),
+            (0.362, -0.247, 0.022, 0.0, 0.0, -0.16),
+            (0.247, -0.216, 0.022, 0.0, 0.0, 0.48),
+            (0.291, -0.220, 0.022, 0.0, 0.0, -0.39),
+            (0.337, -0.211, 0.022, 0.0, 0.0, 0.19),
+            (0.372, -0.202, 0.022, 0.0, 0.0, -0.52),
+            (0.228, -0.177, 0.022, 0.0, 0.0, -0.27),
+            (0.268, -0.182, 0.022, 0.0, 0.0, 0.37),
+            (0.316, -0.176, 0.022, 0.0, 0.0, -0.46),
+            (0.361, -0.168, 0.022, 0.0, 0.0, 0.24),
+            (0.252, -0.234, 0.048, 0.18, -0.10, -0.63),
+            (0.299, -0.232, 0.048, -0.14, 0.12, 0.71),
+            (0.345, -0.226, 0.048, 0.10, 0.16, -0.32),
+            (0.244, -0.193, 0.048, -0.12, -0.15, 0.66),
+            (0.292, -0.197, 0.048, 0.15, -0.11, -0.74),
+            (0.343, -0.189, 0.048, -0.16, 0.09, 0.43),
+        )
+        candies = []
+        for index, (x, y, z, roll, pitch, yaw) in enumerate(placements, start=1):
+            candy = Link(
+                f"candy_{index}",
+                xyz=(x, y, z),
+                rpy=(roll, pitch, yaw),
+                kind="free",
+                mass=0.008,
+                inertia=(7.68e-7, 7.68e-7, 7.68e-7, 0.0, 0.0, 0.0),
+                shapes=[Shape("box", (0.024, 0.024, 0.024), color=candy_color)],
+            )
+            candy.damping = 0.001
+            for shape in candy.shapes:
+                shape.friction = (1.0, 0.03, 0.005)
+            candies.append([candy])
+
+        # The adjacent wide bin makes S19 a continuous small-object throughput
+        # task.  Its usable floor holds all eighteen cubes without requiring a
+        # reset or a physically implausible tower, while the 35 mm gap from the
+        # source tray keeps the two fixtures mechanically distinct.
+        cup_shapes = [
+            Shape(
+                "box",
+                (0.22, 0.12, 0.01),
+                (0.0, 0.0, 0.005),
+                color=(0.10, 0.30, 0.85, 1.0),
+            )
+        ]
+        cup_shapes.extend(
+            (
+                Shape(
+                    "box",
+                    (0.008, 0.12, 0.07),
+                    (-0.106, 0.0, 0.035),
+                    color=(0.10, 0.30, 0.85, 1.0),
+                ),
+                Shape(
+                    "box",
+                    (0.008, 0.12, 0.07),
+                    (0.106, 0.0, 0.035),
+                    color=(0.10, 0.30, 0.85, 1.0),
+                ),
+                Shape(
+                    "box",
+                    (0.204, 0.008, 0.07),
+                    (0.0, -0.056, 0.035),
+                    color=(0.10, 0.30, 0.85, 1.0),
+                ),
+                Shape(
+                    "box",
+                    (0.204, 0.008, 0.07),
+                    (0.0, 0.056, 0.035),
+                    color=(0.10, 0.30, 0.85, 1.0),
+                ),
+            )
+        )
+        cup = Link("destination_cup", xyz=(0.42, -0.03, 0.0), shapes=cup_shapes)
+        return [table, [tray], *candies, [cup]]
     if environment == "drawer":
         # Keep the closed front clear of the robot's starting hand. The
         # handle travels from x=.503 to .283 m as the drawer opens.
