@@ -54,6 +54,8 @@ _BOUNDS = {
     # Keep densely packed candy starts physically separated while retaining
     # seed-dependent grasp choices and orientations.
     "candy-bin-transfer": (0.002, 0.05),
+    # Keep the twenty single-layer chocolates separated inside their source tray.
+    "chocolate-packing": (0.001, 0.05),
 }
 
 

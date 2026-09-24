@@ -23,6 +23,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Add the S20 `chocolate-packing` MuJoCo scene with twenty spaced small cylinders,
+  a physical six-pocket box, a closer scene camera, and native grasp/drop tests.
+  Trusted continuation reset preserves remaining source pieces and retires packed
+  pieces so the next box is empty without restoring the supply.
 - Retain validated explicit YAM `pick_lift` pose profiles for replaying frozen
   evaluations that selected one.
 - Add the single-arm `candy-bin-transfer` MuJoCo task environment: eighteen

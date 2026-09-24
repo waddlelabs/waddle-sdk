@@ -64,8 +64,8 @@ models. Engine-specific acceptance stays in `sdk/tests/test_simulation.py`; a
 skipped optional-engine case is not evidence that the engine passed. Reference
 worlds preserve state across ordinary runs and reset only when the site explicitly
 sets `reset_on_episode: true`.
-The thirty MuJoCo-only development task environments are built-in interactive
-fixtures using the same runtime surface. Nineteen are single-arm and eleven are
+The thirty-one MuJoCo-only development task environments are built-in interactive
+fixtures using the same runtime surface. Twenty are single-arm and eleven are
 matched two-arm scenes. Keep their task-relevant
 objects visible from the scene camera for every reference embodiment, and verify
 mechanics without adding task routes or success logic to the simulator. Native
@@ -76,10 +76,16 @@ Native initial-state acceptance must reject robot/table, robot/prop, and dual-ar
 inter-robot penetration across the complete task/family matrix. Reference MuJoCo
 also refuses an evaluator reset when its resolved compiled contacts contain one of
 those penetrations; trusted administration fences the refused world until reopen.
-Together with the reference drawer they form the 30-task evaluation matrix.
+The existing 30-task evaluation matrix remains frozen; S20 has a separate
+reset-enabled development suite.
 The S19 reference fixture uses eighteen same-color 24 mm cubes in one irregular
 source pile and a separate adjacent wide destination bin sized for all eighteen;
 the SDK scene does not reset individual transfers or define their success/order.
+The S20 chocolate-packing scene has twenty single-layer 20 mm cylinders in a
+source tray and a six-pocket box. Its ordinary runtime remains task-neutral.
+Trusted continuation reset can preserve measured free-body poses and retire packed
+bodies while resetting the box and robot; only the private evaluator chooses the
+sets and completion boundary. Keep retired state out of participant observations.
 Trusted evaluator reset applies an explicit engine-neutral profile over pose,
 appearance, physics, and geometry. Reference MuJoCo task scenes implement stable
 seed-derived bounded pose/material/lighting/mass/friction/damping variation and

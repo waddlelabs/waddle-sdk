@@ -1233,6 +1233,102 @@ def objects(environment: str, *, robot: str | None = None) -> list[list[Link]]:
                     )
                 )
         return [table, *tubes, [rack, *slots]]
+    if environment == "chocolate-packing":
+        source = Link(
+            "chocolate_tray",
+            xyz=(0.312, -0.192, 0.0),
+            shapes=[
+                Shape(
+                    "box",
+                    (0.22, 0.17, 0.004),
+                    (0, 0, 0.002),
+                    color=(0.86, 0.76, 0.57, 1.0),
+                ),
+                Shape(
+                    "box",
+                    (0.004, 0.17, 0.008),
+                    (-0.108, 0, 0.008),
+                    color=(0.75, 0.62, 0.42, 1.0),
+                ),
+                Shape(
+                    "box",
+                    (0.004, 0.17, 0.008),
+                    (0.108, 0, 0.008),
+                    color=(0.75, 0.62, 0.42, 1.0),
+                ),
+                Shape(
+                    "box",
+                    (0.212, 0.004, 0.008),
+                    (0, -0.083, 0.008),
+                    color=(0.75, 0.62, 0.42, 1.0),
+                ),
+                Shape(
+                    "box",
+                    (0.212, 0.004, 0.008),
+                    (0, 0.083, 0.008),
+                    color=(0.75, 0.62, 0.42, 1.0),
+                ),
+            ],
+        )
+        for shape in source.shapes:
+            shape.friction = (1.2, 0.04, 0.008)
+        chocolates = []
+        for row in range(4):
+            for column in range(5):
+                index = row * 5 + column + 1
+                chocolate = free_cylinder(
+                    f"chocolate_{index:02d}",
+                    (0.240 + 0.036 * column, -0.246 + 0.036 * row, 0.011),
+                    (0.30 + 0.025 * (index % 3), 0.115, 0.055, 1.0),
+                    radius=0.010,
+                    length=0.014,
+                    mass=0.006,
+                )
+                chocolate.damping = 0.002
+                chocolate.shapes[0].friction = (1.4, 0.06, 0.01)
+                chocolates.append([chocolate])
+
+        # Each circular pocket has a 23 mm clear diameter around a 20 mm
+        # chocolate. The physical floor and collar make rim placements distinct
+        # from chocolates actually seated in a pocket.
+        box = Link(
+            "packing_box",
+            xyz=(0.41, 0.13, 0.0),
+            shapes=[
+                Shape(
+                    "box",
+                    (0.115, 0.080, 0.004),
+                    (0, 0, 0.002),
+                    color=(0.12, 0.33, 0.67, 1.0),
+                )
+            ],
+        )
+        slots = []
+        for index in range(6):
+            column, row = index % 3, index // 3
+            collar = []
+            for segment in range(12):
+                angle = 2 * math.pi * segment / 12
+                collar.append(
+                    Shape(
+                        "box",
+                        (0.003, 0.0075, 0.020),
+                        (0.013 * math.cos(angle), 0.013 * math.sin(angle), 0.014),
+                        (0, 0, angle),
+                        color=(0.82, 0.69, 0.39, 1.0),
+                    )
+                )
+            slots.append(
+                Link(
+                    f"packing_slot_{index + 1}",
+                    parent="packing_box",
+                    xyz=((column - 1) * 0.033, (row - 0.5) * 0.033, 0.0),
+                    mass=1e-6,
+                    inertia=(1e-9, 1e-9, 1e-9, 0, 0, 0),
+                    shapes=collar,
+                )
+            )
+        return [table, [source], *chocolates, [box, *slots]]
     if environment == "candy-bin-transfer":
         tray = Link(
             "candy_tray",

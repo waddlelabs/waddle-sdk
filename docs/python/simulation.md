@@ -53,7 +53,7 @@ Each engine accepts `so101`, `yam`, or `xarm7` and these environments:
   and 5 N·s/m native joint damping. The damping dissipates a pull after release;
   there is no spring returning the drawer to its starting position.
 
-MuJoCo also provides thirty interactive development task environments:
+MuJoCo also provides thirty-one interactive development task environments:
 
 - `touch_target`: one red contact target and two blue distractors.
 - `pick_lift`: one free 46 mm cube.
@@ -94,10 +94,15 @@ MuJoCo also provides thirty interactive development task environments:
   Native acceptance requires both reference fingers to retain contact with one
   cube, carry it upward by at least 45 mm, and hold it at the lifted pinch for
   500 ms for every reference robot family.
+- `chocolate-packing`: twenty 20 mm diameter, 14 mm tall, 6 g cylinders in a
+  single layer on a source tray, with 16 mm clear gaps for finger access. A blue
+  box has six physical 23 mm diameter pockets with floors and collars. Each
+  chocolate has explicit sliding, torsional, and rolling friction. The close
+  scene camera resolves the source and all six pockets. A trusted evaluator can
+  replace a full box while preserving the remaining source chocolates, then
+  finish after the final two fill the last box. The SDK does not decide when a
+  box is complete.
 
-For YAM `pick_lift`, every noncanonical evaluator pose reset uses the built-in
-near-base cube range (X 0.25–0.33 m, Y ±0.06 m). This range no longer requires a
-separate simulation pose profile. Canonical seed zero keeps the fixed reference pose.
 - `split_workspace_sorting`: a matched two-arm scene with one cube initially in
   each arm's outer workspace and two open bins near the center. Each cube's
   matching bin is on the opposite side.
@@ -122,6 +127,14 @@ separate simulation pose profile. Canonical seed zero keeps the fixed reference 
   cap, and a cap goal. Preloaded passive pads create finite cap-removal resistance.
 - `retrieve-bottle-clutter`: a target and three distractor bottles in a physical
   bin plus a table goal region.
+
+![Initial chocolate-packing scene](../images/chocolate-packing-initial.png)
+![Six chocolates seated in the box](../images/chocolate-packing-six-filled.png)
+![Empty box after a trusted continuation reset](../images/chocolate-packing-next-box.png)
+
+For YAM `pick_lift`, every noncanonical evaluator pose reset uses the built-in
+near-base cube range (X 0.25–0.33 m, Y ±0.06 m). Canonical seed zero keeps the
+fixed reference pose.
 
 These environments use the ordinary robot, camera, and lifecycle interfaces.
 Their scene camera exposes every task-relevant object at the starting pose for
@@ -172,9 +185,9 @@ For the YAM `pick_lift` scene, a trusted simulation configuration may also set
 `pose_profile` with `x_offset_m`, `x_half_range_m`, and `y_half_range_m`. It shifts
 the center of noncanonical cube resets by `x_offset_m` from the canonical
 `x=0.32 m`, then samples within the declared half ranges. Validation keeps the
-bounded X range inside `0.24–0.34 m` and Y within `±0.06 m`. The default
-distribution stays at `±0.012 m` in X and Y when this setting is absent. The
-canonical seed still places the cube at `(0.32, 0) m`.
+bounded X range inside `0.24–0.34 m` and Y within `±0.06 m`. Without this
+setting, the noncanonical distribution uses X `0.25–0.33 m` and Y `±0.06 m`.
+The canonical seed still places the cube at `(0.32, 0) m`.
 
 The same seed, environment, and profile reproduce the same resolved initial state
 across worker restarts. Appearance does not alter mechanics, physics does not
@@ -407,6 +420,16 @@ higher-level motion executor. The evaluator must pause participant dispatch and
 confirm that the current tool call and all admitted operations are terminal before
 reset. A reset advances only the administration episode revision, so prepared
 plans from a higher layer must bind and check that revision themselves.
+
+For a MuJoCo-only continuation reset, the trusted evaluator may also pass
+`preserve_free_bodies=(...)` and `retire_free_bodies=(...)`. The former retains
+each named free prop's measured pose and velocity across the reset; the latter
+parks named free props outside the workcell with their collision and rendering
+disabled. Retirement is cumulative: pass all previously packed names on every
+box replacement. MuJoCo reports that list in the privileged snapshot. The
+robot, box, clock, contacts, and unselected props reset normally. Names must be
+unique, refer to free props, and never occur in both sets. This operation remains
+behind the same drained administration boundary and is never a participant tool.
 
 The built-in trusted facet is currently available for MuJoCo. Other installed
 worlds remain valid interactive simulations and can opt in by implementing

@@ -44,6 +44,7 @@ SINGLE_ARM_TASK_ENVIRONMENTS = (
     "insert-usb",
     "load-clear-test-tubes",
     "candy-bin-transfer",
+    "chocolate-packing",
 )
 DUAL_ARM_TASK_ENVIRONMENTS = (
     "split_workspace_sorting",
@@ -67,6 +68,7 @@ REFERENCE_EMBODIMENT_REVISION = "1.0.0"
 _ENVIRONMENT_REVISIONS = {
     "pick_lift": ("1.1.0", "1.0.0"),
     "candy-bin-transfer": ("1.2.0", "1.2.0"),
+    "chocolate-packing": ("1.0.0", "1.0.0"),
 }
 _REVISION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$")
 
@@ -391,6 +393,8 @@ def make_site(
         # A high tripod view retains the drawer's front face while exposing its
         # interior once open and the rear row of the test-tube rack.
         mounts["scene"] = look_at((0.10, -0.65, 1.35), (0.42, 0, 0.05)).tolist()
+    if environment == "chocolate-packing":
+        mounts["scene"] = look_at((0.10, -0.42, 0.72), (0.35, -0.07, 0.02)).tolist()
     if environment in DUAL_ARM_TASK_ENVIRONMENTS:
         mounts["scene"] = look_at((0.10, 0, 2.00), (0.30, 0, 0)).tolist()
     if robot == "yam":
