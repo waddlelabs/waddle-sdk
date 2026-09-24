@@ -155,6 +155,14 @@ development implementation provides:
 - one task-prop geometry scale within 2%, or a disjoint held-out scale between 2%
   and 4% from canonical.
 
+For the YAM `pick_lift` scene, a trusted simulation configuration may also set
+`pose_profile` with `x_offset_m`, `x_half_range_m`, and `y_half_range_m`. It shifts
+the center of noncanonical cube resets by `x_offset_m` from the canonical
+`x=0.32 m`, then samples within the declared half ranges. Validation keeps the
+bounded X range inside `0.24–0.34 m` and Y within `±0.06 m`. The default
+distribution stays at `±0.012 m` in X and Y when this setting is absent. The
+canonical seed still places the cube at `(0.32, 0) m`.
+
 The same seed, environment, and profile reproduce the same resolved initial state
 across worker restarts. Appearance does not alter mechanics, physics does not
 alter geometry or appearance, and ordinary `reset()` restores every model and

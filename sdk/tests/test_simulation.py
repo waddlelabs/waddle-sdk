@@ -155,6 +155,53 @@ def test_dual_task_environment_requires_two_arms():
         )
 
 
+def test_yam_pick_lift_near_base_pose_profile(tmp_path, monkeypatch):
+    pytest.importorskip("mujoco")
+    monkeypatch.setenv("MUJOCO_GL", "egl")
+    from waddle_sdk.simulators.mujoco import Engine
+
+    _, config = documents(tmp_path, "mujoco", "yam", "pick_lift")
+    config["pose_profile"] = {
+        "x_offset_m": -0.03,
+        "x_half_range_m": 0.04,
+        "y_half_range_m": 0.06,
+    }
+    (tmp_path / "simulation.json").write_text(json.dumps(config))
+    assert load_scene(tmp_path, "simulation.json")[1] == config
+    engine = Engine(config, tmp_path)
+    try:
+        positions = []
+        for seed in range(1, 65):
+            assert engine.evaluation_reset(seed=seed) is True
+            positions.append(engine.data.body("target_cube").xpos[:2].copy())
+        xy = np.asarray(positions)
+        assert np.all((0.25 <= xy[:, 0]) & (xy[:, 0] <= 0.33))
+        assert np.all((-0.06 <= xy[:, 1]) & (xy[:, 1] <= 0.06))
+        assert np.ptp(xy[:, 0]) > 0.06
+        assert np.ptp(xy[:, 1]) > 0.09
+        assert engine.evaluation_reset(seed=0) is True
+        np.testing.assert_allclose(engine.data.body("target_cube").xpos[:2], (0.32, 0))
+    finally:
+        engine.close()
+
+
+def test_yam_pick_lift_pose_profile_rejects_far_or_foreign_ranges(tmp_path):
+    _, config = documents(tmp_path, "mujoco", "yam", "pick_lift")
+    config["pose_profile"] = {
+        "x_offset_m": -0.03,
+        "x_half_range_m": 0.10,
+        "y_half_range_m": 0.06,
+    }
+    (tmp_path / "simulation.json").write_text(json.dumps(config))
+    with pytest.raises(ValueError, match="near-base XY range"):
+        load_scene(tmp_path, "simulation.json")
+    config["pose_profile"]["x_half_range_m"] = 0.04
+    config["robot"] = "so101"
+    (tmp_path / "simulation.json").write_text(json.dumps(config))
+    with pytest.raises(ValueError, match="YAM pick_lift pose profile"):
+        load_scene(tmp_path, "simulation.json")
+
+
 @pytest.mark.parametrize("backend", ("isaac", "sapien"))
 @pytest.mark.parametrize("environment", TASK_ENVIRONMENTS)
 def test_development_task_environments_reject_unvalidated_backends(
@@ -1554,9 +1601,7 @@ def _assert_no_robot_workcell_penetration(engine):
     workcell_bodies.add(int(model.body("table").id))
     robot_bodies = set(range(1, model.nbody)) - workcell_bodies
     for contact in engine.data.contact:
-        bodies = tuple(
-            int(model.geom(int(geom)).bodyid[0]) for geom in contact.geom
-        )
+        bodies = tuple(int(model.geom(int(geom)).bodyid[0]) for geom in contact.geom)
         if (bodies[0] in robot_bodies) != (bodies[1] in robot_bodies):
             assert contact.dist >= 0, (
                 tuple(model.body(body).name for body in bodies),
@@ -2440,9 +2485,7 @@ def _wave_c_single_prop_conformance(engine, advance, config, environment):
             place_free(name, (x, y, 0.12))
             advance(1.0)
         for name, (x, y) in zip(tube_names, slots, strict=True):
-            np.testing.assert_allclose(
-                data.body(name).xpos[:2], (x, y), atol=0.004
-            )
+            np.testing.assert_allclose(data.body(name).xpos[:2], (x, y), atol=0.004)
             assert data.body(name).xpos[2] == pytest.approx(0.06, abs=0.004)
             axis = data.body(name).xmat.reshape(3, 3)[:, 2]
             assert axis[2] > 0.985
@@ -2574,9 +2617,7 @@ def test_native_split_workspace_sorting_scene(tmp_path, monkeypatch, robot):
     "environment",
     DUAL_ARM_MEDIUM_TASK_ENVIRONMENTS,
 )
-def test_native_medium_dual_arm_task_scenes(
-    tmp_path, monkeypatch, robot, environment
-):
+def test_native_medium_dual_arm_task_scenes(tmp_path, monkeypatch, robot, environment):
     mujoco = pytest.importorskip("mujoco")
     monkeypatch.setenv("MUJOCO_GL", "egl")
     from waddle_sdk.simulators.mujoco import Engine
@@ -2655,12 +2696,10 @@ def test_native_medium_dual_arm_task_scenes(
         for point, expected_color in witnesses[environment]:
             camera_point = np.linalg.inv(world_from_camera) @ [*point, 1.0]
             u = round(
-                intrinsics["fx"] * camera_point[0] / camera_point[2]
-                + intrinsics["cx"]
+                intrinsics["fx"] * camera_point[0] / camera_point[2] + intrinsics["cx"]
             )
             v = round(
-                intrinsics["fy"] * camera_point[1] / camera_point[2]
-                + intrinsics["cy"]
+                intrinsics["fy"] * camera_point[1] / camera_point[2] + intrinsics["cy"]
             )
             assert 0 <= u < rgb.shape[1] and 0 <= v < rgb.shape[0]
             pixels = rgb[max(0, v - 3) : v + 4, max(0, u - 3) : u + 4]
@@ -2673,9 +2712,7 @@ def test_native_medium_dual_arm_task_scenes(
         if environment == "handover-block":
             block = place_free("handover_block", (0.32, 0.30, 0.08))
             advance(1.0)
-            np.testing.assert_allclose(
-                data.xpos[block, :2], (0.32, 0.30), atol=0.005
-            )
+            np.testing.assert_allclose(data.xpos[block, :2], (0.32, 0.30), atol=0.005)
             assert 0.02 < data.xpos[block, 2] < 0.03
         elif environment == "stabilize-open-drawer":
             cabinet = model.body("movable_cabinet")
@@ -2692,8 +2729,7 @@ def test_native_medium_dual_arm_task_scenes(
         elif environment == "hold-container-place":
             container = model.body("movable_container")
             assert (
-                model.jnt_type[int(container.jntadr[0])]
-                == mujoco.mjtJoint.mjJNT_FREE
+                model.jnt_type[int(container.jntadr[0])] == mujoco.mjtJoint.mjJNT_FREE
             )
             initial = data.body("movable_container").xpos.copy()
             data.xfrc_applied[int(container.id), 1] = 3.0
@@ -2702,9 +2738,7 @@ def test_native_medium_dual_arm_task_scenes(
             assert engine.reset() is True
             target = place_free("target_object", (0.38, -0.12, 0.12))
             advance(1.0)
-            np.testing.assert_allclose(
-                data.xpos[target, :2], (0.38, -0.12), atol=0.005
-            )
+            np.testing.assert_allclose(data.xpos[target, :2], (0.38, -0.12), atol=0.005)
             assert 0.025 < data.xpos[target, 2] < 0.04
         else:
             assert environment == "stabilize-remove-lid"
@@ -2728,22 +2762,18 @@ def test_native_medium_dual_arm_task_scenes(
             for _ in range(round(0.5 / config["timestep"])):
                 engine.step()
                 if (
-                    data.body("box_lid").xpos[2]
-                    - data.body("movable_box").xpos[2]
+                    data.body("box_lid").xpos[2] - data.body("movable_box").xpos[2]
                     > initial_separation + 0.05
                 ):
                     break
             data.xfrc_applied[:] = 0.0
             assert (
-                data.body("box_lid").xpos[2]
-                - data.body("movable_box").xpos[2]
+                data.body("box_lid").xpos[2] - data.body("movable_box").xpos[2]
                 > initial_separation + 0.05
             )
             lid_id = place_free("box_lid", (0.36, 0.25, 0.08))
             advance(1.0)
-            np.testing.assert_allclose(
-                data.xpos[lid_id, :2], (0.36, 0.25), atol=0.006
-            )
+            np.testing.assert_allclose(data.xpos[lid_id, :2], (0.36, 0.25), atol=0.006)
             assert 0.025 < data.xpos[lid_id, 2] < 0.035
 
         assert engine.evaluation_reset(seed=7)
@@ -2840,12 +2870,10 @@ def test_native_hard_dual_arm_task_scenes(tmp_path, monkeypatch, robot, environm
         for point, expected_color in witnesses[environment]:
             camera_point = np.linalg.inv(world_from_camera) @ [*point, 1.0]
             u = round(
-                intrinsics["fx"] * camera_point[0] / camera_point[2]
-                + intrinsics["cx"]
+                intrinsics["fx"] * camera_point[0] / camera_point[2] + intrinsics["cx"]
             )
             v = round(
-                intrinsics["fy"] * camera_point[1] / camera_point[2]
-                + intrinsics["cy"]
+                intrinsics["fy"] * camera_point[1] / camera_point[2] + intrinsics["cy"]
             )
             assert 0 <= u < rgb.shape[1] and 0 <= v < rgb.shape[0]
             pixels = rgb[max(0, v - 4) : v + 5, max(0, u - 4) : u + 5]

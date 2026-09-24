@@ -582,6 +582,7 @@ def load_scene(root: Path, relative: Any) -> tuple[Path, dict]:
         "scene_revision",
         "asset_revision",
         "embodiment_revision",
+        "pose_profile",
     }
     if value.keys() - allowed:
         raise ValueError(
@@ -601,6 +602,34 @@ def load_scene(root: Path, relative: Any) -> tuple[Path, dict]:
         ):
             raise ValueError(f"simulation {key} must be a semantic revision")
     profile(value.get("robot"))
+    if "pose_profile" in value:
+        pose = value["pose_profile"]
+        if (
+            value["backend"] != "mujoco"
+            or value["robot"] != "yam"
+            or value["environment"] != "pick_lift"
+            or not isinstance(pose, dict)
+            or set(pose) != {"x_offset_m", "x_half_range_m", "y_half_range_m"}
+        ):
+            raise ValueError(
+                "YAM pick_lift pose profile requires X offset and XY half ranges"
+            )
+        if any(
+            isinstance(number, bool)
+            or not isinstance(number, (int, float))
+            or not np.isfinite(number)
+            for number in pose.values()
+        ):
+            raise ValueError("YAM pick_lift pose profile values must be finite metres")
+        x_offset = pose["x_offset_m"]
+        x_half = pose["x_half_range_m"]
+        y_half = pose["y_half_range_m"]
+        if not (-0.08 <= x_offset - x_half < x_offset + x_half <= 0.02) or not (
+            0 < y_half <= 0.06
+        ):
+            raise ValueError(
+                "YAM pick_lift pose profile exceeds the near-base XY range"
+            )
     parts = value.get("parts")
     if not isinstance(parts, dict) or not parts or len(parts) not in (1, 2):
         raise ValueError("simulation requires one or two named robot parts")

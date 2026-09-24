@@ -497,26 +497,43 @@ class Engine:
 
     def _apply_pose_randomization(self, seed, level="bounded"):
         environment = self.config["environment"]
+        pose_profile = self.config.get("pose_profile")
         for index, group in enumerate(self._pose_groups):
+            x_limit = (
+                pose_profile["x_half_range_m"]
+                if pose_profile is not None and group.bodies == ("target_cube",)
+                else group.translation_xy_m
+            )
+            y_limit = (
+                pose_profile["y_half_range_m"]
+                if pose_profile is not None and group.bodies == ("target_cube",)
+                else group.translation_xy_m
+            )
+            x_offset = (
+                pose_profile["x_offset_m"]
+                if pose_profile is not None and group.bodies == ("target_cube",)
+                else 0.0
+            )
             if level == "bounded":
-                dx = sample(seed, environment, index, "x", group.translation_xy_m)
-                dy = sample(seed, environment, index, "y", group.translation_xy_m)
+                dx = x_offset + sample(seed, environment, index, "x", x_limit)
+                dy = sample(seed, environment, index, "y", y_limit)
                 yaw = sample(seed, environment, index, "yaw", group.yaw_rad)
             else:
                 dx = held_out_sample(
                     seed,
                     environment,
                     f"pose:{index}:x",
-                    group.translation_xy_m,
-                    group.translation_xy_m * 1.5,
+                    x_limit,
+                    x_limit * 1.5,
                 )
                 dy = held_out_sample(
                     seed,
                     environment,
                     f"pose:{index}:y",
-                    group.translation_xy_m,
-                    group.translation_xy_m * 1.5,
+                    y_limit,
+                    y_limit * 1.5,
                 )
+                dx += x_offset
                 yaw = held_out_sample(
                     seed,
                     environment,
