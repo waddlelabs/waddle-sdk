@@ -118,11 +118,14 @@ def test_all_reference_declarations_validate_without_opening(
     loaded = load_site(tmp_path / "site.yaml")
     assert loaded.id == "physics-test"
     assert load_scene(tmp_path, "simulation.json")[1] == sim
-    expected_scene_revision = (
+    expected_scene_revision = {
+        "candy-bin-transfer": "1.2.0",
+        "pick_lift": "1.1.0",
+    }.get(environment, "1.0.0")
+    assert sim["scene_revision"] == expected_scene_revision
+    assert sim["asset_revision"] == (
         "1.2.0" if environment == "candy-bin-transfer" else "1.0.0"
     )
-    assert sim["scene_revision"] == expected_scene_revision
-    assert sim["asset_revision"] == expected_scene_revision
     assert sim["embodiment_revision"] == "1.0.0"
     assert set(site["cameras"]) == {"scene", "wrist"}
     assert site["parts"]["arm"]["gripper"]["open_m"] == profile(robot).opening

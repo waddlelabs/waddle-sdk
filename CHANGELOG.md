@@ -14,7 +14,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 ### Changed
 
 - Make the near-base, wider YAM `pick_lift` cube distribution the built-in
-  noncanonical evaluation behavior; an external pose profile is no longer needed.
+  noncanonical evaluation behavior under scene revision 1.1.0; an external pose
+  profile is no longer needed.
 - Revise the `candy-bin-transfer` scene to version 1.2.0 with an adjacent wide
   blue destination bin. Its physical floor can retain all eighteen 24 mm cubes
   in one evolving scene, enabling continuous transfer-throughput evaluation

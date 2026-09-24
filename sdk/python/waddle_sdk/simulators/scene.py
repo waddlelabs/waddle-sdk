@@ -65,6 +65,7 @@ REFERENCE_SCENE_REVISION = "1.0.0"
 REFERENCE_ASSET_REVISION = "1.0.0"
 REFERENCE_EMBODIMENT_REVISION = "1.0.0"
 _ENVIRONMENT_REVISIONS = {
+    "pick_lift": ("1.1.0", "1.0.0"),
     "candy-bin-transfer": ("1.2.0", "1.2.0"),
 }
 _REVISION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$")
