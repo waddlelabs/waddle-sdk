@@ -159,17 +159,13 @@ def test_dual_task_environment_requires_two_arms():
         )
 
 
-def test_yam_pick_lift_near_base_pose_profile(tmp_path, monkeypatch):
+def test_yam_pick_lift_near_base_pose_distribution_is_default(tmp_path, monkeypatch):
     pytest.importorskip("mujoco")
     monkeypatch.setenv("MUJOCO_GL", "egl")
     from waddle_sdk.simulators.mujoco import Engine
 
     _, config = documents(tmp_path, "mujoco", "yam", "pick_lift")
-    config["pose_profile"] = {
-        "x_offset_m": -0.03,
-        "x_half_range_m": 0.04,
-        "y_half_range_m": 0.06,
-    }
+    assert "pose_profile" not in config
     (tmp_path / "simulation.json").write_text(json.dumps(config))
     assert load_scene(tmp_path, "simulation.json")[1] == config
     engine = Engine(config, tmp_path)
@@ -2620,9 +2616,8 @@ def _wave_c_single_prop_conformance(engine, advance, config, environment):
         advance(0.5)
         assert maximum_z > initial_z + 0.045
         lifted_tcp = p.poses(lift)[-1]
-        retained_center = (
-            lifted_tcp[:3, 3]
-            + lifted_tcp[:3, :3] @ np.asarray(p.pinch_offset)
+        retained_center = lifted_tcp[:3, 3] + lifted_tcp[:3, :3] @ np.asarray(
+            p.pinch_offset
         )
         if robot == "xarm7":
             retained_center += (0.0, 0.0, 0.03)

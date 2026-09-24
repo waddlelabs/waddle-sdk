@@ -86,9 +86,10 @@ seed-derived bounded pose/material/lighting/mass/friction/damping variation and
 bounded or disjoint development geometry scales. Preserve rigid transforms within
 assembled free fixtures, keep the seed and resolved variation outside participant
 contracts, and retain canonical ordinary reset behavior. Evaluator seed zero is
-reserved for the fully canonical profile. Reference MuJoCo task engines accept
-an optional validated near-base XY pose profile for the YAM pick-and-lift cube;
-without it the original bounded placement distribution remains authoritative.
+reserved for the fully canonical profile. Reference MuJoCo task engines use the
+near-base XY pose distribution by default for YAM pick-and-lift on noncanonical
+evaluator resets: X spans 0.25–0.33 m and Y spans ±0.06 m. A validated explicit
+profile remains available to reproduce previous frozen evaluations.
 They also retain
 bounded per-physics-step contact summaries for the current evaluator episode so a
 slower hidden-state sampler can score transient contact and peak-force events.

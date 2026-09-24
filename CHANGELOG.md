@@ -13,6 +13,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Changed
 
+- Make the near-base, wider YAM `pick_lift` cube distribution the built-in
+  noncanonical evaluation behavior; an external pose profile is no longer needed.
 - Revise the `candy-bin-transfer` scene to version 1.2.0 with an adjacent wide
   blue destination bin. Its physical floor can retain all eighteen 24 mm cubes
   in one evolving scene, enabling continuous transfer-throughput evaluation
@@ -20,19 +22,18 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
-- Allow a validated near-base XY pose profile for the YAM pick-and-lift reference
-  cube in trusted simulation configurations. Its default distribution and canonical
-  seed remain unchanged; the profile widens only explicitly selected evaluations.
-- Add the single-arm `candy-bin-transfer` MuJoCo task environment: nine
-  independently simulated candy-sized wrapped objects start in a shallow clutter
-  tray beside a physical destination cup. Native tests cover camera visibility,
-  stable clutter, released cup containment, reset, and all three reference robot
+- Retain validated explicit YAM `pick_lift` pose profiles for replaying frozen
+  evaluations that selected one.
+- Add the single-arm `candy-bin-transfer` MuJoCo task environment: eighteen
+  independently simulated candy cubes start in a shallow clutter tray beside
+  a physical destination bin. Native tests cover camera visibility,
+  stable clutter, released bin containment, reset, and all three reference robot
   families without adding task policy or evaluator state to the public SDK.
 - Extend native initial-collision acceptance to every matched dual-arm task cell.
   D01-D11 now reject penetration between either robot and the tabletop or any
   task prop for SO-101, YAM, and xArm7, alongside the existing inter-arm and
   single-arm checks.
-- Add a native-mechanics coverage guard for all 29 MuJoCo evaluation task
+- Add a native-mechanics coverage guard for all 30 MuJoCo evaluation task
   environments. Every catalog scene must remain assigned to the isolated
   single-arm conformance path or an explicit dual-arm physics acceptance group.
 - Add evaluator-only per-physics-step contact summaries to reference MuJoCo task
