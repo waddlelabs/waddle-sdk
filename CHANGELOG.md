@@ -19,6 +19,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Changed
 
+- Version shampoo packing as 1.0.2: raise the receiving box by 40 mm for upright YAM access, and use explicit bottle/finger material pairs with a 3 mm torsional patch. Preserve pad sliding friction, force limits, stiffness, gravity pile and other contact pairs.
+
 - Version shampoo packing as scene 1.0.1 with physical tapered pocket entrances: 62 mm mouth to a snug 46 mm bottom, keeping upright seating dimensions and task-neutral runtime.
 
 - Tighten the chocolate grid to 12 mm clear gaps (32 mm centers) in scene

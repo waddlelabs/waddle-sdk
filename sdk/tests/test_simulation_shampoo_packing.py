@@ -113,7 +113,7 @@ def test_tilted_bottle_is_retained_rotated_carried_and_seated(tmp_path):
         bottle = engine.data.body(target)
         slot = engine.data.body("shampoo_slot_1")
         assert np.linalg.norm(bottle.xpos[:2] - slot.xpos[:2]) < 0.0035
-        assert 0.050 < bottle.xpos[2] < 0.057
+        assert 0.050 < bottle.xpos[2] - slot.xpos[2] < 0.057
         assert np.arccos(abs(bottle.xmat[8])) < 0.2
         support = 0.0
         for i, c in enumerate(engine.data.contact):
@@ -156,7 +156,7 @@ def test_tapered_pockets_physically_center_released_bottles(tmp_path, offset):
             engine.data.qpos[q : q + 7] = [
                 slot[0] + offset[0],
                 slot[1] + offset[1],
-                0.14,
+                slot[2] + 0.14,
                 1,
                 0,
                 0,
@@ -170,7 +170,7 @@ def test_tapered_pockets_physically_center_released_bottles(tmp_path, offset):
             body = engine.data.body(f"shampoo_{index:02d}")
             slot = engine.data.body(f"shampoo_slot_{index}")
             assert np.linalg.norm(body.xpos[:2] - slot.xpos[:2]) < 0.0035
-            assert 0.050 < body.xpos[2] < 0.057
+            assert 0.050 < body.xpos[2] - slot.xpos[2] < 0.057
             assert np.arccos(abs(body.xmat[8])) < 0.2
     finally:
         engine.close()

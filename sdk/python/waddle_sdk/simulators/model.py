@@ -31,6 +31,8 @@ class Shape:
     texture: str | None = None
     friction: tuple[float, float, float] | None = None
     contact_margin: float = 0.0
+    # Optional finite contact patch against reference finger pads (MuJoCo).
+    finger_contact_patch_m: float = 0.0
 
 
 @dataclass
@@ -1293,6 +1295,7 @@ def objects(environment: str, *, robot: str | None = None) -> list[list[Link]]:
             bottle.damping = 0.002
             bottle.shapes[0].friction = (1.4, 0.06, 0.01)
             bottle.shapes[0].contact_margin = 1e-6
+            bottle.shapes[0].finger_contact_patch_m = 0.003
             # A visual band makes the cylinder axis readable without changing
             # the cylindrical collision surface, mass or grasp mechanics.
             bottle.shapes.append(
@@ -1306,14 +1309,20 @@ def objects(environment: str, *, robot: str | None = None) -> list[list[Link]]:
             bottles.append([bottle])
         rack = Link(
             "shampoo_packing_box",
-            xyz=(0.30, 0.18, 0),
+            xyz=(0.30, 0.18, 0.04),
             shapes=[
+                Shape(
+                    "box",
+                    (0.23, 0.16, 0.04),
+                    (0, 0, -0.02),
+                    color=(0.12, 0.30, 0.70, 1),
+                ),
                 Shape(
                     "box",
                     (0.23, 0.16, 0.008),
                     (0, 0, 0.004),
                     color=(0.12, 0.30, 0.70, 1),
-                )
+                ),
             ],
         )
         # A real tapered entrance guides small placement errors into the snug
@@ -1865,6 +1874,7 @@ def mjcf(p: Profile, config: dict) -> str:
         "yam": ("tip_left", "tip_right"),
         "xarm7": ("left_finger", "right_finger"),
     }[p.name]
+    finger_geometries = []
     for part in robot_groups:
         for name in fingers:
             for geom in bodies[f"{prefixes[part]}{name}"].findall("geom"):
@@ -1872,6 +1882,7 @@ def mjcf(p: Profile, config: dict) -> str:
                     geom.set("solref", "0.004 1")
                     geom.set("solimp", "0.95 0.99 0.001")
                     geom.set("priority", "1")
+                    finger_geometries.append((f"{prefixes[part]}{name}", geom))
     for geom in bodies["table"].findall("geom"):
         if geom.get("group") == "2":
             geom.set("material", "table_finish")
@@ -1901,6 +1912,62 @@ def mjcf(p: Profile, config: dict) -> str:
                 if not native.joint.endswith("inner_knuckle_joint"):
                     joint.set("solreflimit", "0.005 1")
     contact = ET.SubElement(root, "contact")
+    # Explicit material pairs preserve the pads' stiff contact response while
+    # enabling a finite torsional patch only on objects that declare one. The
+    # higher-priority reference pads otherwise override object condim/friction.
+    # Other object, fixture and robot contact pairs retain their existing model.
+    for group in props:
+        for link in group:
+            collision_shapes = [shape for shape in link.shapes if shape.collision]
+            if not any(shape.finger_contact_patch_m for shape in collision_shapes):
+                continue
+            collision_geometries = [
+                geom
+                for geom in bodies[link.name].findall("geom")
+                if geom.get("group") == "3"
+            ]
+            for index, (shape, geom) in enumerate(
+                zip(collision_shapes, collision_geometries, strict=True)
+            ):
+                if not shape.finger_contact_patch_m:
+                    continue
+                if (
+                    not math.isfinite(shape.finger_contact_patch_m)
+                    or shape.finger_contact_patch_m <= 0
+                ):
+                    raise ValueError(
+                        "Finger contact patch must be a finite positive length"
+                    )
+                geom.set("name", geom.get("name") or f"{link.name}__contact_{index}")
+                for finger_index, (finger_name, finger) in enumerate(finger_geometries):
+                    finger.set(
+                        "name",
+                        finger.get("name") or f"{finger_name}__contact_{finger_index}",
+                    )
+                    sliding, _torsion, rolling = map(
+                        float, finger.get("friction", "1 0.005 0.0001").split()
+                    )
+                    ET.SubElement(
+                        contact,
+                        "pair",
+                        geom1=geom.get("name"),
+                        geom2=finger.get("name"),
+                        condim="4",
+                        friction=numbers(
+                            (
+                                sliding,
+                                sliding,
+                                shape.finger_contact_patch_m,
+                                rolling,
+                                rolling,
+                            )
+                        ),
+                        solref=finger.get("solref"),
+                        solimp=finger.get("solimp"),
+                        margin=str(
+                            shape.contact_margin + float(finger.get("margin", "0"))
+                        ),
+                    )
     for group in groups:
         for link in group:
             if link.parent:
