@@ -151,6 +151,9 @@ MuJoCo also provides thirty-two interactive development task environments:
 - `retrieve-bottle-clutter`: a target and three distractor bottles in a physical
   bin plus a table goal region.
 
+![Gravity-settled shampoo pile and raised receiving box](../images/shampoo-packing-initial.png)
+![Scripted native shampoo grasp, rotation, transport and upright release](../images/shampoo-packing-native-seated.png)
+
 ![Initial chocolate-packing scene](../images/chocolate-packing-initial.png)
 ![Six chocolates seated in the box](../images/chocolate-packing-six-filled.png)
 ![Empty box after a trusted continuation reset](../images/chocolate-packing-next-box.png)
