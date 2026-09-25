@@ -33,6 +33,7 @@ class Shape:
     contact_margin: float = 0.0
     # Optional finite contact patch against reference finger pads (MuJoCo).
     finger_contact_patch_m: float = 0.0
+    finger_contact_friction_scale: float = 1.0
 
 
 @dataclass
@@ -1293,9 +1294,10 @@ def objects(environment: str, *, robot: str | None = None) -> list[list[Link]]:
             )
             bottle.rpy = tuple(pose["rpy"])
             bottle.damping = 0.002
-            bottle.shapes[0].friction = (1.4, 0.06, 0.01)
+            bottle.shapes[0].friction = (2.8, 0.12, 0.02)
             bottle.shapes[0].contact_margin = 1e-6
             bottle.shapes[0].finger_contact_patch_m = 0.003
+            bottle.shapes[0].finger_contact_friction_scale = 2.0
             # A visual band makes the cylinder axis readable without changing
             # the cylindrical collision surface, mass or grasp mechanics.
             bottle.shapes.append(
@@ -1939,6 +1941,9 @@ def mjcf(p: Profile, config: dict) -> str:
                     raise ValueError(
                         "Finger contact patch must be a finite positive length"
                     )
+                friction_scale = shape.finger_contact_friction_scale
+                if not math.isfinite(friction_scale) or friction_scale <= 0:
+                    raise ValueError("Finger friction scale must be finite and positive")
                 geom.set("name", geom.get("name") or f"{link.name}__contact_{index}")
                 for finger_index, (finger_name, finger) in enumerate(finger_geometries):
                     finger.set(
@@ -1956,11 +1961,11 @@ def mjcf(p: Profile, config: dict) -> str:
                         condim="4",
                         friction=numbers(
                             (
-                                sliding,
-                                sliding,
-                                shape.finger_contact_patch_m,
-                                rolling,
-                                rolling,
+                                sliding * friction_scale,
+                                sliding * friction_scale,
+                                shape.finger_contact_patch_m * friction_scale,
+                                rolling * friction_scale,
+                                rolling * friction_scale,
                             )
                         ),
                         solref=finger.get("solref"),

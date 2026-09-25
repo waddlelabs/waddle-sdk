@@ -19,6 +19,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Changed
 
+- Increase shampoo bottle material and explicit finger-contact friction by 2×
+  in scene 1.0.4, retaining geometry, pile poses, contact stiffness and forces.
+
 - Exercise native tilted-bottle pickup, upright transport and supported release
   at every shampoo slot, including the farther row; retain bilateral-contact
   and measured grasp-drift acceptance throughout each carry.
