@@ -84,7 +84,9 @@ and a receiving box on a 60 mm pedestal. Each 62-to-46 mm pocket tapers
 continuously over 80 mm so released bottles slide to the floor and seated
 bottles resist displacement by later approaches. Explicit bottle/finger pairs use a 3 mm torsional patch with
 existing pad sliding friction/stiffness; other contacts and actuator limits stay
-unchanged. Native grasp evidence must include rotation and release.
+unchanged. Native grasp evidence must include rotation and supported release
+at every receiving slot, with bilateral contact and measured grasp drift checked
+throughout the carry. These actuator fixtures do not establish planner/tool success.
 Its retained pile was gravity-authored with a 62 mm straight receiver sleeve
 and 18 mm tapered mouth. `tools/generate_shampoo_pile.py` generates a new pile
 using the installed scene; changed scene geometry can change the settled poses.

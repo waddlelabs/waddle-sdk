@@ -19,6 +19,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Changed
 
+- Exercise native tilted-bottle pickup, upright transport and supported release
+  at every shampoo slot, including the farther row; retain bilateral-contact
+  and measured grasp-drift acceptance throughout each carry.
+
 - Record the shampoo pile's actual authoring receiver profile and distinguish
   the retained gravity fixture from new piles generated with the installed scene.
 

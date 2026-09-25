@@ -53,16 +53,20 @@ def test_gravity_pile_is_stable_varied_and_inside_box(tmp_path, robot):
         engine.close()
 
 
-def test_tilted_bottle_is_retained_rotated_carried_and_seated(tmp_path):
+@pytest.mark.parametrize("slot_index", range(1, 7))
+def test_tilted_bottle_is_retained_rotated_carried_and_seated(tmp_path, slot_index):
     import json
     from pathlib import Path
 
     mujoco = pytest.importorskip("mujoco")
     from waddle_sdk.simulators.mujoco import Engine
 
-    fixture = json.loads(
-        (Path(__file__).parent / "fixtures/shampoo_transport.json").read_text()
+    fixture_name = (
+        "shampoo_transport.json"
+        if slot_index == 1
+        else f"shampoo_transport_slot{slot_index}.json"
     )
+    fixture = json.loads((Path(__file__).parent / "fixtures" / fixture_name).read_text())
     _, config = make_site(
         "shampoo-transport",
         backend="mujoco",
@@ -111,7 +115,7 @@ def test_tilted_bottle_is_retained_rotated_carried_and_seated(tmp_path):
                 assert np.linalg.norm(relative - relative_reference) < 0.003
             start = end
         bottle = engine.data.body(target)
-        slot = engine.data.body("shampoo_slot_1")
+        slot = engine.data.body(f"shampoo_slot_{slot_index}")
         assert np.linalg.norm(bottle.xpos[:2] - slot.xpos[:2]) < 0.0035
         assert 0.050 < bottle.xpos[2] - slot.xpos[2] < 0.057
         assert np.arccos(abs(bottle.xmat[8])) < 0.2
