@@ -29,6 +29,7 @@ class Shape:
     collision: bool = True
     texture: str | None = None
     friction: tuple[float, float, float] | None = None
+    contact_margin: float = 0.0
 
 
 @dataclass
@@ -1286,6 +1287,12 @@ def objects(environment: str, *, robot: str | None = None) -> list[list[Link]]:
                 )
                 chocolate.damping = 0.002
                 chocolate.shapes[0].friction = (1.4, 0.06, 0.01)
+                # A positive margin selects iterative cylinder multicontact.
+                # MuJoCo 3.13's zero-margin single-shot manifold loses these
+                # small cylinders during a centered bilateral pinch. One
+                # micrometre preserves snug pocket clearance without changing
+                # the cylinder, friction, mass, or the robot's force budget.
+                chocolate.shapes[0].contact_margin = 1e-6
                 chocolates.append([chocolate])
 
         # Each circular pocket has a 23 mm clear diameter around a 20 mm
@@ -1712,7 +1719,10 @@ def mjcf(p: Profile, config: dict) -> str:
         geom.set("group", "2" if geom.get("contype") == "0" else "3")
     for group in props:
         for link in group:
-            if not any(shape.friction is not None for shape in link.shapes):
+            if not any(
+                shape.friction is not None or shape.contact_margin
+                for shape in link.shapes
+            ):
                 continue
             collision_shapes = [shape for shape in link.shapes if shape.collision]
             collision_geometries = [
@@ -1729,6 +1739,8 @@ def mjcf(p: Profile, config: dict) -> str:
             ):
                 if shape.friction is not None:
                     geometry.set("friction", numbers(shape.friction))
+                if shape.contact_margin:
+                    geometry.set("margin", str(shape.contact_margin))
     # Reuse Menagerie's finger-pad contact response on the manufacturer's
     # collision meshes. Default 20 ms contacts let the stiff linear hand
     # penetrate a held cube and oscillate; no material friction is increased.

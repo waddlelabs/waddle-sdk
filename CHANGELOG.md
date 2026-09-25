@@ -11,6 +11,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep small chocolate cylinders held during lift/carry on MuJoCo 3.13.0 by
+  selecting iterative multicontact with a 1 micrometre contact margin in scene
+  revision 1.0.2. Preserve geometry, material friction, mass, and robot force.
+
 ### Changed
 
 - Move the chocolate-packing camera above the box in scene revision 1.0.1,

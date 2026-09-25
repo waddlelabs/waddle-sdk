@@ -7,9 +7,7 @@ never written. All subsequent movement uses the reference position actuators.
 
 import numpy as np
 import pytest
-
 from waddle_sdk.simulators.scene import make_site
-
 
 ABOVE = (
     -0.5085160982,

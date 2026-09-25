@@ -82,8 +82,11 @@ The S19 reference fixture uses eighteen same-color 24 mm cubes in one irregular
 source pile and a separate adjacent wide destination bin sized for all eighteen;
 the SDK scene does not reset individual transfers or define their success/order.
 The S20 chocolate-packing scene has twenty single-layer 20 mm cylinders in a
-source tray and a six-pocket box. Scene revision 1.0.1 views the pockets from
-above so their visible mouth centers resolve to the floor in RGB-D. Its ordinary
+source tray and a six-pocket box. Scene revision 1.0.2 uses a 1 micrometre
+chocolate contact margin for stable iterative cylinder multicontact, including
+MuJoCo 3.13.0. Test sustained bilateral transport and release on the actual
+evaluation engine version; the earlier 3.11-only pinch test missed that regression.
+The overhead view resolves visible pocket mouth centers to the floor in RGB-D. Its ordinary
 runtime remains task-neutral.
 Trusted continuation reset can preserve measured free-body poses and retire packed
 bodies while resetting the box and robot; only the private evaluator chooses the

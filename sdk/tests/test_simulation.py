@@ -121,7 +121,7 @@ def test_all_reference_declarations_validate_without_opening(
     expected_scene_revision = {
         "candy-bin-transfer": "1.2.0",
         "pick_lift": "1.1.0",
-        "chocolate-packing": "1.0.1",
+        "chocolate-packing": "1.0.2",
     }.get(environment, "1.0.0")
     assert sim["scene_revision"] == expected_scene_revision
     assert sim["asset_revision"] == (
