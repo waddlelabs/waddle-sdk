@@ -51,3 +51,81 @@ def test_gravity_pile_is_stable_varied_and_inside_box(tmp_path, robot):
             assert np.linalg.norm(engine.data.qvel[v : v + 3]) < 0.002
     finally:
         engine.close()
+
+
+def test_tilted_bottle_is_retained_rotated_carried_and_seated(tmp_path):
+    import json
+    from pathlib import Path
+
+    mujoco = pytest.importorskip("mujoco")
+    from waddle_sdk.simulators.mujoco import Engine
+
+    fixture = json.loads(
+        (Path(__file__).parent / "fixtures/shampoo_transport.json").read_text()
+    )
+    _, config = make_site(
+        "shampoo-transport",
+        backend="mujoco",
+        robot="yam",
+        environment="shampoo-packing",
+        width=320,
+        height=240,
+    )
+    engine = Engine(config, tmp_path)
+    target = fixture["target"]
+    force = np.zeros(6)
+    fingers = {"tip_left", "tip_right"}
+    relative_reference = None
+    try:
+        start = np.array(fixture["initial"])
+        initial_z = float(engine.data.body(target).xpos[2])
+        # Only initialize the open robot approach. Bottle state is never written.
+        engine.home(start)
+        for motion in fixture["motions"]:
+            end = np.array(motion["end"])
+            steps = round(motion["seconds"] / engine.model.opt.timestep)
+            for step in range(steps):
+                t = (step + 1) / steps
+                smooth = t**3 * (10 - 15 * t + 6 * t * t)
+                engine.write(start + smooth * (end - start))
+                engine.step()
+                if not motion["check"] or step % 10:
+                    continue
+                touched = set()
+                for i, c in enumerate(engine.data.contact):
+                    names = {
+                        engine.model.body(int(engine.model.geom_bodyid[g])).name
+                        for g in c.geom
+                    }
+                    if target in names:
+                        mujoco.mj_contactForce(engine.model, engine.data, i, force)
+                        if force[0] > 0.01:
+                            touched.update(names & fingers)
+                assert touched == fingers
+                bottle = engine.data.body(target)
+                assert bottle.xpos[2] > initial_z + 0.03
+                tcp = engine.data.site("tcp_site")
+                relative = tcp.xmat.reshape(3, 3).T @ (bottle.xpos - tcp.xpos)
+                if relative_reference is None:
+                    relative_reference = relative.copy()
+                assert np.linalg.norm(relative - relative_reference) < 0.003
+            start = end
+        bottle = engine.data.body(target)
+        slot = engine.data.body("shampoo_slot_1")
+        assert np.linalg.norm(bottle.xpos[:2] - slot.xpos[:2]) < 0.0035
+        assert 0.050 < bottle.xpos[2] < 0.057
+        assert np.arccos(abs(bottle.xmat[8])) < 0.2
+        support = 0.0
+        for i, c in enumerate(engine.data.contact):
+            names = {
+                engine.model.body(int(engine.model.geom_bodyid[g])).name for g in c.geom
+            }
+            if target not in names:
+                continue
+            mujoco.mj_contactForce(engine.model, engine.data, i, force)
+            assert not (names & fingers and force[0] > 0.01)
+            if "shampoo_packing_box" in names:
+                support += force[0]
+        assert support > 0.2
+    finally:
+        engine.close()
