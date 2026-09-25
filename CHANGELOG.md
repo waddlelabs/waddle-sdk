@@ -26,6 +26,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Add native small-cylinder grasp acceptance through descent, lift, sustained
+  bilateral carry, and release, including partial closure and a missed-grasp
+  negative control across supported MuJoCo runtimes.
+
 - Add the S20 `chocolate-packing` MuJoCo scene with twenty spaced small cylinders,
   a physical six-pocket box, a closer scene camera, and native grasp/drop tests.
   Trusted continuation reset preserves remaining source pieces and retires packed
