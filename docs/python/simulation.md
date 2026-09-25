@@ -97,7 +97,7 @@ MuJoCo also provides thirty-two interactive development task environments:
 - `shampoo-packing`: twenty 40 mm diameter, 90 mm long, 80 g cylinders
   in a 260 × 240 mm box, initialized from a retained native gravity drop.
   The pile has mixed stable orientations within 60 mm source walls. In scene
-  1.0.4, six physical pockets taper continuously from a 62 mm mouth into a
+  1.0.5, six physical pockets taper continuously from a 62 mm mouth into a
   46 mm bottom opening over 80 mm of height, on 74 mm centers. Release an
   upright bottle above the pocket mouth so it can settle onto the floor.
   The receiving box stands on a 60 mm pedestal; pocket floors are 68 mm above
@@ -106,8 +106,9 @@ MuJoCo also provides thirty-two interactive development task environments:
   torsional coefficient 0.006 m. Contact stiffness stays unchanged.
   There are no object attachments or increased actuator forces.
   Either flat end can support an upright bottle. Cylinder friction is
-  `(2.8, 0.12, 0.02)` with a 1 micrometre contact margin. This doubles bottle
-  and effective bottle/finger friction relative to scene 1.0.3. The scene asset retains
+  `(1.4, 0.06, 0.01)` with a 1 micrometre contact margin. Only effective
+  bottle/finger friction doubles relative to scene 1.0.3; increasing pocket
+  friction as well prevented off-center bottles from seating in diagnostic 1.0.4. The scene asset retains
   MuJoCo version, gravity, drop seed and settling provenance. The retained pile
   was authored with the earlier straight-sleeve receiver; the installed scene's
   generator, `tools/generate_shampoo_pile.py`, produces a new pile for review

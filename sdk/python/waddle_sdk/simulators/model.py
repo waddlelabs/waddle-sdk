@@ -1294,7 +1294,7 @@ def objects(environment: str, *, robot: str | None = None) -> list[list[Link]]:
             )
             bottle.rpy = tuple(pose["rpy"])
             bottle.damping = 0.002
-            bottle.shapes[0].friction = (2.8, 0.12, 0.02)
+            bottle.shapes[0].friction = (1.4, 0.06, 0.01)
             bottle.shapes[0].contact_margin = 1e-6
             bottle.shapes[0].finger_contact_patch_m = 0.003
             bottle.shapes[0].finger_contact_friction_scale = 2.0

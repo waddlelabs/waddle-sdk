@@ -79,11 +79,12 @@ those penetrations; trusted administration fences the refused world until reopen
 The existing 30-task evaluation matrix remains frozen; S20 has a separate
 reset-enabled development suite. S21 shampoo packing adds a gravity-settled
 mixed-orientation pile of twenty 40 × 90 mm cylinders and six upright pockets.
-Scene 1.0.4 retains the gravity-settled pile in a 60 mm walled source box,
+Scene 1.0.5 retains the gravity-settled pile in a 60 mm walled source box,
 and a receiving box on a 60 mm pedestal. Each 62-to-46 mm pocket tapers
 continuously over 80 mm so released bottles slide to the floor and seated
-bottles resist displacement by later approaches. Scene 1.0.4 doubles bottle material friction to (2.8, 0.12, 0.02) and
-scales explicit bottle/finger friction by two: sliding 2.0 and torsional 0.006 m.
+bottles resist displacement by later approaches. Scene 1.0.5 scales explicit bottle/finger friction by two: sliding 2.0 and
+torsional 0.006 m. Other bottle contacts retain (1.4, 0.06, 0.01): doubling them
+in diagnostic 1.0.4 made offset drops stick in the pockets.
 Contact stiffness, geometry and actuator limits remain unchanged. Native grasp evidence must include rotation and supported release
 at every receiving slot, with bilateral contact and measured grasp drift checked
 throughout the carry. These actuator fixtures do not establish planner/tool success.
