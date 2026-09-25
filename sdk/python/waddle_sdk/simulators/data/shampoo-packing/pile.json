@@ -20,6 +20,7 @@
     ],
     "receiving_origin_z_m": 0.06,
     "receiving_pocket_depth_m": 0.08,
+    "receiving_pocket_profile": "62-mm-straight-sleeve-and-18-mm-taper",
     "max_linear_speed_m_s": 0.0009003388937892001,
     "robot_contacts": 0
   },

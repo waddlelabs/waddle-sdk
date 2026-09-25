@@ -107,8 +107,10 @@ MuJoCo also provides thirty-two interactive development task environments:
   retain their existing material properties.
   Either flat end can support an upright bottle. Cylinder friction is
   `(1.4, 0.06, 0.01)` with a 1 micrometre contact margin. The scene asset retains
-  MuJoCo version, gravity, drop seed and settling provenance; regenerate with
-  `tools/generate_shampoo_pile.py`. Pose jitter is disabled for the interlocked
+  MuJoCo version, gravity, drop seed and settling provenance. The retained pile
+  was authored with the earlier straight-sleeve receiver; the installed scene's
+  generator, `tools/generate_shampoo_pile.py`, produces a new pile for review
+  rather than a guaranteed identical copy. Pose jitter is disabled for the interlocked
   pile; appearance and physics variation remain available. Trusted continuation
   preserves the remaining measured bottle poses as for chocolate packing.
 - `chocolate-packing`: twenty 20 mm diameter, 14 mm tall, 6 g cylinders in a

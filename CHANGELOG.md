@@ -19,6 +19,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Changed
 
+- Record the shampoo pile's actual authoring receiver profile and distinguish
+  the retained gravity fixture from new piles generated with the installed scene.
+
 - Version shampoo packing as 1.0.3: lower source walls to 60 mm and regenerate
   its stable mixed-orientation gravity pile; raise the receiver pedestal to
   60 mm and taper its six pockets continuously over 80 mm. Preserve bottle

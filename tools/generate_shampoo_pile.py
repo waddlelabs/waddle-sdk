@@ -1,7 +1,9 @@
 """Generate the shampoo scene asset by sequential native gravity drops.
 
 Run with MuJoCo 3.13.0 from the SDK repository. Writes evidence under tmp;
-inspect before explicitly replacing the shipped pile.json. This offline authoring
+inspect before explicitly replacing the shipped pile.json. The installed scene's
+geometry can differ from the shipped pile's recorded authoring geometry, so this
+utility does not promise bitwise reproduction of a historical asset. This offline authoring
 utility has privileged state access and is not a robot task policy.
 """
 
@@ -120,6 +122,7 @@ try:
             "drop_xy_half_ranges_m": [0.05, 0.04],
             "receiving_origin_z_m": 0.06,
             "receiving_pocket_depth_m": 0.08,
+            "receiving_pocket_profile": "continuous-taper",
             "max_linear_speed_m_s": max(speeds),
             "robot_contacts": len(robot_contacts),
         },

@@ -85,8 +85,11 @@ continuously over 80 mm so released bottles slide to the floor and seated
 bottles resist displacement by later approaches. Explicit bottle/finger pairs use a 3 mm torsional patch with
 existing pad sliding friction/stiffness; other contacts and actuator limits stay
 unchanged. Native grasp evidence must include rotation and release.
-Its pile asset is reproduced by `tools/generate_shampoo_pile.py`; do not replace
-it with independent random pose jitter that intersects neighboring bottles.
+Its retained pile was gravity-authored with a 62 mm straight receiver sleeve
+and 18 mm tapered mouth. `tools/generate_shampoo_pile.py` generates a new pile
+using the installed scene; changed scene geometry can change the settled poses.
+Review replacements before adopting them, and never use independent random
+pose jitter that intersects neighboring bottles.
 The S19 reference fixture uses eighteen same-color 24 mm cubes in one irregular
 source pile and a separate adjacent wide destination bin sized for all eighteen;
 the SDK scene does not reset individual transfers or define their success/order.
