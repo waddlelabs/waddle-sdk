@@ -13,10 +13,16 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- YAM supervised control now defaults to the bench-tested arm gains
+  `KP=[80,80,120,10,10,10]`, `KD=[5,5,5,1.5,1.5,1.5]` and a `0.10 rad`
+  following-error allowance. Sites can still override gains and can request the
+  legacy cadence-derived allowance with explicit `None`.
+
 - Optional per-row `Arm.position_error_caps` and YAM
   `max_joint_position_error_rad` let a reviewed owner envelope bound servo
-  tracking error independently of command cadence. Defaults, gripper bounds,
-  simulated speed and vendor dispatch remain unchanged. Open descriptions and
+  tracking error independently of command cadence. YAM factories default their
+  six arm rows to 0.10 rad; explicit `None` retains the cadence-derived legacy
+  bound. Gripper bounds and simulated speed remain unchanged. Open descriptions and
   `limits.position_error` support report the actual ordered allowance; refusal
   context retains it alongside the target and latest measurement. This adds no
   interpolation, convergence, or physical velocity/torque guarantee.

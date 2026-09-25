@@ -34,11 +34,10 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-import waddle_sdk
 from mcap.reader import make_reader
 from mcap_protobuf.decoder import DecoderFactory
 from waddle_sdk import descriptors
-from waddle_sdk._session import Control, _derive_grants, create_core_session
+from waddle_sdk._session import _derive_grants, create_core_session
 from waddle_sdk.robots import base, yam
 from waddle_sdk.runtime import FaultCode, RuntimeFault
 
@@ -68,22 +67,22 @@ def _cross_arm() -> base.CrossArm:
 
 
 def _bimanual(**overrides) -> base.Rig:
-    kwargs: dict = dict(
-        workspace=WORKSPACE_BOX_M,
-        gripper_limits=GRIPPER_LIMITS_MOTOR_RAD,
-        cross_arm=_cross_arm(),
-        sim=True,
-    )
+    kwargs: dict = {
+        "workspace": WORKSPACE_BOX_M,
+        "gripper_limits": GRIPPER_LIMITS_MOTOR_RAD,
+        "cross_arm": _cross_arm(),
+        "sim": True,
+    }
     kwargs.update(overrides)
     return yam.bimanual(**kwargs)
 
 
 def _arm_rig(**overrides) -> base.Rig:
-    kwargs: dict = dict(
-        workspace=WORKSPACE_BOX_M,
-        gripper_limits=GRIPPER_LIMITS_MOTOR_RAD,
-        sim=True,
-    )
+    kwargs: dict = {
+        "workspace": WORKSPACE_BOX_M,
+        "gripper_limits": GRIPPER_LIMITS_MOTOR_RAD,
+        "sim": True,
+    }
     kwargs.update(overrides)
     return yam.arm(**kwargs)
 
@@ -463,9 +462,8 @@ def test_a_supervised_rig_registers_the_three_driving_verbs():
 
 def test_the_sim_factory_drives_its_twins_through_the_envelope(tmp_path):
     """A sim rig is a rehearsal of the live one: the same declaration, the
-    same envelope arithmetic, the same seam. The step cap is DERIVED from the
-    declared speed and rate (1.0 rad/s at 10 Hz = 0.10 rad per command), which
-    is what makes a jump refusable at all."""
+    same envelope arithmetic, the same seam. The reviewed 0.10 rad following
+    allowance applies to simulation too, without changing simulated speed."""
     rig = _bimanual()
     arms = rig.arms()
     assert set(arms) == {"left_arm", "right_arm"}
@@ -494,7 +492,7 @@ def test_the_sim_factory_drives_its_twins_through_the_envelope(tmp_path):
     jump = arms["left_arm"].state()[0] + 0.5
     assert arms["left_arm"].command(jump) is False
     assert arms["left_arm"].rejected == 1
-    assert any("would move" in line for line in lines)
+    assert any("position-error cap 0.1000" in line for line in lines)
 
 
 def test_the_twins_start_on_distinct_rows():
@@ -737,11 +735,11 @@ def test_live_driver_installs_starvation_safe_receive_before_open(vendor, monkey
 
 
 def _live(vendor: _FakeVendor, **overrides) -> yam.LiveDriver:
-    kwargs: dict = dict(
-        channel="can_left",
-        gripper_limits=GRIPPER_LIMITS_MOTOR_RAD,
-        report=lambda _: None,
-    )
+    kwargs: dict = {
+        "channel": "can_left",
+        "gripper_limits": GRIPPER_LIMITS_MOTOR_RAD,
+        "report": lambda _: None,
+    }
     kwargs.update(overrides)
     return yam.LiveDriver(**kwargs)
 
@@ -1173,6 +1171,30 @@ def test_factories_freeze_explicit_gains_until_open(vendor, bimanual):
         assert robot.gains[0][1][:6] == pytest.approx([5] * 6)
     for part in opened.values():
         part.driver.close()
+
+
+@pytest.mark.parametrize("bimanual", [False, True])
+def test_live_factories_apply_supervised_yam_defaults(vendor, bimanual):
+    if bimanual:
+        rig = yam.bimanual(
+            workspace=None,
+            left=yam.ArmSite(channel="can_left"),
+            right=yam.ArmSite(channel="can_right"),
+            report=lambda _: None,
+        )
+    else:
+        rig = yam.arm(
+            workspace=None, channel="can_left", report=lambda _: None
+        )
+    opened = rig.arms()
+    assert len(vendor.robots) == (2 if bimanual else 1)
+    for robot, arm in zip(vendor.robots, opened.values(), strict=True):
+        assert robot.gains[0][0][:6] == pytest.approx(yam.DEFAULT_ARM_KP)
+        assert robot.gains[0][1][:6] == pytest.approx(yam.DEFAULT_ARM_KD)
+        assert tuple(arm.position_error_caps[:6]) == (
+            yam.DEFAULT_MAX_JOINT_POSITION_ERROR_RAD,
+        ) * 6
+        arm.driver.close()
 
 
 @pytest.mark.parametrize("factory", [yam.arm, yam.bimanual])

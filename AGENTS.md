@@ -880,10 +880,11 @@ with explicit site-operator authorization to release holding torque. Normal clos
 and context exit keep the parking/support wait; uncertain teardown retains ownership.
 YAM checks actual CAN cache updates and CAN/server liveness before observations
 and writes, refusing stopped/stale feedback rather than accepting cached positions.
-YAM `arm_gains` optionally supplies six KP/KD values independently, excluding
-nondefault `arm_gain_scale`. Explicit and scaled gains must fit the pinned MIT
+YAM defaults to the reviewed supervised profile `KP=[80,80,120,10,10,10]` and
+`KD=[5,5,5,1.5,1.5,1.5]`; `arm_gains` can replace those six values independently,
+excluding nondefault `arm_gain_scale`. Explicit and scaled gains must fit the pinned MIT
 encoding (positive KP <= 500, KD <= 5) before CAN startup; reject silent clipping.
-Defaults and hand gains remain unchanged. Recovery restores the requested vectors;
+Hand gains remain unchanged. Recovery restores the requested vectors;
 monitor and simulation modes validate but do not apply PD gains. Live evidence
 distinguishes requested gains from predicted 12-bit encoded gains, never claiming
 hardware gain readback. See [gain configuration](docs/porting/robot.md#yam-gain-configuration).
@@ -893,10 +894,11 @@ state ingestion. Preserve `startup_evidence` independently of motion timing;
 never wait for an in-envelope pose or infer physical settling from readiness.
 
 `Arm.position_error_caps` optionally replaces the legacy `step_caps` target-to-
-measurement allowance; omission preserves existing admission. Both are position
+measurement allowance. Both are position
 error bounds, not physical velocity or torque enforcement. YAM's optional
-`max_joint_position_error_rad` applies only to six arm joints, retaining gripper
-limits, declared reference speeds and simulated speed. It validates before opening.
+`max_joint_position_error_rad` defaults to 0.10 rad and applies only to six arm
+joints, retaining gripper limits, declared reference speeds and simulated speed.
+Explicit `None` selects the legacy cadence-derived allowance. It validates before opening.
 Open runtime descriptions expose ordered `command_limits[part].max_position_error`
 and the `limits.position_error` support fact; exact refusal context retains the
 enforced vector. Callers own reference timing/convergence; no extra SDK controller

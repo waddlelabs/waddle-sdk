@@ -125,9 +125,10 @@ These are local runtime metadata; they add no protocol field or separate writer.
 YAM `arm()` and `bimanual()` accept `max_joint_position_error_rad`, also available
 under `parts.<part>.options` in `site.yaml`. It applies the explicit bound to the
 six arm joints and retains the existing gripper bound. Invalid values fail during
-factory construction, before CAN or vendor drivers open. Omission continues to
-use `max_joint_speed_rad_s / rate_hz` for arm rows. Declared velocity, simulator
-speed, vendor gains and command bytes remain unchanged.
+factory construction, before CAN or vendor drivers open. The supervised YAM
+default is `0.10 rad`; pass explicit `None` to select the legacy
+`max_joint_speed_rad_s / rate_hz` arm bound. Declared velocity and simulator
+speed remain unchanged.
 
 Select this allowance as part of the site's reviewed envelope. It is not a
 velocity, acceleration, force or torque limit: a larger error can request more
@@ -184,13 +185,14 @@ ignores these factors.
 
 ## YAM gain configuration
 
-The YAM factories and `LiveDriver` accept optional
+The YAM factories and `LiveDriver` accept
 `arm_gains={"kp": [...], "kd": [...]}`. Each vector names joints 1–6 in order and
 contains six finite positive numbers. In `site.yaml`, place this mapping under
 `parts.<part>.options`. Values are copied at declaration, so mutating the input
 later does not change what opens. Explicit arm gains cannot be combined with
 `arm_gain_scale != 1`. The independent `gripper_gain_scale` still affects only the
-hand; omitted options retain the vendor defaults.
+hand. YAM factories default to `KP=[80,80,120,10,10,10]` and
+`KD=[5,5,5,1.5,1.5,1.5]`; explicit values replace that profile.
 
 The pinned DM4340/DM4310 MIT encoding supports KP up to 500 and KD up to 5.
 Validate both explicit gains and effective scaled gains before CAN startup, and

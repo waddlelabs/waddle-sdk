@@ -106,9 +106,12 @@ __all__ = [
     "CHAIN_AXIS",
     "CHAIN_ORIGIN_RPY_RAD",
     "CHAIN_ORIGIN_XYZ_M",
+    "DEFAULT_ARM_KD",
+    "DEFAULT_ARM_KP",
     "DEFAULT_GRAVITY_COMP_FACTOR",
     "DEFAULT_MAX_FEEDFORWARD_VEL_RAD_S",
     "DEFAULT_MAX_GRIPPER_SPEED_PER_S",
+    "DEFAULT_MAX_JOINT_POSITION_ERROR_RAD",
     "DEFAULT_MAX_JOINT_SPEED_RAD_S",
     "DEFAULT_RATE_HZ",
     "DEFAULT_SIM_HOME",
@@ -153,6 +156,13 @@ I2RT_PIN = "570ef66681ff12bd8298aba34084307cfecc9f05"
 #: these are SDK control defaults, not vendor ratings or universal calibration.
 #: The vendor appends its unchanged gripper factor of 1.0.
 DEFAULT_GRAVITY_COMP_FACTOR = (1.0, 1.1, 1.2, 1.3, 1.0, 1.0)
+
+# Bench-tested supervised position-control defaults. Joint 3 needs more holding
+# stiffness than pinned I2RT's generic profile during gravity-loaded YAM sweeps.
+# Sites may still replace these exact vectors explicitly.
+DEFAULT_ARM_KP = (80.0, 80.0, 120.0, 10.0, 10.0, 10.0)
+DEFAULT_ARM_KD = (5.0, 5.0, 5.0, 1.5, 1.5, 1.5)
+DEFAULT_MAX_JOINT_POSITION_ERROR_RAD = 0.1
 
 # Pinned I2RT robots/config/{yam,linear_4310}.yml. These are the startup
 # gains used to validate site options before opening CAN, not new defaults.
@@ -1490,6 +1500,14 @@ def _build_arms(
         position_error_caps = (float(max_joint_position_error_rad),) * ARM_JOINT_COUNT + (
             step_caps[-1],
         )
+    # Omission selects the SDK's tested YAM profile. Resolve it to an explicit
+    # request so I2RT receives the same gains on every unit and after recovery.
+    if arm_gains is None:
+        arm_gains = {
+            "kp": tuple(value * arm_gain_scale for value in DEFAULT_ARM_KP),
+            "kd": tuple(value * arm_gain_scale for value in DEFAULT_ARM_KD),
+        }
+        arm_gain_scale = 1.0
     kp, kd = _gain_vectors(
         arm_gains=arm_gains,
         arm_gain_scale=arm_gain_scale,
@@ -1575,7 +1593,7 @@ def bimanual(
     joint_limits: Sequence[Sequence[float]] | None = None,
     rate_hz: float = DEFAULT_RATE_HZ,
     max_joint_speed_rad_s: float = DEFAULT_MAX_JOINT_SPEED_RAD_S,
-    max_joint_position_error_rad: float | None = None,
+    max_joint_position_error_rad: float | None = DEFAULT_MAX_JOINT_POSITION_ERROR_RAD,
     max_gripper_speed_per_s: float = DEFAULT_MAX_GRIPPER_SPEED_PER_S,
     gravity_comp_factor: Sequence[float] = DEFAULT_GRAVITY_COMP_FACTOR,
     arm_gains: Mapping[str, Sequence[float]] | None = None,
@@ -1619,7 +1637,7 @@ def bimanual(
     These bench-derived defaults are not a substitute for per-unit calibration;
     ``sim=True`` uses the kinematic simulator and ignores gravity factors.
 
-    ``arm_gains`` optionally supplies separate ``kp`` and ``kd`` vectors for
+    ``arm_gains`` optionally replaces the default separate ``kp`` and ``kd`` vectors for
     joints 1–6. Each must contain six finite positive numbers, with ``kp <= 500``
     and ``kd <= 5`` (MIT encoding limits, not tuning recommendations). Explicit
     arm gains cannot be combined with ``arm_gain_scale != 1``. The independent
@@ -1628,9 +1646,11 @@ def bimanual(
     refused. Requested gains are restored after e-stop recovery. Simulation and
     monitor/zero-gravity modes validate these options but do not apply PD gains.
 
-    ``max_joint_position_error_rad`` optionally sets the owner-authorized
+    ``max_joint_position_error_rad`` sets the owner-authorized
     target-to-measurement bound for the six arm joints independently of
-    ``rate_hz``. Omission preserves the legacy speed/rate bound. Declared
+    ``rate_hz`` and defaults to
+    :data:`DEFAULT_MAX_JOINT_POSITION_ERROR_RAD`. Explicit ``None`` preserves
+    the legacy speed/rate bound. Declared
     reference speed, gripper bounds and vendor behavior remain unchanged;
     callers own interpolation and convergence. This is not a torque limit.
 
@@ -1737,7 +1757,7 @@ def arm(
     joint_limits: Sequence[Sequence[float]] | None = None,
     rate_hz: float = DEFAULT_RATE_HZ,
     max_joint_speed_rad_s: float = DEFAULT_MAX_JOINT_SPEED_RAD_S,
-    max_joint_position_error_rad: float | None = None,
+    max_joint_position_error_rad: float | None = DEFAULT_MAX_JOINT_POSITION_ERROR_RAD,
     max_gripper_speed_per_s: float = DEFAULT_MAX_GRIPPER_SPEED_PER_S,
     gravity_comp_factor: Sequence[float] = DEFAULT_GRAVITY_COMP_FACTOR,
     arm_gains: Mapping[str, Sequence[float]] | None = None,
