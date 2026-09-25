@@ -79,8 +79,10 @@ those penetrations; trusted administration fences the refused world until reopen
 The existing 30-task evaluation matrix remains frozen; S20 has a separate
 reset-enabled development suite. S21 shampoo packing adds a gravity-settled
 mixed-orientation pile of twenty 40 × 90 mm cylinders and six upright pockets.
-Scene 1.0.2 raises the receiving box 40 mm and retains each 62-to-46 mm
-tapered entrance. Explicit bottle/finger pairs use a 3 mm torsional patch with
+Scene 1.0.3 uses a newly gravity-settled pile in a 60 mm walled source box,
+and a receiving box on a 60 mm pedestal. Each 62-to-46 mm pocket tapers
+continuously over 80 mm so released bottles slide to the floor and seated
+bottles resist displacement by later approaches. Explicit bottle/finger pairs use a 3 mm torsional patch with
 existing pad sliding friction/stiffness; other contacts and actuator limits stay
 unchanged. Native grasp evidence must include rotation and release.
 Its pile asset is reproduced by `tools/generate_shampoo_pile.py`; do not replace

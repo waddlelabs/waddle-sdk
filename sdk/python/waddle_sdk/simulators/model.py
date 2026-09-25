@@ -1255,26 +1255,26 @@ def objects(environment: str, *, robot: str | None = None) -> list[list[Link]]:
                 ),
                 Shape(
                     "box",
-                    (0.006, 0.24, 0.09),
-                    (-0.127, 0, 0.053),
+                    (0.006, 0.24, 0.06),
+                    (-0.127, 0, 0.038),
                     color=(0.49, 0.56, 0.63, 1),
                 ),
                 Shape(
                     "box",
-                    (0.006, 0.24, 0.09),
-                    (0.127, 0, 0.053),
+                    (0.006, 0.24, 0.06),
+                    (0.127, 0, 0.038),
                     color=(0.49, 0.56, 0.63, 1),
                 ),
                 Shape(
                     "box",
-                    (0.248, 0.006, 0.09),
-                    (0, -0.117, 0.053),
+                    (0.248, 0.006, 0.06),
+                    (0, -0.117, 0.038),
                     color=(0.49, 0.56, 0.63, 1),
                 ),
                 Shape(
                     "box",
-                    (0.248, 0.006, 0.09),
-                    (0, 0.117, 0.053),
+                    (0.248, 0.006, 0.06),
+                    (0, 0.117, 0.038),
                     color=(0.49, 0.56, 0.63, 1),
                 ),
             ],
@@ -1309,12 +1309,12 @@ def objects(environment: str, *, robot: str | None = None) -> list[list[Link]]:
             bottles.append([bottle])
         rack = Link(
             "shampoo_packing_box",
-            xyz=(0.30, 0.18, 0.04),
+            xyz=(0.30, 0.18, 0.06),
             shapes=[
                 Shape(
                     "box",
-                    (0.23, 0.16, 0.04),
-                    (0, 0, -0.02),
+                    (0.23, 0.16, 0.06),
+                    (0, 0, -0.03),
                     color=(0.12, 0.30, 0.70, 1),
                 ),
                 Shape(
@@ -1326,9 +1326,10 @@ def objects(environment: str, *, robot: str | None = None) -> list[list[Link]]:
             ],
         )
         # A real tapered entrance guides small placement errors into the snug
-        # 46 mm bottom opening. Its inner radius grows to 31 mm over 18 mm.
-        taper = math.atan2(0.008, 0.018)
-        wall_length = math.hypot(0.008, 0.018)
+        # 46 mm bottom opening. A continuous 80 mm taper also protects seated
+        # bottles without the ledge of a short funnel above a straight sleeve.
+        taper = math.atan2(0.008, 0.080)
+        wall_length = math.hypot(0.008, 0.080)
         wall_radius = 0.027 + 0.0015 * math.cos(taper)
         slots = []
         for index in range(6):
@@ -1342,7 +1343,7 @@ def objects(environment: str, *, robot: str | None = None) -> list[list[Link]]:
                         (
                             wall_radius * math.cos(angle),
                             wall_radius * math.sin(angle),
-                            0.017,
+                            0.048,
                         ),
                         (0, taper, angle),
                         color=(0.90, 0.77, 0.35, 1),

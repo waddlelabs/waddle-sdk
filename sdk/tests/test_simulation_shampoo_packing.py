@@ -172,5 +172,18 @@ def test_tapered_pockets_physically_center_released_bottles(tmp_path, offset):
             assert np.linalg.norm(body.xpos[:2] - slot.xpos[:2]) < 0.0035
             assert 0.050 < body.xpos[2] - slot.xpos[2] < 0.057
             assert np.arccos(abs(body.xmat[8])) < 0.2
+            joint = engine.model.joint(int(engine.model.body(body.name).jntadr[0]))
+            v = int(joint.dofadr[0])
+            assert np.linalg.norm(engine.data.qvel[v : v + 3]) < 0.015
+            force, support = np.zeros(6), 0.0
+            for i, contact in enumerate(engine.data.contact):
+                names = {
+                    engine.model.body(int(engine.model.geom_bodyid[g])).name
+                    for g in contact.geom
+                }
+                if names == {body.name, "shampoo_packing_box"}:
+                    engine.mj.mj_contactForce(engine.model, engine.data, i, force)
+                    support += force[0]
+            assert support > 0.2
     finally:
         engine.close()

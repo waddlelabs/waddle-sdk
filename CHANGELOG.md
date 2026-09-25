@@ -19,6 +19,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Changed
 
+- Version shampoo packing as 1.0.3: lower source walls to 60 mm and regenerate
+  its stable mixed-orientation gravity pile; raise the receiver pedestal to
+  60 mm and taper its six pockets continuously over 80 mm. Preserve bottle
+  dimensions, material contacts and actuator limits. Update the native transport
+  witness and require floor support and settling in offset-drop checks.
+
 - Version shampoo packing as 1.0.2: raise the receiving box by 40 mm for upright YAM access, and use explicit bottle/finger material pairs with a 3 mm torsional patch. Preserve pad sliding friction, force limits, stiffness, gravity pile and other contact pairs.
 
 - Version shampoo packing as scene 1.0.1 with physical tapered pocket entrances: 62 mm mouth to a snug 46 mm bottom, keeping upright seating dimensions and task-neutral runtime.

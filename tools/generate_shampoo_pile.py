@@ -67,9 +67,9 @@ try:
             rng.uniform(-math.pi, math.pi),
         ]
         e.data.qpos[q : q + 7] = [
-            0.29 + rng.uniform(-0.06, 0.06),
-            -0.20 + rng.uniform(-0.05, 0.05),
-            top + 0.065,
+            0.29 + rng.uniform(-0.05, 0.05),
+            -0.20 + rng.uniform(-0.04, 0.04),
+            top + 0.05,
             *quaternion(rotation(rpy)),
         ]
         e.data.qvel[v : v + 6] = 0
@@ -114,8 +114,12 @@ try:
             "timestep_s": float(e.model.opt.timestep),
             "settle_steps": 10000,
             "drop_interval_steps": 1500,
-            "drop_method": "sequential, 65 mm above current pile top",
+            "drop_method": "sequential, 50 mm above current pile top",
             "drop_seed": 210924,
+            "source_wall_height_m": 0.06,
+            "drop_xy_half_ranges_m": [0.05, 0.04],
+            "receiving_origin_z_m": 0.06,
+            "receiving_pocket_depth_m": 0.08,
             "max_linear_speed_m_s": max(speeds),
             "robot_contacts": len(robot_contacts),
         },

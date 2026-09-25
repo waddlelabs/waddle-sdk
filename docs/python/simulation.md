@@ -96,14 +96,15 @@ MuJoCo also provides thirty-two interactive development task environments:
   500 ms for every reference robot family.
 - `shampoo-packing`: twenty 40 mm diameter, 90 mm long, 80 g cylinders
   in a 260 × 240 mm box, initialized from a retained native gravity drop.
-  The pile has mixed stable orientations. In scene 1.0.2, six physical tapered
-  collars guide a 62 mm mouth into a 46 mm bottom opening over 18 mm of height,
-  on 74 mm centers, with room above the walls for a mid-body release.
-  The receiving box stands on a 40 mm pedestal; pocket floors are 48 mm above
+  The pile has mixed stable orientations within 60 mm source walls. In scene
+  1.0.3, six physical pockets taper continuously from a 62 mm mouth into a
+  46 mm bottom opening over 80 mm of height, on 74 mm centers. Release an
+  upright bottle above the pocket mouth so it can settle onto the floor.
+  The receiving box stands on a 60 mm pedestal; pocket floors are 68 mm above
   the table. Explicit bottle/finger contact pairs model a 3 mm soft-finger
   torsional patch, retaining pad sliding friction 1.0 and its existing stiffness.
   There are no object attachments or increased actuator forces. Other contacts
-  and the original gravity-generated pile remain unchanged.
+  retain their existing material properties.
   Either flat end can support an upright bottle. Cylinder friction is
   `(1.4, 0.06, 0.01)` with a 1 micrometre contact margin. The scene asset retains
   MuJoCo version, gravity, drop seed and settling provenance; regenerate with
