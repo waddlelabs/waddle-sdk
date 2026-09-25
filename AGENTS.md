@@ -79,6 +79,7 @@ those penetrations; trusted administration fences the refused world until reopen
 The existing 30-task evaluation matrix remains frozen; S20 has a separate
 reset-enabled development suite. S21 shampoo packing adds a gravity-settled
 mixed-orientation pile of twenty 40 × 90 mm cylinders and six upright pockets.
+Scene 1.0.1 tapers each physical 62 mm entrance to a 46 mm bottom opening.
 Its pile asset is reproduced by `tools/generate_shampoo_pile.py`; do not replace
 it with independent random pose jitter that intersects neighboring bottles.
 The S19 reference fixture uses eighteen same-color 24 mm cubes in one irregular

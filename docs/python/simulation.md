@@ -96,8 +96,9 @@ MuJoCo also provides thirty-two interactive development task environments:
   500 ms for every reference robot family.
 - `shampoo-packing`: twenty 40 mm diameter, 90 mm long, 80 g cylinders
   in a 260 × 240 mm box, initialized from a retained native gravity drop.
-  The pile has mixed stable orientations. Six shallow collars have 46 mm clear
-  openings on 74 mm centers, with room above the walls for a mid-body release.
+  The pile has mixed stable orientations. In scene 1.0.1, six physical tapered
+  collars guide a 62 mm mouth into a 46 mm bottom opening over 18 mm of height,
+  on 74 mm centers, with room above the walls for a mid-body release.
   Either flat end can support an upright bottle. Cylinder friction is
   `(1.4, 0.06, 0.01)` with a 1 micrometre contact margin. The scene asset retains
   MuJoCo version, gravity, drop seed and settling provenance; regenerate with

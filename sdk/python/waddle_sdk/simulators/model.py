@@ -1316,6 +1316,11 @@ def objects(environment: str, *, robot: str | None = None) -> list[list[Link]]:
                 )
             ],
         )
+        # A real tapered entrance guides small placement errors into the snug
+        # 46 mm bottom opening. Its inner radius grows to 31 mm over 18 mm.
+        taper = math.atan2(0.008, 0.018)
+        wall_length = math.hypot(0.008, 0.018)
+        wall_radius = 0.027 + 0.0015 * math.cos(taper)
         slots = []
         for index in range(6):
             collar = []
@@ -1324,9 +1329,13 @@ def objects(environment: str, *, robot: str | None = None) -> list[list[Link]]:
                 collar.append(
                     Shape(
                         "box",
-                        (0.003, 0.010, 0.018),
-                        (0.0245 * math.cos(angle), 0.0245 * math.sin(angle), 0.017),
-                        (0, 0, angle),
+                        (0.003, 0.013, wall_length),
+                        (
+                            wall_radius * math.cos(angle),
+                            wall_radius * math.sin(angle),
+                            0.017,
+                        ),
+                        (0, taper, angle),
                         color=(0.90, 0.77, 0.35, 1),
                     )
                 )

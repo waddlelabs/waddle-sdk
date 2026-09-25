@@ -129,3 +129,48 @@ def test_tilted_bottle_is_retained_rotated_carried_and_seated(tmp_path):
         assert support > 0.2
     finally:
         engine.close()
+
+
+@pytest.mark.parametrize("offset", [(0.008, 0), (-0.008, 0), (0, 0.008), (0, -0.008)])
+def test_tapered_pockets_physically_center_released_bottles(tmp_path, offset):
+    pytest.importorskip("mujoco")
+    from waddle_sdk.simulators.mujoco import Engine
+
+    _, config = make_site(
+        "shampoo-drop",
+        backend="mujoco",
+        robot="yam",
+        environment="shampoo-packing",
+        width=320,
+        height=240,
+    )
+    engine = Engine(config, tmp_path)
+    try:
+        for index in range(1, 7):
+            body = engine.model.body(f"shampoo_{index:02d}")
+            slot = engine.data.body(f"shampoo_slot_{index}").xpos
+            joint = engine.model.joint(int(body.jntadr[0]))
+            q = int(joint.qposadr[0])
+            v = int(joint.dofadr[0])
+            # A dropped fixture tests physical guidance; it is not robot evidence.
+            engine.data.qpos[q : q + 7] = [
+                slot[0] + offset[0],
+                slot[1] + offset[1],
+                0.14,
+                1,
+                0,
+                0,
+                0,
+            ]
+            engine.data.qvel[v : v + 6] = 0
+        engine.mj.mj_forward(engine.model, engine.data)
+        for _ in range(round(2 / engine.model.opt.timestep)):
+            engine.step()
+        for index in range(1, 7):
+            body = engine.data.body(f"shampoo_{index:02d}")
+            slot = engine.data.body(f"shampoo_slot_{index}")
+            assert np.linalg.norm(body.xpos[:2] - slot.xpos[:2]) < 0.0035
+            assert 0.050 < body.xpos[2] < 0.057
+            assert np.arccos(abs(body.xmat[8])) < 0.2
+    finally:
+        engine.close()

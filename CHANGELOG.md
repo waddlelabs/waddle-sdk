@@ -19,6 +19,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Changed
 
+- Version shampoo packing as scene 1.0.1 with physical tapered pocket entrances: 62 mm mouth to a snug 46 mm bottom, keeping upright seating dimensions and task-neutral runtime.
+
 - Tighten the chocolate grid to 12 mm clear gaps (32 mm centers) in scene
   1.0.3, keeping twenty 20 mm cylinders and the validated contact margin.
 
