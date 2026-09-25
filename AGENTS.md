@@ -64,8 +64,8 @@ models. Engine-specific acceptance stays in `sdk/tests/test_simulation.py`; a
 skipped optional-engine case is not evidence that the engine passed. Reference
 worlds preserve state across ordinary runs and reset only when the site explicitly
 sets `reset_on_episode: true`.
-The thirty-one MuJoCo-only development task environments are built-in interactive
-fixtures using the same runtime surface. Twenty are single-arm and eleven are
+The thirty-two MuJoCo-only development task environments are built-in interactive
+fixtures using the same runtime surface. Twenty-one are single-arm and eleven are
 matched two-arm scenes. Keep their task-relevant
 objects visible from the scene camera for every reference embodiment, and verify
 mechanics without adding task routes or success logic to the simulator. Native
@@ -77,7 +77,10 @@ inter-robot penetration across the complete task/family matrix. Reference MuJoCo
 also refuses an evaluator reset when its resolved compiled contacts contain one of
 those penetrations; trusted administration fences the refused world until reopen.
 The existing 30-task evaluation matrix remains frozen; S20 has a separate
-reset-enabled development suite.
+reset-enabled development suite. S21 shampoo packing adds a gravity-settled
+mixed-orientation pile of twenty 40 × 90 mm cylinders and six upright pockets.
+Its pile asset is reproduced by `tools/generate_shampoo_pile.py`; do not replace
+it with independent random pose jitter that intersects neighboring bottles.
 The S19 reference fixture uses eighteen same-color 24 mm cubes in one irregular
 source pile and a separate adjacent wide destination bin sized for all eighteen;
 the SDK scene does not reset individual transfers or define their success/order.

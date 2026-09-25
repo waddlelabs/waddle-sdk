@@ -56,6 +56,7 @@ _BOUNDS = {
     "candy-bin-transfer": (0.002, 0.05),
     # Keep the twenty single-layer chocolates separated inside their source tray.
     "chocolate-packing": (0.001, 0.05),
+    "shampoo-packing": (0.0, 0.0),
 }
 
 

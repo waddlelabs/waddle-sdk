@@ -45,6 +45,7 @@ SINGLE_ARM_TASK_ENVIRONMENTS = (
     "load-clear-test-tubes",
     "candy-bin-transfer",
     "chocolate-packing",
+    "shampoo-packing",
 )
 DUAL_ARM_TASK_ENVIRONMENTS = (
     "split_workspace_sorting",
@@ -399,6 +400,11 @@ def make_site(
         # optical frame so both trays fit along the image's wider dimension.
         mounts["scene"] = (
             look_at((0.41, 0.13, 0.62), (0.30, -0.06, 0.02))
+            @ transform((0, 0, 0), (0, 0, math.pi / 2))
+        ).tolist()
+    if environment == "shampoo-packing":
+        mounts["scene"] = (
+            look_at((0.30, 0.12, 0.95), (0.29, -0.055, 0.04))
             @ transform((0, 0, 0), (0, 0, math.pi / 2))
         ).tolist()
     if environment in DUAL_ARM_TASK_ENVIRONMENTS:

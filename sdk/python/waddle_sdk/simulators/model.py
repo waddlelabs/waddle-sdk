@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field, replace
@@ -1234,6 +1235,112 @@ def objects(environment: str, *, robot: str | None = None) -> list[list[Link]]:
                     )
                 )
         return [table, *tubes, [rack, *slots]]
+    if environment == "shampoo-packing":
+        # The canonical poses are produced by a native gravity drop, then saved
+        # as a stable physical fixture. Ordinary reset restores that same pile.
+        pile = json.loads(
+            files(__package__).joinpath("data/shampoo-packing/pile.json").read_text()
+        )
+        source = Link(
+            "shampoo_source_box",
+            xyz=(0.29, -0.20, 0.0),
+            shapes=[
+                Shape(
+                    "box",
+                    (0.26, 0.24, 0.008),
+                    (0, 0, 0.004),
+                    color=(0.69, 0.74, 0.78, 1),
+                ),
+                Shape(
+                    "box",
+                    (0.006, 0.24, 0.09),
+                    (-0.127, 0, 0.053),
+                    color=(0.49, 0.56, 0.63, 1),
+                ),
+                Shape(
+                    "box",
+                    (0.006, 0.24, 0.09),
+                    (0.127, 0, 0.053),
+                    color=(0.49, 0.56, 0.63, 1),
+                ),
+                Shape(
+                    "box",
+                    (0.248, 0.006, 0.09),
+                    (0, -0.117, 0.053),
+                    color=(0.49, 0.56, 0.63, 1),
+                ),
+                Shape(
+                    "box",
+                    (0.248, 0.006, 0.09),
+                    (0, 0.117, 0.053),
+                    color=(0.49, 0.56, 0.63, 1),
+                ),
+            ],
+        )
+        for shape in source.shapes:
+            shape.friction = (1.0, 0.02, 0.002)
+        bottles = []
+        for index, pose in enumerate(pile["bottles"], 1):
+            bottle = free_cylinder(
+                f"shampoo_{index:02d}",
+                tuple(pose["xyz"]),
+                (0.18, 0.65, 0.69, 1),
+                radius=0.020,
+                length=0.090,
+                mass=0.080,
+            )
+            bottle.rpy = tuple(pose["rpy"])
+            bottle.damping = 0.002
+            bottle.shapes[0].friction = (1.4, 0.06, 0.01)
+            bottle.shapes[0].contact_margin = 1e-6
+            # A visual band makes the cylinder axis readable without changing
+            # the cylindrical collision surface, mass or grasp mechanics.
+            bottle.shapes.append(
+                Shape(
+                    "cylinder",
+                    (0.0201, 0.018),
+                    color=(0.88, 0.96, 0.94, 1),
+                    collision=False,
+                )
+            )
+            bottles.append([bottle])
+        rack = Link(
+            "shampoo_packing_box",
+            xyz=(0.30, 0.18, 0),
+            shapes=[
+                Shape(
+                    "box",
+                    (0.23, 0.16, 0.008),
+                    (0, 0, 0.004),
+                    color=(0.12, 0.30, 0.70, 1),
+                )
+            ],
+        )
+        slots = []
+        for index in range(6):
+            collar = []
+            for segment in range(16):
+                angle = 2 * math.pi * segment / 16
+                collar.append(
+                    Shape(
+                        "box",
+                        (0.003, 0.010, 0.018),
+                        (0.0245 * math.cos(angle), 0.0245 * math.sin(angle), 0.017),
+                        (0, 0, angle),
+                        color=(0.90, 0.77, 0.35, 1),
+                    )
+                )
+            slots.append(
+                Link(
+                    f"shampoo_slot_{index + 1}",
+                    parent="shampoo_packing_box",
+                    xyz=((index % 3 - 1) * 0.074, (index // 3 - 0.5) * 0.074, 0),
+                    mass=1e-6,
+                    inertia=(1e-9, 1e-9, 1e-9, 0, 0, 0),
+                    shapes=collar,
+                )
+            )
+        return [table, [source], *bottles, [rack, *slots]]
     if environment == "chocolate-packing":
         source = Link(
             "chocolate_tray",

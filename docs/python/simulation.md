@@ -53,7 +53,7 @@ Each engine accepts `so101`, `yam`, or `xarm7` and these environments:
   and 5 N·s/m native joint damping. The damping dissipates a pull after release;
   there is no spring returning the drawer to its starting position.
 
-MuJoCo also provides thirty-one interactive development task environments:
+MuJoCo also provides thirty-two interactive development task environments:
 
 - `touch_target`: one red contact target and two blue distractors.
 - `pick_lift`: one free 46 mm cube.
@@ -94,6 +94,16 @@ MuJoCo also provides thirty-one interactive development task environments:
   Native acceptance requires both reference fingers to retain contact with one
   cube, carry it upward by at least 45 mm, and hold it at the lifted pinch for
   500 ms for every reference robot family.
+- `shampoo-packing`: twenty 40 mm diameter, 90 mm long, 80 g cylinders
+  in a 260 × 240 mm box, initialized from a retained native gravity drop.
+  The pile has mixed stable orientations. Six shallow collars have 46 mm clear
+  openings on 74 mm centers, with room above the walls for a mid-body release.
+  Either flat end can support an upright bottle. Cylinder friction is
+  `(1.4, 0.06, 0.01)` with a 1 micrometre contact margin. The scene asset retains
+  MuJoCo version, gravity, drop seed and settling provenance; regenerate with
+  `tools/generate_shampoo_pile.py`. Pose jitter is disabled for the interlocked
+  pile; appearance and physics variation remain available. Trusted continuation
+  preserves the remaining measured bottle poses as for chocolate packing.
 - `chocolate-packing`: twenty 20 mm diameter, 14 mm tall, 6 g cylinders in a
   single layer on a source tray, with 12 mm clear gaps for finger access. A blue
   box has six physical 23 mm diameter pockets with floors and collars. Each

@@ -35,6 +35,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Add the shampoo-packing scene with twenty gravity-settled thick cylinders, a reproducible pile asset, and six upright receiving pockets.
+
 - Add native small-cylinder grasp acceptance through descent, lift, sustained
   bilateral carry, and release, including partial closure and a missed-grasp
   negative control across supported MuJoCo runtimes.
