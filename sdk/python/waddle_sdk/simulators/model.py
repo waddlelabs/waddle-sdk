@@ -1943,7 +1943,9 @@ def mjcf(p: Profile, config: dict) -> str:
                     )
                 friction_scale = shape.finger_contact_friction_scale
                 if not math.isfinite(friction_scale) or friction_scale <= 0:
-                    raise ValueError("Finger friction scale must be finite and positive")
+                    raise ValueError(
+                        "Finger friction scale must be finite and positive"
+                    )
                 geom.set("name", geom.get("name") or f"{link.name}__contact_{index}")
                 for finger_index, (finger_name, finger) in enumerate(finger_geometries):
                     finger.set(
