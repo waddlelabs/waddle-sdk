@@ -1279,7 +1279,7 @@ def objects(environment: str, *, robot: str | None = None) -> list[list[Link]]:
                 index = row * 5 + column + 1
                 chocolate = free_cylinder(
                     f"chocolate_{index:02d}",
-                    (0.240 + 0.036 * column, -0.246 + 0.036 * row, 0.011),
+                    (0.248 + 0.032 * column, -0.240 + 0.032 * row, 0.011),
                     (0.30 + 0.025 * (index % 3), 0.115, 0.055, 1.0),
                     radius=0.010,
                     length=0.014,

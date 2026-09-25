@@ -82,7 +82,8 @@ The S19 reference fixture uses eighteen same-color 24 mm cubes in one irregular
 source pile and a separate adjacent wide destination bin sized for all eighteen;
 the SDK scene does not reset individual transfers or define their success/order.
 The S20 chocolate-packing scene has twenty single-layer 20 mm cylinders in a
-source tray and a six-pocket box. Scene revision 1.0.2 uses a 1 micrometre
+source tray and a six-pocket box. Scene revision 1.0.3 uses 12 mm clear gaps
+and retains a 1 micrometre
 chocolate contact margin for stable iterative cylinder multicontact, including
 MuJoCo 3.13.0. Test sustained bilateral transport and release on the actual
 evaluation engine version; the earlier 3.11-only pinch test missed that regression.

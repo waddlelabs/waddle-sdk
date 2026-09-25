@@ -95,11 +95,11 @@ MuJoCo also provides thirty-one interactive development task environments:
   cube, carry it upward by at least 45 mm, and hold it at the lifted pinch for
   500 ms for every reference robot family.
 - `chocolate-packing`: twenty 20 mm diameter, 14 mm tall, 6 g cylinders in a
-  single layer on a source tray, with 16 mm clear gaps for finger access. A blue
+  single layer on a source tray, with 12 mm clear gaps for finger access. A blue
   box has six physical 23 mm diameter pockets with floors and collars. Each
   chocolate declares material friction coefficients; native three-dimensional
   contacts apply sliding friction (finger-priority contacts use the finger's
-  coefficient). Scene revision 1.0.2 adds a 1 micrometre chocolate contact margin
+  coefficient). Scene revision 1.0.3 tightens the centered grid to 32 mm spacing and retains a 1 micrometre chocolate contact margin
   to use iterative cylinder multicontact, avoiding lost grasps on MuJoCo 3.13.0
   without increasing friction or reducing gripper force. Native acceptance checks
   sustained bilateral lift/carry and gravity-driven release, including a missed

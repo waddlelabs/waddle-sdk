@@ -19,6 +19,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Changed
 
+- Tighten the chocolate grid to 12 mm clear gaps (32 mm centers) in scene
+  1.0.3, keeping twenty 20 mm cylinders and the validated contact margin.
+
 - Move the chocolate-packing camera above the box in scene revision 1.0.1,
   keeping both trays visible while reducing pocket-mouth depth parallax.
 

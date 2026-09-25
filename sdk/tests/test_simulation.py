@@ -121,7 +121,7 @@ def test_all_reference_declarations_validate_without_opening(
     expected_scene_revision = {
         "candy-bin-transfer": "1.2.0",
         "pick_lift": "1.1.0",
-        "chocolate-packing": "1.0.2",
+        "chocolate-packing": "1.0.3",
     }.get(environment, "1.0.0")
     assert sim["scene_revision"] == expected_scene_revision
     assert sim["asset_revision"] == (
@@ -3840,21 +3840,21 @@ def test_chocolate_packing_native_bilateral_grasp_lifts(tmp_path, robot):
         ),
         "yam": (
             (
-                -0.5073011758,
-                1.9527587169,
-                1.3864839788,
-                -1.0045904466,
-                -0.0003258847,
-                0.0162585578,
+                -0.5121808088,
+                1.9562679639,
+                1.3914444217,
+                -1.0060440962,
+                -0.0003262259,
+                0.0113803864,
                 0.3999989982,
             ),
             (
-                -0.5073832518,
-                1.9063926729,
-                1.5698738174,
-                -1.2342777578,
+                -0.5122536284,
+                1.9101833953,
+                1.574984329,
+                -1.2355984463,
                 -0.00000725,
-                0.0162300983,
+                0.0113611839,
                 0.0,
             ),
         ),
