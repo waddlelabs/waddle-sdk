@@ -79,7 +79,7 @@ try:
         e.model.geom_contype[geoms[index]] = 1
         e.model.geom_conaffinity[geoms[index]] = 1
         e.mj.mj_forward(e.model, e.data)
-        for step in range(1500):
+        for _ in range(1500):
             e.step()
     for step in range(10000):
         e.step()
