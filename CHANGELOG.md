@@ -11,6 +11,13 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+### Added
+
+- Export portable articulated SO-101, YAM and xArm7 reference model sources with
+  the full moving hand, visual/collision geometry, inertias, couplings and native
+  actuators. Retain licenses and source provenance while excluding surrounding
+  objects and cameras; source compilation opens no site or physical device.
+
 ### Fixed
 
 - Render native MuJoCo metric depth at pixel centres independently of RGB

@@ -58,6 +58,12 @@ development camera defaults before publication. Its public planner-source helper
 uses the same pinned chain and builds bounded deterministic spatial hulls from
 complete source collision pieces for every reference family. It
 records the proxy method and its fixed-open-hand/no-scene scope. The
+separate `articulated_model_sources` export preserves native visuals, collision
+pieces, moving hand/linkages, tendons and actuators at the base origin without
+scene objects or cameras. It uses the same native assembly and carries portable
+assets, licenses and explicit hand-joint units; it does not assert calibrated
+hardware dynamics or an affine physical jaw mapping. Native source parity checks
+live in `sdk/tests/test_articulated_sources.py`. The
 hash-pinned manufacturer assemblies and native
 physics workers are reference implementations, not calibrated actuator or friction
 models. Engine-specific acceptance stays in `sdk/tests/test_simulation.py`; a

@@ -632,6 +632,18 @@ All variants freeze the complete hand at maximum opening and omit task props and
 another arm; those limits remain explicit in provenance and require separate
 fixture/inter-arm checks for safety qualification.
 
+For articulated scene composition, use
+`articulated_model_sources(robot, part_name=...)` from `waddle_sdk.simulators`.
+It returns the same immutable `ModelSources` contract with the full native robot
+at its base origin: visuals, collision pieces, inertias, arm and hand joints,
+couplings, tendons, contact exclusions and position actuators. No surrounding
+objects, cameras or another arm are included. Asset paths are portable and model
+licenses are retained. Primary named bindings describe the arm; `hand_joints` in
+provenance declares native hand units and limits. A linkage can be nonlinear and
+does not become an affine jaw-width mapping merely because it is exported.
+Compilation requires MuJoCo but opens no site, camera or device. Reference servo
+and contact parameters remain simulation assumptions, not hardware identification.
+
 The worker advances physics, serializes sensor/control requests, and
 fails closed on startup or connection loss. Recovery requires reopening the site;
 it never replays a motion after reconnecting. Site camera declarations are compared

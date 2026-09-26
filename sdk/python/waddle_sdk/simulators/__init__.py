@@ -3,6 +3,7 @@
 Importing this package never imports a physics engine or opens a device.
 """
 
+from .articulated_sources import articulated_model_sources
 from .scene import (
     BACKENDS,
     DUAL_ARM_TASK_ENVIRONMENTS,
@@ -24,6 +25,7 @@ __all__ = [
     "ROBOTS",
     "SINGLE_ARM_TASK_ENVIRONMENTS",
     "TASK_ENVIRONMENTS",
+    "articulated_model_sources",
     "load_scene",
     "make_site",
     "reference_model_sources",

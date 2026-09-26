@@ -90,3 +90,9 @@ source geometry. A changed physical mapping still requires a matching custom mod
 Tests in `sdk/tests/test_model_sources.py` cover independent adapter resolution,
 absence, selected failures, frozen metadata and path/binding refusal.
 `sdk/tests/test_yam_model_sources.py` retains vendor provenance/relationship checks.
+
+Reference simulator assemblies also expose a portable articulated source bundle;
+see [articulated and planning source exports](../python/simulation.md). It preserves
+the reference moving hand and native actuator relationships without exporting a
+surrounding scene. Customer adapters continue to supply the same `ModelSources`
+contract through their own non-opening provider.
