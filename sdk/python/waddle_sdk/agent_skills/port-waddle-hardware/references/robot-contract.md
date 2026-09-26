@@ -61,7 +61,7 @@ World-owned arms do not independently home in the per-arm episode hook.
 
 Adapters may expose the optional, non-opening `safety_presets(factory=, options=)`
 contract from `waddle_sdk.robots`. The YAM reference suggests an arm-base workspace
-from `[-0.7, -0.7, 0.0]` to `[0.7, 0.7, 1.0]` metres, without keepouts or a
+from `[-0.7, -0.7, -0.015]` to `[0.7, 0.7, 1.0]` metres, without keepouts or a
 self-collision configuration. These are site-operator-reviewed starting values,
 not vendor joint limits or evidence that a particular mounting is collision-free.
 Preserve existing site declarations and validate the selected envelope normally.

@@ -81,7 +81,7 @@ in [Simulation backends](../porting/simulation.md).
 
 A mounted arm may need room on both sides of its base. The optional
 `waddle_sdk.robots.safety_presets_for_driver` contract exposes the YAM tabletop
-starting bounds as `min: [-0.7, -0.7, 0.0]` and `max: [0.7, 0.7, 1.0]`, in metres
+starting bounds as `min: [-0.7, -0.7, -0.015]` and `max: [0.7, 0.7, 1.0]`, in metres
 in each arm's declared base frame. The preset has no static keepouts or
 self-collision configuration. The site operator must review mounting, table,
 tool, and neighboring-arm clearance before copying these values into a new site.

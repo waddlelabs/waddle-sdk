@@ -19,6 +19,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Changed
 
+- Lower the YAM tabletop initializer preset's base-frame floor to -0.015 m,
+  retaining its other bounds and the requirement to review each physical site.
+
 - Increase explicit shampoo bottle/finger friction by 2× in scene 1.0.5,
   retaining pocket friction, geometry, pile poses, contact stiffness and forces.
   Preserve diagnostic 1.0.4: doubling pocket friction caused offset drops to stick.
