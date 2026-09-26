@@ -3,16 +3,20 @@
 from __future__ import annotations
 
 import threading
+import time
 
 import numpy as np
 
 from .base import CameraFrame
+from .timing import CameraContentTiming
 
 __all__ = ["MockDriver"]
 
 
 class MockDriver:
     """A mutable synthetic scene with one bright-green circular object."""
+
+    content_timing_kind = "simulated_state"
 
     def __init__(
         self,
@@ -65,24 +69,32 @@ class MockDriver:
         with self._lock:
             if self._closed:
                 raise RuntimeError("mock camera is closed")
+            began = time.monotonic_ns()
             u = self.object_u
             v = self.object_v
             radius = self.object_radius_px
             object_depth_m = self.object_depth_m
             background_depth_m = self.background_depth_m
+            ended = time.monotonic_ns()
+        timing = CameraContentTiming(
+            kind=self.content_timing_kind,
+            clock_revision="local-host-monotonic/v1",
+            rgb_monotonic_ns=(began, ended),
+            depth_monotonic_ns=(began, ended) if self.has_depth else None,
+        )
         yy, xx = np.ogrid[: self.height, : self.width]
         mask = (xx - u) ** 2 + (yy - v) ** 2 <= radius**2
         rgb = np.full((self.height, self.width, 3), 60, dtype=np.uint8)
         rgb[mask] = np.array([0, 220, 0], dtype=np.uint8)
         if not self.has_depth:
-            return CameraFrame(rgb=rgb)
+            return CameraFrame(rgb=rgb, content_timing=timing)
         depth = np.full(
             (self.height, self.width),
             round(background_depth_m * 1000.0 / self.depth_scale_mm),
             dtype=np.uint16,
         )
         depth[mask] = round(object_depth_m * 1000.0 / self.depth_scale_mm)
-        return CameraFrame(rgb=rgb, depth=depth)
+        return CameraFrame(rgb=rgb, depth=depth, content_timing=timing)
 
     def close(self) -> None:
         with self._lock:

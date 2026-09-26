@@ -16,10 +16,12 @@ from .inspection import (
     inspect_cameras,
 )
 from .site import CameraConfig, CameraMount
+from .timing import CameraContentTiming
 
 __all__ = [
     "CameraCalibrationDriver",
     "CameraConfig",
+    "CameraContentTiming",
     "CameraDriver",
     "CameraFrame",
     "CameraInspection",

@@ -13,7 +13,12 @@ import numpy as np
 import pytest
 import waddle_sdk
 from waddle_sdk import descriptors
-from waddle_sdk.cameras import CameraDriver, CameraFrame, CameraSample
+from waddle_sdk.cameras import (
+    CameraContentTiming,
+    CameraDriver,
+    CameraFrame,
+    CameraSample,
+)
 from waddle_sdk.robots import base
 
 JOINTS = ("joint",)
@@ -244,6 +249,9 @@ def test_capture_keeps_metric_depth_local_and_publishes_paired_preview():
     frame = CameraFrame(
         rgb=source_rgb,
         depth=source_depth,
+        content_timing=CameraContentTiming(
+            "sensor_exposure", "test-mapping", (10, 12), (9, 13)
+        ),
         point_resolver=lambda x, y, depth_m: (
             x * depth_m / 100.0,
             y * depth_m / 100.0,
@@ -262,6 +270,7 @@ def test_capture_keeps_metric_depth_local_and_publishes_paired_preview():
     assert isinstance(driver, CameraDriver)
     assert isinstance(sample, CameraSample)
     assert (sample.session_ns, sample.unix_ns) == (1, 1_000_001)
+    assert sample.content_timing == frame.content_timing
     assert sample.rgb.flags.writeable is False
     assert sample.depth is not None and sample.depth.flags.writeable is False
     np.testing.assert_array_equal(

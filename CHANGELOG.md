@@ -56,6 +56,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Optional immutable `CameraContentTiming` and declared `camera.content_timing`
+  support for local RGB/depth content intervals. Preserve timing through camera
+  pumps and native MuJoCo worker IPC; mock/native cameras report state-snapshot
+  bounds. Physical adapters retain unknown exposure timing and paired stream
+  timestamps remain unchanged.
+
 - Add the shampoo-packing scene with twenty gravity-settled thick cylinders, a reproducible pile asset, and six upright receiving pockets.
 
 - Add native small-cylinder grasp acceptance through descent, lift, sustained

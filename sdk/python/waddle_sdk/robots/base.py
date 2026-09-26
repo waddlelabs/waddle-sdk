@@ -2031,6 +2031,15 @@ class CameraPump(threading.Thread):
                     return
                 if not isinstance(frame, CameraFrame):
                     raise TypeError("CameraDriver.capture() must return CameraFrame")
+                declared_timing = getattr(self._driver, "content_timing_kind", None)
+                if (
+                    frame.content_timing is not None
+                    and declared_timing is not None
+                    and frame.content_timing.kind != declared_timing
+                ):
+                    raise ValueError(
+                        "camera content timing differs from its declared kind"
+                    )
                 self._next_sequence += 1
                 sample = CameraSample(
                     stamp=self._session.stamp(),
@@ -2038,6 +2047,7 @@ class CameraPump(threading.Thread):
                     depth=frame.depth,
                     frame_sequence=self._next_sequence,
                     point_resolver=frame.point_resolver,
+                    content_timing=frame.content_timing,
                 )
                 expected = (self._description.height, self._description.width)
                 if sample.rgb.shape[:2] != expected:

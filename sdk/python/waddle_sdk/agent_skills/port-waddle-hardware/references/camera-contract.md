@@ -1,5 +1,15 @@
 # Camera adapter contract
 
+Optional `CameraFrame.content_timing` / `CameraSample.content_timing` uses
+`CameraContentTiming` with separate RGB/depth intervals on the local host's
+monotonic-nanosecond clock and an explicit `clock_revision`. Declare
+`content_timing_kind` (`sensor_exposure` or `simulated_state`) to advertise
+`camera.content_timing`. Every bound must include readout and mapping uncertainty;
+buffered-read or delivery timestamps alone are insufficient. Missing timing stays
+unknown. Preserve the ordinary paired session/Unix stamps independently; these
+optional content clocks are local-only. Built-in physical adapters do not yet
+provide verified content-clock mappings.
+
 ## Factory and capture
 
 A camera manifest entry names `module:factory`. Prefer a factory accepting `CameraConfig`. The SDK calls it only while the full site enters or an explicit `inspect_cameras()` context enters. Module import, discovery, `CameraInspectionSpec` construction, and the `inspect_cameras()` call itself must remain non-opening, and vendor imports must stay lazy.

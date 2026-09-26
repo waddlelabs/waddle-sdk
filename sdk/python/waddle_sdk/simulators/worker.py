@@ -26,7 +26,12 @@ def serve(connection: Connection) -> None:
             # engine module imports. Startup failure never degrades to a mock.
             for name in config["cameras"]:
                 engine.capture(name)
-            connection.send((True, None))
+            timing_kind = (
+                getattr(engine, "content_timing_kind", None)
+                if callable(getattr(engine, "capture_timed", None))
+                else None
+            )
+            connection.send((True, {"camera_content_timing_kind": timing_kind}))
             dt = config["timestep"]
             pending_time = 0.0
             real_time = config.get("_real_time", False)
@@ -97,6 +102,12 @@ def serve(connection: Connection) -> None:
                         if not real_time:
                             advance(arguments[0])
                         result = None
+                    elif (
+                        operation == "capture"
+                        and len(arguments) == 2
+                        and arguments[1] is True
+                    ):
+                        result = engine.capture_timed(arguments[0])
                     elif operation == "evaluation_snapshot":
                         result = engine.evaluation_snapshot()
                     elif operation == "evaluation_reset":

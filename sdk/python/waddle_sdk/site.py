@@ -1272,7 +1272,9 @@ class SiteSession:
                 description["command_limits"] = {
                     name: {
                         "joint_names": list(arm.joint_names),
-                        "max_position_error": list(arm.position_error_caps or arm.step_caps),
+                        "max_position_error": list(
+                            arm.position_error_caps or arm.step_caps
+                        ),
                     }
                     for name, arm in managed.arms.items()
                 }
@@ -1538,6 +1540,11 @@ class SiteSession:
             facts = {SupportFact.CAMERA_RGB}
             if description.intrinsics is not None:
                 facts.add(SupportFact.CAMERA_INTRINSICS)
+            if getattr(managed.cameras[name], "content_timing_kind", None) in (
+                "simulated_state",
+                "sensor_exposure",
+            ):
+                facts.add(SupportFact.CAMERA_CONTENT_TIMING)
             public_camera = public_cameras.get(name)
             if public_camera is None:
                 raise RuntimeFault(

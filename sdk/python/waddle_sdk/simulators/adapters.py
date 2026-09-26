@@ -15,6 +15,7 @@ import numpy as np
 from .. import descriptors
 from ..cameras.base import CameraFrame
 from ..cameras.site import CameraConfig
+from ..cameras.timing import CameraContentTiming
 from ..robots import base
 from ..robots.site import PartConfig
 from ..simulation import WorldConfig
@@ -44,6 +45,7 @@ class World:
         self._connection = None
         self._failed = False
         self._part_names: set[str] = set()
+        self.content_timing_kind = None
 
     def open(self) -> None:
         with self._lock:
@@ -82,7 +84,20 @@ class World:
                     self._connection = parent
                     child.close()
                     parent.send({**self.config, "_real_time": self._real_time})
-                    self._receive(180.0)
+                    ready = self._receive(180.0)
+                    self.content_timing_kind = (
+                        ready.get("camera_content_timing_kind")
+                        if isinstance(ready, dict)
+                        else None
+                    )
+                    if self.content_timing_kind not in (
+                        None,
+                        "sensor_exposure",
+                        "simulated_state",
+                    ):
+                        raise ValueError(
+                            "simulation worker advertised invalid camera timing"
+                        )
                 except BaseException:
                     child.close()
                     parent.close()
@@ -434,6 +449,7 @@ class Camera:
         self._intrinsics = descriptors.Intrinsics(**dict(config.intrinsics or {}))
         self._closed = False
         self.world = owner
+        self.content_timing_kind = getattr(owner, "content_timing_kind", None)
 
     def intrinsics(self):
         return self._intrinsics
@@ -441,8 +457,13 @@ class Camera:
     def capture(self):
         if self._closed:
             raise RuntimeError("simulation camera is closed")
-        rgb, depth = self.world.call("capture", self.name)
-        return CameraFrame(rgb=rgb, depth=depth)
+        if self.content_timing_kind is None:
+            rgb, depth = self.world.call("capture", self.name)
+            return CameraFrame(rgb=rgb, depth=depth)
+        rgb, depth, timing = self.world.call("capture", self.name, True)
+        return CameraFrame(
+            rgb=rgb, depth=depth, content_timing=CameraContentTiming(**timing)
+        )
 
     def close(self):
         if not self._closed:

@@ -91,6 +91,33 @@ can reduce the delivered rate: the SDK skips missed frame slots and resumes at a
 future slot instead of issuing catch-up bursts. Every acquired frame is still
 published through the ordinary sample and recording paths.
 
+### Optional image-content timing
+
+`CameraFrame.content_timing` may carry immutable `CameraContentTiming` from
+`waddle_sdk.cameras`. The camera pump preserves it on the exact `CameraSample`.
+It contains `kind`, `clock_revision`, and separate `rgb_monotonic_ns` and optional
+`depth_monotonic_ns` inclusive interval pairs on this host's `time.monotonic_ns`
+clock. Supply depth bounds exactly when a depth plane exists. These local values
+do not replace the paired session/Unix stream stamp and are not sent on the wire.
+
+A driver implementing this extension declares `content_timing_kind` as
+`sensor_exposure` or `simulated_state`; the opened camera's support row then
+advertises `camera.content_timing`. This declares implementation support, not a
+guarantee that every frame supplies bounds. Missing timing stays unknown. The pump
+rejects a supplied timing kind that contradicts the driver's declaration.
+
+For `sensor_exposure`, bounds must contain every pixel's exposure/readout time,
+including sensor-to-host clock uncertainty and RGB/depth alignment latency.
+Change `clock_revision` whenever that mapping changes. A buffered read's start,
+frame delivery stamp, nominal frame rate or wall-clock timestamp alone cannot
+establish these bounds. Drivers with an unverified mapping should omit timing.
+Built-in physical camera adapters currently omit it.
+
+Mock and both native MuJoCo camera paths report `simulated_state`, bounding the
+state snapshot used for rendering. The subprocess worker preserves those host
+intervals through IPC; rendering/transport delays do not restamp the content.
+This is simulation state timing, not physical sensor calibration or exposure.
+
 ## Intrinsics and deprojection
 
 A driver may structurally implement `CameraCalibrationDriver.intrinsics()` to report

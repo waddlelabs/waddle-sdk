@@ -126,6 +126,14 @@ observations, capabilities, or tools.
 
 ## Repo map
 
+Optional `CameraContentTiming` preserves separate RGB/depth acquisition intervals
+on the local host monotonic clock without changing paired stream stamps. Driver
+`content_timing_kind` advertises `camera.content_timing`; missing per-frame bounds
+remain unknown. Mock and both native MuJoCo camera paths provide simulated-state
+snapshot bounds, including across the reference worker's IPC. Physical adapters
+currently omit timing; delivery stamps never qualify exposure. See the
+[camera contract](docs/porting/camera.md#optional-image-content-timing).
+
 ```
 waddle-sdk/
   AGENTS.md, CLAUDE.md -> AGENTS.md, CHANGELOG.md, README.md, LICENSE, .gitignore
