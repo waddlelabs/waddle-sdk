@@ -11,7 +11,40 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep small chocolate cylinders held during lift/carry on MuJoCo 3.13.0 by
+  selecting iterative multicontact with a 1 micrometre contact margin in scene
+  revision 1.0.2. Preserve geometry, material friction, mass, and robot force.
+
 ### Changed
+
+- Increase explicit shampoo bottle/finger friction by 2× in scene 1.0.5,
+  retaining pocket friction, geometry, pile poses, contact stiffness and forces.
+  Preserve diagnostic 1.0.4: doubling pocket friction caused offset drops to stick.
+
+- Exercise native tilted-bottle pickup, upright transport and supported release
+  at every shampoo slot, including the farther row; retain bilateral-contact
+  and measured grasp-drift acceptance throughout each carry.
+
+- Record the shampoo pile's actual authoring receiver profile and distinguish
+  the retained gravity fixture from new piles generated with the installed scene.
+
+- Version shampoo packing as 1.0.3: lower source walls to 60 mm and regenerate
+  its stable mixed-orientation gravity pile; raise the receiver pedestal to
+  60 mm and taper its six pockets continuously over 80 mm. Preserve bottle
+  dimensions, material contacts and actuator limits. Update the native transport
+  witness and require floor support and settling in offset-drop checks.
+
+- Version shampoo packing as 1.0.2: raise the receiving box by 40 mm for upright YAM access, and use explicit bottle/finger material pairs with a 3 mm torsional patch. Preserve pad sliding friction, force limits, stiffness, gravity pile and other contact pairs.
+
+- Version shampoo packing as scene 1.0.1 with physical tapered pocket entrances: 62 mm mouth to a snug 46 mm bottom, keeping upright seating dimensions and task-neutral runtime.
+
+- Tighten the chocolate grid to 12 mm clear gaps (32 mm centers) in scene
+  1.0.3, keeping twenty 20 mm cylinders and the validated contact margin.
+
+- Move the chocolate-packing camera above the box in scene revision 1.0.1,
+  keeping both trays visible while reducing pocket-mouth depth parallax.
 
 - Make the near-base, wider YAM `pick_lift` cube distribution the built-in
   noncanonical evaluation behavior under scene revision 1.1.0; an external pose
@@ -23,6 +56,16 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Add the shampoo-packing scene with twenty gravity-settled thick cylinders, a reproducible pile asset, and six upright receiving pockets.
+
+- Add native small-cylinder grasp acceptance through descent, lift, sustained
+  bilateral carry, and release, including partial closure and a missed-grasp
+  negative control across supported MuJoCo runtimes.
+
+- Add the S20 `chocolate-packing` MuJoCo scene with twenty spaced small cylinders,
+  a physical six-pocket box, a closer scene camera, and native grasp/drop tests.
+  Trusted continuation reset preserves remaining source pieces and retires packed
+  pieces so the next box is empty without restoring the supply.
 - Retain validated explicit YAM `pick_lift` pose profiles for replaying frozen
   evaluations that selected one.
 - Add the single-arm `candy-bin-transfer` MuJoCo task environment: eighteen

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field, replace
@@ -29,6 +30,10 @@ class Shape:
     collision: bool = True
     texture: str | None = None
     friction: tuple[float, float, float] | None = None
+    contact_margin: float = 0.0
+    # Optional finite contact patch against reference finger pads (MuJoCo).
+    finger_contact_patch_m: float = 0.0
+    finger_contact_friction_scale: float = 1.0
 
 
 @dataclass
@@ -1233,6 +1238,232 @@ def objects(environment: str, *, robot: str | None = None) -> list[list[Link]]:
                     )
                 )
         return [table, *tubes, [rack, *slots]]
+    if environment == "shampoo-packing":
+        # The canonical poses are produced by a native gravity drop, then saved
+        # as a stable physical fixture. Ordinary reset restores that same pile.
+        pile = json.loads(
+            files(__package__).joinpath("data/shampoo-packing/pile.json").read_text()
+        )
+        source = Link(
+            "shampoo_source_box",
+            xyz=(0.29, -0.20, 0.0),
+            shapes=[
+                Shape(
+                    "box",
+                    (0.26, 0.24, 0.008),
+                    (0, 0, 0.004),
+                    color=(0.69, 0.74, 0.78, 1),
+                ),
+                Shape(
+                    "box",
+                    (0.006, 0.24, 0.06),
+                    (-0.127, 0, 0.038),
+                    color=(0.49, 0.56, 0.63, 1),
+                ),
+                Shape(
+                    "box",
+                    (0.006, 0.24, 0.06),
+                    (0.127, 0, 0.038),
+                    color=(0.49, 0.56, 0.63, 1),
+                ),
+                Shape(
+                    "box",
+                    (0.248, 0.006, 0.06),
+                    (0, -0.117, 0.038),
+                    color=(0.49, 0.56, 0.63, 1),
+                ),
+                Shape(
+                    "box",
+                    (0.248, 0.006, 0.06),
+                    (0, 0.117, 0.038),
+                    color=(0.49, 0.56, 0.63, 1),
+                ),
+            ],
+        )
+        for shape in source.shapes:
+            shape.friction = (1.0, 0.02, 0.002)
+        bottles = []
+        for index, pose in enumerate(pile["bottles"], 1):
+            bottle = free_cylinder(
+                f"shampoo_{index:02d}",
+                tuple(pose["xyz"]),
+                (0.18, 0.65, 0.69, 1),
+                radius=0.020,
+                length=0.090,
+                mass=0.080,
+            )
+            bottle.rpy = tuple(pose["rpy"])
+            bottle.damping = 0.002
+            bottle.shapes[0].friction = (1.4, 0.06, 0.01)
+            bottle.shapes[0].contact_margin = 1e-6
+            bottle.shapes[0].finger_contact_patch_m = 0.003
+            bottle.shapes[0].finger_contact_friction_scale = 2.0
+            # A visual band makes the cylinder axis readable without changing
+            # the cylindrical collision surface, mass or grasp mechanics.
+            bottle.shapes.append(
+                Shape(
+                    "cylinder",
+                    (0.0201, 0.018),
+                    color=(0.88, 0.96, 0.94, 1),
+                    collision=False,
+                )
+            )
+            bottles.append([bottle])
+        rack = Link(
+            "shampoo_packing_box",
+            xyz=(0.30, 0.18, 0.06),
+            shapes=[
+                Shape(
+                    "box",
+                    (0.23, 0.16, 0.06),
+                    (0, 0, -0.03),
+                    color=(0.12, 0.30, 0.70, 1),
+                ),
+                Shape(
+                    "box",
+                    (0.23, 0.16, 0.008),
+                    (0, 0, 0.004),
+                    color=(0.12, 0.30, 0.70, 1),
+                ),
+            ],
+        )
+        # A real tapered entrance guides small placement errors into the snug
+        # 46 mm bottom opening. A continuous 80 mm taper also protects seated
+        # bottles without the ledge of a short funnel above a straight sleeve.
+        taper = math.atan2(0.008, 0.080)
+        wall_length = math.hypot(0.008, 0.080)
+        wall_radius = 0.027 + 0.0015 * math.cos(taper)
+        slots = []
+        for index in range(6):
+            collar = []
+            for segment in range(16):
+                angle = 2 * math.pi * segment / 16
+                collar.append(
+                    Shape(
+                        "box",
+                        (0.003, 0.013, wall_length),
+                        (
+                            wall_radius * math.cos(angle),
+                            wall_radius * math.sin(angle),
+                            0.048,
+                        ),
+                        (0, taper, angle),
+                        color=(0.90, 0.77, 0.35, 1),
+                    )
+                )
+            slots.append(
+                Link(
+                    f"shampoo_slot_{index + 1}",
+                    parent="shampoo_packing_box",
+                    xyz=((index % 3 - 1) * 0.074, (index // 3 - 0.5) * 0.074, 0),
+                    mass=1e-6,
+                    inertia=(1e-9, 1e-9, 1e-9, 0, 0, 0),
+                    shapes=collar,
+                )
+            )
+        return [table, [source], *bottles, [rack, *slots]]
+    if environment == "chocolate-packing":
+        source = Link(
+            "chocolate_tray",
+            xyz=(0.312, -0.192, 0.0),
+            shapes=[
+                Shape(
+                    "box",
+                    (0.22, 0.17, 0.004),
+                    (0, 0, 0.002),
+                    color=(0.86, 0.76, 0.57, 1.0),
+                ),
+                Shape(
+                    "box",
+                    (0.004, 0.17, 0.008),
+                    (-0.108, 0, 0.008),
+                    color=(0.75, 0.62, 0.42, 1.0),
+                ),
+                Shape(
+                    "box",
+                    (0.004, 0.17, 0.008),
+                    (0.108, 0, 0.008),
+                    color=(0.75, 0.62, 0.42, 1.0),
+                ),
+                Shape(
+                    "box",
+                    (0.212, 0.004, 0.008),
+                    (0, -0.083, 0.008),
+                    color=(0.75, 0.62, 0.42, 1.0),
+                ),
+                Shape(
+                    "box",
+                    (0.212, 0.004, 0.008),
+                    (0, 0.083, 0.008),
+                    color=(0.75, 0.62, 0.42, 1.0),
+                ),
+            ],
+        )
+        for shape in source.shapes:
+            shape.friction = (1.2, 0.04, 0.008)
+        chocolates = []
+        for row in range(4):
+            for column in range(5):
+                index = row * 5 + column + 1
+                chocolate = free_cylinder(
+                    f"chocolate_{index:02d}",
+                    (0.248 + 0.032 * column, -0.240 + 0.032 * row, 0.011),
+                    (0.30 + 0.025 * (index % 3), 0.115, 0.055, 1.0),
+                    radius=0.010,
+                    length=0.014,
+                    mass=0.006,
+                )
+                chocolate.damping = 0.002
+                chocolate.shapes[0].friction = (1.4, 0.06, 0.01)
+                # A positive margin selects iterative cylinder multicontact.
+                # MuJoCo 3.13's zero-margin single-shot manifold loses these
+                # small cylinders during a centered bilateral pinch. One
+                # micrometre preserves snug pocket clearance without changing
+                # the cylinder, friction, mass, or the robot's force budget.
+                chocolate.shapes[0].contact_margin = 1e-6
+                chocolates.append([chocolate])
+
+        # Each circular pocket has a 23 mm clear diameter around a 20 mm
+        # chocolate. The physical floor and collar make rim placements distinct
+        # from chocolates actually seated in a pocket.
+        box = Link(
+            "packing_box",
+            xyz=(0.41, 0.13, 0.0),
+            shapes=[
+                Shape(
+                    "box",
+                    (0.115, 0.080, 0.004),
+                    (0, 0, 0.002),
+                    color=(0.12, 0.33, 0.67, 1.0),
+                )
+            ],
+        )
+        slots = []
+        for index in range(6):
+            column, row = index % 3, index // 3
+            collar = []
+            for segment in range(12):
+                angle = 2 * math.pi * segment / 12
+                collar.append(
+                    Shape(
+                        "box",
+                        (0.003, 0.0075, 0.020),
+                        (0.013 * math.cos(angle), 0.013 * math.sin(angle), 0.014),
+                        (0, 0, angle),
+                        color=(0.82, 0.69, 0.39, 1.0),
+                    )
+                )
+            slots.append(
+                Link(
+                    f"packing_slot_{index + 1}",
+                    parent="packing_box",
+                    xyz=((column - 1) * 0.033, (row - 0.5) * 0.033, 0.0),
+                    mass=1e-6,
+                    inertia=(1e-9, 1e-9, 1e-9, 0, 0, 0),
+                    shapes=collar,
+                )
+            )
+        return [table, [source], *chocolates, [box, *slots]]
     if environment == "candy-bin-transfer":
         tray = Link(
             "candy_tray",
@@ -1616,7 +1847,10 @@ def mjcf(p: Profile, config: dict) -> str:
         geom.set("group", "2" if geom.get("contype") == "0" else "3")
     for group in props:
         for link in group:
-            if not any(shape.friction is not None for shape in link.shapes):
+            if not any(
+                shape.friction is not None or shape.contact_margin
+                for shape in link.shapes
+            ):
                 continue
             collision_shapes = [shape for shape in link.shapes if shape.collision]
             collision_geometries = [
@@ -1633,6 +1867,8 @@ def mjcf(p: Profile, config: dict) -> str:
             ):
                 if shape.friction is not None:
                     geometry.set("friction", numbers(shape.friction))
+                if shape.contact_margin:
+                    geometry.set("margin", str(shape.contact_margin))
     # Reuse Menagerie's finger-pad contact response on the manufacturer's
     # collision meshes. Default 20 ms contacts let the stiff linear hand
     # penetrate a held cube and oscillate; no material friction is increased.
@@ -1641,6 +1877,7 @@ def mjcf(p: Profile, config: dict) -> str:
         "yam": ("tip_left", "tip_right"),
         "xarm7": ("left_finger", "right_finger"),
     }[p.name]
+    finger_geometries = []
     for part in robot_groups:
         for name in fingers:
             for geom in bodies[f"{prefixes[part]}{name}"].findall("geom"):
@@ -1648,6 +1885,7 @@ def mjcf(p: Profile, config: dict) -> str:
                     geom.set("solref", "0.004 1")
                     geom.set("solimp", "0.95 0.99 0.001")
                     geom.set("priority", "1")
+                    finger_geometries.append((f"{prefixes[part]}{name}", geom))
     for geom in bodies["table"].findall("geom"):
         if geom.get("group") == "2":
             geom.set("material", "table_finish")
@@ -1677,6 +1915,67 @@ def mjcf(p: Profile, config: dict) -> str:
                 if not native.joint.endswith("inner_knuckle_joint"):
                     joint.set("solreflimit", "0.005 1")
     contact = ET.SubElement(root, "contact")
+    # Explicit material pairs preserve the pads' stiff contact response while
+    # enabling a finite torsional patch only on objects that declare one. The
+    # higher-priority reference pads otherwise override object condim/friction.
+    # Other object, fixture and robot contact pairs retain their existing model.
+    for group in props:
+        for link in group:
+            collision_shapes = [shape for shape in link.shapes if shape.collision]
+            if not any(shape.finger_contact_patch_m for shape in collision_shapes):
+                continue
+            collision_geometries = [
+                geom
+                for geom in bodies[link.name].findall("geom")
+                if geom.get("group") == "3"
+            ]
+            for index, (shape, geom) in enumerate(
+                zip(collision_shapes, collision_geometries, strict=True)
+            ):
+                if not shape.finger_contact_patch_m:
+                    continue
+                if (
+                    not math.isfinite(shape.finger_contact_patch_m)
+                    or shape.finger_contact_patch_m <= 0
+                ):
+                    raise ValueError(
+                        "Finger contact patch must be a finite positive length"
+                    )
+                friction_scale = shape.finger_contact_friction_scale
+                if not math.isfinite(friction_scale) or friction_scale <= 0:
+                    raise ValueError(
+                        "Finger friction scale must be finite and positive"
+                    )
+                geom.set("name", geom.get("name") or f"{link.name}__contact_{index}")
+                for finger_index, (finger_name, finger) in enumerate(finger_geometries):
+                    finger.set(
+                        "name",
+                        finger.get("name") or f"{finger_name}__contact_{finger_index}",
+                    )
+                    sliding, _torsion, rolling = map(
+                        float, finger.get("friction", "1 0.005 0.0001").split()
+                    )
+                    ET.SubElement(
+                        contact,
+                        "pair",
+                        geom1=geom.get("name"),
+                        geom2=finger.get("name"),
+                        condim="4",
+                        friction=numbers(
+                            (
+                                sliding * friction_scale,
+                                sliding * friction_scale,
+                                shape.finger_contact_patch_m * friction_scale,
+                                rolling * friction_scale,
+                                rolling * friction_scale,
+                            )
+                        ),
+                        solref=finger.get("solref"),
+                        solimp=finger.get("solimp"),
+                        margin=str(
+                            shape.contact_margin + float(finger.get("margin", "0"))
+                        ),
+                    )
     for group in groups:
         for link in group:
             if link.parent:

@@ -64,8 +64,8 @@ models. Engine-specific acceptance stays in `sdk/tests/test_simulation.py`; a
 skipped optional-engine case is not evidence that the engine passed. Reference
 worlds preserve state across ordinary runs and reset only when the site explicitly
 sets `reset_on_episode: true`.
-The thirty MuJoCo-only development task environments are built-in interactive
-fixtures using the same runtime surface. Nineteen are single-arm and eleven are
+The thirty-two MuJoCo-only development task environments are built-in interactive
+fixtures using the same runtime surface. Twenty-one are single-arm and eleven are
 matched two-arm scenes. Keep their task-relevant
 objects visible from the scene camera for every reference embodiment, and verify
 mechanics without adding task routes or success logic to the simulator. Native
@@ -76,10 +76,37 @@ Native initial-state acceptance must reject robot/table, robot/prop, and dual-ar
 inter-robot penetration across the complete task/family matrix. Reference MuJoCo
 also refuses an evaluator reset when its resolved compiled contacts contain one of
 those penetrations; trusted administration fences the refused world until reopen.
-Together with the reference drawer they form the 30-task evaluation matrix.
+The existing 30-task evaluation matrix remains frozen; S20 has a separate
+reset-enabled development suite. S21 shampoo packing adds a gravity-settled
+mixed-orientation pile of twenty 40 × 90 mm cylinders and six upright pockets.
+Scene 1.0.5 retains the gravity-settled pile in a 60 mm walled source box,
+and a receiving box on a 60 mm pedestal. Each 62-to-46 mm pocket tapers
+continuously over 80 mm so released bottles slide to the floor and seated
+bottles resist displacement by later approaches. Scene 1.0.5 scales explicit bottle/finger friction by two: sliding 2.0 and
+torsional 0.006 m. Other bottle contacts retain (1.4, 0.06, 0.01): doubling them
+in diagnostic 1.0.4 made offset drops stick in the pockets.
+Contact stiffness, geometry and actuator limits remain unchanged. Native grasp evidence must include rotation and supported release
+at every receiving slot, with bilateral contact and measured grasp drift checked
+throughout the carry. These actuator fixtures do not establish planner/tool success.
+Its retained pile was gravity-authored with a 62 mm straight receiver sleeve
+and 18 mm tapered mouth. `tools/generate_shampoo_pile.py` generates a new pile
+using the installed scene; changed scene geometry can change the settled poses.
+Review replacements before adopting them, and never use independent random
+pose jitter that intersects neighboring bottles.
 The S19 reference fixture uses eighteen same-color 24 mm cubes in one irregular
 source pile and a separate adjacent wide destination bin sized for all eighteen;
 the SDK scene does not reset individual transfers or define their success/order.
+The S20 chocolate-packing scene has twenty single-layer 20 mm cylinders in a
+source tray and a six-pocket box. Scene revision 1.0.3 uses 12 mm clear gaps
+and retains a 1 micrometre
+chocolate contact margin for stable iterative cylinder multicontact, including
+MuJoCo 3.13.0. Test sustained bilateral transport and release on the actual
+evaluation engine version; the earlier 3.11-only pinch test missed that regression.
+The overhead view resolves visible pocket mouth centers to the floor in RGB-D. Its ordinary
+runtime remains task-neutral.
+Trusted continuation reset can preserve measured free-body poses and retire packed
+bodies while resetting the box and robot; only the private evaluator chooses the
+sets and completion boundary. Keep retired state out of participant observations.
 Trusted evaluator reset applies an explicit engine-neutral profile over pose,
 appearance, physics, and geometry. Reference MuJoCo task scenes implement stable
 seed-derived bounded pose/material/lighting/mass/friction/damping variation and

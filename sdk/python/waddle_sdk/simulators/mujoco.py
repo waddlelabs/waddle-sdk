@@ -130,6 +130,7 @@ class Engine:
         self._variation_initial = self._capture_variation_initial()
         self._active_variation = dict(SimulationVariation().as_dict())
         self._active_variation_digest = self._variation_digest()
+        self._retired_free_bodies: tuple[str, ...] = ()
         self._contact_force_buffer = np.zeros(6, dtype=float)
         self._clear_contact_events()
 
@@ -237,13 +238,21 @@ class Engine:
             self.home(part, self.profile.home)
         self._restore_prop_initial()
         self._active_variation = dict(SimulationVariation().as_dict())
+        self._retired_free_bodies = ()
         if hasattr(self, "_variation_initial"):
             self._active_variation_digest = self._variation_digest()
         if hasattr(self, "_contact_events"):
             self._clear_contact_events()
         return True
 
-    def evaluation_reset(self, *, seed, variation=None):
+    def evaluation_reset(
+        self,
+        *,
+        seed,
+        variation=None,
+        preserve_free_bodies=(),
+        retire_free_bodies=(),
+    ):
         if isinstance(seed, bool) or not isinstance(seed, int):
             raise TypeError("simulation reset seed must be an integer")
         if seed < 0 or seed > 2**63 - 1:
@@ -255,6 +264,27 @@ class Engine:
         )
         if seed == 0 and profile != SimulationVariation():
             raise ValueError("noncanonical variation requires a nonzero seed")
+        preserved = tuple(preserve_free_bodies)
+        retired = tuple(retire_free_bodies)
+        if len(preserved) != len(set(preserved)) or len(retired) != len(set(retired)):
+            raise ValueError("simulation continuation body names must be unique")
+        if set(preserved) & set(retired):
+            raise ValueError("simulation continuation bodies overlap")
+        for name in (*preserved, *retired):
+            link = self._prop_links.get(name)
+            if link is None or link.kind != "free":
+                raise ValueError(
+                    f"simulation continuation body is not a free prop: {name}"
+                )
+        poses = {}
+        for name in preserved:
+            joint = self.model.joint(int(self.model.body(name).jntadr[0]))
+            poses[name] = (
+                self.data.qpos[
+                    int(joint.qposadr[0]) : int(joint.qposadr[0]) + 7
+                ].copy(),
+                self.data.qvel[int(joint.dofadr[0]) : int(joint.dofadr[0]) + 6].copy(),
+            )
         self.reset()
         if profile.geometry != "canonical":
             self._apply_geometry_randomization(seed, profile.geometry)
@@ -264,6 +294,29 @@ class Engine:
             self._apply_appearance_randomization(seed, profile.appearance)
         if profile.physics != "canonical":
             self._apply_physics_randomization(seed, profile.physics)
+        for name, (pose, velocity) in poses.items():
+            joint = self.model.joint(int(self.model.body(name).jntadr[0]))
+            self.data.qpos[int(joint.qposadr[0]) : int(joint.qposadr[0]) + 7] = pose
+            self.data.qvel[int(joint.dofadr[0]) : int(joint.dofadr[0]) + 6] = velocity
+        for index, name in enumerate(retired):
+            joint = self.model.joint(int(self.model.body(name).jntadr[0]))
+            qpos = int(joint.qposadr[0])
+            dof = int(joint.dofadr[0])
+            self.data.qpos[qpos : qpos + 7] = (-1.0 - 0.03 * index, 0, -0.5, 1, 0, 0, 0)
+            self.data.qvel[dof : dof + 6] = 0
+            body = self.model.body(name)
+            self.model.body_gravcomp[int(body.id)] = 1.0
+            for geom_id in range(
+                int(self.model.body_geomadr[int(body.id)]),
+                int(
+                    self.model.body_geomadr[int(body.id)]
+                    + self.model.body_geomnum[int(body.id)]
+                ),
+            ):
+                self.model.geom_contype[geom_id] = 0
+                self.model.geom_conaffinity[geom_id] = 0
+                self.model.geom_rgba[geom_id, 3] = 0.0
+        self._retired_free_bodies = tuple(sorted(retired))
         self._active_variation = dict(profile.as_dict())
         self.mj.mj_forward(self.model, self.data)
         self._active_variation_digest = self._variation_digest()
@@ -304,6 +357,9 @@ class Engine:
                 "geom_size",
                 "geom_rgba",
                 "geom_friction",
+                "geom_contype",
+                "geom_conaffinity",
+                "body_gravcomp",
                 "jnt_pos",
                 "jnt_range",
                 "light_ambient",
@@ -596,6 +652,7 @@ class Engine:
             "profile": dict(self._active_variation),
             "resolved_digest": self._active_variation_digest,
         }
+        snapshot["retired_free_bodies"] = list(self._retired_free_bodies)
         snapshot["contact_events"] = {
             "schema": "waddle.simulation-contact-events/mujoco-v1",
             "through_time_s": self._contact_events_through_s,

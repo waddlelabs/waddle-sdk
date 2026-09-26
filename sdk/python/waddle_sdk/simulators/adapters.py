@@ -200,12 +200,25 @@ class AdministrativeWorld(World):
     def evaluation_snapshot(self):
         return self.call("evaluation_snapshot")
 
-    def evaluation_reset(self, *, seed: int, variation=None) -> bool:
+    def evaluation_reset(
+        self,
+        *,
+        seed: int,
+        variation=None,
+        preserve_free_bodies=(),
+        retire_free_bodies=(),
+    ) -> bool:
         if isinstance(seed, bool) or not isinstance(seed, int):
             raise TypeError("simulation reset seed must be an integer")
         if seed < 0 or seed > 2**63 - 1:
             raise ValueError("simulation reset seed must be between 0 and 2^63-1")
-        return self.call("evaluation_reset", seed, variation)
+        return self.call(
+            "evaluation_reset",
+            seed,
+            variation,
+            preserve_free_bodies,
+            retire_free_bodies,
+        )
 
 
 def backend(*, config: WorldConfig) -> World:

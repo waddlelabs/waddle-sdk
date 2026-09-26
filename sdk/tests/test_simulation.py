@@ -121,6 +121,8 @@ def test_all_reference_declarations_validate_without_opening(
     expected_scene_revision = {
         "candy-bin-transfer": "1.2.0",
         "pick_lift": "1.1.0",
+        "chocolate-packing": "1.0.3",
+        "shampoo-packing": "1.0.5",
     }.get(environment, "1.0.0")
     assert sim["scene_revision"] == expected_scene_revision
     assert sim["asset_revision"] == (
@@ -1744,7 +1746,10 @@ def _native_conformance(
         t = np.array(camera["transform"])
         intr = camera["intrinsics"]
         if robot != "so101":
-            point = np.linalg.inv(t) @ np.array([0.1, -0.32, 0.0, 1.0])
+            # The pocket-overhead view puts the old near-base witness behind
+            # xArm's tall upper arm. Use clear tabletop beside the source tray.
+            witness_x = 0.4 if environment == "chocolate-packing" else 0.1
+            point = np.linalg.inv(t) @ np.array([witness_x, -0.32, 0.0, 1.0])
             u = round(intr["fx"] * point[0] / point[2] + intr["cx"])
             v = round(intr["fy"] * point[1] / point[2] + intr["cy"])
             _, depth = engine.capture("scene")
@@ -3679,3 +3684,247 @@ def test_reference_control_defaults_match_nonopening_physical_declaration(robot)
     assert options["rate_hz"] == physical.rate_hz
     assert options["max_joint_speed_rad_s"] == physical.joints[0].max_velocity
     assert options["max_gripper_speed_per_s"] == physical.joints[-1].max_velocity
+
+
+@pytest.mark.parametrize("robot", ROBOTS)
+def test_chocolate_packing_camera_resolves_pocket_floors(tmp_path, robot):
+    pytest.importorskip("mujoco")
+    from waddle_sdk.simulators.mujoco import Engine
+
+    _, config = make_site(
+        "chocolate-pocket-view",
+        backend="mujoco",
+        robot=robot,
+        environment="chocolate-packing",
+        width=640,
+        height=480,
+    )
+    engine = Engine(config, tmp_path)
+    try:
+        engine.evaluation_reset(seed=0)
+        rgb, depth = engine.capture("scene")
+        camera = config["cameras"]["scene"]
+        world_from_camera = np.asarray(camera["transform"])
+        camera_from_world = np.linalg.inv(world_from_camera)
+        intr = camera["intrinsics"]
+        for index in range(1, 7):
+            center = engine.data.body(f"packing_slot_{index}").xpos.copy()
+            # A center selected from the visible pocket mouth must see the blue
+            # floor, not the gold collar. Test actual native pixels and depth.
+            center[2] += 0.024
+            point = camera_from_world @ np.r_[center, 1.0]
+            u = round(intr["fx"] * point[0] / point[2] + intr["cx"])
+            v = round(intr["fy"] * point[1] / point[2] + intr["cy"])
+            assert 0 <= u < 640 and 0 <= v < 480
+            red, _green, blue = map(int, rgb[v, u])
+            assert blue > red * 1.5
+            if depth is not None:
+                z = float(depth[v, u]) * intr["depth_scale_mm"] / 1000
+                projected = world_from_camera @ [
+                    z * (u - intr["cx"]) / intr["fx"],
+                    z * (v - intr["cy"]) / intr["fy"],
+                    z,
+                    1.0,
+                ]
+                assert abs(projected[2] - 0.004) < 0.002
+                assert np.linalg.norm(projected[:2] - center[:2]) < 0.0025
+    finally:
+        engine.close()
+
+
+@pytest.mark.parametrize("robot", ROBOTS)
+def test_chocolate_packing_native_slots_and_source_continuation(tmp_path, robot):
+    pytest.importorskip("mujoco")
+    from waddle_sdk.simulators.mujoco import Engine
+
+    _, config = make_site(
+        "chocolate-native",
+        backend="mujoco",
+        robot=robot,
+        environment="chocolate-packing",
+        width=320,
+        height=240,
+    )
+    engine = Engine(config, tmp_path)
+    try:
+        assert engine.evaluation_reset(seed=0)
+        for _ in range(1000):
+            engine.step()
+        names = tuple(f"chocolate_{index:02d}" for index in range(1, 21))
+        positions = np.array([engine.data.body(name).xpos.copy() for name in names])
+        assert np.all(np.abs(positions[:, 2] - 0.011) < 0.002)
+        assert (
+            min(
+                np.linalg.norm(first[:2] - second[:2])
+                for index, first in enumerate(positions)
+                for second in positions[index + 1 :]
+            )
+            > 0.025
+        )
+
+        slot = engine.data.body("packing_slot_1").xpos.copy()
+        body = engine.model.body(names[0])
+        joint = engine.model.joint(int(body.jntadr[0]))
+        qpos = int(joint.qposadr[0])
+        dof = int(joint.dofadr[0])
+        engine.data.qpos[qpos : qpos + 7] = (*slot[:2], 0.07, 1, 0, 0, 0)
+        engine.data.qvel[dof : dof + 6] = 0
+        for _ in range(750):
+            engine.step()
+        seated = engine.data.body(names[0]).xpos.copy()
+        assert np.linalg.norm(seated[:2] - slot[:2]) < 0.0025
+        assert 0.009 <= seated[2] <= 0.014
+        snapshot = engine.evaluation_snapshot()
+        support = sum(
+            row["normal_force_n"]
+            for row in snapshot["contacts"]
+            if {row["first"]["body"], row["second"]["body"]}
+            == {names[0], "packing_box"}
+        )
+        assert support > 0.03
+
+        source_before = {name: engine.data.body(name).xpos.copy() for name in names[1:]}
+        assert engine.evaluation_reset(
+            seed=0,
+            preserve_free_bodies=names[1:],
+            retire_free_bodies=(names[0],),
+        )
+        assert engine.evaluation_snapshot()["retired_free_bodies"] == [names[0]]
+        for name, before in source_before.items():
+            np.testing.assert_allclose(engine.data.body(name).xpos, before, atol=1e-9)
+        assert engine.data.body(names[0]).xpos[2] < -0.4
+        geom = int(engine.model.body_geomadr[int(body.id)])
+        assert engine.model.geom_contype[geom] == 0
+        assert engine.model.geom_conaffinity[geom] == 0
+        assert engine.model.geom_rgba[geom, 3] == 0
+        assert engine.evaluation_reset(
+            seed=0,
+            preserve_free_bodies=names[1:],
+            retire_free_bodies=(names[0],),
+        )
+        assert engine.evaluation_snapshot()["retired_free_bodies"] == [names[0]]
+    finally:
+        engine.close()
+
+
+@pytest.mark.parametrize("robot", ROBOTS)
+def test_chocolate_packing_native_bilateral_grasp_lifts(tmp_path, robot):
+    pytest.importorskip("mujoco")
+    from waddle_sdk.simulators.mujoco import Engine
+
+    _, config = make_site(
+        "chocolate-grasp",
+        backend="mujoco",
+        robot=robot,
+        environment="chocolate-packing",
+        width=320,
+        height=240,
+    )
+    grasp, lift = {
+        "so101": (
+            (
+                0.6111116363,
+                0.2058768679,
+                0.2887797362,
+                -0.47794756798,
+                -1.6836794621,
+                0.15,
+            ),
+            (
+                0.6111028479,
+                0.0851971464,
+                -0.1595262347,
+                0.0910381109,
+                -1.6865021762,
+                0.0,
+            ),
+        ),
+        "yam": (
+            (
+                -0.5121808088,
+                1.9562679639,
+                1.3914444217,
+                -1.0060440962,
+                -0.0003262259,
+                0.0113803864,
+                0.3999989982,
+            ),
+            (
+                -0.5122536284,
+                1.9101833953,
+                1.574984329,
+                -1.2355984463,
+                -0.00000725,
+                0.0113611839,
+                0.0,
+            ),
+        ),
+        "xarm7": (
+            (
+                0.3545473497,
+                0.0280239344,
+                -0.7897804566,
+                0.5556825795,
+                0.0389480318,
+                0.5362834975,
+                -3.0865124481,
+                0.25,
+            ),
+            (
+                0.3118233049,
+                -0.3061679102,
+                -0.7296058080,
+                0.6683255177,
+                -0.2561315532,
+                0.9158303896,
+                -2.85398900596,
+                0.0,
+            ),
+        ),
+    }[robot]
+    engine = Engine(config, tmp_path)
+    try:
+        grasp, lift = np.asarray(grasp), np.asarray(lift)
+        engine.home(grasp)
+        target = "chocolate_13" if robot == "yam" else "chocolate_01"
+        if robot != "yam":
+            tcp = profile(robot).poses(grasp)[-1]
+            center = tcp[:3, 3] + tcp[:3, :3] @ np.asarray(profile(robot).pinch_offset)
+            if robot == "xarm7":
+                center += (0, 0, 0.03)
+            body = engine.model.body(target)
+            joint = engine.model.joint(int(body.jntadr[0]))
+            engine.data.qpos[int(joint.qposadr[0]) : int(joint.qposadr[0]) + 7] = (
+                *center,
+                1,
+                0,
+                0,
+                0,
+            )
+            engine.mj.mj_forward(engine.model, engine.data)
+        start = float(engine.data.body(target).xpos[2])
+        closed = grasp.copy()
+        closed[-1] = 0
+        engine.write(closed)
+        for _ in range(750):
+            engine.step()
+        for fraction in np.linspace(0.01, 1.0, 150):
+            engine.write(closed + fraction * (lift - closed))
+            for _ in range(5):
+                engine.step()
+        for _ in range(250):
+            engine.step()
+        assert engine.data.body(target).xpos[2] > start + 0.04
+        fingers = {
+            "so101": {"gripper_link", "moving_jaw_so101_v1_link"},
+            "yam": {"tip_left", "tip_right"},
+            "xarm7": {"left_finger", "right_finger"},
+        }[robot]
+        touched = set()
+        for row in engine.evaluation_snapshot()["contact_events"]["pairs"]:
+            bodies = {row["first"]["body"], row["second"]["body"]}
+            if target in bodies and row["maximum_normal_force_n"] > 0:
+                touched.update(bodies & fingers)
+        assert touched == fingers
+    finally:
+        engine.close()

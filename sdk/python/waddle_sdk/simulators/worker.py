@@ -102,7 +102,14 @@ def serve(connection: Connection) -> None:
                     elif operation == "evaluation_reset":
                         variation = arguments[1] if len(arguments) > 1 else None
                         result = engine.evaluation_reset(
-                            seed=arguments[0], variation=variation
+                            seed=arguments[0],
+                            variation=variation,
+                            preserve_free_bodies=(
+                                arguments[2] if len(arguments) > 2 else ()
+                            ),
+                            retire_free_bodies=(
+                                arguments[3] if len(arguments) > 3 else ()
+                            ),
                         )
                         pending_time = 0.0
                         last_time = time.monotonic()

@@ -134,7 +134,12 @@ class SimulationAdministrationBackend(Protocol):
     def evaluation_snapshot(self) -> Mapping[str, Any]: ...
 
     def evaluation_reset(
-        self, *, seed: int, variation: Mapping[str, str] | None = None
+        self,
+        *,
+        seed: int,
+        variation: Mapping[str, str] | None = None,
+        preserve_free_bodies: tuple[str, ...] = (),
+        retire_free_bodies: tuple[str, ...] = (),
     ) -> bool: ...
 
 
@@ -267,6 +272,8 @@ class SimulationAdministration:
         *,
         seed: int,
         variation: SimulationVariation | Mapping[str, Any] | None = None,
+        preserve_free_bodies: tuple[str, ...] = (),
+        retire_free_bodies: tuple[str, ...] = (),
     ) -> SimulationSnapshot:
         """Reset only the bound simulation and return its new initial state."""
 
@@ -279,18 +286,32 @@ class SimulationAdministration:
             if variation is None
             else dict(SimulationVariation.parse(variation).as_dict())
         )
+        for label, names in (
+            ("preserve_free_bodies", preserve_free_bodies),
+            ("retire_free_bodies", retire_free_bodies),
+        ):
+            if (
+                not isinstance(names, tuple)
+                or any(not isinstance(name, str) or not name for name in names)
+                or len(names) != len(set(names))
+            ):
+                raise ValueError(f"simulation reset {label} must be unique body names")
+        if set(preserve_free_bodies) & set(retire_free_bodies):
+            raise ValueError(
+                "simulation reset cannot preserve and retire the same body"
+            )
         with self._lock:
             binding = self._require()
             try:
                 with binding.dispatch_lock, binding.lifecycle_lock:
                     for backend in binding.worlds.values():
-                        accepted = (
-                            backend.evaluation_reset(seed=seed)
-                            if profile is None
-                            else backend.evaluation_reset(
-                                seed=seed, variation=copy.deepcopy(profile)
-                            )
-                        )
+                        options = {"seed": seed}
+                        if profile is not None:
+                            options["variation"] = copy.deepcopy(profile)
+                        if preserve_free_bodies or retire_free_bodies:
+                            options["preserve_free_bodies"] = preserve_free_bodies
+                            options["retire_free_bodies"] = retire_free_bodies
+                        accepted = backend.evaluation_reset(**options)
                         if not accepted:
                             raise SimulationAdministrationError(
                                 "a simulation world refused reset"
