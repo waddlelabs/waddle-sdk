@@ -70,7 +70,6 @@ def exercise_tube(tmp_path, fixture, *, dropped=False, miss=False):
         closed = down.copy()
         closed[-1] = fixture["closed_opening"]
         engine.home(part, above)
-        initial_z = float(engine.data.body(target).xpos[2])
 
         def move(start, end, seconds, *, retain=False, airborne=False):
             nonlocal reference
@@ -123,6 +122,8 @@ def exercise_tube(tmp_path, fixture, *, dropped=False, miss=False):
                     )
 
         move(above, above, 0.5)
+        # Measure lift from the gravity-settled tube, not its authored drop height.
+        initial_z = float(engine.data.body(target).xpos[2])
         move(above, down, 2.0)
         move(down, down, 0.5)
         move(down, closed, 1.0)
