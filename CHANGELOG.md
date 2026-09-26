@@ -11,6 +11,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+### Added
+
+- Native test-tube pickup and continuous carry/release regression across SO-101,
+  YAM and xArm7, including all four lying-tube positions and missed-grasp controls.
+
 ### Fixed
 
 - Keep small chocolate cylinders held during lift/carry on MuJoCo 3.13.0 by
