@@ -66,7 +66,9 @@ def test_tilted_bottle_is_retained_rotated_carried_and_seated(tmp_path, slot_ind
         if slot_index == 1
         else f"shampoo_transport_slot{slot_index}.json"
     )
-    fixture = json.loads((Path(__file__).parent / "fixtures" / fixture_name).read_text())
+    fixture = json.loads(
+        (Path(__file__).parent / "fixtures" / fixture_name).read_text()
+    )
     _, config = make_site(
         "shampoo-transport",
         backend="mujoco",
