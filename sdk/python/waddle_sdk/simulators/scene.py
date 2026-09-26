@@ -67,6 +67,8 @@ REFERENCE_SCENE_REVISION = "1.0.0"
 REFERENCE_ASSET_REVISION = "1.0.0"
 REFERENCE_EMBODIMENT_REVISION = "1.0.0"
 _ENVIRONMENT_REVISIONS = {
+    "load-clear-test-tubes": ("1.1.0", "1.0.0"),
+    "uncap-return-test-tube": ("1.1.0", "1.0.0"),
     "pick_lift": ("1.1.0", "1.0.0"),
     "candy-bin-transfer": ("1.2.0", "1.2.0"),
     "chocolate-packing": ("1.0.3", "1.0.0"),
