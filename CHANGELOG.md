@@ -59,6 +59,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Add an experimental, default-off, per-joint YAM static breakaway torque
+  setting for supervised physical tracking tests. Bound and taper the assist
+  near the target and at moving speed; preserve motor torque limits, zero-gain
+  stops, and the ordinary SDK action contract.
+
 - Add the shampoo-packing scene with twenty gravity-settled thick cylinders, a reproducible pile asset, and six upright receiving pockets.
 
 - Add native small-cylinder grasp acceptance through descent, lift, sustained

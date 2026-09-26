@@ -40,6 +40,7 @@ from mcap_protobuf.decoder import DecoderFactory
 from waddle_sdk import descriptors
 from waddle_sdk._session import Control, _derive_grants, create_core_session
 from waddle_sdk.robots import base, yam
+from waddle_sdk.robots._i2rt_patches import apply_static_breakaway_patch
 from waddle_sdk.runtime import FaultCode, RuntimeFault
 
 
@@ -1444,3 +1445,106 @@ def test_invalid_gravity_factors_refuse_before_vendor_open(vendor, values):
     with pytest.raises(ValueError, match="gravity_comp_factor"):
         yam.arm(workspace=None, channel="can_test", gravity_comp_factor=values)
     assert not vendor.calls
+
+
+@pytest.mark.parametrize(
+    "values",
+    [None, [0] * 5, [0] * 7, [0, 0, -0.1, 0, 0, 0], [0, 0, 1.01, 0, 0, 0],
+     [0, 0, float("nan"), 0, 0, 0], [0, 0, True, 0, 0, 0]],
+)
+def test_invalid_static_breakaway_refuses_before_vendor_open(vendor, values):
+    with pytest.raises(ValueError, match="arm_static_breakaway_nm"):
+        _live(vendor, arm_static_breakaway_nm=values)
+    with pytest.raises(ValueError, match="arm_static_breakaway_nm"):
+        yam.arm(workspace=None, channel="can_test", arm_static_breakaway_nm=values)
+    assert not vendor.calls
+
+
+def test_static_breakaway_site_option_is_frozen_and_scoped_to_live_yam(vendor, monkeypatch):
+    motor_drivers = types.ModuleType("i2rt.motor_drivers")
+    motor_utils = types.ModuleType("i2rt.motor_drivers.utils")
+
+    class MotorType:
+        DM4340 = "large"
+        DM4310 = "small"
+
+        @staticmethod
+        def get_motor_constants(kind):
+            return types.SimpleNamespace(TORQUE_MAX=28 if kind == "large" else 10)
+
+    motor_utils.MotorType = MotorType
+    monkeypatch.setitem(sys.modules, "i2rt.motor_drivers", motor_drivers)
+    monkeypatch.setitem(sys.modules, "i2rt.motor_drivers.utils", motor_utils)
+    patched = []
+    monkeypatch.setattr(yam, "apply_static_breakaway_patch", patched.append)
+    values = [0, 0, 0.75, 0, 0, 0]
+    rig = yam.arm(
+        workspace=None, fk=None, channel="can_test", arm_static_breakaway_nm=values
+    )
+    values[2] = 0
+    drivers = rig.arms()
+    try:
+        assert patched == [_FakeYamRobot]
+        np.testing.assert_array_equal(
+            vendor.robots[0]._waddle_arm_static_breakaway_nm, [0, 0, 0.75, 0, 0, 0]
+        )
+        np.testing.assert_array_equal(
+            vendor.robots[0]._waddle_arm_motor_torque_max_nm,
+            [28, 28, 28, 10, 10, 10],
+        )
+    finally:
+        for driver in drivers.values():
+            driver.close()
+
+
+def test_static_breakaway_seam_is_bounded_and_suppressed_on_stop():
+    class IdentityMapper:
+        def to_command_joint_pos_space(self, positions):
+            return positions
+
+    class VendorRobot:
+        def __init__(self):
+            self.remapper = IdentityMapper()
+            self._joint_state = types.SimpleNamespace(pos=np.zeros(7), vel=np.zeros(7))
+            self._clip_motor_torque = float("inf")
+            self._waddle_arm_motor_torque_max_nm = np.array([28, 28, 28, 10, 10, 10])
+            self._waddle_arm_static_breakaway_nm = np.array([0, 0, 0.75, 0, 0, 0])
+            self.sent = None
+
+        def _update_joint_state(self, motor_torques, joint_commands, encoder_infos=None):
+            self.sent = np.asarray(motor_torques).copy()
+
+    apply_static_breakaway_patch(VendorRobot)
+    robot = VendorRobot()
+    commands = types.SimpleNamespace(pos=np.zeros(7), kp=np.ones(7))
+    commands.pos[2] = 0.01
+    input_torque = np.zeros(7)
+
+    robot._update_joint_state(input_torque, commands)
+    assert robot.sent[2] == pytest.approx(0.75)
+    assert np.count_nonzero(robot.sent) == 1
+    assert robot._last_motor_torques[2] == pytest.approx(0.75)
+    commands.pos[2] = -0.01
+    robot._update_joint_state(input_torque, commands)
+    assert robot.sent[2] == pytest.approx(-0.75)
+    commands.pos[2] = 0.0015
+    robot._update_joint_state(input_torque, commands)
+    assert robot.sent[2] == pytest.approx(0.0)
+    commands.pos[2] = 0.01
+    robot._joint_state.vel[2] = 0.03
+    robot._update_joint_state(input_torque, commands)
+    assert robot.sent[2] == pytest.approx(0.0)
+    robot._joint_state.vel[2] = 0.0
+    commands.kp[:] = 0.0  # vendor zero_torque_mode on SDK e-stop
+    robot._update_joint_state(input_torque, commands)
+    assert robot.sent[2] == pytest.approx(0.0)
+
+    commands.kp[:] = 1.0
+    input_torque[2] = 27.8
+    robot._update_joint_state(input_torque, commands)
+    assert robot.sent[2] == pytest.approx(28.0)
+    np.testing.assert_array_equal(input_torque, [0, 0, 27.8, 0, 0, 0, 0])
+
+    del robot._waddle_arm_static_breakaway_nm
+    robot._update_joint_state(input_torque, commands)
+    assert robot.sent[2] == pytest.approx(27.8)

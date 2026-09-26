@@ -240,6 +240,10 @@ default arm KD is already 5 on joints 1–3, so increasing `arm_gain_scale` is r
 These are encoding limits, not recommended tuning values. Requested gains survive
 e-stop recovery; simulation and monitor modes validate but do not apply PD gains.
 See [YAM gain configuration](../docs/porting/robot.md#yam-gain-configuration).
+An optional, default-off `arm_static_breakaway_nm` vector selects bounded
+low-speed physical YAM torque assist per arm joint for supervised testing. It
+does not change the action contract or simulation actuator. See
+[experimental YAM static breakaway assist](../docs/porting/robot.md#experimental-yam-static-breakaway-assist).
 When an application supplies a trajectory's known joint velocity, the YAM adapter uses
 I2RT `command_joint_state` for simultaneous position/velocity control. It
 never differentiates measurements or an IK stream to invent velocity, always

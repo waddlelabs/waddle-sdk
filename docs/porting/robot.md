@@ -203,6 +203,26 @@ motion envelope and validate measured tracking, arrival and recovery.
 I2RT opens with its original gains holding the measured initial position; the SDK
 then applies valid configured gains through `update_kp_kd`. Reopen to change a site
 configuration. Hold and e-stop recovery retain the configured requested vectors.
+
+## Experimental YAM static breakaway assist
+
+For a physical YAM that holds a persistent position error near zero measured
+speed, `parts.<part>.options.arm_static_breakaway_nm` selects a six-element
+joint-order vector of additional torque magnitudes. The default is all zeros;
+each configured value must be finite and between 0 and 1 Nm. For example,
+`[0, 0, 0.75, 0, 0, 0]` selects only joint 3. This is an explicit per-unit
+test setting, not a general YAM calibration or a change to the action contract.
+
+The assist follows the sign of the requested-minus-measured joint position.
+It ramps from zero between 1.5 and 4 mrad error and tapers to zero by
+0.03 rad/s measured speed. Zero motor gains suppress it during torque-off
+stops. The pinned motor torque encoding bound and any configured vendor torque
+clip remain enforced after adding it. The vendor's ordinary gravity and
+velocity-signed Coulomb terms, PD gains, command path, envelope, and stop
+behavior remain in place. Configure it only for reviewed supervised tests;
+measure both approach directions for error, time, jumps, and stop response.
+Reopen the hardware to change the setting. Simulation and monitor modes validate
+the vector but do not apply motor torque.
 The vendor quantizes gains to 12 bits. Benchmark evidence records requested
 `kp`/`kd` and predicted `encoded_kp`/`encoded_kd` separately; the latter are codec
 calculations, not motor gain readback. Simulation and monitor/zero-gravity modes

@@ -29,6 +29,8 @@ import logging
 import time
 from typing import Any
 
+import numpy as np
+
 _EXPECTED_RECEIVE_PARAMETERS = (
     "self",
     "motor_id",
@@ -36,6 +38,12 @@ _EXPECTED_RECEIVE_PARAMETERS = (
     "supress_warning",
 )
 _EXPECTED_COMMAND_STATE_PARAMETERS = ("self", "joint_state")
+_EXPECTED_UPDATE_JOINT_PARAMETERS = (
+    "self",
+    "motor_torques",
+    "joint_commands",
+    "encoder_infos",
+)
 _EXPECTED_TRANSACTION_PARAMETERS = (
     "self",
     "id",
@@ -230,4 +238,82 @@ def apply_command_state_atomic_patch(robot_type: type[Any] | None = None) -> boo
     return True
 
 
-__all__ = ["apply_command_state_atomic_patch", "apply_recv_starvation_patch"]
+def _static_breakaway_torque(
+    target: np.ndarray,
+    measured: np.ndarray,
+    velocity: np.ndarray,
+    kp: np.ndarray,
+    strength: np.ndarray,
+) -> np.ndarray:
+    """Bound a position-error-directed assist to slow, energized arm joints.
+
+    The pinned vendor's Coulomb term follows measured velocity and can vanish
+    while an encoder is stationary short of a requested position. This optional
+    assist instead follows the signed remaining position error. Both gates taper
+    it continuously to zero near the goal or at ordinary moving speed.
+    """
+
+    error = target - measured
+    position_gate = np.clip((np.abs(error) - 0.0015) / 0.0025, 0.0, 1.0)
+    velocity_gate = np.clip((0.03 - np.abs(velocity)) / 0.03, 0.0, 1.0)
+    enabled = np.asarray(kp) > 0.0
+    return strength * np.sign(error) * position_gate * velocity_gate * enabled
+
+
+def apply_static_breakaway_patch(robot_type: type[Any]) -> None:
+    """Install a guarded YAM-local vendor seam for optional slow-speed assist."""
+
+    current = getattr(robot_type, "_update_joint_state", None)
+    if getattr(current, "_waddle_static_breakaway_patch", False):
+        return
+    parameters = tuple(inspect.signature(current).parameters) if callable(current) else ()
+    if parameters != _EXPECTED_UPDATE_JOINT_PARAMETERS:
+        raise RuntimeError(
+            f"the installed I2RT MotorChainRobot._update_joint_state signature is "
+            f"{parameters!r}, expected {_EXPECTED_UPDATE_JOINT_PARAMETERS!r}; "
+            "re-verify optional YAM breakaway compensation before use"
+        )
+
+    def update_joint_state(self, motor_torques, joint_commands, encoder_infos=None):
+        strength = getattr(self, "_waddle_arm_static_breakaway_nm", None)
+        if strength is None:
+            return current(self, motor_torques, joint_commands, encoder_infos)
+        state = self._joint_state
+        if state is None:
+            return current(self, motor_torques, joint_commands, encoder_infos)
+        target = np.asarray(
+            self.remapper.to_command_joint_pos_space(joint_commands.pos), dtype=float
+        )[:6]
+        measured = np.asarray(state.pos, dtype=float)[:6]
+        velocity = np.asarray(state.vel, dtype=float)[:6]
+        kp = np.asarray(joint_commands.kp, dtype=float)[:6]
+        if (
+            any(len(row) != 6 or not np.all(np.isfinite(row)) for row in (target, measured, velocity, kp))
+            or not np.all(np.isfinite(motor_torques))
+        ):
+            raise RuntimeError("YAM static breakaway received invalid joint or torque state")
+        assist = _static_breakaway_torque(
+            target,
+            measured,
+            velocity,
+            kp,
+            strength,
+        )
+        adjusted = np.asarray(motor_torques, dtype=float).copy()
+        adjusted[:6] += assist
+        # The vendor clip is applied before this seam. Preserve it and the
+        # pinned motor codec bounds after adding the optional assist.
+        limit = np.minimum(self._clip_motor_torque, self._waddle_arm_motor_torque_max_nm)
+        adjusted[:6] = np.clip(adjusted[:6], -limit, limit)
+        self._last_motor_torques = adjusted.copy()
+        return current(self, adjusted, joint_commands, encoder_infos)
+
+    update_joint_state._waddle_static_breakaway_patch = True  # type: ignore[attr-defined]
+    robot_type._update_joint_state = update_joint_state
+
+
+__all__ = [
+    "apply_command_state_atomic_patch",
+    "apply_recv_starvation_patch",
+    "apply_static_breakaway_patch",
+]
