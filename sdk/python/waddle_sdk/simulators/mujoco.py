@@ -7,13 +7,12 @@ import json
 import math
 import os
 import sys
-import time
 from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
 
-from ..cameras import CameraContentTiming
+from ..cameras._mujoco_render import RGBDRenderer
 from ..robots.mujoco import (
     _evaluation_geometry,
     _evaluation_snapshot,
@@ -682,33 +681,27 @@ class Engine:
     def capture_timed(self, name):
         row = self.config["cameras"][name]
         if name not in self.renderers:
-            self.renderers[name] = self.mj.Renderer(
-                self.model, height=row["stream"]["height"], width=row["stream"]["width"]
+            self.renderers[name] = RGBDRenderer(
+                self.mj,
+                self.model,
+                height=row["stream"]["height"],
+                width=row["stream"]["width"],
+                depth=row["options"]["depth"],
             )
-        renderer = self.renderers[name]
         option = self.mj.MjvOption()
         option.geomgroup[3] = 0  # collisions do not replace the manufacturer's visuals
-        began = time.monotonic_ns()
-        renderer.update_scene(self.data, camera=name, scene_option=option)
-        ended = time.monotonic_ns()
-        timing = asdict(
-            CameraContentTiming(
-                kind=self.content_timing_kind,
-                clock_revision="local-host-monotonic/v1",
-                rgb_monotonic_ns=(began, ended),
-                depth_monotonic_ns=(began, ended) if row["options"]["depth"] else None,
-            )
+        rgb, depth, timing = self.renderers[name].capture(
+            self.data, camera=name, scene_option=option
         )
-        renderer.disable_depth_rendering()
-        rgb = renderer.render().copy()
-        if not row["options"]["depth"]:
-            return rgb, None, timing
-        renderer.enable_depth_rendering()
-        depth = renderer.render().copy()
-        renderer.disable_depth_rendering()
+        if depth is None:
+            return rgb, None, asdict(timing)
         far = self.model.vis.map.zfar * self.model.stat.extent
         depth[depth >= far * 0.999] = 0
-        return rgb, depth_z16(depth, row["intrinsics"]["depth_scale_mm"]), timing
+        return (
+            rgb,
+            depth_z16(depth, row["intrinsics"]["depth_scale_mm"]),
+            asdict(timing),
+        )
 
     def native_tcp(self, part=None):
         part = self._part(part)

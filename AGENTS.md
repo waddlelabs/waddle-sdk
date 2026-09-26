@@ -126,6 +126,13 @@ observations, capabilities, or tools.
 
 ## Repo map
 
+Both native MuJoCo camera paths retain configured RGB multisampling and use a
+separate pixel-centre depth context when needed. Construct/capture under the
+world lock (or serialized reference worker) and on the owning render thread;
+source visual settings must be restored even on allocation failure. RGB/depth
+scene snapshots bind one unchanged state. Native analytic-plane and lifecycle
+checks live in `sdk/tests/test_mujoco_depth_calibration.py`.
+
 Optional `CameraContentTiming` preserves separate RGB/depth acquisition intervals
 on the local host monotonic clock without changing paired stream stamps. Driver
 `content_timing_kind` advertises `camera.content_timing`; missing per-frame bounds

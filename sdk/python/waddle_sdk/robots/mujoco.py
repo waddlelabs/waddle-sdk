@@ -13,7 +13,6 @@ import importlib
 import json
 import math
 import threading
-import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -21,7 +20,8 @@ from typing import Any
 import numpy as np
 
 from .. import descriptors
-from ..cameras import CameraContentTiming, CameraFrame
+from ..cameras import CameraFrame
+from ..cameras._mujoco_render import RGBDRenderer
 from ..cameras.site import CameraConfig
 from ..simulation import WorldConfig
 from . import base
@@ -715,10 +715,12 @@ class MujocoCameraDriver:
     def _thread_renderer(self):
         current = threading.get_ident()
         if self._renderer is None:
-            self._renderer = self._world.mj.Renderer(
+            self._renderer = RGBDRenderer(
+                self._world.mj,
                 self._world.model,
                 height=self._height,
                 width=self._width,
+                depth=self._depth,
             )
             self._renderer_thread = current
         elif self._renderer_thread != current:
@@ -748,18 +750,12 @@ class MujocoCameraDriver:
         with self._world._lock:
             self._world._require_open()
             renderer = self._thread_renderer()
-            renderer.disable_depth_rendering()
-            began = time.monotonic_ns()
-            renderer.update_scene(self._world.data, camera=self._camera)
-            ended = time.monotonic_ns()
-            rgb = np.array(renderer.render(), dtype=np.uint8, order="C", copy=True)
+            rgb, metres, timing = renderer.capture(
+                self._world.data, camera=self._camera
+            )
             depth = None
-            if self._depth:
-                renderer.enable_depth_rendering()
-                try:
-                    metres = np.asarray(renderer.render(), dtype=float)
-                finally:
-                    renderer.disable_depth_rendering()
+            if metres is not None:
+                metres = np.asarray(metres, dtype=float)
                 valid = np.isfinite(metres) & (metres > 0.0)
                 scaled = np.zeros(metres.shape, dtype=np.uint16)
                 raw = np.rint(metres[valid] * (1000.0 / self._depth_scale_mm))
@@ -768,16 +764,7 @@ class MujocoCameraDriver:
                 valid_values[in_range] = raw[in_range].astype(np.uint16)
                 scaled[valid] = valid_values
                 depth = scaled
-            return CameraFrame(
-                rgb=rgb,
-                depth=depth,
-                content_timing=CameraContentTiming(
-                    kind=self.content_timing_kind,
-                    clock_revision="local-host-monotonic/v1",
-                    rgb_monotonic_ns=(began, ended),
-                    depth_monotonic_ns=(began, ended) if depth is not None else None,
-                ),
-            )
+            return CameraFrame(rgb=rgb, depth=depth, content_timing=timing)
 
     def close(self) -> None:
         self._closing.set()

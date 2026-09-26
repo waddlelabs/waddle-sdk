@@ -42,6 +42,10 @@ Opening/reset establishes that start; a new run preserves the current scene.
 renderer detail independently of camera resolution and physics. Missing quality
 in older reference scenes means `standard`. Higher quality can reduce throughput;
 MuJoCo/SAPIEN remain raster renderers, while Isaac high uses path tracing.
+MuJoCo metric depth samples calibrated pixel-centre rays independently of RGB
+multisampling. Both native camera paths preserve configured RGB appearance and
+capture one frozen state; multisampled RGB-D uses a second cached depth context.
+Keep source visual settings unchanged and close both contexts on the render thread.
 Reference native dynamics include a passive damped drawer, a single-motor
 MuJoCo hand tendon, and the engine's recommended elliptic friction cone to reduce
 grasp creep. These use ordinary physics constraints; manipulation tests must

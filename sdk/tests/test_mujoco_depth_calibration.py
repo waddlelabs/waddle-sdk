@@ -96,3 +96,80 @@ def test_native_depth_matches_analytic_plane_without_changing_rgb(
         engine.close()
         driver.close()
         world.close()
+
+
+def test_failed_depth_context_restores_model_and_closes_created_rgb():
+    from types import SimpleNamespace
+
+    from waddle_sdk.cameras._mujoco_render import RGBDRenderer
+
+    model = SimpleNamespace(vis=SimpleNamespace(quality=SimpleNamespace(offsamples=4)))
+    created = []
+    fault = RuntimeError("Original native depth allocation failure")
+
+    class Renderer:
+        def __init__(self, model, **_):
+            if model.vis.quality.offsamples == 0:
+                raise fault
+            self.closed = False
+            created.append(self)
+
+        def close(self):
+            self.closed = True
+
+    with pytest.raises(RuntimeError) as caught:
+        RGBDRenderer(
+            SimpleNamespace(Renderer=Renderer), model, height=48, width=64, depth=True
+        )
+    assert caught.value is fault
+    assert model.vis.quality.offsamples == 4
+    assert created and all(renderer.closed for renderer in created)
+
+
+def test_depth_read_failure_keeps_rgb_mode_reusable_and_close_drains_both():
+    from types import SimpleNamespace
+
+    from waddle_sdk.cameras._mujoco_render import RGBDRenderer
+
+    model = SimpleNamespace(vis=SimpleNamespace(quality=SimpleNamespace(offsamples=4)))
+    created = []
+    fault = RuntimeError("Original native depth read failure")
+
+    class Renderer:
+        def __init__(self, model, **_):
+            self.depth = self.closed = False
+            self.fail = model.vis.quality.offsamples == 0
+            created.append(self)
+
+        def update_scene(self, *_args, **_kwargs):
+            pass
+
+        def enable_depth_rendering(self):
+            self.depth = True
+
+        def disable_depth_rendering(self):
+            self.depth = False
+
+        def render(self):
+            if self.fail:
+                self.fail = False
+                raise fault
+            return np.ones((48, 64) if self.depth else (48, 64, 3))
+
+        def close(self):
+            self.closed = True
+
+    renderer = RGBDRenderer(
+        SimpleNamespace(Renderer=Renderer), model, height=48, width=64, depth=True
+    )
+    try:
+        with pytest.raises(RuntimeError) as caught:
+            renderer.capture(None, camera="view")
+        assert caught.value is fault
+        assert not any(item.depth for item in created)
+        rgb, depth, _timing = renderer.capture(None, camera="view")
+        assert rgb.shape == (48, 64, 3) and depth.shape == (48, 64)
+    finally:
+        renderer.close()
+        renderer.close()
+    assert all(item.closed for item in created)

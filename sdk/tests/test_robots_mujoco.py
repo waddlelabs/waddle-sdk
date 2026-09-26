@@ -40,6 +40,7 @@ class FakeModel:
         self.jnt_range = np.asarray([[-1.0, 1.0], [-2.0, 2.0]])
         self.opt = SimpleNamespace(timestep=0.01)
         self.cam_fovy = np.asarray([90.0])
+        self.vis = SimpleNamespace(quality=SimpleNamespace(offsamples=4))
         self.names = {
             _ObjectKind.mjOBJ_JOINT: {"shoulder": 0, "elbow": 1},
             _ObjectKind.mjOBJ_ACTUATOR: {"shoulder_motor": 0, "elbow_motor": 1},

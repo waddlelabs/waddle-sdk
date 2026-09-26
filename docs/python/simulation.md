@@ -354,6 +354,15 @@ surfaces as a self-contained USD assembly without launching Isaac. The data READ
 reproduction. The reference collision spheres are conservative covers derived from
 these same meshes and link transforms.
 
+MuJoCo RGB retains the scene's configured offscreen multisampling. Metric depth
+uses a pixel-centre render pass so deprojection agrees with the declared pinhole
+intrinsics, including on oblique surfaces. When RGB multisampling is enabled,
+the camera caches a second native rendering context for depth; RGB-only cameras
+and scenes with multisampling disabled use one context. Both passes snapshot the
+same physics state and share conservative content-time bounds. This applies to
+the modular MuJoCo camera adapter and the reference worker, preserves depth units,
+and does not model physical sensor noise or transparency failures.
+
 Reference worlds use real-time physics by default with 500 Hz native stepping
 (2 ms substeps) in all three engines. SAPIEN's coupled hand contacts require finer
 integration than the generic 100 Hz manipulation default. This increases native

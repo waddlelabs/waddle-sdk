@@ -13,6 +13,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Render native MuJoCo metric depth at pixel centres independently of RGB
+  multisampling in both modular and reference camera paths. Keep configured RGB
+  appearance, source visual settings, paired state/timing and depth units; retain
+  original native errors and close both cached contexts.
+
 - Keep small chocolate cylinders held during lift/carry on MuJoCo 3.13.0 by
   selecting iterative multicontact with a 1 micrometre contact margin in scene
   revision 1.0.2. Preserve geometry, material friction, mass, and robot force.
