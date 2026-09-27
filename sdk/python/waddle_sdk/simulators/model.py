@@ -591,6 +591,8 @@ def objects(environment: str, *, robot: str | None = None) -> list[list[Link]]:
             length=0.10,
             mass=0.015,
         )
+        # Positive margin selects stable iterative cylinder multicontact.
+        tube.shapes[0].contact_margin = 1e-6
         cap_grips = [
             Link(
                 f"tube_cap_grip_{side}",
@@ -928,6 +930,12 @@ def objects(environment: str, *, robot: str | None = None) -> list[list[Link]]:
                 ),
             ],
         )
+        # A finite finger-pad patch resists twisting of the offset hook load.
+        # Keep sliding friction and all non-finger contacts unchanged.
+        for shape in hook.shapes:
+            shape.finger_contact_patch_m = 0.003
+            # Iterative multicontact also stabilizes thin box/mesh grasps.
+            shape.contact_margin = 1e-6
         target = Link(
             "target_object",
             xyz=(0.44, 0.04, 0.015),
@@ -1200,6 +1208,7 @@ def objects(environment: str, *, robot: str | None = None) -> list[list[Link]]:
         for (tube,) in tubes:
             tube.damping = 0.001
             tube.shapes[0].friction = (1.0, 0.05, 0.01)
+            tube.shapes[0].contact_margin = 1e-6
         rack = Link(
             "blue_rack",
             xyz=(0.39, 0.10, 0.0),
@@ -1743,7 +1752,7 @@ def mjcf(p: Profile, config: dict) -> str:
     root = ET.fromstring(native.to_xml())
     # MuJoCo's documented manipulation configuration reduces soft-constraint
     # friction creep for all contacts, without changing material friction.
-    ET.SubElement(
+    option = ET.SubElement(
         root,
         "option",
         timestep=str(config["timestep"]),
@@ -1753,6 +1762,15 @@ def mjcf(p: Profile, config: dict) -> str:
         solver="Newton",
         tolerance="1e-10",
     )
+    if config["environment"] in {
+        "load-clear-test-tubes",
+        "uncap-return-test-tube",
+        "use-hook",
+    }:
+        # Slender objects can creep off the pads under the regularized friction
+        # model despite ample normal force. Suppress that drift within the
+        # existing friction cone; this neither attaches objects nor raises mu.
+        option.set("noslip_iterations", "10")
     visual = ET.SubElement(root, "visual")
     samples, shadow_size = {
         "fast": (0, 1024),
