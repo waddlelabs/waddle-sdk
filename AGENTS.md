@@ -974,7 +974,9 @@ and writes, refusing stopped/stale feedback rather than accepting cached positio
 YAM `arm_gains` optionally supplies six KP/KD values independently, excluding
 nondefault `arm_gain_scale`. Explicit and scaled gains must fit the pinned MIT
 encoding (positive KP <= 500, KD <= 5) before CAN startup; reject silent clipping.
-Defaults and hand gains remain unchanged. Recovery restores the requested vectors;
+The YAM factory default now uses arm KP `[80,150,180,10,10,10]` and KD
+`[5,5,5,1.5,1.5,1.5]`; the low-level `LiveDriver` default and hand gains remain
+vendor values. Recovery restores the requested vectors;
 monitor and simulation modes validate but do not apply PD gains. Live evidence
 distinguishes requested gains from predicted 12-bit encoded gains, never claiming
 hardware gain readback. See [gain configuration](docs/porting/robot.md#yam-gain-configuration).
@@ -987,7 +989,8 @@ never wait for an in-envelope pose or infer physical settling from readiness.
 measurement allowance; omission preserves existing admission. Both are position
 error bounds, not physical velocity or torque enforcement. YAM's optional
 `max_joint_position_error_rad` accepts one scalar or six ordered values and applies
-only to six arm joints, retaining gripper
+only to six arm joints; the factory defaults to `[0.04,0.2,0.04,0.04,0.04,0.04]`
+at 25 Hz with a 0.010 rad arm owner-limit margin, retaining gripper
 limits, declared reference speeds and simulated speed. It validates before opening.
 Open runtime descriptions expose ordered `command_limits[part].max_position_error`
 and the `limits.position_error` support fact; exact refusal context retains the

@@ -34,11 +34,10 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-import waddle_sdk
 from mcap.reader import make_reader
 from mcap_protobuf.decoder import DecoderFactory
 from waddle_sdk import descriptors
-from waddle_sdk._session import Control, _derive_grants, create_core_session
+from waddle_sdk._session import _derive_grants, create_core_session
 from waddle_sdk.robots import base, yam
 from waddle_sdk.runtime import FaultCode, RuntimeFault
 
@@ -68,22 +67,22 @@ def _cross_arm() -> base.CrossArm:
 
 
 def _bimanual(**overrides) -> base.Rig:
-    kwargs: dict = dict(
-        workspace=WORKSPACE_BOX_M,
-        gripper_limits=GRIPPER_LIMITS_MOTOR_RAD,
-        cross_arm=_cross_arm(),
-        sim=True,
-    )
+    kwargs: dict = {
+        "workspace": WORKSPACE_BOX_M,
+        "gripper_limits": GRIPPER_LIMITS_MOTOR_RAD,
+        "cross_arm": _cross_arm(),
+        "sim": True,
+    }
     kwargs.update(overrides)
     return yam.bimanual(**kwargs)
 
 
 def _arm_rig(**overrides) -> base.Rig:
-    kwargs: dict = dict(
-        workspace=WORKSPACE_BOX_M,
-        gripper_limits=GRIPPER_LIMITS_MOTOR_RAD,
-        sim=True,
-    )
+    kwargs: dict = {
+        "workspace": WORKSPACE_BOX_M,
+        "gripper_limits": GRIPPER_LIMITS_MOTOR_RAD,
+        "sim": True,
+    }
     kwargs.update(overrides)
     return yam.arm(**kwargs)
 
@@ -192,14 +191,18 @@ def _as_json(robot: descriptors.Robot, grants: list[dict]) -> dict:
 
 
 def test_the_factory_declares_what_the_customer_program_declares(tmp_path):
-    """The golden. `yam.bimanual()` must compile to the byte-shape the
-    program running at the reference rig already registers — same part names
+    """The golden. Explicit legacy site settings retain the byte-shape the
+    historical reference program registers — same part names
     in the same order, same per-joint limits, same rate and chunking, same
     cross-arm edge with its rpy converted to a **wxyz** quaternion."""
     rig = _bimanual(
         name="waddle-yam-bimanual",
         robot_id="yam-bimanual-01",
         cell_id="yam-cell",
+        rate_hz=SUBSTRATE_RATE_HZ,
+        joint_limits=SUBSTRATE_JOINT_LIMITS,
+        max_joint_position_error_rad=None,
+        arm_gains=None,
     )
     grants = _grants(rig)
     assert _as_json(rig.robot(), grants) == _as_json(_substrate_declaration(), grants)
@@ -364,9 +367,9 @@ def test_a_rig_declares_the_limits_its_own_machine_has():
 
     # ...and the same command against the model's own numbers is refused, so
     # the test is about the declared interval and nothing else.
-    default = _rig().arms()[""]
-    assert default.command(below) is False
-    assert default.rejected == 1
+    strict_model = _rig(joint_limits=yam.JOINT_LIMITS).arms()[""]
+    assert strict_model.command(below) is False
+    assert strict_model.rejected == 1
 
 
 def test_widening_past_the_shipped_model_is_reported_never_silent():
@@ -378,6 +381,18 @@ def test_widening_past_the_shipped_model_is_reported_never_silent():
     quiet: list[str] = []
     _arm_rig(joint_limits=yam.JOINT_LIMITS, report=quiet.append)
     assert not any("WIDER" in line for line in quiet)
+
+
+def test_default_yam_control_profile_is_shared_by_single_and_two_arm_factories():
+    for factory in (_arm_rig, _bimanual):
+        rig = factory(workspace=None, report=lambda _: None)
+        for arm in rig.arms().values():
+            assert rig.rate_hz == yam.DEFAULT_RATE_HZ
+            assert tuple(arm.position_error_caps[:6]) == (
+                yam.DEFAULT_MAX_JOINT_POSITION_ERROR_RAD
+            )
+            assert tuple(arm.joint_limits) == yam.DEFAULT_CONTROL_JOINT_LIMITS
+            arm.driver.close()
 
 
 def test_the_declaration_carries_the_interval_the_envelope_enforces():
@@ -494,7 +509,7 @@ def test_the_sim_factory_drives_its_twins_through_the_envelope(tmp_path):
     jump = arms["left_arm"].state()[0] + 0.5
     assert arms["left_arm"].command(jump) is False
     assert arms["left_arm"].rejected == 1
-    assert any("would move" in line for line in lines)
+    assert any("position-error cap" in line for line in lines)
 
 
 def test_the_twins_start_on_distinct_rows():
@@ -737,11 +752,11 @@ def test_live_driver_installs_starvation_safe_receive_before_open(vendor, monkey
 
 
 def _live(vendor: _FakeVendor, **overrides) -> yam.LiveDriver:
-    kwargs: dict = dict(
-        channel="can_left",
-        gripper_limits=GRIPPER_LIMITS_MOTOR_RAD,
-        report=lambda _: None,
-    )
+    kwargs: dict = {
+        "channel": "can_left",
+        "gripper_limits": GRIPPER_LIMITS_MOTOR_RAD,
+        "report": lambda _: None,
+    }
     kwargs.update(overrides)
     return yam.LiveDriver(**kwargs)
 
@@ -1123,6 +1138,19 @@ def test_site_arm_and_hand_gains_stay_independent_and_survive_re_enable(
     assert len(robot.gains) == 2
     assert np.allclose(robot.gains[1][0], expected_kp)
     assert np.allclose(robot.gains[1][1], expected_kd)
+
+
+def test_yam_factory_applies_default_arm_gains_and_keeps_vendor_hand(vendor):
+    rig = yam.arm(workspace=None, channel="can_test", report=lambda _: None)
+    arm = rig.arms()[""]
+    try:
+        assert len(vendor.robots[0].gains) == 1
+        kp, kd = vendor.robots[0].gains[0]
+        assert tuple(kp[:6]) == yam.DEFAULT_ARM_GAINS["kp"]
+        assert tuple(kd[:6]) == yam.DEFAULT_ARM_GAINS["kd"]
+        assert kp[-1] == 10.0 and kd[-1] == 1.0
+    finally:
+        arm.driver.close()
 
 
 @pytest.mark.parametrize(

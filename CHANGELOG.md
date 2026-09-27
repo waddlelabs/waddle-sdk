@@ -27,6 +27,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Changed
 
+- Make the attended YAM control profile the factory default: 25 Hz, arm KP
+  `[80, 150, 180, 10, 10, 10]`, KD `[5, 5, 5, 1.5, 1.5, 1.5]`, J2 0.2 rad
+  and other-joint 0.04 rad position-error allowances, and a 0.010 rad arm
+  joint-limit margin. Keep vendor/model facts and explicit site overrides distinct.
+
 - Lower the YAM tabletop initializer preset's base-frame floor to -0.015 m,
   retaining its other bounds and the requirement to review each physical site.
 
