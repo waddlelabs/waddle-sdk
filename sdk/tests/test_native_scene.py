@@ -8,7 +8,6 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-
 from waddle_sdk.simulators.mujoco import Engine
 from waddle_sdk.simulators.native_scene import camera_parameters
 from waddle_sdk.simulators.scene import load_scene, make_site
@@ -65,7 +64,7 @@ def native_bundle(tmp_path):
         "camera_names": {name: name for name in config["cameras"]},
         "pose_groups": [
             {"bodies": [name], "translation_xy_m": 0.015, "yaw_rad": 0.1}
-            for name in ("cube_a", "cube_b")
+            for name in ("cube_1", "cube_2")
         ],
     }
     model = mj.MjModel.from_xml_path(str(tmp_path / "world.xml"))

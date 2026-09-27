@@ -50,3 +50,12 @@ remain mandatory. See `docs/python/site.md` for completion and failure semantics
 SDK-owned receipts include local monotonic bounds for the dispatch call after it
 acquires the shared dispatch boundary; applications may use the start bound for
 cadence without counting unrelated lock wait as driver execution.
+
+## Imported simulation worlds
+
+Reference MuJoCo configuration can select an explicit `native_scene` with
+portable asset digests, robot prefixes, camera bindings and an initial keyframe.
+Use the ordinary SDK world/part/camera lifecycle; keep trusted reset and ground
+truth outside participant observations. The SDK simulation guide documents the
+configuration and compiled camera/kinematic checks. Imported assets do not
+establish physical calibration or contact fidelity.

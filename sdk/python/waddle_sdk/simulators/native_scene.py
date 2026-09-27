@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import hashlib
 import math
-from pathlib import Path
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 import numpy as np
 
