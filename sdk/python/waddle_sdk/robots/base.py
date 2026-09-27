@@ -998,7 +998,8 @@ class Arm:
                     }
                     if target_bodies:
                         current_bodies = {
-                            body.name: body for body in self.collision_snapshot(measured)
+                            body.name: body
+                            for body in self.collision_snapshot(measured)
                         }
                         if set(current_bodies) != {body.name for body in target_bodies}:
                             return "collision bodies changed during workspace recovery"

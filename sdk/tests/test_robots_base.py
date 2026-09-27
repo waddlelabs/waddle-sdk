@@ -417,15 +417,20 @@ def test_inward_workspace_recovery_never_relaxes_other_envelopes():
         workspace=((-0.02, -1.0, -1.0), (0.02, 1.0, 1.0)),
         step_caps=(0.01, 0.10, 0.25),
     )
-    assert "cap 0.0100" in arm.check(
-        np.array([-0.04, 0.0, 1.0]), driver.read()[0]
-    )
+    assert "cap 0.0100" in arm.check(np.array([-0.04, 0.0, 1.0]), driver.read()[0])
 
 
 @pytest.mark.parametrize(
     "caps",
-    [(0.2,), (0.2, 0.2, 0.0), (0.2, -1.0, 0.2), (True, 0.2, 0.2),
-     ("0.2", 0.2, 0.2), (float("inf"), 0.2, 0.2), (float("nan"), 0.2, 0.2)],
+    [
+        (0.2,),
+        (0.2, 0.2, 0.0),
+        (0.2, -1.0, 0.2),
+        (True, 0.2, 0.2),
+        ("0.2", 0.2, 0.2),
+        (float("inf"), 0.2, 0.2),
+        (float("nan"), 0.2, 0.2),
+    ],
 )
 def test_invalid_position_error_limits_are_rejected_before_dispatch(caps):
     with pytest.raises(ValueError, match="position_error_caps"):
