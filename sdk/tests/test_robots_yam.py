@@ -1187,18 +1187,26 @@ def test_position_error_option_is_validated_before_hardware_construction(
     connection = (
         {"channel": "can_left"}
         if factory is yam.arm
-        else {"left": yam.ArmSite(channel="can_left"),
-              "right": yam.ArmSite(channel="can_right")}
+        else {
+            "left": yam.ArmSite(channel="can_left"),
+            "right": yam.ArmSite(channel="can_right"),
+        }
     )
     with pytest.raises(ValueError, match="max_joint_position_error_rad"):
-        factory(workspace=None, configure_can=True,
-                max_joint_position_error_rad=cap, **connection)
+        factory(
+            workspace=None,
+            configure_can=True,
+            max_joint_position_error_rad=cap,
+            **connection,
+        )
     assert not configured and not vendor.calls
 
 
 @pytest.mark.parametrize("rate_hz", [10.0, 50.0])
 @pytest.mark.parametrize("factory", [_arm_rig, _bimanual])
-def test_explicit_yam_error_allowance_preserves_gripper_and_simulated_speed(factory, rate_hz):
+def test_explicit_yam_error_allowance_preserves_gripper_and_simulated_speed(
+    factory, rate_hz
+):
     rig = factory(
         workspace=None,
         rate_hz=rate_hz,
@@ -1220,6 +1228,39 @@ def test_explicit_yam_error_allowance_preserves_gripper_and_simulated_speed(fact
         target[-1] = later[-1] + 0.5 / rate_hz + 0.001
         assert arm.check(target, later) is not None
         arm.driver.close()
+
+
+@pytest.mark.parametrize("factory", [_arm_rig, _bimanual])
+def test_yam_joint_specific_error_allowance_keeps_other_joints_bounded(factory):
+    caps = (0.04, 0.2, 0.04, 0.04, 0.04, 0.04)
+    rig = factory(
+        workspace=None,
+        rate_hz=25.0,
+        max_joint_speed_rad_s=1.0,
+        max_joint_position_error_rad=caps,
+        report=lambda _: None,
+    )
+    for arm in rig.arms().values():
+        measured, _ = arm.state()
+        assert tuple(arm.position_error_caps)[:6] == caps
+        j2_target = measured.copy()
+        j2_target[1] += 0.19
+        assert arm.check(j2_target, measured) is None
+        j2_target[1] += 0.02
+        assert "position-error cap 0.2000" in arm.check(j2_target, measured)
+        other_target = measured.copy()
+        other_target[0] += 0.05
+        assert "position-error cap 0.0400" in arm.check(other_target, measured)
+        assert arm.step_caps[1] == pytest.approx(0.04)
+        arm.driver.close()
+
+
+@pytest.mark.parametrize(
+    "caps", [[0.04] * 5, [0.04, 0.2, 0.04, 0.04, 0.04, 0], [0.04] * 5 + [float("nan")]]
+)
+def test_yam_joint_specific_error_allowance_rejects_invalid_vectors(caps):
+    with pytest.raises(ValueError, match="six finite positive arm-joint values"):
+        _arm_rig(max_joint_position_error_rad=caps).arms()
 
 
 def test_re_enable_refuses_to_guess_gains_it_never_snapshotted(vendor):

@@ -986,7 +986,8 @@ never wait for an in-envelope pose or infer physical settling from readiness.
 `Arm.position_error_caps` optionally replaces the legacy `step_caps` target-to-
 measurement allowance; omission preserves existing admission. Both are position
 error bounds, not physical velocity or torque enforcement. YAM's optional
-`max_joint_position_error_rad` applies only to six arm joints, retaining gripper
+`max_joint_position_error_rad` accepts one scalar or six ordered values and applies
+only to six arm joints, retaining gripper
 limits, declared reference speeds and simulated speed. It validates before opening.
 Open runtime descriptions expose ordered `command_limits[part].max_position_error`
 and the `limits.position_error` support fact; exact refusal context retains the

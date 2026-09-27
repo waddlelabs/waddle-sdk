@@ -29,6 +29,8 @@ Construction and authorization probes must remain non-opening. Hardware adapters
 ## Safety and posture
 
 The ordinary `Arm` seam rejects a complete target and never clamps it into a command nobody requested. Owner inputs include joint limits, target-to-measurement allowances, optional workspace bounds, and optional static collision rules. Optional `position_error_caps` replaces the legacy `step_caps` allowance without changing the other checks; neither measures physical velocity or bounds torque. Consume the open runtime's ordered `command_limits[part].max_position_error` when `limits.position_error` is advertised rather than deriving an allowance from rate. Workspace checks require usable FK; configured collision checks require conservative geometry in a compatible frame and fail closed when unavailable.
+YAM sites accept one `max_joint_position_error_rad` scalar or six ordered
+arm-joint values; the gripper keeps its separate bound.
 An outside measured workspace pose can recover through checked steps that make
 strict inward progress without worsening any TCP or body violation. The owner
 plans those steps; the SDK still enforces joint, step, collision and stop rules.

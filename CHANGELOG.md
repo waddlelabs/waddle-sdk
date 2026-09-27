@@ -11,6 +11,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+### Added
+
+- Allow YAM sites to declare six separate target-to-measurement position-error
+  bounds while retaining the scalar form, gripper bound, speed and gains.
+
 ### Fixed
 
 - Permit checked, progressive inward commands from measured poses outside a

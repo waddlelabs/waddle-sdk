@@ -124,7 +124,11 @@ These are local runtime metadata; they add no protocol field or separate writer.
 
 YAM `arm()` and `bimanual()` accept `max_joint_position_error_rad`, also available
 under `parts.<part>.options` in `site.yaml`. It applies the explicit bound to the
-six arm joints and retains the existing gripper bound. Invalid values fail during
+six arm joints and retains the existing gripper bound. Pass one positive scalar
+for all six joints, or six positive values in declared joint order for separate
+allowances. For example, `[0.04, 0.2, 0.04, 0.04, 0.04, 0.04]` permits a larger
+joint 2 position-reference lead without changing the other five joints. Invalid
+values fail during
 factory construction, before CAN or vendor drivers open. Omission continues to
 use `max_joint_speed_rad_s / rate_hz` for arm rows. Declared velocity, simulator
 speed, vendor gains and command bytes remain unchanged.

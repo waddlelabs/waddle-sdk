@@ -1453,7 +1453,7 @@ def _build_arms(
     workspace,
     fk,
     step_caps: Sequence[float],
-    max_joint_position_error_rad: float | None,
+    max_joint_position_error_rad: float | Sequence[float] | None,
     joint_limits: Sequence[Sequence[float]],
     rate_hz: float,
     gravity_comp_factor: Sequence[float],
@@ -1480,16 +1480,28 @@ def _build_arms(
 
     position_error_caps = None
     if max_joint_position_error_rad is not None:
-        if (
-            isinstance(max_joint_position_error_rad, bool)
-            or not isinstance(max_joint_position_error_rad, (int, float))
-            or not math.isfinite(max_joint_position_error_rad)
-            or max_joint_position_error_rad <= 0
-        ):
-            raise ValueError("max_joint_position_error_rad must be finite and positive")
-        position_error_caps = (float(max_joint_position_error_rad),) * ARM_JOINT_COUNT + (
-            step_caps[-1],
+        values = (
+            (max_joint_position_error_rad,) * ARM_JOINT_COUNT
+            if isinstance(max_joint_position_error_rad, (int, float))
+            else max_joint_position_error_rad
         )
+        if (
+            isinstance(max_joint_position_error_rad, (str, bytes, bool))
+            or not isinstance(values, Sequence)
+            or len(values) != ARM_JOINT_COUNT
+            or any(
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or value <= 0
+                for value in values
+            )
+        ):
+            raise ValueError(
+                "max_joint_position_error_rad must be one finite positive value "
+                "or six finite positive arm-joint values"
+            )
+        position_error_caps = tuple(float(value) for value in values) + (step_caps[-1],)
     kp, kd = _gain_vectors(
         arm_gains=arm_gains,
         arm_gain_scale=arm_gain_scale,
@@ -1575,7 +1587,7 @@ def bimanual(
     joint_limits: Sequence[Sequence[float]] | None = None,
     rate_hz: float = DEFAULT_RATE_HZ,
     max_joint_speed_rad_s: float = DEFAULT_MAX_JOINT_SPEED_RAD_S,
-    max_joint_position_error_rad: float | None = None,
+    max_joint_position_error_rad: float | Sequence[float] | None = None,
     max_gripper_speed_per_s: float = DEFAULT_MAX_GRIPPER_SPEED_PER_S,
     gravity_comp_factor: Sequence[float] = DEFAULT_GRAVITY_COMP_FACTOR,
     arm_gains: Mapping[str, Sequence[float]] | None = None,
@@ -1630,7 +1642,8 @@ def bimanual(
 
     ``max_joint_position_error_rad`` optionally sets the owner-authorized
     target-to-measurement bound for the six arm joints independently of
-    ``rate_hz``. Omission preserves the legacy speed/rate bound. Declared
+    ``rate_hz``. Pass one scalar or six values in joint order. Omission
+    preserves the legacy speed/rate bound. Declared
     reference speed, gripper bounds and vendor behavior remain unchanged;
     callers own interpolation and convergence. This is not a torque limit.
 
@@ -1737,7 +1750,7 @@ def arm(
     joint_limits: Sequence[Sequence[float]] | None = None,
     rate_hz: float = DEFAULT_RATE_HZ,
     max_joint_speed_rad_s: float = DEFAULT_MAX_JOINT_SPEED_RAD_S,
-    max_joint_position_error_rad: float | None = None,
+    max_joint_position_error_rad: float | Sequence[float] | None = None,
     max_gripper_speed_per_s: float = DEFAULT_MAX_GRIPPER_SPEED_PER_S,
     gravity_comp_factor: Sequence[float] = DEFAULT_GRAVITY_COMP_FACTOR,
     arm_gains: Mapping[str, Sequence[float]] | None = None,
