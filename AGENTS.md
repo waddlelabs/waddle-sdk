@@ -489,15 +489,6 @@ waddle-sdk/
                              #   override; when absent, hardware open delegates
                              #   to I2RT's jaw-moving auto-range. Simulation
                              #   needs no motor measurement.
-                             #   Experimental arm_static_breakaway_nm is a
-                             #   default-zero six-arm-joint torque vector for
-                             #   supervised physical tracking tests. The
-                             #   YAM-local pinned-vendor seam adds at most
-                             #   1 Nm per selected joint in the direction of
-                             #   remaining position error, tapering to zero
-                             #   near target or above 0.03 rad/s. Zero gains
-                             #   suppress it; vendor/motor torque clips remain.
-                             #   Simulation/monitor validate but do not apply it.
                              #   LiveDriver also works
                              #   around the pinned vendor close race by joining
                              #   its unretained CAN writer before the vendor
@@ -987,12 +978,6 @@ Defaults and hand gains remain unchanged. Recovery restores the requested vector
 monitor and simulation modes validate but do not apply PD gains. Live evidence
 distinguishes requested gains from predicted 12-bit encoded gains, never claiming
 hardware gain readback. See [gain configuration](docs/porting/robot.md#yam-gain-configuration).
-YAM's experimental `arm_static_breakaway_nm` option is default-off and scoped
-to the physical driver. It does not add an SDK motion controller or change
-envelopes, ordinary action dispatch, gravity factors or convergence policy.
-Test its bounded low-speed torque effect through the same public actions and
-keep physical error, completion time, stop response and any overshoot separate
-from software checks. See [the public setting](docs/porting/robot.md#experimental-yam-static-breakaway-assist).
 Before YAM benchmark motion, a test-only bounded readiness check observes the
 constructor hold command, two subsequent CAN cache generations and later robot
 state ingestion. Preserve `startup_evidence` independently of motion timing;

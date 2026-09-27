@@ -91,11 +91,7 @@ from ..descriptors import (
 )
 from ..runtime import FaultCode, RuntimeFault
 from . import base
-from ._i2rt_patches import (
-    apply_command_state_atomic_patch,
-    apply_recv_starvation_patch,
-    apply_static_breakaway_patch,
-)
+from ._i2rt_patches import apply_command_state_atomic_patch, apply_recv_starvation_patch
 from .base import CrossArm
 from .socketcan import ensure_socketcan_up
 
@@ -157,7 +153,6 @@ I2RT_PIN = "570ef66681ff12bd8298aba34084307cfecc9f05"
 #: these are SDK control defaults, not vendor ratings or universal calibration.
 #: The vendor appends its unchanged gripper factor of 1.0.
 DEFAULT_GRAVITY_COMP_FACTOR = (1.0, 1.1, 1.2, 1.3, 1.0, 1.0)
-_NO_STATIC_BREAKAWAY_NM = (0.0,) * 6
 
 # Pinned I2RT robots/config/{yam,linear_4310}.yml. These are the startup
 # gains used to validate site options before opening CAN, not new defaults.
@@ -252,24 +247,6 @@ def _checked_gravity_comp_factor(values: Sequence[float]) -> tuple[float, ...]:
         for value in row
     ):
         raise ValueError("gravity_comp_factor needs six finite positive numbers")
-    return tuple(float(value) for value in row)
-
-
-def _checked_arm_static_breakaway_nm(values: Sequence[float]) -> tuple[float, ...]:
-    try:
-        row = tuple(values)
-    except TypeError as exc:
-        raise ValueError(
-            "arm_static_breakaway_nm needs six finite numbers from 0 to 1 Nm"
-        ) from exc
-    if len(row) != ARM_JOINT_COUNT or any(
-        isinstance(value, (bool, str, bytes))
-        or not isinstance(value, (int, float, np.integer, np.floating))
-        or not math.isfinite(float(value))
-        or not 0.0 <= float(value) <= 1.0
-        for value in row
-    ):
-        raise ValueError("arm_static_breakaway_nm needs six finite numbers from 0 to 1 Nm")
     return tuple(float(value) for value in row)
 
 
@@ -697,7 +674,6 @@ class LiveDriver:
         *,
         gripper_limits: Sequence[float] | None = None,
         gravity_comp_factor: Sequence[float] = DEFAULT_GRAVITY_COMP_FACTOR,
-        arm_static_breakaway_nm: Sequence[float] = _NO_STATIC_BREAKAWAY_NM,
         arm_gains: Mapping[str, Sequence[float]] | None = None,
         arm_gain_scale: float = 1.0,
         gripper_gain_scale: float = 1.0,
@@ -709,7 +685,6 @@ class LiveDriver:
         report: Callable[[str], None] = base.status,
     ) -> None:
         gravity_factors = _checked_gravity_comp_factor(gravity_comp_factor)
-        static_breakaway = _checked_arm_static_breakaway_nm(arm_static_breakaway_nm)
         requested_kp, requested_kd = _gain_vectors(
             arm_gains=arm_gains,
             arm_gain_scale=arm_gain_scale,
@@ -796,23 +771,6 @@ class LiveDriver:
                 )
             self._default_kp, self._default_kd = self._snapshot_gains()
             self._apply_gain_scales(arm_gain_scale, gripper_gain_scale, arm_gains)
-            if any(static_breakaway) and not self._zero_gravity:
-                from i2rt.motor_drivers.utils import MotorType
-
-                apply_static_breakaway_patch(type(self._robot))
-                motor_types = (MotorType.DM4340,) * 3 + (MotorType.DM4310,) * 3
-                self._robot._waddle_arm_motor_torque_max_nm = np.asarray(
-                    [MotorType.get_motor_constants(kind).TORQUE_MAX for kind in motor_types],
-                    dtype=float,
-                )
-                self._robot._waddle_arm_static_breakaway_nm = np.asarray(
-                    static_breakaway, dtype=float
-                )
-                self._report(
-                    f"live {self.channel}: experimental arm static breakaway torque "
-                    f"{list(static_breakaway)} Nm (bounded; zero below 1.5 mrad error "
-                    "or above 0.03 rad/s measured speed)"
-                )
             self._can_command_state = callable(
                 getattr(self._robot, "command_joint_state", None)
             )
@@ -1499,7 +1457,6 @@ def _build_arms(
     joint_limits: Sequence[Sequence[float]],
     rate_hz: float,
     gravity_comp_factor: Sequence[float],
-    arm_static_breakaway_nm: Sequence[float],
     arm_gains: Mapping[str, Sequence[float]] | None,
     arm_gain_scale: float,
     gripper_gain_scale: float,
@@ -1563,7 +1520,6 @@ def _build_arms(
                         site.channel,
                         gripper_limits=site.gripper_limits,
                         gravity_comp_factor=gravity_comp_factor,
-                        arm_static_breakaway_nm=arm_static_breakaway_nm,
                         arm_gains=arm_gains,
                         arm_gain_scale=arm_gain_scale,
                         gripper_gain_scale=gripper_gain_scale,
@@ -1622,7 +1578,6 @@ def bimanual(
     max_joint_position_error_rad: float | None = None,
     max_gripper_speed_per_s: float = DEFAULT_MAX_GRIPPER_SPEED_PER_S,
     gravity_comp_factor: Sequence[float] = DEFAULT_GRAVITY_COMP_FACTOR,
-    arm_static_breakaway_nm: Sequence[float] = _NO_STATIC_BREAKAWAY_NM,
     arm_gains: Mapping[str, Sequence[float]] | None = None,
     arm_gain_scale: float = 1.0,
     gripper_gain_scale: float = 1.0,
@@ -1663,12 +1618,6 @@ def bimanual(
     then passed to I2RT before its servo starts. The gripper factor stays 1.0.
     These bench-derived defaults are not a substitute for per-unit calibration;
     ``sim=True`` uses the kinematic simulator and ignores gravity factors.
-
-    ``arm_static_breakaway_nm`` is an experimental, default-off six-joint
-    slow-speed torque assist for a live YAM. Every value is bounded to 0–1 Nm.
-    It follows signed position error only when the motor is nearly stationary,
-    tapers to zero near the goal and above 0.03 rad/s, and is suppressed when
-    gains are zero. Simulation and monitor modes validate but do not apply it.
 
     ``arm_gains`` optionally supplies separate ``kp`` and ``kd`` vectors for
     joints 1–6. Each must contain six finite positive numbers, with ``kp <= 500``
@@ -1757,7 +1706,6 @@ def bimanual(
             joint_limits=joints,
             rate_hz=rate_hz,
             gravity_comp_factor=_checked_gravity_comp_factor(gravity_comp_factor),
-            arm_static_breakaway_nm=_checked_arm_static_breakaway_nm(arm_static_breakaway_nm),
             arm_gains=arm_gains,
             arm_gain_scale=arm_gain_scale,
             gripper_gain_scale=gripper_gain_scale,
@@ -1792,7 +1740,6 @@ def arm(
     max_joint_position_error_rad: float | None = None,
     max_gripper_speed_per_s: float = DEFAULT_MAX_GRIPPER_SPEED_PER_S,
     gravity_comp_factor: Sequence[float] = DEFAULT_GRAVITY_COMP_FACTOR,
-    arm_static_breakaway_nm: Sequence[float] = _NO_STATIC_BREAKAWAY_NM,
     arm_gains: Mapping[str, Sequence[float]] | None = None,
     arm_gain_scale: float = 1.0,
     gripper_gain_scale: float = 1.0,
@@ -1856,7 +1803,6 @@ def arm(
             joint_limits=joints,
             rate_hz=rate_hz,
             gravity_comp_factor=_checked_gravity_comp_factor(gravity_comp_factor),
-            arm_static_breakaway_nm=_checked_arm_static_breakaway_nm(arm_static_breakaway_nm),
             arm_gains=arm_gains,
             arm_gain_scale=arm_gain_scale,
             gripper_gain_scale=gripper_gain_scale,
