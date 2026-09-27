@@ -72,6 +72,19 @@ mechanics without adding task routes or success logic to the simulator. Native
 small-object acceptance must establish retained bilateral finger contact and
 measured object lift, not infer a grasp from commanded or measured gripper
 closure alone.
+The two test-tube scenes use revision 1.1.0: a 1 micrometre tube margin selects
+iterative cylinder multicontact and ten friction post-solver iterations suppress
+soft-contact creep. Keep material coefficients, object geometry, and force limits
+unchanged. `test_simulation_tube_grasp.py` covers original lying-tube pickups,
+continuous bilateral transport, long holds, gravity release, and missed grasps on
+all three families; dropped-tube setup in the uncapping scene is explicit. These
+are native actuator witnesses, not motion-planner or physical acceptance.
+The use-hook scene uses revision 1.1.0: hook/finger contacts declare a 3 mm
+effective torsional patch and the scene enables ten friction post-solver
+iterations. A 1 micrometre hook margin stabilizes box/mesh contact generation. This resists twisting and soft-contact creep without changing
+geometry, mass, sliding friction or force limits. Its native regression covers
+flat-table pickup, sustained bilateral transport, two twenty-second holds,
+gravity release and missed grasps across all three families.
 Native initial-state acceptance must reject robot/table, robot/prop, and dual-arm
 inter-robot penetration across the complete task/family matrix. Reference MuJoCo
 also refuses an evaluator reset when its resolved compiled contacts contain one of

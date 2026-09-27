@@ -11,7 +11,22 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+### Added
+
+- Native test-tube pickup and continuous carry/release regression across SO-101,
+  YAM and xArm7, including all four lying-tube positions and missed-grasp controls.
+
 ### Fixed
+
+- Stabilize flat-hook pickup and retention in scene 1.1.0 with an explicit
+  3 mm finger torsional patch, 1 micrometre contact margin and ten friction
+  post-solver iterations. Preserve
+  geometry, mass, sliding friction and motor limits; verify sustained native
+  grasps and release on SO-101, YAM and xArm7.
+
+- Stabilize test-tube pickup and retention in both tube scenes, revision 1.1.0,
+  using a 1 micrometre cylinder margin and ten friction post-solver iterations.
+  Preserve material friction, geometry, mass, and motor limits.
 
 - Keep small chocolate cylinders held during lift/carry on MuJoCo 3.13.0 by
   selecting iterative multicontact with a 1 micrometre contact margin in scene
