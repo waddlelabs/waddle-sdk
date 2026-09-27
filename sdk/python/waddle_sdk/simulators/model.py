@@ -934,6 +934,8 @@ def objects(environment: str, *, robot: str | None = None) -> list[list[Link]]:
         # Keep sliding friction and all non-finger contacts unchanged.
         for shape in hook.shapes:
             shape.finger_contact_patch_m = 0.003
+            # Iterative multicontact also stabilizes thin box/mesh grasps.
+            shape.contact_margin = 1e-6
         target = Link(
             "target_object",
             xyz=(0.44, 0.04, 0.015),

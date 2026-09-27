@@ -70,7 +70,7 @@ MuJoCo also provides thirty-two interactive development task environments:
 - `use-hook`: a free compound hook, a movable target, and a marked goal region.
   Scene 1.1.0 gives hook/finger contacts a 3 mm effective torsional patch and
   enables ten friction post-solver iterations to resist twisting and numerical
-  creep. Geometry, mass, sliding friction and motor limits are unchanged. Native
+  creep. A 1 micrometre hook margin stabilizes box/mesh contact generation. Geometry, mass, sliding friction and motor limits are unchanged. Native
   SO-101/YAM/xArm7 checks cover flat-table pickup, two twenty-second holds,
   transport, gravity release and missed grasps.
 - `open-hinged-door`: a passive lever and sliding bolt on a hinged door. The

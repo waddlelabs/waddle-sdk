@@ -19,7 +19,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 ### Fixed
 
 - Stabilize flat-hook pickup and retention in scene 1.1.0 with an explicit
-  3 mm finger torsional patch and ten friction post-solver iterations. Preserve
+  3 mm finger torsional patch, 1 micrometre contact margin and ten friction
+  post-solver iterations. Preserve
   geometry, mass, sliding friction and motor limits; verify sustained native
   grasps and release on SO-101, YAM and xArm7.
 
