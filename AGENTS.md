@@ -133,6 +133,13 @@ slower hidden-state sampler can score transient contact and peak-force events.
 Clear those summaries on every reset and never expose them through participant
 observations, capabilities, or tools.
 
+Imported native MuJoCo worlds can now select portable, digest-bound assets and
+an explicit initial keyframe through `native_scene` in the reference simulation
+configuration. This reuses reference actuation and coupled hands, validates robot
+placement and camera projection, and retains trusted reset/variation ownership.
+See [native scene configuration](docs/python/simulation.md#imported-native-mujoco-worlds)
+and `sdk/tests/test_native_scene.py`; physical fidelity is not established.
+
 ## Repo map
 
 Both native MuJoCo camera paths retain configured RGB multisampling and use a

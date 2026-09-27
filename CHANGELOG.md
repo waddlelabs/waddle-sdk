@@ -13,6 +13,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Load portable, hash-verified native MuJoCo worlds with reference robot control,
+  coupled grippers, configured camera validation and explicit keyframe resets.
+
 - Retain optional nominal scalar kinematic witnesses in articulated reference and
   pinned YAM model-source provenance. Explicit units and seventeen jaw-width
   samples support independent mapping checks without opening hardware or claiming

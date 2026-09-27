@@ -675,3 +675,33 @@ Exact revisions, source paths, mechanism choices and limitations are recorded in
 the packaged `waddle_sdk/simulators/data/README.md`.
 All three backends use native URDF import and physics constraints. Engine-specific
 geometry conversion, axis handling and inertia conversion stay in the importer.
+
+## Imported native MuJoCo worlds
+
+An explicit `native_scene` selection in `waddle.simulation/v1` can load a portable
+MJCF world containing the reference robot assembly instead of generating a
+built-in environment. The same SDK world, reference robot controller, coupled
+hand, camera acquisition and trusted reset lifecycle remain in use. This path
+supports the declared one/two-part reference family; custom robot controllers
+continue to implement the public backend/driver contracts.
+
+`native_scene` contains `model` (relative to the site root), a `files` mapping of
+portable paths to SHA-256 digests, `initial_keyframe`, `prefixes` mapping each part
+to its native robot name prefix, `camera_names` mapping each public camera to a
+native camera, and `pose_groups`. Each pose group declares disjoint `bodies`,
+`translation_xy_m` and `yaw_rad`. The environment has its own name and semantic
+scene/asset revisions; it does not inherit a built-in task identity.
+
+Selection verifies all file digests and confines XML references before loading.
+The worker verifies again, then checks declared robot placement/kinematics and
+camera projection against the compiled model. Use
+`waddle_sdk.simulators.native_scene.camera_parameters` during offline preparation
+to derive rectified intrinsics and configured optical poses. Wrist cameras must
+be attached to the TCP body; scene cameras must be statically mounted. These are
+simulation configuration facts, not measured physical calibration.
+
+Reset restores the explicit keyframe, including robot and object coordinates and
+native controls. Trusted evaluation can apply declared seeded pose variations
+and existing appearance/physics variations. Imported environments support fixed,
+free and passive scalar-joint bodies; unsupported mappings fail explicitly.
+Opening this simulation configuration never opens a physical robot.
