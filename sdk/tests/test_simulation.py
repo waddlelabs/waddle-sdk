@@ -1751,7 +1751,13 @@ def _native_conformance(
         if robot != "so101":
             # The pocket-overhead view puts the old near-base witness behind
             # xArm's tall upper arm. Use clear tabletop beside the source tray.
-            witness_x = 0.4 if environment == "chocolate-packing" else 0.1
+            # The xArm blocks the old shampoo witness after this joint motion;
+            # the far side of the same tabletop remains visible and unoccluded.
+            witness_x = 0.1
+            if environment == "chocolate-packing":
+                witness_x = 0.4
+            elif environment == "shampoo-packing" and robot == "xarm7":
+                witness_x = 0.5
             point = np.linalg.inv(t) @ np.array([witness_x, -0.32, 0.0, 1.0])
             u = round(intr["fx"] * point[0] / point[2] + intr["cx"])
             v = round(intr["fy"] * point[1] / point[2] + intr["cy"])

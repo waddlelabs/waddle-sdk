@@ -76,6 +76,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from importlib.resources import files
 from time import monotonic
+from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -106,9 +107,12 @@ __all__ = [
     "CHAIN_AXIS",
     "CHAIN_ORIGIN_RPY_RAD",
     "CHAIN_ORIGIN_XYZ_M",
+    "DEFAULT_ARM_GAINS",
+    "DEFAULT_CONTROL_JOINT_LIMITS",
     "DEFAULT_GRAVITY_COMP_FACTOR",
     "DEFAULT_MAX_FEEDFORWARD_VEL_RAD_S",
     "DEFAULT_MAX_GRIPPER_SPEED_PER_S",
+    "DEFAULT_MAX_JOINT_POSITION_ERROR_RAD",
     "DEFAULT_MAX_JOINT_SPEED_RAD_S",
     "DEFAULT_RATE_HZ",
     "DEFAULT_SIM_HOME",
@@ -326,6 +330,13 @@ GRIPPER_JOINT_LIMITS = (0.0, 1.0)
 #: One part's full limit table, the layout :data:`JOINT_NAMES` declares.
 JOINT_LIMITS = ARM_JOINT_LIMITS_RAD + (GRIPPER_JOINT_LIMITS,)
 
+# A small owner-envelope allowance around the published model limits lets an
+# encoder near Home be held and returned without weakening the gripper range.
+# The source model remains the exact pinned vendor geometry and limit facts.
+DEFAULT_CONTROL_JOINT_LIMITS = tuple(
+    (lower - 0.01, upper + 0.01) for lower, upper in ARM_JOINT_LIMITS_RAD
+) + (GRIPPER_JOINT_LIMITS,)
+
 #: Per-joint effort ceiling (N·m), the shipped URDF's ``<limit effort="10">``.
 #: Declaration only — this module commands positions and never torques — and
 #: gated ``<=``, like every other ceiling here.
@@ -487,19 +498,27 @@ def forward_kinematics(
 # against anything, because there is nothing to gate a choice against.
 
 #: The declared control rate of one part, Hz. Deliberately far below the
-#: vendor's ~1 kHz servo: a rig that goes wrong at 10 Hz goes wrong ten times
-#: more slowly than one at 100.
-DEFAULT_RATE_HZ = 10.0
+#: vendor's ~1 kHz servo. A site can select a slower rate when required.
+DEFAULT_RATE_HZ = 25.0
 
 #: The declared reference speed, rad/s. The legacy owner envelope derives its
 #: target-to-measurement bound from ``speed / rate_hz``. An explicit position-
 #: error allowance can replace that bound; neither bounds physical velocity.
 DEFAULT_MAX_JOINT_SPEED_RAD_S = 1.0
 
+# Physical YAM reference settings used by the attended single-arm workspace.
+# These are configurable controller choices, not motor specifications.  The
+# 0.2 rad J2 allowance has only a small near-Home physical smoke so far.
+DEFAULT_MAX_JOINT_POSITION_ERROR_RAD = (0.04, 0.2, 0.04, 0.04, 0.04, 0.04)
+DEFAULT_ARM_GAINS = MappingProxyType(
+    {
+        "kp": (80.0, 150.0, 180.0, 10.0, 10.0, 10.0),
+        "kd": (5.0, 5.0, 5.0, 1.5, 1.5, 1.5),
+    }
+)
+
 #: The same rule for the hand, in its normalized units per second. At the
-#: default rate that is a quarter of full travel per accepted command: a full
-#: open or close takes four commands, fast enough to be useful and slow enough
-#: to stop.
+#: default rate that is one tenth of full travel per accepted command.
 DEFAULT_MAX_GRIPPER_SPEED_PER_S = 2.5
 
 #: Ceiling on a supplied arm velocity feedforward.  This is a motor command
@@ -523,7 +542,7 @@ DEFAULT_SIM_HOME = (
 def safety_presets(*, factory: str, options: Mapping[str, object]):
     """Return configuration-only YAM workspace starting points.
 
-    The tabletop box spans 0.7 m in each horizontal direction and 0 to 1 m
+    The tabletop box spans 0.7 m in each horizontal direction and -0.015 to 1 m
     vertically, expressed in each selected arm's base frame.  Mount height,
     table geometry, tooling, payload, and neighboring arms remain site facts and
     therefore require explicit review in the initializer.
@@ -539,7 +558,7 @@ def safety_presets(*, factory: str, options: Mapping[str, object]):
             identifier="yam-tabletop",
             label="YAM tabletop starter",
             workspace_bounds={
-                "min": [-0.7, -0.7, 0.0],
+                "min": [-0.7, -0.7, -0.015],
                 "max": [0.7, 0.7, 1.0],
             },
             review=(
@@ -1146,7 +1165,7 @@ def _part_space(
     rate_hz: float,
     max_joint_speed_rad_s: float,
     max_gripper_speed_per_s: float,
-    joint_limits: Sequence[Sequence[float]] = JOINT_LIMITS,
+    joint_limits: Sequence[Sequence[float]] = DEFAULT_CONTROL_JOINT_LIMITS,
 ) -> JointSpace:
     """One arm: six joints plus the gripper row, at the declared rate."""
     max_velocities = (max_joint_speed_rad_s,) * ARM_JOINT_COUNT + (
@@ -1180,7 +1199,7 @@ def declaration(
     rate_hz: float = DEFAULT_RATE_HZ,
     max_joint_speed_rad_s: float = DEFAULT_MAX_JOINT_SPEED_RAD_S,
     max_gripper_speed_per_s: float = DEFAULT_MAX_GRIPPER_SPEED_PER_S,
-    joint_limits: Sequence[Sequence[float]] = JOINT_LIMITS,
+    joint_limits: Sequence[Sequence[float]] = DEFAULT_CONTROL_JOINT_LIMITS,
     base_frame: str = BASE_FRAME,
     declare_urdf: bool | None = None,
     frames: Sequence[FrameTransform] = (),
@@ -1327,7 +1346,7 @@ def _checked_joint_limits(
     to the plane, so a teleoperator and an application-hosted agent are shown the
     range this rig really has."""
     if limits is None:
-        return JOINT_LIMITS
+        limits = DEFAULT_CONTROL_JOINT_LIMITS
     try:
         rows = tuple(tuple(float(v) for v in row) for row in limits)
     except TypeError:
@@ -1453,7 +1472,7 @@ def _build_arms(
     workspace,
     fk,
     step_caps: Sequence[float],
-    max_joint_position_error_rad: float | None,
+    max_joint_position_error_rad: float | Sequence[float] | None,
     joint_limits: Sequence[Sequence[float]],
     rate_hz: float,
     gravity_comp_factor: Sequence[float],
@@ -1480,16 +1499,28 @@ def _build_arms(
 
     position_error_caps = None
     if max_joint_position_error_rad is not None:
-        if (
-            isinstance(max_joint_position_error_rad, bool)
-            or not isinstance(max_joint_position_error_rad, (int, float))
-            or not math.isfinite(max_joint_position_error_rad)
-            or max_joint_position_error_rad <= 0
-        ):
-            raise ValueError("max_joint_position_error_rad must be finite and positive")
-        position_error_caps = (float(max_joint_position_error_rad),) * ARM_JOINT_COUNT + (
-            step_caps[-1],
+        values = (
+            (max_joint_position_error_rad,) * ARM_JOINT_COUNT
+            if isinstance(max_joint_position_error_rad, (int, float))
+            else max_joint_position_error_rad
         )
+        if (
+            isinstance(max_joint_position_error_rad, (str, bytes, bool))
+            or not isinstance(values, Sequence)
+            or len(values) != ARM_JOINT_COUNT
+            or any(
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or value <= 0
+                for value in values
+            )
+        ):
+            raise ValueError(
+                "max_joint_position_error_rad must be one finite positive value "
+                "or six finite positive arm-joint values"
+            )
+        position_error_caps = tuple(float(value) for value in values) + (step_caps[-1],)
     kp, kd = _gain_vectors(
         arm_gains=arm_gains,
         arm_gain_scale=arm_gain_scale,
@@ -1575,10 +1606,12 @@ def bimanual(
     joint_limits: Sequence[Sequence[float]] | None = None,
     rate_hz: float = DEFAULT_RATE_HZ,
     max_joint_speed_rad_s: float = DEFAULT_MAX_JOINT_SPEED_RAD_S,
-    max_joint_position_error_rad: float | None = None,
+    max_joint_position_error_rad: float
+    | Sequence[float]
+    | None = DEFAULT_MAX_JOINT_POSITION_ERROR_RAD,
     max_gripper_speed_per_s: float = DEFAULT_MAX_GRIPPER_SPEED_PER_S,
     gravity_comp_factor: Sequence[float] = DEFAULT_GRAVITY_COMP_FACTOR,
-    arm_gains: Mapping[str, Sequence[float]] | None = None,
+    arm_gains: Mapping[str, Sequence[float]] | None = DEFAULT_ARM_GAINS,
     arm_gain_scale: float = 1.0,
     gripper_gain_scale: float = 1.0,
     velocity_feedforward: bool = True,
@@ -1630,7 +1663,8 @@ def bimanual(
 
     ``max_joint_position_error_rad`` optionally sets the owner-authorized
     target-to-measurement bound for the six arm joints independently of
-    ``rate_hz``. Omission preserves the legacy speed/rate bound. Declared
+    ``rate_hz``. Pass one scalar or six values in joint order. Omission
+    preserves the legacy speed/rate bound. Declared
     reference speed, gripper bounds and vendor behavior remain unchanged;
     callers own interpolation and convergence. This is not a torque limit.
 
@@ -1647,6 +1681,8 @@ def bimanual(
     silent. Whatever is declared here is both what the envelope enforces and
     what the declaration carries to the plane.
     """
+    if arm_gains is DEFAULT_ARM_GAINS and arm_gain_scale != 1.0:
+        arm_gains = None
     limits = (
         None
         if gripper_limits is None
@@ -1737,10 +1773,12 @@ def arm(
     joint_limits: Sequence[Sequence[float]] | None = None,
     rate_hz: float = DEFAULT_RATE_HZ,
     max_joint_speed_rad_s: float = DEFAULT_MAX_JOINT_SPEED_RAD_S,
-    max_joint_position_error_rad: float | None = None,
+    max_joint_position_error_rad: float
+    | Sequence[float]
+    | None = DEFAULT_MAX_JOINT_POSITION_ERROR_RAD,
     max_gripper_speed_per_s: float = DEFAULT_MAX_GRIPPER_SPEED_PER_S,
     gravity_comp_factor: Sequence[float] = DEFAULT_GRAVITY_COMP_FACTOR,
-    arm_gains: Mapping[str, Sequence[float]] | None = None,
+    arm_gains: Mapping[str, Sequence[float]] | None = DEFAULT_ARM_GAINS,
     arm_gain_scale: float = 1.0,
     gripper_gain_scale: float = 1.0,
     velocity_feedforward: bool = True,
@@ -1763,6 +1801,8 @@ def arm(
     that this rig has one arm, so its site facts are arguments rather than an
     :class:`ArmSite`.
     """
+    if arm_gains is DEFAULT_ARM_GAINS and arm_gain_scale != 1.0:
+        arm_gains = None
     limits = (
         None
         if gripper_limits is None

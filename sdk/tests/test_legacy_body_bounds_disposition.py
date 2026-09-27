@@ -10,13 +10,11 @@ that replacement or an explicit hard-cut disposition.
 from __future__ import annotations
 
 import time
+from collections.abc import Callable, Sequence
 from importlib import resources
-from pathlib import Path
-from typing import Callable, Sequence
 
 import numpy as np
 import pytest
-
 from waddle_sdk.robots import base
 
 
@@ -24,6 +22,8 @@ class _Driver:
     kind = "sim"
 
     def __init__(self, current: Sequence[float] = (0.0, 0.0)) -> None:
+        # Tests of unchanged out-of-bounds targets set this explicitly: the
+        # default pose may itself be outside the conservative body envelope.
         self.current = np.asarray(current, dtype=float)
         self.writes: list[np.ndarray] = []
         self.holds = 0
@@ -75,8 +75,10 @@ def _tool_spheres(q: Sequence[float]) -> tuple[base.CollisionSphere, ...]:
 def _arm(
     *,
     driver: _Driver | None = None,
-    workspace: tuple[tuple[float, float, float], tuple[float, float, float]]
-    | None = ((0.0, -1.0, 0.0), (1.0, 1.0, 1.0)),
+    workspace: tuple[tuple[float, float, float], tuple[float, float, float]] | None = (
+        (0.0, -1.0, 0.0),
+        (1.0, 1.0, 1.0),
+    ),
     spheres: Callable[[Sequence[float]], Sequence[base.CollisionSphere]] | None = (
         _tool_spheres
     ),
@@ -117,7 +119,9 @@ def test_margin_inflates_radii() -> None:
             base.CollisionSphere("two", (0.21, 0.0, 0.0), 0.10),
         )
 
-    assert _arm(workspace=None, spheres=separated, self_collision=True).command((0.0, 0.0))
+    assert _arm(workspace=None, spheres=separated, self_collision=True).command(
+        (0.0, 0.0)
+    )
     widened = _arm(
         workspace=None,
         spheres=separated,
@@ -128,7 +132,10 @@ def test_margin_inflates_radii() -> None:
 
 
 def test_joints_reject_when_min_z_above_gripper() -> None:
-    arm = _arm(workspace=((0.0, -1.0, 0.48), (1.0, 1.0, 1.0)))
+    arm = _arm(
+        driver=_Driver(current=(0.5, 0.0)),
+        workspace=((0.0, -1.0, 0.48), (1.0, 1.0, 1.0)),
+    )
     assert not arm.command((0.5, 0.0))
 
 
@@ -141,13 +148,11 @@ def test_pose_reject_gripper_below_floor() -> None:
     def low(q: Sequence[float]) -> tuple[base.CollisionSphere, ...]:
         return (base.CollisionSphere("gripper", (float(q[0]), 0.0, 0.04), 0.05),)
 
-    assert not _arm(spheres=low).command((0.5, 0.0))
+    assert not _arm(driver=_Driver(current=(0.5, 0.0)), spheres=low).command((0.5, 0.0))
 
 
 def test_pose_accept_high_in_big_box() -> None:
-    assert _arm(workspace=((-2.0, -2.0, -2.0), (2.0, 2.0, 2.0))).command(
-        (0.5, 0.0)
-    )
+    assert _arm(workspace=((-2.0, -2.0, -2.0), (2.0, 2.0, 2.0))).command((0.5, 0.0))
 
 
 def test_gripper_sweep_covered_by_inflated_endpoints() -> None:
@@ -163,7 +168,7 @@ def test_gripper_sweep_covered_by_inflated_endpoints() -> None:
 
 
 def test_clamp_lifts_gripper_to_floor_minimally() -> None:
-    driver = _Driver()
+    driver = _Driver(current=(0.5, 0.0))
     arm = _arm(driver=driver, workspace=((0.0, -1.0, 0.48), (1.0, 1.0, 1.0)))
     assert not arm.command((0.5, 0.0))
     assert driver.writes == [] and driver.holds == 1
@@ -207,7 +212,9 @@ def test_base_frame_guard_rejects_non_root_base() -> None:
 
 
 def test_fixed_base_link_excluded() -> None:
-    names = {sphere.name for sphere in _arm(workspace=None).collision_snapshot((0.5, 0.0))}
+    names = {
+        sphere.name for sphere in _arm(workspace=None).collision_snapshot((0.5, 0.0))
+    }
     assert "arm/fixed_base" not in names
 
 
@@ -230,7 +237,10 @@ def test_spheres_conservatively_contain_geom_aabbs() -> None:
 
 
 def test_violations_list_and_ignore_faces() -> None:
-    arm = _arm(workspace=((0.0, -1.0, 0.48), (1.0, 1.0, 1.0)))
+    arm = _arm(
+        driver=_Driver(current=(0.5, 0.0)),
+        workspace=((0.0, -1.0, 0.48), (1.0, 1.0, 1.0)),
+    )
     assert "workspace_ignore_faces" not in arm.__dataclass_fields__
     assert not arm.command((0.5, 0.0))
 
@@ -326,4 +336,4 @@ def test_ee_only_and_body_wb_split_are_independent_knobs() -> None:
     fields = _arm().__dataclass_fields__
     assert "workspace_ee_only" not in fields
     assert "body_workspace" not in fields
-    assert not _arm().command((0.01, 0.0))
+    assert not _arm(driver=_Driver(current=(0.01, 0.0))).command((0.01, 0.0))

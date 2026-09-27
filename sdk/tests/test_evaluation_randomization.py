@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 from waddle_sdk.simulation import SimulationVariation
 from waddle_sdk.simulators.description import description
+from waddle_sdk.simulators.randomization import YAM_PICK_LIFT_POSE
 from waddle_sdk.simulators.scene import (
     DUAL_ARM_TASK_ENVIRONMENTS,
     ROBOTS,
@@ -81,8 +82,14 @@ def test_seeded_evaluation_reset_covers_complete_task_matrix(
         assert engine.evaluation_reset(seed=713)
         second_snapshot = engine.evaluation_snapshot()
         second = _body_poses(second_snapshot, names)
-        assert second != first
-        assert second_snapshot["variation"]["resolved_digest"] != first_variation_digest
+        pose_varies = any(
+            group.translation_xy_m > 0 or group.yaw_rad > 0
+            for group in engine._pose_groups
+        ) or (robot == "yam" and environment == "pick_lift")
+        assert (second != first) == pose_varies
+        assert (
+            second_snapshot["variation"]["resolved_digest"] != first_variation_digest
+        ) == pose_varies
 
         engine.data.qpos[0] += 0.001
         engine.mj.mj_forward(engine.model, engine.data)
@@ -115,7 +122,19 @@ def test_seeded_evaluation_reset_covers_complete_task_matrix(
             translation = positions[:, :2].mean(axis=0) - initial_positions[:, :2].mean(
                 axis=0
             )
-            assert np.all(np.abs(translation) <= group.translation_xy_m)
+            if (
+                robot == "yam"
+                and environment == "pick_lift"
+                and group.bodies == ("target_cube",)
+            ):
+                pose_profile = config.get("pose_profile") or YAM_PICK_LIFT_POSE
+                assert (
+                    abs(translation[0] - pose_profile["x_offset_m"])
+                    <= pose_profile["x_half_range_m"]
+                )
+                assert abs(translation[1]) <= pose_profile["y_half_range_m"]
+            else:
+                assert np.all(np.abs(translation) <= group.translation_xy_m)
             np.testing.assert_allclose(positions[:, 2], initial_positions[:, 2])
 
             yaws = []
@@ -128,7 +147,7 @@ def test_seeded_evaluation_reset_covers_complete_task_matrix(
                 )
                 np.testing.assert_allclose(delta[1:3], 0.0, atol=1e-12)
                 yaw = 2.0 * math.atan2(delta[3], delta[0])
-                assert abs(yaw) <= group.yaw_rad
+                assert abs(yaw) <= group.yaw_rad + 1e-12
                 yaws.append(yaw)
             np.testing.assert_allclose(yaws, yaws[0], atol=1e-12)
 

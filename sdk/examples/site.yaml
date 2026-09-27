@@ -22,7 +22,7 @@ frames: {}
 calibration:
   artifacts: calib/
 workspace_bounds:
-  min: [-0.7, -0.7, 0.0]
+  min: [-0.7, -0.7, -0.015]
   max: [0.7, 0.7, 1.0]
 envelope:
   static_keepouts: []
