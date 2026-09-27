@@ -62,7 +62,10 @@ separate `articulated_model_sources` export preserves native visuals, collision
 pieces, moving hand/linkages, tendons and actuators at the base origin without
 scene objects or cameras. It uses the same native assembly and carries portable
 assets, licenses and explicit hand-joint units; it does not assert calibrated
-hardware dynamics or an affine physical jaw mapping. Native source parity checks
+hardware dynamics or an affine physical jaw mapping. Optional `scalar_kinematics`
+provenance retains seventeen nominal width/native-joint witnesses, including the
+nonlinear G2 linkage; the pinned physical YAM source supplies its two-slide
+relationship. These samples do not establish live calibration or interpolation. Native source parity checks
 live in `sdk/tests/test_articulated_sources.py`. The
 hash-pinned manufacturer assemblies and native
 physics workers are reference implementations, not calibrated actuator or friction

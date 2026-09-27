@@ -641,6 +641,8 @@ objects, cameras or another arm are included. Asset paths are portable and model
 licenses are retained. Primary named bindings describe the arm; `hand_joints` in
 provenance declares native hand units and limits. A linkage can be nonlinear and
 does not become an affine jaw-width mapping merely because it is exported.
+Optional [scalar kinematic witnesses](../porting/source-models.md#optional-scalar-kinematic-witnesses)
+supply seventeen nominal jaw-width/native-joint samples for independent consumer checks.
 Compilation requires MuJoCo but opens no site, camera or device. Reference servo
 and contact parameters remain simulation assumptions, not hardware identification.
 

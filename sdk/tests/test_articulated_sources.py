@@ -46,7 +46,13 @@ def test_portable_articulated_assembly_matches_reference_robot(tmp_path, robot):
         exported.body(i).name not in {"table", "cube_a", "cube_b"}
         for i in range(exported.nbody)
     )
-    for position in (0.2, 0.8):
+    witnesses = bundle.provenance["scalar_kinematics"]["coordinates"][
+        profile(robot).names[-1]
+    ]
+    assert witnesses["unit"] == "m"
+    assert set(witnesses["joint_units"]) == set(native.hand_names)
+    for witness in witnesses["samples"]:
+        position = witness["position"] / profile(robot).opening
         states = []
         for model in (exported, full):
             data = mj.MjData(model)
@@ -55,7 +61,11 @@ def test_portable_articulated_assembly_matches_reference_robot(tmp_path, robot):
             ):
                 data.joint(name).qpos[0] = q
             for name in native.hand_names:
-                data.joint(name).qpos[0] = native.hand_position(position)
+                data.joint(name).qpos[0] = (
+                    witness["joints"][name]
+                    if model is exported
+                    else native.hand_position(position)
+                )
             mj.mj_forward(model, data)
             states.append(data)
         for link in links:

@@ -96,3 +96,40 @@ see [articulated and planning source exports](../python/simulation.md). It prese
 the reference moving hand and native actuator relationships without exporting a
 surrounding scene. Customer adapters continue to supply the same `ModelSources`
 contract through their own non-opening provider.
+
+## Optional scalar kinematic witnesses
+
+A source provider may add `scalar_kinematics` to its finite JSON provenance:
+
+```json
+{
+  "api": "waddle.sdk.scalar-kinematics/v1",
+  "coordinates": {
+    "gripper": {
+      "unit": "m",
+      "joint_units": {"left_slide": "m", "right_slide": "m"},
+      "samples": [
+        {"position": 0.0, "joints": {"left_slide": 0.0, "right_slide": 0.0}},
+        {"position": 0.08, "joints": {"left_slide": 0.04, "right_slide": 0.04}}
+      ]
+    }
+  }
+}
+```
+
+Coordinate names identify the part's measured scalar coordinates. Each sample
+maps a coordinate value to the nominal native model positions of all its declared
+joints. Units are explicitly `m` or `rad`; values are finite and samples strictly
+increase in the source coordinate. Each coordinate declares 2–64 samples and
+1–16 uniquely assigned native joints; the document allows 1–16 coordinates.
+Consumers validate this optional schema when using it; `ModelSources` preserves
+it as immutable provenance, and does not evaluate a conversion function.
+
+The reference articulated exports supply seventeen jaw-width samples spanning
+closed to open, including the nonlinear xArm G2 hand. The verified physical YAM
+source supplies the pinned linear hand's nominal two-slide relationship.
+These are source-model witnesses, not live measurements, interpolation rules or
+physical calibration. Consumers may compare their mappings at the supplied
+points, retaining unchecked status when evidence or native correspondence is
+missing. Customer providers can supply the same optional declaration without a
+central embodiment registry.

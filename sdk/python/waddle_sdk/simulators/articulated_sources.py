@@ -89,6 +89,28 @@ def articulated_model_sources(robot: str, *, part_name: str) -> ModelSources:
                 url: sha for url, sha in manifest["sources"].items() if token in url
             },
             "geometry_scope": "Articulated reference robot at its base origin; no scene, props, cameras or other arm.",
+            "scalar_kinematics": {
+                "api": "waddle.sdk.scalar-kinematics/v1",
+                "coordinates": {
+                    p.names[-1]: {
+                        "unit": "m",
+                        "joint_units": {
+                            name: "m" if hand[name].kind == "prismatic" else "rad"
+                            for name in native.hand_names
+                        },
+                        "samples": [
+                            {
+                                "position": p.opening * index / 16,
+                                "joints": {
+                                    name: native.hand_position(index / 16)
+                                    for name in native.hand_names
+                                },
+                            }
+                            for index in range(17)
+                        ],
+                    }
+                },
+            },
             "hand_joints": {
                 name: {
                     "unit": "m" if hand[name].kind == "prismatic" else "rad",

@@ -13,6 +13,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Retain optional nominal scalar kinematic witnesses in articulated reference and
+  pinned YAM model-source provenance. Explicit units and seventeen jaw-width
+  samples support independent mapping checks without opening hardware or claiming
+  physical calibration.
+
 - Export portable articulated SO-101, YAM and xArm7 reference model sources with
   the full moving hand, visual/collision geometry, inertias, couplings and native
   actuators. Retain licenses and source provenance while excluding surrounding
