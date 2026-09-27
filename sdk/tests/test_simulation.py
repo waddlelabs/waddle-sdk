@@ -122,6 +122,7 @@ def test_all_reference_declarations_validate_without_opening(
         "candy-bin-transfer": "1.2.0",
         "pick_lift": "1.1.0",
         "load-clear-test-tubes": "1.1.0",
+        "use-hook": "1.1.0",
         "uncap-return-test-tube": "1.1.0",
         "chocolate-packing": "1.0.3",
         "shampoo-packing": "1.0.5",

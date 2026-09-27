@@ -930,6 +930,10 @@ def objects(environment: str, *, robot: str | None = None) -> list[list[Link]]:
                 ),
             ],
         )
+        # A finite finger-pad patch resists twisting of the offset hook load.
+        # Keep sliding friction and all non-finger contacts unchanged.
+        for shape in hook.shapes:
+            shape.finger_contact_patch_m = 0.003
         target = Link(
             "target_object",
             xyz=(0.44, 0.04, 0.015),
@@ -1756,8 +1760,12 @@ def mjcf(p: Profile, config: dict) -> str:
         solver="Newton",
         tolerance="1e-10",
     )
-    if config["environment"] in {"load-clear-test-tubes", "uncap-return-test-tube"}:
-        # Narrow tubes can creep off the pads under the regularized friction
+    if config["environment"] in {
+        "load-clear-test-tubes",
+        "uncap-return-test-tube",
+        "use-hook",
+    }:
+        # Slender objects can creep off the pads under the regularized friction
         # model despite ample normal force. Suppress that drift within the
         # existing friction cone; this neither attaches objects nor raises mu.
         option.set("noslip_iterations", "10")

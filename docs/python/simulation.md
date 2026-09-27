@@ -68,6 +68,11 @@ MuJoCo also provides thirty-two interactive development task environments:
 - `ring-on-peg`: a free compound ring and a fixed vertical peg with physical
   clearance between them.
 - `use-hook`: a free compound hook, a movable target, and a marked goal region.
+  Scene 1.1.0 gives hook/finger contacts a 3 mm effective torsional patch and
+  enables ten friction post-solver iterations to resist twisting and numerical
+  creep. Geometry, mass, sliding friction and motor limits are unchanged. Native
+  SO-101/YAM/xArm7 checks cover flat-table pickup, two twenty-second holds,
+  transport, gravity release and missed grasps.
 - `open-hinged-door`: a passive lever and sliding bolt on a hinged door. The
   extended bolt physically contacts a fixed strike; holding the lever retracts
   it so the door can open.

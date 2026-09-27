@@ -79,6 +79,12 @@ unchanged. `test_simulation_tube_grasp.py` covers original lying-tube pickups,
 continuous bilateral transport, long holds, gravity release, and missed grasps on
 all three families; dropped-tube setup in the uncapping scene is explicit. These
 are native actuator witnesses, not motion-planner or physical acceptance.
+The use-hook scene uses revision 1.1.0: hook/finger contacts declare a 3 mm
+effective torsional patch and the scene enables ten friction post-solver
+iterations. This resists twisting and soft-contact creep without changing
+geometry, mass, sliding friction or force limits. Its native regression covers
+flat-table pickup, sustained bilateral transport, two twenty-second holds,
+gravity release and missed grasps across all three families.
 Native initial-state acceptance must reject robot/table, robot/prop, and dual-arm
 inter-robot penetration across the complete task/family matrix. Reference MuJoCo
 also refuses an evaluator reset when its resolved compiled contacts contain one of
