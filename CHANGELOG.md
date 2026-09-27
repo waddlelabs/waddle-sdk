@@ -18,6 +18,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Keep legacy workspace rejection tests valid with checked inward recovery by
+  measuring from a pose that makes no progress toward the workspace.
+- Align native simulation test witnesses with the fixed shampoo pile and YAM's
+  near-base pick-lift distribution; use an unoccluded tabletop pixel for the
+  shampoo xArm depth check.
+
 - Permit checked, progressive inward commands from measured poses outside a
   workspace box, while retaining joint, step, collision, and stop limits.
 
