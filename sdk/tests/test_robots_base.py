@@ -392,6 +392,36 @@ def test_explicit_position_error_does_not_relax_joint_or_workspace_limits():
     assert not arm.driver.writes
 
 
+def test_outside_workspace_accepts_only_progressive_inward_commands():
+    driver = _CountingDriver(home=(-0.06, 0.0, 1.0))
+    arm = _arm(
+        driver,
+        fk=_flat_fk,
+        workspace=((-0.02, -1.0, -1.0), (0.02, 1.0, 1.0)),
+    )
+    assert arm.check(np.array([-0.04, 0.0, 1.0]), driver.read()[0]) is None
+    assert arm.check(np.array([-0.01, 0.0, 1.0]), driver.read()[0]) is None
+    assert "outside the declared workspace" in arm.check(
+        np.array([-0.07, 0.0, 1.0]), driver.read()[0]
+    )
+    assert "outside the declared workspace" in arm.check(
+        np.array([-0.06, 0.01, 1.0]), driver.read()[0]
+    )
+
+
+def test_inward_workspace_recovery_never_relaxes_other_envelopes():
+    driver = _CountingDriver(home=(-0.06, 0.0, 1.0))
+    arm = _arm(
+        driver,
+        fk=_flat_fk,
+        workspace=((-0.02, -1.0, -1.0), (0.02, 1.0, 1.0)),
+        step_caps=(0.01, 0.10, 0.25),
+    )
+    assert "cap 0.0100" in arm.check(
+        np.array([-0.04, 0.0, 1.0]), driver.read()[0]
+    )
+
+
 @pytest.mark.parametrize(
     "caps",
     [(0.2,), (0.2, 0.2, 0.0), (0.2, -1.0, 0.2), (True, 0.2, 0.2),

@@ -36,6 +36,10 @@ An optional `write_position_velocity(target, velocity_feedforward_rad_s) -> bool
 Every command crosses `Arm`. Supply exact joint limits and `step_caps`, the legacy target-to-measurement allowance. An optional `position_error_caps` vector replaces that allowance independently of cadence; neither is physical velocity or torque enforcement. The default seam checks declared width, finite values, limits, the applicable allowance, optional workspace bounds, and configured geometry rules; it rejects whole and never clamps. Reference timing and convergence belong to the caller.
 
 Workspace bounds require FK. Static keep-outs and self/cross-part collision require deterministic conservative `CollisionSphere` values and compatible frames. Omit unsupported optional geometry rather than fabricating it. If a configured envelope rule depends on absent geometry, opening must fail closed.
+When feedback is already outside a workspace box, the owner may submit checked
+intermediate commands that reduce its TCP/body violation without worsening any
+other side. This does not relax the other envelope rules; see
+[site topology and envelope](../../../../../../docs/python/site.md#topology-and-envelope).
 
 `posture="monitor"` registers observation and the owner stop without a send path. `posture="supervised"` registers send, hold, and e-stop. Posture is not authority.
 

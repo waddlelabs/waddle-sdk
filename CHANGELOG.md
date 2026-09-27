@@ -13,6 +13,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Permit checked, progressive inward commands from measured poses outside a
+  workspace box, while retaining joint, step, collision, and stop limits.
+
 - Keep small chocolate cylinders held during lift/carry on MuJoCo 3.13.0 by
   selecting iterative multicontact with a 1 micrometre contact margin in scene
   revision 1.0.2. Preserve geometry, material friction, mass, and robot force.
