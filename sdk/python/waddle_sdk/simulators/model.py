@@ -1762,7 +1762,7 @@ def mjcf(p: Profile, config: dict, *, robot_only: bool = False) -> str:
         solver="Newton",
         tolerance="1e-10",
     )
-    if config["environment"] in {
+    if not robot_only and config["environment"] in {
         "load-clear-test-tubes",
         "uncap-return-test-tube",
         "use-hook",

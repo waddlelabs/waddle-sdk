@@ -28,6 +28,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Keep robot-only articulated exports independent of environment-specific solver
+  settings, restoring SO-101 and xArm7 source compilation without a scene config.
+
 - Render native MuJoCo metric depth at pixel centres independently of RGB
   multisampling in both modular and reference camera paths. Keep configured RGB
   appearance, source visual settings, paired state/timing and depth units; retain
