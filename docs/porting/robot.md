@@ -124,10 +124,14 @@ These are local runtime metadata; they add no protocol field or separate writer.
 
 YAM `arm()` and `bimanual()` accept `max_joint_position_error_rad`, also available
 under `parts.<part>.options` in `site.yaml`. It applies the explicit bound to the
-six arm joints and retains the existing gripper bound. Invalid values fail during
-factory construction, before CAN or vendor drivers open. Omission continues to
-use `max_joint_speed_rad_s / rate_hz` for arm rows. Declared velocity, simulator
-speed, vendor gains and command bytes remain unchanged.
+six arm joints and retains the existing gripper bound. Pass one positive scalar
+for all six joints, or six positive values in declared joint order for separate
+allowances. For example, `[0.04, 0.2, 0.04, 0.04, 0.04, 0.04]` permits a larger
+joint 2 position-reference lead without changing the other five joints. Invalid
+values fail during factory construction, before CAN or vendor drivers open.
+The YAM factories now default to that six-value vector at 25 Hz; explicitly
+passing `None` retains the legacy `max_joint_speed_rad_s / rate_hz` arm bound.
+Declared velocity and simulator speed are separate from this allowance.
 
 Select this allowance as part of the site's reviewed envelope. It is not a
 velocity, acceleration, force or torque limit: a larger error can request more
@@ -190,7 +194,18 @@ contains six finite positive numbers. In `site.yaml`, place this mapping under
 `parts.<part>.options`. Values are copied at declaration, so mutating the input
 later does not change what opens. Explicit arm gains cannot be combined with
 `arm_gain_scale != 1`. The independent `gripper_gain_scale` still affects only the
-hand; omitted options retain the vendor defaults.
+hand. The YAM factories default to arm KP `[80, 150, 180, 10, 10, 10]` and KD
+`[5, 5, 5, 1.5, 1.5, 1.5]`, preserving the vendor hand gains. An explicit
+`arm_gains=None` selects vendor gains. The low-level `LiveDriver` still defaults
+to vendor gains when used directly. An explicit `arm_gain_scale` without explicit
+arm gains retains its vendor-relative behavior.
+
+The factories also default their owner joint envelope to the published YAM
+joint range plus 0.010 rad on each side of the six arm joints; the gripper
+range stays 0–1. The exact vendor model facts remain in `JOINT_LIMITS`.
+Pass explicit `joint_limits=JOINT_LIMITS` to keep those tighter values. The
+factory reports each widened row when constructing a rig. Site authors still
+need to review mechanical stops and their planner model before moving hardware.
 
 The pinned DM4340/DM4310 MIT encoding supports KP up to 500 and KD up to 5.
 Validate both explicit gains and effective scaled gains before CAN startup, and

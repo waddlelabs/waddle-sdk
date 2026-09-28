@@ -32,12 +32,46 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   multisampling in both modular and reference camera paths. Keep configured RGB
   appearance, source visual settings, paired state/timing and depth units; retain
   original native errors and close both cached contexts.
+- Allow YAM sites to declare six separate target-to-measurement position-error
+  bounds while retaining the scalar form, gripper bound, speed and gains.
+
+- Native test-tube pickup and continuous carry/release regression across SO-101,
+  YAM and xArm7, including all four lying-tube positions and missed-grasp controls.
+
+### Fixed
+
+- Keep legacy workspace rejection tests valid with checked inward recovery by
+  measuring from a pose that makes no progress toward the workspace.
+- Align native simulation test witnesses with the fixed shampoo pile and YAM's
+  near-base pick-lift distribution; use an unoccluded tabletop pixel for the
+  shampoo xArm depth check.
+
+- Permit checked, progressive inward commands from measured poses outside a
+  workspace box, while retaining joint, step, collision, and stop limits.
+
+- Stabilize flat-hook pickup and retention in scene 1.1.0 with an explicit
+  3 mm finger torsional patch, 1 micrometre contact margin and ten friction
+  post-solver iterations. Preserve
+  geometry, mass, sliding friction and motor limits; verify sustained native
+  grasps and release on SO-101, YAM and xArm7.
+
+- Stabilize test-tube pickup and retention in both tube scenes, revision 1.1.0,
+  using a 1 micrometre cylinder margin and ten friction post-solver iterations.
+  Preserve material friction, geometry, mass, and motor limits.
 
 - Keep small chocolate cylinders held during lift/carry on MuJoCo 3.13.0 by
   selecting iterative multicontact with a 1 micrometre contact margin in scene
   revision 1.0.2. Preserve geometry, material friction, mass, and robot force.
 
 ### Changed
+
+- Make the attended YAM control profile the factory default: 25 Hz, arm KP
+  `[80, 150, 180, 10, 10, 10]`, KD `[5, 5, 5, 1.5, 1.5, 1.5]`, J2 0.2 rad
+  and other-joint 0.04 rad position-error allowances, and a 0.010 rad arm
+  joint-limit margin. Keep vendor/model facts and explicit site overrides distinct.
+
+- Lower the YAM tabletop initializer preset's base-frame floor to -0.015 m,
+  retaining its other bounds and the requirement to review each physical site.
 
 - Increase explicit shampoo bottle/finger friction by 2× in scene 1.0.5,
   retaining pocket friction, geometry, pile poses, contact stiffness and forces.

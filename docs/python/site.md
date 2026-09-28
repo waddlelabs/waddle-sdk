@@ -67,6 +67,13 @@ through the ordinary runtime. See [simulation backends](../porting/simulation.md
 the scene or one declared part; they do not imply a transform. A configured workspace
 requires forward kinematics. Static keep-outs or self/cross-part collision rules
 require conservative geometry in compatible frames and fail closed when it is missing.
+If measured feedback is already outside a workspace box, the SDK admits an
+intermediate command that reduces at least one TCP or robot-body violation without
+worsening or introducing any other violation. The command still crosses joint,
+per-command step, static collision, self-collision, and stop checks. A command from
+inside the box to outside remains refused. Returning from outside is not a bypass
+for a missing geometry source or an automatic recovery motion; the owner must
+plan and submit each checked step.
 
 The complete JSON Schema ships at `waddle_sdk/schemas/site-v1.schema.json` in the
 installed distribution.
@@ -81,7 +88,7 @@ in [Simulation backends](../porting/simulation.md).
 
 A mounted arm may need room on both sides of its base. The optional
 `waddle_sdk.robots.safety_presets_for_driver` contract exposes the YAM tabletop
-starting bounds as `min: [-0.7, -0.7, 0.0]` and `max: [0.7, 0.7, 1.0]`, in metres
+starting bounds as `min: [-0.7, -0.7, -0.015]` and `max: [0.7, 0.7, 1.0]`, in metres
 in each arm's declared base frame. The preset has no static keepouts or
 self-collision configuration. The site operator must review mounting, table,
 tool, and neighboring-arm clearance before copying these values into a new site.

@@ -68,6 +68,11 @@ MuJoCo also provides thirty-two interactive development task environments:
 - `ring-on-peg`: a free compound ring and a fixed vertical peg with physical
   clearance between them.
 - `use-hook`: a free compound hook, a movable target, and a marked goal region.
+  Scene 1.1.0 gives hook/finger contacts a 3 mm effective torsional patch and
+  enables ten friction post-solver iterations to resist twisting and numerical
+  creep. A 1 micrometre hook margin stabilizes box/mesh contact generation. Geometry, mass, sliding friction and motor limits are unchanged. Native
+  SO-101/YAM/xArm7 checks cover flat-table pickup, two twenty-second holds,
+  transport, gravity release and missed grasps.
 - `open-hinged-door`: a passive lever and sliding bolt on a hinged door. The
   extended bolt physically contacts a fixed strike; holding the lever retracts
   it so the door can open.
@@ -84,7 +89,12 @@ MuJoCo also provides thirty-two interactive development task environments:
   the reversed roll through ordinary native contact.
 - `load-clear-test-tubes`: four translucent free tubes and a blue rack with two
   named rows of physical slot collars. The elevated scene camera exposes the row
-  order.
+  order. Scene 1.1.0 uses a 1 micrometre tube contact margin and ten
+  friction post-solver iterations to stabilize cylinder contacts and suppress
+  soft-contact creep during grasping; dimensions, friction and motor limits are
+  unchanged. Native tests pick each lying tube with SO-101, YAM and xArm7,
+  retain bilateral contact through extended holds and transport, and release it
+  under gravity. These actuator witnesses do not qualify motion planners.
 - `candy-bin-transfer`: eighteen same-color 24 mm candy cubes scattered and piled
   irregularly in a shallow tray beside a wide blue destination bin. Each candy cube is
   an independent rigid
@@ -153,6 +163,9 @@ MuJoCo also provides thirty-two interactive development task environments:
   transport goal.
 - `uncap-return-test-tube`: a translucent tube in a named rack slot, a separate
   cap, and a cap goal. Preloaded passive pads create finite cap-removal resistance.
+  Scene 1.1.0 uses the same tube contact margin and friction post-solver as
+  `load-clear-test-tubes`. Dropped-tube pickup tests initialize the uncapped tube
+  on the table before motion; ordinary reset still starts it upright in the rack.
 - `retrieve-bottle-clutter`: a target and three distractor bottles in a physical
   bin plus a table goal region.
 

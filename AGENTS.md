@@ -81,6 +81,19 @@ mechanics without adding task routes or success logic to the simulator. Native
 small-object acceptance must establish retained bilateral finger contact and
 measured object lift, not infer a grasp from commanded or measured gripper
 closure alone.
+The two test-tube scenes use revision 1.1.0: a 1 micrometre tube margin selects
+iterative cylinder multicontact and ten friction post-solver iterations suppress
+soft-contact creep. Keep material coefficients, object geometry, and force limits
+unchanged. `test_simulation_tube_grasp.py` covers original lying-tube pickups,
+continuous bilateral transport, long holds, gravity release, and missed grasps on
+all three families; dropped-tube setup in the uncapping scene is explicit. These
+are native actuator witnesses, not motion-planner or physical acceptance.
+The use-hook scene uses revision 1.1.0: hook/finger contacts declare a 3 mm
+effective torsional patch and the scene enables ten friction post-solver
+iterations. A 1 micrometre hook margin stabilizes box/mesh contact generation. This resists twisting and soft-contact creep without changing
+geometry, mass, sliding friction or force limits. Its native regression covers
+flat-table pickup, sustained bilateral transport, two twenty-second holds,
+gravity release and missed grasps across all three families.
 Native initial-state acceptance must reject robot/table, robot/prop, and dual-arm
 inter-robot penetration across the complete task/family matrix. Reference MuJoCo
 also refuses an evaluator reset when its resolved compiled contacts contain one of
@@ -554,7 +567,7 @@ waddle-sdk/
                              #   without mutation. SDK callers remain opt-in;
                              #   configuration frontends may choose the default.
                              #   It also publishes a non-opening tabletop preset
-                             #   spanning [-0.7, -0.7, 0.0] to [0.7, 0.7, 1.0] m;
+                             #   spanning [-0.7, -0.7, -0.015] to [0.7, 0.7, 1.0] m;
                              #   mounting/table/tool clearance still requires
                              #   explicit site review.
         socketcan.py         # reusable bounded Linux link helper for custom
@@ -1005,7 +1018,9 @@ and writes, refusing stopped/stale feedback rather than accepting cached positio
 YAM `arm_gains` optionally supplies six KP/KD values independently, excluding
 nondefault `arm_gain_scale`. Explicit and scaled gains must fit the pinned MIT
 encoding (positive KP <= 500, KD <= 5) before CAN startup; reject silent clipping.
-Defaults and hand gains remain unchanged. Recovery restores the requested vectors;
+The YAM factory default now uses arm KP `[80,150,180,10,10,10]` and KD
+`[5,5,5,1.5,1.5,1.5]`; the low-level `LiveDriver` default and hand gains remain
+vendor values. Recovery restores the requested vectors;
 monitor and simulation modes validate but do not apply PD gains. Live evidence
 distinguishes requested gains from predicted 12-bit encoded gains, never claiming
 hardware gain readback. See [gain configuration](docs/porting/robot.md#yam-gain-configuration).
@@ -1017,7 +1032,9 @@ never wait for an in-envelope pose or infer physical settling from readiness.
 `Arm.position_error_caps` optionally replaces the legacy `step_caps` target-to-
 measurement allowance; omission preserves existing admission. Both are position
 error bounds, not physical velocity or torque enforcement. YAM's optional
-`max_joint_position_error_rad` applies only to six arm joints, retaining gripper
+`max_joint_position_error_rad` accepts one scalar or six ordered values and applies
+only to six arm joints; the factory defaults to `[0.04,0.2,0.04,0.04,0.04,0.04]`
+at 25 Hz with a 0.010 rad arm owner-limit margin, retaining gripper
 limits, declared reference speeds and simulated speed. It validates before opening.
 Open runtime descriptions expose ordered `command_limits[part].max_position_error`
 and the `limits.position_error` support fact; exact refusal context retains the

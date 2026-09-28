@@ -581,6 +581,18 @@ def _sphere_hits_keepout(
     return float(np.linalg.norm(center - nearest)) <= sphere.radius_m + margin
 
 
+def _workspace_excess(
+    center: Sequence[float], radius: float, lower: np.ndarray, upper: np.ndarray
+) -> np.ndarray:
+    """Per-side metres outside a box for a TCP or conservative body sphere."""
+    point = np.asarray(center, dtype=float)
+    if point.shape != (3,) or not np.all(np.isfinite(point)):
+        raise ValueError("workspace geometry must have finite XYZ coordinates")
+    return np.concatenate(
+        (np.maximum(lower - (point - radius), 0), np.maximum(point + radius - upper, 0))
+    )
+
+
 @dataclass(kw_only=True)
 class Arm:
     """One declared part: its driver, and the envelope every command crosses.
@@ -605,8 +617,11 @@ class Arm:
     ``workspace``
         ``((min_x, min_y, min_z), (max_x, max_y, max_z))`` in metres, applied
         to the forward kinematics of a command and every adapter-supplied
-        conservative collision sphere before it is accepted. Optional — and it
-        requires ``fk``, since a box is at minimum a statement about a TCP.
+        conservative collision sphere before it is accepted. When feedback is
+        already outside, an intermediate command may stay outside only if no
+        TCP/body violation worsens and at least one strictly improves. Joint,
+        step and collision checks still apply. Optional — and it requires
+        ``fk``, since a box is at minimum a statement about a TCP.
     ``fk``
         ``q -> (position, rotation)`` for the first ``arm_dof`` rows, in this
         part's own base frame. OPT-IN: an arm built without it is legal and
@@ -944,30 +959,73 @@ class Arm:
         if self.workspace is not None and self.fk is not None:
             tcp, _ = self.fk(target[: self.arm_dof])
             lo_box, hi_box = (np.asarray(v, dtype=float) for v in self.workspace)
-            if not (np.all(tcp >= lo_box) and np.all(tcp <= hi_box)):
-                return (
+            try:
+                target_tcp_excess = _workspace_excess(tcp, 0.0, lo_box, hi_box)
+            except ValueError:
+                return "target TCP geometry unavailable for workspace check"
+            outside_reason = None
+            if np.any(target_tcp_excess > 0):
+                outside_reason = (
                     f"tcp {list(np.round(tcp, 4))} outside the declared workspace box "
                     f"{list(np.round(lo_box, 3))}..{list(np.round(hi_box, 3))}"
                 )
+            target_bodies = ()
             if self.collision_spheres is not None:
                 try:
-                    bodies = self.collision_snapshot(target)
+                    target_bodies = self.collision_snapshot(target)
                 except Exception as error:  # noqa: BLE001 -- fail closed
                     return (
                         "collision geometry unavailable for workspace check "
                         f"({type(error).__name__})"
                     )
-                if not bodies:
+                if not target_bodies:
                     return "collision geometry provider returned no robot bodies"
-                for body in bodies:
-                    center = np.asarray(body.center_m, dtype=float)
-                    lower_overshoot = lo_box - (center - body.radius_m)
-                    upper_overshoot = (center + body.radius_m) - hi_box
-                    if np.any(lower_overshoot > 0.0) or np.any(upper_overshoot > 0.0):
-                        return (
-                            f"body {body.name!r} outside the declared workspace box "
-                            f"{list(np.round(lo_box, 3))}..{list(np.round(hi_box, 3))}"
-                        )
+            target_excess = {"tcp": target_tcp_excess}
+            for body in target_bodies:
+                target_excess[body.name] = _workspace_excess(
+                    body.center_m, body.radius_m, lo_box, hi_box
+                )
+                if outside_reason is None and np.any(target_excess[body.name] > 0):
+                    outside_reason = (
+                        f"body {body.name!r} outside the declared workspace box "
+                        f"{list(np.round(lo_box, 3))}..{list(np.round(hi_box, 3))}"
+                    )
+            if outside_reason is not None:
+                try:
+                    current_tcp, _ = self.fk(measured[: self.arm_dof])
+                    current_excess = {
+                        "tcp": _workspace_excess(current_tcp, 0.0, lo_box, hi_box)
+                    }
+                    if target_bodies:
+                        current_bodies = {
+                            body.name: body
+                            for body in self.collision_snapshot(measured)
+                        }
+                        if set(current_bodies) != {body.name for body in target_bodies}:
+                            return "collision bodies changed during workspace recovery"
+                        for body in target_bodies:
+                            earlier = current_bodies[body.name]
+                            if earlier.radius_m != body.radius_m:
+                                return "collision body radius changed during workspace recovery"
+                            current_excess[body.name] = _workspace_excess(
+                                earlier.center_m, earlier.radius_m, lo_box, hi_box
+                            )
+                except Exception as error:  # noqa: BLE001 -- fail closed
+                    return (
+                        "current geometry unavailable for workspace recovery "
+                        f"({type(error).__name__})"
+                    )
+                # Never introduce or increase a violation. A still-outside
+                # reference must make measurable progress toward the box.
+                tolerance_m = 1e-9
+                if any(
+                    np.any(target_excess[name] > previous + tolerance_m)
+                    for name, previous in current_excess.items()
+                ) or not any(
+                    np.any(target_excess[name] < previous - tolerance_m)
+                    for name, previous in current_excess.items()
+                ):
+                    return outside_reason
         collision_reason = self._static_collision_reason(target)
         if collision_reason is not None:
             return collision_reason
