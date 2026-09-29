@@ -20,6 +20,12 @@ After open, the SDK derives `waddle.sdk.support/v1` from actual registered verbs
 
 ## Extension seams
 
+Optional robot model sources are non-opening immutable bundles under
+`waddle_sdk.robots.models`. For reference simulators,
+`waddle_sdk.simulators.articulated_model_sources` preserves moving hand geometry,
+linkages and native actuators; `reference_model_sources` deliberately freezes the
+hand for planning. Retain each bundle's licenses and stated physical limitations.
+
 A manifest robot factory accepts `PartConfig`, returns a declaration-only `Rig`, and defers bus/thread creation to `Rig.build_arms`. A manifest-loaded part factory returns one bare `Arm`; site composition assigns its manifest part name. A camera factory accepts `CameraConfig` and is called only during site open. A shared simulator may instead declare a `WorldConfig` factory returning `SimulationBackend`; the SDK opens that world once after authorization, advances it once per composite tick, and adapts its optional part and camera facets into the same runtime contracts.
 
 Use structural protocols rather than inheritance. Keep vendor imports lazy. Connection credentials stay in manifest secret references and are resolved only for opening. Package facts with provenance and test them against the pinned vendor artifact where possible.
@@ -44,3 +50,12 @@ remain mandatory. See `docs/python/site.md` for completion and failure semantics
 SDK-owned receipts include local monotonic bounds for the dispatch call after it
 acquires the shared dispatch boundary; applications may use the start bound for
 cadence without counting unrelated lock wait as driver execution.
+
+## Imported simulation worlds
+
+Reference MuJoCo configuration can select an explicit `native_scene` with
+portable asset digests, robot prefixes, camera bindings and an initial keyframe.
+Use the ordinary SDK world/part/camera lifecycle; keep trusted reset and ground
+truth outside participant observations. The SDK simulation guide documents the
+configuration and compiled camera/kinematic checks. Imported assets do not
+establish physical calibration or contact fidelity.

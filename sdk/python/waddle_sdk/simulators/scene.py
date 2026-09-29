@@ -615,16 +615,25 @@ def load_scene(root: Path, relative: Any) -> tuple[Path, dict]:
         "asset_revision",
         "embodiment_revision",
         "pose_profile",
+        "native_scene",
     }
     if value.keys() - allowed:
         raise ValueError(
             f"unknown simulation settings: {sorted(value.keys() - allowed)}"
         )
-    if (
-        value.get("backend") not in BACKENDS
-        or value.get("environment") not in ENVIRONMENTS
+    native = "native_scene" in value
+    if value.get("backend") not in BACKENDS or (
+        not native and value.get("environment") not in ENVIRONMENTS
     ):
         raise ValueError("unknown simulation backend or environment")
+    if native and (
+        value.get("backend") != "mujoco"
+        or not isinstance(value.get("environment"), str)
+        or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.-]{0,95}", value["environment"])
+    ):
+        raise ValueError(
+            "native scene selection requires MuJoCo and a portable environment name"
+        )
     for key in ("scene_revision", "asset_revision", "embodiment_revision"):
         revision = value.get(key)
         if key in value and (
@@ -763,6 +772,11 @@ def load_scene(root: Path, relative: Any) -> tuple[Path, dict]:
         for key in ("fx", "fy") + (("depth_scale_mm",) if options["depth"] else ()):
             if not math.isfinite(intr[key]) or intr[key] <= 0:
                 raise ValueError(f"camera {name} needs positive {key}")
+    if native:
+        from .native_scene import resolve
+
+        resolve(root, value)
+        value["_native_root"] = str(root.resolve())
     return resolved, value
 
 

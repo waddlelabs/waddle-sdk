@@ -1711,7 +1711,7 @@ def _robot_instance(links: list[Link], prefix: str, placement: dict) -> list[Lin
     return result
 
 
-def mjcf(p: Profile, config: dict) -> str:
+def mjcf(p: Profile, config: dict, *, robot_only: bool = False) -> str:
     from .description import description
 
     robot = description(p.name)
@@ -1719,7 +1719,7 @@ def mjcf(p: Profile, config: dict) -> str:
 
     # MuJoCo's maintained URDF importer owns geometry and full inertias. Keep
     # fixed frames for the same camera/TCP names used by the other backends.
-    props = objects(config["environment"], robot=config["robot"])
+    props = [] if robot_only else objects(config["environment"], robot=config["robot"])
     prefixes = {
         part: "" if len(config["parts"]) == 1 else f"{part}__"
         for part in config["parts"]
@@ -1762,7 +1762,7 @@ def mjcf(p: Profile, config: dict) -> str:
         solver="Newton",
         tolerance="1e-10",
     )
-    if config["environment"] in {
+    if not robot_only and config["environment"] in {
         "load-clear-test-tubes",
         "uncap-return-test-tube",
         "use-hook",
@@ -1783,8 +1783,14 @@ def mjcf(p: Profile, config: dict) -> str:
     ET.SubElement(
         visual,
         "global",
-        offwidth=str(max(c["stream"]["width"] for c in config["cameras"].values())),
-        offheight=str(max(c["stream"]["height"] for c in config["cameras"].values())),
+        offwidth=str(
+            max((c["stream"]["width"] for c in config["cameras"].values()), default=640)
+        ),
+        offheight=str(
+            max(
+                (c["stream"]["height"] for c in config["cameras"].values()), default=480
+            )
+        ),
     )
     world = root.find("worldbody")
     ET.SubElement(
@@ -1822,23 +1828,24 @@ def mjcf(p: Profile, config: dict) -> str:
         width="256",
         height="1536",
     )
-    ET.SubElement(
-        asset,
-        "texture",
-        name="table_wood",
-        type="2d",
-        file=props[0][0].shapes[0].texture,
-    )
-    ET.SubElement(
-        asset,
-        "material",
-        name="table_finish",
-        texture="table_wood",
-        texrepeat="1 1",
-        texuniform="true",
-        specular=".25",
-        shininess=".2",
-    )
+    if props:
+        ET.SubElement(
+            asset,
+            "texture",
+            name="table_wood",
+            type="2d",
+            file=props[0][0].shapes[0].texture,
+        )
+        ET.SubElement(
+            asset,
+            "material",
+            name="table_finish",
+            texture="table_wood",
+            texrepeat="1 1",
+            texuniform="true",
+            specular=".25",
+            shininess=".2",
+        )
     for material in asset.findall("material"):
         if material.get("name") != "table_finish":
             material.set("specular", ".45")
@@ -1904,7 +1911,7 @@ def mjcf(p: Profile, config: dict) -> str:
                     geom.set("solimp", "0.95 0.99 0.001")
                     geom.set("priority", "1")
                     finger_geometries.append((f"{prefixes[part]}{name}", geom))
-    for geom in bodies["table"].findall("geom"):
+    for geom in bodies["table"].findall("geom") if props else ():
         if geom.get("group") == "2":
             geom.set("material", "table_finish")
             geom.set("rgba", "1 1 1 1")
@@ -2100,7 +2107,7 @@ def mjcf(p: Profile, config: dict) -> str:
                 )
             ),
         )
-    if config["environment"] == "bottle_cap":
+    if not robot_only and config["environment"] == "bottle_cap":
         from .thread import append_mjcf
 
         append_mjcf(root)

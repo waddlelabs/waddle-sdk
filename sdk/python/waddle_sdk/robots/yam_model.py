@@ -244,6 +244,25 @@ def _read_sources(part_name):
             "vendor_commit": yam.I2RT_PIN,
             "vendor_sources_sha256": provenance,
             "sdk_urdf_sha256": _sha(urdf_bytes),
+            "scalar_kinematics": {
+                "api": "waddle.sdk.scalar-kinematics/v1",
+                "coordinates": {
+                    yam.GRIPPER_JOINT_NAME: {
+                        "unit": "m",
+                        "joint_units": {"joint7": "m", "joint8": "m"},
+                        "samples": [
+                            {
+                                "position": yam.GRIPPER_MAX_OPENING_M * index / 16,
+                                "joints": {
+                                    name: yam.GRIPPER_MAX_OPENING_M * index / 32
+                                    for name in ("joint7", "joint8")
+                                },
+                            }
+                            for index in range(17)
+                        ],
+                    }
+                },
+            },
             "hand_attachment": "T_sdk_link6_tcp @ inverse(T_vendor_hand_grasp_site)",
             "T_sdk_link6_vendor_hand": transform.tolist(),
             "geometry_scope": "Complete YAM arm and linear_4310 hand. No table, environment or other arm geometry.",

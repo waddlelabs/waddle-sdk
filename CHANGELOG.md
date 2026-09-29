@@ -11,8 +11,32 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Respect an explicitly selected MuJoCo renderer in camera timing IPC acceptance.
+
 ### Added
 
+- Load portable, hash-verified native MuJoCo worlds with reference robot control,
+  coupled grippers, configured camera validation and explicit keyframe resets.
+
+- Retain optional nominal scalar kinematic witnesses in articulated reference and
+  pinned YAM model-source provenance. Explicit units and seventeen jaw-width
+  samples support independent mapping checks without opening hardware or claiming
+  physical calibration.
+
+- Export portable articulated SO-101, YAM and xArm7 reference model sources with
+  the full moving hand, visual/collision geometry, inertias, couplings and native
+  actuators. Retain licenses and source provenance while excluding surrounding
+  objects and cameras; source compilation opens no site or physical device.
+
+### Fixed
+
+- Keep robot-only articulated exports independent of environment-specific solver
+  settings, restoring SO-101 and xArm7 source compilation without a scene config.
+
+- Render native MuJoCo metric depth at pixel centres independently of RGB
+  multisampling in both modular and reference camera paths. Keep configured RGB
+  appearance, source visual settings, paired state/timing and depth units; retain
+  original native errors and close both cached contexts.
 - Allow YAM sites to declare six separate target-to-measurement position-error
   bounds while retaining the scalar form, gripper bound, speed and gains.
 
@@ -90,6 +114,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   without per-cube resets.
 
 ### Added
+
+- Optional immutable `CameraContentTiming` and declared `camera.content_timing`
+  support for local RGB/depth content intervals. Preserve timing through camera
+  pumps and native MuJoCo worker IPC; mock/native cameras report state-snapshot
+  bounds. Physical adapters retain unknown exposure timing and paired stream
+  timestamps remain unchanged.
 
 - Add the shampoo-packing scene with twenty gravity-settled thick cylinders, a reproducible pile asset, and six upright receiving pockets.
 

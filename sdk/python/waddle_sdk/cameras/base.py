@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import numpy as np
 
+from .timing import CameraContentTiming, validate_content_timing
+
 if TYPE_CHECKING:
     from .. import SessionStamp
     from ..descriptors import Intrinsics
@@ -158,11 +160,13 @@ class CameraFrame:
             compare=False,
         )
     )
+    content_timing: CameraContentTiming | None = None
 
     def __post_init__(self) -> None:
         rgb = _frozen_rgb(self.rgb)
         object.__setattr__(self, "rgb", rgb)
         object.__setattr__(self, "depth", _frozen_depth(self.depth, rgb.shape))
+        validate_content_timing(self.content_timing, self.depth)
         if self.point_resolver is not None and not callable(self.point_resolver):
             raise TypeError("camera point_resolver must be callable")
 
@@ -215,6 +219,7 @@ class CameraSample:
             compare=False,
         )
     )
+    content_timing: CameraContentTiming | None = None
 
     def __post_init__(self) -> None:
         session_ns = getattr(self.stamp, "session_ns", None)
@@ -241,6 +246,7 @@ class CameraSample:
         rgb = _frozen_rgb(self.rgb)
         object.__setattr__(self, "rgb", rgb)
         object.__setattr__(self, "depth", _frozen_depth(self.depth, rgb.shape))
+        validate_content_timing(self.content_timing, self.depth)
         if self.point_resolver is not None and not callable(self.point_resolver):
             raise TypeError("camera point_resolver must be callable")
 

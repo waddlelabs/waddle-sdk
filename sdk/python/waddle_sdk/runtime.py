@@ -77,6 +77,7 @@ class SupportFact(str, enum.Enum):
     GRIPPER_GEOMETRY = "gripper.geometry"
     CAMERA_RGB = "camera.rgb"
     CAMERA_INTRINSICS = "camera.intrinsics"
+    CAMERA_CONTENT_TIMING = "camera.content_timing"
     SEND_GRANT = "grant.send"
     HOLD_GRANT = "grant.hold"
     RESUME_GRANT = "grant.resume"

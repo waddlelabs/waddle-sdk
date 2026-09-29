@@ -7,10 +7,12 @@ import json
 import math
 import os
 import sys
+from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
 
+from ..cameras._mujoco_render import RGBDRenderer
 from ..robots.mujoco import (
     _evaluation_geometry,
     _evaluation_snapshot,
@@ -29,6 +31,8 @@ from .scene import depth_z16, profile
 
 
 class Engine:
+    content_timing_kind = "simulated_state"
+
     def __init__(self, config: dict, scratch: Path):
         # Selection precedes the first MuJoCo import and is local to this worker.
         if sys.platform == "linux" and not os.environ.get("DISPLAY"):
@@ -39,8 +43,14 @@ class Engine:
         self.config = config
         self.profile = p = profile(config["robot"])
         self.description = robot = description(p.name)
-        path = scratch / "scene.xml"
-        path.write_text(mjcf(p, config))
+        self._native_key = None
+        if "native_scene" in config:
+            from .native_scene import resolve
+
+            path = resolve(config["_native_root"], config)
+        else:
+            path = scratch / "scene.xml"
+            path.write_text(mjcf(p, config))
         self.model = mujoco.MjModel.from_xml_path(str(path))
         self.data = mujoco.MjData(self.model)
         self.parts = tuple(config["parts"])
@@ -48,7 +58,7 @@ class Engine:
         self._dofs = {}
         self._controls = {}
         for part in self.parts:
-            prefix = "" if len(self.parts) == 1 else f"{part}__"
+            prefix = self._prefix(part)
             joints = [
                 self.model.joint(f"{prefix}{name}")
                 for name in p.names[:-1] + robot.hand_names
@@ -62,7 +72,13 @@ class Engine:
         self._velocity_ratio = np.array(
             [robot.servo(name)[1] / robot.servo(name)[0] for name in native_controls]
         )
-        object_groups = objects(config["environment"], robot=config["robot"])
+        if "native_scene" in config:
+            from .native_scene import initialize, validate_cameras
+
+            object_groups = initialize(self)
+            validate_cameras(self)
+        else:
+            object_groups = objects(config["environment"], robot=config["robot"])
         self._prop_links = {
             link.name: link
             for group in object_groups
@@ -122,10 +138,24 @@ class Engine:
             if link.joint is not None
         }
         self.renderers = {}
-        for part in self.parts:
-            self.home(part, p.home)
+        if self._native_key is None:
+            for part in self.parts:
+                self.home(part, p.home)
         self._restore_prop_initial()
-        self._pose_groups = pose_groups(config["environment"], object_groups)
+        if "native_scene" in config:
+            from .randomization import PoseGroup
+
+            self._pose_groups = tuple(
+                PoseGroup(**row) for row in config["native_scene"]["pose_groups"]
+            )
+            if any(
+                name not in self._prop_links
+                for group in self._pose_groups
+                for name in group.bodies
+            ):
+                raise ValueError("native pose groups must name environment bodies")
+        else:
+            self._pose_groups = pose_groups(config["environment"], object_groups)
         self._pose_initial = self._capture_pose_initial()
         self._variation_initial = self._capture_variation_initial()
         self._active_variation = dict(SimulationVariation().as_dict())
@@ -133,6 +163,16 @@ class Engine:
         self._retired_free_bodies: tuple[str, ...] = ()
         self._contact_force_buffer = np.zeros(6, dtype=float)
         self._clear_contact_events()
+
+    def _prefix(self, part):
+        selected = self.config.get("native_scene")
+        return (
+            selected["prefixes"][part]
+            if selected is not None
+            else ""
+            if len(self.parts) == 1
+            else f"{part}__"
+        )
 
     def _restore_prop_initial(self):
         for name, value in self._prop_initial.items():
@@ -234,8 +274,12 @@ class Engine:
         self.mj.mj_resetData(self.model, self.data)
         if hasattr(self, "_variation_initial"):
             self.mj.mj_setConst(self.model, self.data)
-        for part in self.parts:
-            self.home(part, self.profile.home)
+        if self._native_key is None:
+            for part in self.parts:
+                self.home(part, self.profile.home)
+        else:
+            self.mj.mj_resetDataKeyframe(self.model, self.data, self._native_key)
+            self.mj.mj_forward(self.model, self.data)
         self._restore_prop_initial()
         self._active_variation = dict(SimulationVariation().as_dict())
         self._retired_free_bodies = ()
@@ -325,8 +369,11 @@ class Engine:
     def _initial_robot_clearance_valid(self):
         """Reject reset states that penetrate a robot into the workcell or peer."""
 
-        workcell_bodies = {*self._prop_body_ids, int(self.model.body("table").id)}
-        robot_bodies = set(range(1, self.model.nbody)) - workcell_bodies
+        if "native_scene" in self.config:
+            robot_bodies = self._native_robot_bodies
+        else:
+            workcell_bodies = {*self._prop_body_ids, int(self.model.body("table").id)}
+            robot_bodies = set(range(1, self.model.nbody)) - workcell_bodies
         for contact in self.data.contact:
             if contact.dist >= 0:
                 continue
@@ -336,7 +383,24 @@ class Engine:
             if (bodies[0] in robot_bodies) != (bodies[1] in robot_bodies):
                 return False
             names = tuple(self.model.body(body).name for body in bodies)
-            if (
+            if "native_scene" in self.config:
+                owners = [
+                    next(
+                        (
+                            part
+                            for part in self.parts
+                            if name.startswith(self._prefix(part))
+                        ),
+                        None,
+                    )
+                    for name in names
+                ]
+                if (
+                    all(owner is not None for owner in owners)
+                    and owners[0] != owners[1]
+                ):
+                    return False
+            elif (
                 names[0].startswith("left__")
                 and names[1].startswith("right__")
                 or names[0].startswith("right__")
@@ -672,31 +736,41 @@ class Engine:
         return snapshot
 
     def capture(self, name):
+        return self.capture_timed(name)[:2]
+
+    def capture_timed(self, name):
         row = self.config["cameras"][name]
         if name not in self.renderers:
-            self.renderers[name] = self.mj.Renderer(
-                self.model, height=row["stream"]["height"], width=row["stream"]["width"]
+            self.renderers[name] = RGBDRenderer(
+                self.mj,
+                self.model,
+                height=row["stream"]["height"],
+                width=row["stream"]["width"],
+                depth=row["options"]["depth"],
             )
-        renderer = self.renderers[name]
         option = self.mj.MjvOption()
         option.geomgroup[3] = 0  # collisions do not replace the manufacturer's visuals
-        renderer.update_scene(self.data, camera=name, scene_option=option)
-        renderer.disable_depth_rendering()
-        rgb = renderer.render().copy()
-        if not row["options"]["depth"]:
-            return rgb, None
-        renderer.enable_depth_rendering()
-        depth = renderer.render().copy()
-        renderer.disable_depth_rendering()
+        rgb, depth, timing = self.renderers[name].capture(
+            self.data,
+            camera=self.config.get("native_scene", {})
+            .get("camera_names", {})
+            .get(name, name),
+            scene_option=option,
+        )
+        if depth is None:
+            return rgb, None, asdict(timing)
         far = self.model.vis.map.zfar * self.model.stat.extent
         depth[depth >= far * 0.999] = 0
-        return rgb, depth_z16(depth, row["intrinsics"]["depth_scale_mm"])
+        return (
+            rgb,
+            depth_z16(depth, row["intrinsics"]["depth_scale_mm"]),
+            asdict(timing),
+        )
 
     def native_tcp(self, part=None):
         part = self._part(part)
         self.mj.mj_forward(self.model, self.data)
-        prefix = "" if len(self.parts) == 1 else f"{part}__"
-        site = self.data.site(f"{prefix}tcp_site")
+        site = self.data.site(f"{self._prefix(part)}tcp_site")
         return site.xpos.copy(), site.xmat.reshape(3, 3).copy()
 
     def close(self):

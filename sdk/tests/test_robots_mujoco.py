@@ -40,6 +40,7 @@ class FakeModel:
         self.jnt_range = np.asarray([[-1.0, 1.0], [-2.0, 2.0]])
         self.opt = SimpleNamespace(timestep=0.01)
         self.cam_fovy = np.asarray([90.0])
+        self.vis = SimpleNamespace(quality=SimpleNamespace(offsamples=4))
         self.names = {
             _ObjectKind.mjOBJ_JOINT: {"shoulder": 0, "elbow": 1},
             _ObjectKind.mjOBJ_ACTUATOR: {"shoulder_motor": 0, "elbow_motor": 1},
@@ -216,7 +217,9 @@ def test_body_spheres_apply_reviewed_link_local_offsets(tmp_path):
             },
         }
     )
-    sphere = mujoco.arm(config=config).arms()[""].driver.collision_spheres([0.5, 0.0])[0]
+    sphere = (
+        mujoco.arm(config=config).arms()[""].driver.collision_spheres([0.5, 0.0])[0]
+    )
     assert sphere.center_m == (0.55, 0.02, 0.0)
 
 
@@ -338,9 +341,7 @@ def test_modular_world_runtime_identity_must_be_complete_and_match_parts(tmp_pat
     model = tmp_path / "cell.xml"
     model.write_text("<mujoco/>", encoding="utf-8")
     with pytest.raises(ValueError, match="complete runtime identity"):
-        mujoco.MujocoBackend(
-            model_path=model, identity={"robot_family": "yam"}
-        )
+        mujoco.MujocoBackend(model_path=model, identity={"robot_family": "yam"})
 
     world = mujoco.MujocoBackend(
         model_path=model,
@@ -477,6 +478,11 @@ def test_real_mujoco_world_renders_aligned_rgbd_when_extra_is_installed(
         assert frame.depth.shape == (48, 64)
         assert frame.depth.dtype == np.uint16
         assert camera_driver.intrinsics().fx > 0.0
+        assert frame.content_timing.kind == "simulated_state"
+        assert (
+            frame.content_timing.rgb_monotonic_ns
+            == frame.content_timing.depth_monotonic_ns
+        )
     finally:
         camera_driver.close()
         arm_driver.close()

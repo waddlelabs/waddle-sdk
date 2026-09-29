@@ -132,6 +132,15 @@ def test_complete_sources_are_immutable_and_do_not_open_hardware(monkeypatch):
         assert [float(v) for v in joint.get("range").split()] == pytest.approx(
             [0, yam.GRIPPER_MAX_OPENING_M / 2]
         )
+    witnesses = bundle.provenance["scalar_kinematics"]["coordinates"][
+        yam.GRIPPER_JOINT_NAME
+    ]
+    assert witnesses["unit"] == "m"
+    assert witnesses["joint_units"] == {j.get("name"): "m" for j in slides}
+    assert witnesses["samples"][0]["position"] == 0
+    assert witnesses["samples"][-1]["position"] == yam.GRIPPER_MAX_OPENING_M
+    for sample in witnesses["samples"]:
+        assert all(q == sample["position"] / 2 for q in sample["joints"].values())
     with pytest.raises(TypeError):
         bundle.assets["new"] = b"bad"
 

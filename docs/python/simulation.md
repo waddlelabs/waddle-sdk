@@ -367,6 +367,15 @@ surfaces as a self-contained USD assembly without launching Isaac. The data READ
 reproduction. The reference collision spheres are conservative covers derived from
 these same meshes and link transforms.
 
+MuJoCo RGB retains the scene's configured offscreen multisampling. Metric depth
+uses a pixel-centre render pass so deprojection agrees with the declared pinhole
+intrinsics, including on oblique surfaces. When RGB multisampling is enabled,
+the camera caches a second native rendering context for depth; RGB-only cameras
+and scenes with multisampling disabled use one context. Both passes snapshot the
+same physics state and share conservative content-time bounds. This applies to
+the modular MuJoCo camera adapter and the reference worker, preserves depth units,
+and does not model physical sensor noise or transparency failures.
+
 Reference worlds use real-time physics by default with 500 Hz native stepping
 (2 ms substeps) in all three engines. SAPIEN's coupled hand contacts require finer
 integration than the generic 100 Hz manipulation default. This increases native
@@ -636,6 +645,20 @@ All variants freeze the complete hand at maximum opening and omit task props and
 another arm; those limits remain explicit in provenance and require separate
 fixture/inter-arm checks for safety qualification.
 
+For articulated scene composition, use
+`articulated_model_sources(robot, part_name=...)` from `waddle_sdk.simulators`.
+It returns the same immutable `ModelSources` contract with the full native robot
+at its base origin: visuals, collision pieces, inertias, arm and hand joints,
+couplings, tendons, contact exclusions and position actuators. No surrounding
+objects, cameras or another arm are included. Asset paths are portable and model
+licenses are retained. Primary named bindings describe the arm; `hand_joints` in
+provenance declares native hand units and limits. A linkage can be nonlinear and
+does not become an affine jaw-width mapping merely because it is exported.
+Optional [scalar kinematic witnesses](../porting/source-models.md#optional-scalar-kinematic-witnesses)
+supply seventeen nominal jaw-width/native-joint samples for independent consumer checks.
+Compilation requires MuJoCo but opens no site, camera or device. Reference servo
+and contact parameters remain simulation assumptions, not hardware identification.
+
 The worker advances physics, serializes sensor/control requests, and
 fails closed on startup or connection loss. Recovery requires reopening the site;
 it never replays a motion after reconnecting. Site camera declarations are compared
@@ -665,3 +688,33 @@ Exact revisions, source paths, mechanism choices and limitations are recorded in
 the packaged `waddle_sdk/simulators/data/README.md`.
 All three backends use native URDF import and physics constraints. Engine-specific
 geometry conversion, axis handling and inertia conversion stay in the importer.
+
+## Imported native MuJoCo worlds
+
+An explicit `native_scene` selection in `waddle.simulation/v1` can load a portable
+MJCF world containing the reference robot assembly instead of generating a
+built-in environment. The same SDK world, reference robot controller, coupled
+hand, camera acquisition and trusted reset lifecycle remain in use. This path
+supports the declared one/two-part reference family; custom robot controllers
+continue to implement the public backend/driver contracts.
+
+`native_scene` contains `model` (relative to the site root), a `files` mapping of
+portable paths to SHA-256 digests, `initial_keyframe`, `prefixes` mapping each part
+to its native robot name prefix, `camera_names` mapping each public camera to a
+native camera, and `pose_groups`. Each pose group declares disjoint `bodies`,
+`translation_xy_m` and `yaw_rad`. The environment has its own name and semantic
+scene/asset revisions; it does not inherit a built-in task identity.
+
+Selection verifies all file digests and confines XML references before loading.
+The worker verifies again, then checks declared robot placement/kinematics and
+camera projection against the compiled model. Use
+`waddle_sdk.simulators.native_scene.camera_parameters` during offline preparation
+to derive rectified intrinsics and configured optical poses. Wrist cameras must
+be attached to the TCP body; scene cameras must be statically mounted. These are
+simulation configuration facts, not measured physical calibration.
+
+Reset restores the explicit keyframe, including robot and object coordinates and
+native controls. Trusted evaluation can apply declared seeded pose variations
+and existing appearance/physics variations. Imported environments support fixed,
+free and passive scalar-joint bodies; unsupported mappings fail explicitly.
+Opening this simulation configuration never opens a physical robot.

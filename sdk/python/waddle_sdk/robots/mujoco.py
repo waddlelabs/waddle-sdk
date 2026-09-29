@@ -21,6 +21,7 @@ import numpy as np
 
 from .. import descriptors
 from ..cameras import CameraFrame
+from ..cameras._mujoco_render import RGBDRenderer
 from ..cameras.site import CameraConfig
 from ..simulation import WorldConfig
 from . import base
@@ -92,7 +93,9 @@ def _runtime_identity(value: object | None) -> dict[str, Any] | None:
             or not item
             or any(character.isspace() for character in item)
         ):
-            raise ValueError(f"MuJoCo options.identity.{field} must be a nonempty token")
+            raise ValueError(
+                f"MuJoCo options.identity.{field} must be a nonempty token"
+            )
     arm_count = result["arm_count"]
     if isinstance(arm_count, bool) or not isinstance(arm_count, int) or arm_count < 1:
         raise ValueError("MuJoCo options.identity.arm_count must be a positive integer")
@@ -118,7 +121,10 @@ def _evidence_identity(config: WorldConfig) -> dict[str, Any] | None:
         document = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError("MuJoCo options.evidence is not valid build evidence") from exc
-    if not isinstance(document, Mapping) or document.get("schema") != "waddle.simulation-build/v1":
+    if (
+        not isinstance(document, Mapping)
+        or document.get("schema") != "waddle.simulation-build/v1"
+    ):
         raise ValueError("MuJoCo options.evidence has an unsupported schema")
     resolved = document.get("resolved_scene")
     if not isinstance(resolved, Mapping):
@@ -269,9 +275,8 @@ class MujocoBackend:
         with self._lock:
             if self._opened or self._closed:
                 raise RuntimeError("MuJoCo world instances may be opened only once")
-            if (
-                self._identity is not None
-                and self._identity["arm_count"] != len(self._declared_parts)
+            if self._identity is not None and self._identity["arm_count"] != len(
+                self._declared_parts
             ):
                 raise RuntimeError(
                     "MuJoCo runtime identity arm_count does not match declared parts"
@@ -447,9 +452,7 @@ class MujocoDriver:
                 name = str(row["name"])
                 body = str(row["body"])
                 radius = float(row["radius_m"])
-                offset = np.asarray(
-                    row.get("center_m", (0.0, 0.0, 0.0)), dtype=float
-                )
+                offset = np.asarray(row.get("center_m", (0.0, 0.0, 0.0)), dtype=float)
             except (KeyError, TypeError, ValueError) as exc:
                 raise ValueError(
                     "MuJoCo collision bodies need name, body, and radius_m"
@@ -658,6 +661,8 @@ class MujocoDriver:
 class MujocoCameraDriver:
     """One RGB-D renderer over an opened :class:`MujocoBackend`."""
 
+    content_timing_kind = "simulated_state"
+
     def __init__(self, *, world: MujocoBackend, config: CameraConfig) -> None:
         self._world = world
         self._closing = threading.Event()
@@ -695,7 +700,9 @@ class MujocoCameraDriver:
         self._depth_scale_mm = float(
             configured_scale
             if configured_scale is not None
-            else 1.0 if option_scale is None else option_scale
+            else 1.0
+            if option_scale is None
+            else option_scale
         )
         if not math.isfinite(self._depth_scale_mm) or self._depth_scale_mm <= 0.0:
             raise ValueError("MuJoCo camera depth scale must be finite and positive")
@@ -708,10 +715,12 @@ class MujocoCameraDriver:
     def _thread_renderer(self):
         current = threading.get_ident()
         if self._renderer is None:
-            self._renderer = self._world.mj.Renderer(
+            self._renderer = RGBDRenderer(
+                self._world.mj,
                 self._world.model,
                 height=self._height,
                 width=self._width,
+                depth=self._depth,
             )
             self._renderer_thread = current
         elif self._renderer_thread != current:
@@ -723,7 +732,9 @@ class MujocoCameraDriver:
             self._world._require_open()
             fovy = float(self._world.model.cam_fovy[self._camera_id])
             if not math.isfinite(fovy) or fovy <= 0.0 or fovy >= 180.0:
-                raise RuntimeError("MuJoCo camera has an invalid vertical field of view")
+                raise RuntimeError(
+                    "MuJoCo camera has an invalid vertical field of view"
+                )
             focal = (self._height / 2.0) / math.tan(math.radians(fovy) / 2.0)
             return descriptors.Intrinsics(
                 fx=focal,
@@ -739,18 +750,12 @@ class MujocoCameraDriver:
         with self._world._lock:
             self._world._require_open()
             renderer = self._thread_renderer()
-            renderer.disable_depth_rendering()
-            renderer.update_scene(self._world.data, camera=self._camera)
-            rgb = np.array(
-                renderer.render(), dtype=np.uint8, order="C", copy=True
+            rgb, metres, timing = renderer.capture(
+                self._world.data, camera=self._camera
             )
             depth = None
-            if self._depth:
-                renderer.enable_depth_rendering()
-                try:
-                    metres = np.asarray(renderer.render(), dtype=float)
-                finally:
-                    renderer.disable_depth_rendering()
+            if metres is not None:
+                metres = np.asarray(metres, dtype=float)
                 valid = np.isfinite(metres) & (metres > 0.0)
                 scaled = np.zeros(metres.shape, dtype=np.uint16)
                 raw = np.rint(metres[valid] * (1000.0 / self._depth_scale_mm))
@@ -759,7 +764,7 @@ class MujocoCameraDriver:
                 valid_values[in_range] = raw[in_range].astype(np.uint16)
                 scaled[valid] = valid_values
                 depth = scaled
-            return CameraFrame(rgb=rgb, depth=depth)
+            return CameraFrame(rgb=rgb, depth=depth, content_timing=timing)
 
     def close(self) -> None:
         self._closing.set()
@@ -801,9 +806,7 @@ def _limits_and_names(
     return names, limits
 
 
-def _arm_rig(
-    config: PartConfig, *, world: MujocoBackend | None = None
-) -> base.Rig:
+def _arm_rig(config: PartConfig, *, world: MujocoBackend | None = None) -> base.Rig:
     """Build one lazy MuJoCo part from explicit manifest mappings."""
 
     model_path = None if world is not None else _model_path(config)
@@ -834,7 +837,9 @@ def _arm_rig(
         and "collision_frame" in config.options
         and config.base_frame != legacy_frame
     ):
-        raise ValueError("MuJoCo base_frame conflicts with legacy options.collision_frame")
+        raise ValueError(
+            "MuJoCo base_frame conflicts with legacy options.collision_frame"
+        )
     collision_frame = config.base_frame or legacy_frame
     workspace = config.workspace_bounds
     if workspace and tool_site is None:

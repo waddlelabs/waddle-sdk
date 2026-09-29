@@ -58,6 +58,15 @@ development camera defaults before publication. Its public planner-source helper
 uses the same pinned chain and builds bounded deterministic spatial hulls from
 complete source collision pieces for every reference family. It
 records the proxy method and its fixed-open-hand/no-scene scope. The
+separate `articulated_model_sources` export preserves native visuals, collision
+pieces, moving hand/linkages, tendons and actuators at the base origin without
+scene objects or cameras. It uses the same native assembly and carries portable
+assets, licenses and explicit hand-joint units; it does not assert calibrated
+hardware dynamics or an affine physical jaw mapping. Optional `scalar_kinematics`
+provenance retains seventeen nominal width/native-joint witnesses, including the
+nonlinear G2 linkage; the pinned physical YAM source supplies its two-slide
+relationship. These samples do not establish live calibration or interpolation. Native source parity checks
+live in `sdk/tests/test_articulated_sources.py`. The
 hash-pinned manufacturer assemblies and native
 physics workers are reference implementations, not calibrated actuator or friction
 models. Engine-specific acceptance stays in `sdk/tests/test_simulation.py`; a
@@ -137,7 +146,29 @@ slower hidden-state sampler can score transient contact and peak-force events.
 Clear those summaries on every reset and never expose them through participant
 observations, capabilities, or tools.
 
+Imported native MuJoCo worlds can now select portable, digest-bound assets and
+an explicit initial keyframe through `native_scene` in the reference simulation
+configuration. This reuses reference actuation and coupled hands, validates robot
+placement and camera projection, and retains trusted reset/variation ownership.
+See [native scene configuration](docs/python/simulation.md#imported-native-mujoco-worlds)
+and `sdk/tests/test_native_scene.py`; physical fidelity is not established.
+
 ## Repo map
+
+Both native MuJoCo camera paths retain configured RGB multisampling and use a
+separate pixel-centre depth context when needed. Construct/capture under the
+world lock (or serialized reference worker) and on the owning render thread;
+source visual settings must be restored even on allocation failure. RGB/depth
+scene snapshots bind one unchanged state. Native analytic-plane and lifecycle
+checks live in `sdk/tests/test_mujoco_depth_calibration.py`.
+
+Optional `CameraContentTiming` preserves separate RGB/depth acquisition intervals
+on the local host monotonic clock without changing paired stream stamps. Driver
+`content_timing_kind` advertises `camera.content_timing`; missing per-frame bounds
+remain unknown. Mock and both native MuJoCo camera paths provide simulated-state
+snapshot bounds, including across the reference worker's IPC. Physical adapters
+currently omit timing; delivery stamps never qualify exposure. See the
+[camera contract](docs/porting/camera.md#optional-image-content-timing).
 
 ```
 waddle-sdk/

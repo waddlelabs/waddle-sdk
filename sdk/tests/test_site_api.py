@@ -375,7 +375,17 @@ def test_hardware_opens_only_inside_context_and_closes_once(tmp_path):
     assert site_fixtures.closed == {"arms": 1, "cameras": 1}
 
 
-def test_open_session_exposes_immutable_support_and_optional_sdk_facets(tmp_path):
+@pytest.mark.parametrize("timed", [False, True])
+def test_open_session_exposes_immutable_support_and_optional_sdk_facets(
+    tmp_path, monkeypatch, timed
+):
+    if timed:
+        monkeypatch.setattr(
+            site_fixtures._Camera,
+            "content_timing_kind",
+            "sensor_exposure",
+            raising=False,
+        )
     site = waddle_sdk.load_site(_write_site(tmp_path))
     with site.open(console=False, _testing=True) as session:
         assert isinstance(session, SdkSupportPort)
@@ -409,7 +419,7 @@ def test_open_session_exposes_immutable_support_and_optional_sdk_facets(tmp_path
         assert camera_facts == {
             SupportFact.CAMERA_RGB,
             SupportFact.CAMERA_INTRINSICS,
-        }
+        } | ({SupportFact.CAMERA_CONTENT_TIMING} if timed else set())
         assert all("camera.depth" not in fact.value for fact in camera_facts)
 
         spheres = session.body_geometry("arm", [0.0, 0.0])
@@ -424,7 +434,8 @@ def test_open_session_exposes_immutable_support_and_optional_sdk_facets(tmp_path
 
         arm = session._managed.arms["arm"]
         assert description["command_limits"]["arm"] == {
-            "joint_names": ["j0", "j1"], "max_position_error": [0.2, 0.2]
+            "joint_names": ["j0", "j1"],
+            "max_position_error": [0.2, 0.2],
         }
         arm.position_error_caps = (0.3, 0.4)
         command_limits = session.describe()["command_limits"]["arm"]
