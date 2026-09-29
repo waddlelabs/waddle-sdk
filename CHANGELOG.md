@@ -11,6 +11,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Respect an explicitly selected MuJoCo renderer in camera timing IPC acceptance.
+
 ### Added
 
 - Load portable, hash-verified native MuJoCo worlds with reference robot control,
