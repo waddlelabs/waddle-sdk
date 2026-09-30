@@ -49,7 +49,11 @@ Single-arm tests project the selected part into a public SiteSession and keep th
 original site ID and ownership lock. An unrelated arm is never opened merely to
 hold it during another arm's trial. The native gate and manifest envelope still
 apply. Camera inspection
-owns only the selected camera; missing arms cannot prevent camera checks. Motion
+owns only the selected camera; missing arms cannot prevent camera checks. The
+camera-pair case additionally opens that camera and its next configured peer,
+then checks advancing RGB and available aligned depth from both. Parametrizing
+the selected camera exercises both opening orders on a two-camera site; no arm
+is opened. Fewer than two cameras skips that case. Motion
 uses a quintic trajectory, measured joint arrival and three settled samples, then
 returns to the configured reference. JSON reports retain samples, target errors,
 encoder-derived TCP displacement, timing, outcome and cleanup errors. FK-derived

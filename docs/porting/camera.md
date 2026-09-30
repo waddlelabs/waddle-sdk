@@ -113,6 +113,25 @@ frame delivery stamp, nominal frame rate or wall-clock timestamp alone cannot
 establish these bounds. Drivers with an unverified mapping should omit timing.
 Built-in physical camera adapters currently omit it.
 
+The RealSense adapter resolves an explicit `connection.serial` through a
+serial-selected vendor configuration, so opening or recovering one RSUSB camera
+does not globally enumerate a peer's active streaming interfaces. It retains one
+process-lifetime vendor context and each camera's independent bounded recovery.
+Omitting the serial selects the first enumerated device; use explicit serials for
+multi-camera sites.
+
+For source-built librealsense 2.58.4, the optional
+[alignment binding patch](patches/librealsense-2.58.4-align-gil.patch) releases
+Python's GIL while native `align.process` runs. Apply it to the upstream source
+with `patch -p1 < /path/to/librealsense-2.58.4-align-gil.patch`, then rebuild the
+Python binding with the same selected USB backend, interpreter and native build
+options. The SDK does not install this patch or modify vendor packages at runtime.
+Retain the original binding for a hardware-free software-device pixel-parity
+comparison and record concurrent Python progress before selecting the rebuilt
+binding. A local 50-frame RGB/depth comparison was byte-identical; it does not
+qualify arbitrary builds or establish hardware timing. This native dependency
+patch is separate from serial selection in the Python adapter.
+
 Mock and both native MuJoCo camera paths report `simulated_state`, bounding the
 state snapshot used for rendering. The subprocess worker preserves those host
 intervals through IPC; rendering/transport delays do not restamp the content.

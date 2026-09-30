@@ -134,8 +134,12 @@ class _RsPipeline:
         self.behavior = behavior
         self.device = device
         self.stops = 0
+        self.active = False
 
     def start(self, _config):
+        self.active = True
+        if _config.serial in _config.devices:
+            self.device = _config.devices[_config.serial]
         intrinsics = SimpleNamespace(
             fx=612.0,
             fy=613.0,
@@ -162,13 +166,18 @@ class _RsPipeline:
         return _RsFrames()
 
     def stop(self) -> None:
+        self.active = False
         self.stops += 1
 
 
 class _RsConfig:
-    def __init__(self) -> None:
+    def __init__(self, devices=None) -> None:
         self.serial = ""
         self.streams: list[tuple[object, ...]] = []
+        self.devices = devices or {}
+
+    def resolve(self, _pipeline):
+        return SimpleNamespace(get_device=lambda: self.devices[self.serial])
 
     def enable_device(self, serial: str) -> None:
         self.serial = serial
@@ -195,7 +204,11 @@ class _RsVendor:
         return pipeline
 
     def config(self):
-        return _RsConfig()
+        return _RsConfig({self.device.serial: self.device})
+
+    @staticmethod
+    def pipeline_wrapper(pipeline):
+        return pipeline
 
     def align(self, _stream):
         return SimpleNamespace(process=lambda frames: frames)
@@ -261,6 +274,47 @@ def test_realsense_rebuilds_after_a_later_capture_timeout(monkeypatch):
     assert vendor.device.resets == 0
     assert len(vendor.pipelines) == 2
     assert [pipeline.stops for pipeline in vendor.pipelines] == [1, 1]
+
+
+def test_realsense_opens_and_recovers_a_selected_camera_while_peer_streams(monkeypatch):
+    class MultiVendor(_RsVendor):
+        def __init__(self):
+            super().__init__(
+                [
+                    {"confirm": True},
+                    {"confirm": True, "capture_error": True},
+                    {"confirm": True},
+                ]
+            )
+            self.devices = {name: _RsDevice(name) for name in ("scene", "wrist")}
+
+        def context(self):
+            def query():
+                if any(pipeline.active for pipeline in self.pipelines):
+                    raise RuntimeError("failed to set power state")
+                return list(self.devices.values())
+
+            return SimpleNamespace(query_devices=query)
+
+        def config(self):
+            return _RsConfig(self.devices)
+
+    vendor = MultiVendor()
+    _fast_realsense(monkeypatch, vendor)
+    scene = realsense.RealSenseDriver(serial="scene", width=3, height=2)
+    try:
+        wrist = realsense.RealSenseDriver(serial="wrist", width=3, height=2)
+        try:
+            assert wrist.capture().depth.shape == (2, 3)
+            assert scene.capture().rgb.shape == (2, 3, 3)
+            assert vendor.pipelines[0].active
+            assert vendor.pipelines[0].stops == 0
+            assert len(vendor.pipelines) == 3
+            assert all(device.resets == 0 for device in vendor.devices.values())
+        finally:
+            wrist.close()
+    finally:
+        scene.close()
 
 
 def test_realsense_fails_after_one_bounded_hardware_reset(monkeypatch):

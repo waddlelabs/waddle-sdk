@@ -30,6 +30,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Resolve explicitly selected RealSense cameras by serial instead of globally
+  enumerating active peers, allowing RSUSB multi-camera startup and independent
+  stream recovery. Add camera-only live acceptance with both opening orders.
+  Retain the optional librealsense 2.58.4 alignment GIL-release source patch
+  and rebuild guidance; vendor binaries are not changed by the adapter.
+
 - Keep robot-only articulated exports independent of environment-specific solver
   settings, restoring SO-101 and xArm7 source compilation without a scene config.
 

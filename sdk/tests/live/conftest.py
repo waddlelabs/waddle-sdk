@@ -26,9 +26,14 @@ def camera_session(request, camera):
         with CameraInspection([config["camera_specs"][camera]]) as session:
             yield session
         return
+    with CameraInspection([_site_camera_spec(config, camera)]) as session:
+        yield session
+
+
+def _site_camera_spec(config, camera):
     site = load_site(config["site"])
     row = site.manifest["cameras"][camera]
-    spec = CameraInspectionSpec(
+    return CameraInspectionSpec(
         name=camera,
         driver=row["driver"],
         connection=row["connection"],
@@ -36,5 +41,24 @@ def camera_session(request, camera):
         options=row.get("options", {}),
         site_root=Path(site.path).parent,
     )
-    with CameraInspection([spec]) as session:
+
+
+@pytest.fixture
+def camera_pair_session(request, camera):
+    assert request.config.getoption("--live")
+    config = request.config.live_bench
+    names = config["cameras"]
+    if len(names) < 2:
+        pytest.skip("simultaneous capture needs two configured cameras")
+    peer = names[(names.index(camera) + 1) % len(names)]
+    missing = request.config.live_missing.get(f"cameras:{peer}")
+    if missing:
+        pytest.skip(missing)
+    specs = [
+        config["camera_specs"][name]
+        if name in config.get("camera_specs", {})
+        else _site_camera_spec(config, name)
+        for name in (camera, peer)
+    ]
+    with CameraInspection(specs) as session:
         yield session
