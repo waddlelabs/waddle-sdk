@@ -88,8 +88,14 @@ class RealSenseDriver:
         with self._recover_lock:
             self._open_with_recovery()
 
-    def _select_device(self) -> Any:
+    def _select_device(self, pipeline: Any) -> Any:
         context = _shared_context(self._rs)
+        if self._serial is not None:
+            # Resolve only the configured camera. RSUSB global enumeration can
+            # fail to set power on a peer whose streaming interfaces are owned.
+            config = self._rs.config()
+            config.enable_device(self._serial)
+            return config.resolve(self._rs.pipeline_wrapper(pipeline)).get_device()
         deadline = time.monotonic() + self._ENUMERATION_TIMEOUT_S
         while True:
             for device in context.query_devices():
@@ -111,9 +117,7 @@ class RealSenseDriver:
             except RuntimeError:
                 pass
 
-    def _start_pipeline(self, device: Any) -> None:
-        context = _shared_context(self._rs)
-        pipeline = self._rs.pipeline(context)
+    def _start_pipeline(self, device: Any, pipeline: Any) -> None:
         config = self._rs.config()
         serial = device.get_info(self._rs.camera_info.serial_number)
         config.enable_device(serial)
@@ -208,9 +212,10 @@ class RealSenseDriver:
         for attempt in range(2):
             if self._closed:
                 raise RuntimeError("RealSense camera is closed")
-            device = self._select_device()
+            pipeline = self._rs.pipeline(_shared_context(self._rs))
+            device = self._select_device(pipeline)
             try:
-                self._start_pipeline(device)
+                self._start_pipeline(device, pipeline)
                 if not self._confirm_streaming():
                     raise RuntimeError("pipeline started but no frames arrived")
                 return

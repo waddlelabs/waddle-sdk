@@ -368,6 +368,10 @@ waddle-sdk/
                              #   the same for OpenCV behind [usb]. [cameras]
                              #   composes all three; mock is dependency-free.
                              #   RealSense owns one process-lifetime context,
+                             #   resolves configured serials without enumerating
+                             #   streaming peers (required by RSUSB),
+                             #   documents an opt-in upstream alignment GIL patch
+                             #   without installing/modifying vendor binaries,
                              #   proves frame flow, resets one wedged device
                              #   once, rebuilds after a later timeout, and
                              #   reports the active color-grid intrinsics plus

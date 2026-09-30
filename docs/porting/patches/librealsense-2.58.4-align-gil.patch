@@ -1,0 +1,11 @@
+--- a/wrappers/python/pyrs_processing.cpp
++++ b/wrappers/python/pyrs_processing.cpp
+@@ -155,7 +155,7 @@
+     align.def(py::init<rs2_stream>(), "To perform alignment of a depth image to the other, set the align_to parameter with the other stream type.\n"
+               "To perform alignment of a non depth image to a depth image, set the align_to parameter to RS2_STREAM_DEPTH.\n"
+               "Camera calibration and frame's stream type are determined on the fly, according to the first valid frameset passed to process().", "align_to"_a)
+-        .def("process", (rs2::frameset(rs2::align::*)(rs2::frameset)) &rs2::align::process, "Run thealignment process on the given frames to get an aligned set of frames", "frames"_a);
++        .def("process", (rs2::frameset(rs2::align::*)(rs2::frameset)) &rs2::align::process, "Run thealignment process on the given frames to get an aligned set of frames", "frames"_a, py::call_guard<py::gil_scoped_release>());
+ 
+     py::class_<rs2::colorizer, rs2::filter> colorizer(m, "colorizer", "Colorizer filter generates color images based on input depth frame");
+     colorizer.def(py::init<>())

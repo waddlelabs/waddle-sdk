@@ -40,3 +40,18 @@ def test_camera_delivers_five_fresh_aligned_rgb_depth_frames(camera_session, cam
         assert sample.rgb.max() > sample.rgb.min(), "Camera returned a flat image"
         assert sample.sequence > last
         last = sample.sequence
+
+
+def test_camera_pair_delivers_fresh_frames_without_stopping_peer(camera_pair_session):
+    last = dict.fromkeys(camera_pair_session.names, 0)
+    for _ in range(5):
+        for name in camera_pair_session.names:
+            sample = camera_pair_session.wait(name, after_sequence=last[name], timeout_s=5)
+            assert sample is not None, dict(camera_pair_session.errors)
+            assert sample.sequence > last[name]
+            assert sample.rgb.dtype == np.uint8 and sample.rgb.shape[2] == 3
+            assert sample.rgb.max() > sample.rgb.min(), "Camera returned a flat image"
+            if sample.depth is not None:
+                assert sample.depth.shape == sample.rgb.shape[:2]
+                assert np.count_nonzero(sample.depth) > sample.depth.size * 0.01
+            last[name] = sample.sequence
