@@ -46,7 +46,9 @@ def test_camera_pair_delivers_fresh_frames_without_stopping_peer(camera_pair_ses
     last = dict.fromkeys(camera_pair_session.names, 0)
     for _ in range(5):
         for name in camera_pair_session.names:
-            sample = camera_pair_session.wait(name, after_sequence=last[name], timeout_s=5)
+            sample = camera_pair_session.wait(
+                name, after_sequence=last[name], timeout_s=5
+            )
             assert sample is not None, dict(camera_pair_session.errors)
             assert sample.sequence > last[name]
             assert sample.rgb.dtype == np.uint8 and sample.rgb.shape[2] == 3

@@ -279,11 +279,13 @@ def test_realsense_rebuilds_after_a_later_capture_timeout(monkeypatch):
 def test_realsense_opens_and_recovers_a_selected_camera_while_peer_streams(monkeypatch):
     class MultiVendor(_RsVendor):
         def __init__(self):
-            super().__init__([
-                {"confirm": True},
-                {"confirm": True, "capture_error": True},
-                {"confirm": True},
-            ])
+            super().__init__(
+                [
+                    {"confirm": True},
+                    {"confirm": True, "capture_error": True},
+                    {"confirm": True},
+                ]
+            )
             self.devices = {name: _RsDevice(name) for name in ("scene", "wrist")}
 
         def context(self):
@@ -291,6 +293,7 @@ def test_realsense_opens_and_recovers_a_selected_camera_while_peer_streams(monke
                 if any(pipeline.active for pipeline in self.pipelines):
                     raise RuntimeError("failed to set power state")
                 return list(self.devices.values())
+
             return SimpleNamespace(query_devices=query)
 
         def config(self):
