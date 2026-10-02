@@ -160,12 +160,17 @@ class Profile:
     def dof(self) -> int:
         return len(self.names) - 1
 
-    def poses(self, q: Any) -> list[np.ndarray]:
+    def validate_positions(self, q: Any) -> np.ndarray:
+        """Validate public coordinates without calculating robot geometry."""
         values = np.asarray(q, dtype=float)
         if values.shape != (len(self.names),) or not np.isfinite(values).all():
             raise ValueError(
                 "joint vector must have the declared width and finite values"
             )
+        return values
+
+    def poses(self, q: Any) -> list[np.ndarray]:
+        values = self.validate_positions(q)
         pose = np.eye(4)
         result = [pose.copy()]
         for i in range(self.dof):

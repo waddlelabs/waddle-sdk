@@ -34,6 +34,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Validate reference simulation joint vectors without calculating and discarding
+  nominal forward kinematics during commands and manufacturer geometry queries.
+  Preserve joint validation, command values and resulting geometry.
+
 - Derive native MuJoCo velocity feedforward from each loaded position actuator's
   compiled KP/KD gains, including different gains across imported robot parts.
   Refuse incompatible actuator mappings explicitly. Keep reference gains, hand

@@ -182,7 +182,7 @@ class Description:
 
     def poses(self, q) -> dict[str, np.ndarray]:
         p = profile(self.name)
-        p.poses(q)  # public vector validation
+        p.validate_positions(q)
         values = dict(zip(p.names[:-1] + self.hand_names, self.expand(q), strict=True))
         result = {}
         for link in self.links:

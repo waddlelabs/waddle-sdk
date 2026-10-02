@@ -650,6 +650,35 @@ def test_yam_fk_matches_live_adapter_at_multiple_configurations():
         np.testing.assert_allclose(pose[:3, :3], expected_rot, atol=1e-9)
 
 
+@pytest.mark.parametrize("robot", ROBOTS)
+@pytest.mark.parametrize("invalid", ("short", "long", "matrix", "nan", "inf"))
+def test_reference_coordinates_reject_invalid_geometry_and_commands(robot, invalid):
+    from waddle_sdk.simulators.adapters import Driver
+
+    p = profile(robot)
+    q = list(p.home)
+    if invalid == "short":
+        q.pop()
+    elif invalid == "long":
+        q.append(0.0)
+    elif invalid == "matrix":
+        q = [q]
+    else:
+        q[-1] = float(invalid)
+    writes = []
+    world = SimpleNamespace(
+        config={"robot": robot}, part_call=lambda *a: writes.append(a)
+    )
+    driver = Driver(world, part="arm", posture="supervised")
+    for operation in (p.poses, description(robot).poses, driver.write, driver.home):
+        with pytest.raises(
+            ValueError,
+            match="joint vector must have the declared width and finite values",
+        ):
+            operation(q)
+    assert writes == []
+
+
 def test_yam_reference_home_is_in_the_tabletop_working_region():
     p = profile("yam")
     position, orientation = yam.forward_kinematics(p.home[:-1])

@@ -298,8 +298,7 @@ class Driver:
     def _write(self, target, velocity=None):
         if self._monitor or self._estopped:
             raise RuntimeError("simulation arm is monitor-only or e-stopped")
-        values = np.asarray(target, dtype=float)
-        self.profile.poses(values)  # shared width/finite validation
+        values = self.profile.validate_positions(target)
         if any(
             x < lo or x > hi
             for x, (lo, hi) in zip(values, self.profile.limits, strict=True)
@@ -327,7 +326,7 @@ class Driver:
     def home(self, values):
         if self._monitor or self._estopped:
             return False
-        self.profile.poses(values)
+        self.profile.validate_positions(values)
         if any(
             x < lo or x > hi
             for x, (lo, hi) in zip(values, self.profile.limits, strict=True)
