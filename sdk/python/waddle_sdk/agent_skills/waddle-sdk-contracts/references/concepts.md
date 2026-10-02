@@ -42,3 +42,7 @@ plans those steps; the SDK still enforces joint, step, collision and stop rules.
 Stream time is session-monotonic nanoseconds. A `ClockAnchor` pairs it with wall time, and the wall-clock twin is captured at stamp time. Camera RGB and aligned raw metric depth form one immutable, paired sample. Raw depth stays local; a derived preview may use the media plane. The local recorder is authoritative for full-rate evidence.
 
 The control plane carries low-rate control and bounded declared observations, not continuous media. A negotiated feature flag belongs to one connection and must not leak queued messages onto a later connection with different negotiation.
+
+Explicit zero velocity may quiesce an acknowledged hint on its exact accepted
+position. It admits no new position; see the
+[known-velocity contract](https://waddle-sdk.readthedocs.io/en/latest/porting/robot/#position-and-known-velocity).

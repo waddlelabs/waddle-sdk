@@ -149,6 +149,17 @@ is a trajectory producer's known hint for the same already-admitted position tar
 Return false only after deliberately issuing the identical position-only fallback.
 Never differentiate measurements or an IK stream to invent feedforward.
 
+An explicit all-zero velocity command on the exact position target of the last
+acknowledged nonzero-velocity write quiesces that hint. It introduces no new
+position, so it need not re-admit that position against newer target-to-feedback
+error. Finite values, joint limits, workspace/collision checks and e-stop still
+apply. Any changed position or nonzero velocity uses ordinary admission.
+This authority is local to the current arm writer: writes, Hold/e-stop, faults,
+re-enable, homing and close invalidate it. An unsupported or uncertain driver
+write does not create it. After acknowledgement, the producer waits for feedback
+before advancing its checked trajectory; it must not leave a nonzero hint active
+while its trajectory clock is paused.
+
 ### Forward kinematics
 
 Pass `fk(q) -> (position_xyz, rotation_3x3)` to `Arm` when the implementation is

@@ -369,6 +369,10 @@ may additionally implement
 `write_position_velocity(target, velocity_feedforward_rad_s) -> bool`.
 Returning false means the driver intentionally issued its position-only
 fallback. This is an optional extension and is not added to `base.Driver`.
+Clearing an active hint uses an explicit all-zero velocity on the exact last
+acknowledged position; changed positions retain ordinary envelope admission.
+See [the driver contract](../docs/porting/robot.md#position-and-known-velocity)
+for acknowledgement and invalidation requirements.
 Both protocols are also exported directly from `waddle_sdk.robots` for custom
 packages; no inheritance or YAM dependency is required.
 

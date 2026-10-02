@@ -215,6 +215,10 @@ class JointPositionCommand:
     velocity-aware extension execute ``positions`` normally.  In particular,
     nobody differentiates measured positions or an IK stream to invent this
     value.
+
+    An explicit all-zero hint can quiesce the exact position target of the
+    writer's last acknowledged nonzero-hint command. No position may change in
+    that update; all other commands retain ordinary owner admission.
     """
 
     positions: tuple[float, ...]

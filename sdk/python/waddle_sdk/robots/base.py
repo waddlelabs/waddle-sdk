@@ -667,6 +667,7 @@ class Arm:
     report: Callable[[str], None] = status
     accepted: int = field(default=0, init=False)
     rejected: int = field(default=0, init=False)
+    _velocity_target: np.ndarray | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.joint_names = tuple(str(n) for n in self.joint_names)
@@ -870,7 +871,11 @@ class Arm:
     # -- reads ------------------------------------------------------------
 
     def state(self) -> tuple[np.ndarray, np.ndarray]:
-        return self.driver.read()
+        try:
+            return self.driver.read()
+        except Exception:
+            self._velocity_target = None
+            raise
 
     @property
     def estopped(self) -> bool:
@@ -896,7 +901,13 @@ class Arm:
 
     # -- the envelope -----------------------------------------------------
 
-    def check(self, target: np.ndarray, current: np.ndarray) -> str | None:
+    def check(
+        self,
+        target: np.ndarray,
+        current: np.ndarray,
+        *,
+        _quiescing_velocity: bool = False,
+    ) -> str | None:
         """``None`` when ``target`` may be applied, else why not.
 
         Order matters only for the message: the first failing check names
@@ -922,6 +933,8 @@ class Arm:
                 "and the declaration disagree, so nothing here can say whether "
                 "this target is one step or a jump"
             )
+        if not np.all(np.isfinite(measured)):
+            return "non-finite measured joint positions"
         if not np.all(np.isfinite(target)):
             return f"non-finite values {list(np.round(target, 4))}"
         for i, (value, (lo, hi)) in enumerate(
@@ -935,7 +948,7 @@ class Arm:
         step = np.abs(target - measured)
         caps = self.position_error_caps or self.step_caps
         for i, (moved, cap) in enumerate(zip(step, caps, strict=True)):
-            if moved > cap:
+            if moved > cap and not _quiescing_velocity:
                 if self.position_error_caps is not None:
                     return (
                         f"{self.joint_names[i]} target is {moved:.4f} from measured "
@@ -1059,22 +1072,26 @@ class Arm:
         reason = self.check(target, current)
         if reason is not None:
             self.rejected += 1
-            self.driver.hold()
+            self.hold()
             self._reject(reason)
             return False
         self.accepted += 1
+        self._velocity_target = None
         self.driver.write(target)
         return True
 
     # -- the unit verbs ---------------------------------------------------
 
     def hold(self) -> None:
+        self._velocity_target = None
         self.driver.hold()
 
     def estop(self) -> None:
+        self._velocity_target = None
         self.driver.estop()
 
     def re_enable(self) -> None:
+        self._velocity_target = None
         self.driver.re_enable()
 
     def step(self, dt: float) -> None:
@@ -1087,9 +1104,11 @@ class Arm:
         target = self.home_values if values is None else values
         if target is None:
             return False
+        self._velocity_target = None
         return bool(self.driver.home(target))
 
     def close(self) -> None:
+        self._velocity_target = None
         self.driver.close()
 
 
@@ -1244,7 +1263,16 @@ def apply_decision(
         else:
             current, _velocity = arm.state()
             measurements[part] = np.asarray(current, dtype=float).copy()
-            reason = arm.check(target, current)
+            quiescing = (
+                velocity is not None
+                and not np.any(velocity)
+                and arm._velocity_target is not None
+                and np.array_equal(target, arm._velocity_target)
+            )
+            # Clearing an active hint keeps the exact already-admitted position.
+            # Fresh position-error admission applies to new targets; every other
+            # owner check still applies to this acknowledged quiescence update.
+            reason = arm.check(target, current, _quiescing_velocity=quiescing)
         prepared.append((arm, target, velocity))
         if reason is not None and refusal is None:
             refusal = (arm, reason)
@@ -1317,8 +1345,11 @@ def apply_decision(
     for arm, target, velocity in prepared:
         if target.size == 0:
             continue
+        arm._velocity_target = None
         if velocity is not None and isinstance(arm.driver, PositionVelocityDriver):
-            arm.driver.write_position_velocity(target, velocity)
+            acknowledged_velocity = arm.driver.write_position_velocity(target, velocity)
+            if acknowledged_velocity and np.any(velocity):
+                arm._velocity_target = target.copy()
         else:
             arm.driver.write(target)
         arm.accepted += 1

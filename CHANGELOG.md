@@ -30,6 +30,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Permit clearing an acknowledged velocity hint on its exact accepted position
+  after feedback leaves new-target headroom. Keep fresh finite feedback, joint,
+  workspace, collision and supervision checks, and ordinary admission for every
+  changed target or nonzero hint. Invalidate this ephemeral state on stop, faults
+  and later writes; position-only drivers retain their existing fallback.
+
 - Resolve explicitly selected RealSense cameras by serial instead of globally
   enumerating active peers, allowing RSUSB multi-camera startup and independent
   stream recovery. Add camera-only live acceptance with both opening orders.

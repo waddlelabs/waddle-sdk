@@ -36,6 +36,14 @@ touching anything.
 
 ## What this repo is
 
+Optional position/velocity drivers retain the exact last acknowledged nonzero-hint
+position only in memory. An explicit all-zero hint on that exact position clears
+its active velocity without admitting a new position-error step. New positions
+and nonzero hints retain ordinary admission; Hold/e-stop, driver faults and later
+writes invalidate this state. See `docs/porting/robot.md`; this is not physical
+motion qualification or a change to gains, limits, or the native supervision gate.
+
+
 A public supervision layer for real-world robot policy rollouts
 with explicit site/session/run ownership. Historical public design decisions and the N1–N18
 amendment tables are recorded in

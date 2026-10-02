@@ -707,6 +707,99 @@ def test_velocity_feedforward_never_bypasses_an_owner_refusal():
     assert driver.holds == 1
 
 
+@pytest.mark.parametrize("next_velocity", ([0.0, 0.0, 0.0], [0.3, 0.0, 0.0]))
+def test_velocity_quiescence_preserves_the_accepted_target_and_new_target_gates(
+    next_velocity,
+):
+    driver = _VelocityDriver()
+    arm = _arm(driver)
+    target = [0.05, 0.0, 1.0]
+    assert base.apply_decision(
+        {"toy": arm}, target, velocity_feedforward_rad_s=[0.2, 0.0, 0.0]
+    )
+    # A persistent hint can take feedback beyond new-target admission. It must
+    # still be possible to stop that hint without introducing another position.
+    driver._q[0] = -0.2
+    accepted = base.apply_decision(
+        {"toy": arm}, target, velocity_feedforward_rad_s=next_velocity
+    )
+    assert accepted is (not any(next_velocity))
+    if accepted:
+        position, velocity = driver.state_writes[-1]
+        assert position.tolist() == target
+        assert velocity.tolist() == [0.0, 0.0, 0.0]
+        assert not base.apply_decision(
+            {"toy": arm},
+            [0.050001, 0.0, 1.0],
+            velocity_feedforward_rad_s=[0.0, 0.0, 0.0],
+        )
+    assert driver.holds == 1
+
+
+def test_hold_invalidates_velocity_quiescence_authority():
+    driver = _VelocityDriver()
+    arm = _arm(driver)
+    target = [0.05, 0.0, 1.0]
+    assert base.apply_decision(
+        {"toy": arm}, target, velocity_feedforward_rad_s=[0.2, 0.0, 0.0]
+    )
+    arm.hold()
+    driver._q[0] = -0.2
+    assert not base.apply_decision(
+        {"toy": arm}, target, velocity_feedforward_rad_s=[0.0, 0.0, 0.0]
+    )
+    assert len(driver.state_writes) == 1
+
+
+@pytest.mark.parametrize(
+    "invalidate", ["read_fault", "ordinary_write", "unacknowledged_hint"]
+)
+def test_velocity_quiescence_requires_a_still_acknowledged_hint(
+    invalidate, monkeypatch
+):
+    driver = _VelocityDriver()
+    arm = _arm(driver)
+    target = [0.05, 0.0, 1.0]
+    assert base.apply_decision(
+        {"toy": arm}, target, velocity_feedforward_rad_s=[0.2, 0.0, 0.0]
+    )
+    if invalidate == "read_fault":
+        read = driver.read
+
+        def failed_read():
+            raise OSError("encoder unavailable")
+
+        monkeypatch.setattr(driver, "read", failed_read)
+        with pytest.raises(OSError, match="encoder unavailable"):
+            arm.state()
+        monkeypatch.setattr(driver, "read", read)
+    elif invalidate == "ordinary_write":
+        assert arm.command(target)
+    else:
+        monkeypatch.setattr(driver, "write_position_velocity", lambda q, v: False)
+        assert base.apply_decision(
+            {"toy": arm}, target, velocity_feedforward_rad_s=[0.2, 0.0, 0.0]
+        )
+    driver._q[0] = -0.2
+    assert not base.apply_decision(
+        {"toy": arm}, target, velocity_feedforward_rad_s=[0.0, 0.0, 0.0]
+    )
+
+
+def test_velocity_quiescence_requires_finite_measured_feedback():
+    driver = _VelocityDriver()
+    arm = _arm(driver)
+    target = [0.05, 0.0, 1.0]
+    assert base.apply_decision(
+        {"toy": arm}, target, velocity_feedforward_rad_s=[0.2, 0.0, 0.0]
+    )
+    driver._q[0] = np.nan
+    assert not base.apply_decision(
+        {"toy": arm}, target, velocity_feedforward_rad_s=[0.0, 0.0, 0.0]
+    )
+    assert len(driver.state_writes) == 1
+
+
 def test_multipart_dispatch_preflights_every_envelope_before_any_write():
     arms = _two_arms()
 

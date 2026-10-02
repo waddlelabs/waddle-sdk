@@ -30,6 +30,9 @@ Inheritance is optional. A driver provides:
 Make all methods safe under concurrent SDK pump and dispatch threads. Preserve the e-stop latch across writes and holds. Do not report re-enable success until the vendor operation succeeds.
 
 An optional `write_position_velocity(target, velocity_feedforward_rad_s) -> bool` consumes a producer-known feedforward for the same admitted position target. Return `False` only after deliberately issuing the unchanged position-only target. Never derive feedforward from measurements.
+An explicit all-zero hint may clear the last acknowledged nonzero hint only on
+its exact accepted position. Other targets retain ordinary admission; see the
+[known-velocity contract](https://waddle-sdk.readthedocs.io/en/latest/porting/robot/#position-and-known-velocity).
 
 ## Owner envelope
 
