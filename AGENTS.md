@@ -62,8 +62,15 @@ Reference physics sites are documented in `docs/python/simulation.md` and live i
 contracts as physical sites. The reference generator selects SO-101, YAM or xArm7;
 MuJoCo also supports a shared two-arm instance with part-scoped control and wrist
 cameras. Exact physical stream/intrinsics/mount rows can replace the clearly marked
-development camera defaults before publication. Its public planner-source helper
-uses the same pinned chain and builds bounded deterministic spatial hulls from
+development camera defaults before publication.
+
+Reference robot part options accept optional `max_joint_position_error_rad`, a
+scalar or ordered arm-joint vector, through the ordinary position-error contract.
+Omitted/null values retain the speed/rate fallback and the gripper bound stays
+rate-derived. This declares an owner envelope, not calibrated dynamics or gains;
+see `docs/porting/simulation.md`.
+
+Its public planner-source helper uses the same pinned chain and builds bounded deterministic spatial hulls from
 complete source collision pieces for every reference family. It
 records the proxy method and its fixed-open-hand/no-scene scope. The
 separate `articulated_model_sources` export preserves native visuals, collision

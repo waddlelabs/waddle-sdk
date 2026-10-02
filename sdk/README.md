@@ -169,6 +169,11 @@ produce the same runtime description, support rows, observations, actions, and R
 samples as physical devices. The manifest and public extension contract are documented
 in [Simulation backends](../docs/porting/simulation.md).
 
+Reference simulation parts may explicitly declare `max_joint_position_error_rad`
+in their options to match a hardware site's scalar or ordered arm-joint bounds.
+Omission preserves the existing speed/rate fallback. This uses ordinary SDK
+admission and support facts; it does not change motor gains or certify dynamics.
+
 For a URDF-based environment, use the portable scene build instead of hand-authoring
 simulator XML:
 

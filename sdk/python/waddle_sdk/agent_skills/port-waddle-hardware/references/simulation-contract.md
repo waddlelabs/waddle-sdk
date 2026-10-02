@@ -113,6 +113,12 @@ process/thread, connect a socket, or allocate a renderer. The backend provides
 `camera(config=CameraConfig) -> CameraDriver` runs after it. Protect shared state from
 concurrent command, step, capture, reset, and shutdown.
 
+The packaged reference robot adapter accepts optional part option
+`max_joint_position_error_rad` as a positive scalar or ordered arm-joint vector.
+It advertises and enforces the normal `limits.position_error` bounds. Omitted/null
+values preserve speed/rate admission; gripper bounds and dynamics do not change.
+See `docs/porting/simulation.md` for the normative configuration contract.
+
 Register installable short names rather than editing the SDK:
 
 ```toml

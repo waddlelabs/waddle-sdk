@@ -15,6 +15,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Allow reference simulation robot parts to declare scalar or ordered arm-joint
+  position-error bounds using the existing owner admission contract. Preserve
+  omitted defaults, gripper bounds, motor gains and physical adapter behavior.
+
 - Load portable, hash-verified native MuJoCo worlds with reference robot control,
   coupled grippers, configured camera validation and explicit keyframe resets.
 
