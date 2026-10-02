@@ -161,3 +161,9 @@ contact margins while retaining native rest offsets and material friction. Keep 
 from SDK control and sensor rates; a stable-looking pose alone does not prove
 that native joint velocities have converged under contact. Consumer completion
 thresholds must not mask a native solver defect.
+
+Imported MuJoCo worlds retain their compiled position-servo gains. Arm velocity
+hints use each actuator's KD/KP ratio, with separate values per joint/part;
+incompatible mappings fail explicitly and jaw velocity stays zero. This does not
+establish calibrated dynamics. See
+`docs/python/simulation.md#imported-native-mujoco-worlds` for the contract.

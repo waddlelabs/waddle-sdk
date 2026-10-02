@@ -165,6 +165,9 @@ Imported native MuJoCo worlds can now select portable, digest-bound assets and
 an explicit initial keyframe through `native_scene` in the reference simulation
 configuration. This reuses reference actuation and coupled hands, validates robot
 placement and camera projection, and retains trusted reset/variation ownership.
+Known arm velocity hints use each compiled position servo's KD/KP ratio, including
+different gains per imported part; incompatible actuator mappings fail explicitly.
+This does not change reference gains, force limits, jaw velocity or physical drivers.
 See [native scene configuration](docs/python/simulation.md#imported-native-mujoco-worlds)
 and `sdk/tests/test_native_scene.py`; physical fidelity is not established.
 

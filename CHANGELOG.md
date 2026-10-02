@@ -34,6 +34,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Derive native MuJoCo velocity feedforward from each loaded position actuator's
+  compiled KP/KD gains, including different gains across imported robot parts.
+  Refuse incompatible actuator mappings explicitly. Keep reference gains, hand
+  commands, force limits and physical drivers unchanged.
+
 - Permit clearing an acknowledged velocity hint on its exact accepted position
   after feedback leaves new-target headroom. Keep fresh finite feedback, joint,
   workspace, collision and supervision checks, and ordinary admission for every
