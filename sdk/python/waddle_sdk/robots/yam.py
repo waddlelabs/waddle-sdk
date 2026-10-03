@@ -508,8 +508,8 @@ DEFAULT_MAX_JOINT_SPEED_RAD_S = 1.0
 
 # Physical YAM reference settings used by the attended single-arm workspace.
 # These are configurable controller choices, not motor specifications.  The
-# 0.2 rad J2 allowance has only a small near-Home physical smoke so far.
-DEFAULT_MAX_JOINT_POSITION_ERROR_RAD = (0.04, 0.2, 0.04, 0.04, 0.04, 0.04)
+# The default arm allowance is independent of cadence and remains overridable.
+DEFAULT_MAX_JOINT_POSITION_ERROR_RAD = (0.2,) * ARM_JOINT_COUNT
 DEFAULT_ARM_GAINS = MappingProxyType(
     {
         "kp": (80.0, 150.0, 180.0, 10.0, 10.0, 10.0),

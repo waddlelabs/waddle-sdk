@@ -1037,7 +1037,7 @@ never wait for an in-envelope pose or infer physical settling from readiness.
 measurement allowance; omission preserves existing admission. Both are position
 error bounds, not physical velocity or torque enforcement. YAM's optional
 `max_joint_position_error_rad` accepts one scalar or six ordered values and applies
-only to six arm joints; the factory defaults to `[0.04,0.2,0.04,0.04,0.04,0.04]`
+only to six arm joints; the factory defaults to `[0.2,0.2,0.2,0.2,0.2,0.2]`
 at 25 Hz with a 0.010 rad arm owner-limit margin, retaining gripper
 limits, declared reference speeds and simulated speed. It validates before opening.
 Open runtime descriptions expose ordered `command_limits[part].max_position_error`

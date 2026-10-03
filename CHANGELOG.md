@@ -11,6 +11,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Default YAM arm target-to-measurement allowance to 0.2 rad on all six arm
+  joints. Explicit site/factory values still override it; gripper bounds,
+  reference speed declarations, joint/workspace limits and stop rules stay intact.
+
 - Respect an explicitly selected MuJoCo renderer in camera timing IPC acceptance.
 
 ### Added

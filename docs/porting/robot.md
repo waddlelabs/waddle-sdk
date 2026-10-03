@@ -129,7 +129,7 @@ for all six joints, or six positive values in declared joint order for separate
 allowances. For example, `[0.04, 0.2, 0.04, 0.04, 0.04, 0.04]` permits a larger
 joint 2 position-reference lead without changing the other five joints. Invalid
 values fail during factory construction, before CAN or vendor drivers open.
-The YAM factories now default to that six-value vector at 25 Hz; explicitly
+The YAM factories default to 0.2 rad on all six arm joints at 25 Hz; explicitly
 passing `None` retains the legacy `max_joint_speed_rad_s / rate_hz` arm bound.
 Declared velocity and simulator speed are separate from this allowance.
 
