@@ -52,6 +52,12 @@ Reference physics sites are documented in `docs/python/simulation.md` and live i
 `sdk/python/waddle_sdk/simulators/`. They use the same public
 `SimulationBackend`, named-part, camera, action, gripper, safety, and observation
 contracts as physical sites. The reference generator selects SO-101, YAM or xArm7;
+reference part options can declare scalar or ordered arm-only
+`max_joint_position_error_rad` bounds; omission retains speed/rate admission.
+MuJoCo converts known arm velocity hints with each compiled position actuator's
+KD/KP ratio, including imported gains. These adapter changes do not alter physical
+drivers, shared admission or jaw velocity commands. Focused behavior checks live
+in `sdk/tests/test_simulation_admission.py` and `sdk/tests/test_native_scene.py`.
 MuJoCo also supports a shared two-arm instance with part-scoped control and wrist
 cameras. Exact physical stream/intrinsics/mount rows can replace the clearly marked
 development camera defaults before publication. Its public planner-source helper

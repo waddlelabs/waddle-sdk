@@ -718,3 +718,12 @@ native controls. Trusted evaluation can apply declared seeded pose variations
 and existing appearance/physics variations. Imported environments support fixed,
 free and passive scalar-joint bodies; unsupported mappings fail explicitly.
 Opening this simulation configuration never opens a physical robot.
+
+Each driven native actuator must be a finite position servo with positive KP and
+nonnegative KD. Known arm velocity hints use that actuator's compiled KD/KP ratio
+to convert the position control into `KP*(goal-position) + KD*(goal_velocity-velocity)`.
+Imported gains may differ between joints or robot parts; no reference gain is
+substituted. Jaw velocity hints remain zero. MuJoCo's existing control/force limits
+and any declared actuator filtering remain active; this conversion does not
+calibrate dynamics or establish physical controller parity. See the
+[MuJoCo position-servo definition](https://mujoco.readthedocs.io/en/stable/XMLreference.html#actuator-position).

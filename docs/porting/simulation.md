@@ -40,6 +40,15 @@ For ready-made YAM/xArm7 scenes with coupled grippers, cubes, a threaded cap, or
 drawer, see [reference environments](../python/simulation.md). These use the same
 shared-world lifecycle, with MuJoCo, Isaac Sim, or SAPIEN physics workers.
 
+The packaged reference robot adapter accepts `parts.<name>.options.max_joint_position_error_rad`
+as a finite positive scalar or an ordered list with one value per arm joint.
+It uses the normal [position-error admission contract](robot.md#position-tracking-allowance)
+and advertises the resolved bounds through `limits.position_error`. Omission or
+`null` preserves the speed/rate fallback. Gripper bounds, motor gains, velocity
+limits and reference scene assets remain unchanged. Declare a hardware site's
+actual bounds explicitly when comparing execution; this setting does not infer
+or qualify physical dynamics.
+
 ## Start with any portable URDF bundle
 
 Install the MuJoCo reference implementation and initialize an editable scene:

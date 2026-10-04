@@ -35,6 +35,12 @@ and its simulation profile when renaming a part. One reference world contains
 one robot; two part names cannot alias that robot. Camera placements, calibration,
 and object layouts may differ between sites, while reported intrinsics and depth
 units must describe the rendered pixels.
+Reference robot parts accept scalar or ordered arm-only
+`max_joint_position_error_rad` options; omission keeps speed/rate admission and
+jaw bounds remain separate. For imported MuJoCo scenes, known arm velocity hints
+use each compiled position servo's KD/KP ratio rather than reference-model gains.
+Jaw velocity hints remain zero; incompatible actuator mappings fail explicitly.
+See `docs/porting/simulation.md` and `docs/python/simulation.md` for the contracts.
 Reference YAM worlds start with TCP near `(0.36, 0, 0.14)` m and the open hand
 pitched 45 degrees down, in the overlap of forward and downward reach.
 Opening/reset establishes that start; a new run preserves the current scene.

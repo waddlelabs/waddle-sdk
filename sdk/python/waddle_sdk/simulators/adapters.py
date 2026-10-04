@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import threading
+from collections.abc import Sequence
 from pathlib import Path
 
 import numpy as np
@@ -383,6 +384,33 @@ def _arm(owner: World, *, config: PartConfig) -> base.Rig:
     if not all(math.isfinite(x) and x > 0 for x in (rate, speed, hand_speed)):
         raise ValueError("simulation rate and speed must be positive")
     velocities = (speed,) * p.dof + (hand_speed,)
+    position_error_caps = None
+    requested_error = config.options.get("max_joint_position_error_rad")
+    if requested_error is not None:
+        values = (
+            (requested_error,) * p.dof
+            if isinstance(requested_error, (int, float))
+            else requested_error
+        )
+        if (
+            isinstance(requested_error, (str, bytes, bool))
+            or not isinstance(values, Sequence)
+            or len(values) != p.dof
+            or any(
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or value <= 0
+                for value in values
+            )
+        ):
+            raise ValueError(
+                "max_joint_position_error_rad must be one finite positive value "
+                f"or {p.dof} finite positive arm-joint values"
+            )
+        position_error_caps = tuple(float(value) for value in values) + (
+            hand_speed / rate,
+        )
 
     def build():
         driver = Driver(
@@ -399,6 +427,7 @@ def _arm(owner: World, *, config: PartConfig) -> base.Rig:
                     joint_names=p.names,
                     joint_limits=limits,
                     step_caps=tuple(v / rate for v in velocities),
+                    position_error_caps=position_error_caps,
                     base_frame=config.base_frame,
                     workspace=(
                         tuple(config.workspace_bounds["min"]),
