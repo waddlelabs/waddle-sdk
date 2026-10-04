@@ -44,7 +44,8 @@ The packaged reference robot adapter accepts `parts.<name>.options.max_joint_pos
 as a finite positive scalar or an ordered list with one value per arm joint.
 It uses the normal [position-error admission contract](robot.md#position-tracking-allowance)
 and advertises the resolved bounds through `limits.position_error`. Omission or
-`null` preserves the speed/rate fallback. Gripper bounds, motor gains, velocity
+`null` admits 0.2 rad on every arm joint, the YAM hardware default, so simulated and
+physical moves admit alike. Gripper bounds, motor gains, velocity
 limits and reference scene assets remain unchanged. Declare a hardware site's
 actual bounds explicitly when comparing execution; this setting does not infer
 or qualify physical dynamics.

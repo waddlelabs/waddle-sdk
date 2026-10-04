@@ -37,19 +37,18 @@ def reference_arm(robot="yam", **options):
 
 
 @pytest.mark.parametrize("robot", ROBOTS)
-@pytest.mark.parametrize("explicit", [False, True])
-def test_scalar_or_omitted_reference_envelope_controls_actual_admission(
-    robot, explicit
+@pytest.mark.parametrize("declared", [None, 0.04])
+def test_reference_arms_admit_the_hardware_command_lead_unless_the_site_declares_less(
+    robot, declared
 ):
-    options = {"max_joint_position_error_rad": 0.2 if explicit else None}
+    # Omitted bounds admit 0.2 rad per arm joint, as the physical YAM does by default,
+    # instead of the 0.04 rad speed/rate step (1 rad/s at 25 Hz).
+    options = {} if declared is None else {"max_joint_position_error_rad": declared}
     arm = reference_arm(robot, **options)
     target = arm.state()[0]
     target[0] += 0.05
-    assert arm.command(target) is explicit
-    assert arm.step_caps[0] == pytest.approx(0.04)
-    assert arm.position_error_caps == (
-        (0.2,) * arm.arm_dof + (0.04,) if explicit else None
-    )
+    assert arm.command(target) is (declared is None)
+    assert arm.position_error_caps == ((declared or 0.2),) * arm.arm_dof + (0.04,)
 
 
 def test_ordered_bounds_allow_j2_lag_without_widening_other_joints_or_jaws():

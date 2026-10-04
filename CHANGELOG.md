@@ -11,6 +11,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Reference simulation arms (SO-101, YAM, xArm7) default to 0.2 rad of command lead
+  on every arm joint, matching the YAM hardware default. They previously fell back to
+  speed/rate admission (0.04 rad per command at 1 rad/s and 25 Hz) and refused
+  full-speed moves the physical arm accepts. Explicit `max_joint_position_error_rad`
+  values still override it; jaw bounds are unchanged.
+
 - Default YAM arm target-to-measurement allowance to 0.2 rad on all six arm
   joints. Explicit site/factory values still override it; gripper bounds,
   reference speed declarations, joint/workspace limits and stop rules stay intact.

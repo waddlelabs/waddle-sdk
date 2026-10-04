@@ -23,6 +23,10 @@ from ..simulation import WorldConfig
 from .description import collision_bounds, description
 from .scene import load_scene, profile
 
+# Command lead each reference arm joint admits unless the site declares its own bound:
+# the YAM hardware factory default, so simulated and physical moves admit alike.
+DEFAULT_MAX_JOINT_POSITION_ERROR_RAD = 0.2
+
 
 class World:
     """One lazy world owned by the standard SDK simulation lifecycle."""
@@ -384,33 +388,33 @@ def _arm(owner: World, *, config: PartConfig) -> base.Rig:
     if not all(math.isfinite(x) and x > 0 for x in (rate, speed, hand_speed)):
         raise ValueError("simulation rate and speed must be positive")
     velocities = (speed,) * p.dof + (hand_speed,)
-    position_error_caps = None
     requested_error = config.options.get("max_joint_position_error_rad")
-    if requested_error is not None:
-        values = (
-            (requested_error,) * p.dof
-            if isinstance(requested_error, (int, float))
-            else requested_error
+    if requested_error is None:
+        requested_error = DEFAULT_MAX_JOINT_POSITION_ERROR_RAD
+    values = (
+        (requested_error,) * p.dof
+        if isinstance(requested_error, (int, float))
+        else requested_error
+    )
+    if (
+        isinstance(requested_error, (str, bytes, bool))
+        or not isinstance(values, Sequence)
+        or len(values) != p.dof
+        or any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value <= 0
+            for value in values
         )
-        if (
-            isinstance(requested_error, (str, bytes, bool))
-            or not isinstance(values, Sequence)
-            or len(values) != p.dof
-            or any(
-                isinstance(value, bool)
-                or not isinstance(value, (int, float))
-                or not math.isfinite(value)
-                or value <= 0
-                for value in values
-            )
-        ):
-            raise ValueError(
-                "max_joint_position_error_rad must be one finite positive value "
-                f"or {p.dof} finite positive arm-joint values"
-            )
-        position_error_caps = tuple(float(value) for value in values) + (
-            hand_speed / rate,
+    ):
+        raise ValueError(
+            "max_joint_position_error_rad must be one finite positive value "
+            f"or {p.dof} finite positive arm-joint values"
         )
+    position_error_caps = tuple(float(value) for value in values) + (
+        hand_speed / rate,
+    )
 
     def build():
         driver = Driver(

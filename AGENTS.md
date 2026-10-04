@@ -53,7 +53,8 @@ Reference physics sites are documented in `docs/python/simulation.md` and live i
 `SimulationBackend`, named-part, camera, action, gripper, safety, and observation
 contracts as physical sites. The reference generator selects SO-101, YAM or xArm7;
 reference part options can declare scalar or ordered arm-only
-`max_joint_position_error_rad` bounds; omission retains speed/rate admission.
+`max_joint_position_error_rad` bounds; omission admits 0.2 rad per arm joint, the
+YAM hardware default.
 MuJoCo converts known arm velocity hints with each compiled position actuator's
 KD/KP ratio, including imported gains. These adapter changes do not alter physical
 drivers, shared admission or jaw velocity commands. Focused behavior checks live
