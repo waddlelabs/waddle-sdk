@@ -1271,6 +1271,12 @@ class SiteSession:
                 description["robot"] = self._registered_robot_description(managed)
                 description["command_limits"] = {
                     name: {
+                        **(
+                            {"gripper_force_n": list(arm.driver.gripper_force_limits_n)}
+                            if isinstance(arm.driver, base.GripperForceDriver)
+                            and arm.driver.gripper_force_supported
+                            else {}
+                        ),
                         "joint_names": list(arm.joint_names),
                         "max_position_error": list(
                             arm.position_error_caps or arm.step_caps
@@ -1489,6 +1495,13 @@ class SiteSession:
                         for joint in joints
                     ):
                         facts.add(SupportFact.VELOCITY_LIMITS)
+            if (
+                isinstance(arm.driver, base.GripperForceDriver)
+                and arm.driver.gripper_force_supported
+            ):
+                facts.update(
+                    (SupportFact.GRIPPER_FORCE, SupportFact.GRIPPER_FORCE_OBSERVATION)
+                )
             if isinstance(arm.driver, base.PositionVelocityDriver):
                 facts.add(SupportFact.VELOCITY_FEEDFORWARD)
             if arm.fk is not None:
@@ -1685,6 +1698,12 @@ class SiteSession:
             try:
                 position, velocity = arm.state()
                 pose = arm.ee_pose(position)
+                force = (
+                    arm.driver.read_gripper_force()
+                    if isinstance(arm.driver, base.GripperForceDriver)
+                    and arm.driver.gripper_force_supported
+                    else None
+                )
             except Exception as exc:
                 faults[name] = _operation_fault(
                     "observe robot part",
@@ -1701,6 +1720,7 @@ class SiteSession:
                 if pose is None
                 else np.asarray(pose, dtype=np.float64),
                 frame_id=None if pose is None else arm.base_frame,
+                gripper_force=force,
             )
         cameras = {
             name: sample
@@ -1982,8 +2002,14 @@ class Run:
         if self._episode.done:
             raise RuntimeFault(FaultCode.CONFLICT, "run is already terminal")
         velocity_feedforward = None
+        force_n = None
         gate_action = action
         if isinstance(action, JointPositionCommand):
+            force_n = action.gripper_force_n
+            if force_n is not None and part is None:
+                raise RuntimeFault(
+                    FaultCode.INVALID_REQUEST, "force modifier requires a named part"
+                )
             gate_action = np.asarray(action.positions, dtype=np.float64)
             if action.velocity_feedforward_rad_s is not None:
                 velocity_feedforward = np.asarray(
@@ -2026,6 +2052,7 @@ class Run:
             # action has none, or one policy's velocity would ride another
             # policy's position target.
             velocity_feedforward = None
+            force_n = None
         if gate is not None and gate.velocity_feedforward is not None:
             velocity_feedforward = np.asarray(
                 gate.velocity_feedforward, dtype=np.float64
@@ -2040,6 +2067,22 @@ class Run:
                     decided = {caller_part: decided}
                     if velocity_feedforward is not None:
                         velocity_feedforward = {caller_part: velocity_feedforward}
+                force_rows = None if force_n is None else {caller_part: force_n}
+                if kind != "pass":
+                    # Selected supervision streams own their full action. An
+                    # earlier caller's persistent jaw mode cannot override it.
+                    arms = self._session._require().arms
+                    rows = (
+                        decided
+                        if isinstance(decided, dict)
+                        else base.split_by_part(arms, decided)
+                    )
+                    force_rows = {
+                        name: 0.0
+                        for name in rows
+                        if isinstance(arms[name].driver, base.GripperForceDriver)
+                        and arms[name].driver.gripper_force_supported
+                    }
                 dispatched = base.apply_decision(
                     self._session._require().arms,
                     decided,
@@ -2047,6 +2090,7 @@ class Run:
                     # caller on pass, selected stream on substitute/anchorless
                     # blend, absent on an actually interpolated blend.
                     velocity_feedforward_rad_s=velocity_feedforward,
+                    gripper_force_n=force_rows,
                     on_refusal=refusal_faults.append,
                     check_neighbors=caller_part is not None,
                 )
@@ -2076,6 +2120,7 @@ class Run:
                 "dispatched": dispatched,
                 "gate": kind,
                 "part": part,
+                **({"gripper_force_n": force_n} if force_n is not None else {}),
                 **({"fault": fault.as_dict()} if fault is not None else {}),
             },
         )

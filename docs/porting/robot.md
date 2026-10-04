@@ -148,6 +148,16 @@ A driver may additionally implement
 is a trajectory producer's known hint for the same already-admitted position target.
 Return false only after deliberately issuing the identical position-only fallback.
 Never differentiate measurements or an IK stream to invent feedforward.
+The YAM LINEAR_4310 reference adapter smooths each accepted position-only jaw
+target over one 40 ms host period at motor rate, with a 1.0 normalized action/s
+slew ceiling for large direct goals. It leaves the vendor's contact/force
+correction immediate and sends zero jaw velocity feedforward. This changes the
+motor reference after admission; it does not claim fingertip-force control.
+Positive YAM force mode makes a bounded correction for steady motor-effort
+shortfall only after a stationary hold has been established. The correction
+resets when motion resumes and never raises its nominal command above the
+driver's declared force-request ceiling. Motor effort remains an estimate of
+fingertip contact force.
 
 ### Forward kinematics
 

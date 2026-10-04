@@ -280,6 +280,35 @@ class Driver:
         q[-1] = np.clip(q[-1], 0.0, 1.0)
         return q, dq
 
+    @property
+    def gripper_force_supported(self):
+        return self.world.config["backend"] == "mujoco" and self.profile.name == "yam"
+
+    @property
+    def gripper_force_limits_n(self):
+        return tuple(self.world.part_call("gripper_force_limits", self.part))
+
+    def read_gripper_force(self):
+        from ..runtime import GripperForce
+
+        return GripperForce(
+            float(self.world.part_call("gripper_force", self.part)),
+            "mujoco.yam.actuator_force",
+            True,
+        )
+
+    def write_gripper_force(self, target, force_n, velocity=None):
+        if self._monitor or self._estopped:
+            raise RuntimeError("simulation arm is monitor-only or e-stopped")
+        values = np.asarray(target, dtype=float)
+        self.profile.poses(values)
+        if any(
+            x < lo or x > hi
+            for x, (lo, hi) in zip(values, self.profile.limits, strict=True)
+        ):
+            raise ValueError("simulation target exceeds the robot's joint limits")
+        self.world.part_call("write_force", self.part, values, force_n, velocity)
+
     def write(self, target):
         self._write(target)
 
