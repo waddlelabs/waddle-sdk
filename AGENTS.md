@@ -52,6 +52,12 @@ Reference physics sites are documented in `docs/python/simulation.md` and live i
 `sdk/python/waddle_sdk/simulators/`. They use the same public
 `SimulationBackend`, named-part, camera, action, gripper, safety, and observation
 contracts as physical sites. The reference generator selects SO-101, YAM or xArm7;
+reference part options can declare scalar or ordered arm-only
+`max_joint_position_error_rad` bounds; omission retains speed/rate admission.
+MuJoCo converts known arm velocity hints with each compiled position actuator's
+KD/KP ratio, including imported gains. These adapter changes do not alter physical
+drivers, shared admission or jaw velocity commands. Focused behavior checks live
+in `sdk/tests/test_simulation_admission.py` and `sdk/tests/test_native_scene.py`.
 MuJoCo also supports a shared two-arm instance with part-scoped control and wrist
 cameras. Exact physical stream/intrinsics/mount rows can replace the clearly marked
 development camera defaults before publication. Its public planner-source helper
@@ -1037,7 +1043,7 @@ never wait for an in-envelope pose or infer physical settling from readiness.
 measurement allowance; omission preserves existing admission. Both are position
 error bounds, not physical velocity or torque enforcement. YAM's optional
 `max_joint_position_error_rad` accepts one scalar or six ordered values and applies
-only to six arm joints; the factory defaults to `[0.04,0.2,0.04,0.04,0.04,0.04]`
+only to six arm joints; the factory defaults to `[0.2,0.2,0.2,0.2,0.2,0.2]`
 at 25 Hz with a 0.010 rad arm owner-limit margin, retaining gripper
 limits, declared reference speeds and simulated speed. It validates before opening.
 Open runtime descriptions expose ordered `command_limits[part].max_position_error`

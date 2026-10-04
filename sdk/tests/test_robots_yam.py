@@ -395,6 +395,29 @@ def test_default_yam_control_profile_is_shared_by_single_and_two_arm_factories()
             arm.driver.close()
 
 
+@pytest.mark.parametrize("factory", [_arm_rig, _bimanual])
+def test_default_arm_allowance_admits_lead_but_preserves_arm_and_hand_gates(factory):
+    rig = factory(workspace=None, report=lambda _: None)
+    for arm in rig.arms().values():
+        measured, _ = arm.state()
+        for index in range(6):
+            for lead in (-0.19, 0.19):
+                target = measured.copy()
+                target[index] += lead
+                if (
+                    arm.joint_limits[index][0]
+                    <= target[index]
+                    <= arm.joint_limits[index][1]
+                ):
+                    assert arm.check(target, measured) is None
+                    target[index] += 0.02 if lead > 0 else -0.02
+                    assert "position-error cap 0.2000" in arm.check(target, measured)
+        target = measured.copy()
+        target[-1] += arm.step_caps[-1] + 0.001
+        assert arm.check(target, measured) is not None
+        arm.driver.close()
+
+
 def test_the_declaration_carries_the_interval_the_envelope_enforces():
     """One number, two readers: a teleoperator or an agent is shown the range
     this rig really has, because it is the range that will judge them."""

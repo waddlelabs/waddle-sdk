@@ -57,6 +57,7 @@ class Engine:
         self._qpos = {}
         self._dofs = {}
         self._controls = {}
+        self._velocity_ratio = {}
         for part in self.parts:
             prefix = self._prefix(part)
             joints = [
@@ -68,10 +69,27 @@ class Engine:
             self._controls[part] = tuple(
                 f"{prefix}{name}" for name in p.names[:-1] + robot.hand_names[:1]
             )
-        native_controls = p.names[:-1] + robot.hand_names[:1]
-        self._velocity_ratio = np.array(
-            [robot.servo(name)[1] / robot.servo(name)[0] for name in native_controls]
-        )
+            ratios = []
+            for name in self._controls[part]:
+                actuator = self.model.actuator(name)
+                kp = float(actuator.gainprm[0])
+                bias = actuator.biasprm[:3]
+                if (
+                    actuator.gaintype[0] != mujoco.mjtGain.mjGAIN_FIXED
+                    or actuator.biastype[0] != mujoco.mjtBias.mjBIAS_AFFINE
+                    or not math.isfinite(kp)
+                    or kp <= 0
+                    or not np.isfinite(bias).all()
+                    or bias[0] != 0
+                    or bias[1] != -kp
+                    or bias[2] > 0
+                ):
+                    raise ValueError(
+                        f"native actuator {name} requires a finite position servo "
+                        "with positive KP and nonnegative KD"
+                    )
+                ratios.append(float(-bias[2] / kp))
+            self._velocity_ratio[part] = np.asarray(ratios)
         if "native_scene" in config:
             from .native_scene import initialize, validate_cameras
 
@@ -207,7 +225,7 @@ class Engine:
         # equivalent to kp*(target-q) + kv*(desired_velocity-dq).
         target = np.r_[q[:-1], self.description.hand_position(q[-1])]
         if velocity is not None:
-            target += self._velocity_ratio * np.r_[velocity[:-1], 0.0]
+            target += self._velocity_ratio[part] * np.r_[velocity[:-1], 0.0]
         for name, value in zip(self._controls[part], target, strict=True):
             self.data.actuator(name).ctrl[0] = value
 

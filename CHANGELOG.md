@@ -11,9 +11,17 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Default YAM arm target-to-measurement allowance to 0.2 rad on all six arm
+  joints. Explicit site/factory values still override it; gripper bounds,
+  reference speed declarations, joint/workspace limits and stop rules stay intact.
+
 - Respect an explicitly selected MuJoCo renderer in camera timing IPC acceptance.
 
 ### Added
+
+- Reference simulation parts accept explicit scalar or ordered arm-joint
+  `max_joint_position_error_rad` bounds through ordinary admission and support
+  facts. Omission preserves speed/rate admission and jaw bounds remain separate.
 
 - Load portable, hash-verified native MuJoCo worlds with reference robot control,
   coupled grippers, configured camera validation and explicit keyframe resets.
@@ -29,6 +37,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   objects and cameras; source compilation opens no site or physical device.
 
 ### Fixed
+
+- Convert known arm velocity hints using each loaded MuJoCo position actuator's
+  compiled KD/KP ratio, including different imported gains across parts. Reject
+  incompatible actuator mappings; preserve position-only and jaw commands.
 
 - Resolve explicitly selected RealSense cameras by serial instead of globally
   enumerating active peers, allowing RSUSB multi-camera startup and independent
