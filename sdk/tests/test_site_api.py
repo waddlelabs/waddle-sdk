@@ -717,6 +717,30 @@ def test_run_routes_gate_decision_through_owner_envelope(tmp_path):
         assert any(event.kind == "run.step" for event in events)
 
 
+def test_long_runs_keep_recent_steps_and_every_other_event(tmp_path, monkeypatch):
+    # One step event per command (25 Hz on a YAM) grew the heap for the whole session;
+    # its full garbage collections then starved the motor loop.
+    from waddle_sdk import site as site_module
+
+    monkeypatch.setattr(site_module, "STEP_EVENT_HISTORY", 8)
+    site = waddle_sdk.load_site(_write_site(tmp_path))
+    with site.open(console=False, _testing=True) as session:
+        with session.run(task={"id": "move"}, actor={"id": "test"}) as run:
+            observation = run.observe()
+            for _ in range(30):
+                run.step([0.1, -0.1], observation)
+            session.hold("operator")
+            run.finish("success")
+        events = session.events()
+    steps = [event for event in events if event.kind == "run.step"]
+    assert len(steps) == 8 and steps[-1].cursor > steps[0].cursor
+    kinds = {event.kind for event in events}
+    assert {"session.opened", "run.started", "control.hold", "run.finished"} <= kinds
+    cursors = [event.cursor for event in events]
+    assert cursors == sorted(set(cursors))  # unique and increasing across both stores
+    assert session.events(after_cursor=steps[-1].cursor)[0].cursor > steps[-1].cursor
+
+
 def test_run_carries_a_known_velocity_only_for_the_unchanged_gate_action(tmp_path):
     site = waddle_sdk.load_site(_write_site(tmp_path))
     with site.open(console=False, _testing=True) as session:

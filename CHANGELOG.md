@@ -11,6 +11,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- `SiteSession.events()` keeps the most recent 4,096 `run.step` events and every other
+  event for the session. One step event per submitted command (25 Hz on a YAM) grew the
+  heap for the whole session, so full garbage collections in long-running owners held
+  the GIL long enough to starve the motor loop. Cursors stay unique and increasing.
+
 - Reference simulation arms (SO-101, YAM, xArm7) default to 0.2 rad of command lead
   on every arm joint, matching the YAM hardware default. They previously fell back to
   speed/rate admission (0.04 rad per command at 1 rad/s and 25 Hz) and refused

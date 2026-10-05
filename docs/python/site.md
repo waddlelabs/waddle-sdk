@@ -111,6 +111,9 @@ Background part failures remain in `SiteSession.events()` as `robot.part_fault`
 events containing `part` and the original structured `fault`, including its cause
 chain. Later successful reads do not erase that history. Unchanged repeated fault
 payloads are coalesced per part; applications choose their response policy.
+`run.step` events, one per submitted command, are retained for the most recent
+4,096 steps; all other events are retained for the session. Cursors stay unique and
+increasing, so a reader polling `events(after_cursor)` can tell when steps aged out.
 
 `Run.step_parts({part: JointPositionCommand(...)}, observation)` returns one
 `SubmitResult` per addressed part. Each command crosses the native gate and owner

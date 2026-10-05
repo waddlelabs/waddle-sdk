@@ -11,6 +11,7 @@ import sys
 import threading
 import time
 import warnings
+from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from functools import partial
@@ -73,6 +74,13 @@ _SEMVER = re.compile(
 )
 _UTC_DEADLINE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
 
+
+
+# A run records one `run.step` event per submitted command (25 Hz on a YAM). Keeping
+# every one for a long session grew the heap without bound, and each full garbage
+# collection then held the GIL long enough to starve the motor loop. Steps keep a
+# recent window; every other event is kept for the session.
+STEP_EVENT_HISTORY = 4096
 
 class ConnectorCompatibilityWarning(UserWarning):
     """The connected host recommends an SDK upgrade before a deadline."""
@@ -977,6 +985,8 @@ class SiteSession:
         self._assembly: _SiteAssembly | None = None
         self._active: Run | None = None
         self._events: list[RuntimeEvent] = []
+        self._step_events: deque[RuntimeEvent] = deque(maxlen=STEP_EVENT_HISTORY)
+        self._event_cursor = 0
         self._event_lock = threading.Lock()
         self._dispatch_lock = threading.RLock()
         self._service_stop = threading.Event()
@@ -1247,8 +1257,9 @@ class SiteSession:
         if managed is not None and managed.core is not None:
             session_ns = int(managed.core.stamp().session_ns)
         with self._event_lock:
-            event = RuntimeEvent(len(self._events) + 1, kind, session_ns, dict(data))
-            self._events.append(event)
+            self._event_cursor += 1
+            event = RuntimeEvent(self._event_cursor, kind, session_ns, dict(data))
+            (self._step_events if kind == "run.step" else self._events).append(event)
         return event
 
     def _record_part_fault(self, part: str, error: Exception) -> None:
@@ -1762,7 +1773,9 @@ class SiteSession:
         if after_cursor < 0:
             raise ValueError("after_cursor must be non-negative")
         with self._event_lock:
-            return tuple(event for event in self._events if event.cursor > after_cursor)
+            rows = [event for event in self._events if event.cursor > after_cursor]
+            rows += [event for event in self._step_events if event.cursor > after_cursor]
+        return tuple(sorted(rows, key=lambda event: event.cursor))
 
     def calibration_measurement(
         self,
