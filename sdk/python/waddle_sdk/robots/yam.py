@@ -698,6 +698,7 @@ class LiveDriver:
         gripper_gain_scale: float = 1.0,
         velocity_feedforward: bool = True,
         max_feedforward_vel_rad_s: float = DEFAULT_MAX_FEEDFORWARD_VEL_RAD_S,
+        max_gripper_speed_per_s: float = DEFAULT_MAX_GRIPPER_SPEED_PER_S,
         configure_can: bool = False,
         can_bitrate: int = DEFAULT_CAN_BITRATE,
         zero_gravity: bool = False,
@@ -738,7 +739,7 @@ class LiveDriver:
         self.channel = channel
         self._zero_gravity = bool(zero_gravity)
         self._report = report
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._feedback_lock = threading.Lock()
         self._last_feedback_state: object | None = None
         self._last_feedback_update = monotonic()
@@ -790,6 +791,39 @@ class LiveDriver:
                 )
             self._default_kp, self._default_kd = self._snapshot_gains()
             self._apply_gain_scales(arm_gain_scale, gripper_gain_scale, arm_gains)
+            self._force_limiter = None
+            if (
+                getattr(self._robot, "_limit_gripper_force", 0) > 0
+                and getattr(self._robot, "_gripper_limits", None) is not None
+                and callable(
+                    getattr(
+                        getattr(self._robot, "_gripper_force_limiter", None),
+                        "update",
+                        None,
+                    )
+                )
+                and callable(
+                    getattr(
+                        getattr(self._robot, "remapper", None),
+                        "to_robot_joint_pos_space",
+                        None,
+                    )
+                )
+                and float(self._robot._kp[-1]) > 0
+                and float(self._robot._kd[-1]) > 0
+            ):
+                from .yam_force import ForceLimiter
+
+                raw_limits = self._robot._gripper_limits
+                self._force_limiter = ForceLimiter(
+                    self._robot._gripper_force_limiter,
+                    kp=float(self._robot._kp[-1]),
+                    kd=float(self._robot._kd[-1]),
+                    stroke=float(raw_limits[1] - raw_limits[0]),
+                    max_speed=max_gripper_speed_per_s,
+                    max_force_n=min(50.0, float(self._robot._limit_gripper_force)),
+                )
+                self._robot._gripper_force_limiter = self._force_limiter
             self._can_command_state = callable(
                 getattr(self._robot, "command_joint_state", None)
             )
@@ -988,7 +1022,64 @@ class LiveDriver:
             velocity[:ARM_JOINT_COUNT] = np.asarray(raw_vel, dtype=float)[
                 :ARM_JOINT_COUNT
             ]
+        grip_vel = obs.get("gripper_vel")
+        if grip_vel is not None:
+            velocity[-1] = float(np.reshape(grip_vel, -1)[0])
         return position, velocity
+
+    @property
+    def gripper_force_supported(self):
+        return (
+            not self._zero_gravity and getattr(self, "_force_limiter", None) is not None
+        )
+
+    @property
+    def gripper_force_limits_n(self):
+        return 1.0, min(50.0, float(self._robot._limit_gripper_force))
+
+    def read_gripper_force(self):
+        self._check_feedback()
+        effort = self._robot.get_observations().get("gripper_eff")
+        if effort is None or np.size(effort) != 1:
+            raise RuntimeError(f"{self.channel}: gripper effort feedback is missing")
+        return self._force_limiter.measurement(float(np.reshape(effort, -1)[0]))
+
+    def write_gripper_force(self, target, force_n, velocity=None):
+        with self._lock:
+            if self._estopped or self._zero_gravity:
+                raise RuntimeError(
+                    f"{self.channel}: force control is stopped or unavailable"
+                )
+            lo, hi = self.gripper_force_limits_n
+            if not math.isfinite(force_n) or (force_n != 0 and not lo <= force_n <= hi):
+                raise ValueError("gripper.force_range")
+            raw = self._robot.remapper.to_robot_joint_pos_space(
+                np.asarray(target, dtype=float)
+            )
+            self._force_limiter.set_force(force_n, float(raw[-1]))
+            try:
+                if velocity is None:
+                    self.write(target)
+                else:
+                    self.write_position_velocity(target, velocity)
+            except BaseException:
+                self._force_limiter.discard_pending()
+                raise
+
+    def _clear_force(self, target=None):
+        if (
+            limiter := getattr(self, "_force_limiter", None)
+        ) is not None and limiter.has_mode:
+            raw = (
+                None
+                if target is None
+                else float(
+                    self._robot.remapper.to_robot_joint_pos_space(
+                        np.asarray(target, dtype=float)
+                    )[-1]
+                )
+            )
+            limiter.set_force(0, raw)
 
     def write(self, target: np.ndarray) -> None:
         if self._zero_gravity:
@@ -1056,7 +1147,13 @@ class LiveDriver:
         with self._lock:
             if self._estopped:
                 return
-            self._robot.command_joint_pos(np.asarray(position, dtype=float))
+            self._clear_force(position)
+            try:
+                self._robot.command_joint_pos(np.asarray(position, dtype=float))
+            except BaseException:
+                if limiter := getattr(self, "_force_limiter", None):
+                    limiter.discard_pending()
+                raise
 
     def estop(self) -> None:
         """Zero torque, and LATCH.
@@ -1068,6 +1165,7 @@ class LiveDriver:
         with self._lock:
             self._estopped = True
             self._robot.zero_torque_mode()
+            self._clear_force()
 
     def re_enable(self) -> None:
         """Gains back, measured pose held — the only exit from the latch.
@@ -1106,6 +1204,7 @@ class LiveDriver:
     def close(self) -> None:
         with self._lock:
             self._quiesce_pinned_i2rt_control_thread()
+            self._clear_force()
             self._robot.close()
 
     def _quiesce_pinned_i2rt_control_thread(self) -> None:
@@ -1550,6 +1649,7 @@ def _build_arms(
                     driver = LiveDriver(
                         site.channel,
                         gripper_limits=site.gripper_limits,
+                        max_gripper_speed_per_s=step_caps[-1] * rate_hz,
                         gravity_comp_factor=gravity_comp_factor,
                         arm_gains=arm_gains,
                         arm_gain_scale=arm_gain_scale,

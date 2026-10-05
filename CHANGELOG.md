@@ -22,6 +22,22 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   full-speed moves the physical arm accepts. Explicit `max_joint_position_error_rad`
   values still override it; jaw bounds are unchanged.
 
+- Approach force grasps from a mostly open, lightly loaded YAM jaw using its
+  ordinary smoothed position controller; hand off to force mode on motor-effort
+  contact with raw-motor slowdown or before the final 5% of stroke.
+
+- Correct small stationary YAM force-hold shortfalls with a bounded adjustment
+  that resets on motion and stays within the declared force-request ceiling.
+
+- Blend YAM LINEAR_4310 position-only jaw references across one host period in
+  the existing vendor motor loop, with a bounded direct-goal slew. Retain
+  vendor contact correction, force mode, zero hand velocity feedforward and
+  SDK admission/stop rules.
+
+- Add optional named-part gripper force actuation/feedback and explicit bounds.
+  Preserve native gates, owner envelopes, retained arm writes and stop lifecycle;
+  YAM and native MuJoCo YAM report sourced nominal force estimates.
+
 - Default YAM arm target-to-measurement allowance to 0.2 rad on all six arm
   joints. Explicit site/factory values still override it; gripper bounds,
   reference speed declarations, joint/workspace limits and stop rules stay intact.

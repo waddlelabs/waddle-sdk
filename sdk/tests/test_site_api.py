@@ -1025,3 +1025,63 @@ def test_close_keeps_holding_until_release_is_authorized(
     reopened = site.open(console=False, _testing=True).__enter__()
     reopened.close(torque_release_authorized=True)
     assert site_fixtures.closed == {"arms": 2, "cameras": 2}
+
+
+def test_named_force_mode_is_owner_checked_and_selected_stream_clears_it(
+    tmp_path, monkeypatch
+):
+    from waddle_sdk.runtime import GripperForce
+
+    forces = []
+    monkeypatch.setattr(
+        site_fixtures._Driver, "gripper_force_supported", True, raising=False
+    )
+    monkeypatch.setattr(
+        site_fixtures._Driver, "gripper_force_limits_n", (1, 50), raising=False
+    )
+    monkeypatch.setattr(
+        site_fixtures._Driver,
+        "read_gripper_force",
+        lambda self: GripperForce(0, "test.sensor", False),
+        raising=False,
+    )
+
+    def write_force(driver, target, force_n, velocity=None):
+        forces.append(force_n)
+        driver.write(target)
+
+    monkeypatch.setattr(
+        site_fixtures._Driver, "write_gripper_force", write_force, raising=False
+    )
+    site = waddle_sdk.load_site(_write_site(tmp_path))
+    with (
+        site.open(console=False, _testing=True) as session,
+        session.run(task="force ownership", actor="test") as run,
+    ):
+        result = run.step_parts(
+            {"arm": JointPositionCommand([0.05, 0], gripper_force_n=10)},
+            session.observe_parts(["arm"]),
+        )["arm"]
+        assert result.dispatched and forces == [10]
+        refused = run.step_parts(
+            {"arm": JointPositionCommand([0.95, 0], gripper_force_n=20)},
+            session.observe_parts(["arm"]),
+        )["arm"]
+        assert not refused.dispatched and forces == [10]
+        core = session._managed.core
+        core._testing_engage("claim-force", "agent")
+        deadline = time.monotonic() + 5
+        while core.status()["gate_mode"] != "Intervention":
+            assert time.monotonic() < deadline
+            time.sleep(0.005)
+        core._testing_push_chunk([0.05, 0])
+        while True:
+            selected = run.step_parts(
+                {"arm": JointPositionCommand([0.05, 0], gripper_force_n=30)},
+                session.observe_parts(["arm"]),
+            )["arm"]
+            if selected.gate == "substitute":
+                break
+            assert time.monotonic() < deadline
+            time.sleep(0.005)
+        assert forces == [10, 0], forces

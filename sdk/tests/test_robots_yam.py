@@ -1536,3 +1536,61 @@ def test_invalid_gravity_factors_refuse_before_vendor_open(vendor, values):
     with pytest.raises(ValueError, match="gravity_comp_factor"):
         yam.arm(workspace=None, channel="can_test", gravity_comp_factor=values)
     assert not vendor.calls
+
+
+def test_force_driver_binds_mode_to_reference_and_hold_releases_it(vendor, monkeypatch):
+    original = vendor.get_yam_robot
+
+    def force_robot(**kwargs):
+        robot = original(**kwargs)
+        robot._limit_gripper_force = 50
+        robot._gripper_limits = np.array(GRIPPER_LIMITS_MOTOR_RAD)
+        robot._gripper_force_limiter = types.SimpleNamespace(
+            update=lambda state: state["target_qpos"]
+        )
+        robot._kp = np.array([10.0] * 6 + [20.0])
+        robot._kd = np.array([1.0] * 6 + [0.5])
+
+        def remap(values):
+            result = np.array(values, dtype=float)
+            result[-1] = GRIPPER_LIMITS_MOTOR_RAD[0] + result[-1] * (
+                GRIPPER_LIMITS_MOTOR_RAD[1] - GRIPPER_LIMITS_MOTOR_RAD[0]
+            )
+            return result
+
+        robot.remapper = types.SimpleNamespace(to_robot_joint_pos_space=remap)
+        robot.observations.update(gripper_eff=[10 * 0.096 / 6.57], gripper_vel=[0.0])
+        return robot
+
+    monkeypatch.setattr(
+        sys.modules["i2rt.robots.get_robot"], "get_yam_robot", force_robot
+    )
+    driver = _live(vendor)
+    robot = vendor.robots[0]
+    try:
+        assert driver.gripper_force_supported
+        assert driver.read_gripper_force().force_n == pytest.approx(10)
+        target = np.array([0.1] * 6 + [0.4])
+        driver.write_gripper_force(target, 10)
+        raw = robot.remapper.to_robot_joint_pos_space(target)[-1]
+        state = {
+            "current_qpos": 0.9,
+            "target_qpos": raw,
+            "current_qvel": 0.0,
+            "current_eff": 10 * 0.096 / 6.57,
+            "current_normalized_qpos": 0.5,
+            "last_command_qpos": raw,
+        }
+        robot._gripper_force_limiter.update(state)
+        assert robot._gripper_force_limiter.force_n == 10
+        target[0] += 0.01
+        driver.write(target)
+        assert robot._gripper_force_limiter.force_n == 10
+        driver.hold()
+        robot._gripper_force_limiter.update(state)  # Pre-Hold copied reference.
+        assert robot._gripper_force_limiter.force_n == 10
+        state["target_qpos"] = 0.9
+        assert robot._gripper_force_limiter.update(state) == 0.9
+        assert robot._gripper_force_limiter.force_n == 0
+    finally:
+        driver.close()

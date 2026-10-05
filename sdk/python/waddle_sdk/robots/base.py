@@ -60,7 +60,7 @@ from ..cameras import CameraCalibrationDriver, CameraDriver, CameraFrame, Camera
 from ..cameras.base import _depth_preview_rgb
 from ..descriptors import Camera as CameraDescription
 from ..descriptors import FrameTransform, Intrinsics, Robot
-from ..runtime import FaultCode, RuntimeFault
+from ..runtime import FaultCode, GripperForce, RuntimeFault
 
 __all__ = [
     "CONSOLE_THREAD_NAME",
@@ -340,6 +340,29 @@ class PositionVelocityDriver(Protocol):
     def write_position_velocity(
         self, target: np.ndarray, velocity_feedforward_rad_s: np.ndarray
     ) -> bool: ...
+
+
+@runtime_checkable
+class GripperForceDriver(Protocol):
+    """Optional admitted force mode, retained across ordinary arm writes.
+
+    The position vector bounds approach travel. Positive force activates the
+    driver force servo; zero returns to position control. Hold/e-stop/close
+    must clear the mode. Force readings report measured closing effort, never
+    a requested setpoint. A kinematic driver cannot advertise this interface.
+    """
+
+    @property
+    def gripper_force_supported(self) -> bool: ...
+
+    @property
+    def gripper_force_limits_n(self) -> tuple[float, float]: ...
+
+    def read_gripper_force(self) -> GripperForce: ...
+
+    def write_gripper_force(
+        self, target: np.ndarray, force_n: float, velocity: np.ndarray | None = None
+    ) -> None: ...
 
 
 class SimDriver:
@@ -1180,6 +1203,7 @@ def apply_decision(
     velocity_feedforward_rad_s: (
         Mapping[str, Sequence[float]] | Sequence[float] | None
     ) = None,
+    gripper_force_n: Mapping[str, float] | None = None,
     on_refusal: Callable[[RuntimeFault], None] | None = None,
     check_neighbors: bool = False,
 ) -> bool:
@@ -1197,6 +1221,29 @@ def apply_decision(
     with those independent faults in ``context['hold_errors']``.
     """
     rows = decided if isinstance(decided, dict) else split_by_part(arms, decided)
+    force_rows = gripper_force_n or {}
+    if set(force_rows) - set(rows):
+        raise ValueError("force modifier must address an admitted part")
+    for part, force in force_rows.items():
+        driver = arms[part].driver
+        if (
+            not isinstance(driver, GripperForceDriver)
+            or not driver.gripper_force_supported
+        ):
+            if force == 0:
+                continue
+            raise RuntimeFault(
+                FaultCode.INVALID_REQUEST,
+                "gripper.force_unavailable",
+                context={"part": part},
+            )
+        lo, hi = driver.gripper_force_limits_n
+        if not math.isfinite(force) or (force != 0 and not lo <= force <= hi):
+            raise RuntimeFault(
+                FaultCode.INVALID_REQUEST,
+                "gripper.force_range",
+                context={"part": part, "force_n": force, "limits_n": [lo, hi]},
+            )
     velocity_rows: Mapping[str, Sequence[float]]
     if velocity_feedforward_rad_s is None:
         velocity_rows = {}
@@ -1317,7 +1364,14 @@ def apply_decision(
     for arm, target, velocity in prepared:
         if target.size == 0:
             continue
-        if velocity is not None and isinstance(arm.driver, PositionVelocityDriver):
+        part = next(name for name, value in arms.items() if value is arm)
+        if (
+            part in force_rows
+            and isinstance(arm.driver, GripperForceDriver)
+            and arm.driver.gripper_force_supported
+        ):
+            arm.driver.write_gripper_force(target, force_rows[part], velocity)
+        elif velocity is not None and isinstance(arm.driver, PositionVelocityDriver):
             arm.driver.write_position_velocity(target, velocity)
         else:
             arm.driver.write(target)

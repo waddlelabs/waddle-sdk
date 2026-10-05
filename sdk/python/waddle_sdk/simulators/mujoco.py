@@ -58,6 +58,8 @@ class Engine:
         self._dofs = {}
         self._controls = {}
         self._velocity_ratio = {}
+        self._force_modes = {}
+        self._force_ranges = {}
         for part in self.parts:
             prefix = self._prefix(part)
             joints = [
@@ -90,6 +92,9 @@ class Engine:
                     )
                 ratios.append(float(-bias[2] / kp))
             self._velocity_ratio[part] = np.asarray(ratios)
+            self._force_ranges[part] = self.model.actuator(
+                self._controls[part][-1]
+            ).forcerange.copy()
         if "native_scene" in config:
             from .native_scene import initialize, validate_cameras
 
@@ -229,9 +234,72 @@ class Engine:
         for name, value in zip(self._controls[part], target, strict=True):
             self.data.actuator(name).ctrl[0] = value
 
+    def gripper_force_limits(self, part=None):
+        part = self._part(part)
+        if self.profile.name != "yam":
+            raise ValueError("gripper.force_unavailable")
+        return 1.0, min(50.0, max(abs(self._force_ranges[part])) / 2)
+
+    def gripper_force(self, part=None):
+        part = self._part(part)
+        self.gripper_force_limits(part)
+        return max(
+            0.0, -float(self.data.actuator(self._controls[part][-1]).force[0]) / 2
+        )
+
+    def write_force(self, part_or_q, q_or_force, force_or_velocity=None, velocity=None):
+        if isinstance(part_or_q, str):
+            part, q, force = self._part(part_or_q), q_or_force, force_or_velocity
+        else:
+            part, q, force, velocity = (
+                self._part(),
+                part_or_q,
+                q_or_force,
+                force_or_velocity,
+            )
+        lo, hi = self.gripper_force_limits(part)
+        if not math.isfinite(force) or (force != 0 and not lo <= force <= hi):
+            raise ValueError("gripper.force_range")
+        if force == 0:
+            self._clear_force(part)
+        else:
+            previous = self._force_modes.get(part)
+            if previous is None or previous[0] != force:
+                self._force_modes[part] = (force, False)
+            # Restrict actual native actuation from the first step, including
+            # moving contact. The scalar force is conjugate to total jaw width.
+            self.model.actuator(self._controls[part][-1]).forcerange[:] = (
+                -2 * force,
+                2 * force,
+            )
+        self.write(part, q, velocity)
+
+    def _clear_force(self, part):
+        self._force_modes.pop(part, None)
+        self.model.actuator(self._controls[part][-1]).forcerange[:] = (
+            self._force_ranges[part]
+        )
+
+    def _apply_force_modes(self):
+        for part, (force, holding) in tuple(self._force_modes.items()):
+            q, dq = self.read(part)
+            holding = holding or (
+                self.gripper_force(part) >= force * 0.9
+                and abs(dq[-1]) < 0.01
+                and q[-1] > 0.0005 / self.profile.opening
+            )
+            self._force_modes[part] = (force, holding)
+            if holding:
+                name = self._controls[part][-1]
+                kp = float(self.model.actuator(name).gainprm[0])
+                self.data.actuator(name).ctrl[0] = (
+                    self.description.hand_position(q[-1]) - 2 * force / kp
+                )
+
     def hold(self, part=None):
         parts = self.parts if part is None else (self._part(part),)
         for name in parts:
+            self._clear_force(name)
             self.write(name, self.read(name)[0])
 
     def home(self, part_or_q, q=None):
@@ -239,6 +307,7 @@ class Engine:
             part = self._part(part_or_q)
         else:
             part, q = self._part(), part_or_q
+        self._clear_force(part)
         self.data.qpos[self._qpos[part]] = self.description.expand(q)
         self.data.qvel[self._dofs[part]] = 0
         self.write(part, q)
@@ -246,6 +315,7 @@ class Engine:
         return True
 
     def step(self):
+        self._apply_force_modes()
         self.mj.mj_step(self.model, self.data)
         self._latch_contact_events()
 
@@ -285,6 +355,8 @@ class Engine:
         self._contact_events_through_s = now
 
     def reset(self):
+        for part in self.parts:
+            self._clear_force(part)
         if hasattr(self, "_variation_initial"):
             self._restore_variation_initial()
         if hasattr(self, "_pose_initial"):
