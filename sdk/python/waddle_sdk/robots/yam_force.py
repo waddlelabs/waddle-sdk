@@ -154,12 +154,13 @@ class ForceLimiter:
             current, target = state["current_qpos"], state["target_qpos"]
             measured = self.measurement(state["current_eff"]).force_n
             if self._approach_pending:
-                # Only a fresh, mostly open, lightly loaded start uses the
-                # vendor's ordinary fast position controller. A force change
-                # during an established grasp stays in force mode.
-                self.approaching = state[
-                    "current_normalized_qpos"
-                ] >= 0.8 and measured < min(15.0, self.force_n * 0.5)
+                # A fresh, lightly loaded start uses the vendor's ordinary fast
+                # position controller from any opening; contact or the final 5%
+                # of stroke hands over to force mode. A start already pressing
+                # on an object, or a force change during an established grasp,
+                # stays in force mode. Requiring a mostly open start made grasps
+                # from a partly open jaw creep under torque control the whole way.
+                self.approaching = measured < min(15.0, self.force_n * 0.5)
                 self._approach_pending = False
             if self.approaching:
                 if (

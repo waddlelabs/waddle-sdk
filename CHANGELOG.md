@@ -22,8 +22,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   full-speed moves the physical arm accepts. Explicit `max_joint_position_error_rad`
   values still override it; jaw bounds are unchanged.
 
-- Approach force grasps from a mostly open, lightly loaded YAM jaw using its
-  ordinary smoothed position controller; hand off to force mode on motor-effort
+- Approach force grasps from a lightly loaded YAM jaw at any opening using its
+  ordinary smoothed position controller (a mostly open start was required before; from
+  a 75 mm start, force mode throughout took 3.6 s of uneven travel, against 1.4 s
+  from fully open); hand off to force mode on motor-effort
   contact with raw-motor slowdown or before the final 5% of stroke.
 
 - Correct small stationary YAM force-hold shortfalls with a bounded adjustment

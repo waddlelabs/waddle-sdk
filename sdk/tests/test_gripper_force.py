@@ -86,7 +86,7 @@ def test_yam_bounds_demand_from_first_contact_and_follows_deformation():
         "target_qpos": 6.0,
         "current_qvel": 0.0,
         "current_eff": 0.0,
-        "current_normalized_qpos": 0.7,
+        "current_normalized_qpos": 0.04,  # inside the final 5%: force mode from the start
         "last_command_qpos": 6.0,
     }
     reference = limiter.update(state)
@@ -145,6 +145,35 @@ def test_yam_force_grasp_approaches_from_open_then_hands_off_at_contact(monkeypa
     assert not limiter.approaching
 
 
+def test_yam_force_grasp_approaches_fast_from_a_partly_open_unloaded_jaw(monkeypatch):
+    # From 75 mm, force mode the whole way took 3.6 s of uneven travel on the rig,
+    # against 1.4 s from fully open. Load, not opening, decides the approach.
+    clock = [0.0]
+    monkeypatch.setattr(yam_force, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    original = SimpleNamespace(update=lambda state: state["target_qpos"])
+
+    def start(effort_n):
+        limiter = ForceLimiter(original, kp=20, kd=0.5, stroke=-6.57, max_speed=2.5)
+        limiter.set_force(36)
+        state = {
+            "current_qpos": 1.6,
+            "target_qpos": 6.57,
+            "current_qvel": 0.0,
+            "current_eff": effort_n * 0.096 / 6.57,
+            "current_normalized_qpos": 0.75,
+            "last_command_qpos": 1.6,
+        }
+        limiter.update(state)
+        clock[0] += 0.01
+        return limiter, limiter.update(state), state
+
+    free, reference, state = start(0.0)
+    assert free.approaching and reference - state["current_qpos"] > 36 * 0.096 / 6.57 / 20
+    loaded, reference, state = start(20.0)
+    assert not loaded.approaching
+    assert reference - state["current_qpos"] <= 36 * 0.096 / 6.57 / 20 + 1e-9
+
+
 def test_explicit_release_cannot_reactivate_vendor_fixed_force_hold():
     legacy = SimpleNamespace(update=lambda state: state["target_qpos"] + 1)
     limiter = ForceLimiter(legacy, kp=20, kd=0.5, stroke=-6.57, max_speed=2.5)
@@ -169,7 +198,7 @@ def test_release_waits_for_its_reference_and_failed_write_discards_pending_mode(
         "target_qpos": 6.0,
         "current_qvel": 0.0,
         "current_eff": 0.0,
-        "current_normalized_qpos": 0.7,
+        "current_normalized_qpos": 0.04,  # force mode, not the free approach
         "last_command_qpos": 6.0,
     }
     limiter.set_force(0, target_qpos=2.0)
