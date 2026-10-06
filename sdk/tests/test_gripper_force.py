@@ -283,3 +283,17 @@ def test_yam_stationary_force_hold_recovers_a_small_friction_shortfall(monkeypat
     state["current_qvel"] = 0.2
     limiter.update(state)
     assert limiter._force_bias_n == 0.0
+
+
+def test_simulated_jaws_offer_force_only_when_the_world_serves_it():
+    """A world that relays a fixed operation set keeps its arms position-only."""
+    from waddle_sdk.simulators.adapters import Driver, World
+
+    class Relay(World):
+        supports_gripper_force = False
+
+    config = {"backend": "mujoco", "robot": "yam"}
+    assert Driver(World(config), part="arm", posture="active").gripper_force_supported
+    assert not Driver(
+        Relay(config), part="arm", posture="active"
+    ).gripper_force_supported

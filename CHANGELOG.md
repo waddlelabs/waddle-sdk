@@ -11,6 +11,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Simulated worlds declare `supports_gripper_force` (true for MuJoCo worlds). A
+  simulated YAM advertises measured gripper force only when its world serves those
+  operations, so a world that relays a fixed operation set keeps position-only jaws
+  instead of failing every description.
 - `SiteSession.events()` keeps the most recent 4,096 `run.step` events and every other
   event for the session. One step event per submitted command (25 Hz on a YAM) grew the
   heap for the whole session, so full garbage collections in long-running owners held

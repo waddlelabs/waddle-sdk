@@ -52,6 +52,15 @@ class World:
         self._part_names: set[str] = set()
         self.content_timing_kind = None
 
+    @property
+    def supports_gripper_force(self) -> bool:
+        """Whether this world serves the measured gripper force operations.
+
+        MuJoCo worlds do. A world that relays a fixed set of operations to its
+        engine overrides this to False, so its arms advertise position-only jaws.
+        """
+        return self.config["backend"] == "mujoco"
+
     def open(self) -> None:
         with self._lock:
             if self._failed:
@@ -286,7 +295,7 @@ class Driver:
 
     @property
     def gripper_force_supported(self):
-        return self.world.config["backend"] == "mujoco" and self.profile.name == "yam"
+        return self.world.supports_gripper_force and self.profile.name == "yam"
 
     @property
     def gripper_force_limits_n(self):
