@@ -235,7 +235,7 @@ def wheelhouse(tmp_path_factory: pytest.TempPathFactory) -> Path:
             "waddle_media/__init__.py": b"",
             "waddle_media/_core.py": (
                 f"__version__ = {VERSION!r}\n"
-                "BINDING_API_VERSION = 7\n"
+                f"BINDING_API_VERSION = {waddle_sdk._native._REQUIRED_BINDING_API_VERSION}\n"
                 'FEATURES = frozenset({"grpc", "livekit"})\n'
                 "class SessionStamp:\n"
                 "    pass\n"
