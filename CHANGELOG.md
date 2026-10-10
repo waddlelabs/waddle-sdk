@@ -11,6 +11,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Prepare matching SDK and media wheels as 0.1.13; the optional preview bindings
+  require API 6, which was not included in the published 0.1.12 pair.
+
 - Add optional LiveKit preview width, fps and per-track bitrate ceilings, RGB-only
   presentation and demand-driven publisher dynacast. Preserve original RGB-D
   samples and independent agent still rates; skip unused depth colorization.
