@@ -11,6 +11,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Add opt-in Linux RGB preview isolation in a media-only process. Nonblocking
+  latest-frame memfd slots keep codec/network waits out of the owner; explicit
+  worker CPU placement, idle-only scheduling and an address-space bound apply before
+  numerical/native initialization. Preserve source RGB-D, control, recordings
+  and original SDK cleanup faults. Binding API 8 requires matching extensions.
+
 - Demand-driven previews skip conversion/encoding when the room has no peers,
   independently of SFU layer-pause timing. Disconnect/worker exit clear demand.
   Previews capped at <=2 fps reduce idle video polling from 200 Hz to 10 Hz,
@@ -21,7 +27,7 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   media metadata releases the Python interpreter lock. Keep short, bounded frame
   admission without an extra per-frame interpreter handoff.
 
-- Prepare matching SDK and media wheels as 0.1.14 for API-7 video-only isolation.
+- Prepare matching SDK and media wheels as 0.1.14 for API-8 isolated RGB previews.
   The proposed 0.1.13 publication was cancelled before uploads; 0.1.12 remains
   the previous published pair and does not contain these preview bindings.
 
@@ -31,7 +37,7 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 - Bound pending video to the latest frame and separate its native worker from
   control-plane stills. Lower Linux media worker priority and bound publication
   waits. Demand-driven preview signaling starts/retries asynchronously, without
-  delaying session startup. Python/native binding API advances to 7; rebuild both extensions.
+  delaying session startup. The earlier preview binding API was 7; isolated publication advances it to 8.
 
 ## Released changelogs
 

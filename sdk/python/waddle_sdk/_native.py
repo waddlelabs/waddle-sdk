@@ -39,7 +39,7 @@ from typing import TYPE_CHECKING
 # This Python surface consumes named caller gate actions and their part identity. A semantic package version cannot distinguish two
 # local wheels built from different commits, so the native shim carries this
 # deliberately small compatibility epoch as well.
-_REQUIRED_BINDING_API_VERSION = 7
+_REQUIRED_BINDING_API_VERSION = 8
 
 
 def _binding_api(module: object) -> int | None:

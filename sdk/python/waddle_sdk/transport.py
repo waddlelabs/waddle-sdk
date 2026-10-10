@@ -53,6 +53,10 @@ class LiveKit:
     preview_width/fps/max_kbps ceilings affect presentation only; depth_preview
     and demand_driven control colorization and publisher subscriber demand.
     video_only excludes teleoperation/telemetry topics and their intake worker.
+    isolated selects a Linux RGB-only child with nonblocking shared-memory
+    slots. worker_cpu_ids places the child before native initialization;
+    callers reserve disjoint owner CPUs. worker_memory_mb bounds its address
+    space, including libraries (not just pixel buffers), to 2048 MiB by default.
     """
 
     url: str
@@ -63,6 +67,9 @@ class LiveKit:
     depth_preview: bool = True
     demand_driven: bool = False
     video_only: bool = False
+    isolated: bool = False
+    worker_cpu_ids: tuple[int, ...] | None = None
+    worker_memory_mb: int = 2048
 
     def __post_init__(self) -> None:
         if not isinstance(self.url, str) or not self.url:
@@ -80,9 +87,27 @@ class LiveKit:
             or self.preview_fps <= 0
         ):
             raise ValueError("LiveKit.preview_fps must be finite and positive or None")
-        for name in ("depth_preview", "demand_driven", "video_only"):
+        for name in ("depth_preview", "demand_driven", "video_only", "isolated"):
             if type(getattr(self, name)) is not bool:
                 raise ValueError(f"LiveKit.{name} must be a bool")
+        if self.isolated and (
+            not self.video_only or self.depth_preview or self.preview_fps is None
+        ):
+            raise ValueError(
+                "isolated preview requires video_only, no depth preview and an explicit fps ceiling"
+            )
+        if self.worker_cpu_ids is not None and (
+            not self.isolated
+            or not isinstance(self.worker_cpu_ids, tuple)
+            or not self.worker_cpu_ids
+            or any(type(cpu) is not int or cpu < 0 for cpu in self.worker_cpu_ids)
+            or len(set(self.worker_cpu_ids)) != len(self.worker_cpu_ids)
+        ):
+            raise ValueError(
+                "LiveKit.worker_cpu_ids requires isolated preview and distinct nonnegative CPU IDs"
+            )
+        if type(self.worker_memory_mb) is not int or self.worker_memory_mb <= 0:
+            raise ValueError("LiveKit.worker_memory_mb must be a positive integer")
 
 
 __all__ = ["Grpc", "LiveKit"]

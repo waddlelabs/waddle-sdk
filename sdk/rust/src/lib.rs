@@ -9,6 +9,7 @@ use pyo3::types::PyFrozenSet;
 
 mod convert;
 mod episode;
+mod preview;
 mod session;
 mod verbs;
 
@@ -19,7 +20,7 @@ mod verbs;
 /// Python starts requiring a newly exposed native attribute or method, so
 /// `_native.py` refuses a stale extension at import instead of discovering
 /// the mismatch during robot motion.
-const BINDING_API_VERSION: u32 = 7;
+const BINDING_API_VERSION: u32 = 8;
 
 /// Which connected transports this extension was compiled with — the ONLY
 /// feature-detection surface the Python layer may branch on (it decides
@@ -65,6 +66,7 @@ fn robot_json_roundtrip(json: &str) -> PyResult<String> {
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<session::PySession>()?;
+    m.add_class::<preview::PyPreviewPublisher>()?;
     m.add_class::<session::PySessionStamp>()?;
     m.add_class::<session::AgentResult>()?;
     m.add_class::<episode::PyEpisode>()?;

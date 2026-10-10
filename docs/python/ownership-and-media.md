@@ -54,9 +54,10 @@ remote reception or current connectivity. A quiet stream retains its last attemp
 status across missing samples and transport reconnects. Consumers must not infer
 track identity or publication from camera observations.
 
-The native `Session::media_tracks()` owns these facts. The Python shim only
-serializes them; binding API version 7 requires rebuilding both the base and media
-extensions together. Runtime adapters without `MediaRuntimePort` remain valid:
+The native publisher owns transport outcomes. Ordinary sessions serialize their
+local native track facts; isolated sessions read bounded status from the media-only
+child. Binding API version 8 requires rebuilding both base and media extensions
+together. Runtime adapters without `MediaRuntimePort` remain valid:
 applications should disable only the media-dependent feature.
 
 
@@ -86,6 +87,7 @@ media = LiveKit(
     url=authorized_url, token=authorized_token,
     preview_width=320, preview_fps=1.0, preview_max_kbps=128,
     depth_preview=False, demand_driven=True, video_only=True,
+    isolated=True, worker_cpu_ids=(7,),
 )
 ```
 
@@ -101,3 +103,33 @@ These limits bound optional work; shared CPU, memory bandwidth and network still
 have a cost. Encoder bitrate excludes signaling and transport overhead, and multiplies
 by the number of camera tracks. Evaluate control timing on the configured host under
 viewing, recording and congestion before qualifying a deployment.
+
+
+## Isolated RGB previews
+
+`isolated=True` selects a Linux media-only child. It requires RGB-only,
+video-only publication and an explicit fps ceiling. The child receives camera
+names/dimensions, raw RGB slots and the media grant; it receives no site,
+hardware adapter, control callback, session, lease or recording authority.
+Owner capture and source RGB-D remain unchanged. Each camera has one anonymous
+shared-memory slot, with a 32 MiB aggregate source-slot limit. Frame handoff
+copies at most once per presentation interval, takes only nonblocking locks,
+and drops a preview frame while the child reads. It never waits for encoding,
+startup, signaling or a network acknowledgement. Credentials use a private
+inherited socket rather than argv, environment or persistent files.
+
+`worker_cpu_ids` places the child before importing numerical/native libraries
+and creating WebRTC threads. Reserve a disjoint CPU set for the owner in the
+caller or service configuration; affinity alone does not reserve CPUs against
+unrelated processes. The child uses Linux `SCHED_IDLE` before library/thread initialization, so normal
+robot work takes precedence; one numerical-library thread avoids unnecessary
+parallelism. Leaving `worker_cpu_ids` unset preserves the owner's full CPU set. `worker_memory_mb` defaults to a 2048 MiB process address-space ceiling,
+including loaded libraries, not just buffers. Resource failure disables optional
+video and retains its scoped error through media metadata. Native controller cleanup
+precedes bounded child termination; optional teardown never replaces an original
+SDK fault. Unsupported platforms retain ordinary SDK control and report optional
+isolated media as unavailable. Legacy non-isolated transports remain supported.
+
+This separates interpreters and codec scheduling, but uses real host memory,
+copy bandwidth and uplink capacity. Qualify the chosen resource placement with
+same-owner timing trials, recording, intended processing load and actual viewers.

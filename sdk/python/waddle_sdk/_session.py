@@ -79,8 +79,7 @@ def _reset_kwargs(label: str, value: Callable | None) -> dict:
         ):
             return result
         raise TypeError(
-            "a reset hook must return bool or (bool, Optional[bool]); "
-            f"got {result!r}"
+            f"a reset hook must return bool or (bool, Optional[bool]); got {result!r}"
         )
 
     return {f"{label}_kind": "hook", f"{label}_hook": wrapped}
@@ -114,8 +113,7 @@ def create_core_session(
         raise ValueError("media and _testing=True are mutually exclusive")
     if media is not None and "livekit" not in _native.FEATURES:
         raise RuntimeError(
-            "LiveKit media is not compiled into this core; install "
-            "waddle-sdk[media]"
+            "LiveKit media is not compiled into this core; install waddle-sdk[media]"
         )
     if transport is not None and "grpc" not in _native.FEATURES:
         raise RuntimeError(
@@ -124,6 +122,54 @@ def create_core_session(
         )
 
     robot_json = json.dumps(robot._compile(_derive_grants(control, robot.action_space)))
+    preview = None
+    native_media = media
+    if media is not None and media.isolated:
+        from ._preview import IsolatedPreview
+
+        preview = IsolatedPreview(media, robot.cameras)
+        native_media = None
+    try:
+        session = _create_native_session(
+            project,
+            robot_json,
+            control,
+            recording_dir,
+            transport,
+            native_media,
+            pre_reset,
+            post_reset,
+            reset_verification,
+            _testing,
+        )
+    except BaseException as original:
+        if preview is not None:
+            try:
+                preview.close()
+            except Exception as error:  # noqa: BLE001 -- preserve the original native owner failure
+                note = getattr(original, "add_note", None)
+                if note is not None:
+                    note(f"Optional preview cleanup also failed: {error}")
+        raise
+    if preview is not None:
+        from ._preview import PreviewSession
+
+        return PreviewSession(session, preview)
+    return session
+
+
+def _create_native_session(
+    project,
+    robot_json,
+    control,
+    recording_dir,
+    transport,
+    media,
+    pre_reset,
+    post_reset,
+    reset_verification,
+    testing,
+):
     return core.create_session(
         project=project,
         robot_json=robot_json,
@@ -143,7 +189,7 @@ def create_core_session(
         handoff_ns=0,
         lease_enforcement="enforced",
         reset_verification=reset_verification,
-        testing_loopback=_testing,
+        testing_loopback=testing,
         transport_url=None if transport is None else transport.url,
         transport_token=None if transport is None else transport.token,
         connector_customer_id=None if transport is None else transport.customer_id,

@@ -676,3 +676,10 @@ and a conversion source. These are actuator-effort estimates: friction,
 transmission loss and transient inertia require separate physical calibration
 before claiming accurate object contact force. No load-cell calibration or
 physical force acceptance is established by software or native simulation tests.
+
+
+Linux RGB-only previews can opt into `LiveKit(isolated=True, worker_cpu_ids=(7,))`
+with an explicit fps ceiling. Encoding/signaling live in a separate process with
+bounded, nonblocking raw-frame slots; callers reserve a disjoint owner CPU set.
+This child owns no robot or recording. See the [ownership/media contract](../docs/python/ownership-and-media.md#isolated-rgb-previews)
+for resource limits, platform fallback and timing qualification.

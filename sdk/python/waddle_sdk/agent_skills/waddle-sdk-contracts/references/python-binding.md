@@ -59,3 +59,12 @@ Use the ordinary SDK world/part/camera lifecycle; keep trusted reset and ground
 truth outside participant observations. The SDK simulation guide documents the
 configuration and compiled camera/kinematic checks. Imported assets do not
 establish physical calibration or contact fidelity.
+
+
+Optional Linux RGB previews may use `LiveKit(isolated=True)` with nonblocking
+anonymous frame slots and a media-only child. The child receives no hardware,
+control or recording authority. CPU placement must precede native initialization;
+callers reserve disjoint owner CPUs. Keep original SDK faults authoritative when
+optional video fails or shuts down. Binding API 8 requires matching base/media
+extensions. See the public ownership and media guide
+for resource bounds and physical qualification limits.
