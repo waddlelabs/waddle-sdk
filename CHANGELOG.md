@@ -15,8 +15,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   intake. Video lifecycle polling avoids the controller snapshot lock; native
   frame enqueue and media metadata release the Python interpreter lock.
 
-- Prepare matching SDK and media wheels as 0.1.13; the optional preview bindings
-  require API 6, which was not included in the published 0.1.12 pair.
+- Prepare matching SDK and media wheels as 0.1.14 for API-7 video-only isolation.
+  The proposed 0.1.13 publication was cancelled before uploads; 0.1.12 remains
+  the previous published pair and does not contain these preview bindings.
 
 - Add optional LiveKit preview width, fps and per-track bitrate ceilings, RGB-only
   presentation and demand-driven publisher dynacast. Preserve original RGB-D
