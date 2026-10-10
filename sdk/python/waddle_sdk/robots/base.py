@@ -2170,7 +2170,9 @@ class CameraPump(threading.Thread):
                     )
                 self._latest.publish(self._camera_name, sample)
                 self._session.publish_frame(self._camera_name, sample.rgb)
-                if sample.depth is not None:
+                if sample.depth is not None and getattr(
+                    self._session, "depth_preview_enabled", True
+                ):
                     intrinsics = self._description.intrinsics
                     self._session.publish_depth_preview(
                         self._camera_name,

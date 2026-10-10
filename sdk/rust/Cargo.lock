@@ -3441,6 +3441,7 @@ dependencies = [
  "livekit",
  "parking_lot",
  "prost 0.14.4",
+ "rustix",
  "thiserror 2.0.18",
  "tokio",
  "tracing",

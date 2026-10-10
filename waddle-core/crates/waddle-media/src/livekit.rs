@@ -45,8 +45,9 @@ use std::fmt;
 use std::sync::Arc;
 use std::sync::mpsc as std_mpsc;
 use std::thread;
+use std::time::Duration;
 
-use ::livekit::options::TrackPublishOptions;
+use ::livekit::options::{TrackPublishOptions, VideoEncoding};
 use ::livekit::prelude::*;
 use ::livekit::webrtc::prelude::{
     I420Buffer, RtcVideoSource, VideoFrame, VideoResolution, VideoRotation,
@@ -77,6 +78,12 @@ pub struct LiveKitConfig {
     /// needed because [`MediaPlane::push_frame`] carries opaque bytes: the
     /// declared resolution is what lets the transport interpret raw frames.
     pub track_resolutions: HashMap<String, (u32, u32)>,
+    /// Optional presentation ceilings, applied off the capture/control thread.
+    pub preview_width: Option<u32>,
+    pub preview_fps: Option<f64>,
+    pub preview_max_kbps: Option<u32>,
+    pub depth_preview: bool,
+    pub demand_driven: bool,
 }
 
 impl LiveKitConfig {
@@ -86,6 +93,11 @@ impl LiveKitConfig {
             url,
             token,
             track_resolutions: HashMap::new(),
+            preview_width: None,
+            preview_fps: None,
+            preview_max_kbps: None,
+            depth_preview: true,
+            demand_driven: false,
         }
     }
 
@@ -142,7 +154,7 @@ enum Command {
         camera: String,
         width: u32,
         height: u32,
-        reply: std_mpsc::Sender<Result<NativeVideoSource, MediaError>>,
+        reply: std_mpsc::Sender<Result<(NativeVideoSource, LocalVideoTrack), MediaError>>,
     },
     PublishData {
         topic: DataTopic,
@@ -157,6 +169,7 @@ enum Command {
 
 struct TrackState {
     source: NativeVideoSource,
+    track: LocalVideoTrack,
     width: u32,
     height: u32,
 }
@@ -166,6 +179,10 @@ pub struct LiveKitMedia {
     cmd: tokio_mpsc::UnboundedSender<Command>,
     /// Declared per-camera resolutions (from [`LiveKitConfig`]).
     resolutions: HashMap<String, (u32, u32)>,
+    preview_width: Option<u32>,
+    preview_fps: Option<f64>,
+    depth_preview: bool,
+    demand_driven: bool,
     /// Published tracks; the stored [`NativeVideoSource`] is thread-safe,
     /// so `push_frame` captures directly without a worker round-trip.
     tracks: Mutex<HashMap<String, TrackState>>,
@@ -181,11 +198,23 @@ impl fmt::Debug for LiveKitMedia {
 }
 
 impl LiveKitMedia {
-    /// Connect to the room named by `config.token`. Blocks until the signal
-    /// connection succeeds or fails (the SDK applies its own connect
-    /// timeout); on failure the worker thread has already wound down.
+    /// Connect to the room named by `config.token`. Ordinary publication waits
+    /// for signaling; demand-driven previews dial and retry in the worker so
+    /// optional presentation cannot hold up the owning session's startup.
     pub fn connect(config: LiveKitConfig) -> Result<Arc<Self>, MediaError> {
+        if config.preview_width == Some(0)
+            || config.preview_max_kbps == Some(0)
+            || config
+                .preview_fps
+                .is_some_and(|fps| !fps.is_finite() || fps <= 0.0)
+        {
+            return Err(MediaError::Transport("invalid preview ceiling".into()));
+        }
         let resolutions = config.track_resolutions.clone();
+        let preview_width = config.preview_width;
+        let preview_fps = config.preview_fps;
+        let depth_preview = config.depth_preview;
+        let demand_driven = config.demand_driven;
         let (cmd_tx, cmd_rx) = tokio_mpsc::unbounded_channel();
         let (ready_tx, ready_rx) = std_mpsc::channel();
         let handle = thread::Builder::new()
@@ -199,6 +228,10 @@ impl LiveKitMedia {
             Ok(()) => Ok(Arc::new(Self {
                 cmd: cmd_tx,
                 resolutions,
+                preview_width,
+                preview_fps,
+                depth_preview,
+                demand_driven,
                 tracks: Mutex::new(HashMap::new()),
                 worker: Mutex::new(Some(handle)),
             })),
@@ -228,6 +261,14 @@ impl Drop for LiveKitMedia {
 }
 
 impl MediaPlane for LiveKitMedia {
+    fn max_video_fps(&self) -> Option<f64> {
+        self.preview_fps
+    }
+
+    fn depth_preview_enabled(&self) -> bool {
+        self.depth_preview
+    }
+
     fn publish_track(&self, camera: &str) -> Result<TrackHandle, MediaError> {
         // The registry lock is held across the worker round-trip so
         // concurrent publishes of the same camera cannot double-publish;
@@ -240,6 +281,7 @@ impl MediaPlane for LiveKitMedia {
                 .get(camera)
                 .copied()
                 .unwrap_or(DEFAULT_TRACK_RESOLUTION);
+            let (width, height) = preview_dimensions(width, height, self.preview_width);
             let (reply_tx, reply_rx) = std_mpsc::channel();
             self.cmd
                 .send(Command::PublishTrack {
@@ -249,13 +291,14 @@ impl MediaPlane for LiveKitMedia {
                     reply: reply_tx,
                 })
                 .map_err(|_| MediaError::Transport("livekit worker is gone".into()))?;
-            let source = reply_rx
-                .recv()
-                .map_err(|_| MediaError::Transport("livekit worker is gone".into()))??;
+            let (source, track) = reply_rx
+                .recv_timeout(Duration::from_secs(5))
+                .map_err(|e| MediaError::Transport(format!("livekit publication wait: {e}")))??;
             tracks.insert(
                 camera.to_owned(),
                 TrackState {
                     source,
+                    track,
                     width,
                     height,
                 },
@@ -264,6 +307,17 @@ impl MediaPlane for LiveKitMedia {
         Ok(TrackHandle {
             name: camera.to_owned(),
         })
+    }
+
+    fn wants_video_frame(&self, track: &TrackHandle) -> bool {
+        !self.demand_driven
+            || self.tracks.lock().get(&track.name).is_some_and(|state| {
+                state
+                    .track
+                    .publishing_layers()
+                    .iter()
+                    .any(|layer| layer.active)
+            })
     }
 
     fn push_frame(&self, track: &TrackHandle, frame: EncodedFrame) -> Result<(), MediaError> {
@@ -275,20 +329,45 @@ impl MediaPlane for LiveKitMedia {
             let state = tracks
                 .get(&track.name)
                 .ok_or_else(|| MediaError::UnknownTrack(track.name.clone()))?;
+            // SFU dynacast state gates expensive conversion before pixels
+            // are touched. A published track exists even while nobody watches.
+            if self.demand_driven
+                && !state
+                    .track
+                    .publishing_layers()
+                    .iter()
+                    .any(|layer| layer.active)
+            {
+                return Ok(());
+            }
             (state.source.clone(), state.width, state.height)
+        };
+        let (input_w, input_h) = self
+            .resolutions
+            .get(&track.name)
+            .copied()
+            .unwrap_or(DEFAULT_TRACK_RESOLUTION);
+        let resized;
+        let raw = if (input_w, input_h) != (w, h)
+            && frame.data.len() == input_w as usize * input_h as usize * 3
+        {
+            resized = resize_rgb(input_w, input_h, w, h, &frame.data);
+            resized.as_slice()
+        } else {
+            frame.data.as_ref()
         };
         let (cw, ch) = ((w as usize).div_ceil(2), (h as usize).div_ceil(2));
         let i420_len = (w as usize) * (h as usize) + 2 * cw * ch;
         let rgb_len = (w as usize) * (h as usize) * 3;
         let converted;
-        let i420: &[u8] = if frame.data.len() == rgb_len {
-            converted = rgb8_to_i420(w, h, &frame.data)?;
+        let i420: &[u8] = if raw.len() == rgb_len {
+            converted = rgb8_to_i420(w, h, raw)?;
             &converted
-        } else if frame.data.len() == i420_len {
-            &frame.data
+        } else if raw.len() == i420_len {
+            raw
         } else {
             return Err(MediaError::BadFrame {
-                got: frame.data.len(),
+                got: raw.len(),
                 expected: rgb_len,
                 layout: "RGB8 or planar I420 at the track's declared resolution",
             });
@@ -350,6 +429,30 @@ fn copy_plane(dst: &mut [u8], stride: usize, src: &[u8], width: usize, rows: usi
     }
 }
 
+fn preview_dimensions(width: u32, height: u32, ceiling: Option<u32>) -> (u32, u32) {
+    match ceiling {
+        Some(max) if max < width => (
+            max,
+            ((u64::from(height) * u64::from(max)) / u64::from(width)).max(1) as u32,
+        ),
+        _ => (width, height),
+    }
+}
+
+// Presentation-only nearest-neighbor sampling; never modifies source pixels.
+fn resize_rgb(iw: u32, ih: u32, ow: u32, oh: u32, rgb: &[u8]) -> Vec<u8> {
+    let mut out = vec![0; ow as usize * oh as usize * 3];
+    for y in 0..oh as usize {
+        for x in 0..ow as usize {
+            let src =
+                ((y * ih as usize / oh as usize) * iw as usize + x * iw as usize / ow as usize) * 3;
+            let dst = (y * ow as usize + x) * 3;
+            out[dst..dst + 3].copy_from_slice(&rgb[src..src + 3]);
+        }
+    }
+    out
+}
+
 /// The dedicated worker: owns the private current-thread runtime, the Room,
 /// and inbound routing. Everything async lives below this line.
 fn worker(
@@ -357,6 +460,7 @@ fn worker(
     mut cmd_rx: tokio_mpsc::UnboundedReceiver<Command>,
     ready_tx: std_mpsc::Sender<Result<(), MediaError>>,
 ) {
+    crate::prepare_background_media_thread();
     let rt = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -370,19 +474,54 @@ fn worker(
         }
     };
     rt.block_on(async move {
-        let (room, mut events) =
-            match Room::connect(&config.url, &config.token, RoomOptions::default()).await {
-                Ok(v) => v,
-                Err(e) => {
-                    let _ = ready_tx.send(Err(MediaError::Transport(format!(
-                        "livekit connect failed: {e}"
-                    ))));
-                    return;
+        let mut options = RoomOptions::default();
+        options.auto_subscribe = false;
+        options.dynacast = config.demand_driven;
+        let mut rx_routes: HashMap<&'static str, std_mpsc::Sender<Bytes>> = HashMap::new();
+        if config.demand_driven {
+            let _ = ready_tx.send(Ok(()));
+        }
+        let (room, mut events) = loop {
+            let attempt = Room::connect(&config.url, &config.token, options.clone());
+            tokio::pin!(attempt);
+            let result = loop {
+                tokio::select! {
+                    result = &mut attempt => break result,
+                    command = cmd_rx.recv(), if config.demand_driven => {
+                        if !reject_disconnected(command, "livekit signaling is connecting", &mut rx_routes) {
+                            return;
+                        }
+                    }
                 }
             };
-        let _ = ready_tx.send(Ok(()));
+            match result {
+                Ok(connected) => break connected,
+                Err(error) => {
+                    let detail = format!("livekit connect failed: {error}");
+                    if !config.demand_driven {
+                        let _ = ready_tx.send(Err(MediaError::Transport(detail)));
+                        return;
+                    }
+                    tracing::warn!(error = %detail, "optional camera preview unavailable");
+                    let retry = tokio::time::sleep(Duration::from_secs(5));
+                    tokio::pin!(retry);
+                    loop {
+                        tokio::select! {
+                            () = &mut retry => break,
+                            command = cmd_rx.recv() => {
+                                if !reject_disconnected(command, &detail, &mut rx_routes) {
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        };
+        if !config.demand_driven {
+            let _ = ready_tx.send(Ok(()));
+        }
 
-        let mut rx_routes: HashMap<&'static str, std_mpsc::Sender<Bytes>> = HashMap::new();
         loop {
             tokio::select! {
                 cmd = cmd_rx.recv() => match cmd {
@@ -396,20 +535,26 @@ fn worker(
                             &camera,
                             RtcVideoSource::Native(source.clone()),
                         );
-                        let res = room
+                        let mut options = TrackPublishOptions {
+                            source: TrackSource::Camera,
+                            simulcast: !config.demand_driven,
+                            ..Default::default()
+                        };
+                        if config.preview_max_kbps.is_some() || config.preview_fps.is_some() {
+                            options.video_encoding = Some(VideoEncoding {
+                                max_bitrate: u64::from(config.preview_max_kbps.unwrap_or(128)) * 1000,
+                                max_framerate: config.preview_fps.unwrap_or(30.0),
+                            });
+                        }
+                        let res = tokio::time::timeout(Duration::from_secs(4), room
                             .local_participant()
                             .publish_track(
-                                LocalTrack::Video(track),
-                                TrackPublishOptions {
-                                    source: TrackSource::Camera,
-                                    ..Default::default()
-                                },
-                            )
+                                LocalTrack::Video(track.clone()), options,
+                            ))
                             .await
-                            .map(|_publication| source)
-                            .map_err(|e| {
-                                MediaError::Transport(format!("publish_track failed: {e}"))
-                            });
+                            .map_err(|_| MediaError::Transport("publish_track timed out".into()))
+                            .and_then(|res| res.map_err(|e| MediaError::Transport(format!("publish_track failed: {e}"))))
+                            .map(|_publication| (source, track));
                         let _ = reply.send(res);
                     }
                     Some(Command::PublishData { topic, payload }) => {
@@ -452,6 +597,30 @@ fn worker(
         }
         let _ = room.close().await;
     });
+}
+
+/// Drain optional preview requests while signaling is unavailable. Never build
+/// an offline queue of frames/data or retain abandoned publication requests.
+fn reject_disconnected(
+    command: Option<Command>,
+    detail: &str,
+    rx_routes: &mut HashMap<&'static str, std_mpsc::Sender<Bytes>>,
+) -> bool {
+    match command {
+        None | Some(Command::Shutdown) => false,
+        Some(Command::PublishTrack { reply, .. }) => {
+            let _ = reply.send(Err(MediaError::Transport(detail.to_owned())));
+            true
+        }
+        Some(Command::OpenRx { topic, tx }) => {
+            rx_routes.insert(topic.topic_str(), tx);
+            true
+        }
+        Some(Command::PublishData { topic, .. }) => {
+            tracing::warn!(topic = topic.topic_str(), error = %detail, "livekit data publish unavailable");
+            true
+        }
+    }
 }
 
 #[cfg(test)]
@@ -519,5 +688,31 @@ mod tests {
         let config = LiveKitConfig::new("ws://plane.invalid".to_owned(), "token".to_owned())
             .with_robot_cameras(&pb::RobotDescription::default());
         assert!(config.track_resolutions.is_empty());
+    }
+
+    #[test]
+    fn preview_sampling_preserves_source_and_aspect_ratio() {
+        assert_eq!(preview_dimensions(640, 480, Some(320)), (320, 240));
+        assert_eq!(preview_dimensions(1280, 720, Some(320)), (320, 180));
+        assert_eq!(preview_dimensions(96, 64, Some(320)), (96, 64));
+        let pixels: Vec<u8> = (0..48).collect();
+        let small = resize_rgb(4, 4, 2, 2, &pixels);
+        assert_eq!(small, [0, 1, 2, 6, 7, 8, 24, 25, 26, 30, 31, 32]);
+        assert_eq!(pixels.len(), 48);
+    }
+
+    #[test]
+    fn disconnected_preview_does_not_delay_session_or_shutdown() {
+        let started = std::time::Instant::now();
+        let mut config = LiveKitConfig::new("ws://127.0.0.1:1".into(), "scoped-test".into());
+        config.demand_driven = true;
+        let media = LiveKitMedia::connect(config).expect("optional preview worker starts");
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(matches!(
+            media.publish_track("camera"),
+            Err(MediaError::Transport(_))
+        ));
+        drop(media);
+        assert!(started.elapsed() < Duration::from_secs(3));
     }
 }

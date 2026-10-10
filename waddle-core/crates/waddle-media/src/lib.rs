@@ -23,6 +23,16 @@ use waddle_types::pb::v0 as pb;
 mod encode;
 pub use encode::{JpegEncoder, VideoEncoding, make_encoder, rgb8_to_i420};
 
+/// Give presentation workers a lower Linux scheduling priority. This affects
+/// only the calling thread (and subsequently created children), never the owner
+/// or control threads. Other platforms retain their ordinary scheduler policy.
+pub fn prepare_background_media_thread() {
+    #[cfg(target_os = "linux")]
+    {
+        let _ = rustix::process::setpriority_process(None, 10);
+    }
+}
+
 /// LiveKit video-track name for a camera's operator-facing depth preview.
 ///
 /// The camera's existing track name remains the RGB track for v0 compatibility;
@@ -160,7 +170,20 @@ impl DataTx {
 
 /// The media plane boundary the runtime wires against.
 pub trait MediaPlane: Send + Sync + 'static {
+    /// Optional transport-side preview ceiling. Source samples and agent stills
+    /// retain their own independent rates and dimensions.
+    fn max_video_fps(&self) -> Option<f64> {
+        None
+    }
+    /// Whether this transport accepts the optional colorized depth sibling.
+    fn depth_preview_enabled(&self) -> bool {
+        true
+    }
     fn publish_track(&self, camera: &str) -> Result<TrackHandle, MediaError>;
+    /// A paused presentation can reject pixels before the encoder copies them.
+    fn wants_video_frame(&self, _track: &TrackHandle) -> bool {
+        true
+    }
     fn push_frame(&self, track: &TrackHandle, frame: EncodedFrame) -> Result<(), MediaError>;
     /// Inbound data (teleop actions, clutch, marks).
     fn open_data_rx(&self, topic: DataTopic) -> Result<DataRx, MediaError>;

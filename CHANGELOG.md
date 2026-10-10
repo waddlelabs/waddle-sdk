@@ -11,6 +11,14 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Add optional LiveKit preview width, fps and per-track bitrate ceilings, RGB-only
+  presentation and demand-driven publisher dynacast. Preserve original RGB-D
+  samples and independent agent still rates; skip unused depth colorization.
+- Bound pending video to the latest frame and separate its native worker from
+  control-plane stills. Lower Linux media worker priority and bound publication
+  waits. Demand-driven preview signaling starts/retries asynchronously, without
+  delaying session startup. Python/native binding API advances to 6; rebuild both extensions.
+
 - Simulated worlds declare `supports_gripper_force` (true for MuJoCo worlds). A
   simulated YAM advertises measured gripper force only when its world serves those
   operations, so a world that relays a fixed operation set keeps position-only jaws

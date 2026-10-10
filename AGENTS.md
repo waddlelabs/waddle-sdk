@@ -24,6 +24,15 @@ permits transient approach effort above the requested settling target; do not
 equate the nominal motor reading with fingertip force.
 
 
+LiveKit previews can cap presentation width/fps/encoder kbps independently of
+exact source samples and agent stills. Hosted integrations can select RGB-only
+`depth_preview=False`; capture then skips depth colorization, including when no
+media plane exists. Native video and still workers are separate; video has
+latest-only pending frames and lower Linux priority. Demand-driven preview
+signaling starts/retries asynchronously without delaying session startup.
+Binding API 6 requires matching rebuilt
+base/media extensions; see docs/python/ownership-and-media.md.
+
 This file bootstraps every agent that works in this repository. Read it fully before
 touching anything.
 
