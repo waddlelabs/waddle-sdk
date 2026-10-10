@@ -68,7 +68,9 @@ preserved without upscaling), `preview_fps` (finite positive rate ceiling), and
 `depth_preview=False` suppresses the colorized depth sibling and its capture-side
 colorization. It does not disable acquisition or change exact local RGB-D samples.
 `demand_driven=True` enables publisher dynacast and skips resize/color conversion
-while all sender layers are paused by the SFU. It also starts signaling on the
+while the room has no remote participants or all sender layers are paused by
+the SFU. The empty-room gate is independent of SFU pause timing and is cleared
+on disconnect/worker exit. It also starts signaling on the
 native media worker and retries failed initial connections without delaying
 session startup. Unavailable video drops publication attempts; it does not stop
 control, local capture or agent stills. `video_only=True` excludes media data topics and their teleoperation intake;
@@ -91,7 +93,8 @@ The frame-timeline rate ceiling applies before media enqueue/encoding. There is
 one waiting frame per camera; newer samples replace older samples during congestion.
 Video publication and agent stills use separate native workers, with lower Linux
 scheduling priority. Source capture, full-size agent stills and gate commands retain
-their own paths. LiveKit publication waits have a deadline. Custom media transports
+their own paths. Previews capped at 2 fps or less poll idle video queues at 10 Hz,
+adding at most 100 ms of presentation/shutdown polling latency. LiveKit publication waits have a deadline. Custom media transports
 must still bound synchronous calls for orderly shutdown.
 
 These limits bound optional work; shared CPU, memory bandwidth and network still

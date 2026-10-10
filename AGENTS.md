@@ -30,6 +30,9 @@ exact source samples and agent stills. Hosted integrations can select RGB-only
 media plane exists. Native video and still workers are separate; video has
 latest-only pending frames and lower Linux priority. Demand-driven preview
 signaling starts/retries asynchronously without delaying session startup.
+An empty-room demand gate skips encoding independently of SFU layer-pause timing;
+disconnect and media-worker exit clear demand.
+Previews capped at <=2 fps use 10 Hz idle video polling; still/control rates stay independent.
 `video_only=True` removes data-topic/teleoperation intake. Video shutdown polls
 use an atomic lifecycle flag; media metadata releases the GIL. Keep bounded
 frame admission short, without an extra per-frame interpreter handoff. Binding API 7 requires matching rebuilt

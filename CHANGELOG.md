@@ -11,6 +11,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Demand-driven previews skip conversion/encoding when the room has no peers,
+  independently of SFU layer-pause timing. Disconnect/worker exit clear demand.
+  Previews capped at <=2 fps reduce idle video polling from 200 Hz to 10 Hz,
+  bounding added presentation/shutdown polling latency to 100 ms.
+
 - Presentation-only LiveKit can exclude intervention data topics and teleoperation
   intake. Video lifecycle polling avoids the controller snapshot lock; native
   media metadata releases the Python interpreter lock. Keep short, bounded frame
