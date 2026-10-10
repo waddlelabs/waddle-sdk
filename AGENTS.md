@@ -762,7 +762,8 @@ top-level dirs; they are not built yet.
       `sdk/pyproject.toml` is the ONE version maturin cannot derive from the
       manifest (PEP 621 has no dynamic optional-dependencies), so a version
       bump must edit it — otherwise the extra resolves to the previous
-      release and `_native` silently falls back to a core with no LiveKit.
+      release. `_native` warns on a version mismatch; an incompatible binding API
+      falls back to a core with no LiveKit.
       `tests/test_features.py` fails until the pin equals
       `waddle_sdk.__version__`. Build and publish the two wheels together — in CI,
       not by hand: see **Release** below and `docs/RELEASING.md`.
