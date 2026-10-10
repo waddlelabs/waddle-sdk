@@ -11,6 +11,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Updated both Python wheel projects and the exact media-companion pin to version 0.1.12.
+
 - Simulated worlds declare `supports_gripper_force` (true for MuJoCo worlds). A
   simulated YAM advertises measured gripper force only when its world serves those
   operations, so a world that relays a fixed operation set keeps position-only jaws
