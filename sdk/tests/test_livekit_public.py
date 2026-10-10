@@ -333,6 +333,16 @@ async def _acceptance(tmp_path, rtc, config, *, site=None):
 def test_bounded_rgb_preview_keeps_full_quality_depth_and_rejoins(
     tmp_path, livekit_configuration
 ):
+    _bounded_preview_acceptance(tmp_path, livekit_configuration, isolated=False)
+
+
+def test_isolated_rgb_preview_keeps_full_quality_depth_and_rejoins(
+    tmp_path, livekit_configuration
+):
+    _bounded_preview_acceptance(tmp_path, livekit_configuration, isolated=True)
+
+
+def _bounded_preview_acceptance(tmp_path, livekit_configuration, *, isolated):
     rtc = pytest.importorskip("livekit.rtc")
 
     async def check():
@@ -340,6 +350,14 @@ def test_bounded_rgb_preview_keeps_full_quality_depth_and_rejoins(
         site = _site(tmp_path / "preview-site.yaml", width=640, height=480)
         viewer = _Viewer(rtc, publisher, (320, 240))
         sdk = None
+        poller = None
+        child = None
+
+        async def poll_tracks():
+            while True:
+                await asyncio.to_thread(sdk.media_tracks)
+                await asyncio.sleep(0.1)
+
         try:
             sdk = await asyncio.to_thread(
                 site.open(
@@ -351,10 +369,16 @@ def test_bounded_rgb_preview_keeps_full_quality_depth_and_rejoins(
                         preview_max_kbps=128,
                         depth_preview=False,
                         demand_driven=True,
+                        video_only=True,
+                        isolated=isolated,
                     ),
                     console=False,
                 ).__enter__
             )
+            if isolated:
+                assert sdk._managed.core._inner.media_tracks() == []
+                child = sdk._managed.core._preview._process
+                poller = asyncio.create_task(poll_tracks())
             # Publication is discoverable without viewers or program turns.
             await asyncio.sleep(2)
             await viewer.room.connect(
@@ -362,6 +386,9 @@ def test_bounded_rgb_preview_keeps_full_quality_depth_and_rejoins(
             )
             await viewer.received({"scene": 3}, timeout=20)
             assert set(viewer.publications) == {"scene"}
+            if isolated:
+                for task in Path(f"/proc/{child.pid}/task").iterdir():
+                    assert os.sched_getscheduler(int(task.name)) == os.SCHED_IDLE
             sample = (await asyncio.to_thread(sdk.observe)).cameras["scene"]
             assert sample.rgb.shape == (480, 640, 3)
             assert sample.depth.shape == (480, 640)
@@ -377,8 +404,13 @@ def test_bounded_rgb_preview_keeps_full_quality_depth_and_rejoins(
             await viewer.received({"scene": 2}, timeout=15)
             assert not any(event.kind == "run.step" for event in sdk.events())
         finally:
+            if poller is not None:
+                poller.cancel()
+                await asyncio.gather(poller, return_exceptions=True)
             await viewer.close()
             if sdk is not None:
                 await asyncio.to_thread(sdk.close)
+            if child is not None:
+                assert child.poll() is not None
 
     asyncio.run(check())

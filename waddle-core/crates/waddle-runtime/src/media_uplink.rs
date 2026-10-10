@@ -507,6 +507,13 @@ pub(crate) fn spawn_media_uplink(
 ) -> Vec<JoinHandle<()>> {
     let mut workers = Vec::new();
     if let Some(media) = media {
+        // Occasional previews need no 200 Hz idle polling. Bound the added
+        // presentation/shutdown latency to 100 ms without touching stills.
+        let idle_poll = if media.max_video_fps().is_some_and(|fps| fps <= 2.0) {
+            Duration::from_millis(100)
+        } else {
+            Duration::from_millis(5)
+        };
         let cameras = cameras.clone();
         let mirror = mirror.clone();
         workers.push(
@@ -515,7 +522,7 @@ pub(crate) fn spawn_media_uplink(
                 .spawn(move || {
                     waddle_media::prepare_background_media_thread();
                     let mut encoders: HashMap<String, Box<dyn VideoEncoder>> = HashMap::new();
-                    while !mirror.read().shutdown {
+                    while !mirror.is_shutdown() {
                         let mut idle = true;
                         for cam in &cameras {
                             if cam.media_wired
@@ -525,7 +532,7 @@ pub(crate) fn spawn_media_uplink(
                             }
                         }
                         if idle {
-                            std::thread::sleep(Duration::from_millis(5));
+                            std::thread::sleep(idle_poll);
                         }
                     }
                 })

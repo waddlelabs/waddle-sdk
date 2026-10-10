@@ -48,14 +48,16 @@ class Chunk:
     def steps(
         self,
     ) -> list[
-        tuple[npt.NDArray[np.float64] | dict[str, npt.NDArray[np.float64]], float | None, int]
+        tuple[
+            npt.NDArray[np.float64] | dict[str, npt.NDArray[np.float64]],
+            float | None,
+            int,
+        ]
     ]: ...
     @property
     def velocity_feedforwards(
         self,
-    ) -> list[
-        npt.NDArray[np.float64] | dict[str, npt.NDArray[np.float64]] | None
-    ]: ...
+    ) -> list[npt.NDArray[np.float64] | dict[str, npt.NDArray[np.float64]] | None]: ...
     @property
     def provenance(self) -> str: ...
     @property
@@ -98,6 +100,23 @@ class AgentResult:
     @property
     def detail(self) -> str: ...
     def __repr__(self) -> str: ...
+
+class PreviewPublisher:
+    """Internal media-only endpoint for the isolated child; owns no hardware."""
+    def __init__(
+        self,
+        cameras: list[tuple[str, int, int]],
+        url: str,
+        token: str,
+        preview_width: int | None = None,
+        preview_fps: float | None = None,
+        preview_max_kbps: int | None = None,
+        demand_driven: bool = True,
+        testing_loopback: bool = False,
+    ) -> None: ...
+    def publish_frame(self, camera: str, frame: Any, t_ns: int) -> None: ...
+    def close(self) -> None: ...
+    def wants_frame(self, camera: str) -> bool: ...
 
 class SessionStamp:
     @property
@@ -281,6 +300,7 @@ def create_session(
     media_preview_max_kbps: int | None = None,
     media_depth_preview: bool = True,
     media_demand_driven: bool = False,
+    media_video_only: bool = False,
 ) -> Session: ...
 def validate_robot_json(json: str) -> None: ...
 def robot_json_roundtrip(json: str) -> str: ...
