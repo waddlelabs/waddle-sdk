@@ -25,6 +25,7 @@ def test_preview_ceilings_refuse_invalid_values():
         {"preview_fps": True},
         {"depth_preview": 0},
         {"demand_driven": "yes"},
+        {"video_only": 1},
     ):
         with pytest.raises(ValueError):
             waddle_sdk.LiveKit("wss://media.example.test", "secret", **row)

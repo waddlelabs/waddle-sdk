@@ -170,6 +170,11 @@ impl DataTx {
 
 /// The media plane boundary the runtime wires against.
 pub trait MediaPlane: Send + Sync + 'static {
+    /// Whether this plane carries intervention/telemetry data in addition to
+    /// video. A presentation-only plane must not wire teleoperation intake.
+    fn supports_data_topics(&self) -> bool {
+        true
+    }
     /// Optional transport-side preview ceiling. Source samples and agent stills
     /// retain their own independent rates and dimensions.
     fn max_video_fps(&self) -> Option<f64> {

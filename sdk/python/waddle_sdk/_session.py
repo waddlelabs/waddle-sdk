@@ -159,6 +159,7 @@ def create_core_session(
         media_preview_max_kbps=None if media is None else media.preview_max_kbps,
         media_depth_preview=True if media is None else media.depth_preview,
         media_demand_driven=False if media is None else media.demand_driven,
+        media_video_only=False if media is None else media.video_only,
         **_reset_kwargs("pre_reset", pre_reset),
         **_reset_kwargs("post_reset", post_reset),
     )

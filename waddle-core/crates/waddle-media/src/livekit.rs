@@ -84,6 +84,7 @@ pub struct LiveKitConfig {
     pub preview_max_kbps: Option<u32>,
     pub depth_preview: bool,
     pub demand_driven: bool,
+    pub video_only: bool,
 }
 
 impl LiveKitConfig {
@@ -98,6 +99,7 @@ impl LiveKitConfig {
             preview_max_kbps: None,
             depth_preview: true,
             demand_driven: false,
+            video_only: false,
         }
     }
 
@@ -183,6 +185,7 @@ pub struct LiveKitMedia {
     preview_fps: Option<f64>,
     depth_preview: bool,
     demand_driven: bool,
+    video_only: bool,
     /// Published tracks; the stored [`NativeVideoSource`] is thread-safe,
     /// so `push_frame` captures directly without a worker round-trip.
     tracks: Mutex<HashMap<String, TrackState>>,
@@ -215,6 +218,7 @@ impl LiveKitMedia {
         let preview_fps = config.preview_fps;
         let depth_preview = config.depth_preview;
         let demand_driven = config.demand_driven;
+        let video_only = config.video_only;
         let (cmd_tx, cmd_rx) = tokio_mpsc::unbounded_channel();
         let (ready_tx, ready_rx) = std_mpsc::channel();
         let handle = thread::Builder::new()
@@ -232,6 +236,7 @@ impl LiveKitMedia {
                 preview_fps,
                 depth_preview,
                 demand_driven,
+                video_only,
                 tracks: Mutex::new(HashMap::new()),
                 worker: Mutex::new(Some(handle)),
             })),
@@ -261,6 +266,9 @@ impl Drop for LiveKitMedia {
 }
 
 impl MediaPlane for LiveKitMedia {
+    fn supports_data_topics(&self) -> bool {
+        !self.video_only
+    }
     fn max_video_fps(&self) -> Option<f64> {
         self.preview_fps
     }
@@ -392,6 +400,9 @@ impl MediaPlane for LiveKitMedia {
     }
 
     fn open_data_rx(&self, topic: DataTopic) -> Result<DataRx, MediaError> {
+        if self.video_only {
+            return Err(MediaError::TopicClosed(topic.topic_str()));
+        }
         let (tx, rx) = std_mpsc::channel();
         self.cmd
             .send(Command::OpenRx { topic, tx })
@@ -400,6 +411,9 @@ impl MediaPlane for LiveKitMedia {
     }
 
     fn open_data_tx(&self, topic: DataTopic) -> Result<DataTx, MediaError> {
+        if self.video_only {
+            return Err(MediaError::TopicClosed(topic.topic_str()));
+        }
         // DataTx is a plain std channel by contract; a small forwarder
         // thread drains it into the worker, which applies the topic's
         // reliability class. The forwarder exits when the DataTx (all
