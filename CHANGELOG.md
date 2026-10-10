@@ -11,6 +11,17 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Prepare matching SDK and media wheels as 0.1.13; the optional preview bindings
+  require API 6, which was not included in the published 0.1.12 pair.
+
+- Add optional LiveKit preview width, fps and per-track bitrate ceilings, RGB-only
+  presentation and demand-driven publisher dynacast. Preserve original RGB-D
+  samples and independent agent still rates; skip unused depth colorization.
+- Bound pending video to the latest frame and separate its native worker from
+  control-plane stills. Lower Linux media worker priority and bound publication
+  waits. Demand-driven preview signaling starts/retries asynchronously, without
+  delaying session startup. Python/native binding API advances to 6; rebuild both extensions.
+
 ## Released changelogs
 
 - [`0.1.12` — 2026-10-10](docs/changelogs/CHANGELOG-0.1.12.md)

@@ -641,11 +641,40 @@ impl SessionBuilder {
             let stills = media_uplink::declares_stills(cam);
             declares_stills |= stills;
             if media_wired || (stills && stills_wired) {
-                let uplink = media_uplink::build_camera_uplink(cam, media_wired)?;
+                let mut uplink = media_uplink::build_camera_uplink(cam, media_wired)?;
+                if let Some(fps) = media_for_cameras
+                    .as_ref()
+                    .and_then(|media| media.max_video_fps())
+                {
+                    if !fps.is_finite() || fps <= 0.0 {
+                        return Err(RuntimeError::InvalidCameraUplinkFps {
+                            camera: cam.name.clone(),
+                            fps,
+                        });
+                    }
+                    uplink.fps = if uplink.fps > 0.0 {
+                        uplink.fps.min(fps)
+                    } else {
+                        fps
+                    };
+                }
                 camera_uplinks.insert(cam.name.clone(), Arc::new(uplink));
             }
-            if media_wired {
-                let uplink = media_uplink::build_depth_uplink(cam)?;
+            if media_for_cameras
+                .as_ref()
+                .is_some_and(|media| media.depth_preview_enabled())
+            {
+                let mut uplink = media_uplink::build_depth_uplink(cam)?;
+                if let Some(fps) = media_for_cameras
+                    .as_ref()
+                    .and_then(|media| media.max_video_fps())
+                {
+                    uplink.fps = if uplink.fps > 0.0 {
+                        uplink.fps.min(fps)
+                    } else {
+                        fps
+                    };
+                }
                 depth_uplinks.insert(cam.name.clone(), Arc::new(uplink));
             }
         }
@@ -950,7 +979,7 @@ impl SessionBuilder {
                 .chain(depth_uplinks.values())
                 .cloned()
                 .collect();
-            threads.push(media_uplink::spawn_media_uplink(
+            threads.extend(media_uplink::spawn_media_uplink(
                 media_for_cameras,
                 plane.clone(),
                 uplinks,
@@ -2283,6 +2312,12 @@ impl Session {
     /// No-media sessions return no tracks. Depth appears only after preview
     /// intake; publication evidence persists across sparse frames and reconnects.
     /// A published frame does not establish remote reception or live connectivity.
+    /// False means no colorization or depth-preview publication is needed.
+    #[must_use]
+    pub fn depth_preview_enabled(&self) -> bool {
+        !self.inner.depth_uplinks.is_empty()
+    }
+
     pub fn media_tracks(&self) -> Vec<crate::MediaTrackStatus> {
         let mut tracks: Vec<_> = self
             .inner

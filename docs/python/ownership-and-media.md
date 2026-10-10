@@ -55,6 +55,43 @@ status across missing samples and transport reconnects. Consumers must not infer
 track identity or publication from camera observations.
 
 The native `Session::media_tracks()` owns these facts. The Python shim only
-serializes them; binding API version 4 requires rebuilding both the base and media
+serializes them; binding API version 6 requires rebuilding both the base and media
 extensions together. Runtime adapters without `MediaRuntimePort` remain valid:
 applications should disable only the media-dependent feature.
+
+
+## Bounded previews
+
+`LiveKit` optionally accepts `preview_width` (maximum output width, aspect ratio
+preserved without upscaling), `preview_fps` (finite positive rate ceiling), and
+`preview_max_kbps` (positive per-track encoder bitrate ceiling in kilobits/s).
+`depth_preview=False` suppresses the colorized depth sibling and its capture-side
+colorization. It does not disable acquisition or change exact local RGB-D samples.
+`demand_driven=True` enables publisher dynacast and skips resize/color conversion
+while all sender layers are paused by the SFU. It also starts signaling on the
+native media worker and retries failed initial connections without delaying
+session startup. Unavailable video drops publication attempts; it does not stop
+control, local capture or agent stills. The default settings preserve
+ordinary full-size publication. For an occasional RGB monitor:
+
+```python
+from waddle_sdk import LiveKit
+
+media = LiveKit(
+    url=authorized_url, token=authorized_token,
+    preview_width=320, preview_fps=1.0, preview_max_kbps=128,
+    depth_preview=False, demand_driven=True,
+)
+```
+
+The frame-timeline rate ceiling applies before media enqueue/encoding. There is
+one waiting frame per camera; newer samples replace older samples during congestion.
+Video publication and agent stills use separate native workers, with lower Linux
+scheduling priority. Source capture, full-size agent stills and gate commands retain
+their own paths. LiveKit publication waits have a deadline. Custom media transports
+must still bound synchronous calls for orderly shutdown.
+
+These limits bound optional work; shared CPU, memory bandwidth and network still
+have a cost. Encoder bitrate excludes signaling and transport overhead, and multiplies
+by the number of camera tracks. Evaluate control timing on the configured host under
+viewing, recording and congestion before qualifying a deployment.

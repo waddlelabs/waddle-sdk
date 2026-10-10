@@ -45,3 +45,10 @@ world's `camera(config=...)` facet opens it after the shared scene. It returns t
 [simulation contract](simulation-contract.md) for world timing and cleanup.
 
 `waddle_sdk.cameras.metadata` normalizes effective runtime declarations and parses intrinsics, retaining the declared distortion model. Missing optional calibration disables only dependent camera behavior. RGB-only intrinsics need no depth scale; metric resolution explicitly requires one and shares validation with `CameraSample.point_at`.
+
+
+Optional LiveKit presentation can cap width/fps/encoder kbps and disable colorized
+depth previews while preserving original RGB-D samples. Transport waits and
+encoding belong outside capture/control; native video and still workers are
+separate. See the public ownership-and-media guide for configuration and timing
+qualification. Preview bitrate ceilings exclude signaling/transport overhead.
