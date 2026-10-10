@@ -607,6 +607,13 @@ rediscovers both tracks, followed by normal public SDK shutdown. Proxy handshake
 logging is disabled because headers can contain scoped tokens. This proves media
 transport and session continuity, not browser rendering or physical-camera quality.
 
+The bounded RGB case also verifies 320x240 presentation at <=1 fps, source-size
+RGB-D samples and viewer rejoin. With the explicit URL and isolated publisher/
+viewer grants above, the native room-presence gate can be checked from
+`waddle-core/` with
+`cargo test -p waddle-media --features livekit preview_demand_follows_real_room_presence -- --ignored`.
+It verifies demand is cleared after the last peer leaves; it opens no camera or arm.
+
 With the same credential options and a configured physical site, run
 `python -m pytest --live --live-config=/absolute/bench.json tests/live/test_03_media.py`.
 This tests each selected real camera through the same SDK publication/reconnect
