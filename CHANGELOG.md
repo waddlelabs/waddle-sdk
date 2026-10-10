@@ -18,6 +18,7 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   control-plane stills. Lower Linux media worker priority and bound publication
   waits. Demand-driven preview signaling starts/retries asynchronously, without
   delaying session startup. Python/native binding API advances to 6; rebuild both extensions.
+- Updated both Python wheel projects and the exact media-companion pin to version 0.1.12.
 
 - Simulated worlds declare `supports_gripper_force` (true for MuJoCo worlds). A
   simulated YAM advertises measured gripper force only when its world serves those
