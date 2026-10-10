@@ -13,7 +13,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 - Presentation-only LiveKit can exclude intervention data topics and teleoperation
   intake. Video lifecycle polling avoids the controller snapshot lock; native
-  frame enqueue and media metadata release the Python interpreter lock.
+  media metadata releases the Python interpreter lock. Keep short, bounded frame
+  admission without an extra per-frame interpreter handoff.
 
 - Prepare matching SDK and media wheels as 0.1.14 for API-7 video-only isolation.
   The proposed 0.1.13 publication was cancelled before uploads; 0.1.12 remains

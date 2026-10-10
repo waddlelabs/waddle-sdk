@@ -972,12 +972,7 @@ impl PySession {
     /// definition; `RuntimeError` for an undeclared camera name or a
     /// `frame` whose (height, width) disagrees with that camera's
     /// declaration (both mapped from the core's `RuntimeError`).
-    fn publish_frame(
-        &self,
-        py: Python<'_>,
-        camera: &str,
-        frame: &Bound<'_, PyAny>,
-    ) -> PyResult<()> {
+    fn publish_frame(&self, camera: &str, frame: &Bound<'_, PyAny>) -> PyResult<()> {
         let arr = frame.cast::<PyArray3<u8>>().map_err(|_| {
             PyTypeError::new_err("frame must be a numpy uint8 ndarray shaped (height, width, 3)")
         })?;
@@ -1003,19 +998,18 @@ impl PySession {
         let (height, width) = (shape[0] as u32, shape[1] as u32);
         let bytes = Bytes::copy_from_slice(slice);
         let data = FrameData::rgb8(width, height, bytes.clone());
-        py.detach(|| {
-            self.inner.publish_frame(camera, data)?;
-            self.latest_frames.lock().insert(
-                camera.to_owned(),
-                LatestRawFrame {
-                    width,
-                    height,
-                    data: bytes,
-                },
-            );
-            Ok(())
-        })
-        .map_err(runtime_err)
+        self.inner
+            .publish_frame(camera, data)
+            .map_err(runtime_err)?;
+        self.latest_frames.lock().insert(
+            camera.to_owned(),
+            LatestRawFrame {
+                width,
+                height,
+                data: bytes,
+            },
+        );
+        Ok(())
     }
 
     /// Publish one browser-compatible RGB8 visualization of a camera's
@@ -1023,12 +1017,7 @@ impl PySession {
     /// camera dimensions and routes it onto the append-only
     /// `<camera>/depth` media track; metric depth never passes through this
     /// preview-only method.
-    fn publish_depth_preview(
-        &self,
-        py: Python<'_>,
-        camera: &str,
-        frame: &Bound<'_, PyAny>,
-    ) -> PyResult<()> {
+    fn publish_depth_preview(&self, camera: &str, frame: &Bound<'_, PyAny>) -> PyResult<()> {
         let arr = frame.cast::<PyArray3<u8>>().map_err(|_| {
             PyTypeError::new_err(
                 "depth preview must be a numpy uint8 ndarray shaped (height, width, 3)",
@@ -1051,8 +1040,11 @@ impl PySession {
             .as_slice()
             .map_err(|_| PyTypeError::new_err("depth preview must be a contiguous numpy array"))?;
         let (height, width) = (shape[0] as u32, shape[1] as u32);
-        let data = FrameData::rgb8(width, height, Bytes::copy_from_slice(slice));
-        py.detach(|| self.inner.publish_depth_preview(camera, data))
+        self.inner
+            .publish_depth_preview(
+                camera,
+                FrameData::rgb8(width, height, Bytes::copy_from_slice(slice)),
+            )
             .map_err(runtime_err)
     }
 

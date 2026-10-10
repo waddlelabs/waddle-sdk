@@ -31,8 +31,8 @@ media plane exists. Native video and still workers are separate; video has
 latest-only pending frames and lower Linux priority. Demand-driven preview
 signaling starts/retries asynchronously without delaying session startup.
 `video_only=True` removes data-topic/teleoperation intake. Video shutdown polls
-use an atomic lifecycle flag, and native enqueue/metadata work releases the GIL
-after copying Python inputs. Binding API 7 requires matching rebuilt
+use an atomic lifecycle flag; media metadata releases the GIL. Keep bounded
+frame admission short, without an extra per-frame interpreter handoff. Binding API 7 requires matching rebuilt
 base/media extensions; see docs/python/ownership-and-media.md.
 
 This file bootstraps every agent that works in this repository. Read it fully before
