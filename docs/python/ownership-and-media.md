@@ -73,8 +73,8 @@ native media worker and retries failed initial connections without delaying
 session startup. Unavailable video drops publication attempts; it does not stop
 control, local capture or agent stills. `video_only=True` excludes media data topics and their teleoperation intake;
 video workers read shutdown state without locking the controller snapshot.
-Native frame enqueue and media metadata lookup release the Python interpreter
-lock after copying Python-owned inputs. The default settings preserve
+Native media metadata lookup releases the Python interpreter lock. Frame
+admission stays short and bounded without an extra per-frame interpreter handoff. The default settings preserve
 ordinary full-size publication. For an occasional RGB monitor:
 
 ```python

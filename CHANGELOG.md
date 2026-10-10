@@ -13,7 +13,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 - Presentation-only LiveKit can exclude intervention data topics and teleoperation
   intake. Video lifecycle polling avoids the controller snapshot lock; native
-  frame enqueue and media metadata release the Python interpreter lock.
+  media metadata releases the Python interpreter lock. Keep short, bounded frame
+  admission without an extra per-frame interpreter handoff.
 
 - Add optional LiveKit preview width, fps and per-track bitrate ceilings, RGB-only
   presentation and demand-driven publisher dynacast. Preserve original RGB-D
