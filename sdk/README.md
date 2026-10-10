@@ -644,3 +644,28 @@ All claim, lease, handoff, gate, timeline, and timestamp decisions live in
 
 Private `_testing` loopback hooks remain only for core conformance tests. They
 are not exported by the package and are not an alternate application API.
+
+### Optional gripper force actuation
+
+An opened part can advertise `actuation.gripper_force` and
+`observation.gripper_force`. Its `describe().command_limits[part].gripper_force_n`
+declares the supported Newton range, and `observe_parts()` includes a sourced
+`GripperForce` reading. Custom hardware implements the structural
+`robots.GripperForceDriver` extension. Kinematic simulators cannot supply force.
+
+A named `JointPositionCommand(positions, gripper_force_n=10)` activates the
+supported jaw force servo after ordinary native and owner-envelope admission.
+The position reference bounds approach travel; the driver maintains force when
+contact is acquired. An omitted modifier preserves force mode during arm writes;
+`gripper_force_n=0` returns to position control. Hold, e-stop, close and a selected
+supervision action clear the mode. Callers own measured acquisition decisions;
+the SDK introduces no grasp-completion or convergence policy.
+
+YAM LINEAR_4310 feedback uses CAN-reported `gripper_eff` in Nm, inferred from
+motor current. Its nominal conversion is `closing_torque * 6.57 / 0.096` N.
+The native MuJoCo YAM adapter uses its driven slide actuator force, conjugate
+to total jaw separation. Both readings explicitly report `estimated=True`
+and a conversion source. These are actuator-effort estimates: friction,
+transmission loss and transient inertia require separate physical calibration
+before claiming accurate object contact force. No load-cell calibration or
+physical force acceptance is established by software or native simulation tests.

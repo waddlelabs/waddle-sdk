@@ -36,7 +36,7 @@ one robot; two part names cannot alias that robot. Camera placements, calibratio
 and object layouts may differ between sites, while reported intrinsics and depth
 units must describe the rendered pixels.
 Reference robot parts accept scalar or ordered arm-only
-`max_joint_position_error_rad` options; omission keeps speed/rate admission and
+`max_joint_position_error_rad` options; omission admits 0.2 rad per arm joint and
 jaw bounds remain separate. For imported MuJoCo scenes, known arm velocity hints
 use each compiled position servo's KD/KP ratio rather than reference-model gains.
 Jaw velocity hints remain zero; incompatible actuator mappings fail explicitly.

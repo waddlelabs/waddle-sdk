@@ -11,6 +11,41 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Updated both Python wheel projects and the exact media-companion pin to version 0.1.12.
+
+- Simulated worlds declare `supports_gripper_force` (true for MuJoCo worlds). A
+  simulated YAM advertises measured gripper force only when its world serves those
+  operations, so a world that relays a fixed operation set keeps position-only jaws
+  instead of failing every description.
+- `SiteSession.events()` keeps the most recent 4,096 `run.step` events and every other
+  event for the session. One step event per submitted command (25 Hz on a YAM) grew the
+  heap for the whole session, so full garbage collections in long-running owners held
+  the GIL long enough to starve the motor loop. Cursors stay unique and increasing.
+
+- Reference simulation arms (SO-101, YAM, xArm7) default to 0.2 rad of command lead
+  on every arm joint, matching the YAM hardware default. They previously fell back to
+  speed/rate admission (0.04 rad per command at 1 rad/s and 25 Hz) and refused
+  full-speed moves the physical arm accepts. Explicit `max_joint_position_error_rad`
+  values still override it; jaw bounds are unchanged.
+
+- Approach force grasps from a lightly loaded YAM jaw at any opening using its
+  ordinary smoothed position controller (a mostly open start was required before; from
+  a 75 mm start, force mode throughout took 3.6 s of uneven travel, against 1.4 s
+  from fully open); hand off to force mode on motor-effort
+  contact with raw-motor slowdown or before the final 5% of stroke.
+
+- Correct small stationary YAM force-hold shortfalls with a bounded adjustment
+  that resets on motion and stays within the declared force-request ceiling.
+
+- Blend YAM LINEAR_4310 position-only jaw references across one host period in
+  the existing vendor motor loop, with a bounded direct-goal slew. Retain
+  vendor contact correction, force mode, zero hand velocity feedforward and
+  SDK admission/stop rules.
+
+- Add optional named-part gripper force actuation/feedback and explicit bounds.
+  Preserve native gates, owner envelopes, retained arm writes and stop lifecycle;
+  YAM and native MuJoCo YAM report sourced nominal force estimates.
+
 - Default YAM arm target-to-measurement allowance to 0.2 rad on all six arm
   joints. Explicit site/factory values still override it; gripper bounds,
   reference speed declarations, joint/workspace limits and stop rules stay intact.

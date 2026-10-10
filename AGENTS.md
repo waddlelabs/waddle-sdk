@@ -1,5 +1,29 @@
 # AGENTS.md — waddle-sdk monorepo
 
+Optional gripper force control uses `GripperForceDriver` and the public runtime
+`GripperForce` observation. Named `JointPositionCommand.gripper_force_n` is
+admitted by the existing native gate and owner envelope before driver activation.
+Positive force retains a jaw force mode across arm writes; zero releases it.
+Hold/e-stop/close and selected supervision streams clear that mode. Capability
+facts and explicit force limits are required; kinematic drivers cannot invent
+force feedback. YAM LINEAR_4310 and native MuJoCo YAM provide nominal motor/actuator
+estimates with provenance, not calibrated contact-force qualification.
+The YAM force-limiter seam also smooths ordinary accepted jaw position steps
+over 40 ms at motor rate, bounded to 1.0 normalized action/s for direct goals.
+Vendor clog correction and force mode remain immediate; this is position
+reference smoothing, not calibrated contact control.
+Positive YAM force hold now corrects a small stationary nominal-effort
+shortfall with a bounded, reset-on-motion adjustment capped by the declared
+force-request ceiling. It remains a motor estimate, not fingertip calibration.
+From a lightly loaded jaw at any opening, a force grasp uses the vendor's normal
+smoothed position travel until measured motor effort reaches the requested
+force with raw-motor slowdown or the final 5% of stroke begins. It then stays
+in force mode. A grasp started already loaded (effort at least the smaller of
+15 N and half the request) or inside the final 5% uses force mode throughout. This
+permits transient approach effort above the requested settling target; do not
+equate the nominal motor reading with fingertip force.
+
+
 This file bootstraps every agent that works in this repository. Read it fully before
 touching anything.
 
@@ -53,7 +77,8 @@ Reference physics sites are documented in `docs/python/simulation.md` and live i
 `SimulationBackend`, named-part, camera, action, gripper, safety, and observation
 contracts as physical sites. The reference generator selects SO-101, YAM or xArm7;
 reference part options can declare scalar or ordered arm-only
-`max_joint_position_error_rad` bounds; omission retains speed/rate admission.
+`max_joint_position_error_rad` bounds; omission admits 0.2 rad per arm joint, the
+YAM hardware default.
 MuJoCo converts known arm velocity hints with each compiled position actuator's
 KD/KP ratio, including imported gains. These adapter changes do not alter physical
 drivers, shared admission or jaw velocity commands. Focused behavior checks live

@@ -73,6 +73,8 @@ class SupportFact(str, enum.Enum):
     POSITION_LIMITS = "limits.position"
     POSITION_ERROR_LIMITS = "limits.position_error"
     VELOCITY_LIMITS = "limits.velocity"
+    GRIPPER_FORCE = "actuation.gripper_force"
+    GRIPPER_FORCE_OBSERVATION = "observation.gripper_force"
     GRIPPER_MAPPING = "gripper.mapping"
     GRIPPER_GEOMETRY = "gripper.geometry"
     CAMERA_RGB = "camera.rgb"
@@ -215,10 +217,18 @@ class JointPositionCommand:
     velocity-aware extension execute ``positions`` normally.  In particular,
     nobody differentiates measured positions or an IK stream to invent this
     value.
+
+    ``gripper_force_n`` is an optional named-part actuation mode. A positive
+    value activates supported driver force control, zero releases it, and None
+    preserves the current mode during an arm write. Position references bound
+    the approach; on acquisition the driver maintains force within physical
+    jaw/speed limits. The native gate and owner envelope admit every reference
+    before activation. Substituted supervision actions clear the caller mode.
     """
 
     positions: tuple[float, ...]
     velocity_feedforward_rad_s: tuple[float, ...] | None = None
+    gripper_force_n: float | None = None
 
     def __init__(
         self,
@@ -226,6 +236,8 @@ class JointPositionCommand:
         velocity_feedforward_rad_s: (
             Sequence[float] | npt.NDArray[np.float64] | None
         ) = None,
+        *,
+        gripper_force_n: float | None = None,
     ) -> None:
         position_values = tuple(float(value) for value in positions)
         if not position_values or not all(np.isfinite(position_values)):
@@ -244,6 +256,13 @@ class JointPositionCommand:
                 raise ValueError(
                     "velocity_feedforward_rad_s must contain finite values"
                 )
+        if gripper_force_n is not None:
+            if isinstance(gripper_force_n, bool):
+                raise ValueError("gripper_force_n must be a finite number, not boolean")
+            gripper_force_n = float(gripper_force_n)
+            if not math.isfinite(gripper_force_n) or gripper_force_n < 0:
+                raise ValueError("gripper_force_n must be finite and non-negative")
+        object.__setattr__(self, "gripper_force_n", gripper_force_n)
         object.__setattr__(self, "positions", position_values)
         object.__setattr__(self, "velocity_feedforward_rad_s", velocity_values)
 
@@ -446,12 +465,26 @@ class RuntimeEvent:
     data: Mapping[str, JSONValue] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class GripperForce:
+    """Closing force in N; estimates must identify their conversion source."""
+
+    force_n: float
+    source: str
+    estimated: bool = True
+
+    def __post_init__(self):
+        if not math.isfinite(self.force_n) or self.force_n < 0 or not self.source:
+            raise ValueError("gripper force must be finite, non-negative and sourced")
+
+
 @dataclass(frozen=True, eq=False)
 class PartObservation:
     joint_position: npt.NDArray[np.float64]
     joint_velocity: npt.NDArray[np.float64]
     ee_pose_wxyz: npt.NDArray[np.float64] | None = None
     frame_id: str | None = None
+    gripper_force: GripperForce | None = None
 
 
 @dataclass(frozen=True, eq=False)
@@ -605,6 +638,7 @@ __all__ = [
     "Action",
     "BodySphere",
     "FaultCode",
+    "GripperForce",
     "JSONValue",
     "JointPositionCommand",
     "MediaRuntimePort",

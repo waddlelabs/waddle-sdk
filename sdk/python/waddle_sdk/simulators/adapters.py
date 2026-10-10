@@ -23,6 +23,10 @@ from ..simulation import WorldConfig
 from .description import collision_bounds, description
 from .scene import load_scene, profile
 
+# Command lead each reference arm joint admits unless the site declares its own bound:
+# the YAM hardware factory default, so simulated and physical moves admit alike.
+DEFAULT_MAX_JOINT_POSITION_ERROR_RAD = 0.2
+
 
 class World:
     """One lazy world owned by the standard SDK simulation lifecycle."""
@@ -47,6 +51,15 @@ class World:
         self._failed = False
         self._part_names: set[str] = set()
         self.content_timing_kind = None
+
+    @property
+    def supports_gripper_force(self) -> bool:
+        """Whether this world serves the measured gripper force operations.
+
+        MuJoCo worlds do. A world that relays a fixed set of operations to its
+        engine overrides this to False, so its arms advertise position-only jaws.
+        """
+        return self.config["backend"] == "mujoco"
 
     def open(self) -> None:
         with self._lock:
@@ -280,6 +293,35 @@ class Driver:
         q[-1] = np.clip(q[-1], 0.0, 1.0)
         return q, dq
 
+    @property
+    def gripper_force_supported(self):
+        return self.world.supports_gripper_force and self.profile.name == "yam"
+
+    @property
+    def gripper_force_limits_n(self):
+        return tuple(self.world.part_call("gripper_force_limits", self.part))
+
+    def read_gripper_force(self):
+        from ..runtime import GripperForce
+
+        return GripperForce(
+            float(self.world.part_call("gripper_force", self.part)),
+            "mujoco.yam.actuator_force",
+            True,
+        )
+
+    def write_gripper_force(self, target, force_n, velocity=None):
+        if self._monitor or self._estopped:
+            raise RuntimeError("simulation arm is monitor-only or e-stopped")
+        values = np.asarray(target, dtype=float)
+        self.profile.poses(values)
+        if any(
+            x < lo or x > hi
+            for x, (lo, hi) in zip(values, self.profile.limits, strict=True)
+        ):
+            raise ValueError("simulation target exceeds the robot's joint limits")
+        self.world.part_call("write_force", self.part, values, force_n, velocity)
+
     def write(self, target):
         self._write(target)
 
@@ -384,33 +426,33 @@ def _arm(owner: World, *, config: PartConfig) -> base.Rig:
     if not all(math.isfinite(x) and x > 0 for x in (rate, speed, hand_speed)):
         raise ValueError("simulation rate and speed must be positive")
     velocities = (speed,) * p.dof + (hand_speed,)
-    position_error_caps = None
     requested_error = config.options.get("max_joint_position_error_rad")
-    if requested_error is not None:
-        values = (
-            (requested_error,) * p.dof
-            if isinstance(requested_error, (int, float))
-            else requested_error
+    if requested_error is None:
+        requested_error = DEFAULT_MAX_JOINT_POSITION_ERROR_RAD
+    values = (
+        (requested_error,) * p.dof
+        if isinstance(requested_error, (int, float))
+        else requested_error
+    )
+    if (
+        isinstance(requested_error, (str, bytes, bool))
+        or not isinstance(values, Sequence)
+        or len(values) != p.dof
+        or any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value <= 0
+            for value in values
         )
-        if (
-            isinstance(requested_error, (str, bytes, bool))
-            or not isinstance(values, Sequence)
-            or len(values) != p.dof
-            or any(
-                isinstance(value, bool)
-                or not isinstance(value, (int, float))
-                or not math.isfinite(value)
-                or value <= 0
-                for value in values
-            )
-        ):
-            raise ValueError(
-                "max_joint_position_error_rad must be one finite positive value "
-                f"or {p.dof} finite positive arm-joint values"
-            )
-        position_error_caps = tuple(float(value) for value in values) + (
-            hand_speed / rate,
+    ):
+        raise ValueError(
+            "max_joint_position_error_rad must be one finite positive value "
+            f"or {p.dof} finite positive arm-joint values"
         )
+    position_error_caps = tuple(float(value) for value in values) + (
+        hand_speed / rate,
+    )
 
     def build():
         driver = Driver(
