@@ -11,6 +11,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Presentation-only LiveKit can exclude intervention data topics and teleoperation
+  intake. Video lifecycle polling avoids the controller snapshot lock; native
+  frame enqueue and media metadata release the Python interpreter lock.
+
 - Prepare matching SDK and media wheels as 0.1.13; the optional preview bindings
   require API 6, which was not included in the published 0.1.12 pair.
 
@@ -20,7 +24,7 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 - Bound pending video to the latest frame and separate its native worker from
   control-plane stills. Lower Linux media worker priority and bound publication
   waits. Demand-driven preview signaling starts/retries asynchronously, without
-  delaying session startup. Python/native binding API advances to 6; rebuild both extensions.
+  delaying session startup. Python/native binding API advances to 7; rebuild both extensions.
 
 ## Released changelogs
 

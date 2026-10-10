@@ -351,6 +351,7 @@ def test_bounded_rgb_preview_keeps_full_quality_depth_and_rejoins(
                         preview_max_kbps=128,
                         depth_preview=False,
                         demand_driven=True,
+                        video_only=True,
                     ),
                     console=False,
                 ).__enter__

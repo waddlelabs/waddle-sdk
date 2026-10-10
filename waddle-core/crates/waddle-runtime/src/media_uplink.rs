@@ -515,7 +515,7 @@ pub(crate) fn spawn_media_uplink(
                 .spawn(move || {
                     waddle_media::prepare_background_media_thread();
                     let mut encoders: HashMap<String, Box<dyn VideoEncoder>> = HashMap::new();
-                    while !mirror.read().shutdown {
+                    while !mirror.is_shutdown() {
                         let mut idle = true;
                         for cam in &cameras {
                             if cam.media_wired

@@ -972,7 +972,12 @@ impl PySession {
     /// definition; `RuntimeError` for an undeclared camera name or a
     /// `frame` whose (height, width) disagrees with that camera's
     /// declaration (both mapped from the core's `RuntimeError`).
-    fn publish_frame(&self, camera: &str, frame: &Bound<'_, PyAny>) -> PyResult<()> {
+    fn publish_frame(
+        &self,
+        py: Python<'_>,
+        camera: &str,
+        frame: &Bound<'_, PyAny>,
+    ) -> PyResult<()> {
         let arr = frame.cast::<PyArray3<u8>>().map_err(|_| {
             PyTypeError::new_err("frame must be a numpy uint8 ndarray shaped (height, width, 3)")
         })?;
@@ -998,18 +1003,19 @@ impl PySession {
         let (height, width) = (shape[0] as u32, shape[1] as u32);
         let bytes = Bytes::copy_from_slice(slice);
         let data = FrameData::rgb8(width, height, bytes.clone());
-        self.inner
-            .publish_frame(camera, data)
-            .map_err(runtime_err)?;
-        self.latest_frames.lock().insert(
-            camera.to_owned(),
-            LatestRawFrame {
-                width,
-                height,
-                data: bytes,
-            },
-        );
-        Ok(())
+        py.detach(|| {
+            self.inner.publish_frame(camera, data)?;
+            self.latest_frames.lock().insert(
+                camera.to_owned(),
+                LatestRawFrame {
+                    width,
+                    height,
+                    data: bytes,
+                },
+            );
+            Ok(())
+        })
+        .map_err(runtime_err)
     }
 
     /// Publish one browser-compatible RGB8 visualization of a camera's
@@ -1017,7 +1023,12 @@ impl PySession {
     /// camera dimensions and routes it onto the append-only
     /// `<camera>/depth` media track; metric depth never passes through this
     /// preview-only method.
-    fn publish_depth_preview(&self, camera: &str, frame: &Bound<'_, PyAny>) -> PyResult<()> {
+    fn publish_depth_preview(
+        &self,
+        py: Python<'_>,
+        camera: &str,
+        frame: &Bound<'_, PyAny>,
+    ) -> PyResult<()> {
         let arr = frame.cast::<PyArray3<u8>>().map_err(|_| {
             PyTypeError::new_err(
                 "depth preview must be a numpy uint8 ndarray shaped (height, width, 3)",
@@ -1040,11 +1051,8 @@ impl PySession {
             .as_slice()
             .map_err(|_| PyTypeError::new_err("depth preview must be a contiguous numpy array"))?;
         let (height, width) = (shape[0] as u32, shape[1] as u32);
-        self.inner
-            .publish_depth_preview(
-                camera,
-                FrameData::rgb8(width, height, Bytes::copy_from_slice(slice)),
-            )
+        let data = FrameData::rgb8(width, height, Bytes::copy_from_slice(slice));
+        py.detach(|| self.inner.publish_depth_preview(camera, data))
             .map_err(runtime_err)
     }
 
@@ -1057,7 +1065,8 @@ impl PySession {
     /// Native publication evidence; no media naming or availability inference in Python.
     fn media_tracks<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
         let out = PyList::empty(py);
-        for track in self.inner.media_tracks() {
+        let tracks = py.detach(|| self.inner.media_tracks());
+        for track in tracks {
             let row = PyDict::new(py);
             row.set_item("camera_id", track.camera_id)?;
             row.set_item("stream", track.stream)?;
@@ -1404,6 +1413,7 @@ impl PySession {
     media_preview_max_kbps=None,
     media_depth_preview=true,
     media_demand_driven=false,
+    media_video_only=false,
 ))]
 pub(crate) fn create_session(
     py: Python<'_>,
@@ -1443,6 +1453,7 @@ pub(crate) fn create_session(
     media_preview_max_kbps: Option<u32>,
     media_depth_preview: bool,
     media_demand_driven: bool,
+    media_video_only: bool,
 ) -> PyResult<PySession> {
     #[cfg(not(feature = "livekit"))]
     let _ = (
@@ -1451,6 +1462,7 @@ pub(crate) fn create_session(
         media_preview_max_kbps,
         media_depth_preview,
         media_demand_driven,
+        media_video_only,
     );
     let robot = parse_robot_json(robot_json)?;
     let cameras: Arc<BTreeMap<String, (u32, u32)>> = Arc::new(
@@ -1569,6 +1581,7 @@ pub(crate) fn create_session(
         config.preview_max_kbps = media_preview_max_kbps;
         config.depth_preview = media_depth_preview;
         config.demand_driven = media_demand_driven;
+        config.video_only = media_video_only;
         config
     });
 

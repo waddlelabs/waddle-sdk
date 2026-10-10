@@ -55,7 +55,7 @@ status across missing samples and transport reconnects. Consumers must not infer
 track identity or publication from camera observations.
 
 The native `Session::media_tracks()` owns these facts. The Python shim only
-serializes them; binding API version 6 requires rebuilding both the base and media
+serializes them; binding API version 7 requires rebuilding both the base and media
 extensions together. Runtime adapters without `MediaRuntimePort` remain valid:
 applications should disable only the media-dependent feature.
 
@@ -71,7 +71,10 @@ colorization. It does not disable acquisition or change exact local RGB-D sample
 while all sender layers are paused by the SFU. It also starts signaling on the
 native media worker and retries failed initial connections without delaying
 session startup. Unavailable video drops publication attempts; it does not stop
-control, local capture or agent stills. The default settings preserve
+control, local capture or agent stills. `video_only=True` excludes media data topics and their teleoperation intake;
+video workers read shutdown state without locking the controller snapshot.
+Native frame enqueue and media metadata lookup release the Python interpreter
+lock after copying Python-owned inputs. The default settings preserve
 ordinary full-size publication. For an occasional RGB monitor:
 
 ```python
@@ -80,7 +83,7 @@ from waddle_sdk import LiveKit
 media = LiveKit(
     url=authorized_url, token=authorized_token,
     preview_width=320, preview_fps=1.0, preview_max_kbps=128,
-    depth_preview=False, demand_driven=True,
+    depth_preview=False, demand_driven=True, video_only=True,
 )
 ```
 

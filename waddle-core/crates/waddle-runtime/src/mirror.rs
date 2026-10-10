@@ -3,7 +3,10 @@
 //! The reducer is the only writer; a condvar wakes blockers (e.g.
 //! `start_episode` waiting through reset).
 
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 use parking_lot::{Condvar, Mutex};
 use waddle_ingest::SessionClock;
@@ -227,6 +230,7 @@ pub struct Status {
 pub struct Mirror {
     state: Mutex<Status>,
     changed: Condvar,
+    shutdown: AtomicBool,
 }
 
 impl Mirror {
@@ -238,7 +242,15 @@ impl Mirror {
     pub fn update(&self, f: impl FnOnce(&mut Status)) {
         let mut s = self.state.lock();
         f(&mut s);
+        self.shutdown.store(s.shutdown, Ordering::Release);
         self.changed.notify_all();
+    }
+
+    /// Background presentation workers only need lifecycle state. Reading it
+    /// never locks or clones the shared controller snapshot.
+    #[must_use]
+    pub fn is_shutdown(&self) -> bool {
+        self.shutdown.load(Ordering::Acquire)
     }
 
     #[must_use]

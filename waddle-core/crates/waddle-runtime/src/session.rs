@@ -679,14 +679,18 @@ impl SessionBuilder {
             }
         }
 
-        // A live engage path: a wired media plane, or `hold`/`send`
+        // A live engage path: a media plane with data topics, or `hold`/`send`
         // registered directly. `grant_and_engage` doesn't consult
         // `self.media` at all, so registering either verb without media is
         // just as live a path into the same HOLD_FIRST engage handshake as
-        // wiring media is (see the `build` rustdoc above and the safety
+        // wiring intervention media is (see the `build` rustdoc above and the safety
         // note on `grant_and_engage`).
-        let intervention_wired =
-            self.media.is_some() || self.control.hold.is_some() || self.control.send.is_some();
+        let intervention_wired = self
+            .media
+            .as_ref()
+            .is_some_and(|m| m.supports_data_topics())
+            || self.control.hold.is_some()
+            || self.control.send.is_some();
         // The one shared engage-path verb check (see `missing_engage_verb`
         // for the effective-handoff degrade it encodes); the error prose
         // stays call-site so a build failure names the wiring that made the
@@ -956,7 +960,7 @@ impl SessionBuilder {
         ));
 
         // Media intake: teleop stream → gate ring; clutch → FSM.
-        if let Some(media) = self.media {
+        if let Some(media) = self.media.filter(|m| m.supports_data_topics()) {
             threads.push(pumps::spawn_media_intake(
                 media,
                 stream_tx.clone(),
