@@ -71,6 +71,8 @@ rounded USB timeout without changing the deadline or terminal fence. Caller wall
 time includes Python scheduling; it is not a hardware/native transfer timestamp.
 Live startup preserves retained vendor control faults before generic stopped-worker
 evidence. Connection/worker cleanup does not verify delivery of zero motor torque.
+The pristine raw-vendor live comparator rejects USB selection before vendor imports
+or site ownership; SDK USB qualification remains separate from SocketCAN comparison.
 The candidate's `control_wait` seam changes only its blocking cadence delay.
 Retained control threads use first-iteration readiness and bounded drain before
 bus close, preserving original background faults and cleanup uncertainty.

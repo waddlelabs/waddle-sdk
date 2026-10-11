@@ -538,6 +538,45 @@ def test_raw_close_joins_workers_before_closing_socket(monkeypatch):
     assert "close socket" not in events
 
 
+@pytest.mark.parametrize("phase", ["construction", "opening"])
+def test_unsupported_raw_transport_refuses_before_import_or_ownership(
+    monkeypatch, phase
+):
+    import builtins
+
+    row = {
+        "driver": "waddle_sdk.robots.yam:arm",
+        "posture": "supervised",
+        "connection": {"usb_can": {"selector": {"serial_number": "offline"}}},
+    }
+    site = SimpleNamespace(manifest={"parts": {"left": row}})
+
+    def initialize(owner, config, part):
+        owner.site = site
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Unsupported raw transport reached hardware ownership")
+
+    original_import = builtins.__import__
+
+    def checked_import(name, *args, **kwargs):
+        if name == "i2rt" or name.startswith("i2rt."):
+            raise AssertionError("Unsupported raw transport imported the vendor")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(session.Bench, "__init__", initialize)
+    monkeypatch.setattr(vendor, "_SiteLock", forbidden)
+    monkeypatch.setattr(builtins, "__import__", checked_import)
+    with pytest.raises(ValueError, match="supports SocketCAN only"):
+        if phase == "construction":
+            vendor.VendorBench({}, "left")
+        else:
+            owner = object.__new__(vendor.VendorBench)
+            owner.config = {"torque_release_authorized": True}
+            owner.site, owner.part = site, "left"
+            owner.__enter__()
+
+
 def test_controller_evidence_distinguishes_requested_from_encoded_gains():
     result = vendor.settings(
         SimpleNamespace(get_robot_info=lambda: {"kp": [320, 40], "kd": [20, 6]})

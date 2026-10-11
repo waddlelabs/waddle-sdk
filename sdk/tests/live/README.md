@@ -28,8 +28,9 @@ for live selection, without inferring an attached robot or claiming a USB handle
 during collection. The driver rechecks the declared current bus/address and
 serial before commands. The reviewed runtime and native library remain execution
 prerequisites; discovery presence establishes neither timing nor fault parity.
-The existing pristine SocketCAN raw-vendor comparator does not yet support this
-USB selection. SDK-only USB tests and Linux comparison remain separate evidence.
+The pristine SocketCAN raw-vendor comparator refuses this USB selection before
+vendor imports or ownership acquisition. SDK-only USB tests and Linux comparison
+remain separate evidence.
 
 Configuration resolves from `--live-config`, `WADDLE_SDK_LIVE_CONFIG`, or
 `.live-tests.json` in the working directory. `--live-site` or `WADDLE_LIVE_SITE`

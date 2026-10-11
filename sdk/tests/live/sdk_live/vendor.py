@@ -23,6 +23,14 @@ VENDOR_GRAVITY_DEFAULT = [1, 1.1, 1.1, 1.2, 1, 1]
 _UNCERTAIN_OWNERS = []
 
 
+def _require_socketcan(row):
+    if row["connection"].get("usb_can") is not None:
+        raise ValueError(
+            "The pristine raw I2RT comparator supports SocketCAN only; "
+            "USB-CAN requires the SDK qualification path"
+        )
+
+
 def wait_for_startup(owner, robot, channel, *, timeout_s=1.0):
     """Test-only proof that constructor holding has yielded fresh public state.
 
@@ -218,6 +226,7 @@ class VendorBench(Bench):
             or row["posture"] != "supervised"
         ):
             raise ValueError("The raw I2RT comparator requires a supervised YAM arm")
+        _require_socketcan(row)
         # Compile exactly the manifest's envelope onto a non-hardware SimDriver.
         # Neither Site.open nor LiveDriver is used in this process.
         model_row = {**row, "connection": {**row["connection"], "sim": True}}
@@ -237,6 +246,8 @@ class VendorBench(Bench):
     def __enter__(self):
         if self.config.get("torque_release_authorized") is not True:
             raise ValueError("Raw I2RT requires explicit torque_release_authorized")
+        row = self.site.manifest["parts"][self.part]
+        _require_socketcan(row)
         from i2rt.motor_drivers.can_interface import CanInterface
         from i2rt.robots.get_robot import get_yam_robot
         from i2rt.robots.motor_chain_robot import MotorChainRobot
@@ -249,7 +260,6 @@ class VendorBench(Bench):
             if not method.__module__.startswith("i2rt."):
                 raise RuntimeError("Raw I2RT comparison requires a pristine subprocess")
         self.ownership = _SiteLock(self.site.id)
-        row = self.site.manifest["parts"][self.part]
         options = row.get("options", {})
         self.channel = row["connection"]["channel"]
         try:

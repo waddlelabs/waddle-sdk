@@ -27,6 +27,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 - Retain phase and measured caller duration in USB submission deadline errors,
   preserving the original budget and terminal fence. Live startup reports retained
   vendor control faults before generic stopped-worker evidence.
+- Refuse unsupported USB selection in the pristine raw-vendor live comparator
+  before vendor imports or site ownership, preserving its SocketCAN comparison.
 
 - Pin build toolchains to Rust 1.98.1 for the upstream Mach-O binary-alignment
   correction. Verify real media wheel imports and unavailable-service startup in
