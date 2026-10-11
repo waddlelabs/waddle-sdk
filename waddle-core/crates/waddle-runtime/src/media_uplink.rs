@@ -7,11 +7,11 @@
 //! and otherwise only copies the frame onto a small bounded per-track
 //! queue. Everything expensive — the (lazy, once-per-track) `publish_track`
 //! call and the actual encode/`push_frame` — runs off that thread, on the
-//! single dedicated `waddle-media-uplink` pump this module spawns.
+//! dedicated `waddle-media-uplink` worker this module spawns.
 //!
 //! Control-plane stills (flag `waddle.v0.obs.stills`): a camera declaring
 //! `StreamPolicy.still_fps > 0` additionally tees each published frame into
-//! a latest-wins per-camera slot; the SAME pump samples that slot at
+//! a latest-wins per-camera slot; a separate stills worker samples that slot at
 //! `still_fps` (a frame-timeline throttle mirroring the media fps throttle),
 //! JPEG-encodes the sampled frame, and sends it as
 //! `ObservationUpdate{ still: FrameStill }` on the CONTROL plane. This is
@@ -74,21 +74,10 @@
 //! per-frame failure): no encoder produces it, and no track can ingest it,
 //! yet.
 //!
-//! Known limitations of the single-pump design (acceptable for this task's
-//! scope; worth revisiting if multi-camera deployments need it):
-//! `publish_track`/`push_frame` are synchronous `MediaPlane` trait calls —
-//! a stalled transport for one camera blocks the ONE uplink thread's
-//! round-robin, starving every other declared camera's queued frames (and
-//! stills) for as long as the stall lasts (same trust model as
-//! `ControlRegistry`'s synchronous verb callables: the integrator's
-//! transport is expected to stay bounded). A failing `publish_track` is
-//! retried on every subsequent frame with no backoff (no circuit breaker) —
-//! a permanently broken transport keeps re-attempting the same failing call
-//! once per admitted frame rather than degrading gracefully. Because this
-//! same thread also owns thread-join at `Session::shutdown`, a transport
-//! call that never returns would block shutdown indefinitely — again, the
-//! same risk category `VerbDispatch` already carries for a hanging
-//! integrator callback.
+//! Video and control-plane stills have separate native workers. A synchronous
+//! video transport can stall other video tracks, but cannot starve stills or
+//! execute on the gate/capture thread. Custom transports must bound their calls
+//! for orderly shutdown; the LiveKit publication round-trip has a deadline.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -117,8 +106,8 @@ pub(crate) use waddle_controlplane::flags::STILLS as STILLS_FLAG;
 /// The per-camera bounded queue's capacity. Small and fixed: video wants the
 /// freshest frame, not a deep backlog — a few frames of slack absorb jitter
 /// between the customer's loop and the uplink pump without building a real
-/// queue depth.
-const QUEUE_CAPACITY: usize = 4;
+/// queue depth. Capacity one deliberately retains only the newest waiting frame.
+const QUEUE_CAPACITY: usize = 1;
 
 /// JPEG quality for control-plane stills. Fixed: stills are bounded-rate
 /// agent perception, not an archival or video surface — a mid-range quality
@@ -287,7 +276,7 @@ pub(crate) struct CameraUplink {
     /// media leg, so the bounded queue can't fill against a drain that
     /// isn't there), while the stills tee runs independently.
     media_wired: bool,
-    fps: f64,
+    pub(crate) fps: f64,
     encoding: VideoEncoding,
     last_sent_ns: AtomicI64,
     queue: Mutex<VecDeque<QueuedFrame>>,
@@ -508,59 +497,75 @@ pub(crate) fn admit_and_enqueue(uplink: &CameraUplink, now_ns: i64, frame: Frame
     }
 }
 
-/// The single dedicated uplink pump (named `waddle-media-uplink`):
-/// round-robins the declared cameras, draining at most one queued frame per
-/// camera per pass onto the media plane (lazily `publish_track`-ing on a
-/// camera's first frame, then encoding + `push_frame`-ing), and sampling
-/// each camera's stills slot at its declared `still_fps` onto the control
-/// plane. Either leg may be absent — an agent-only session has no media
-/// plane, a media-only session has no stills — and the pump runs as long as
-/// at least one camera has either. Joins the ordinary pump lifecycle (mirror
-/// shutdown → exit before the session joins threads).
+/// Independent native workers for video and negotiated agent stills. Both
+/// share the ordinary mirror-driven shutdown lifecycle and bound pending pixels.
 pub(crate) fn spawn_media_uplink(
     media: Option<Arc<dyn MediaPlane>>,
     plane: Option<Arc<ControlPlaneClient>>,
     cameras: Vec<Arc<CameraUplink>>,
     mirror: Arc<Mirror>,
-) -> JoinHandle<()> {
-    std::thread::Builder::new()
-        .name("waddle-media-uplink".into())
-        .spawn(move || {
-            // One stateful encoder per camera per leg (`VideoEncoder::encode`
-            // takes `&mut self`), built lazily from the camera's first frame
-            // — mirrors the lazy `publish_track` below.
-            let mut encoders: HashMap<String, Box<dyn VideoEncoder>> = HashMap::new();
-            let mut still_encoders: HashMap<String, JpegEncoder> = HashMap::new();
-            loop {
-                let status = mirror.read();
-                if status.shutdown {
-                    return;
-                }
-                // VERSIONING §3: stills are emitted only while the CURRENT
-                // connection has accepted `waddle.v0.obs.stills` at Register
-                // (the plane pump refreshes this on every re-registration).
-                let stills_on = status.stills_negotiated;
-                let mut idle = true;
-                for cam in &cameras {
-                    if cam.media_wired
-                        && let Some(media) = media.as_deref()
-                        && pump_media_frame(cam, media, &mut encoders)
-                    {
-                        idle = false;
+) -> Vec<JoinHandle<()>> {
+    let mut workers = Vec::new();
+    if let Some(media) = media {
+        let cameras = cameras.clone();
+        let mirror = mirror.clone();
+        workers.push(
+            std::thread::Builder::new()
+                .name("waddle-media-uplink".into())
+                .spawn(move || {
+                    waddle_media::prepare_background_media_thread();
+                    let mut encoders: HashMap<String, Box<dyn VideoEncoder>> = HashMap::new();
+                    while !mirror.read().shutdown {
+                        let mut idle = true;
+                        for cam in &cameras {
+                            if cam.media_wired
+                                && pump_media_frame(cam, media.as_ref(), &mut encoders)
+                            {
+                                idle = false;
+                            }
+                        }
+                        if idle {
+                            std::thread::sleep(Duration::from_millis(5));
+                        }
                     }
-                    if stills_on
-                        && let Some(plane) = plane.as_deref()
-                        && pump_still(cam, plane, &mut still_encoders)
-                    {
-                        idle = false;
-                    }
-                }
-                if idle {
-                    std::thread::sleep(Duration::from_millis(1));
-                }
-            }
-        })
-        .expect("spawn media uplink")
+                })
+                .expect("spawn media uplink"),
+        );
+    }
+    if let Some(plane) = plane {
+        let cameras: Vec<_> = cameras
+            .into_iter()
+            .filter(|cam| cam.still_fps > 0.0)
+            .collect();
+        if !cameras.is_empty() {
+            workers.push(
+                std::thread::Builder::new()
+                    .name("waddle-camera-stills".into())
+                    .spawn(move || {
+                        let mut encoders: HashMap<String, JpegEncoder> = HashMap::new();
+                        loop {
+                            let status = mirror.read();
+                            if status.shutdown {
+                                return;
+                            }
+                            let mut idle = true;
+                            if status.stills_negotiated {
+                                for cam in &cameras {
+                                    if pump_still(cam, plane.as_ref(), &mut encoders) {
+                                        idle = false;
+                                    }
+                                }
+                            }
+                            if idle {
+                                std::thread::sleep(Duration::from_millis(5));
+                            }
+                        }
+                    })
+                    .expect("spawn camera stills"),
+            );
+        }
+    }
+    workers
 }
 
 /// One camera's media leg for a single pump pass: drain at most one queued
@@ -594,6 +599,11 @@ fn pump_media_frame(
         }
         guard.clone().expect("just set or already present")
     };
+    if !media.wants_video_frame(&track) {
+        // The advertised track is available; paused demand is not a fault.
+        cam.publication.store(1, Ordering::Relaxed);
+        return true;
+    }
     let encoder = encoders.entry(cam.name.clone()).or_insert_with(|| {
         make_encoder(
             cam.encoding,

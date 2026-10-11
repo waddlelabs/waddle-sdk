@@ -16,9 +16,11 @@ source tree"):
 | `waddle-sdk` | `sdk/pyproject.toml` | `waddle_sdk._core` | `pyo3/extension-module`, `grpc` |
 | `waddle-sdk-media` | `sdk/media/pyproject.toml` | `waddle_media._core` | the same, plus `livekit` |
 
-Both are one build of `sdk/rust/Cargo.toml`, so they cannot disagree on a version, and
-`waddle_sdk._native` refuses a mismatched pair at import rather than loading a core built
-from other sources. The companion is installed as the extra — `pip install
+Both derive their release version from `sdk/rust/Cargo.toml`.
+`waddle_sdk._native` requires a matching native binding API; a package-version
+mismatch warns while retaining a compatible media core, and an incompatible media
+core falls back to the bundled core. Publish the same source version as a pair.
+The companion is installed as the extra — `pip install
 'waddle-sdk[media]'` — never by name.
 
 The same release also carries two portable Agent Skills from the canonical
@@ -89,8 +91,8 @@ commit only after it has landed on `main`.
 
    That literal is the ONE version maturin cannot derive (PEP 621 has no dynamic
    optional-dependencies). Forget it and `pip install 'waddle-sdk[media]'` resolves the
-   *previous* release, `waddle_sdk._native` sees the mismatch, and the install silently has
-   no LiveKit. `sdk/tests/test_features.py::test_the_media_extra_pins_this_builds_version`
+   *previous* release. `_native` warns on the package-version mismatch and, if that
+   release has an incompatible binding API, falls back to the core without LiveKit. `sdk/tests/test_features.py::test_the_media_extra_pins_this_builds_version`
    fails until the two agree, and the publish job re-checks the built wheels against the
    tag.
 

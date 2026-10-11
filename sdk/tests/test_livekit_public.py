@@ -54,7 +54,7 @@ def _configuration(values=None):
     return url, publisher, viewer, published["sub"]
 
 
-def _site(path: Path, *, camera_row=None, site_id=None):
+def _site(path: Path, *, camera_row=None, site_id=None, width=96, height=64):
     manifest = {
         "api_version": "waddle.site/v1",
         "kind": "Site",
@@ -81,12 +81,12 @@ def _site(path: Path, *, camera_row=None, site_id=None):
                 "connection": {},
                 "mount": {"kind": "scene"},
                 "frame_id": "scene_optical",
-                "stream": {"width": 96, "height": 64, "fps": 10.0},
+                "stream": {"width": width, "height": height, "fps": 10.0},
                 "intrinsics": {
                     "fx": 90.0,
                     "fy": 90.0,
-                    "cx": 47.5,
-                    "cy": 31.5,
+                    "cx": (width - 1) / 2,
+                    "cy": (height - 1) / 2,
                     "depth_scale_mm": 1.0,
                 },
                 "options": {"has_depth": True, "object_radius_px": 12},
@@ -328,3 +328,57 @@ async def _acceptance(tmp_path, rtc, config, *, site=None):
             await asyncio.to_thread(sdk.__exit__, None, None, None)
         await viewer.close()
     return evidence
+
+
+def test_bounded_rgb_preview_keeps_full_quality_depth_and_rejoins(
+    tmp_path, livekit_configuration
+):
+    rtc = pytest.importorskip("livekit.rtc")
+
+    async def check():
+        url, publisher_token, viewer_token, publisher = livekit_configuration
+        site = _site(tmp_path / "preview-site.yaml", width=640, height=480)
+        viewer = _Viewer(rtc, publisher, (320, 240))
+        sdk = None
+        try:
+            sdk = await asyncio.to_thread(
+                site.open(
+                    media=LiveKit(
+                        url,
+                        publisher_token,
+                        preview_width=320,
+                        preview_fps=1.0,
+                        preview_max_kbps=128,
+                        depth_preview=False,
+                        demand_driven=True,
+                    ),
+                    console=False,
+                ).__enter__
+            )
+            # Publication is discoverable without viewers or program turns.
+            await asyncio.sleep(2)
+            await viewer.room.connect(
+                url, viewer_token, rtc.RoomOptions(connect_timeout=10)
+            )
+            await viewer.received({"scene": 3}, timeout=20)
+            assert set(viewer.publications) == {"scene"}
+            sample = (await asyncio.to_thread(sdk.observe)).cameras["scene"]
+            assert sample.rgb.shape == (480, 640, 3)
+            assert sample.depth.shape == (480, 640)
+            before = viewer.frames["scene"]
+            await asyncio.sleep(5)
+            assert 2 <= viewer.frames["scene"] - before <= 7
+            await viewer.close()
+            await asyncio.sleep(2)
+            viewer = _Viewer(rtc, publisher, (320, 240))
+            await viewer.room.connect(
+                url, viewer_token, rtc.RoomOptions(connect_timeout=10)
+            )
+            await viewer.received({"scene": 2}, timeout=15)
+            assert not any(event.kind == "run.step" for event in sdk.events())
+        finally:
+            await viewer.close()
+            if sdk is not None:
+                await asyncio.to_thread(sdk.close)
+
+    asyncio.run(check())

@@ -6,6 +6,7 @@ feature negotiation, reconnect behavior, and connection-scoped safety.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 
@@ -48,17 +49,38 @@ class Grpc:
 class LiveKit:
     """Select the optional LiveKit media transport.
 
-    The companion waddle-sdk-media wheel supplies the native feature.
+    The companion waddle-sdk-media wheel supplies the native feature. Optional
+    preview_width/fps/max_kbps ceilings affect presentation only; depth_preview
+    and demand_driven control colorization and publisher subscriber demand.
     """
 
     url: str
     token: str = field(repr=False)
+    preview_width: int | None = None
+    preview_fps: float | None = None
+    preview_max_kbps: int | None = None
+    depth_preview: bool = True
+    demand_driven: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.url, str) or not self.url:
             raise ValueError("LiveKit.url must be a non-empty str")
         if not isinstance(self.token, str) or not self.token:
             raise ValueError("LiveKit.token must be a non-empty str")
+        for name in ("preview_width", "preview_max_kbps"):
+            value = getattr(self, name)
+            if value is not None and (type(value) is not int or value <= 0):
+                raise ValueError(f"LiveKit.{name} must be a positive integer or None")
+        if self.preview_fps is not None and (
+            isinstance(self.preview_fps, bool)
+            or not isinstance(self.preview_fps, (int, float))
+            or not math.isfinite(self.preview_fps)
+            or self.preview_fps <= 0
+        ):
+            raise ValueError("LiveKit.preview_fps must be finite and positive or None")
+        for name in ("depth_preview", "demand_driven"):
+            if type(getattr(self, name)) is not bool:
+                raise ValueError(f"LiveKit.{name} must be a bool")
 
 
 __all__ = ["Grpc", "LiveKit"]

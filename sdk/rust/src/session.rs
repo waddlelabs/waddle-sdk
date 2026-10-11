@@ -1048,6 +1048,12 @@ impl PySession {
             .map_err(runtime_err)
     }
 
+    /// Whether capture needs to construct a colorized depth presentation.
+    #[getter]
+    fn depth_preview_enabled(&self) -> bool {
+        self.inner.depth_preview_enabled()
+    }
+
     /// Native publication evidence; no media naming or availability inference in Python.
     fn media_tracks<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
         let out = PyList::empty(py);
@@ -1393,6 +1399,11 @@ impl PySession {
     connector_authorization_only=false,
     media_url=None,
     media_token=None,
+    media_preview_width=None,
+    media_preview_fps=None,
+    media_preview_max_kbps=None,
+    media_depth_preview=true,
+    media_demand_driven=false,
 ))]
 pub(crate) fn create_session(
     py: Python<'_>,
@@ -1427,7 +1438,20 @@ pub(crate) fn create_session(
     connector_authorization_only: bool,
     media_url: Option<&str>,
     media_token: Option<&str>,
+    media_preview_width: Option<u32>,
+    media_preview_fps: Option<f64>,
+    media_preview_max_kbps: Option<u32>,
+    media_depth_preview: bool,
+    media_demand_driven: bool,
 ) -> PyResult<PySession> {
+    #[cfg(not(feature = "livekit"))]
+    let _ = (
+        media_preview_width,
+        media_preview_fps,
+        media_preview_max_kbps,
+        media_depth_preview,
+        media_demand_driven,
+    );
     let robot = parse_robot_json(robot_json)?;
     let cameras: Arc<BTreeMap<String, (u32, u32)>> = Arc::new(
         robot
@@ -1534,12 +1558,18 @@ pub(crate) fn create_session(
     // marshalling.
     #[cfg(feature = "livekit")]
     let media_config = media_url.map(|url| {
-        waddle_media::livekit::LiveKitConfig::new(
+        let mut config = waddle_media::livekit::LiveKitConfig::new(
             url.to_owned(),
             // Checked present above.
             media_token.unwrap_or_default().to_owned(),
         )
-        .with_robot_cameras(&robot)
+        .with_robot_cameras(&robot);
+        config.preview_width = media_preview_width;
+        config.preview_fps = media_preview_fps;
+        config.preview_max_kbps = media_preview_max_kbps;
+        config.depth_preview = media_depth_preview;
+        config.demand_driven = media_demand_driven;
+        config
     });
 
     // The declared space, parsed once here, and the parts layout derived

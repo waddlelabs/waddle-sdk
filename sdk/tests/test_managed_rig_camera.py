@@ -410,3 +410,27 @@ def test_camera_sample_validates_metadata_before_vendor_resolution(changes):
     )
     with pytest.raises(ValueError):
         sample.point_at(0, 0, intrinsics)
+
+
+def test_rgb_only_preview_keeps_exact_depth_without_colorization(monkeypatch):
+    closed = []
+    driver = _BlockingCamera(closed)
+    rig = _rig(closed, driver)
+    session = _RecordingSession()
+    session.depth_preview_enabled = False
+
+    def unnecessary(*args):
+        raise AssertionError("disabled depth preview must not touch pixels")
+
+    monkeypatch.setattr(base, "_depth_preview_rgb", unnecessary)
+    pump = rig.camera_pumps(session, {"overhead": driver})["overhead"]
+    rgb = np.arange(12, dtype=np.uint8).reshape(2, 2, 3)
+    depth = np.full((2, 2), 750, dtype=np.uint16)
+    pump.start()
+    driver.push(CameraFrame(rgb=rgb, depth=depth))
+    sample = rig.wait_camera("overhead", timeout_s=2.0)
+    pump.stop()
+    assert sample is not None
+    np.testing.assert_array_equal(sample.rgb, rgb)
+    np.testing.assert_array_equal(sample.depth, depth)
+    assert [name for name, _ in session.published] == ["overhead"]

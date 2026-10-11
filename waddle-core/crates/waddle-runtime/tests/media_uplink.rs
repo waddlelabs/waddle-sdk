@@ -976,3 +976,81 @@ fn native_track_status_reports_failures_recovery_and_lazy_depth() {
     assert_eq!(session.media_tracks(), tracks); // No observation polling needed.
     session.shutdown();
 }
+
+struct PausedPreview {
+    inner: Arc<LoopbackMedia>,
+    paused: std::sync::atomic::AtomicBool,
+    entered: std::sync::atomic::AtomicBool,
+}
+
+impl MediaPlane for PausedPreview {
+    fn max_video_fps(&self) -> Option<f64> {
+        Some(1.0)
+    }
+    fn depth_preview_enabled(&self) -> bool {
+        false
+    }
+    fn publish_track(&self, camera: &str) -> Result<TrackHandle, MediaError> {
+        self.inner.publish_track(camera)
+    }
+    fn push_frame(&self, track: &TrackHandle, frame: EncodedFrame) -> Result<(), MediaError> {
+        self.entered
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        while self.paused.load(std::sync::atomic::Ordering::Relaxed) {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        self.inner.push_frame(track, frame)
+    }
+    fn open_data_rx(&self, topic: DataTopic) -> Result<DataRx, MediaError> {
+        self.inner.open_data_rx(topic)
+    }
+    fn open_data_tx(&self, topic: DataTopic) -> Result<DataTx, MediaError> {
+        self.inner.open_data_tx(topic)
+    }
+}
+
+#[test]
+fn paused_preview_cannot_starve_full_quality_agent_stills_or_gate() {
+    use std::sync::atomic::Ordering;
+    let (inner, far) = LoopbackMedia::new();
+    let media = Arc::new(PausedPreview {
+        inner,
+        paused: std::sync::atomic::AtomicBool::new(true),
+        entered: std::sync::atomic::AtomicBool::new(false),
+    });
+    let (transport, log) = logging_transport(&["waddle.v0.core", STILLS_FLAG]);
+    let session = Session::builder("paused-preview")
+        .robot(robot_granted(vec![stills_camera("overhead", 20.0)]))
+        .control(registry())
+        .transport(transport)
+        .media(media.clone())
+        .build()
+        .unwrap();
+    assert!(!session.depth_preview_enabled());
+    let mut ep = session.start_episode("task").unwrap();
+    session.publish_frame("overhead", frame_4x4(1)).unwrap();
+    assert!(wait_until(
+        || media.entered.load(Ordering::Relaxed),
+        Duration::from_secs(2)
+    ));
+    for i in 2..50 {
+        session.publish_frame("overhead", frame_4x4(i)).unwrap();
+        let _ = ep.gate(&[0.0; 3], None, Some(&[0.1, 0.2, 0.3]));
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let independent = wait_until(
+        || log.lock().stills().len() >= 2 && log.lock().proprio_count() >= 2,
+        Duration::from_secs(2),
+    );
+    // Always release the test transport before assertions/session teardown.
+    media.paused.store(false, Ordering::Relaxed);
+    session.shutdown();
+    assert!(independent, "media stall starved agent observations");
+    assert!(
+        far.frames().len() <= 3,
+        "1 fps ceiling must precede transport work"
+    );
+    for still in log.lock().stills() {
+        assert_eq!((still.width, still.height), (4, 4));
+    }
+}
