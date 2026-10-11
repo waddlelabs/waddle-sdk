@@ -95,6 +95,7 @@ from . import base
 from ._i2rt_patches import apply_command_state_atomic_patch, apply_recv_starvation_patch
 from .base import CrossArm
 from .socketcan import ensure_socketcan_up
+from .usbcan_config import UsbCanConfig
 
 if TYPE_CHECKING:
     from .models import ModelSources
@@ -598,6 +599,10 @@ class ArmSite:
         Required when the rig is live; ignored, and permitted, in sim — so one
         call site can carry both configurations and the program text does not
         change across the flip.
+    ``usb_can``
+        Explicit exact-device USB-CAN candidate instead of ``channel``. Accepts
+        :class:`~waddle_sdk.robots.usbcan_config.UsbCanConfig` or its Site mapping.
+        Configuration opens no device; simulation ignores the selected transport.
     ``base_frame``
         What this arm's base is called in the frames the rig declares.
     ``gripper_limits``
@@ -612,6 +617,7 @@ class ArmSite:
     base_frame: str | None = None
     gripper_limits: Sequence[float] | None = None
     sim_home: Sequence[float] | None = None
+    usb_can: UsbCanConfig | Mapping | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -682,15 +688,34 @@ class LiveDriver:
     read back.  This is opt-in for SDK callers; workspace frontends may expose
     it as an explicit site choice.  It does not patch the vendor transport or
     tune a live bus.
+
+    ``usb_can`` explicitly selects the exact-device candidate through the same
+    controller. It conflicts with ``channel``/``configure_can``, requires the
+    reviewed derived runtime and the vendor chain's 1 Mbit/s bitrate, and verifies
+    source before optional/vendor imports. Construction of site facts opens no
+    hardware; this live driver does. Physical transport qualification stays false.
     """
 
     kind = "live"
     _MAX_FEEDBACK_STALL_S = 0.5
 
+    @property
+    def transport_evidence(self):
+        """Selected USB source/device evidence, with physical qualification false.
+
+        SocketCAN retains its existing path. This evidence does not change the
+        arm's action/feedback declarations or establish measured timing parity.
+        """
+        if self._usb_can is None:
+            return None
+        bus = self._robot.motor_chain.motor_interface.bus
+        return {**bus.transport_evidence, "runtime_source": self._transport_source}
+
     def __init__(
         self,
-        channel: str,
+        channel: str | None = None,
         *,
+        usb_can: UsbCanConfig | Mapping | None = None,
         gripper_limits: Sequence[float] | None = None,
         gravity_comp_factor: Sequence[float] = DEFAULT_GRAVITY_COMP_FACTOR,
         arm_gains: Mapping[str, Sequence[float]] | None = None,
@@ -704,6 +729,19 @@ class LiveDriver:
         zero_gravity: bool = False,
         report: Callable[[str], None] = base.status,
     ) -> None:
+        usb_can = None if usb_can is None else UsbCanConfig.from_value(usb_can)
+        if not isinstance(configure_can, bool):
+            raise TypeError("configure_can must be true or false")
+        if usb_can is not None:
+            if channel is not None or configure_can:
+                raise ValueError(
+                    "usb_can cannot be combined with channel or configure_can"
+                )
+            if type(can_bitrate) is not int or can_bitrate != DEFAULT_CAN_BITRATE:
+                raise ValueError("Reviewed USB YAM requires can_bitrate=1000000")
+            channel = usb_can.selector.channel
+        elif not isinstance(channel, str) or not channel:
+            raise ValueError("A live YAM requires channel or explicit usb_can")
         gravity_factors = _checked_gravity_comp_factor(gravity_comp_factor)
         requested_kp, requested_kd = _gain_vectors(
             arm_gains=arm_gains,
@@ -716,10 +754,24 @@ class LiveDriver:
                 "kp": tuple(requested_kp[:ARM_JOINT_COUNT]),
                 "kd": tuple(requested_kd[:ARM_JOINT_COUNT]),
             }
+        transport_options = {}
+        self._usb_can = usb_can
+        self._transport_source = None
+        if usb_can is not None:
+            from ..scheduling import periodic_wait
+            from ._yam_usb_can import prepare
+
+            interface_factory, self._transport_source = prepare(usb_can)
+            transport_options = {
+                "motor_interface_factory": interface_factory,
+                "control_wait": periodic_wait,
+            }
         try:
             from i2rt.robots.get_robot import get_yam_robot
             from i2rt.robots.utils import GripperType
         except ImportError as e:
+            if usb_can is not None:
+                raise
             raise RuntimeError(
                 f"{channel}: driving a real YAM needs the I2RT vendor package, and "
                 f"importing it raised {e!r}.\n\n"
@@ -731,8 +783,6 @@ class LiveDriver:
                 "same one every fact in this module is stated against."
             ) from e
 
-        if not isinstance(configure_can, bool):
-            raise TypeError("configure_can must be true or false")
         if configure_can:
             ensure_socketcan_up(channel, bitrate=can_bitrate, report=report)
 
@@ -774,8 +824,14 @@ class LiveDriver:
             zero_gravity_mode=self._zero_gravity,
             gripper_limits_override=gripper_limits_override,
             gravity_comp_factor=np.asarray(gravity_factors, dtype=float),
+            **transport_options,
         )
         try:
+            if usb_can is not None:
+                self._report(
+                    f"live {self.channel}: explicit USB-CAN candidate; "
+                    "physical timing and fault parity remain unqualified"
+                )
             # I2RT's constructor latches its initial measured pose with the
             # position-only method. Before any caller can publish a velocity
             # command, replace the concrete returned type's non-atomic method.
@@ -1552,10 +1608,13 @@ def _resolved_site(
     where the program can still be fixed, rather than at the bus."""
     site = site if site is not None else ArmSite()
     channel = site.channel
-    if not sim and not channel:
+    usb_can = None if site.usb_can is None else UsbCanConfig.from_value(site.usb_can)
+    if usb_can is not None and channel is not None:
+        raise ValueError(f"{where}: choose channel or usb_can, not both")
+    if not sim and not channel and usb_can is None:
         raise ValueError(
             f"{where}: a live rig needs a channel (the SocketCAN interface this "
-            "arm is on) — pass it, or pass sim=True. Nothing here reaches for a "
+            "arm is on) or explicit usb_can — pass one, or pass sim=True. Nothing here reaches for a "
             "bus because an argument was missing"
         )
     limits = (
@@ -1575,6 +1634,7 @@ def _resolved_site(
         base_frame=site.base_frame or base_frame,
         gripper_limits=limits,
         sim_home=home,
+        usb_can=usb_can,
     )
 
 
@@ -1641,6 +1701,23 @@ def _build_arms(
         gripper_gain_scale=gripper_gain_scale,
         where="YAM declaration",
     )
+    if any(site.usb_can is not None for site in sites.values()):
+        if configure_can:
+            raise ValueError("usb_can cannot be combined with configure_can")
+        if type(can_bitrate) is not int or can_bitrate != DEFAULT_CAN_BITRATE:
+            raise ValueError("Reviewed USB YAM requires can_bitrate=1000000")
+        if not sim:
+            selected = [
+                site.usb_can.selector for site in sites.values() if site.usb_can
+            ]
+            for index, selector in enumerate(selected):
+                for peer in selected[:index]:
+                    if (selector.bus, selector.address) == (peer.bus, peer.address) or (
+                        selector.vendor_id,
+                        selector.product_id,
+                        selector.serial_number,
+                    ) == (peer.vendor_id, peer.product_id, peer.serial_number):
+                        raise ValueError("YAM parts cannot share one USB-CAN adapter")
     if arm_gains is not None:
         arm_gains = {
             "kp": tuple(kp[:ARM_JOINT_COUNT]),
@@ -1663,6 +1740,7 @@ def _build_arms(
                 else:
                     driver = LiveDriver(
                         site.channel,
+                        usb_can=site.usb_can,
                         gripper_limits=site.gripper_limits,
                         max_gripper_speed_per_s=step_caps[-1] * rate_hz,
                         gravity_comp_factor=gravity_comp_factor,
@@ -1878,6 +1956,7 @@ def arm(
     workspace: Sequence[Sequence[float]] | None,
     gripper_limits: Sequence[float] | None = None,
     channel: str | None = None,
+    usb_can: UsbCanConfig | Mapping | None = None,
     sim: bool = False,
     posture: str = "supervised",
     fk: Callable[[Sequence[float]], tuple[np.ndarray, np.ndarray]] | None = (
@@ -1927,7 +2006,9 @@ def arm(
     box = _checked_workspace(workspace, report=report)
     caps = _step_caps(rate_hz, max_joint_speed_rad_s, max_gripper_speed_per_s)
     site = _resolved_site(
-        ArmSite(channel=channel, base_frame=base_frame, sim_home=sim_home),
+        ArmSite(
+            channel=channel, base_frame=base_frame, sim_home=sim_home, usb_can=usb_can
+        ),
         where="arm",
         sim=sim,
         base_frame=base_frame,

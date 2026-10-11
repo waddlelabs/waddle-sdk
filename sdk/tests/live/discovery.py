@@ -9,8 +9,36 @@ import pytest
 from waddle_sdk import load_site
 from waddle_sdk.cameras.inspection import CameraInspectionSpec
 from waddle_sdk.discovery import discover_hardware
+from waddle_sdk.robots.usbcan_config import UsbCanConfig
 
 from .sdk_live.config import load, reject_ci
+
+
+def connection_available(row, candidates):
+    """Non-opening evidence only; exact location/serial is rechecked at opening."""
+    connection = row.get("connection", {})
+    if "usb_can" in connection:
+        selector = UsbCanConfig.from_value(connection["usb_can"]).selector
+        return any(
+            candidate.kind == "transport"
+            and candidate.metadata.get("transport") == "gs_usb"
+            and candidate.metadata.get("vendor_id") == f"{selector.vendor_id:04x}"
+            and candidate.metadata.get("product_id") == f"{selector.product_id:04x}"
+            and candidate.metadata.get("usb_serial_evidence") == selector.serial_number
+            for candidate in candidates
+        )
+    identity = {
+        key: value
+        for key, value in connection.items()
+        if key in ("channel", "serial", "device", "port")
+    }
+    return bool(identity) and any(
+        (candidate.driver == row["driver"] or candidate.kind == "transport")
+        and all(
+            candidate.connection.get(key) == value for key, value in identity.items()
+        )
+        for candidate in candidates
+    )
 
 
 def pytest_addoption(parser):
@@ -86,21 +114,7 @@ def pytest_configure(config):
         for kind in ("parts", "cameras"):
             for name in values[kind]:
                 row = site.manifest[kind][name]
-                connection = row.get("connection", {})
-                identity = {
-                    key: value
-                    for key, value in connection.items()
-                    if key in ("channel", "serial", "device", "port")
-                }
-                matched = any(
-                    (candidate.driver == row["driver"] or candidate.kind == "transport")
-                    and all(
-                        candidate.connection.get(key) == value
-                        for key, value in identity.items()
-                    )
-                    for candidate in report.candidates
-                )
-                if not identity or not matched:
+                if not connection_available(row, report.candidates):
                     missing[f"{kind}:{name}"] = (
                         f"{name}: no matching hardware discovery evidence for configured connection"
                     )

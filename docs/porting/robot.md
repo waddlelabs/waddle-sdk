@@ -128,8 +128,8 @@ and does not stop siblings. Hold/e-stop remain available.
 
 `waddle-sdk[can-usb]` provides the optional
 `waddle_sdk.robots.usbcan.{UsbCanSelector,UsbCanBus,UsbCanFault}` transport.
-This is a software-tested qualification candidate. The YAM adapter does not yet
-select it, and `transport_evidence.qualified` is explicitly false. Installing the
+This is a software-tested qualification candidate. YAM accepts explicit selection
+with the reviewed runtime below; `transport_evidence.qualified` is explicitly false. Installing the
 extra imports no bus and does not identify the attached robot.
 
 The selector requires a supported Candlelight VID/PID, exact serial number and
@@ -197,8 +197,8 @@ Apply and test the patch in a separate checkout of that exact upstream commit.
 Do not change an installed vendor tree or its `RECORD`/`direct_url.json` to hide
 source differences. The [reviewed derived runtime](#reviewed-i2rt-runtime-artifact)
 retains unchanged source geometry and supports non-opening model inspection.
-Explicit YAM transport selection, physical cadence under load, stop/fault behavior
-and multi-owner checks are still required before enabling USB-CAN in the adapter.
+Physical cadence under load, stop/fault behavior and multi-owner checks remain
+required before deployment. Explicit selection does not establish that acceptance.
 The patch is a shared transport seam, not a separate macOS controller fork.
 
 ### Reviewed I2RT runtime artifact
@@ -245,6 +245,51 @@ distribution's license-record path; inspection imports no vendor Python code.
 These checks establish source identity, not a sandbox against a malicious user
 who can change the interpreter or installed SDK. This artifact does not select
 USB-CAN, open a device or qualify physical control behavior.
+
+### YAM USB selection
+
+The shared YAM adapter accepts `arm(usb_can=...)` and `ArmSite(usb_can=...)`
+for explicitly selected live parts. `waddle_sdk.robots.usbcan_config` supplies
+immutable `UsbCanSelector` and `UsbCanConfig` without importing optional CAN/USB
+or vendor code. The existing selector import from `robots.usbcan` remains valid.
+An ordinary Site manifest can supply the equivalent configuration under its
+YAM part's `connection`:
+
+```yaml
+connection:
+  usb_can:
+    selector:
+      vendor_id: 7504       # 0x1d50; use the discovered supported VID/PID
+      product_id: 24687     # 0x606f
+      bus: 7               # replace with this adapter's current USB location
+      address: 3
+      serial_number: "replace-with-exact-adapter-serial"
+    # Optional absolute path to the host's selected libusb library:
+    # libusb_library: /absolute/path/libusb-1.0.dylib
+```
+
+Omit `channel` and `configure_can`. The current reviewed vendor chain assumes
+1,000,000 bit/s; another `can_bitrate` is refused before any USB/motor command.
+Selectors sharing either a location or a VID/PID/serial identity are refused
+for distinct live parts before the first arm opens. Configuration mappings are
+frozen at declaration, so later caller mutation cannot change the selected arm.
+Simulation can retain valid live configuration without importing/opening its
+transport. Reconnection that changes the bus/address requires updating the site.
+
+Opening a USB-selected arm first verifies the exact derived I2RT source against
+the SDK manifest, then imports the optional transport/vendor implementation.
+Each injected motor interface owns a fresh selected bus. The existing YAM
+receive/transaction handling, gains, gravity compensation, measured gripper
+decisions, feedback freshness, envelopes and stop authority remain in place.
+The scoped `periodic_wait` callback surrounds only each control thread's wait;
+it does not change control frequency or execute the controller remotely.
+
+`LiveDriver.transport_evidence` includes the original bus evidence and exact
+reviewed `runtime_source`, with physical qualification false. A startup report
+makes that scope visible. There is no discovery-based automatic USB selection
+or reduced motion/arrival acceptance. Physical feedback, transport timing under
+load, error reporting, multi-owner exclusion and clean measured stopping still
+require live qualification before production use.
 
 ## Declaration and envelope must agree
 

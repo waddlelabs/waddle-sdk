@@ -58,6 +58,14 @@ USB I/O and a bounded receive queue, fences terminal USB/CAN/lost-frame faults a
 drains before release. Its evidence explicitly remains unqualified; YAM does not
 select it automatically. The source-pinned I2RT injection patch and software checks
 are documented under [USB-CAN](docs/porting/robot.md#usb-can-transport-candidate).
+YAM `arm(usb_can=...)` and per-part `ArmSite.usb_can` explicitly select that
+candidate through ordinary Site `connection` mappings. Pure `usbcan_config`
+facts freeze exact identity without optional imports or opening devices. Source
+verification precedes vendor imports; selection remains lazy until arm opening.
+Conflicting SocketCAN settings, duplicate peer selectors and non-1-Mbit/s USB
+YAM configurations refuse before hardware. Preserve shared gains, motor/gripper
+behavior, faults and stop/drain authority. `LiveDriver.transport_evidence` retains
+the original bus and reviewed-runtime evidence with physical qualification false.
 The candidate's `control_wait` seam changes only its blocking cadence delay.
 Retained control threads use first-iteration readiness and bounded drain before
 bus close, preserving original background faults and cleanup uncertainty.
@@ -71,8 +79,8 @@ the reviewed patch. YAM model inspection accepts that candidate only after
 complete inventory, SDK-approved source/asset hashes, package records and
 metadata/license checks. Five changed/112 unchanged production files and original
 model bytes remain explicit. Rewritten installation metadata cannot substitute
-for review. The pristine Git source remains supported; USB selection and physical
-control qualification remain separate. See the reviewed runtime section in the
+for review. The pristine Git source remains supported; explicit USB selection
+requires the derived runtime and remains physically unqualified. See the reviewed runtime section in the
 robot porting guide.
 
 The native arm64 RealSense candidate is a separately built `pyrealsense2`

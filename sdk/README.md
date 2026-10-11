@@ -151,6 +151,13 @@ service manages the bus. Custom robot adapters can reuse
 `waddle_sdk.robots.ensure_socketcan_up`; the helper never scans for other links or
 guesses what is attached.
 
+An explicit `connection.usb_can` instead selects the exact-device USB-CAN
+candidate through the same YAM factory. Its mapping contains `selector`
+(`vendor_id`, `product_id`, `bus`, `address`, `serial_number`) and optional absolute
+`libusb_library`. Do not combine it with `channel` or `configure_can`. The selected
+reviewed runtime, lazy opening and remaining physical qualification requirements
+are documented under [YAM USB selection](../docs/porting/robot.md#yam-usb-selection).
+
 Before a live YAM opens I2RT, its reference adapter installs an exact-signature
 workaround for the pinned vendor receive loop. The stock loop polls SocketCAN in
 one-millisecond slices and can abandon a healthy reply if Python is descheduled

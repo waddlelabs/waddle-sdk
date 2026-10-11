@@ -12,8 +12,9 @@ def linux_snapshot(monkeypatch):
     monkeypatch.setattr(discovery.sys, "platform", "linux")
 
 
+@pytest.mark.parametrize("vendor,product", [(0x1D50, 0x606F), (0x1209, 0x2323)])
 def test_darwin_scan_uses_registry_without_turning_usb_evidence_into_driver_selectors(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, vendor, product
 ):
     from waddle_sdk import _darwin_discovery
 
@@ -21,8 +22,8 @@ def test_darwin_scan_uses_registry_without_turning_usb_evidence_into_driver_sele
     registry = [
         {
             "IORegistryEntryID": 1,
-            "idVendor": 0x1D50,
-            "idProduct": 0x606F,
+            "idVendor": vendor,
+            "idProduct": product,
             "USB Product Name": "CANable",
             "USB Serial Number": "can-id",
         },

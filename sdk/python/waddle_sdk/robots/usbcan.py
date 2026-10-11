@@ -13,7 +13,7 @@ import struct
 import threading
 import time
 from collections import deque
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 
 import can
 import usb.core
@@ -21,6 +21,7 @@ import usb.util
 from usb.backend import libusb1
 
 from ..scheduling import periodic_thread
+from .usbcan_config import UsbCanSelector
 
 _RX_ECHO = 0xFFFFFFFF
 _EXTENDED = 0x80000000
@@ -28,33 +29,6 @@ _REMOTE = 0x40000000
 _ERROR = 0x20000000
 _BERR_REPORTING = 1 << 12
 _FRAME = struct.Struct("<IIBBBB8s")
-_SUPPORTED_IDS = {(0x1D50, 0x606F), (0x1209, 0x2323)}
-
-
-@dataclass(frozen=True)
-class UsbCanSelector:
-    """Bind serial identity AND current location; reordered devices cannot substitute."""
-
-    vendor_id: int
-    product_id: int
-    bus: int
-    address: int
-    serial_number: str
-
-    def __post_init__(self):
-        if (self.vendor_id, self.product_id) not in _SUPPORTED_IDS:
-            raise ValueError("Select a supported Candlelight/gs_usb VID/PID")
-        if any(
-            type(value) is not int or value < 0 for value in (self.bus, self.address)
-        ):
-            raise ValueError("USB bus/address must be explicit non-negative integers")
-        if (
-            not isinstance(self.serial_number, str)
-            or not self.serial_number
-            or self.serial_number.strip() != self.serial_number
-            or "\0" in self.serial_number
-        ):
-            raise ValueError("USB-CAN requires an exact non-empty serial number")
 
 
 class UsbCanFault(RuntimeError):

@@ -47,8 +47,12 @@ for the pinned vendor injection patch, provenance and physical qualification gap
 The reviewed derived I2RT package is built with `tools/build_i2rt_transport_runtime.py`;
 source inspection checks its complete SDK-approved inventory, package records,
 metadata and license before accepting unchanged geometry. Self-declared provenance
-or a rewritten RECORD does not establish review. This does not enable USB selection
-or qualify physical control.
+or a rewritten RECORD does not establish review. Explicit `yam.arm(usb_can=...)`
+and per-part `ArmSite.usb_can` select it through the shared driver; pure
+`usbcan_config` facts also accept ordinary Site connection mappings. Source
+verification precedes imports/opening; duplicate/conflicting selectors and
+non-1-Mbit/s USB YAM configuration refuse before hardware. See
+`docs/porting/robot.md#yam-usb-selection`. Selection does not qualify physical control.
 That candidate accepts a wait callback without placing CAN I/O or computation
 under the scheduling budget. Retain first-iteration readiness and original
 control-thread faults, and confirm bounded drain before releasing the bus.

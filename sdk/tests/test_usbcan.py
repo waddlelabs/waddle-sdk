@@ -19,6 +19,52 @@ from waddle_sdk.runtime import RuntimeFault
 SELECTOR = usbcan.UsbCanSelector(0x1D50, 0x606F, 7, 3, "selected-adapter")
 
 
+def test_reviewed_vendor_interface_owns_selected_bus_and_preserves_messages(device):
+    from importlib import metadata
+
+    from waddle_sdk.robots._i2rt_runtime import TRANSPORT_VERSION
+    from waddle_sdk.robots._yam_usb_can import prepare
+    from waddle_sdk.robots.usbcan_config import UsbCanConfig
+
+    try:
+        version = metadata.version("i2rt")
+    except metadata.PackageNotFoundError:
+        pytest.skip("Reviewed I2RT runtime is not installed")
+    if version != TRANSPORT_VERSION:
+        pytest.skip("The installed I2RT runtime is not the explicit USB candidate")
+    factory, source = prepare(UsbCanConfig(SELECTOR))
+    assert source["version"] == TRANSPORT_VERSION
+    interface = factory(
+        channel=SELECTOR.channel,
+        bitrate=1_000_000,
+        name="yam_real",
+        use_buffered_reader=False,
+    )
+    try:
+        original = can.Message(arbitration_id=7, data=[1, 2], is_extended_id=False)
+        device.frames.put(packet(0x17, b"\x02\x03"))
+        pending(interface.bus, 1)
+        measured = interface._send_message_get_response(7, 7, list(original.data))
+        assert device.writes[0][0] == packet(7, bytes(original.data), echo=0)
+        assert measured.arbitration_id == 0x17 and measured.data == b"\x02\x03"
+        assert interface.bus.transport_evidence["qualified"] is False
+        error = usbcan.usb.core.USBError(
+            "Selected adapter removed", error_code=-4, errno=19
+        )
+        device.write_error = error
+        with pytest.raises(usbcan.UsbCanFault) as caught:
+            interface._send_message_get_response(7, 7, [1, 2])
+        assert caught.value.__cause__ is error
+        assert caught.value.code == "hardware.usb_can_io"
+        assert (
+            len(device.writes) == 1
+        )  # Terminal transport faults are not motor retries.
+    finally:
+        interface.close()
+    assert device.claims == device.releases == [(device, 0)]
+    assert device.disposes == [device]
+
+
 class Device:
     serial_number = SELECTOR.serial_number
 

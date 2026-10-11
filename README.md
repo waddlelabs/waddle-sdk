@@ -121,8 +121,9 @@ pip install "i2rt @ git+https://github.com/i2rt-robotics/i2rt@570ef66681ff12bd82
 
 The [reviewed I2RT runtime builder](docs/porting/robot.md#reviewed-i2rt-runtime-artifact)
 also creates a visibly versioned transport candidate with unchanged model bytes.
-Source inspection verifies its complete reviewed inventory; physical transport
-selection and control qualification remain separate.
+Source inspection verifies its complete reviewed inventory. The shared YAM
+factory accepts explicit [USB-CAN site configuration](docs/porting/robot.md#yam-usb-selection)
+using that runtime; physical control qualification remains separate.
 
 Contributors and agents must read [`AGENTS.md`](AGENTS.md) before changing the
 repository.

@@ -7,10 +7,11 @@ import subprocess
 from pathlib import Path
 
 from .discovery import HardwareCandidate
+from .robots.usbcan_config import SUPPORTED_DEVICE_IDS
 
 # USB identities accepted by the Candlelight/gs_usb reference transport. A
 # transport does not identify the robot attached to it.
-_GS_USB_IDS = {(0x1D50, 0x606F)}
+_GS_USB_IDS = SUPPORTED_DEVICE_IDS
 
 
 def _usb_registry() -> list[dict]:

@@ -38,6 +38,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Add explicit exact-device USB-CAN selection to the shared YAM factories and
+  Site connection mappings. Freeze device-free configuration, verify the reviewed
+  runtime before imports/opening, reject conflicting or duplicate selections and
+  retain candidate transport/source evidence. Preserve the vendor controller and
+  existing SDK limits/supervision; physical qualification remains open.
+
 - Add a source-verifying builder for an explicitly versioned I2RT transport
   runtime candidate. Accept its unchanged YAM model assets only after complete
   SDK-approved source/asset, installed-record and metadata/license verification.
@@ -53,7 +59,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 - Add an optional classic gs_usb transport candidate with exact-device selection,
   bounded I/O/queueing, nonblocking receive, terminal fault fencing and scoped
   cleanup. Include a source-pinned I2RT transport-injection patch and software
-  qualification tests. Hardware qualification and YAM activation remain separate.
+  qualification tests. Explicit YAM selection requires the reviewed derived
+  runtime; hardware qualification remains separate.
   The vendor candidate also retains original control-thread faults, confirms
   first-iteration readiness, accepts a cadence-wait provider and drains before
   transport release. YAM honors retained faults and explicit bounded drains while
