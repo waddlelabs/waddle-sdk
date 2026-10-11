@@ -24,6 +24,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Changed
 
+- Detach the native core after confirmed managed-rig teardown so native reset
+  callbacks cannot retain closed rig/camera lifecycles. Uncertain cleanup keeps
+  the native reference and site ownership intact.
+
 - Retain phase and measured caller duration in USB submission deadline errors,
   preserving the original budget and terminal fence. Live startup reports retained
   vendor control faults before generic stopped-worker evidence.

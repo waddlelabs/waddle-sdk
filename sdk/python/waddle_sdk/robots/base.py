@@ -2595,6 +2595,8 @@ class RigSession:
     Hardware opens inside :meth:`_open`; every later failure closes all opened
     arms and cameras. Normal close retires local recovery, stops capture and
     proprio pumps, finalizes the core session, and only then closes the arms.
+    Confirmed teardown detaches the native core so its reset callbacks cannot
+    retain this closed lifecycle. Uncertain teardown retains that reference.
     """
 
     def __init__(
@@ -2845,3 +2847,8 @@ class RigSession:
                 close_session()
         finally:
             self.teardown_confirmed &= close_all(self.arms, report=self._report)
+        if self.teardown_confirmed:
+            # Native reset callbacks may capture this lifecycle. Once every
+            # activity and device has drained, break the native/Python cycle;
+            # keep the reference intact when cleanup is uncertain.
+            self.core = None

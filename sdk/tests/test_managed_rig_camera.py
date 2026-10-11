@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import gc
 import queue
 import sys
 import threading
+import weakref
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -123,6 +125,53 @@ def test_rig_session_owns_pumps_and_closes_a_blocked_camera():
         assert managed.pump is not None and managed.pump.is_alive()
         assert managed.camera_pumps["overhead"].is_alive()
 
+    assert closed == ["camera", "arm"]
+    assert managed.pump is None
+    assert managed.camera_pumps == {}
+
+    managed.close()
+    assert closed == ["camera", "arm"]
+
+
+def test_closed_lifecycles_with_native_reset_callbacks_are_collectible():
+    def one():
+        closed = []
+        managed = _rig(closed, _BlockingCamera(closed)).session(
+            "project", console=False
+        )
+
+        def reset(_task):
+            return bool(managed.arms)
+
+        managed._pre_reset = reset
+        reference = weakref.ref(managed)
+        with managed:
+            pass
+        assert managed.teardown_confirmed
+        assert closed == ["camera", "arm"]
+        return reference
+
+    references = [one() for _ in range(4)]
+    gc.collect()
+    gc.collect()
+    assert all(reference() is None for reference in references)
+
+
+def test_uncertain_driver_teardown_retains_native_session(monkeypatch):
+    closed = []
+    managed = _rig(closed, _BlockingCamera(closed)).session("project", console=False)
+    with managed:
+        native = managed.core
+        driver = managed.arms[""].driver
+        original_close = driver.close
+
+        def failed_close():
+            original_close()
+            raise RuntimeError("original driver drain uncertainty")
+
+        monkeypatch.setattr(driver, "close", failed_close)
+    assert not managed.teardown_confirmed
+    assert managed.core is native
     assert closed == ["camera", "arm"]
     assert managed.pump is None
     assert managed.camera_pumps == {}

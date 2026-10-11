@@ -21,6 +21,13 @@ Repeated context exit does not turn that uncertainty into success. Process exit
 releases OS resources; it does not establish that a physical robot is safe.
 A failed configuration before hardware opens can release ownership normally.
 
+After confirmed pump, native-session and device teardown, the managed rig
+detaches its native core reference. This lets closed lifecycles and captured
+camera buffers be reclaimed even when native reset callbacks referenced that
+rig. Arm counters and the declaration remain available on a retained rig;
+the closed core is no longer an open runtime handle. Uncertain teardown keeps
+the native reference, original failure evidence and site ownership intact.
+
 This is cooperative site ownership for one OS user, not hardware identity discovery
 or command authority. Different site IDs, different users, direct vendor access
 and lower-level driver construction do not share this guarantee. Keep one stable

@@ -36,6 +36,11 @@ base/media extensions; see docs/python/ownership-and-media.md.
 This file bootstraps every agent that works in this repository. Read it fully before
 touching anything.
 
+Confirmed managed-rig teardown detaches its native core only after pump, session
+and device drain. Native reset callbacks can otherwise retain closed Python rig
+cycles and camera samples. Uncertain teardown retains the core and site lock;
+do not clear those references to reclaim memory after a failed drain.
+
 Hardware discovery dispatches Linux sysfs and macOS IORegistry providers explicitly.
 The macOS provider reports Candlelight USB-CAN evidence without identifying a robot
 or opening a bus. RealSense USB serials remain non-executable evidence until optional
