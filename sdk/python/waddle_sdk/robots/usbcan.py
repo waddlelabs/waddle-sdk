@@ -416,15 +416,22 @@ class UsbCanBus(can.BusABC):
                 "hardware.usb_can_write_timeout",
                 "USB-CAN write lock deadline expired",
                 "send",
+                phase="write_lock",
+                timeout_s=budget,
+                elapsed_s=time.monotonic() - started,
             )
         try:
             self._check()
-            remaining = budget - (time.monotonic() - started)
+            elapsed_before_write = time.monotonic() - started
+            remaining = budget - elapsed_before_write
             if remaining <= 0:
                 raise self._error(
                     "hardware.usb_can_write_timeout",
                     "USB-CAN write deadline expired",
                     "send",
+                    phase="before_submission",
+                    timeout_s=budget,
+                    elapsed_s=elapsed_before_write,
                 )
             can_id = (
                 msg.arbitration_id
@@ -438,13 +445,20 @@ class UsbCanBus(can.BusABC):
             try:
                 # USB timeout zero means infinite. Round UP with a 1 ms floor;
                 # report any resulting budget overrun rather than hiding it.
-                self._device.write(packet, max(1, math.ceil(remaining * 1000)))
-                if time.monotonic() - started > budget:
+                usb_timeout_ms = max(1, math.ceil(remaining * 1000))
+                self._device.write(packet, usb_timeout_ms)
+                elapsed_s = time.monotonic() - started
+                if elapsed_s > budget:
                     raise self._error(
                         "hardware.usb_can_write_timeout",
                         "USB-CAN submission exceeded its deadline",
                         "send",
                         timeout_s=budget,
+                        elapsed_s=elapsed_s,
+                        elapsed_before_write_s=elapsed_before_write,
+                        usb_timeout_ms=usb_timeout_ms,
+                        phase="after_submission",
+                        timing_provenance="host caller wall time; includes Python scheduling",
                     )
             except Exception as error:
                 self._latch(error)

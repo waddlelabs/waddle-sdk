@@ -607,7 +607,10 @@ def test_pristine_vendor_applies_explicit_arm_gains_and_preserves_hand(monkeypat
         )
 
 
-@pytest.mark.parametrize("failure", [None, "cache", "host", "writer", "background"])
+@pytest.mark.parametrize(
+    "failure",
+    [None, "cache", "host", "writer", "background", "robot_fault", "chain_fault"],
+)
 def test_startup_waits_for_hold_can_feedback_and_host_ingestion_without_pose_gate(
     monkeypatch, failure
 ):
@@ -656,6 +659,10 @@ def test_startup_waits_for_hold_can_feedback_and_host_ingestion_without_pose_gat
             chain.running = False
         if failure == "background":
             owner._background_error = origin
+        if failure in {"robot_fault", "chain_fault"}:
+            chain.running = False
+            source = robot if failure == "robot_fault" else chain
+            source.control_fault = origin
 
     monkeypatch.setattr(vendor.time, "monotonic", lambda: clock.now)
     monkeypatch.setattr(vendor.time, "sleep", advance)
@@ -663,7 +670,7 @@ def test_startup_waits_for_hold_can_feedback_and_host_ingestion_without_pose_gat
         with pytest.raises(RuntimeFault) as captured:
             vendor.wait_for_startup(owner, robot, "fake_can", timeout_s=0.02)
         assert captured.value.code == FaultCode.MOTOR_FAILURE
-        if failure == "background":
+        if failure in {"background", "robot_fault", "chain_fault"}:
             assert captured.value is origin
         else:
             assert captured.value.context["channel"] == "fake_can"

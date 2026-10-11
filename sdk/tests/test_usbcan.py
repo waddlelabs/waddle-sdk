@@ -211,6 +211,38 @@ def test_submillisecond_and_nonblocking_reads_never_become_infinite_usb_reads(de
         bus.shutdown()
 
 
+def test_submission_overrun_retains_measurement_and_fences_reuse(device, monkeypatch):
+    original_write = device.write
+
+    def slow_write(*args, **kwargs):
+        time.sleep(0.02)
+        return original_write(*args, **kwargs)
+
+    monkeypatch.setattr(device, "write", slow_write)
+    bus = usbcan.UsbCanBus(SELECTOR)
+    try:
+        with pytest.raises(usbcan.UsbCanFault) as caught:
+            bus.send(can.Message(arbitration_id=7, data=[1, 2], is_extended_id=False))
+        original = caught.value
+        assert original.code == "hardware.usb_can_write_timeout"
+        context = original.context
+        assert context["phase"] == "after_submission"
+        assert context["timeout_s"] == 0.005
+        assert context["elapsed_s"] >= 0.02
+        assert context["elapsed_before_write_s"] < context["elapsed_s"]
+        assert 1 <= context["usb_timeout_ms"] <= 5
+        assert (
+            context["timing_provenance"]
+            == "host caller wall time; includes Python scheduling"
+        )
+        with pytest.raises(usbcan.UsbCanFault) as repeated:
+            bus.recv(0)
+        assert repeated.value is original
+        assert len(device.writes) == 1
+    finally:
+        bus.shutdown()
+
+
 @pytest.mark.parametrize("read", [True, False])
 def test_original_usb_fault_fences_all_io_and_survives_runtime_boundary(device, read):
     bus = usbcan.UsbCanBus(SELECTOR)

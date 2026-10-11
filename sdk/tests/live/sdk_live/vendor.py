@@ -69,6 +69,10 @@ def wait_for_startup(owner, robot, channel, *, timeout_s=1.0):
         while not evidence["ready"]:
             if getattr(owner, "_background_error", None) is not None:
                 raise owner._background_error
+            for source in (robot, chain):
+                original = getattr(source, "control_fault", None)
+                if original is not None:
+                    raise original
             if not chain.running or not robot._server_thread.is_alive():
                 raise RuntimeFault(
                     FaultCode.MOTOR_FAILURE,

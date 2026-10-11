@@ -66,6 +66,11 @@ Conflicting SocketCAN settings, duplicate peer selectors and non-1-Mbit/s USB
 YAM configurations refuse before hardware. Preserve shared gains, motor/gripper
 behavior, faults and stop/drain authority. `LiveDriver.transport_evidence` retains
 the original bus and reviewed-runtime evidence with physical qualification false.
+USB submission deadline errors retain phase, measured caller elapsed time and
+rounded USB timeout without changing the deadline or terminal fence. Caller wall
+time includes Python scheduling; it is not a hardware/native transfer timestamp.
+Live startup preserves retained vendor control faults before generic stopped-worker
+evidence. Connection/worker cleanup does not verify delivery of zero motor torque.
 The candidate's `control_wait` seam changes only its blocking cadence delay.
 Retained control threads use first-iteration readiness and bounded drain before
 bus close, preserving original background faults and cleanup uncertainty.

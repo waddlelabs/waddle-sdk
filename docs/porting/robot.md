@@ -148,6 +148,9 @@ the original message intact and acknowledges USB submission, not CAN delivery or
 motor arrival. A positive send timeout is required because this synchronous USB
 provider cannot perform a genuine nonblocking write. Millisecond USB timeout
 rounding is explicit: an observed submission overrun is a terminal fault.
+`hardware.usb_can_write_timeout` retains the phase, elapsed caller time, original
+budget and rounded USB timeout. That duration includes Python/host scheduling;
+it does not isolate USB transfer time or establish a hardware timestamp.
 
 USB access/disconnect failures, controller error frames, malformed frames and
 device/host overflow fence subsequent reads and writes. `UsbCanFault` retains the
@@ -290,6 +293,10 @@ makes that scope visible. There is no discovery-based automatic USB selection
 or reduced motion/arrival acceptance. Physical feedback, transport timing under
 load, error reporting, multi-owner exclusion and clean measured stopping still
 require live qualification before production use.
+An original control-thread fault takes precedence over generic stopped-worker
+evidence during live startup. Draining a worker and releasing USB are distinct
+from confirming a delivered zero-torque command; a transport fault can prevent
+that command. Preserve physical stop and the exact uncertainty after such a fault.
 
 ## Declaration and envelope must agree
 

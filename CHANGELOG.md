@@ -24,6 +24,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Changed
 
+- Retain phase and measured caller duration in USB submission deadline errors,
+  preserving the original budget and terminal fence. Live startup reports retained
+  vendor control faults before generic stopped-worker evidence.
+
 - Pin build toolchains to Rust 1.98.1 for the upstream Mach-O binary-alignment
   correction. Verify real media wheel imports and unavailable-service startup in
   CI. Preserve broken companion import faults on explicit media requests instead
