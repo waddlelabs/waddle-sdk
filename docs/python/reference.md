@@ -62,6 +62,8 @@ Griffe. Documentation builds do not import the native extension or any vendor SD
 
 ## Camera-only inspection
 
+::: waddle_sdk.media.PreviewPublisher
+
 ::: waddle_sdk.cameras.inspection.CameraInspectionSpec
 
 ::: waddle_sdk.cameras.inspection.CameraInspectionFrame

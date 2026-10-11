@@ -7,6 +7,8 @@
 use pyo3::prelude::*;
 use pyo3::types::PyFrozenSet;
 
+#[cfg(feature = "livekit")]
+mod camera_publisher;
 mod convert;
 mod episode;
 mod session;
@@ -19,7 +21,7 @@ mod verbs;
 /// Python starts requiring a newly exposed native attribute or method, so
 /// `_native.py` refuses a stale extension at import instead of discovering
 /// the mismatch during robot motion.
-const BINDING_API_VERSION: u32 = 7;
+const BINDING_API_VERSION: u32 = 9;
 
 /// Which connected transports this extension was compiled with — the ONLY
 /// feature-detection surface the Python layer may branch on (it decides
@@ -64,6 +66,8 @@ fn robot_json_roundtrip(json: &str) -> PyResult<String> {
 
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    #[cfg(feature = "livekit")]
+    m.add_class::<camera_publisher::CameraPublisher>()?;
     m.add_class::<session::PySession>()?;
     m.add_class::<session::PySessionStamp>()?;
     m.add_class::<session::AgentResult>()?;

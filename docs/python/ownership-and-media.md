@@ -55,7 +55,7 @@ status across missing samples and transport reconnects. Consumers must not infer
 track identity or publication from camera observations.
 
 The native `Session::media_tracks()` owns these facts. The Python shim only
-serializes them; binding API version 7 requires rebuilding both the base and media
+serializes them; binding API version 8 requires rebuilding both the base and media
 extensions together. Runtime adapters without `MediaRuntimePort` remain valid:
 applications should disable only the media-dependent feature.
 
@@ -101,3 +101,25 @@ These limits bound optional work; shared CPU, memory bandwidth and network still
 have a cost. Encoder bitrate excludes signaling and transport overhead, and multiplies
 by the number of camera tracks. Evaluate control timing on the configured host under
 viewing, recording and congestion before qualifying a deployment.
+
+## Separate camera publishers
+
+`waddle_sdk.media.PreviewPublisher(cameras, media)` consumes copied RGB8 samples
+in a separately owned presentation process. `cameras` maps original camera IDs to
+source `(width, height)` tuples; `media` must select bounded, demand-driven,
+RGB-only `video_only` publication. It creates no Site, run, camera driver, control
+transport or actuation callback. Construct it, call `publish_track(camera)`, then
+check `wants_frame(camera)` before calling `push_rgb(camera, bytes,
+session_ns=sample.session_ns)`. Keep original source timestamps; do not derive them
+from publication time. Demand-driven signaling starts asynchronously; initial
+`publish_track` calls can report that signaling is connecting. Retry publication
+on the same publisher with a bounded deadline outside the hardware owner, retaining
+the final native error if the deadline expires. Call `close()` during process drain.
+
+This API separates media ownership from hardware ownership. The caller must bound
+snapshot handoff, CPU/memory/network use and process lifetime. Never acquire a
+second camera or wait on encoding, signaling or a consumer from a control/capture
+thread. Construction and publication may wait for the bounded native signaling
+operation. Missing media builds refuse before dialing; binding API 9 requires
+matching rebuilt base/media extensions. This API alone does not qualify control
+timing or guarantee absence of contention on shared resources.

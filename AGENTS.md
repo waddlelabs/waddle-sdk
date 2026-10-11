@@ -35,8 +35,14 @@ disconnect and media-worker exit clear demand.
 Previews capped at <=2 fps use 10 Hz idle video polling; still/control rates stay independent.
 `video_only=True` removes data-topic/teleoperation intake. Video shutdown polls
 use an atomic lifecycle flag; media metadata releases the GIL. Keep bounded
-frame admission short, without an extra per-frame interpreter handoff. Binding API 7 requires matching rebuilt
+frame admission short, without an extra per-frame interpreter handoff. Binding API 9 requires matching rebuilt
 base/media extensions; see docs/python/ownership-and-media.md.
+
+`waddle_sdk.media.PreviewPublisher` is a camera-only public transport consumer for
+separately owned presentation processes. It accepts copied RGB and original sample
+timestamps, opens no Site/device/run/control path, and retains native demand/rate/
+bitrate bounds. Callers own bounded handoff, resource isolation and process drain;
+this API is not a control timing qualification.
 
 This file bootstraps every agent that works in this repository. Read it fully before
 touching anything.

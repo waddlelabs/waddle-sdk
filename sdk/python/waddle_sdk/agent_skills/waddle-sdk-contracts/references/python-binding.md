@@ -1,5 +1,11 @@
 # Python binding contract
 
+`waddle_sdk.media.PreviewPublisher` consumes copied RGB8 bytes in a separately
+owned presentation process. It requires the matching optional media core, explicit
+camera grids and bounded demand-driven RGB-only settings. It opens no site, device,
+run or control transport. The caller owns sampling and process/resource isolation;
+the media core enforces the frame-rate ceiling on original sample timestamps.
+
 ## Hollow frontend
 
 The Python package describes hardware and composes lifecycle resources. It must not reproduce Rust decisions about claims, leases, handoffs, feature negotiation, or episode timelines. If Python grows an `if` about those concepts, move the behavior to the core and expose only the narrow result needed by the binding.

@@ -383,3 +383,98 @@ def test_bounded_rgb_preview_keeps_full_quality_depth_and_rejoins(
                 await asyncio.to_thread(sdk.close)
 
     asyncio.run(check())
+
+
+def test_camera_only_publisher_bounds_frames_and_rejoins(
+    tmp_path, livekit_configuration
+):
+    """A publisher with no owner handle preserves source RGB-D and bounded delivery."""
+    from waddle_sdk.media import PreviewPublisher
+
+    rtc = pytest.importorskip("livekit.rtc")
+
+    async def check():
+        url, publisher_token, viewer_token, identity = livekit_configuration
+        site = _site(tmp_path / "camera-only-site.yaml", width=640, height=480)
+        viewer = _Viewer(rtc, identity, (320, 240))
+        sdk = publisher = pump = None
+        try:
+            sdk = await asyncio.to_thread(site.open(console=False).__enter__)
+            publisher = await asyncio.to_thread(
+                PreviewPublisher,
+                {"scene": (640, 480)},
+                LiveKit(
+                    url,
+                    publisher_token,
+                    preview_width=320,
+                    preview_fps=1.0,
+                    preview_max_kbps=128,
+                    depth_preview=False,
+                    demand_driven=True,
+                    video_only=True,
+                ),
+            )
+            with pytest.raises(ValueError, match="declared"):
+                publisher.publish_track("undeclared")
+            with pytest.raises(ValueError, match="grid"):
+                publisher.push_rgb("scene", b"invalid", session_ns=0)
+            deadline = asyncio.get_running_loop().time() + 20
+            while True:
+                try:
+                    await asyncio.to_thread(publisher.publish_track, "scene")
+                    break
+                except RuntimeError:
+                    if asyncio.get_running_loop().time() >= deadline:
+                        raise
+                    await asyncio.sleep(0.25)
+            assert not publisher.wants_frame("scene")
+
+            async def publish():
+                while True:
+                    if publisher.wants_frame("scene"):
+                        sample = (await asyncio.to_thread(sdk.observe)).cameras["scene"]
+                        await asyncio.to_thread(
+                            publisher.push_rgb,
+                            "scene",
+                            sample.rgb.tobytes(),
+                            session_ns=sample.session_ns,
+                        )
+                    await asyncio.sleep(0.05)
+
+            pump = asyncio.create_task(publish())
+            await viewer.room.connect(
+                url, viewer_token, rtc.RoomOptions(connect_timeout=10)
+            )
+            await viewer.received({"scene": 3}, timeout=20)
+            assert set(viewer.publications) == {"scene"}
+            before = viewer.frames["scene"]
+            await asyncio.sleep(5)
+            assert 2 <= viewer.frames["scene"] - before <= 7
+            sample = (await asyncio.to_thread(sdk.observe)).cameras["scene"]
+            assert sample.rgb.shape == (480, 640, 3) and sample.depth.shape == (
+                480,
+                640,
+            )
+            await viewer.close()
+            for _ in range(50):
+                if not publisher.wants_frame("scene"):
+                    break
+                await asyncio.sleep(0.1)
+            assert not publisher.wants_frame("scene")
+            viewer = _Viewer(rtc, identity, (320, 240))
+            await viewer.room.connect(
+                url, viewer_token, rtc.RoomOptions(connect_timeout=10)
+            )
+            await viewer.received({"scene": 2}, timeout=15)
+            assert not any(event.kind == "run.step" for event in sdk.events())
+        finally:
+            if pump is not None:
+                pump.cancel()
+                await asyncio.gather(pump, return_exceptions=True)
+            await viewer.close()
+            if publisher is not None:
+                await asyncio.to_thread(publisher.close)
+            if sdk is not None:
+                await asyncio.to_thread(sdk.close)
+
+    asyncio.run(check())

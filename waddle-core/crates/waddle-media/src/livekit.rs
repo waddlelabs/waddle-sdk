@@ -175,6 +175,7 @@ struct TrackState {
     track: LocalVideoTrack,
     width: u32,
     height: u32,
+    last_video_ns: Option<i64>,
 }
 
 /// The real LiveKit [`MediaPlane`]. See the module docs for the topology.
@@ -314,6 +315,7 @@ impl MediaPlane for LiveKitMedia {
                     track,
                     width,
                     height,
+                    last_video_ns: None,
                 },
             );
         }
@@ -339,10 +341,28 @@ impl MediaPlane for LiveKitMedia {
         // before the pixel work so concurrent pushes on other tracks don't
         // serialize behind this frame's conversion.
         let (source, w, h) = {
-            let tracks = self.tracks.lock();
+            let mut tracks = self.tracks.lock();
             let state = tracks
-                .get(&track.name)
+                .get_mut(&track.name)
                 .ok_or_else(|| MediaError::UnknownTrack(track.name.clone()))?;
+            let (input_w, input_h) = self
+                .resolutions
+                .get(&track.name)
+                .copied()
+                .unwrap_or(DEFAULT_TRACK_RESOLUTION);
+            let (w, h) = (state.width, state.height);
+            let i420_len = (w as usize) * (h as usize)
+                + 2 * (w as usize).div_ceil(2) * (h as usize).div_ceil(2);
+            if frame.data.len() != input_w as usize * input_h as usize * 3
+                && frame.data.len() != w as usize * h as usize * 3
+                && frame.data.len() != i420_len
+            {
+                return Err(MediaError::BadFrame {
+                    got: frame.data.len(),
+                    expected: input_w as usize * input_h as usize * 3,
+                    layout: "RGB8 or planar I420 at the track's declared resolution",
+                });
+            }
             // SFU dynacast state gates expensive conversion before pixels
             // are touched. A published track exists even while nobody watches.
             if self.demand_driven
@@ -355,6 +375,19 @@ impl MediaPlane for LiveKitMedia {
             {
                 return Ok(());
             }
+            // Camera-only consumers may call this transport without a runtime
+            // uplink pump. Enforce its ceiling on the original sample clock
+            // before conversion or libwebrtc sees the pixels.
+            if let Some(fps) = self.preview_fps {
+                let period_ns = (1_000_000_000.0 / fps).ceil() as i64;
+                if state
+                    .last_video_ns
+                    .is_some_and(|previous| frame.t_ns.saturating_sub(previous) < period_ns)
+                {
+                    return Ok(());
+                }
+            }
+            state.last_video_ns = Some(frame.t_ns);
             (state.source.clone(), state.width, state.height)
         };
         let (input_w, input_h) = self

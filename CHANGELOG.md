@@ -11,6 +11,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Add `waddle_sdk.media.PreviewPublisher` for camera-only RGB publication from a
+  separate presentation process, without Site/device/run/control ownership.
+  Preserve source dimensions/timestamps and native demand/rate/bitrate bounds.
+  Python/native binding API advances to 9; rebuild the matching base/media pair.
+
 - Demand-driven previews skip conversion/encoding when the room has no peers,
   independently of SFU layer-pause timing. Disconnect/worker exit clear demand.
   Previews capped at <=2 fps reduce idle video polling from 200 Hz to 10 Hz,
