@@ -119,6 +119,11 @@ shipped in this tree:
 pip install "i2rt @ git+https://github.com/i2rt-robotics/i2rt@570ef66681ff12bd8298aba34084307cfecc9f05"
 ```
 
+The [reviewed I2RT runtime builder](docs/porting/robot.md#reviewed-i2rt-runtime-artifact)
+also creates a visibly versioned transport candidate with unchanged model bytes.
+Source inspection verifies its complete reviewed inventory; physical transport
+selection and control qualification remain separate.
+
 Contributors and agents must read [`AGENTS.md`](AGENTS.md) before changing the
 repository.
 

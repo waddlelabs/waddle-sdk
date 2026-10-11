@@ -65,6 +65,16 @@ YAM consumes optional `control_fault` and explicit stop/drain operations; the
 pristine vendor retains its existing path. These are software checks, not native
 CAN timing or physical stop qualification.
 
+The source-verifying `tools/build_i2rt_transport_runtime.py` builds the explicit
+`1.1.2+waddle.transport.570ef666` candidate from the immutable vendor pin plus
+the reviewed patch. YAM model inspection accepts that candidate only after
+complete inventory, SDK-approved source/asset hashes, package records and
+metadata/license checks. Five changed/112 unchanged production files and original
+model bytes remain explicit. Rewritten installation metadata cannot substitute
+for review. The pristine Git source remains supported; USB selection and physical
+control qualification remain separate. See the reviewed runtime section in the
+robot porting guide.
+
 The native arm64 RealSense candidate is a separately built `pyrealsense2`
 2.58.4.post2 wheel for macOS 15+. Its source-pinned patches correct rsutils cleanup
 ownership under libc++ and release the GIL around native alignment. Packaging
@@ -841,9 +851,9 @@ top-level dirs; they are not built yet.
     `waddle_sdk/robots/yam_data/`, strict site/scene schemas, plus the two complete
     `waddle_sdk/agent_skills/` folders) ships with no pyproject edit at all,
     and the code reads it through `importlib.resources` so a wheel, an editable
-    install and a checkout all work. The YAM data is 16.1 KB of URDF text +
-    licence + README, 5.6 KB once deflated into the wheel; sdk/README.md quotes
-    that same 16 KB to a customer, so the two move together. Adding or moving such data is
+    install and a checkout all work. The YAM URDF remains about 16 KB of text;
+    adjacent license/README and reviewed-runtime JSON verification data also
+    ship without runtime code or meshes. Adding or moving such data is
     the one time to build a wheel and list it — that it landed, and that no
     bytecode or mesh came with it.
     Each project root also carries a byte-equal copy of the repository

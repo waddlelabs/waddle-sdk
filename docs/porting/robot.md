@@ -195,11 +195,56 @@ and `sdk/tests/test_robots_yam.py`. These selections open no hardware.
 
 Apply and test the patch in a separate checkout of that exact upstream commit.
 Do not change an installed vendor tree or its `RECORD`/`direct_url.json` to hide
-source differences. The current YAM model-source provider deliberately requires
-the pristine vendor pin. A reviewed derived runtime artifact/provenance policy,
-complete dependencies, physical cadence under load, stop/fault behavior and
-multi-owner checks are still required before enabling USB-CAN in the YAM adapter.
+source differences. The [reviewed derived runtime](#reviewed-i2rt-runtime-artifact)
+retains unchanged source geometry and supports non-opening model inspection.
+Explicit YAM transport selection, physical cadence under load, stop/fault behavior
+and multi-owner checks are still required before enabling USB-CAN in the adapter.
 The patch is a shared transport seam, not a separate macOS controller fork.
+
+### Reviewed I2RT runtime artifact
+
+`tools/build_i2rt_transport_runtime.py` builds
+`i2rt==1.1.2+waddle.transport.570ef666` from an immutable archive of the upstream
+pin plus the reviewed SDK patch. It leaves the input checkout and installed
+packages untouched and refuses an existing output directory. With `uv==0.11.26`
+available, run from the SDK repository root:
+
+```bash
+python tools/build_i2rt_transport_runtime.py \
+  --source-repo /path/to/i2rt \
+  --output tmp/i2rt-transport-build
+```
+
+The source repository must contain the exact upstream commit. The tool creates
+the visibly versioned wheel, retains the MIT license and source provenance,
+checks every package file and selected metadata/license byte against the SDK's
+reviewed manifest, and writes `build-evidence.json` with the actual wheel digest.
+It fixes archive timestamps to the upstream commit time. The wheel build backend
+is pinned to Flit Core 4.1.0. Five production files contain the transport/lifecycle changes;
+the other 112 production files, including model assets, retain their upstream
+bytes. The extra provenance file declares these differences without claiming a
+pristine Git installation or physical qualification.
+
+Linux retains the vendor NumPy 2.2.6 requirement. Darwin requires NumPy 2.3.1 or
+later to include the upstream native SME/FPSR corrections. The unchanged vendor
+Ruckig 0.15.3 build uses an older option; with the current build backend, install
+the candidate using its documented compatibility setting:
+
+```bash
+uv pip install --config-settings-package ruckig:minimum-version=0.9 \
+  tmp/i2rt-transport-build/wheels/i2rt-1.1.2+waddle.transport.570ef666-py3-none-any.whl
+```
+
+The YAM model-source provider accepts this exact reviewed distribution as well as
+the original Git pin. It verifies the candidate's version, complete source/asset
+inventory, SDK-approved hashes, installed package records, metadata and license.
+A rewritten RECORD, self-declared provenance, extra vendor source or changed
+model cannot establish acceptance. The returned geometry remains identical to
+the pristine source. Provenance retains the upstream base pin and the actual
+distribution's license-record path; inspection imports no vendor Python code.
+These checks establish source identity, not a sandbox against a malicious user
+who can change the interpreter or installed SDK. This artifact does not select
+USB-CAN, open a device or qualify physical control behavior.
 
 ## Declaration and envelope must agree
 

@@ -518,13 +518,17 @@ back to the bundled core. `WADDLE_NO_MEDIA=1` remains an explicit opt-out.
 ### Third-party content in the wheel
 
 This repo is Apache-2.0 and the wheel carries one deliberate exception:
-`waddle_sdk/robots/yam_data/` is a vendored snapshot of I2RT's YAM robot
+`waddle_sdk/robots/yam_data/yam.urdf` is a vendored snapshot of I2RT's YAM robot
 description, shipped under its own MIT licence (`yam_data/LICENSE`, verbatim
 from the source repo) and pinned to the upstream commit its README names. It
 is data rather than code, text only — the STL meshes are not shipped — and it
 earns its 16 KB twice: `waddle_sdk.robots.yam` hands it to a single-arm
 declaration as `kinematics_urdf`, and `tests/test_yam_facts.py` compares every
 constant in that module against the vendor's own numbers in it.
+Adjacent JSON verification data describes the separately built
+[reviewed I2RT runtime](../docs/porting/robot.md#reviewed-i2rt-runtime-artifact).
+Its original model bytes are accepted only after full source/asset and
+metadata/license verification; no runtime code or meshes are added to `yam_data`.
 
 ## Development
 

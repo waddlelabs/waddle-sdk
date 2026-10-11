@@ -75,7 +75,11 @@ changes source geometry before returning its bundle.
 ## YAM reference
 
 YAM implements exactly this optional contract. It verifies the installed I2RT Git
-pin and each consumed SHA256 record, combines the SDK URDF chain with the complete
+pin and each consumed SHA256 record, or the complete inventory and SDK-approved
+hashes of the [reviewed derived runtime](robot.md#reviewed-i2rt-runtime-artifact).
+The derived runtime retains the exact upstream geometry and base-pin provenance;
+changed source/metadata or rewritten package records cannot pass its review.
+The provider combines the SDK URDF chain with the complete
 vendor hand, and retains both physical slides and their coupling in MJCF. Its
 missing vendor terminal mesh is replaced through the declared hand/TCP attachment,
 inside the adapter. Neither callers nor the shared bundle need YAM-specific fields.

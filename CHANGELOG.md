@@ -38,6 +38,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Add a source-verifying builder for an explicitly versioned I2RT transport
+  runtime candidate. Accept its unchanged YAM model assets only after complete
+  SDK-approved source/asset, installed-record and metadata/license verification.
+  Preserve the pristine Git source path and physical qualification boundaries.
+
 - Add a reviewed macOS arm64 RealSense packaging recipe and source-verifying
   wheel assembler. Retain original vendor sources, shared libusb source/notices,
   build identity and unqualified hardware status. Include native software-device

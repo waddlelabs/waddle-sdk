@@ -44,6 +44,11 @@ with exact serial/location binding, bounded I/O, nonblocking queue reads and ter
 fault fencing. It is not automatically selected by YAM and reports unqualified
 transport evidence. Consult `docs/porting/robot.md#usb-can-transport-candidate`
 for the pinned vendor injection patch, provenance and physical qualification gaps.
+The reviewed derived I2RT package is built with `tools/build_i2rt_transport_runtime.py`;
+source inspection checks its complete SDK-approved inventory, package records,
+metadata and license before accepting unchanged geometry. Self-declared provenance
+or a rewritten RECORD does not establish review. This does not enable USB selection
+or qualify physical control.
 That candidate accepts a wait callback without placing CAN I/O or computation
 under the scheduling budget. Retain first-iteration readiness and original
 control-thread faults, and confirm bounded drain before releasing the bus.
