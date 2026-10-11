@@ -42,6 +42,16 @@ camera selector. Only non-streaming vendor enumeration can resolve that selector
 neither USB presence nor successful native-binding import proves stream access or
 aligned metric RGB-D. Preserve the device's exact access/capture errors.
 
+Native source qualification must retain the original vendor identity and each
+reviewed patch. The RealSense 2.58.4 macOS recipe additionally fixes cleanup
+transfer under libc++ before software-device alignment checks; a moved-from
+cleanup callback cannot remain a second owner. Verify actual wheel architecture,
+deployment floor, shared USB linkage and source/notices. Compare exact aligned
+RGB/depth bytes and concurrent Python progress in separate reference/candidate
+processes. Those checks establish neither physical camera access nor control
+timing under representative load. Never modify an installed vendor in place or
+hide a loader/access failure behind an RGB-only fallback.
+
 Never put motion, robot authority, or owner-envelope logic in a camera adapter.
 
 A camera rendered by a shared simulation world names `world` instead of `driver`. The

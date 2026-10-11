@@ -68,6 +68,13 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Add a reviewed macOS arm64 RealSense packaging recipe and source-verifying
+  wheel assembler. Retain original vendor sources, shared libusb source/notices,
+  build identity and unqualified hardware status. Include native software-device
+  pixel/progress and cleanup ownership checks. Correct upstream cleanup transfer
+  assumptions under libc++ through an explicit source patch; retain the separate
+  native alignment GIL patch. Camera privileges and live timing remain separate.
+
 - Add an optional classic gs_usb transport candidate with exact-device selection,
   bounded I/O/queueing, nonblocking receive, terminal fault fencing and scoped
   cleanup. Include a source-pinned I2RT transport-injection patch and software

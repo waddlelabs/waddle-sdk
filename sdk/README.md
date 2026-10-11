@@ -1,5 +1,10 @@
 # waddle-sdk (Python)
 
+For native arm64/macOS 15+ RealSense builds, follow the source qualification recipe
+in [camera adapters](../docs/porting/camera.md#native-macos-source-qualification).
+The derived wheel retains its patches and native dependency identity; installing
+it does not establish physical camera access or control timing.
+
 The Python frontend owns one customer site: strict configuration, hardware and
 camera lifecycle, the owner envelope, paired timestamps, and raw recordings.
 Applications consume the structural `waddle_sdk.runtime.SdkRuntimePort`; the SDK

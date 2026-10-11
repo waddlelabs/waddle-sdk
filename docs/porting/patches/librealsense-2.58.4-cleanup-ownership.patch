@@ -1,0 +1,46 @@
+diff --git a/third-party/rsutils/include/rsutils/deferred.h b/third-party/rsutils/include/rsutils/deferred.h
+index 959f687..ea5e3be 100644
+--- a/third-party/rsutils/include/rsutils/deferred.h
++++ b/third-party/rsutils/include/rsutils/deferred.h
+@@ -31,9 +31,19 @@ public:
+     {
+     }
+
+-    deferred( deferred && that ) = default;
++    // Explicitly clear transferred callbacks: libc++ may retain a callable
++    // std::function after a move. Cleanup must have exactly one owner.
++    deferred( deferred && that ) noexcept
++        : _deferred( that.detach() )
++    {
++    }
+
+-    deferred & operator=( deferred && ) = default;
++    deferred & operator=( deferred && that ) noexcept
++    {
++        if( this != &that )
++            _deferred = that.detach();
++        return *this;
++    }
+
+     bool is_valid() const { return ! ! _deferred; }
+     operator bool() const { return is_valid(); }
+@@ -49,11 +59,16 @@ public:
+     void reset() { _deferred = {}; }
+
+     // Returns the deferred function so you can move it somewhere else
+-    fn detach() { return std::move( _deferred ); }
++    fn detach() noexcept
++    {
++        fn detached = std::move( _deferred );
++        reset();
++        return detached;
++    }
+
+     // Cause the deferred call to be invoked NOW (throws if nothing there!)
+     void execute() { _deferred(); }
+ };
+
+
+-}  // namespace rsutils
+\ No newline at end of file
++}  // namespace rsutils

@@ -56,6 +56,15 @@ YAM consumes optional `control_fault` and explicit stop/drain operations; the
 pristine vendor retains its existing path. These are software checks, not native
 CAN timing or physical stop qualification.
 
+The native arm64 RealSense candidate is a separately built `pyrealsense2`
+2.58.4.post2 wheel for macOS 15+. Its source-pinned patches correct rsutils cleanup
+ownership under libc++ and release the GIL around native alignment. Packaging
+checks source bytes, build configuration, architecture, deployment floor and
+shared libusb linkage; it retains USB source, patches and notices. The tools under
+`tools/check_realsense_*` use software devices/native cleanup probes only.
+Successful packaging or pixel parity does not establish camera permissions,
+physical RGB-D or robot timing. See [camera source qualification](docs/porting/camera.md#native-macos-source-qualification).
+
 ## Standing obligations (non-negotiable, for every agent, every session)
 
 SDK CI retains Ubuntu/Python 3.10 and adds native arm64 macOS 15 on Python

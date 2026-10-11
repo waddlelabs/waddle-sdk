@@ -104,6 +104,9 @@ The default `waddle-sdk` wheel carries gRPC.
 `pip install "waddle-sdk[media]"` adds the LiveKit media companion on Linux x86-64,
 Linux ARM64, macOS Intel/Apple Silicon, and Windows x64.
 Camera adapters are lazy extras: `[orbbec]`, `[realsense]`, or `[cameras]`.
+The [macOS RealSense source recipe](docs/porting/camera.md#native-macos-source-qualification)
+creates a separately identified arm64/macOS 15+ wheel, with software checks and
+shared USB dependencies. Physical access and timing still require qualification.
 Physical adapters are lazy too: `[xarm]`, `[alicia]`, `[alicia-d]`, or the
 combined `[robots]`; the Synria vendor SDKs currently require Python 3.11+
 while the base SDK remains Python 3.10+.
