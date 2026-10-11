@@ -30,6 +30,22 @@ uncertain cleanup; the SDK cannot verify hidden handles inside a vendor factory.
 
 ## Optional media contract
 
+The media companion declares macOS 13.0+ in its per-target build configuration.
+ScreenCaptureKit needs 12.3, while modern wheel tags express only whole releases;
+the build must not advertise 12.0–12.2 compatibility.
+
+Native macOS media builds retain WebRTC's Objective-C category code with the
+`-ObjC` final-link setting. SDK media wheels select it in their build script;
+repository Cargo tests select it in `.cargo/config.toml`. An external Rust final
+target using the media crate must supply the same setting. See
+[LiveKit's macOS build instructions](https://github.com/livekit/rust-sdks#macos).
+Compiling the transport alone does not establish startup or viewer acceptance.
+Source toolchain pins use Rust 1.98.1 for the upstream Mach-O LINKEDIT alignment
+fix. Packaged-core import and unavailable-service refusal are part of software
+acceptance. An installed companion load failure warns with the original error;
+explicit media selection raises that same error before session/driver opening.
+Absence of the optional companion remains an ordinary capability absence.
+
 `SiteSession.media_tracks()` implements the optional structural
 `waddle_sdk.runtime.MediaRuntimePort`. It returns native publisher snapshots:
 

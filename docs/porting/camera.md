@@ -34,8 +34,20 @@ packages inside the factory or driver constructor.
 
 ## Identify camera views without opening a site
 
+Standard capture pumps and inspection use the SDK's scoped macOS `periodic_wait`
+for cadence only. Capture, alignment, rendering and publication run after the prior
+host policy is restored. Scheduling failures follow the existing capture fault
+boundary; they do not extend freshness or stream deadlines. See
+[host scheduling](robot.md#periodic-host-scheduling) for the request and its limits.
+
 Hardware discovery reports evidence without constructing a driver or starting a
-stream. When a site operator needs to match several physical cameras to their views,
+stream. Linux uses sysfs; macOS reads IORegistry and serial-device entries. Raw
+RealSense USB identities on either platform remain evidence, with no executable
+camera selector. Optional non-streaming librealsense enumeration supplies the
+exact serial accepted by the selected camera driver. A discovered USB-CAN adapter
+does not identify its attached robot or qualify a transport.
+
+When a site operator needs to match several physical cameras to their views,
 use the separate inspection lifecycle:
 
 ```python

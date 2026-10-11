@@ -949,6 +949,13 @@ class LiveDriver:
         after an observation gap, establishes a baseline rather than proving
         the snapshot's acquisition time, which I2RT does not expose.
         """
+        chain = getattr(self._robot, "motor_chain", None)
+        # A vendor retaining the actual control-thread fault supplies better
+        # evidence than a subsequent generic dead-thread/cache observation.
+        for source in (self._robot, chain):
+            fault = getattr(source, "control_fault", None)
+            if isinstance(fault, BaseException):
+                raise fault
         server = getattr(self._robot, "_server_thread", None)
         if callable(getattr(server, "is_alive", None)) and not server.is_alive():
             raise RuntimeFault(
@@ -956,7 +963,6 @@ class LiveDriver:
                 f"{self.channel}: I2RT control server has stopped",
                 context={"channel": self.channel, "reason": "control_server_stopped"},
             )
-        chain = getattr(self._robot, "motor_chain", None)
         if chain is None:
             return
         if getattr(chain, "running", None) is False:
@@ -1218,16 +1224,25 @@ class LiveDriver:
         enter one final send against file descriptor -1.
 
         Preserve the vendor close itself, but perform its two stop operations
-        in the safe order first.  This is intentionally structural and
+        in the safe order first. Vendors exposing explicit ``stop_control_loop``
+        operations use those bounded drains; their original refusal prevents
+        transport close. The pinned legacy implementation retains its existing
+        structural fallback. This is intentionally structural and
         best-effort so a different vendor implementation still receives its
         ordinary public ``close()`` below.  The exact pinned implementation is
         characterized by the regression test beside the other fake-vendor
         lifecycle cases.
         """
         robot = self._robot
+        motor_chain = getattr(robot, "motor_chain", None)
+        stop_server = getattr(robot, "stop_control_loop", None)
+        stop_writer = getattr(motor_chain, "stop_control_loop", None)
+        if callable(stop_server) and callable(stop_writer):
+            stop_server()
+            stop_writer()
+            return
         stop_event = getattr(robot, "_stop_event", None)
         server_thread = getattr(robot, "_server_thread", None)
-        motor_chain = getattr(robot, "motor_chain", None)
         if (
             stop_event is None
             or not callable(getattr(stop_event, "set", None))

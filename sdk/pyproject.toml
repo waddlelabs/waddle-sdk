@@ -35,6 +35,7 @@ media = ["waddle-sdk-media==0.1.12"]
 orbbec = ["pyorbbecsdk2"]
 realsense = ["pyrealsense2"]
 usb = ["opencv-python-headless>=4.8"]
+can-usb = ["python-can==4.5.0", "pyusb==1.3.1"]
 xarm = ["xarm-python-sdk>=1.16"]
 alicia = [
     "alicia-m-sdk>=1.1.1rc1; python_version >= '3.11'",

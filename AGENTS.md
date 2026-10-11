@@ -27,7 +27,63 @@ equate the nominal motor reading with fingertip force.
 This file bootstraps every agent that works in this repository. Read it fully before
 touching anything.
 
+Hardware discovery dispatches Linux sysfs and macOS IORegistry providers explicitly.
+The macOS provider reports Candlelight USB-CAN evidence without identifying a robot
+or opening a bus. RealSense USB serials remain non-executable evidence until optional
+non-streaming librealsense enumeration supplies a driver-valid selector. Discovery
+does not establish native transport or RGB-D acceptance.
+
+`waddle_sdk.scheduling.periodic_thread` requests a scoped macOS Mach periodic
+calling-thread policy, restores nested/prior policies and releases its Mach port.
+Other platforms keep their existing policy. It provides host scheduling evidence,
+not a real-time guarantee; measured freshness/deadline/stop checks remain required.
+Robot/camera/inspection cadence uses `periodic_wait` only around the blocking
+primitive, restoring policy before capture/reporting work. Shared publishing faults
+remain in `RobotPump.fault`, reach the site's original fault events and prevent
+fresh-looking named-part observations; ordinary individual arm faults stay scoped.
+See [adapter scheduling](docs/porting/robot.md#periodic-host-scheduling).
+
+The optional `can-usb` extra exposes `robots.usbcan.UsbCanBus`, a classic gs_usb
+transport qualification candidate. It binds exact serial/location, uses bounded
+USB I/O and a bounded receive queue, fences terminal USB/CAN/lost-frame faults and
+drains before release. Its evidence explicitly remains unqualified; YAM does not
+select it automatically. The source-pinned I2RT injection patch and software checks
+are documented under [USB-CAN](docs/porting/robot.md#usb-can-transport-candidate).
+The candidate's `control_wait` seam changes only its blocking cadence delay.
+Retained control threads use first-iteration readiness and bounded drain before
+bus close, preserving original background faults and cleanup uncertainty.
+YAM consumes optional `control_fault` and explicit stop/drain operations; the
+pristine vendor retains its existing path. These are software checks, not native
+CAN timing or physical stop qualification.
+
 ## Standing obligations (non-negotiable, for every agent, every session)
+
+SDK CI retains Ubuntu/Python 3.10 and adds native arm64 macOS 15 on Python
+3.10/3.12. All SDK legs install the MuJoCo and `can-usb` extras for software
+coverage, with EGL on Linux and CGL on macOS. Core CI runs on Ubuntu and macOS;
+LiveKit system-header installation is Linux-only. Hardware live checks remain
+explicitly separate. Workflow changes are not evidence of a completed CI run.
+Native simulation tests select CGL on macOS and EGL on Linux, including child
+workers. Reproduce CI with the locked MuJoCo version; a different diagnostic
+environment is separate evidence. MuJoCo's generated `MUJOCO_LOG.TXT` is ignored.
+macOS Cargo targets retain WebRTC's Objective-C categories with `-ObjC` in the
+repository configuration. The shim's build script also selects it for media
+cdylibs built outside that configuration. Downstream Rust final targets using
+LiveKit must carry the same linker requirement.
+Both Rust toolchain pins and Read the Docs use 1.98.1, which includes the upstream
+Mach-O LINKEDIT alignment correction required by newer macOS loaders. Language
+MSRV remains unchanged. CI imports the packaged media core explicitly, verifies
+its selected feature set and runs unavailable-service refusal before any control
+dispatch. A missing optional media package remains ordinary absence; a broken
+companion emits the original import fault and explicit media selection raises
+that same fault before creating a session.
+
+Control-plane reconnect backoff uses an injected `Clock` monotonic deadline,
+counting actual elapsed time after coalesced/late waits while continuing bounded
+offline classification. `ControlPlaneClient::spawn_with_clock` accepts the owning
+session's clock; the legacy `spawn` creates an ingest `SessionClock`. Production
+OS reads remain confined to ingest. Backoff values, registration/negotiation and
+authority fences are unchanged.
 
 1. **Keep this file up to date.** `AGENTS.md` must always reflect the actual
    state of the repo: layout, build commands, conventions, and gotchas. If your change
@@ -819,7 +875,9 @@ commands above remain the pre-commit gate and the fastest way to diagnose a fail
   linux x86_64 + aarch64 (manylinux containers, both native), macOS arm64 + x86_64,
   and Windows x64. Every wheel is installed and imported on its build architecture
   before upload, asserting its exact `FEATURES`. The macOS media wheel declares the
-  honest 12.3+ deployment floor required by ScreenCaptureKit. Windows ARM64 remains
+  13.0+ deployment floor from its per-target pyproject configuration. ScreenCaptureKit
+  needs 12.3, but modern wheel tags express only whole macOS releases; a 12.0 tag
+  cannot honestly promise that dependency. Windows ARM64 remains
   unadvertised until both distributions have a native runner-backed smoke test.
 - **No leg may be given `continue-on-error`.** Both publish jobs need the complete
   default and media matrices plus the deterministic Agent Skills bundle, so a failure
@@ -983,6 +1041,12 @@ commands above remain the pre-commit gate and the fastest way to diagnose a fail
   to be "long enough". A test that fails under load fails a gate this repo requires
   clean before every commit, and its assertions usually cannot tell the racing
   outcome from the intended one anyway.
+  Malformed teleop intake uses a queued burst and a subsequent matching packet
+  as its FIFO consumption barrier. Verify both caller and bypass dispatches;
+  a scheduler-induced Noop is distinct from accepting a malformed action.
+  Reset-progress acceptance holds DONE on an explicit transport-server channel
+  until EXECUTING and the unchanged episode phase have been observed; sleep
+  lengths never define that intermediate-state window.
 - When you finish a work session, verify: workspace tests green, clippy/fmt clean,
   CHANGELOG.md updated, this file still accurate.
 

@@ -31,9 +31,21 @@ without a device or network.
 - `waddle-runtime` owns thread lifecycles. A language binding creates one runtime and
   shuts it down deterministically; it does not grow a second authority machine.
 
+Control-plane reconnect backoff uses the owning session's monotonic `Clock` through
+`ControlPlaneClient::spawn_with_clock`. The legacy `spawn` convenience captures an
+ingest `SessionClock`. Delayed/coalesced wakeups count toward the actual reconnect
+deadline rather than accumulating requested sleep slices. Commands are still
+classified into the bounded offline buffer on every wakeup; registration,
+per-connection negotiation and authority checks remain unchanged. OS-clock reads
+remain inside ingest.
+
 ## Build and conformance
 
 From `waddle-core/`:
+
+The pinned build toolchain is Rust 1.98.1, including the upstream Mach-O
+LINKEDIT alignment correction for modern macOS loaders. The language MSRV
+declared in the workspace stays separate from the qualified build toolchain.
 
 ```console
 cargo test --workspace --locked

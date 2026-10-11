@@ -532,14 +532,21 @@ cargo fmt --manifest-path rust/Cargo.toml --check
 ```
 
 The full test suite uses the optional MuJoCo scene compiler. On headless Linux,
-set `MUJOCO_GL=egl` before running rendering tests. The base SDK remains usable
-without MuJoCo.
+set `MUJOCO_GL=egl`; on macOS use `MUJOCO_GL=cgl`. Native test workers select the
+corresponding platform backend. Use the lockfile's MuJoCo version for CI
+reproduction. The base SDK remains usable without MuJoCo.
 
 The shim is its own cargo workspace (`rust/`) with path-deps into
 `../waddle-core/crates/*`; pyo3's `extension-module` feature lives only in
 `[tool.maturin].features` so plain `cargo check/clippy` keep working.
 
 ### Connected builds
+
+The SDK and core source builds use the pinned Rust 1.98.1 toolchain, including
+the upstream Mach-O alignment fix for modern macOS loaders. CI imports the
+packaged media core and verifies its selected features before acceptance.
+If an installed companion cannot load, SDK import reports its original fault;
+an explicit LiveKit request raises that fault before session construction.
 
 The transports are cargo features on the shim. `grpc` (the control plane:
 `create_session(transport_url=, transport_token=)`) is in the DEFAULT
@@ -556,6 +563,14 @@ cargo clippy --manifest-path rust/Cargo.toml --features grpc,livekit --all-targe
 Clippy must be clean featureless, `--features grpc`, and
 `--features grpc,livekit`. A build that lacks a feature refuses the
 matching kwarg rather than running offline in silence.
+On macOS, final media binaries must retain the static WebRTC archive's
+Objective-C categories using `-ObjC`. The repository Cargo configuration and
+shim build script supply it for source tests and media wheels respectively.
+The companion's per-target pyproject settings select macOS 13.0 as the wheel
+deployment floor. ScreenCaptureKit requires 12.3; whole-release macOS wheel tags
+cannot express that minor-version minimum accurately.
+External Rust applications using the core media crate need this in their own
+final link settings; see [LiveKit's build requirement](https://github.com/livekit/rust-sdks#macos).
 **`waddle_sdk.FEATURES` is the probe**, not `waddle_sdk._core.FEATURES`:
 `_native` selects which core this process runs on and re-exports that
 core's features, so on a `[media]` install `waddle_sdk._core.FEATURES` still

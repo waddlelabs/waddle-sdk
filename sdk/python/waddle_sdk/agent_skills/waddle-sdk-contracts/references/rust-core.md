@@ -27,6 +27,12 @@ Protocol evolution is append-only within `waddle.v0`. Do not renumber or reuse r
 
 Keep low-level crates free of I/O and async dependencies. Confine Tokio to transport implementations. Do not expose Tokio types through public core signatures.
 
+Native macOS final targets using LiveKit must retain WebRTC's Objective-C
+categories with `-ObjC`. Repository Cargo configuration covers source tests;
+the Python shim build script covers media wheels built outside that config.
+External Rust applications must supply the same final-link setting. See the
+public site ownership/media guide for the build requirement and acceptance scope.
+
 ## Gate constraints
 
 `Gate::gate()` is synchronous and allocation-free on supported inline dimensions, including claimed/bypass paths. Do not add locks, syscalls, heap-owned strings, or transport work to it. Variable provenance and part identifiers must be shared values minted off the gate thread.

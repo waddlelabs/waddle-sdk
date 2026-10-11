@@ -1,0 +1,1341 @@
+diff --git a/i2rt/motor_drivers/can_interface.py b/i2rt/motor_drivers/can_interface.py
+index 12f87f5..4b0d77c 100644
+--- a/i2rt/motor_drivers/can_interface.py
++++ b/i2rt/motor_drivers/can_interface.py
+@@ -1,6 +1,6 @@
+ import logging
+ import time
+-from typing import List, Optional
++from typing import Callable, List, Optional
+ 
+ import can
+ 
+@@ -16,24 +16,52 @@ class CanInterface:
+         name: str = "default_can_interface",
+         receive_mode: ReceiveMode = ReceiveMode.p16,
+         use_buffered_reader: bool = False,
++        *,
++        bus_factory: Optional[Callable[..., can.BusABC]] = None,
+     ):
+         self.channel = channel
+-        self.bus = can.interface.Bus(bustype=bustype, channel=channel, bitrate=bitrate)
+-        self.busstate = self.bus.state
+-        self.name = name
+-        self.receive_mode = receive_mode
+-        self.use_buffered_reader = use_buffered_reader
+-        logging.info(f"Can interface {self.name} use_buffered_reader: {use_buffered_reader}")
+-        if use_buffered_reader:
+-            # Initialize BufferedReader for asynchronous message handling
+-            self.buffered_reader = can.BufferedReader()
+-            self.notifier = can.Notifier(self.bus, [self.buffered_reader])
++        self.bus = (bus_factory or can.interface.Bus)(bustype=bustype, channel=channel, bitrate=bitrate)
++        try:
++            self.busstate = self.bus.state
++            self.name = name
++            self.receive_mode = receive_mode
++            self.use_buffered_reader = use_buffered_reader
++            self._closed = False
++            logging.info(f"Can interface {self.name} use_buffered_reader: {use_buffered_reader}")
++            if use_buffered_reader:
++                # Initialize BufferedReader for asynchronous message handling
++                self.buffered_reader = can.BufferedReader()
++                self.notifier = can.Notifier(self.bus, [self.buffered_reader])
++        except BaseException as error:
++            try:
++                self.bus.shutdown()
++            except Exception as cleanup:
++                error.can_cleanup_error = {
++                    "type": type(cleanup).__qualname__,
++                    "detail": str(cleanup),
++                    "errno": getattr(cleanup, "errno", None),
++                }
++            raise
+ 
+     def close(self) -> None:
+         """Shut down the CAN bus."""
++        if self._closed:
++            return
+         if self.use_buffered_reader:
+-            self.notifier.stop()
++            try:
++                self.notifier.stop()
++            except BaseException as error:
++                try:
++                    self.bus.shutdown()
++                except Exception as cleanup:
++                    error.can_cleanup_error = {
++                        "type": type(cleanup).__qualname__,
++                        "detail": str(cleanup),
++                        "errno": getattr(cleanup, "errno", None),
++                    }
++                raise
+         self.bus.shutdown()
++        self._closed = True
+ 
+     def _send_message_get_response(
+         self, id: int, motor_id: int, data: List[int], max_retry: int = 5, expected_id: Optional[int] = None
+diff --git a/i2rt/motor_drivers/dm_driver.py b/i2rt/motor_drivers/dm_driver.py
+index 7248741..61dd52a 100644
+--- a/i2rt/motor_drivers/dm_driver.py
++++ b/i2rt/motor_drivers/dm_driver.py
+@@ -19,6 +19,7 @@ from i2rt.motor_drivers.utils import (
+     float_to_uint,
+     uint_to_float,
+ )
++from i2rt.utils.control_loop import LoopWait, ManagedControlLoop
+ from i2rt.utils.encoder_manager import EncoderConfig, PassiveJointEncoder
+ from i2rt.utils.utils import RateRecorder
+ 
+@@ -137,12 +138,21 @@ class DMSingleMotorCanInterface(CanInterface):
+         receive_mode: ReceiveMode = ReceiveMode.p16,
+         name: str = "default_can_DM_interface",
+         use_buffered_reader: bool = False,
++        *,
++        bus_factory: Optional[Callable[..., can.BusABC]] = None,
+     ):
++        cmd_idoffset = ControlMode.get_id_offset(control_mode)
+         super().__init__(
+-            channel, bustype, bitrate, receive_mode=receive_mode, name=name, use_buffered_reader=use_buffered_reader
++            channel,
++            bustype,
++            bitrate,
++            receive_mode=receive_mode,
++            name=name,
++            use_buffered_reader=use_buffered_reader,
++            bus_factory=bus_factory,
+         )
+         self.control_mode = control_mode
+-        self.cmd_idoffset = ControlMode.get_id_offset(self.control_mode)
++        self.cmd_idoffset = cmd_idoffset
+         self.receive_mode = receive_mode
+ 
+     def _get_frame_id(self, motor_id: int) -> int:
+@@ -384,6 +394,9 @@ class DMChainCanInterface(MotorChain):
+         use_buffered_reader: bool = False,  # buffered reader is not very stable, the latest encoder fix allows us to use the non-buffered reader
+         report_interval: float = REPORT_INTERVAL,
+         control_freq: float = CONTROL_FREQ,  # Control loop frequency (Hz), used for the CAN bandwidth check
++        *,
++        motor_interface_factory: Optional[Callable[..., CanInterface]] = None,
++        control_wait: LoopWait | None = None,
+     ):
+         assert not use_buffered_reader, (
+             "buffered reader is not very stable, the latest encoder fix allows us to use the non-buffered reader"
+@@ -392,13 +405,25 @@ class DMChainCanInterface(MotorChain):
+         assert len(motor_list) == len(motor_offset) == len(motor_direction), (
+             f"len{len(motor_list)}, len{len(motor_offset)}, len{len(motor_direction)}"
+         )
++        self._control_loop = ManagedControlLoop(
++            name=f"{motor_chain_name}-can", period_s=1.0 / control_freq, wait_callback=control_wait,
++        )
+         self.motor_list = motor_list
+         # float dtype so a homing routine can write a radian zero offset (see set_zero_position)
+         self.motor_offset = np.array(motor_offset, dtype=float)
+         self.motor_direction = np.array(motor_direction)
+         self.channel = channel
+         logging.info(f"Channel: {channel}, Bitrate: {bitrate}")
+-        if "can" in channel:
++        if motor_interface_factory is not None:
++            self.motor_interface = motor_interface_factory(
++                channel=channel,
++                bitrate=bitrate,
++                receive_mode=receive_mode,
++                name=motor_chain_name,
++                control_mode=control_mode,
++                use_buffered_reader=use_buffered_reader,
++            )
++        elif "can" in channel:
+             self.motor_interface = DMSingleMotorCanInterface(
+                 channel=channel,
+                 bustype="socketcan",
+@@ -414,50 +439,61 @@ class DMChainCanInterface(MotorChain):
+                 name=motor_chain_name,
+                 use_buffered_reader=use_buffered_reader,
+             )
+-        # CAN bus bandwidth check with 1.1x safety factor
+-        CAN_FRAME_BITS = 130  # approximate bits per CAN 2.0A frame including overhead
+-        frames_per_cycle = len(motor_list) * 2  # send + receive per motor
+-        bits_per_second = frames_per_cycle * CAN_FRAME_BITS * control_freq
+-        max_bits_per_second = bitrate / 1.1
+-        if bits_per_second > max_bits_per_second:
+-            max_safe_freq = max_bits_per_second / (frames_per_cycle * CAN_FRAME_BITS)
+-            logging.warning(
+-                f"CAN bus bandwidth exceeded: {bits_per_second:.0f} bps > {max_bits_per_second:.0f} bps "
+-                f"(bitrate={bitrate}, motors={len(motor_list)}, freq={control_freq}Hz). "
+-                f"Max safe frequency: {max_safe_freq:.0f} Hz"
+-            )
+-
+-        self.state = None
+-        self.state_lock = threading.Lock()
+-        self._report_interval = report_interval
+-        self._rate_recorder = RateRecorder(name=self, report_interval=report_interval)
+-
+-        self.same_bus_device_states = None
+-        self.same_bus_device_lock = threading.Lock()
++        try:
++            # CAN bus bandwidth check with 1.1x safety factor
++            CAN_FRAME_BITS = 130  # approximate bits per CAN 2.0A frame including overhead
++            frames_per_cycle = len(motor_list) * 2  # send + receive per motor
++            bits_per_second = frames_per_cycle * CAN_FRAME_BITS * control_freq
++            max_bits_per_second = bitrate / 1.1
++            if bits_per_second > max_bits_per_second:
++                max_safe_freq = max_bits_per_second / (frames_per_cycle * CAN_FRAME_BITS)
++                logging.warning(
++                    f"CAN bus bandwidth exceeded: {bits_per_second:.0f} bps > {max_bits_per_second:.0f} bps "
++                    f"(bitrate={bitrate}, motors={len(motor_list)}, freq={control_freq}Hz). "
++                    f"Max safe frequency: {max_safe_freq:.0f} Hz"
++                )
+ 
+-        with self.same_bus_device_lock:
+-            if get_same_bus_device_driver is not None:
+-                self.same_bus_device_driver = get_same_bus_device_driver(self.motor_interface)
+-            else:
+-                self.same_bus_device_driver = None
+-
+-            if self.same_bus_device_driver is not None:
+-                drained = self.motor_interface._drain_bus(timeout_s=0.2)
+-                if drained:
+-                    logging.info(f"Drained {drained} stale frames before motor bring-up")
+-
+-            self.absolute_positions = None
+-            self._motor_on()
+-        starting_command = []
+-        for motor_state in self.state:
+-            starting_command.append(MotorCmd(torque=motor_state.torque))
+-        logging.info(f"Initializing motorchain with starting command: {starting_command}")
+-        self.commands = starting_command
+-        self.command_lock = threading.RLock()
+-
+-        self.start_thread_flag = False
+-        if start_thread:
+-            self.start_thread()
++            self.state = None
++            self.state_lock = threading.Lock()
++            self._report_interval = report_interval
++            self._rate_recorder = RateRecorder(name=self, report_interval=report_interval)
++
++            self.same_bus_device_states = None
++            self.same_bus_device_lock = threading.Lock()
++
++            with self.same_bus_device_lock:
++                if get_same_bus_device_driver is not None:
++                    self.same_bus_device_driver = get_same_bus_device_driver(self.motor_interface)
++                else:
++                    self.same_bus_device_driver = None
++
++                if self.same_bus_device_driver is not None:
++                    drained = self.motor_interface._drain_bus(timeout_s=0.2)
++                    if drained:
++                        logging.info(f"Drained {drained} stale frames before motor bring-up")
++
++                self.absolute_positions = None
++                self._motor_on()
++            starting_command = []
++            for motor_state in self.state:
++                starting_command.append(MotorCmd(torque=motor_state.torque))
++            logging.info(f"Initializing motorchain with starting command: {starting_command}")
++            self.commands = starting_command
++            self.command_lock = threading.RLock()
++
++            self.start_thread_flag = False
++            if start_thread:
++                self.start_thread()
++        except BaseException as error:
++            try:
++                self.close()
++            except Exception as cleanup:
++                error.can_cleanup_error = {
++                    "type": type(cleanup).__qualname__, "detail": str(cleanup),
++                    "context": cleanup.as_dict() if hasattr(cleanup, "as_dict") else None,
++                }
++                error.can_cleanup_owner = self
++            raise
+ 
+     @property
+     def comm_freq(self) -> float:
+@@ -520,23 +556,30 @@ class DMChainCanInterface(MotorChain):
+         self.state = motor_feedback
+         self.running = True
+ 
++    @property
++    def control_fault(self) -> BaseException | None:
++        return self._control_loop.fault
++
+     def start_thread(self) -> None:
+-        if self.start_thread_flag:
+-            return
+         logging.info("starting separate thread for control loop")
+-        thread = threading.Thread(target=self._set_torques_and_update_state)
+-        thread.start()
++        self._control_loop.start(self._set_torques_and_update_state)
+         self.start_thread_flag = True
+-        time.sleep(0.1)
+-        while self.state is None:
+-            time.sleep(0.1)
+-            logging.info("waiting for the first state")
++
++    def stop_control_loop(self) -> None:
++        self.running = False
++        self._control_loop.stop()
+ 
+     def _set_torques_and_update_state(self) -> None:
+         """
+         Control loop for updating motor torques and states at a fixed frequency.
+         If step_time > EXPECTED_CONTROL_PERIODs, it will report the number of step_time > EXPECTED_CONTROL_PERIODs and mean step_time every REPORT_INTERVAL seconds.
+         """
++        try:
++            self._control_steps()
++        finally:
++            self.running = False
++
++    def _control_steps(self) -> None:
+         last_step_time = time.time()
+         step_time_exceed_count = 0
+         step_time_sum = 0.0
+@@ -544,7 +587,7 @@ class DMChainCanInterface(MotorChain):
+         max_step_time = 0.0
+         report_start_time = time.time()
+         with self._rate_recorder:
+-            while self.running:
++            while self.running and not self._control_loop.stop_event.is_set():
+                 try:
+                     curr_time = time.time()
+                     step_time = curr_time - last_step_time
+@@ -602,12 +645,13 @@ class DMChainCanInterface(MotorChain):
+                         self.state = motor_feedback
+                         self._update_absolute_positions(motor_feedback)
+                     if self.same_bus_device_driver is not None:
+-                        time.sleep(0.001)
++                        self._control_loop.wait(0.001)
+                         with self.same_bus_device_lock:
+                             # assume the same bus device is a passive input device (no commands to send) for now.
+                             self.same_bus_device_states = self.same_bus_device_driver.read_states()
+-                    time.sleep(0.0005)  # yield GIL so other threads can acquire locks
+                     self._rate_recorder.track()
++                    self._control_loop.mark_ready()
++                    self._control_loop.wait(0.0005)  # yield GIL; stop remains interruptible
+                 except Exception as e:
+                     print(f"DM Error in control loop: {e}")
+                     self.running = False
+@@ -685,6 +729,7 @@ class DMChainCanInterface(MotorChain):
+         return motor_feedback
+ 
+     def read_states(self, torques: Optional[np.ndarray] = None) -> List[MotorInfo]:
++        self._control_loop.raise_if_failed()
+         motor_infos = []
+         timestamp = time.time()
+         with self.state_lock:
+@@ -722,6 +767,7 @@ class DMChainCanInterface(MotorChain):
+         kd: Optional[np.ndarray] = None,
+         get_state: bool = True,
+     ) -> List[MotorInfo]:
++        self._control_loop.raise_if_failed()
+         command = []
+         for idx in range(len(self.motor_list)):
+             command.append(
+@@ -743,7 +789,7 @@ class DMChainCanInterface(MotorChain):
+             return self.same_bus_device_states
+ 
+     def close(self) -> None:
+-        self.running = False
++        self.stop_control_loop()
+         self.motor_interface.close()
+ 
+ 
+diff --git a/i2rt/robots/get_robot.py b/i2rt/robots/get_robot.py
+index 352de47..be714ab 100644
+--- a/i2rt/robots/get_robot.py
++++ b/i2rt/robots/get_robot.py
+@@ -20,6 +20,7 @@ from i2rt.robots.utils import (
+     _load_arm_config,
+     combine_arm_and_gripper_xml,
+ )
++from i2rt.utils.control_loop import LoopWait
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -62,6 +63,9 @@ def _get_gripper_only_robot(
+     channel: str = "can0",
+     gripper_type: GripperType = GripperType.LINEAR_4310,
+     sim: bool = False,
++    *,
++    motor_interface_factory: Optional[Callable[..., CanInterface]] = None,
++    control_wait: LoopWait | None = None,
+ ) -> "Robot":
+     """Create a gripper-only robot (no arm).
+ 
+@@ -108,22 +112,36 @@ def _get_gripper_only_robot(
+         motor_chain_name="gripper_only",
+         receive_mode=ReceiveMode.p16,
+         start_thread=True,
++        motor_interface_factory=motor_interface_factory,
++        control_wait=control_wait,
+     )
+ 
+-    return MotorChainRobot(
+-        motor_chain=motor_chain,
+-        xml_path=xml_path,
+-        use_gravity_comp=False,
+-        joint_limits=None,
+-        kp=np.array([gripper_kp]),
+-        kd=np.array([gripper_kd]),
+-        gripper_index=0,
+-        gripper_limits=gripper_limits,
+-        enable_gripper_calibration=gripper_needs_cal,
+-        gripper_type=gripper_type,
+-        arm_type=nominal_arm,
+-        zero_gravity_mode=False,
+-    )
++    try:
++        return MotorChainRobot(
++            motor_chain=motor_chain,
++            xml_path=xml_path,
++            use_gravity_comp=False,
++            joint_limits=None,
++            kp=np.array([gripper_kp]),
++            kd=np.array([gripper_kd]),
++            gripper_index=0,
++            gripper_limits=gripper_limits,
++            enable_gripper_calibration=gripper_needs_cal,
++            gripper_type=gripper_type,
++            arm_type=nominal_arm,
++            zero_gravity_mode=False,
++            control_wait=control_wait,
++        )
++    except BaseException as error:
++        try:
++            motor_chain.close()
++        except Exception as failure:
++            error.can_cleanup_error = {
++                "type": type(failure).__qualname__, "detail": str(failure),
++                "context": failure.as_dict() if hasattr(failure, "as_dict") else None,
++            }
++            error.can_cleanup_owner = motor_chain
++        raise
+ 
+ 
+ def get_yam_robot(
+@@ -140,6 +158,9 @@ def get_yam_robot(
+     sim: bool = False,
+     joint_state_saver_factory: Optional[Callable[[], Any]] = None,
+     set_realtime_and_pin_callback: Optional[Callable[[int], None]] = None,
++    *,
++    motor_interface_factory: Optional[Callable[..., CanInterface]] = None,
++    control_wait: LoopWait | None = None,
+ ) -> "Robot":
+     """Create a YAM-family robot (real or sim).
+ 
+@@ -156,10 +177,22 @@ def get_yam_robot(
+         gripper_kp: Optional gripper kp override. Defaults to gripper_type's default.
+         gripper_kd: Optional gripper kd override. Defaults to gripper_type's default.
+         sim: If True, return a SimRobot instead of connecting to real hardware.
++        motor_interface_factory: Optional per-chain transport factory. It owns its
++            bus and receives channel, bitrate, receive/control modes and name.
++            Omission preserves the native transport selection; ignored in sim mode.
++        control_wait: Optional calling-thread wait callback, receiving the stop
++            event, delay and declared period. Ignored in sim mode. No scheduling
++            policy surrounds computation or CAN transactions.
+     """
+     # --- Gripper-only path (no arm) -------------------------------------------
+     if arm_type == ArmType.NO_ARM:
+-        return _get_gripper_only_robot(channel=channel, gripper_type=gripper_type, sim=sim)
++        return _get_gripper_only_robot(
++            channel=channel,
++            gripper_type=gripper_type,
++            sim=sim,
++            motor_interface_factory=motor_interface_factory,
++            control_wait=control_wait,
++        )
+ 
+     with_gripper = gripper_type not in (GripperType.YAM_TEACHING_HANDLE, GripperType.NO_GRIPPER)
+     with_teaching_handle = gripper_type == GripperType.YAM_TEACHING_HANDLE
+@@ -245,48 +278,62 @@ def get_yam_robot(
+         start_thread=False,
+         get_same_bus_device_driver=get_encoder_chain if with_teaching_handle else None,
+         use_buffered_reader=False,
++        motor_interface_factory=motor_interface_factory,
++        control_wait=control_wait,
+     )
+-    motor_states = motor_chain.read_states()
+-    logging.debug(f"motor_states: {motor_states}")
+-
+-    logging.info(f"current_pos: {[m.pos for m in motor_states]}")
+-    for idx, state in enumerate(motor_states):
+-        if state.pos < -np.pi:
+-            logging.info(f"motor {idx} pos={state.pos:.3f}, offset -2π")
+-            motor_chain.motor_offset[idx] -= 2 * np.pi
+-        elif state.pos > np.pi:
+-            logging.info(f"motor {idx} pos={state.pos:.3f}, offset +2π")
+-            motor_chain.motor_offset[idx] += 2 * np.pi
+-
+-    logging.info(f"adjusted motor_offsets: {motor_chain.motor_offset.tolist()}")
+-
+-    # Start the control thread with corrected offsets.
+-    motor_chain.start_thread()
+-    logging.info(f"YAM initial motor_states: {motor_chain.read_states()}")
+-
+-    get_robot = partial(
+-        MotorChainRobot,
+-        motor_chain=motor_chain,
+-        xml_path=model_path,
+-        use_gravity_comp=True,
+-        gravity_comp_factor=effective_gravity_comp,
+-        joint_limits=joint_limits,
+-        kp=kp,
+-        kd=kd,
+-        grav_comp_kd=grav_comp_kd,
+-        coulomb_friction=coulomb_friction,
+-        zero_gravity_mode=zero_gravity_mode,
+-        joint_state_saver_factory=joint_state_saver_factory,
+-        set_realtime_and_pin_callback=set_realtime_and_pin_callback,
+-    )
+-
+-    if with_gripper:
+-        return get_robot(
+-            gripper_index=n_arm_joints,
+-            gripper_limits=gripper_limits,
+-            enable_gripper_calibration=gripper_needs_cal,
+-            gripper_type=gripper_type,
+-            arm_type=arm_type,
+-            limit_gripper_force=50.0,
++    try:
++        motor_states = motor_chain.read_states()
++        logging.debug(f"motor_states: {motor_states}")
++
++        logging.info(f"current_pos: {[m.pos for m in motor_states]}")
++        for idx, state in enumerate(motor_states):
++            if state.pos < -np.pi:
++                logging.info(f"motor {idx} pos={state.pos:.3f}, offset -2π")
++                motor_chain.motor_offset[idx] -= 2 * np.pi
++            elif state.pos > np.pi:
++                logging.info(f"motor {idx} pos={state.pos:.3f}, offset +2π")
++                motor_chain.motor_offset[idx] += 2 * np.pi
++
++        logging.info(f"adjusted motor_offsets: {motor_chain.motor_offset.tolist()}")
++
++        # Start the control thread with corrected offsets.
++        motor_chain.start_thread()
++        logging.info(f"YAM initial motor_states: {motor_chain.read_states()}")
++
++        get_robot = partial(
++            MotorChainRobot,
++            motor_chain=motor_chain,
++            xml_path=model_path,
++            use_gravity_comp=True,
++            gravity_comp_factor=effective_gravity_comp,
++            joint_limits=joint_limits,
++            kp=kp,
++            kd=kd,
++            grav_comp_kd=grav_comp_kd,
++            coulomb_friction=coulomb_friction,
++            zero_gravity_mode=zero_gravity_mode,
++            joint_state_saver_factory=joint_state_saver_factory,
++            set_realtime_and_pin_callback=set_realtime_and_pin_callback,
++            control_wait=control_wait,
+         )
+-    return get_robot()
++
++        if with_gripper:
++            return get_robot(
++                gripper_index=n_arm_joints,
++                gripper_limits=gripper_limits,
++                enable_gripper_calibration=gripper_needs_cal,
++                gripper_type=gripper_type,
++                arm_type=arm_type,
++                limit_gripper_force=50.0,
++            )
++        return get_robot()
++    except BaseException as error:
++        try:
++            motor_chain.close()
++        except Exception as failure:
++            error.can_cleanup_error = {
++                "type": type(failure).__qualname__, "detail": str(failure),
++                "context": failure.as_dict() if hasattr(failure, "as_dict") else None,
++            }
++            error.can_cleanup_owner = motor_chain
++        raise
+diff --git a/i2rt/robots/motor_chain_robot.py b/i2rt/robots/motor_chain_robot.py
+index 23803e2..629ac07 100644
+--- a/i2rt/robots/motor_chain_robot.py
++++ b/i2rt/robots/motor_chain_robot.py
+@@ -15,6 +15,7 @@ from i2rt.motor_drivers.dm_driver import (
+ )
+ from i2rt.robots.robot import Robot
+ from i2rt.robots.utils import ArmType, GripperForceLimiter, GripperType, JointMapper, detect_gripper_limits
++from i2rt.utils.control_loop import LoopWait, ManagedControlLoop
+ from i2rt.utils.mujoco_utils import MuJoCoKDL
+ 
+ 
+@@ -93,6 +94,8 @@ class MotorChainRobot(Robot):
+         pinned_cpu: int | None = None,
+         joint_state_saver_factory: Optional[Callable[[], Any]] = None,
+         set_realtime_and_pin_callback: Optional[Callable[[int], None]] = None,
++        *,
++        control_wait: LoopWait | None = None,
+     ) -> None:
+         # Set up CPU pinning and real-time scheduling if requested
+         if pinned_cpu is not None and set_realtime_and_pin_callback is not None:
+@@ -233,13 +236,27 @@ class MotorChainRobot(Robot):
+         self._check_current_qpos_in_joint_limits()
+ 
+         self._last_motor_torques: Optional[np.ndarray] = None
+-        self._stop_event = threading.Event()  # Add a stop event
+-        self._server_thread = threading.Thread(target=self.start_server, name="robot_server")
+-        self._server_thread.start()
+-
+-        if not zero_gravity_mode:
+-            # set current qpos as target pos with the default PD parameters
+-            self.command_joint_pos(self._joint_state.pos)
++        self._control_loop = ManagedControlLoop(
++            name="robot_server", period_s=0.001, wait_callback=control_wait,
++        )
++        self._stop_event = self._control_loop.stop_event
++        try:
++            self._control_loop.start(self.start_server)
++            self._server_thread = self._control_loop.thread
++
++            if not zero_gravity_mode:
++                # set current qpos as target pos with the default PD parameters
++                self.command_joint_pos(self._joint_state.pos)
++        except BaseException as error:
++            try:
++                self.stop_control_loop()
++            except Exception as cleanup:
++                error.control_cleanup_error = {
++                    "type": type(cleanup).__qualname__, "detail": str(cleanup),
++                    "context": cleanup.as_dict() if hasattr(cleanup, "as_dict") else None,
++                }
++                error.control_cleanup_owner = self
++            raise
+ 
+     def __repr__(self) -> str:
+         return f"MotorChainRobot(arm_type={self._arm_type}, gripper_type={self._gripper_type}, motor_chain={self.motor_chain})"
+@@ -308,11 +325,19 @@ class MotorChainRobot(Robot):
+             info["limit_gripper_effort"] = self._limit_gripper_force
+         return info
+ 
++    @property
++    def control_fault(self) -> BaseException | None:
++        return self._control_loop.fault
++
++    def stop_control_loop(self) -> None:
++        self._control_loop.stop()
++
+     def start_server(self) -> None:
+         """Start the server."""
+         last_time = time.time()
+         iteration_count = 0
+         self.update()
++        self._control_loop.mark_ready()
+ 
+         logging.info("initializing, ....")
+ 
+@@ -323,7 +348,7 @@ class MotorChainRobot(Robot):
+             self.update()
+             if not self.motor_chain.running:
+                 raise RuntimeError(f"{self}: motor_chain_robot's motor chain is not running, exiting the robot server")
+-            time.sleep(0.001)
++            self._control_loop.wait(0.001)
+ 
+             iteration_count += 1
+             if elapsed_time >= 10.0:
+@@ -507,6 +532,7 @@ class MotorChainRobot(Robot):
+         Returns:
+             T: The current state of the leader robot.
+         """
++        self._control_loop.raise_if_failed()
+         with self._state_lock:
+             return self._joint_state.pos
+ 
+@@ -535,6 +561,7 @@ class MotorChainRobot(Robot):
+         Args:
+             joint_pos (np.ndarray): The state to command the leader robot to.
+         """
++        self._control_loop.raise_if_failed()
+         pos = self._clip_robot_joint_pos_command(joint_pos)
+         with self._command_lock:
+             self._commands = JointCommands.init_all_zero(len(self.motor_chain))
+@@ -548,6 +575,7 @@ class MotorChainRobot(Robot):
+         Args:
+             joint_state (Dict[str, np.ndarray]): The state to command the leader robot to.
+         """
++        self._control_loop.raise_if_failed()
+         pos = self._clip_robot_joint_pos_command(joint_state["pos"])
+         vel = joint_state["vel"]
+         self._commands = JointCommands.init_all_zero(len(self.motor_chain))
+@@ -576,6 +604,7 @@ class MotorChainRobot(Robot):
+         Returns:
+             Dict[str, np.ndarray]: A dictionary of observations.
+         """
++        self._control_loop.raise_if_failed()
+         with self._state_lock:
+             if self._gripper_index is None:
+                 result = {
+@@ -616,8 +645,7 @@ class MotorChainRobot(Robot):
+     def close(self) -> None:
+         """Safely close the robot by setting all torques to zero."""
+         # self.move_to_zero()
+-        self._stop_event.set()  # Signal the thread to stop
+-        self._server_thread.join()  # Wait for the thread to finish
++        self.stop_control_loop()
+         self.motor_chain.close()
+         print("Robot closed with all torques set to zero.")
+ 
+diff --git a/i2rt/utils/control_loop.py b/i2rt/utils/control_loop.py
+new file mode 100644
+index 0000000..ec54b8c
+--- /dev/null
++++ b/i2rt/utils/control_loop.py
+@@ -0,0 +1,113 @@
++"""Device-free lifecycle and optional host wait policy for control threads."""
++
++import logging
++import math
++import threading
++from typing import Callable, Protocol
++
++
++class LoopWait(Protocol):
++    def __call__(self, stop: threading.Event, timeout_s: float, *, period_s: float) -> bool: ...
++
++
++class ControlLoopTimeout(TimeoutError):
++    code = "runtime.control_loop_timeout"
++
++    def __init__(self, name: str, operation: str, timeout_s: float) -> None:
++        self.name, self.operation, self.timeout_s = name, operation, timeout_s
++        super().__init__(f"{name}: control-loop {operation} did not finish within {timeout_s:g} s")
++        self.control_cleanup_error: dict | None = None
++
++    def as_dict(self) -> dict:
++        return {
++            "code": self.code,
++            "detail": str(self),
++            "context": {"loop": self.name, "operation": self.operation, "timeout_s": self.timeout_s},
++        }
++
++
++class ManagedControlLoop:
++    """Retain one thread, its first fault and explicit first-iteration readiness.
++
++    The optional callback owns only the blocking wait. It must preserve stop
++    wakeups and propagate its original errors. No policy surrounds computation,
++    CAN I/O or logging. Neither a scheduling request nor readiness proves device
++    timing or physical arrival. Failed drain keeps the retained thread accessible.
++    """
++
++    def __init__(
++        self,
++        *,
++        name: str,
++        period_s: float,
++        wait_callback: LoopWait | None = None,
++        startup_timeout_s: float = 5.0,
++        drain_timeout_s: float = 1.0,
++    ) -> None:
++        for value in (period_s, startup_timeout_s, drain_timeout_s):
++            if type(value) not in (int, float) or not math.isfinite(value) or value <= 0:
++                raise ValueError("Declare finite positive control-loop timing budgets")
++        self.name, self.period_s = name, period_s
++        self.wait_callback = wait_callback
++        self.startup_timeout_s, self.drain_timeout_s = startup_timeout_s, drain_timeout_s
++        self.stop_event, self.ready = threading.Event(), threading.Event()
++        self._startup_finished = threading.Event()
++        self.fault: BaseException | None = None
++        self.thread: threading.Thread | None = None
++
++    def _run(self, target: Callable[[], None]) -> None:
++        try:
++            target()
++        except BaseException as error:
++            self.fault = error
++            logging.exception("%s: control loop failed", self.name)
++        finally:
++            self.stop_event.set()
++            # Wake a startup waiter on failure or premature completion as well.
++            self._startup_finished.set()
++
++    def start(self, target: Callable[[], None]) -> None:
++        self.raise_if_failed()
++        if self.stop_event.is_set():
++            raise RuntimeError(f"{self.name}: a stopped control loop cannot be restarted")
++        if self.thread is not None:
++            if self.thread.is_alive() and not self.stop_event.is_set():
++                return
++            raise RuntimeError(f"{self.name}: a stopped control loop cannot be restarted")
++        self.thread = threading.Thread(target=self._run, args=(target,), name=self.name)
++        self.thread.start()
++        if not self._startup_finished.wait(self.startup_timeout_s):
++            error = ControlLoopTimeout(self.name, "startup", self.startup_timeout_s)
++            try:
++                self.stop()
++            except ControlLoopTimeout as cleanup:
++                error.control_cleanup_error = cleanup.as_dict()
++            raise error
++        self.raise_if_failed()
++        if self.stop_event.is_set():
++            raise RuntimeError(f"{self.name}: control loop stopped during startup")
++
++    def mark_ready(self) -> None:
++        self.ready.set()
++        self._startup_finished.set()
++
++    def raise_if_failed(self) -> None:
++        if self.fault is not None:
++            raise self.fault
++
++    def wait(self, timeout_s: float) -> bool:
++        if self.stop_event.is_set():
++            return True
++        if self.wait_callback is None:
++            return self.stop_event.wait(timeout_s)
++        return self.wait_callback(self.stop_event, timeout_s, period_s=self.period_s)
++
++    def stop(self) -> None:
++        self.stop_event.set()
++        if self.thread is None:
++            return
++        if self.thread is threading.current_thread():
++            raise RuntimeError(f"{self.name}: a control thread cannot join itself")
++        self.thread.join(self.drain_timeout_s)
++        if self.thread.is_alive():
++            raise ControlLoopTimeout(self.name, "drain", self.drain_timeout_s)
+diff --git a/tests/test_can_transport.py b/tests/test_can_transport.py
+new file mode 100644
+index 0000000..e451c93
+--- /dev/null
++++ b/tests/test_can_transport.py
+@@ -0,0 +1,185 @@
++"""Injected transports preserve motor transactions and resource ownership.
++
++Every bus below is a double. Tests never connect to real hardware.
++"""
++
++from collections import deque
++from types import SimpleNamespace
++from typing import Any, NoReturn
++
++import can
++import numpy as np
++import pytest
++
++from i2rt.motor_drivers.can_interface import CanInterface
++from i2rt.motor_drivers.dm_driver import ControlMode, DMChainCanInterface, DMSingleMotorCanInterface
++from i2rt.motor_drivers.utils import MotorType
++from i2rt.robots import get_robot
++from i2rt.robots.utils import ArmType
++
++
++class Bus:
++    state = can.BusState.ACTIVE
++
++    def __init__(self, *, channel: str, **kwargs: Any):
++        self.channel_info = channel
++        self.options = kwargs
++        self.sent, self.replies = [], deque()
++        self.shutdown_count = 0
++
++    def send(self, message: can.Message) -> None:
++        self.sent.append(message)
++        self.replies.append(
++            can.Message(
++                arbitration_id=message.arbitration_id + 16,
++                data=[0x10 | message.arbitration_id, 0x80, 0, 0x80, 0, 0, 25, 26],
++                is_extended_id=False,
++            )
++        )
++
++    def recv(self, timeout: float | None = None) -> can.Message | None:
++        return self.replies.popleft() if self.replies else None
++
++    def shutdown(self) -> None:
++        self.shutdown_count += 1
++
++
++def test_injected_instances_preserve_motor_protocol_and_close_independently() -> None:
++    buses = []
++
++    def factory(**kwargs: Any) -> Bus:
++        bus = Bus(**kwargs)
++        buses.append(bus)
++        return bus
++
++    left = DMSingleMotorCanInterface(channel="usb-left", bus_factory=factory)
++    right = DMSingleMotorCanInterface(channel="usb-right", bus_factory=factory)
++    feedback = left.motor_on(1, MotorType.DM4310)
++    assert feedback.id == 1 and feedback.error_code == "0x1"
++    assert buses[0].sent[0].arbitration_id == 1
++    assert bytes(buses[0].sent[0].data) == b"\xff" * 7 + b"\xfc"
++    assert buses[1].sent == []
++    left.close()
++    left.close()
++    assert buses[0].shutdown_count == 1 and buses[1].shutdown_count == 0
++    assert right.motor_on(2, MotorType.DM4310).id == 2
++    right.close()
++    assert buses[1].shutdown_count == 1
++
++
++def test_original_socketcan_selection_is_preserved(monkeypatch: pytest.MonkeyPatch) -> None:
++    opened = []
++
++    def factory(**kwargs: Any) -> Bus:
++        opened.append(kwargs)
++        return Bus(**kwargs)
++
++    monkeypatch.setattr(can.interface, "Bus", factory)
++    interface = DMSingleMotorCanInterface(channel="can7")
++    try:
++        assert opened == [{"bustype": "socketcan", "channel": "can7", "bitrate": 1_000_000}]
++        assert interface.motor_on(1, MotorType.DM4310).id == 1
++    finally:
++        interface.close()
++
++
++def test_invalid_motor_mode_is_refused_before_opening_a_bus() -> None:
++    def forbidden(**kwargs: Any) -> NoReturn:
++        pytest.fail("Invalid motor mode opened a bus")
++
++    with pytest.raises(ValueError, match="Control mode"):
++        DMSingleMotorCanInterface(control_mode="invalid", bus_factory=forbidden)
++
++
++def test_partial_open_closes_the_bus_and_preserves_the_original_failure() -> None:
++    original = RuntimeError("device feedback is invalid")
++    cleanup = OSError(5, "USB release failed")
++
++    class FaultBus(Bus):
++        @property
++        def state(self) -> NoReturn:
++            raise original
++
++        def shutdown(self) -> NoReturn:
++            super().shutdown()
++            raise cleanup
++
++    bus = FaultBus(channel="usb-one")
++    with pytest.raises(RuntimeError) as caught:
++        CanInterface(bus_factory=lambda **kwargs: bus)
++    assert caught.value is original
++    assert bus.shutdown_count == 1
++    assert original.can_cleanup_error == {"type": "OSError", "detail": str(cleanup), "errno": 5}
++
++
++def test_notifier_failure_still_shuts_down_its_owned_bus(monkeypatch: pytest.MonkeyPatch) -> None:
++    original = RuntimeError("notifier drain failed")
++
++    class Notifier:
++        def __init__(self, bus: Bus, listeners: list[can.Listener]):
++            self.bus = bus
++
++        def stop(self) -> NoReturn:
++            raise original
++
++    monkeypatch.setattr(can, "Notifier", Notifier)
++    bus = Bus(channel="buffered")
++    interface = CanInterface(bus_factory=lambda **kwargs: bus, use_buffered_reader=True)
++    with pytest.raises(RuntimeError) as caught:
++        interface.close()
++    assert caught.value is original and bus.shutdown_count == 1
++
++
++def test_robot_factory_passes_one_per_chain_transport_without_changing_gains(monkeypatch: pytest.MonkeyPatch) -> None:
++    buses, arguments = [], []
++
++    def factory(**kwargs: Any) -> DMSingleMotorCanInterface:
++        arguments.append(kwargs.copy())
++
++        def bus_factory(**bus_kwargs: Any) -> Bus:
++            bus = Bus(**bus_kwargs)
++            buses.append(bus)
++            return bus
++
++        return DMSingleMotorCanInterface(bus_factory=bus_factory, **kwargs)
++
++    def forbidden(**kwargs: Any) -> NoReturn:
++        pytest.fail("Injected transport fell through to the global CAN factory")
++
++    monkeypatch.setattr(can.interface, "Bus", forbidden)
++    monkeypatch.setattr(DMChainCanInterface, "start_thread", lambda self: None)
++    monkeypatch.setattr(get_robot, "MotorChainRobot", SimpleNamespace)
++    robot = get_robot.get_yam_robot(
++        channel="usb-selected", gripper_limits_override=np.array([0.0, 1.0]), motor_interface_factory=factory
++    )
++    try:
++        assert arguments == [
++            {
++                "channel": "usb-selected",
++                "bitrate": 1_000_000,
++                "receive_mode": get_robot.ReceiveMode.p16,
++                "name": "yam_real",
++                "control_mode": ControlMode.MIT,
++                "use_buffered_reader": False,
++            }
++        ]
++        assert len(buses) == 1 and len(buses[0].sent) == 7
++        hw = get_robot._load_arm_config(ArmType.YAM)
++        np.testing.assert_array_equal(robot.kp[:6], hw.kp)
++        np.testing.assert_array_equal(robot.kd[:6], hw.kd)
++        assert robot.gripper_index == 6
++    finally:
++        robot.motor_chain.close()
++    assert buses[0].shutdown_count == 1
++
++
++@pytest.mark.parametrize("arm_type", [ArmType.YAM, ArmType.NO_ARM])
++def test_simulation_factory_never_opens_the_injected_transport(arm_type: ArmType) -> None:
++    def forbidden(**kwargs: Any) -> NoReturn:
++        pytest.fail("Simulation opened a motor interface")
++
++    robot = get_robot.get_yam_robot(arm_type=arm_type, sim=True, motor_interface_factory=forbidden)
++    try:
++        assert robot.num_dofs() == (7 if arm_type == ArmType.YAM else 1)
++    finally:
++        robot.close()
+diff --git a/tests/test_control_loop.py b/tests/test_control_loop.py
+new file mode 100644
+index 0000000..4c7d86f
+--- /dev/null
++++ b/tests/test_control_loop.py
+@@ -0,0 +1,157 @@
++"""Control-loop readiness, original faults and drain; no devices are opened."""
++
++import threading
++from typing import Any, NoReturn
++
++import pytest
++
++from i2rt.utils.control_loop import ControlLoopTimeout, ManagedControlLoop
++
++
++def test_ready_means_a_completed_iteration_and_stop_wakes_the_selected_loop() -> None:
++    entered, complete, stopped = threading.Event(), threading.Event(), threading.Event()
++    loop = ManagedControlLoop(name="test-control", period_s=0.004)
++
++    def run() -> None:
++        entered.set()
++        assert complete.wait(2)
++        loop.mark_ready()
++        loop.wait(100)
++        stopped.set()
++
++    startup = threading.Thread(target=loop.start, args=(run,))
++    startup.start()
++    assert entered.wait(2)
++    assert startup.is_alive() and not loop.ready.is_set()
++    complete.set()
++    startup.join(2)
++    assert not startup.is_alive()
++    loop.stop()
++    loop.stop()
++    assert stopped.is_set() and not loop.thread.is_alive()
++
++
++@pytest.mark.parametrize("ready_first", [False, True])
++def test_original_fault_is_retained_before_and_after_readiness(ready_first: bool) -> None:
++    original = OSError(5, "selected USB endpoint disconnected")
++    fail = threading.Event()
++    loop = ManagedControlLoop(name="test-control", period_s=0.004)
++
++    def run() -> NoReturn:
++        if ready_first:
++            loop.mark_ready()
++            assert fail.wait(2)
++        raise original
++
++    if ready_first:
++        loop.start(run)
++        fail.set()
++        loop.thread.join(2)
++    else:
++        with pytest.raises(OSError) as caught:
++            loop.start(run)
++        assert caught.value is original
++    assert loop.ready.is_set() is ready_first and loop.fault is original
++    with pytest.raises(OSError) as caught:
++        loop.raise_if_failed()
++    assert caught.value is original
++    loop.stop()
++    with pytest.raises(OSError) as caught:
++        loop.start(run)
++    assert caught.value is original
++
++
++def test_a_blocked_writer_retains_its_thread_until_drain_is_confirmed() -> None:
++    blocked, release = threading.Event(), threading.Event()
++    loop = ManagedControlLoop(name="blocked-writer", period_s=0.004, drain_timeout_s=0.01)
++
++    def run() -> None:
++        loop.mark_ready()
++        blocked.set()
++        assert release.wait(2)
++
++    loop.start(run)
++    assert blocked.is_set()
++    try:
++        with pytest.raises(ControlLoopTimeout) as caught:
++            loop.stop()
++        assert loop.thread.is_alive()
++        assert caught.value.as_dict()["context"] == {
++            "loop": "blocked-writer",
++            "operation": "drain",
++            "timeout_s": 0.01,
++        }
++    finally:
++        release.set()
++        loop.stop()
++    assert not loop.thread.is_alive()
++
++
++def test_startup_timeout_preserves_original_and_uncertain_cleanup() -> None:
++    release = threading.Event()
++    loop = ManagedControlLoop(
++        name="blocked-start",
++        period_s=0.004,
++        startup_timeout_s=0.01,
++        drain_timeout_s=0.01,
++    )
++
++    def run() -> None:
++        assert release.wait(2)
++
++    try:
++        with pytest.raises(ControlLoopTimeout) as caught:
++            loop.start(run)
++        assert caught.value.operation == "startup"
++        assert caught.value.control_cleanup_error["context"]["operation"] == "drain"
++        assert loop.thread.is_alive()
++    finally:
++        release.set()
++        loop.stop()
++
++
++def test_injected_wait_receives_stop_and_exact_timing_and_preserves_its_fault() -> None:
++    original = OSError("native scheduler refused the calling-thread policy")
++    calls = []
++    loop: ManagedControlLoop
++
++    def wait(stop: threading.Event, timeout_s: float, *, period_s: float) -> NoReturn:
++        calls.append((stop, timeout_s, period_s))
++        raise original
++
++    loop = ManagedControlLoop(name="scheduled", period_s=0.004, wait_callback=wait)
++
++    def run() -> None:
++        loop.wait(0.0005)
++
++    with pytest.raises(OSError) as caught:
++        loop.start(run)
++    assert caught.value is original
++    assert calls == [(loop.stop_event, 0.0005, 0.004)]
++    loop.stop()
++
++
++def test_stopping_one_loop_does_not_stop_its_sibling() -> None:
++    left, right = [ManagedControlLoop(name=name, period_s=0.004) for name in ("left", "right")]
++
++    def run(loop: ManagedControlLoop) -> None:
++        loop.mark_ready()
++        loop.wait(100)
++
++    try:
++        left.start(lambda: run(left))
++        right.start(lambda: run(right))
++        left.stop()
++        assert not left.thread.is_alive() and right.thread.is_alive()
++        assert not right.stop_event.is_set()
++    finally:
++        left.stop()
++        right.stop()
++
++
++@pytest.mark.parametrize("setting", ["period_s", "startup_timeout_s", "drain_timeout_s"])
++@pytest.mark.parametrize("value", [0.0, -0.1, float("nan"), float("inf"), True])
++def test_invalid_loop_budgets_fail_before_a_thread_starts(setting: str, value: Any) -> None:
++    options = {"name": "invalid", "period_s": 0.004, setting: value}
++    with pytest.raises(ValueError):
++        ManagedControlLoop(**options)
+diff --git a/tests/test_control_lifecycle.py b/tests/test_control_lifecycle.py
+new file mode 100644
+index 0000000..03b7120
+--- /dev/null
++++ b/tests/test_control_lifecycle.py
+@@ -0,0 +1,179 @@
++"""Actual chain/server lifecycle with transport doubles; no hardware access."""
++
++import threading
++from types import SimpleNamespace
++from typing import Any, NoReturn
++
++import numpy as np
++import pytest
++
++from i2rt.motor_drivers.dm_driver import DMChainCanInterface
++from i2rt.motor_drivers.utils import MotorType
++from i2rt.robots import get_robot
++from i2rt.robots.motor_chain_robot import MotorChainRobot
++from i2rt.utils.control_loop import ControlLoopTimeout
++
++
++class MotorInterface:
++    def __init__(self) -> None:
++        self.commands: list[dict] = []
++        self.closed = 0
++        self.fault: BaseException | None = None
++
++    def _drain_bus(self, **kwargs: Any) -> int:
++        return 0
++
++    def motor_on(self, motor_id: int, motor_type: str) -> SimpleNamespace:
++        return SimpleNamespace(
++            id=motor_id,
++            error_code="0x1",
++            position=0.0,
++            velocity=0.0,
++            torque=0.0,
++            temperature_mos=25.0,
++            temperature_rotor=26.0,
++        )
++
++    def set_control(self, **kwargs: Any) -> SimpleNamespace:
++        if self.fault is not None:
++            raise self.fault
++        self.commands.append(kwargs.copy())
++        return self.motor_on(kwargs["motor_id"], kwargs["motor_type"])
++
++    def close(self) -> None:
++        self.closed += 1
++
++
++def chain(interface: MotorInterface, **kwargs: Any) -> DMChainCanInterface:
++    return DMChainCanInterface(
++        [[1, MotorType.DM4310]],
++        np.array([0.0]),
++        np.array([1.0]),
++        channel="selected-usb",
++        motor_interface_factory=lambda **options: interface,
++        **kwargs,
++    )
++
++
++def test_chain_close_drains_before_release_and_preserves_motor_command_values() -> None:
++    interface = MotorInterface()
++    waiting = threading.Event()
++    calls = []
++
++    def wait(stop: threading.Event, timeout_s: float, *, period_s: float) -> bool:
++        calls.append((timeout_s, period_s))
++        waiting.set()
++        return stop.wait(100)
++
++    instance = chain(interface, control_wait=wait)
++    assert waiting.wait(2)
++    thread = instance._control_loop.thread
++    instance.close()
++    assert thread is not None and not thread.is_alive()
++    assert interface.closed == 1 and calls == [(0.0005, 0.004)]
++    with pytest.raises(RuntimeError, match="stopped control loop"):
++        instance.start_thread()
++    assert interface.commands == [
++        {
++            "motor_id": 1,
++            "motor_type": MotorType.DM4310,
++            "pos": 0.0,
++            "vel": 0.0,
++            "kp": 0.0,
++            "kd": 0.0,
++            "torque": 0.0,
++        }
++    ]
++
++
++def test_chain_unknown_drain_retains_bus_until_the_writer_actually_exits() -> None:
++    interface = MotorInterface()
++    blocked, release = threading.Event(), threading.Event()
++
++    def wait(stop: threading.Event, timeout_s: float, *, period_s: float) -> bool:
++        blocked.set()
++        assert release.wait(2)
++        return stop.is_set()
++
++    instance = chain(interface, control_wait=wait)
++    instance._control_loop.drain_timeout_s = 0.01
++    assert blocked.wait(2)
++    try:
++        with pytest.raises(ControlLoopTimeout):
++            instance.close()
++        assert interface.closed == 0 and instance._control_loop.thread.is_alive()
++    finally:
++        release.set()
++        instance.close()
++    assert interface.closed == 1
++
++
++def test_chain_startup_fault_closes_owned_transport_and_retains_the_original() -> None:
++    interface = MotorInterface()
++    original = OSError(5, "selected device rejected the first command")
++    interface.fault = original
++    with pytest.raises(OSError) as caught:
++        chain(interface)
++    assert caught.value is original and interface.closed == 1
++
++
++def test_robot_factory_failure_closes_the_started_chain(monkeypatch: pytest.MonkeyPatch) -> None:
++    interface = MotorInterface()
++    original = ValueError("joint state does not fit the selected model")
++    retained = []
++
++    def refuse(**kwargs: Any) -> NoReturn:
++        retained.append(kwargs["motor_chain"])
++        raise original
++
++    monkeypatch.setattr(get_robot, "MotorChainRobot", refuse)
++    try:
++        with pytest.raises(ValueError) as caught:
++            get_robot.get_yam_robot(
++                channel="selected-usb",
++                gripper_limits_override=np.array([0.0, 1.0]),
++                motor_interface_factory=lambda **kwargs: interface,
++            )
++        assert caught.value is original and interface.closed == 1
++        assert not retained[0]._control_loop.thread.is_alive()
++    finally:
++        for instance in retained:
++            instance.stop_control_loop()
++
++
++def test_server_wait_fault_reaches_observations_and_commands_with_exact_identity() -> None:
++    interface = MotorInterface()
++    instance = chain(interface)
++    entered, fail = threading.Event(), threading.Event()
++    original = OSError(5, "calling-thread policy could not be restored")
++
++    def wait(stop: threading.Event, timeout_s: float, *, period_s: float) -> NoReturn:
++        assert timeout_s == period_s == 0.001
++        entered.set()
++        assert fail.wait(2)
++        raise original
++
++    robot = MotorChainRobot(
++        instance,
++        use_gravity_comp=False,
++        joint_limits=np.array([[-1.0, 1.0]]),
++        control_wait=wait,
++    )
++    try:
++        assert entered.wait(2)
++        fail.set()
++        robot._server_thread.join(2)
++        assert robot.control_fault is original
++        for operation in (
++            robot.get_joint_pos,
++            robot.get_observations,
++            lambda: robot.command_joint_pos(np.array([0.1])),
++            lambda: robot.command_joint_state({"pos": np.array([0.1]), "vel": np.array([0.0])}),
++        ):
++            with pytest.raises(OSError) as caught:
++                operation()
++            assert caught.value is original
++    finally:
++        fail.set()
++        robot.close()
++    assert interface.closed == 1 and not instance._control_loop.thread.is_alive()

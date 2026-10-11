@@ -61,6 +61,7 @@ from ..cameras.base import _depth_preview_rgb
 from ..descriptors import Camera as CameraDescription
 from ..descriptors import FrameTransform, Intrinsics, Robot
 from ..runtime import FaultCode, GripperForce, RuntimeFault
+from ..scheduling import periodic_wait
 
 __all__ = [
     "CONSOLE_THREAD_NAME",
@@ -2024,7 +2025,10 @@ class RobotPump(threading.Thread):
     caller's thread is elsewhere — blocked inside ``an application run``, or
     sitting in a monitor-only session with no rollout loop at all. ``stop()``
     joins. A delayed tick resumes the declared cadence without replaying missed
-    ticks against a newer command; simulated time may lag under load."""
+    ticks against a newer command; simulated time may lag under load. A terminal
+    publishing/wait fault remains in ``fault`` and is sent to ``on_fault`` when
+    provided. It is distinct from an individual arm's independently handled fault.
+    """
 
     def __init__(
         self,
@@ -2032,6 +2036,7 @@ class RobotPump(threading.Thread):
         rate_hz: float,
         *,
         name: str = "waddle-robot-pump",
+        on_fault: Callable[[Exception], None] | None = None,
     ) -> None:
         super().__init__(name=name, daemon=True)
         if rate_hz <= 0:
@@ -2041,19 +2046,26 @@ class RobotPump(threading.Thread):
         # NOT `_stop`: threading.Thread already owns that name internally, and
         # shadowing it breaks `join()`.
         self._stopping = threading.Event()
+        self.fault: Exception | None = None
+        self._on_fault = on_fault
 
     def run(self) -> None:
         deadline = time.monotonic()
-        while not self._stopping.is_set():
-            self._tick(self._period)
-            deadline += self._period
-            now = time.monotonic()
-            if deadline < now:
-                # A new target must not be integrated over historical ticks
-                # missed while planning/rendering held up this thread. Resume
-                # the declared cadence instead of bursting to repay time debt.
-                deadline = now + self._period
-            self._stopping.wait(max(0.0, deadline - now))
+        try:
+            while not self._stopping.is_set():
+                self._tick(self._period)
+                deadline += self._period
+                now = time.monotonic()
+                if deadline < now:
+                    # Resume cadence without replaying historical commands.
+                    deadline = now + self._period
+                periodic_wait(
+                    self._stopping, max(0.0, deadline - now), period_s=self._period
+                )
+        except Exception as error:  # noqa: BLE001 -- retain publishing/timing faults
+            self.fault = error
+            if self._on_fault is not None:
+                self._on_fault(error)
 
     def stop(self, timeout: float = 5.0) -> None:
         self._stopping.set()
@@ -2186,7 +2198,7 @@ class CameraPump(threading.Thread):
                     # missed slots after slow capture/publish instead of busy
                     # rendering to catch up and starving shared physics/control.
                     deadline += (math.floor((now - deadline) / period) + 1) * period
-                self._stopping.wait(max(0.0, deadline - now))
+                periodic_wait(self._stopping, max(0.0, deadline - now), period_s=period)
         except Exception as exc:  # noqa: BLE001 — vendor capture can throw anything
             if not self._stopping.is_set():
                 self._report(
@@ -2369,6 +2381,7 @@ class Rig:
     build_tick: (
         Callable[[object, Mapping[str, Arm]], Callable[[float], None]] | None
     ) = None
+    on_pump_fault: Callable[[Exception], None] | None = None
     _camera_samples: _LatestCameraSamples = field(
         default_factory=_LatestCameraSamples, init=False, repr=False, compare=False
     )
@@ -2386,6 +2399,8 @@ class Rig:
             raise TypeError("Rig.build_cameras must be callable or None")
         if self.build_tick is not None and not callable(self.build_tick):
             raise TypeError("Rig.build_tick must be callable or None")
+        if self.on_pump_fault is not None and not callable(self.on_pump_fault):
+            raise TypeError("Rig.on_pump_fault must be callable or None")
 
     def robot(self) -> Robot:
         """The declaration this rig registers — the same object a vendor
@@ -2512,7 +2527,16 @@ class Rig:
             if self.build_tick is None
             else self.build_tick(session, arms)
         )
-        return RobotPump(tick, self.rate_hz)
+
+        def report_fault(error):
+            if self.on_pump_fault is not None:
+                self.on_pump_fault(error)
+            else:
+                self.report(
+                    f"robot feedback pump stopped: {RuntimeFault.from_exception(error).as_dict()}"
+                )
+
+        return RobotPump(tick, self.rate_hz, on_fault=report_fault)
 
     def session(
         self,

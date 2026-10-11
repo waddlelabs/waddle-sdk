@@ -38,3 +38,11 @@ features = ["pyo3/extension-module", "grpc", "livekit"]
 # Same reason as the default wheel's (see `sdk/pyproject.toml`): keep dev-run
 # bytecode out, so a wheel is a function of the commit and nothing else.
 exclude = ["python/**/__pycache__/**"]
+
+# ScreenCaptureKit requires macOS 12.3, while modern wheel tags can express
+# only whole macOS releases. Use the first fully compatible major release.
+[tool.maturin.target.aarch64-apple-darwin]
+macos-deployment-target = "13.0"
+
+[tool.maturin.target.x86_64-apple-darwin]
+macos-deployment-target = "13.0"

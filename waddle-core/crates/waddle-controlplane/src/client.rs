@@ -20,7 +20,9 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use parking_lot::Mutex;
+use waddle_ingest::SessionClock;
 use waddle_types::pb::v0 as pb;
+use waddle_types::time::Clock;
 
 use crate::backoff::Backoff;
 use crate::buffer::OfflineBuffer;
@@ -78,6 +80,15 @@ pub struct ControlPlaneClient {
 
 impl ControlPlaneClient {
     pub fn spawn(transport: Arc<dyn ControlTransport>, config: ClientConfig) -> Self {
+        Self::spawn_with_clock(transport, config, Arc::new(SessionClock::capture()))
+    }
+
+    /// Share the owning session's monotonic clock for reconnect deadlines.
+    pub fn spawn_with_clock(
+        transport: Arc<dyn ControlTransport>,
+        config: ClientConfig,
+        clock: Arc<dyn Clock>,
+    ) -> Self {
         let (cmd_tx, cmd_rx) = std::sync::mpsc::channel::<ClientMsg>();
         let (events_tx, events_rx) = std::sync::mpsc::channel::<PlaneEvent>();
         let shutdown = Arc::new(AtomicBool::new(false));
@@ -85,7 +96,16 @@ impl ControlPlaneClient {
 
         let thread = std::thread::Builder::new()
             .name("waddle-controlplane".into())
-            .spawn(move || run(transport, config, &cmd_rx, &events_tx, &shutdown_flag))
+            .spawn(move || {
+                run(
+                    transport,
+                    config,
+                    &cmd_rx,
+                    &events_tx,
+                    &shutdown_flag,
+                    clock.as_ref(),
+                )
+            })
             .expect("spawn control-plane client");
 
         Self {
@@ -133,6 +153,7 @@ fn run(
     cmd_rx: &Receiver<ClientMsg>,
     events_tx: &Sender<PlaneEvent>,
     shutdown: &AtomicBool,
+    clock: &dyn Clock,
 ) {
     let mut buffer: OfflineBuffer<ClientMsg> = OfflineBuffer::new(config.buffer_capacity);
     let mut attempt: u32 = 0;
@@ -154,7 +175,7 @@ fn run(
                 let _ = events_tx.send(PlaneEvent::Disconnected);
                 let delay = config.backoff.delay_ns(attempt);
                 attempt = attempt.saturating_add(1);
-                backoff_draining(delay, shutdown, cmd_rx, &mut buffer, events_tx);
+                backoff_draining(delay, shutdown, cmd_rx, &mut buffer, events_tx, clock);
                 continue 'reconnect;
             }
         };
@@ -180,6 +201,7 @@ fn run(
                 cmd_rx,
                 &mut buffer,
                 events_tx,
+                clock,
             );
             continue 'reconnect;
         }
@@ -200,6 +222,7 @@ fn run(
                 cmd_rx,
                 &mut buffer,
                 events_tx,
+                clock,
             );
             continue 'reconnect;
         };
@@ -215,6 +238,7 @@ fn run(
                     cmd_rx,
                     &mut buffer,
                     events_tx,
+                    clock,
                 );
                 continue 'reconnect;
             }
@@ -240,6 +264,7 @@ fn run(
                 cmd_rx,
                 &mut buffer,
                 events_tx,
+                clock,
             );
             continue 'reconnect;
         }
@@ -254,6 +279,7 @@ fn run(
                 cmd_rx,
                 &mut buffer,
                 events_tx,
+                clock,
             );
             continue 'reconnect;
         }
@@ -321,7 +347,7 @@ fn run(
         // off, so nothing is lost out of order.
         let delay = config.backoff.delay_ns(attempt);
         attempt = attempt.saturating_add(1);
-        backoff_draining(delay, shutdown, cmd_rx, &mut buffer, events_tx);
+        backoff_draining(delay, shutdown, cmd_rx, &mut buffer, events_tx, clock);
     }
 }
 
@@ -343,18 +369,47 @@ fn backoff_draining(
     cmd_rx: &Receiver<ClientMsg>,
     buffer: &mut OfflineBuffer<ClientMsg>,
     events_tx: &Sender<PlaneEvent>,
+    clock: &dyn Clock,
+) {
+    backoff_draining_wait(
+        delay_ns,
+        shutdown,
+        cmd_rx,
+        buffer,
+        events_tx,
+        clock,
+        std::thread::sleep,
+    );
+}
+
+fn backoff_draining_wait(
+    delay_ns: i64,
+    shutdown: &AtomicBool,
+    cmd_rx: &Receiver<ClientMsg>,
+    buffer: &mut OfflineBuffer<ClientMsg>,
+    events_tx: &Sender<PlaneEvent>,
+    clock: &dyn Clock,
+    mut wait: impl FnMut(Duration),
 ) {
     let before = buffer.dropped();
-    let mut remaining = delay_ns.max(0) as u64;
+    let deadline = clock
+        .stamp_now()
+        .mono_ns()
+        .0
+        .saturating_add(delay_ns.max(0));
     const SLICE: u64 = 5_000_000; // 5 ms
     loop {
         buffer_pending(cmd_rx, buffer);
+        let remaining = deadline
+            .saturating_sub(clock.stamp_now().mono_ns().0)
+            .max(0) as u64;
         if remaining == 0 || shutdown.load(Ordering::SeqCst) {
             break;
         }
         let step = remaining.min(SLICE);
-        std::thread::sleep(Duration::from_nanos(step));
-        remaining -= step;
+        // Coalesced/late wakeups count as elapsed backoff, never additional
+        // nominal slices. Buffering and shutdown checks remain at each wakeup.
+        wait(Duration::from_nanos(step));
     }
     let dropped = buffer.dropped() - before;
     if dropped > 0 {
@@ -414,10 +469,11 @@ fn backoff_after_disconnect(
     cmd_rx: &Receiver<ClientMsg>,
     buffer: &mut OfflineBuffer<ClientMsg>,
     events_tx: &Sender<PlaneEvent>,
+    clock: &dyn Clock,
 ) {
     let delay = config.backoff.delay_ns(*attempt);
     *attempt = attempt.saturating_add(1);
-    backoff_draining(delay, shutdown, cmd_rx, buffer, events_tx);
+    backoff_draining(delay, shutdown, cmd_rx, buffer, events_tx, clock);
 }
 
 fn report_overflow(before: u64, buffer: &OfflineBuffer<ClientMsg>, events_tx: &Sender<PlaneEvent>) {
@@ -457,6 +513,45 @@ mod tests {
     use super::*;
     use crate::transport::InMemoryTransport;
     use parking_lot::Mutex;
+
+    #[test]
+    fn late_wakeup_counts_elapsed_backoff_and_still_drains_in_order() {
+        let clock = waddle_ingest::FakeClock::default();
+        let (commands, received) = std::sync::mpsc::channel();
+        let (events, _) = std::sync::mpsc::channel();
+        let first = ClientMsg::Observation(pb::ObservationUpdate {
+            t_ns: 41,
+            ..Default::default()
+        });
+        let second = ClientMsg::Observation(pb::ObservationUpdate {
+            t_ns: 42,
+            ..Default::default()
+        });
+        commands.send(first.clone()).unwrap();
+        let mut buffer = OfflineBuffer::new(2);
+        let shutdown = AtomicBool::new(false);
+        let mut waits = 0;
+        backoff_draining_wait(
+            100_000_000,
+            &shutdown,
+            &received,
+            &mut buffer,
+            &events,
+            &clock,
+            |requested| {
+                assert_eq!(requested, Duration::from_millis(5));
+                waits += 1;
+                commands
+                    .send(ClientMsg::Heartbeat(pb::HeartbeatPing::default()))
+                    .unwrap();
+                commands.send(second.clone()).unwrap();
+                // The host resumed this 5 ms wait after the entire backoff.
+                clock.advance(200_000_000);
+            },
+        );
+        assert_eq!(waits, 1);
+        assert_eq!(buffer.drain().collect::<Vec<_>>(), vec![first, second]);
+    }
 
     fn test_config() -> ClientConfig {
         let mut cfg = ClientConfig::new(pb::RegisterRequest {

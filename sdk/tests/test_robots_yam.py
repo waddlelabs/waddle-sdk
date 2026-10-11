@@ -923,6 +923,58 @@ def test_live_driver_refuses_a_stopped_vendor_server(vendor):
         driver.read()
 
 
+@pytest.mark.parametrize("source", ["server", "writer"])
+@pytest.mark.parametrize("operation", ["read", "write", "write_position_velocity"])
+def test_retained_control_fault_precedes_generic_stopped_evidence(
+    vendor, source, operation
+):
+    driver = _live(vendor)
+    robot = vendor.robots[0]
+    original = OSError(5, "selected transport cannot restore its thread policy")
+    robot._server_thread = types.SimpleNamespace(is_alive=lambda: False)
+    robot.motor_chain = types.SimpleNamespace(running=False, control_fault=None)
+    if source == "server":
+        robot.control_fault = original
+    else:
+        robot.motor_chain.control_fault = original
+    target = np.array([0.1] * yam.ARM_JOINT_COUNT + [0.5])
+
+    with pytest.raises(OSError) as caught:
+        if operation == "read":
+            driver.read()
+        elif operation == "write":
+            driver.write(target)
+        else:
+            driver.write_position_velocity(target, np.zeros(yam.JOINT_COUNT))
+
+    assert caught.value is original
+    assert not robot.commands and not robot.state_commands
+
+
+@pytest.mark.parametrize("failed_drain", [False, True])
+def test_explicit_control_drain_precedes_transport_close(vendor, failed_drain):
+    driver = _live(vendor)
+    robot = vendor.robots[0]
+    calls = []
+    original = TimeoutError("selected CAN writer is still inside an I/O operation")
+
+    def stop_writer():
+        calls.append("writer")
+        if failed_drain:
+            raise original
+
+    robot.stop_control_loop = lambda: calls.append("server")
+    robot.motor_chain = types.SimpleNamespace(stop_control_loop=stop_writer)
+    robot.close = lambda: calls.append("transport")
+    if failed_drain:
+        with pytest.raises(TimeoutError) as caught:
+            driver.close()
+        assert caught.value is original and calls == ["server", "writer"]
+    else:
+        driver.close()
+        assert calls == ["server", "writer", "transport"]
+
+
 @pytest.mark.parametrize("operation", ["read", "write", "write_position_velocity"])
 def test_live_driver_refuses_an_unchanged_can_feedback_cache(
     vendor, monkeypatch, operation

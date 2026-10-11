@@ -400,13 +400,6 @@ jobs:
         with:
           python-version: "3.10"
 
-      # webrtc-sys links ScreenCaptureKit, whose honest deployment floor is
-      # macOS 12.3. The wheel tag must not claim compatibility below it.
-      - name: Set the macOS deployment target
-        if: startsWith(matrix.platform.name, 'macos-')
-        shell: bash
-        run: echo "MACOSX_DEPLOYMENT_TARGET=12.3" >> "$GITHUB_ENV"
-
       # LiveKit's published Windows libwebrtc archive is built with the
       # static MSVC runtime (/MT). Rust and cc otherwise select the dynamic
       # runtime (/MD), which the linker rejects as an ABI mismatch. Apply the

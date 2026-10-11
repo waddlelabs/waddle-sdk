@@ -19,7 +19,7 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{Sender, sync_channel};
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
@@ -101,6 +101,8 @@ fn reset_progress_done_completes_retake_successor_with_no_window() {
     let successor_for_script = successor_id.clone();
     let sent_progress = Arc::new(AtomicBool::new(false));
     let sent_for_script = sent_progress.clone();
+    let (release_done, wait_for_done) = sync_channel(0);
+    let wait_for_done = Mutex::new(wait_for_done);
 
     // The script watches the gate stream for the successor's OWN RESETTING
     // transition (its born-claimed `EpisodeOpen` emission) and then pushes
@@ -132,18 +134,22 @@ fn reset_progress_done_completes_retake_successor_with_no_window() {
         if !is_successor || sent_for_script.swap(true, Ordering::SeqCst) {
             return;
         }
-        // Progress before DONE must not transition anything. A deliberate
-        // gap before DONE (this handler runs on the transport's own server
-        // thread, never a runtime thread) gives the test a real window to
-        // observe the EXECUTING phase land on the mirror before DONE
-        // supersedes it — back-to-back sends would race the test's poll.
+        // Hold DONE until the test has observed EXECUTING and checked the
+        // unchanged episode phase. The transport server owns this wait;
+        // no runtime thread is blocked and no sleep length defines the window.
         let _ = tx.send(ServerMsg::ResetProgress(pb::ResetProgress {
             phase: pb::ResetPhase::Executing as i32,
             strategy: "auto-reset".into(),
             detail: "planning".into(),
             result: None,
         }));
-        std::thread::sleep(Duration::from_millis(150));
+        if wait_for_done
+            .lock()
+            .recv_timeout(Duration::from_secs(5))
+            .is_err()
+        {
+            return;
+        }
         let _ = tx.send(ServerMsg::ResetProgress(pb::ResetProgress {
             phase: pb::ResetPhase::Done as i32,
             strategy: "auto-reset".into(),
@@ -220,13 +226,13 @@ fn reset_progress_done_completes_retake_successor_with_no_window() {
     wait_for(&session, |s| {
         s.reset_progress.as_ref().map(|p| p.phase) == Some(ResetProgressPhase::Executing)
     });
-    std::thread::sleep(Duration::from_millis(50));
     assert!(
         matches!(session.status().episode_state, Some(Phase::Resetting)),
         "progress before DONE must not transition anything"
     );
 
     // DONE completes it exactly like the inline/pump paths would.
+    release_done.send(()).unwrap();
     wait_for(&session, |s| {
         s.episode_id.as_ref() == Some(&successor) && matches!(s.episode_state, Some(Phase::Ready))
     });

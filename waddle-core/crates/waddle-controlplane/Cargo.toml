@@ -25,6 +25,7 @@ tonic-transport = [
 
 [dependencies]
 waddle-types = { workspace = true }
+waddle-ingest = { workspace = true }
 waddle-fsm = { workspace = true }
 thiserror = { workspace = true }
 parking_lot = { workspace = true }

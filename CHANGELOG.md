@@ -11,6 +11,20 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+### Changed
+
+- Pin build toolchains to Rust 1.98.1 for the upstream Mach-O binary-alignment
+  correction. Verify real media wheel imports and unavailable-service startup in
+  CI. Preserve broken companion import faults on explicit media requests instead
+  of reporting only that media was not compiled; optional absence stays usable.
+- Set media wheel deployment floors in both Darwin targets' source configuration
+  to macOS 13.0, covering ordinary builds and CI without an external release-only
+  setting. Whole-release wheel tags cannot accurately represent ScreenCaptureKit's
+  12.3 minimum; check the installed companion's actual wheel tags.
+
+- Extend SDK/core CI to native arm64 macOS 15 while retaining Ubuntu. Exercise
+  optional simulation/USB-CAN software behavior without activating live hardware.
+
 - Updated both Python wheel projects and the exact media-companion pin to version 0.1.12.
 
 - Simulated worlds declare `supports_gripper_force` (true for MuJoCo worlds). A
@@ -54,6 +68,26 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Add an optional classic gs_usb transport candidate with exact-device selection,
+  bounded I/O/queueing, nonblocking receive, terminal fault fencing and scoped
+  cleanup. Include a source-pinned I2RT transport-injection patch and software
+  qualification tests. Hardware qualification and YAM activation remain separate.
+  The vendor candidate also retains original control-thread faults, confirms
+  first-iteration readiness, accepts a cadence-wait provider and drains before
+  transport release. YAM honors retained faults and explicit bounded drains while
+  preserving compatibility with the pristine vendor.
+
+- Add a scoped periodic-thread scheduling request for macOS, restoring the prior
+  Mach policy on normal/exceptional exit and leaving other platforms unchanged.
+  Keep scheduling failures structured and preserve caller timing supervision.
+  Robot/camera/inspection pumps request cadence only while waiting. Preserve
+  shared publishing faults through site events/observations while individual arm
+  failures retain their existing independent behavior.
+
+- Discover macOS USB-CAN, serial and RealSense evidence through IORegistry without
+  opening drivers. Preserve the distinction between raw USB serial evidence and
+  a librealsense-resolved camera selector; Linux continues to use sysfs.
+
 - Reference simulation parts accept explicit scalar or ordered arm-joint
   `max_joint_position_error_rad` bounds through ordinary admission and support
   facts. Omission preserves speed/rate admission and jaw bounds remain separate.
@@ -72,6 +106,21 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   objects and cameras; source compilation opens no site or physical device.
 
 ### Fixed
+
+- Retain LiveKit/WebRTC Objective-C categories in final macOS targets and media
+  wheels. Native simulation acceptance selects CGL on macOS and EGL on Linux,
+  including isolated worker processes.
+
+- Remove a timing race from malformed teleop acceptance: a FIFO packet barrier
+  proves consumption, and both caller and bypass dispatches reject invalid widths
+  without relying on nominal sleep duration to keep the caller healthy.
+  Reset-progress acceptance similarly holds DONE on a transport-server channel
+  until intermediate-state inspection completes.
+
+- Count actual elapsed monotonic time during control-plane reconnect backoff.
+  Late/coalesced wakeups no longer multiply nominal sleep slices. Share the
+  owning session's ingest clock and preserve buffering, registration and authority
+  fences; keep the existing reconnect delay values.
 
 - Convert known arm velocity hints using each loaded MuJoCo position actuator's
   compiled KD/KP ratio, including different imported gains across parts. Reject

@@ -37,6 +37,11 @@ Test a capture blocked in vendor I/O while another thread calls `close()`. Close
 
 Use `CameraInspectionSpec.from_candidate()` only when discovery identified an exact camera driver. Entering `inspect_cameras()` opens cameras but no robot parts, transport, control path, media publication, or recording. Its latest-only frames are appropriate for local camera identification, not rollout data capture.
 
+macOS IORegistry discovery reports raw RealSense USB evidence without an executable
+camera selector. Only non-streaming vendor enumeration can resolve that selector;
+neither USB presence nor successful native-binding import proves stream access or
+aligned metric RGB-D. Preserve the device's exact access/capture errors.
+
 Never put motion, robot authority, or owner-envelope logic in a camera adapter.
 
 A camera rendered by a shared simulation world names `world` instead of `driver`. The

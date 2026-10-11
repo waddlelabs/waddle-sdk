@@ -9,8 +9,8 @@ import numpy as np
 import pytest
 import yaml
 from test_site_api import _write_site
-from waddle_sdk import load_site
-from waddle_sdk.robots import mock
+from waddle_sdk import load_site, scheduling
+from waddle_sdk.robots import base, mock
 from waddle_sdk.runtime import FaultCode, JointPositionCommand, RuntimeFault
 
 DRIVERS = {}
@@ -153,3 +153,30 @@ def test_transient_pump_fault_remains_structured_after_read_recovery(
         faults = [event for event in sdk.events() if event.kind == "robot.part_fault"]
         assert len(faults) == 1
         assert faults[0].data == {"part": "left", "fault": origin.as_dict()}
+
+
+def test_shared_publishing_failure_cannot_be_stamped_as_fresh_feedback(
+    site_path, monkeypatch
+):
+    with load_site(site_path).open() as sdk:
+        managed = sdk._managed
+        managed.pump.stop()
+        original = scheduling.SchedulingError("thread_policy_set", 5)
+
+        def refused(*args, **kwargs):
+            raise original
+
+        monkeypatch.setattr(base, "periodic_wait", refused)
+        managed.pump = managed._rig.pump(managed.core, managed.arms)
+        managed.pump.start()
+        managed.pump.join(2)
+        assert not managed.pump.is_alive() and managed.pump.fault is original
+        observation = sdk.observe_parts()
+        assert not observation.parts and set(observation.faults) == {"left", "right"}
+        for error in observation.faults.values():
+            assert error.__cause__ is original
+            assert error.as_dict()["causes"][0]["code"] == "runtime.scheduling_failed"
+            assert error.as_dict()["causes"][0]["context"]["kernel_return"] == 5
+        events = [row for row in sdk.events() if row.kind == "robot.part_fault"]
+        assert {row.data["part"] for row in events} == {"left", "right"}
+        sdk.hold("publishing failed; stop stays available")

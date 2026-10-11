@@ -113,6 +113,8 @@ def create_core_session(
     if media is not None and _testing:
         raise ValueError("media and _testing=True are mutually exclusive")
     if media is not None and "livekit" not in _native.FEATURES:
+        if _native._MEDIA_IMPORT_ERROR is not None:
+            raise _native._MEDIA_IMPORT_ERROR
         raise RuntimeError(
             "LiveKit media is not compiled into this core; install "
             "waddle-sdk[media]"

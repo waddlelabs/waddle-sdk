@@ -91,6 +91,116 @@ Methods must be thread-safe. Runtime-owned dispatch and pump threads can call th
 driver concurrently with shutdown or observation. `close()` must be idempotent in
 practice even where the structural type does not express that property.
 
+## Periodic host scheduling
+
+An adapter's dedicated periodic thread may use
+`waddle_sdk.scheduling.periodic_thread(period_s=..., computation_s=...,
+constraint_s=...)` around its active loop. Values are seconds and must satisfy
+`0 < constraint/2 <= computation <= constraint <= period`. On macOS this requests
+Mach time-constraint scheduling for the calling thread, restores its original
+policy (including nested requests) on exit and releases the acquired Mach port.
+Other platforms retain their current policy. `SchedulingError.as_dict()` preserves
+the original operation and kernel return under `runtime.scheduling_failed`.
+
+Declare a budget appropriate to the measured work and keep unrelated planning off
+that thread. A request is not a timing guarantee: macOS may demote over-budget
+threads, and timers, hardware and Python execution still need measurement under
+load. Retain the adapter's existing stale-feedback, missed-deadline, cancellation
+and stop gates. Never extend those bounds to compensate for scheduling failures.
+The yielded mapping identifies the requested policy; it does not claim measured
+cadence, physical arrival or real-time qualification.
+
+`periodic_wait(event, timeout_s, period_s=...)` confines the request to the blocking
+wait and restores policy before capture, rendering or customer callbacks. The
+standard robot/camera pumps and camera-only inspection use it. Already-stopped
+and zero-duration waits return without requesting a policy. Other hosts retain
+their ordinary wait behavior; fresh feedback and measured deadlines still govern.
+
+`RobotPump.fault` retains a terminal publishing/wait exception. Its optional
+`on_fault(error)` callback receives that exact exception; `Rig.on_pump_fault` can
+connect it to an application fault channel. Normal site composition emits the
+original fault for every part served by that shared publisher and refuses to
+stamp their observations as fresh after it fails. This is a common publisher
+failure, distinct from one driver's ordinary part fault, which remains independent
+and does not stop siblings. Hold/e-stop remain available.
+
+## USB-CAN transport candidate
+
+`waddle-sdk[can-usb]` provides the optional
+`waddle_sdk.robots.usbcan.{UsbCanSelector,UsbCanBus,UsbCanFault}` transport.
+This is a software-tested qualification candidate. The YAM adapter does not yet
+select it, and `transport_evidence.qualified` is explicitly false. Installing the
+extra imports no bus and does not identify the attached robot.
+
+The selector requires a supported Candlelight VID/PID, exact serial number and
+current USB bus/address. A different serial at the declared location is refused
+before any control request. Opening claims interface zero and configures only the
+selected, single-channel adapter. It never resets USB, detaches a kernel driver,
+falls back to an enumeration index or reconfigures another adapter on shutdown.
+A usable libusb library is required; `libusb_library` can select its exact path.
+Distribution of that native dependency remains part of host qualification.
+
+The provider implements classic CAN only. It validates device bit-timing limits,
+uses finite control/read/write timeouts and stamps receives at host acquisition.
+It does not claim a hardware clock. `recv(0)` inspects only the bounded queue;
+positive submillisecond timeouts never become an infinite USB read. Sending keeps
+the original message intact and acknowledges USB submission, not CAN delivery or
+motor arrival. A positive send timeout is required because this synchronous USB
+provider cannot perform a genuine nonblocking write. Millisecond USB timeout
+rounding is explicit: an observed submission overrun is a terminal fault.
+
+USB access/disconnect failures, controller error frames, malformed frames and
+device/host overflow fence subsequent reads and writes. `UsbCanFault` retains the
+operation, selected device, original exception/cause, errno and backend code;
+the ordinary runtime fault wrapper preserves that chain. It deliberately does not
+inherit retryable `can.CanError`, so a vendor transaction cannot replace terminal
+transport evidence with a final generic motor timeout. Device error reporting is
+enabled when its firmware advertises that feature, and absence remains visible
+in `transport_evidence.berr_reporting`. This is not yet qualified fault parity.
+
+Shutdown wakes waiting receivers, drains the reader and in-flight write, then
+stops/releases the selected interface. An undrained operation retains the device
+and reports `hardware.usb_can_drain`; it does not release a live handle. Site locks
+and actual USB claim semantics remain relevant: direct vendor access or another
+site ID is outside the SDK's cooperative site lock. Multi-owner exclusion must be
+qualified before deployment.
+
+[The I2RT injection patch](patches/i2rt-570ef666-transport-injection.patch) applies
+to upstream commit `570ef66681ff12bd8298aba34084307cfecc9f05`. It adds optional
+keyword-only `get_yam_robot(..., motor_interface_factory=..., control_wait=...)`,
+`DMChainCanInterface(..., motor_interface_factory=..., control_wait=...)` and
+`DMSingleMotorCanInterface(..., bus_factory=...)` seams. Each factory returns a
+fresh owned interface/bus. The default SocketCAN path and original motor/gain/
+gripper code remain in the vendor; simulation ignores the injected transport/wait.
+Partial interface initialization and notifier failures still drain their bus and
+retain the primary exception plus cleanup diagnostics.
+
+The optional `control_wait(stop_event, timeout_s, *, period_s)` callback surrounds
+only the blocking delay; `waddle_sdk.scheduling.periodic_wait` supplies the native
+macOS policy. The server and CAN writer retain their original computation, motor
+recovery and command values. Control loops retain one thread and the original
+background exception. Startup waits for a completed first iteration rather than
+a fixed sleep; stop wakes cadence waits and bounds drain before transport close.
+A failed drain retains the selected handle and reports its original scoped timeout.
+Constructor/factory failures clean up started loops and owned interfaces, preserving
+the primary fault plus any cleanup uncertainty. Readiness proves software progress,
+not measured hardware timing or arrival.
+
+YAM consumes optional retained `control_fault` evidence before a generic stopped-
+thread observation, and explicit server/writer drain methods before closing the
+transport. The pristine vendor retains its existing compatibility path. The patch's
+software cases live in `tests/test_can_transport.py`, `tests/test_control_loop.py`
+and `tests/test_control_lifecycle.py`; SDK cases live in `sdk/tests/test_usbcan.py`
+and `sdk/tests/test_robots_yam.py`. These selections open no hardware.
+
+Apply and test the patch in a separate checkout of that exact upstream commit.
+Do not change an installed vendor tree or its `RECORD`/`direct_url.json` to hide
+source differences. The current YAM model-source provider deliberately requires
+the pristine vendor pin. A reviewed derived runtime artifact/provenance policy,
+complete dependencies, physical cadence under load, stop/fault behavior and
+multi-owner checks are still required before enabling USB-CAN in the YAM adapter.
+The patch is a shared transport seam, not a separate macOS controller fork.
+
 ## Declaration and envelope must agree
 
 One facts source should produce the driver width/order, action declaration, `Arm`

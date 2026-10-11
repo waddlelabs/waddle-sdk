@@ -15,7 +15,7 @@ does not hide the rest of the machine.
 
 from __future__ import annotations
 
-import os
+import sys
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from importlib import import_module
@@ -120,7 +120,7 @@ def _realsense_vendor_candidates(
             product = ""
         rows.append(
             HardwareCandidate(
-                identifier=f"linux-camera:realsense:{serial}",
+                identifier=f"{sys.platform}-camera:realsense:{serial}",
                 kind="camera",
                 label=f"{name or 'Intel RealSense'} {serial}",
                 driver="waddle_sdk.cameras.realsense",
@@ -278,20 +278,34 @@ def discover_hardware(
 
     warnings: list[str] = []
     found: list[HardwareCandidate] = []
-    if os.name == "posix":
+    if sys.platform.startswith("linux") or sys.platform == "darwin":
         realsense: tuple[HardwareCandidate, ...] = ()
         if include_vendor_enumeration:
             try:
                 realsense = _realsense_vendor_candidates()
             except Exception as error:  # noqa: BLE001 -- optional vendor discovery
                 warnings.append(f"RealSense discovery failed ({type(error).__name__})")
-        found.extend(
-            _linux_candidates(
-                sys_root=Path(sys_root),
-                dev_root=Path(dev_root),
-                realsense_resolved=bool(realsense),
+        if sys.platform == "darwin":
+            from ._darwin_discovery import candidates
+
+            try:
+                found.extend(
+                    candidates(
+                        dev_root=Path(dev_root), realsense_resolved=bool(realsense)
+                    )
+                )
+            except Exception as error:  # noqa: BLE001 -- platform discovery is non-opening and isolated
+                warnings.append(
+                    f"macOS hardware discovery failed ({type(error).__name__})"
+                )
+        else:
+            found.extend(
+                _linux_candidates(
+                    sys_root=Path(sys_root),
+                    dev_root=Path(dev_root),
+                    realsense_resolved=bool(realsense),
+                )
             )
-        )
         found.extend(realsense)
 
     named_providers: list[tuple[str, HardwareDiscoveryProvider]] = [

@@ -2,8 +2,54 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from waddle_sdk import discovery
 from waddle_sdk.discovery import HardwareCandidate, discover_hardware
+
+
+@pytest.fixture(autouse=True)
+def linux_snapshot(monkeypatch):
+    monkeypatch.setattr(discovery.sys, "platform", "linux")
+
+
+def test_darwin_scan_uses_registry_without_turning_usb_evidence_into_driver_selectors(
+    tmp_path, monkeypatch
+):
+    from waddle_sdk import _darwin_discovery
+
+    monkeypatch.setattr(discovery.sys, "platform", "darwin")
+    registry = [
+        {
+            "IORegistryEntryID": 1,
+            "idVendor": 0x1D50,
+            "idProduct": 0x606F,
+            "USB Product Name": "CANable",
+            "USB Serial Number": "can-id",
+        },
+        {
+            "IORegistryEntryID": 2,
+            "idVendor": 0x8086,
+            "idProduct": 0x0B07,
+            "USB Product Name": "RealSense D435",
+            "USB Serial Number": "usb-evidence",
+        },
+    ]
+    monkeypatch.setattr(_darwin_discovery, "_usb_registry", lambda: registry)
+    (tmp_path / "cu.usbserial-fixture").touch()
+    report = discover_hardware(
+        include_plugins=False, include_vendor_enumeration=False, dev_root=tmp_path
+    )
+    by_id = {row.identifier: row for row in report.candidates}
+    can = by_id["darwin-usb-can:1"]
+    assert can.driver is None and can.metadata["transport"] == "gs_usb"
+    camera = by_id["darwin-camera:realsense:2"]
+    assert camera.driver is None and not camera.connection
+    assert camera.metadata["usb_serial_evidence"] == "usb-evidence"
+    assert camera.confidence == "possible"
+    assert by_id["darwin-serial:cu.usbserial-fixture"].connection["device"] == str(
+        tmp_path / "cu.usbserial-fixture"
+    )
+    assert not report.warnings
 
 
 def _write(path: Path, value: str) -> None:

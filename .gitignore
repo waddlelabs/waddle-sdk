@@ -23,6 +23,7 @@ __pycache__/
 # Local scratch
 /tmp/
 *.log
+MUJOCO_LOG.TXT
 
 # maturin develop output (built extensions: the default core and the
 # media companion wheel's)

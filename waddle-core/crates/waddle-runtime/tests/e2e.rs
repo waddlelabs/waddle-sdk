@@ -721,8 +721,9 @@ fn mismatched_action_dims_are_dropped_with_one_fault_per_claim() {
 
     let seq = Arc::new(AtomicU32::new(1));
     // A Pose target flattens to 7 values; the declared BaseTwist space wants
-    // 6. Spam this well past a single 60-90 Hz packet to prove the fault
-    // dedupes to once per claim window.
+    // 6. Queue a burst to prove deduplication without making a wall-clock
+    // sleep keep the caller alive. The matching packet below is a FIFO
+    // barrier: its substitution proves intake consumed this entire burst.
     for _ in 0..20 {
         far.push(
             DataTopic::TeleopPose,
@@ -752,17 +753,21 @@ fn mismatched_action_dims_are_dropped_with_one_fault_per_claim() {
             },
         )
         .unwrap();
-        std::thread::sleep(Duration::from_millis(5));
     }
 
-    // None of the mismatched packets ever substitute; the loop only ever
-    // observes Hold.
+    // Malformed packets cannot dispatch through either the caller or the
+    // bypass pump. A delayed caller may legitimately see Noop while the
+    // existing stall supervision recovers; that is not a substitution.
     for _ in 0..10 {
         assert!(
-            matches!(ep.gate(&[0.0; 6], None, None), GateOutput::Hold),
+            matches!(
+                ep.gate(&[0.0; 6], None, None),
+                GateOutput::Hold | GateOutput::Noop { .. }
+            ),
             "a dims-mismatched teleop action must never be substituted"
         );
     }
+    assert!(send_log.lock().is_empty());
 
     // A matching packet still substitutes normally: validation doesn't
     // wedge the stream.
@@ -805,6 +810,14 @@ fn mismatched_action_dims_are_dropped_with_one_fault_per_claim() {
 
     ep.terminate(TerminalOutcome::Success, "done");
     session.shutdown();
+
+    assert!(
+        send_log
+            .lock()
+            .iter()
+            .all(|(_, values)| values.len() == 6 && values[0] == 3.0),
+        "the bypass pump must never dispatch a malformed action"
+    );
 
     // Exactly one Fault{VALIDATION_ERROR} for the whole claim window, no
     // matter how many mismatched packets arrived.
