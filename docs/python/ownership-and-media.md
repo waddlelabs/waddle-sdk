@@ -78,7 +78,7 @@ status across missing samples and transport reconnects. Consumers must not infer
 track identity or publication from camera observations.
 
 The native `Session::media_tracks()` owns these facts. The Python shim only
-serializes them; binding API version 6 requires rebuilding both the base and media
+serializes them; binding API version 8 requires rebuilding both the base and media
 extensions together. Runtime adapters without `MediaRuntimePort` remain valid:
 applications should disable only the media-dependent feature.
 
@@ -91,10 +91,15 @@ preserved without upscaling), `preview_fps` (finite positive rate ceiling), and
 `depth_preview=False` suppresses the colorized depth sibling and its capture-side
 colorization. It does not disable acquisition or change exact local RGB-D samples.
 `demand_driven=True` enables publisher dynacast and skips resize/color conversion
-while all sender layers are paused by the SFU. It also starts signaling on the
+while the room has no remote participants or all sender layers are paused by
+the SFU. The empty-room gate is independent of SFU pause timing and is cleared
+on disconnect/worker exit. It also starts signaling on the
 native media worker and retries failed initial connections without delaying
 session startup. Unavailable video drops publication attempts; it does not stop
-control, local capture or agent stills. The default settings preserve
+control, local capture or agent stills. `video_only=True` excludes media data topics and their teleoperation intake;
+video workers read shutdown state without locking the controller snapshot.
+Native media metadata lookup releases the Python interpreter lock. Frame
+admission stays short and bounded without an extra per-frame interpreter handoff. The default settings preserve
 ordinary full-size publication. For an occasional RGB monitor:
 
 ```python
@@ -103,7 +108,7 @@ from waddle_sdk import LiveKit
 media = LiveKit(
     url=authorized_url, token=authorized_token,
     preview_width=320, preview_fps=1.0, preview_max_kbps=128,
-    depth_preview=False, demand_driven=True,
+    depth_preview=False, demand_driven=True, video_only=True,
 )
 ```
 
@@ -111,10 +116,33 @@ The frame-timeline rate ceiling applies before media enqueue/encoding. There is
 one waiting frame per camera; newer samples replace older samples during congestion.
 Video publication and agent stills use separate native workers, with lower Linux
 scheduling priority. Source capture, full-size agent stills and gate commands retain
-their own paths. LiveKit publication waits have a deadline. Custom media transports
+their own paths. Previews capped at 2 fps or less poll idle video queues at 10 Hz,
+adding at most 100 ms of presentation/shutdown polling latency. LiveKit publication waits have a deadline. Custom media transports
 must still bound synchronous calls for orderly shutdown.
 
 These limits bound optional work; shared CPU, memory bandwidth and network still
 have a cost. Encoder bitrate excludes signaling and transport overhead, and multiplies
 by the number of camera tracks. Evaluate control timing on the configured host under
 viewing, recording and congestion before qualifying a deployment.
+
+## Separate camera publishers
+
+`waddle_sdk.media.PreviewPublisher(cameras, media)` consumes copied RGB8 samples
+in a separately owned presentation process. `cameras` maps original camera IDs to
+source `(width, height)` tuples; `media` must select bounded, demand-driven,
+RGB-only `video_only` publication. It creates no Site, run, camera driver, control
+transport or actuation callback. Construct it, call `publish_track(camera)`, then
+check `wants_frame(camera)` before calling `push_rgb(camera, bytes,
+session_ns=sample.session_ns)`. Keep original source timestamps; do not derive them
+from publication time. Demand-driven signaling starts asynchronously; initial
+`publish_track` calls can report that signaling is connecting. Retry publication
+on the same publisher with a bounded deadline outside the hardware owner, retaining
+the final native error if the deadline expires. Call `close()` during process drain.
+
+This API separates media ownership from hardware ownership. The caller must bound
+snapshot handoff, CPU/memory/network use and process lifetime. Never acquire a
+second camera or wait on encoding, signaling or a consumer from a control/capture
+thread. Construction and publication may wait for the bounded native signaling
+operation. Missing media builds refuse before dialing; binding API 9 requires
+matching rebuilt base/media extensions. This API alone does not qualify control
+timing or guarantee absence of contention on shared resources.

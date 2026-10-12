@@ -1057,7 +1057,8 @@ impl PySession {
     /// Native publication evidence; no media naming or availability inference in Python.
     fn media_tracks<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
         let out = PyList::empty(py);
-        for track in self.inner.media_tracks() {
+        let tracks = py.detach(|| self.inner.media_tracks());
+        for track in tracks {
             let row = PyDict::new(py);
             row.set_item("camera_id", track.camera_id)?;
             row.set_item("stream", track.stream)?;
@@ -1404,6 +1405,7 @@ impl PySession {
     media_preview_max_kbps=None,
     media_depth_preview=true,
     media_demand_driven=false,
+    media_video_only=false,
 ))]
 pub(crate) fn create_session(
     py: Python<'_>,
@@ -1443,6 +1445,7 @@ pub(crate) fn create_session(
     media_preview_max_kbps: Option<u32>,
     media_depth_preview: bool,
     media_demand_driven: bool,
+    media_video_only: bool,
 ) -> PyResult<PySession> {
     #[cfg(not(feature = "livekit"))]
     let _ = (
@@ -1451,6 +1454,7 @@ pub(crate) fn create_session(
         media_preview_max_kbps,
         media_depth_preview,
         media_demand_driven,
+        media_video_only,
     );
     let robot = parse_robot_json(robot_json)?;
     let cameras: Arc<BTreeMap<String, (u32, u32)>> = Arc::new(
@@ -1569,6 +1573,7 @@ pub(crate) fn create_session(
         config.preview_max_kbps = media_preview_max_kbps;
         config.depth_preview = media_depth_preview;
         config.demand_driven = media_demand_driven;
+        config.video_only = media_video_only;
         config
     });
 

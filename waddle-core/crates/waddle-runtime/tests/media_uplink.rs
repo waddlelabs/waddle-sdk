@@ -128,6 +128,42 @@ fn wait_until(mut pred: impl FnMut() -> bool, timeout: Duration) -> bool {
 
 // --- validation ------------------------------------------------------------
 
+struct VideoOnly(Arc<LoopbackMedia>);
+
+impl MediaPlane for VideoOnly {
+    fn supports_data_topics(&self) -> bool {
+        false
+    }
+    fn publish_track(&self, camera: &str) -> Result<TrackHandle, MediaError> {
+        self.0.publish_track(camera)
+    }
+    fn push_frame(&self, track: &TrackHandle, frame: EncodedFrame) -> Result<(), MediaError> {
+        self.0.push_frame(track, frame)
+    }
+    fn open_data_rx(&self, _: DataTopic) -> Result<DataRx, MediaError> {
+        panic!("presentation must never wire intervention intake")
+    }
+    fn open_data_tx(&self, _: DataTopic) -> Result<DataTx, MediaError> {
+        panic!("presentation must never wire data topics")
+    }
+}
+
+#[test]
+fn video_only_publication_requires_no_intervention_verbs_or_intake() {
+    let (media, far) = LoopbackMedia::new();
+    let session = Session::builder("video-only")
+        .robot(robot(vec![camera("front", None)]))
+        .media(Arc::new(VideoOnly(media)))
+        .build()
+        .expect("view-only publication needs no actuation callbacks");
+    session.publish_frame("front", frame_4x4(7)).unwrap();
+    assert!(wait_until(
+        || !far.frames().is_empty(),
+        Duration::from_secs(2)
+    ));
+    session.shutdown();
+}
+
 #[test]
 fn unknown_camera_errors() {
     let (media, _far) = LoopbackMedia::new();

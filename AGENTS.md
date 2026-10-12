@@ -30,8 +30,19 @@ exact source samples and agent stills. Hosted integrations can select RGB-only
 media plane exists. Native video and still workers are separate; video has
 latest-only pending frames and lower Linux priority. Demand-driven preview
 signaling starts/retries asynchronously without delaying session startup.
-Binding API 6 requires matching rebuilt
+An empty-room demand gate skips encoding independently of SFU layer-pause timing;
+disconnect and media-worker exit clear demand.
+Previews capped at <=2 fps use 10 Hz idle video polling; still/control rates stay independent.
+`video_only=True` removes data-topic/teleoperation intake. Video shutdown polls
+use an atomic lifecycle flag; media metadata releases the GIL. Keep bounded
+frame admission short, without an extra per-frame interpreter handoff. Binding API 9 requires matching rebuilt
 base/media extensions; see docs/python/ownership-and-media.md.
+
+`waddle_sdk.media.PreviewPublisher` is a camera-only public transport consumer for
+separately owned presentation processes. It accepts copied RGB and original sample
+timestamps, opens no Site/device/run/control path, and retains native demand/rate/
+bitrate bounds. Callers own bounded handoff, resource isolation and process drain;
+this API is not a control timing qualification.
 
 This file bootstraps every agent that works in this repository. Read it fully before
 touching anything.
@@ -1096,6 +1107,9 @@ commands above remain the pre-commit gate and the fastest way to diagnose a fail
   Reset-progress acceptance holds DONE on an explicit transport-server channel
   until EXECUTING and the unchanged episode phase have been observed; sleep
   lengths never define that intermediate-state window.
+  Reset-hook inheritance acceptance observes both the published post-reset phase
+  and actual hook entry before asserting its exact invocation count; the reducer
+  can publish the phase before the asynchronous reset pump enters the hook.
 - When you finish a work session, verify: workspace tests green, clippy/fmt clean,
   CHANGELOG.md updated, this file still accurate.
 

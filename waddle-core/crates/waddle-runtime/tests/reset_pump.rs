@@ -560,7 +560,10 @@ fn retake_successor_inherits_session_post_reset_hook() {
         at: waddle_types::MonoNs(4_000_000),
     });
     wait_for(&session, |s| {
-        matches!(s.episode_state, Some(Phase::PostReset))
+        // The reducer publishes this phase before the asynchronous reset pump
+        // enters the hook. Observe both facts before checking its exact count;
+        // the gated hook keeps the phase open until the test releases it.
+        matches!(s.episode_state, Some(Phase::PostReset)) && invoked.load(Ordering::SeqCst) > 0
     });
     assert_eq!(
         invoked.load(Ordering::SeqCst),

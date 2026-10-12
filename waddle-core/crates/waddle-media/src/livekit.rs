@@ -43,6 +43,7 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc as std_mpsc;
 use std::thread;
 use std::time::Duration;
@@ -84,6 +85,7 @@ pub struct LiveKitConfig {
     pub preview_max_kbps: Option<u32>,
     pub depth_preview: bool,
     pub demand_driven: bool,
+    pub video_only: bool,
 }
 
 impl LiveKitConfig {
@@ -98,6 +100,7 @@ impl LiveKitConfig {
             preview_max_kbps: None,
             depth_preview: true,
             demand_driven: false,
+            video_only: false,
         }
     }
 
@@ -172,6 +175,7 @@ struct TrackState {
     track: LocalVideoTrack,
     width: u32,
     height: u32,
+    last_video_ns: Option<i64>,
 }
 
 /// The real LiveKit [`MediaPlane`]. See the module docs for the topology.
@@ -183,6 +187,8 @@ pub struct LiveKitMedia {
     preview_fps: Option<f64>,
     depth_preview: bool,
     demand_driven: bool,
+    video_only: bool,
+    remote_peers: Arc<AtomicBool>,
     /// Published tracks; the stored [`NativeVideoSource`] is thread-safe,
     /// so `push_frame` captures directly without a worker round-trip.
     tracks: Mutex<HashMap<String, TrackState>>,
@@ -215,11 +221,14 @@ impl LiveKitMedia {
         let preview_fps = config.preview_fps;
         let depth_preview = config.depth_preview;
         let demand_driven = config.demand_driven;
+        let video_only = config.video_only;
+        let remote_peers = Arc::new(AtomicBool::new(false));
+        let worker_peers = remote_peers.clone();
         let (cmd_tx, cmd_rx) = tokio_mpsc::unbounded_channel();
         let (ready_tx, ready_rx) = std_mpsc::channel();
         let handle = thread::Builder::new()
             .name("waddle-media-livekit".to_owned())
-            .spawn(move || worker(config, cmd_rx, ready_tx))
+            .spawn(move || worker(config, cmd_rx, ready_tx, worker_peers))
             .map_err(|e| MediaError::Transport(format!("failed to spawn worker thread: {e}")))?;
         let connected = ready_rx
             .recv()
@@ -232,6 +241,8 @@ impl LiveKitMedia {
                 preview_fps,
                 depth_preview,
                 demand_driven,
+                video_only,
+                remote_peers,
                 tracks: Mutex::new(HashMap::new()),
                 worker: Mutex::new(Some(handle)),
             })),
@@ -261,6 +272,9 @@ impl Drop for LiveKitMedia {
 }
 
 impl MediaPlane for LiveKitMedia {
+    fn supports_data_topics(&self) -> bool {
+        !self.video_only
+    }
     fn max_video_fps(&self) -> Option<f64> {
         self.preview_fps
     }
@@ -301,6 +315,7 @@ impl MediaPlane for LiveKitMedia {
                     track,
                     width,
                     height,
+                    last_video_ns: None,
                 },
             );
         }
@@ -311,13 +326,14 @@ impl MediaPlane for LiveKitMedia {
 
     fn wants_video_frame(&self, track: &TrackHandle) -> bool {
         !self.demand_driven
-            || self.tracks.lock().get(&track.name).is_some_and(|state| {
-                state
-                    .track
-                    .publishing_layers()
-                    .iter()
-                    .any(|layer| layer.active)
-            })
+            || (self.remote_peers.load(Ordering::Acquire)
+                && self.tracks.lock().get(&track.name).is_some_and(|state| {
+                    state
+                        .track
+                        .publishing_layers()
+                        .iter()
+                        .any(|layer| layer.active)
+                }))
     }
 
     fn push_frame(&self, track: &TrackHandle, frame: EncodedFrame) -> Result<(), MediaError> {
@@ -325,21 +341,53 @@ impl MediaPlane for LiveKitMedia {
         // before the pixel work so concurrent pushes on other tracks don't
         // serialize behind this frame's conversion.
         let (source, w, h) = {
-            let tracks = self.tracks.lock();
+            let mut tracks = self.tracks.lock();
             let state = tracks
-                .get(&track.name)
+                .get_mut(&track.name)
                 .ok_or_else(|| MediaError::UnknownTrack(track.name.clone()))?;
+            let (input_w, input_h) = self
+                .resolutions
+                .get(&track.name)
+                .copied()
+                .unwrap_or(DEFAULT_TRACK_RESOLUTION);
+            let (w, h) = (state.width, state.height);
+            let i420_len = (w as usize) * (h as usize)
+                + 2 * (w as usize).div_ceil(2) * (h as usize).div_ceil(2);
+            if frame.data.len() != input_w as usize * input_h as usize * 3
+                && frame.data.len() != w as usize * h as usize * 3
+                && frame.data.len() != i420_len
+            {
+                return Err(MediaError::BadFrame {
+                    got: frame.data.len(),
+                    expected: input_w as usize * input_h as usize * 3,
+                    layout: "RGB8 or planar I420 at the track's declared resolution",
+                });
+            }
             // SFU dynacast state gates expensive conversion before pixels
             // are touched. A published track exists even while nobody watches.
             if self.demand_driven
-                && !state
-                    .track
-                    .publishing_layers()
-                    .iter()
-                    .any(|layer| layer.active)
+                && (!self.remote_peers.load(Ordering::Acquire)
+                    || !state
+                        .track
+                        .publishing_layers()
+                        .iter()
+                        .any(|layer| layer.active))
             {
                 return Ok(());
             }
+            // Camera-only consumers may call this transport without a runtime
+            // uplink pump. Enforce its ceiling on the original sample clock
+            // before conversion or libwebrtc sees the pixels.
+            if let Some(fps) = self.preview_fps {
+                let period_ns = (1_000_000_000.0 / fps).ceil() as i64;
+                if state
+                    .last_video_ns
+                    .is_some_and(|previous| frame.t_ns.saturating_sub(previous) < period_ns)
+                {
+                    return Ok(());
+                }
+            }
+            state.last_video_ns = Some(frame.t_ns);
             (state.source.clone(), state.width, state.height)
         };
         let (input_w, input_h) = self
@@ -392,6 +440,9 @@ impl MediaPlane for LiveKitMedia {
     }
 
     fn open_data_rx(&self, topic: DataTopic) -> Result<DataRx, MediaError> {
+        if self.video_only {
+            return Err(MediaError::TopicClosed(topic.topic_str()));
+        }
         let (tx, rx) = std_mpsc::channel();
         self.cmd
             .send(Command::OpenRx { topic, tx })
@@ -400,6 +451,9 @@ impl MediaPlane for LiveKitMedia {
     }
 
     fn open_data_tx(&self, topic: DataTopic) -> Result<DataTx, MediaError> {
+        if self.video_only {
+            return Err(MediaError::TopicClosed(topic.topic_str()));
+        }
         // DataTx is a plain std channel by contract; a small forwarder
         // thread drains it into the worker, which applies the topic's
         // reliability class. The forwarder exits when the DataTx (all
@@ -459,7 +513,17 @@ fn worker(
     config: LiveKitConfig,
     mut cmd_rx: tokio_mpsc::UnboundedReceiver<Command>,
     ready_tx: std_mpsc::Sender<Result<(), MediaError>>,
+    remote_peers: Arc<AtomicBool>,
 ) {
+    // Clear demand even if the worker exits unexpectedly. No room peers means
+    // no conversion/encoding, independent of delayed SFU layer-pause signals.
+    struct ClearDemand(Arc<AtomicBool>);
+    impl Drop for ClearDemand {
+        fn drop(&mut self) {
+            self.0.store(false, Ordering::Release);
+        }
+    }
+    let _clear_demand = ClearDemand(remote_peers.clone());
     crate::prepare_background_media_thread();
     let rt = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -521,6 +585,7 @@ fn worker(
         if !config.demand_driven {
             let _ = ready_tx.send(Ok(()));
         }
+        remote_peers.store(!room.remote_participants().is_empty(), Ordering::Release);
 
         loop {
             tokio::select! {
@@ -590,6 +655,20 @@ fn worker(
                         {
                             let _ = tx.send(Bytes::copy_from_slice(&payload));
                         }
+                    }
+                    Some(RoomEvent::ParticipantConnected(_)
+                        | RoomEvent::ParticipantDisconnected(_)
+                        | RoomEvent::Reconnected) => {
+                        remote_peers.store(!room.remote_participants().is_empty(), Ordering::Release);
+                    }
+                    Some(RoomEvent::ConnectionStateChanged(state)) => {
+                        remote_peers.store(
+                            state == ConnectionState::Connected && !room.remote_participants().is_empty(),
+                            Ordering::Release,
+                        );
+                    }
+                    Some(RoomEvent::Disconnected { .. }) => {
+                        remote_peers.store(false, Ordering::Release);
                     }
                     Some(_) => {}
                 },
@@ -708,11 +787,46 @@ mod tests {
         config.demand_driven = true;
         let media = LiveKitMedia::connect(config).expect("optional preview worker starts");
         assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(!media.wants_video_frame(&TrackHandle {
+            name: "camera".into()
+        }));
         assert!(matches!(
             media.publish_track("camera"),
             Err(MediaError::Transport(_))
         ));
         drop(media);
         assert!(started.elapsed() < Duration::from_secs(3));
+    }
+
+    #[test]
+    #[ignore = "requires isolated LiveKit publisher/viewer grants"]
+    fn preview_demand_follows_real_room_presence() {
+        let url = std::env::var("WADDLE_TEST_LIVEKIT_URL").expect("test SFU URL");
+        let publisher =
+            std::env::var("WADDLE_TEST_LIVEKIT_PUBLISHER_TOKEN").expect("isolated publisher grant");
+        let viewer =
+            std::env::var("WADDLE_TEST_LIVEKIT_VIEWER_TOKEN").expect("isolated viewer grant");
+        let mut config = LiveKitConfig::new(url.clone(), publisher);
+        config.demand_driven = true;
+        config.video_only = true;
+        let media = LiveKitMedia::connect(config).expect("publisher connects");
+        assert!(!media.remote_peers.load(Ordering::Acquire));
+        let wait = |present| {
+            let until = std::time::Instant::now() + Duration::from_secs(10);
+            while media.remote_peers.load(Ordering::Acquire) != present {
+                assert!(
+                    std::time::Instant::now() < until,
+                    "room presence did not converge"
+                );
+                thread::sleep(Duration::from_millis(20));
+            }
+        };
+        let joined = LiveKitMedia::connect(LiveKitConfig::new(url, viewer)).expect("viewer joins");
+        wait(true);
+        drop(joined);
+        wait(false);
+        assert!(!media.wants_video_frame(&TrackHandle {
+            name: "camera".into()
+        }));
     }
 }

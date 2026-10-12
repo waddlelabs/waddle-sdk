@@ -11,8 +11,27 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Make retake successor reset-hook acceptance wait for observable hook entry as
+  well as the reducer's published phase, retaining the exact invocation count
+  and terminal outcome under load. Runtime reset behavior is unchanged.
+
+- Add `waddle_sdk.media.PreviewPublisher` for camera-only RGB publication from a
+  separate presentation process, without Site/device/run/control ownership.
+  Preserve source dimensions/timestamps and native demand/rate/bitrate bounds.
+  Python/native binding API advances to 9; rebuild the matching base/media pair.
+
+- Demand-driven previews skip conversion/encoding when the room has no peers,
+  independently of SFU layer-pause timing. Disconnect/worker exit clear demand.
+  Previews capped at <=2 fps reduce idle video polling from 200 Hz to 10 Hz,
+  bounding added presentation/shutdown polling latency to 100 ms.
+
+- Presentation-only LiveKit can exclude intervention data topics and teleoperation
+  intake. Video lifecycle polling avoids the controller snapshot lock; native
+  media metadata releases the Python interpreter lock. Keep short, bounded frame
+  admission without an extra per-frame interpreter handoff.
+
 - Prepare matching SDK and media wheels as 0.1.13; the optional preview bindings
-  require API 6, which was not included in the published 0.1.12 pair.
+  require API 9, which was not included in the published 0.1.12 pair.
 
 - Add optional LiveKit preview width, fps and per-track bitrate ceilings, RGB-only
   presentation and demand-driven publisher dynacast. Preserve original RGB-D
@@ -20,7 +39,7 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 - Bound pending video to the latest frame and separate its native worker from
   control-plane stills. Lower Linux media worker priority and bound publication
   waits. Demand-driven preview signaling starts/retries asynchronously, without
-  delaying session startup. Python/native binding API advances to 6; rebuild both extensions.
+  delaying session startup. Python/native binding API advances to 9; rebuild both extensions.
 
 ### Changed
 

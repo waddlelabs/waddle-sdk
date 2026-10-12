@@ -52,6 +52,7 @@ class LiveKit:
     The companion waddle-sdk-media wheel supplies the native feature. Optional
     preview_width/fps/max_kbps ceilings affect presentation only; depth_preview
     and demand_driven control colorization and publisher subscriber demand.
+    video_only excludes teleoperation/telemetry topics and their intake worker.
     """
 
     url: str
@@ -61,6 +62,7 @@ class LiveKit:
     preview_max_kbps: int | None = None
     depth_preview: bool = True
     demand_driven: bool = False
+    video_only: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.url, str) or not self.url:
@@ -78,7 +80,7 @@ class LiveKit:
             or self.preview_fps <= 0
         ):
             raise ValueError("LiveKit.preview_fps must be finite and positive or None")
-        for name in ("depth_preview", "demand_driven"):
+        for name in ("depth_preview", "demand_driven", "video_only"):
             if type(getattr(self, name)) is not bool:
                 raise ValueError(f"LiveKit.{name} must be a bool")
 
