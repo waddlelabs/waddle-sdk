@@ -117,8 +117,10 @@ physical RGB-D or robot timing. See [camera source qualification](docs/porting/c
 
 ## Standing obligations (non-negotiable, for every agent, every session)
 
-SDK CI retains Ubuntu/Python 3.10 and adds native arm64 macOS 15 on Python
-3.10/3.12. All SDK legs install the MuJoCo and `can-usb` extras for software
+SDK CI runs on pull requests, main pushes and explicit `feat/native-ci-*`
+qualification branch pushes. These triggers run software gates only; they do not
+publish release artifacts. SDK CI retains Ubuntu/Python 3.10 and adds native arm64
+macOS 15 on Python 3.10/3.12. All SDK legs install the MuJoCo and `can-usb` extras for software
 coverage, with EGL on Linux and CGL on macOS. Core CI runs on Ubuntu and macOS;
 LiveKit system-header installation is Linux-only. Hardware live checks remain
 explicitly separate. Workflow changes are not evidence of a completed CI run.

@@ -117,7 +117,8 @@ commit only after it has landed on `main`.
    ```
 
    `.github/workflows/ci.yml` runs the complete Python, Rust, and strict documentation
-   gates on every push and pull request. The release workflow calls that same reusable
+   gates on pull requests, main pushes and `feat/native-ci-*` qualification branch
+   pushes. The release workflow calls that same reusable
    workflow before any wheel or Agent Skills build and before either publishing
    identity can run.
 

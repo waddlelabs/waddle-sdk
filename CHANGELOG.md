@@ -43,6 +43,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Changed
 
+- Run the existing complete software CI on explicit `feat/native-ci-*`
+  qualification branch pushes as well as pull requests and main pushes.
+  Runtime, hardware opt-in and release publication gates remain unchanged.
+
 - Detach the native core after confirmed managed-rig teardown so native reset
   callbacks cannot retain closed rig/camera lifecycles. Uncertain cleanup keeps
   the native reference and site ownership intact.
