@@ -975,6 +975,123 @@ def test_explicit_control_drain_precedes_transport_close(vendor, failed_drain):
         assert calls == ["server", "writer", "transport"]
 
 
+@pytest.mark.parametrize(
+    "reply_mode", ["disabled", "enabled", "stale", "wrong_motor", "transport_fault"]
+)
+def test_usb_teardown_requires_every_fresh_disabled_reply(vendor, reply_mode):
+    can = pytest.importorskip("can")
+    driver = _live(vendor)
+    robot = vendor.robots[0]
+    calls, pending = [], []
+    original = OSError(5, "selected USB device disconnected during motor disable")
+
+    class Bus:
+        def send(self, message):
+            motor_id = message.arbitration_id
+            assert bytes(message.data) == bytes([0xFF] * 7 + [0xFD])
+            calls.append(f"disable-{motor_id}")
+            if motor_id == 2 and reply_mode == "transport_fault":
+                raise original
+            mode = reply_mode if motor_id == 2 else "disabled"
+            # A queued old disabled reply and a fresh enabled scan must never
+            # satisfy shutdown. A matching fresh disabled reply is required.
+            pending.extend(
+                [
+                    can.Message(
+                        arbitration_id=motor_id + 16,
+                        timestamp=0,
+                        data=[motor_id] + [0] * 7,
+                        is_extended_id=False,
+                    ),
+                    can.Message(
+                        arbitration_id=motor_id + 16,
+                        timestamp=time.time(),
+                        data=[0x10 | motor_id] + [0] * 7,
+                        is_extended_id=False,
+                    ),
+                ]
+            )
+            if mode in ("disabled", "wrong_motor"):
+                pending.append(
+                    can.Message(
+                        arbitration_id=motor_id + 16,
+                        timestamp=time.time(),
+                        data=[motor_id if mode == "disabled" else motor_id + 1]
+                        + [0] * 7,
+                        is_extended_id=False,
+                    )
+                )
+
+        def recv(self, timeout):
+            if pending:
+                return pending.pop(0)
+            time.sleep(timeout)
+            return None
+
+    robot.stop_control_loop = lambda: calls.append("server")
+    robot.motor_chain = types.SimpleNamespace(
+        stop_control_loop=lambda: calls.append("writer"),
+        motor_list=[(motor_id, "reviewed") for motor_id in range(1, 8)],
+        motor_interface=types.SimpleNamespace(
+            bus=Bus(),
+            _get_frame_id=lambda motor_id: motor_id,
+            receive_mode=types.SimpleNamespace(
+                get_receive_id=lambda motor_id: motor_id + 16
+            ),
+        ),
+    )
+    robot.close = lambda: calls.append("transport")
+    driver._usb_can = object()
+    if reply_mode == "disabled":
+        driver.close()
+        driver.close()  # Confirmed teardown remains idempotent.
+        assert driver.usb_shutdown_evidence["status"] == "all_motors_disabled"
+        assert all(row["disabled"] for row in driver.usb_shutdown_evidence["motors"])
+        assert calls == [
+            "server",
+            "writer",
+            *[f"disable-{i}" for i in range(1, 8)],
+            "transport",
+        ]
+    else:
+        with pytest.raises((OSError, RuntimeFault)) as caught:
+            driver.close()
+        if reply_mode == "transport_fault":
+            assert caught.value is original
+        else:
+            assert caught.value.code is FaultCode.MOTOR_FAILURE
+            assert caught.value.context["motor_id"] == 2
+        assert calls == ["server", "writer", *[f"disable-{i}" for i in range(1, 8)]]
+        evidence = driver.usb_shutdown_evidence
+        assert evidence["status"] == "uncertain" and len(evidence["errors"]) == 1
+        assert not evidence["motors"][1]["disabled"]
+        assert all(
+            row["disabled"] for row in evidence["motors"] if row["motor_id"] != 2
+        )
+    assert driver._estopped
+
+
+def test_usb_teardown_retains_failed_writer_drain(vendor):
+    driver = _live(vendor)
+    robot = vendor.robots[0]
+    original = TimeoutError("CAN writer still owns a pending USB submission")
+    calls = []
+
+    def stop_writer():
+        calls.append("writer")
+        raise original
+
+    robot.stop_control_loop = lambda: calls.append("server")
+    robot.motor_chain = types.SimpleNamespace(stop_control_loop=stop_writer)
+    robot.close = lambda: calls.append("transport")
+    driver._usb_can = object()
+    with pytest.raises(TimeoutError) as caught:
+        driver.close()
+    assert caught.value is original and calls == ["server", "writer"]
+    assert driver.usb_shutdown_evidence["status"] == "awaiting_writer_drain"
+    assert driver._estopped
+
+
 @pytest.mark.parametrize("operation", ["read", "write", "write_position_velocity"])
 def test_live_driver_refuses_an_unchanged_can_feedback_cache(
     vendor, monkeypatch, operation

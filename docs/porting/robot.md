@@ -298,6 +298,18 @@ evidence during live startup. Draining a worker and releasing USB are distinct
 from confirming a delivered zero-torque command; a transport fault can prevent
 that command. Preserve physical stop and the exact uncertainty after such a fault.
 
+Explicit USB teardown now latches commands and drains both reviewed control
+writers, then sends the existing motor-disable frame to each of the seven motors.
+The original 5 ms USB submission budget remains unchanged. Each motor must return
+its matching classic eight-byte feedback frame, acquired after submission began,
+with disabled state zero within 50 ms of submission completion. Cached replies,
+enabled state and interface/thread closure cannot qualify disable. All motors
+are attempted; the first original fault is re-raised unchanged and complete stop
+attempts/errors stay in `LiveDriver.usb_shutdown_evidence`. Transport closure
+requires all disabled replies; failed drain/disable retains uncertain ownership.
+These are protocol acknowledgements, separate from measured mechanical stopping
+or a physical power cut. The default SocketCAN lifecycle remains unchanged.
+
 ## Declaration and envelope must agree
 
 One facts source should produce the driver width/order, action declaration, `Arm`

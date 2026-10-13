@@ -318,7 +318,12 @@ def test_clean_install_extra_matrix(
     optional: frozenset[str],
 ):
     environment = tmp_path / case
-    venv.EnvBuilder(with_pip=True, clear=True).create(environment)
+    # Relocatable POSIX Python distributions find their standard library through
+    # the original executable; copying the Mac 3.10 binary loses that prefix.
+    # Keep a genuinely isolated venv while preserving the executable location.
+    venv.EnvBuilder(with_pip=True, clear=True, symlinks=os.name == "posix").create(
+        environment
+    )
     python = environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     requirement = f"waddle-sdk=={VERSION}"
     if selected:

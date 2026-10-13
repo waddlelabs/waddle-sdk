@@ -11,6 +11,13 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Confirm explicit USB-YAM teardown with fresh disabled-state replies from every
+  motor after both writers drain. Preserve failed stop evidence, exact original
+  faults and uncertain ownership; stale/healthy replies cannot satisfy teardown.
+  Live bench reports retain the receipts. SocketCAN behavior remains unchanged.
+  Clean-install tests preserve relocatable POSIX Python through executable
+  symlinks without changing their dependency matrix or lazy-import assertions.
+
 - Preserve native scene asset hashing on supported Python 3.10 with bounded
   streaming SHA-256. Verify both complete inert-step chunks before resubmission
   in the claim-deduplication test, retaining exact waypoint and fault assertions.
