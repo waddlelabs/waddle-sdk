@@ -11,6 +11,14 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Preserve native scene asset hashing on supported Python 3.10 with bounded
+  streaming SHA-256. Verify both complete inert-step chunks before resubmission
+  in the claim-deduplication test, retaining exact waypoint and fault assertions.
+
+- Install Mesa EGL libraries for Linux simulation CI and run complete macOS
+  Python/render suites on GPU-enabled `macos-15-xlarge` runners. Preserve all
+  render tests and original failures; core jobs retain standard Mac runners.
+
 - Make retake successor reset-hook acceptance wait for observable hook entry as
   well as the reducer's published phase, retaining the exact invocation count
   and terminal outcome under load. Runtime reset behavior is unchanged.

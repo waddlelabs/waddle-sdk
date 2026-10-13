@@ -40,8 +40,11 @@ def resolve(root, config):
         resolved.relative_to(root)
         if (root / path).is_symlink() or not resolved.is_file():
             raise ValueError("native scene assets must be ordinary files")
+        hasher = hashlib.sha256()
         with resolved.open("rb") as stream:
-            actual = hashlib.file_digest(stream, "sha256").hexdigest()
+            for block in iter(lambda: stream.read(1024 * 1024), b""):
+                hasher.update(block)
+        actual = hasher.hexdigest()
         if actual != digest:
             raise ValueError(f"native scene asset digest differs: {name}")
     if (

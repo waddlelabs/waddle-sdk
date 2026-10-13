@@ -19,8 +19,10 @@ jobs:
       matrix:
         include:
           - {os: ubuntu-24.04, python: "3.10", mujoco_gl: egl}
-          - {os: macos-15, python: "3.10", mujoco_gl: cgl}
-          - {os: macos-15, python: "3.12", mujoco_gl: cgl}
+          # MuJoCo CGL requires an accelerated pixel format. Standard ARM
+          # hosted Macs lack it; keep the full render suite on GPU-enabled Macs.
+          - {os: macos-15-xlarge, python: "3.10", mujoco_gl: cgl}
+          - {os: macos-15-xlarge, python: "3.12", mujoco_gl: cgl}
     runs-on: ${{ matrix.os }}
     env:
       MUJOCO_GL: ${{ matrix.mujoco_gl }}
@@ -28,11 +30,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install LiveKit system headers
+      - name: Install Linux media and render prerequisites
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends libglib2.0-dev
+          sudo apt-get install --yes --no-install-recommends libglib2.0-dev libegl1-mesa-dev libgl1-mesa-dri
 
       - uses: actions/setup-python@v6
         with:

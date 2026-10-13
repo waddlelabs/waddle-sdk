@@ -117,14 +117,25 @@ physical RGB-D or robot timing. See [camera source qualification](docs/porting/c
 
 ## Standing obligations (non-negotiable, for every agent, every session)
 
+Native scene digest verification supports Python 3.10 and streams bounded blocks;
+do not use the Python 3.11-only `hashlib.file_digest` in the supported runtime.
+The inert-step claim test observes each complete chunk before resubmitting a fresh
+sequence, retaining exact surrounding waypoints and one fault per claim window.
+Newer-chunk supersession remains separately tested and unchanged in production.
+
 SDK CI runs on pull requests, main pushes and explicit `feat/native-ci-*`
 qualification branch pushes. These triggers run software gates only; they do not
 publish release artifacts. Python/core test logs and Python JUnit remain in CI
 artifacts even after failure; bounded original failure excerpts also become normal
 Actions annotations. Test commands retain their original failing exit status.
 SDK CI retains Ubuntu/Python 3.10 and adds native arm64
-macOS 15 on Python 3.10/3.12. All SDK legs install the MuJoCo and `can-usb` extras for software
-coverage, with EGL on Linux and CGL on macOS. Core CI runs on Ubuntu and macOS;
+macOS 15 on Python 3.10/3.12. The full Python/render suites require
+`macos-15-xlarge`, whose GPU supports MuJoCo's accelerated CGL pixel format;
+standard hosted ARM Macs remain sufficient for the Rust core. Larger runners
+require repository access and enabled GitHub billing; unavailable runners are a
+qualification blocker, never a passing render result. All SDK legs install the
+MuJoCo and `can-usb` extras for software coverage, with Mesa EGL prerequisites on
+Linux and CGL on macOS. Core CI runs on Ubuntu and macOS;
 LiveKit system-header installation is Linux-only. Hardware live checks remain
 explicitly separate. Workflow changes are not evidence of a completed CI run.
 Native simulation tests select CGL on macOS and EGL on Linux, including child

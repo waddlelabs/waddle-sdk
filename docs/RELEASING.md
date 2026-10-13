@@ -120,6 +120,11 @@ commit only after it has landed on `main`.
    gates on pull requests, main pushes and `feat/native-ci-*` qualification branch
    pushes. Failed Python/core jobs retain their complete test evidence and bounded
    original failure annotations; their failure still blocks the release gate.
+   Linux installs Mesa EGL prerequisites. Full macOS Python/render jobs use
+   `macos-15-xlarge` for MuJoCo's accelerated CGL context; the Rust core retains
+   standard `macos-15`. The larger runner requires repository access and enabled
+   billing. If it cannot run, native render CI remains unqualified; no render
+   tests are filtered or weakened. See [GitHub's runner specifications](https://docs.github.com/en/actions/reference/runners/larger-runners#available-macos-larger-runners-and-labels).
    The release workflow calls that same reusable
    workflow before any wheel or Agent Skills build and before either publishing
    identity can run.
