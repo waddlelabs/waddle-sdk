@@ -43,6 +43,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Changed
 
+- Retain complete software-test logs/JUnit on failed CI jobs and publish bounded
+  original failure excerpts as Actions annotations, preserving failing exits.
+
 - Run the existing complete software CI on explicit `feat/native-ci-*`
   qualification branch pushes as well as pull requests and main pushes.
   Runtime, hardware opt-in and release publication gates remain unchanged.

@@ -118,7 +118,9 @@ commit only after it has landed on `main`.
 
    `.github/workflows/ci.yml` runs the complete Python, Rust, and strict documentation
    gates on pull requests, main pushes and `feat/native-ci-*` qualification branch
-   pushes. The release workflow calls that same reusable
+   pushes. Failed Python/core jobs retain their complete test evidence and bounded
+   original failure annotations; their failure still blocks the release gate.
+   The release workflow calls that same reusable
    workflow before any wheel or Agent Skills build and before either publishing
    identity can run.
 
