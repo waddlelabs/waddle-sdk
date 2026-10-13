@@ -86,6 +86,47 @@ def test_missing_arm_only_disables_its_own_robot_cases():
     assert discovery.reason(item({"part": "right"})) == "right CAN interface is absent"
 
 
+@pytest.mark.parametrize(
+    "changed",
+    [
+        {},
+        {"usb_serial_evidence": "peer"},
+        {"vendor_id": "1209"},
+        {"product_id": "2323"},
+        {"transport": "serial"},
+    ],
+)
+def test_usb_live_admission_requires_selected_transport_identity(changed):
+    from waddle_sdk.discovery import HardwareCandidate
+
+    metadata = {
+        "vendor_id": "1d50",
+        "product_id": "606f",
+        "usb_serial_evidence": "selected-yam",
+        "transport": "gs_usb",
+    }
+    candidate = HardwareCandidate(
+        "registry-device", "transport", "adapter", metadata={**metadata, **changed}
+    )
+    row = {
+        "driver": "waddle_sdk.robots.yam:arm",
+        "connection": {
+            "usb_can": {
+                "selector": {
+                    "vendor_id": 0x1D50,
+                    "product_id": 0x606F,
+                    "bus": 7,
+                    "address": 3,
+                    "serial_number": "selected-yam",
+                }
+            }
+        },
+    }
+    assert discovery.connection_available(row, (candidate,)) is (not changed)
+    assert not discovery.connection_available(row, ())
+    assert candidate.driver is None  # Presence does not infer an attached robot.
+
+
 def test_camera_service_requires_both_credentials_and_available_camera(monkeypatch):
     config = Config(live=True)
     config.live_missing = {"cameras:scene": "scene camera is absent"}

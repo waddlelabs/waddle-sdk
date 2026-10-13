@@ -23,6 +23,15 @@ information; discovery never converts a failing device into a successful test.
 `CI` and `GITHUB_ACTIONS` reject `--live`; release jobs run the normal suite.
 Physical execution is sequential and stops at the first failure.
 
+Explicit YAM `connection.usb_can` uses registry VID/PID/serial transport evidence
+for live selection, without inferring an attached robot or claiming a USB handle
+during collection. The driver rechecks the declared current bus/address and
+serial before commands. The reviewed runtime and native library remain execution
+prerequisites; discovery presence establishes neither timing nor fault parity.
+The pristine SocketCAN raw-vendor comparator refuses this USB selection before
+vendor imports or ownership acquisition. SDK-only USB tests and Linux comparison
+remain separate evidence.
+
 Configuration resolves from `--live-config`, `WADDLE_SDK_LIVE_CONFIG`, or
 `.live-tests.json` in the working directory. `--live-site` or `WADDLE_LIVE_SITE`
 can select a site independently. The JSON schema name is `waddle.live-bench/v1`.

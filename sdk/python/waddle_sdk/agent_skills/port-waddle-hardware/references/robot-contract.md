@@ -29,6 +29,36 @@ Inheritance is optional. A driver provides:
 
 Make all methods safe under concurrent SDK pump and dispatch threads. Preserve the e-stop latch across writes and holds. Do not report re-enable success until the vendor operation succeeds.
 
+For a dedicated periodic macOS thread, the optional
+`waddle_sdk.scheduling.periodic_thread` context requests a Mach host budget in
+seconds and restores the prior policy on exit. Other platforms retain their policy.
+This is a scheduling request, not measured cadence or a real-time guarantee:
+preserve freshness, deadline and stop gates, and qualify work under load. Keep its
+original structured scheduling errors rather than changing timing tolerances.
+For a short cadence wait around heavy capture/reporting, use `periodic_wait` so
+the host policy is restored before that work. Shared publisher faults must not be
+stamped as fresh part feedback; ordinary per-arm faults remain independent.
+
+The optional `robots.usbcan` classic-CAN provider is a software-tested candidate,
+with exact serial/location binding, bounded I/O, nonblocking queue reads and terminal
+fault fencing. It is not automatically selected by YAM and reports unqualified
+transport evidence. Consult `docs/porting/robot.md#usb-can-transport-candidate`
+for the pinned vendor injection patch, provenance and physical qualification gaps.
+The reviewed derived I2RT package is built with `tools/build_i2rt_transport_runtime.py`;
+source inspection checks its complete SDK-approved inventory, package records,
+metadata and license before accepting unchanged geometry. Self-declared provenance
+or a rewritten RECORD does not establish review. Explicit `yam.arm(usb_can=...)`
+and per-part `ArmSite.usb_can` select it through the shared driver; pure
+`usbcan_config` facts also accept ordinary Site connection mappings. Source
+verification precedes imports/opening; duplicate/conflicting selectors and
+non-1-Mbit/s USB YAM configuration refuse before hardware. See
+`docs/porting/robot.md#yam-usb-selection`. Selection does not qualify physical control.
+That candidate accepts a wait callback without placing CAN I/O or computation
+under the scheduling budget. Retain first-iteration readiness and original
+control-thread faults, and confirm bounded drain before releasing the bus.
+YAM preserves optional vendor `control_fault` evidence before generic stopped-
+thread errors and uses explicit server/writer drain operations when supplied.
+
 An optional `write_position_velocity(target, velocity_feedforward_rad_s) -> bool` consumes a producer-known feedforward for the same admitted position target. Return `False` only after deliberately issuing the unchanged position-only target. Never derive feedforward from measurements.
 
 ## Owner envelope

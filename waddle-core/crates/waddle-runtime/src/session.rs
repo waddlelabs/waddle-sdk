@@ -855,7 +855,11 @@ impl SessionBuilder {
                 workspace_id: binding.map_or_else(String::new, |value| value.workspace_id.clone()),
                 authorization_only: binding.is_some_and(|value| value.authorization_only),
             };
-            Arc::new(ControlPlaneClient::spawn(t, ClientConfig::new(register)))
+            Arc::new(ControlPlaneClient::spawn_with_clock(
+                t,
+                ClientConfig::new(register),
+                Arc::new(clock.clone()),
+            ))
         });
 
         let mirror = Mirror::new();

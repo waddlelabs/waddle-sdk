@@ -98,7 +98,7 @@ pub fn rgb8_to_i420(width: u32, height: u32, rgb: &[u8]) -> Result<Vec<u8>, Medi
     let mut out = Vec::with_capacity(w * h + 2 * cw * ch);
 
     // Y plane: per pixel.
-    for px in rgb.chunks_exact(3) {
+    for px in rgb.as_chunks::<3>().0 {
         let (r, g, b) = (i32::from(px[0]), i32::from(px[1]), i32::from(px[2]));
         let y = ((66 * r + 129 * g + 25 * b + 128) >> 8) + 16;
         out.push(y as u8);

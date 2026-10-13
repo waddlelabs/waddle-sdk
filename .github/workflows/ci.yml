@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - feat/native-ci-*
   workflow_call:
 
 permissions:
@@ -12,20 +13,32 @@ permissions:
 
 jobs:
   sdk:
-    name: Python SDK and shim
-    runs-on: ubuntu-24.04
+    name: Python SDK and shim (${{ matrix.os }}, Python ${{ matrix.python }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-24.04, python: "3.10", mujoco_gl: egl}
+          # MuJoCo CGL requires an accelerated pixel format. Standard ARM
+          # hosted Macs lack it; keep the full render suite on GPU-enabled Macs.
+          - {os: macos-15-xlarge, python: "3.10", mujoco_gl: cgl}
+          - {os: macos-15-xlarge, python: "3.12", mujoco_gl: cgl}
+    runs-on: ${{ matrix.os }}
+    env:
+      MUJOCO_GL: ${{ matrix.mujoco_gl }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install LiveKit system headers
+      - name: Install Linux media and render prerequisites
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends libglib2.0-dev
+          sudo apt-get install --yes --no-install-recommends libglib2.0-dev libegl1-mesa-dev libgl1-mesa-dri
 
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.10"
+          python-version: ${{ matrix.python }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
@@ -36,11 +49,18 @@ jobs:
 
       - name: Build the development SDK
         working-directory: sdk
-        run: uv sync --dev --locked
+        run: uv sync --dev --locked --extra mujoco --extra can-usb
 
       - name: Test the Python SDK
         working-directory: sdk
-        run: uv run --no-sync pytest
+        shell: bash
+        run: |
+          mkdir -p ../.ci-evidence
+          uv run --no-sync pytest --junitxml=../.ci-evidence/pytest.xml 2>&1 | tee ../.ci-evidence/pytest.txt
+
+      - name: Retain original Python failures as bounded annotations
+        if: failure()
+        run: python tools/ci_failure_diagnostics.py --junit .ci-evidence/pytest.xml --log .ci-evidence/pytest.txt
 
       # Exercise maturin's real wheel contents, not only the editable source tree.
       # Installing it back into the already isolated CI venv keeps the smoke fully
@@ -109,14 +129,41 @@ jobs:
         working-directory: sdk
         run: cargo clippy --manifest-path rust/Cargo.toml --features grpc,livekit --all-targets -- -D warnings
 
+      - name: Build and verify the packaged media companion
+        working-directory: sdk
+        run: |
+          set -euo pipefail
+          uv build --wheel --python .venv/bin/python --out-dir dist/media media
+          uv pip install --python .venv/bin/python --force-reinstall --no-deps dist/media/*.whl
+          .venv/bin/python - <<'PY'
+          import waddle_media._core
+          import waddle_sdk
+          assert waddle_sdk.FEATURES == frozenset({"grpc", "livekit"})
+          PY
+          uv run --no-sync pytest tests/test_features.py
+
+      - name: Retain complete Python test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-${{ matrix.os }}-python-${{ matrix.python }}
+          path: .ci-evidence/
+          include-hidden-files: true
+          if-no-files-found: warn
+
   core:
-    name: Rust core
-    runs-on: ubuntu-24.04
+    name: Rust core (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
 
       - name: Install LiveKit system headers
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends libglib2.0-dev
@@ -127,7 +174,14 @@ jobs:
 
       - name: Test the featureless workspace
         working-directory: waddle-core
-        run: cargo test --workspace --locked
+        shell: bash
+        run: |
+          mkdir -p ../.ci-evidence
+          cargo test --workspace --locked 2>&1 | tee ../.ci-evidence/core.txt
+
+      - name: Retain original core failures as bounded annotations
+        if: failure()
+        run: python3 tools/ci_failure_diagnostics.py --log .ci-evidence/core.txt
 
       - name: Lint the featureless workspace
         working-directory: waddle-core
@@ -144,6 +198,15 @@ jobs:
       - name: Lint the fully connected runtime
         working-directory: waddle-core
         run: cargo clippy -p waddle-runtime --features grpc,livekit --all-targets --locked -- -D warnings
+
+      - name: Retain complete core test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-${{ matrix.os }}
+          path: .ci-evidence/
+          include-hidden-files: true
+          if-no-files-found: warn
 
   docs:
     name: Documentation

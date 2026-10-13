@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import sys
 
 import numpy as np
 import pytest
@@ -17,6 +18,7 @@ from waddle_sdk.simulators.scene import (
 )
 
 EVALUATION_ENVIRONMENTS = ("drawer", *TASK_ENVIRONMENTS)
+NATIVE_MUJOCO_GL = "cgl" if sys.platform == "darwin" else "egl"
 
 
 def _body_poses(snapshot, names):
@@ -48,7 +50,7 @@ def test_seeded_evaluation_reset_covers_complete_task_matrix(
     tmp_path, monkeypatch, robot, environment
 ):
     pytest.importorskip("mujoco")
-    monkeypatch.setenv("MUJOCO_GL", "egl")
+    monkeypatch.setenv("MUJOCO_GL", NATIVE_MUJOCO_GL)
     from waddle_sdk.simulators.mujoco import Engine
 
     arms = 2 if environment in DUAL_ARM_TASK_ENVIRONMENTS else 1
@@ -177,7 +179,7 @@ def test_evaluation_reset_refuses_compiled_robot_prop_penetration(
     tmp_path, monkeypatch
 ):
     pytest.importorskip("mujoco")
-    monkeypatch.setenv("MUJOCO_GL", "egl")
+    monkeypatch.setenv("MUJOCO_GL", NATIVE_MUJOCO_GL)
     from waddle_sdk.simulators.mujoco import Engine
 
     _, config = make_site(
@@ -217,7 +219,7 @@ def test_candy_bin_transfer_keeps_one_color_under_appearance_variation(
     tmp_path, monkeypatch
 ):
     pytest.importorskip("mujoco")
-    monkeypatch.setenv("MUJOCO_GL", "egl")
+    monkeypatch.setenv("MUJOCO_GL", NATIVE_MUJOCO_GL)
     from waddle_sdk.simulators.mujoco import Engine
 
     _, config = make_site(
@@ -248,7 +250,7 @@ def test_candy_bin_transfer_keeps_one_color_under_appearance_variation(
 
 def test_evaluation_reset_refuses_compiled_cross_arm_penetration(tmp_path, monkeypatch):
     pytest.importorskip("mujoco")
-    monkeypatch.setenv("MUJOCO_GL", "egl")
+    monkeypatch.setenv("MUJOCO_GL", NATIVE_MUJOCO_GL)
     from waddle_sdk.simulators.mujoco import Engine
 
     _, config = make_site(
@@ -282,7 +284,7 @@ def test_reset_profiles_change_only_the_selected_trusted_dimension(
     tmp_path, monkeypatch
 ):
     pytest.importorskip("mujoco")
-    monkeypatch.setenv("MUJOCO_GL", "egl")
+    monkeypatch.setenv("MUJOCO_GL", NATIVE_MUJOCO_GL)
     from waddle_sdk.simulators.mujoco import Engine
 
     _, config = make_site(
@@ -386,7 +388,7 @@ def test_reset_profiles_change_only_the_selected_trusted_dimension(
 
 def test_physics_profile_varies_passive_fixture_damping(tmp_path, monkeypatch):
     pytest.importorskip("mujoco")
-    monkeypatch.setenv("MUJOCO_GL", "egl")
+    monkeypatch.setenv("MUJOCO_GL", NATIVE_MUJOCO_GL)
     from waddle_sdk.simulators.mujoco import Engine
 
     _, config = make_site(
@@ -417,7 +419,7 @@ def test_contact_events_retain_a_physics_step_contact_until_reset(
     tmp_path, monkeypatch
 ):
     pytest.importorskip("mujoco")
-    monkeypatch.setenv("MUJOCO_GL", "egl")
+    monkeypatch.setenv("MUJOCO_GL", NATIVE_MUJOCO_GL)
     from waddle_sdk.simulators.mujoco import Engine
 
     _, config = make_site(

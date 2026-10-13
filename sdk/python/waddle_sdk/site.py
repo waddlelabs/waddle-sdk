@@ -719,6 +719,11 @@ def _combine_rigs(
 
         return base.proprio_tick(session, arms, advance=advance, on_part_fault=on_fault)
 
+    def pump_fault(error):
+        if on_part_fault is not None:
+            for part in components:
+                on_part_fault(part, error)
+
     return base.Rig(
         declaration=declaration,
         build_arms=build_arms,
@@ -727,6 +732,7 @@ def _combine_rigs(
         posture=posture,
         estop_hardware=all(rig.estop_hardware for rig in components.values()),
         build_tick=tick_builder,
+        on_pump_fault=pump_fault if on_part_fault is not None else None,
     )
 
 
@@ -1707,6 +1713,8 @@ class SiteSession:
         for name in names:
             arm = managed.arms[name]
             try:
+                if managed.pump is not None and managed.pump.fault is not None:
+                    raise managed.pump.fault
                 position, velocity = arm.state()
                 pose = arm.ee_pose(position)
                 force = (

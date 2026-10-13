@@ -47,7 +47,7 @@ def _binding_api(module: object) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
-def _select_core():
+def _select_core(*, _import_failures: list[ImportError] | None = None):
     """Return the core module this process should use (see the rules in the
     module docstring). Called exactly once, at import.
 
@@ -68,11 +68,22 @@ def _select_core():
             "from one checkout before opening hardware."
         )
 
+    if os.environ.get("WADDLE_NO_MEDIA") == "1":
+        return bundled
     try:
         from waddle_media import _core as media
-    except ImportError:
-        return bundled
-    if os.environ.get("WADDLE_NO_MEDIA") == "1":
+    except ImportError as error:
+        if isinstance(error, ModuleNotFoundError) and error.name == "waddle_media":
+            return bundled
+        if _import_failures is not None:
+            _import_failures.append(error)
+        warnings.warn(
+            "waddle-sdk-media failed to load: "
+            f"{type(error).__name__}: {error}; using the bundled core, "
+            "so LiveKit media stays unavailable.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
         return bundled
     media_api = _binding_api(media)
     if media_api != _REQUIRED_BINDING_API_VERSION:
@@ -97,10 +108,13 @@ def _select_core():
     return media
 
 
+_import_failures: list[ImportError] = []
 if TYPE_CHECKING:  # both cores are the same shim; `_core.pyi` types both
     from . import _core as core
 else:
-    core = _select_core()
+    core = _select_core(_import_failures=_import_failures)
+
+_MEDIA_IMPORT_ERROR = _import_failures[0] if _import_failures else None
 
 #: Which connected transports the selected core carries — ``"grpc"`` (the
 #: control plane), ``"livekit"`` (the LiveKit media plane). This is the ONLY

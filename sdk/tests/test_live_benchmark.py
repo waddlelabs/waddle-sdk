@@ -538,6 +538,45 @@ def test_raw_close_joins_workers_before_closing_socket(monkeypatch):
     assert "close socket" not in events
 
 
+@pytest.mark.parametrize("phase", ["construction", "opening"])
+def test_unsupported_raw_transport_refuses_before_import_or_ownership(
+    monkeypatch, phase
+):
+    import builtins
+
+    row = {
+        "driver": "waddle_sdk.robots.yam:arm",
+        "posture": "supervised",
+        "connection": {"usb_can": {"selector": {"serial_number": "offline"}}},
+    }
+    site = SimpleNamespace(manifest={"parts": {"left": row}})
+
+    def initialize(owner, config, part):
+        owner.site = site
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Unsupported raw transport reached hardware ownership")
+
+    original_import = builtins.__import__
+
+    def checked_import(name, *args, **kwargs):
+        if name == "i2rt" or name.startswith("i2rt."):
+            raise AssertionError("Unsupported raw transport imported the vendor")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(session.Bench, "__init__", initialize)
+    monkeypatch.setattr(vendor, "_SiteLock", forbidden)
+    monkeypatch.setattr(builtins, "__import__", checked_import)
+    with pytest.raises(ValueError, match="supports SocketCAN only"):
+        if phase == "construction":
+            vendor.VendorBench({}, "left")
+        else:
+            owner = object.__new__(vendor.VendorBench)
+            owner.config = {"torque_release_authorized": True}
+            owner.site, owner.part = site, "left"
+            owner.__enter__()
+
+
 def test_controller_evidence_distinguishes_requested_from_encoded_gains():
     result = vendor.settings(
         SimpleNamespace(get_robot_info=lambda: {"kp": [320, 40], "kd": [20, 6]})
@@ -607,7 +646,10 @@ def test_pristine_vendor_applies_explicit_arm_gains_and_preserves_hand(monkeypat
         )
 
 
-@pytest.mark.parametrize("failure", [None, "cache", "host", "writer", "background"])
+@pytest.mark.parametrize(
+    "failure",
+    [None, "cache", "host", "writer", "background", "robot_fault", "chain_fault"],
+)
 def test_startup_waits_for_hold_can_feedback_and_host_ingestion_without_pose_gate(
     monkeypatch, failure
 ):
@@ -656,6 +698,10 @@ def test_startup_waits_for_hold_can_feedback_and_host_ingestion_without_pose_gat
             chain.running = False
         if failure == "background":
             owner._background_error = origin
+        if failure in {"robot_fault", "chain_fault"}:
+            chain.running = False
+            source = robot if failure == "robot_fault" else chain
+            source.control_fault = origin
 
     monkeypatch.setattr(vendor.time, "monotonic", lambda: clock.now)
     monkeypatch.setattr(vendor.time, "sleep", advance)
@@ -663,7 +709,7 @@ def test_startup_waits_for_hold_can_feedback_and_host_ingestion_without_pose_gat
         with pytest.raises(RuntimeFault) as captured:
             vendor.wait_for_startup(owner, robot, "fake_can", timeout_s=0.02)
         assert captured.value.code == FaultCode.MOTOR_FAILURE
-        if failure == "background":
+        if failure in {"background", "robot_fault", "chain_fault"}:
             assert captured.value is origin
         else:
             assert captured.value.context["channel"] == "fake_can"

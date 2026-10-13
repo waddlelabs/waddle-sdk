@@ -21,13 +21,13 @@ waddle-sdk = "waddle_sdk.cli:main"
 # transport, shipped as its own wheel because libwebrtc is ~690 MB of build
 # that has no business in an install which only supervises a policy. The pin
 # is EXACT: the two wheels are one build of one Cargo.toml, and
-# `waddle_sdk._native` refuses a mismatched pair at import rather than loading a
-# core built from other sources.
+# `waddle_sdk._native` requires the matching native binding API and warns when
+# a compatible companion has a different package version.
 #
 # This literal is the ONE version in this project that maturin does not
 # derive from `rust/Cargo.toml` (PEP 621 has no dynamic
 # optional-dependencies), so a version bump must edit it too — otherwise the
-# extra resolves to the previous release, `_native` sees the mismatch, and
+# extra resolves to the previous release, `_native` rejects an incompatible binding, and
 # `pip install 'waddle-sdk[media]'` silently yields no LiveKit.
 # `tests/test_features.py::test_the_media_extra_pins_this_builds_version`
 # fails until the two agree.
@@ -35,6 +35,7 @@ media = ["waddle-sdk-media==0.1.13"]
 orbbec = ["pyorbbecsdk2"]
 realsense = ["pyrealsense2"]
 usb = ["opencv-python-headless>=4.8"]
+can-usb = ["python-can==4.5.0", "pyusb==1.3.1"]
 xarm = ["xarm-python-sdk>=1.16"]
 alicia = [
     "alicia-m-sdk>=1.1.1rc1; python_version >= '3.11'",

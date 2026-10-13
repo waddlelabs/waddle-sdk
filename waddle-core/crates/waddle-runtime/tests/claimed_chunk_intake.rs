@@ -840,7 +840,10 @@ fn claimed_mode_inert_step_is_skipped_and_the_chunk_survives() {
     wait_for(&session, |s| s.gate_mode == Some(GateMode::Intervention));
     let tx = wait_for_tx(&tx_cell);
 
-    // Sent twice (fresh seq) to prove the fault dedupes per claim window.
+    // Consume both surrounding waypoints before sending the fresh sequence.
+    // A newer chunk can supersede the executing one, so sending both before
+    // observing execution made the expected waypoint pair scheduler-dependent.
+    // Both complete chunks must actuate while the fault dedupes per claim window.
     for seq in 1..=2u64 {
         send_chunk(
             &tx,
@@ -852,22 +855,20 @@ fn claimed_mode_inert_step_is_skipped_and_the_chunk_survives() {
             seq,
             0,
         );
-        std::thread::sleep(Duration::from_millis(5));
-    }
-
-    let mut seen: Vec<Vec<f64>> = Vec::new();
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while seen.len() < 2 && Instant::now() < deadline {
-        if let GateOutput::Substitute { action, .. } = ep.gate(&[0.0; 3], None, None) {
-            seen.push(action.values.to_vec());
+        let mut seen: Vec<Vec<f64>> = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while seen.len() < 2 && Instant::now() < deadline {
+            if let GateOutput::Substitute { action, .. } = ep.gate(&[0.0; 3], None, None) {
+                seen.push(action.values.to_vec());
+            }
+            std::thread::sleep(Duration::from_millis(5));
         }
-        std::thread::sleep(Duration::from_millis(5));
+        assert_eq!(
+            seen,
+            vec![vec![1.0; 3], vec![3.0; 3]],
+            "the steps around the inert one must still actuate, in order (sequence {seq})"
+        );
     }
-    assert_eq!(
-        seen,
-        vec![vec![1.0; 3], vec![3.0; 3]],
-        "the steps around the inert one must still actuate, in order"
-    );
 
     release_claim(&session, "claim-inert");
     wait_for(&session, |s| s.gate_mode == Some(GateMode::Passthrough));

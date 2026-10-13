@@ -43,6 +43,12 @@ run. `SiteOwnershipError.code` distinguishes contention and uncertain teardown;
 uncertain teardown retains ownership. The optional `MediaRuntimePort.media_tracks()`
 returns native publisher identities and last local attempt status, not proof of
 viewer delivery. See the public site ownership/media guide for scope and limits.
+An absent optional media companion is ordinary capability absence. A broken
+installed companion retains its original import fault: SDK import warns and
+explicit media selection raises that fault before creating a session.
+Native media companion wheels select macOS 13.0+ through their per-target build
+configuration. The required ScreenCaptureKit framework starts at 12.3, which
+whole-release wheel tags cannot represent accurately.
 
 ## Named-part operations
 

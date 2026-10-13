@@ -130,7 +130,12 @@ def test_release_is_gated_and_the_distribution_pair_is_atomic():
         (item["name"], item["runner"], item["target"]) for item in media_platforms
     } == expected_platforms
     assert media_platforms == base_platforms
-    assert "MACOSX_DEPLOYMENT_TARGET=12.3" in release_text
+    companion = tomllib.loads((SDK / "media" / "pyproject.toml").read_text())
+    for target in ("aarch64-apple-darwin", "x86_64-apple-darwin"):
+        assert companion["tool"]["maturin"]["target"][target][
+            "macos-deployment-target"
+        ] == "13.0"
+    assert "MACOSX_DEPLOYMENT_TARGET" not in release_text
     assert "waddle-sdk-skills-${GITHUB_REF_NAME}.zip" in release_text
     assert "zipfile.ZIP_STORED" in release_text
     assert "Cannot prove that GitHub Release" in release_text
@@ -179,7 +184,17 @@ def test_public_docs_are_strict_versioned_and_current():
     assert mkdocs["plugins"][1]["mkdocstrings"]["handlers"]["python"]["options"][
         "allow_inspection"
     ] is False
-    assert readthedocs["build"]["tools"] == {"python": "3.12", "rust": "1.96"}
+    core_toolchain = tomllib.loads(
+        (REPO / "waddle-core" / "rust-toolchain.toml").read_text()
+    )["toolchain"]["channel"]
+    sdk_toolchain = tomllib.loads((SDK / "rust-toolchain.toml").read_text())["toolchain"][
+        "channel"
+    ]
+    assert sdk_toolchain == core_toolchain
+    assert readthedocs["build"]["tools"] == {
+        "python": "3.12",
+        "rust": core_toolchain,
+    }
     assert readthedocs["mkdocs"]["configuration"] == "mkdocs.yml"
     assert readthedocs["python"]["install"] == [
         {"requirements": "docs/requirements.txt"}

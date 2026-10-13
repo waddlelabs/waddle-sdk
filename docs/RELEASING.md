@@ -117,7 +117,15 @@ commit only after it has landed on `main`.
    ```
 
    `.github/workflows/ci.yml` runs the complete Python, Rust, and strict documentation
-   gates on every push and pull request. The release workflow calls that same reusable
+   gates on pull requests, main pushes and `feat/native-ci-*` qualification branch
+   pushes. Failed Python/core jobs retain their complete test evidence and bounded
+   original failure annotations; their failure still blocks the release gate.
+   Linux installs Mesa EGL prerequisites. Full macOS Python/render jobs use
+   `macos-15-xlarge` for MuJoCo's accelerated CGL context; the Rust core retains
+   standard `macos-15`. The larger runner requires repository access and enabled
+   billing. If it cannot run, native render CI remains unqualified; no render
+   tests are filtered or weakened. See [GitHub's runner specifications](https://docs.github.com/en/actions/reference/runners/larger-runners#available-macos-larger-runners-and-labels).
+   The release workflow calls that same reusable
    workflow before any wheel or Agent Skills build and before either publishing
    identity can run.
 
@@ -183,7 +191,9 @@ commit only after it has landed on `main`.
 - `pip install 'waddle-sdk[media]'` — linux x86_64, linux aarch64, macOS arm64,
   macOS x86_64, and Windows x64. Each wheel links LiveKit's target-specific prebuilt
   libwebrtc and is imported on the same native architecture before publishing. macOS
-  media wheels declare a 12.3+ deployment floor because the SDK links ScreenCaptureKit.
+  media wheels declare a 13.0+ deployment floor in the companion pyproject's
+  per-target settings. ScreenCaptureKit needs 12.3, while modern macOS wheel tags
+  express only whole releases; claiming 12.0 would include unsupported 12.0–12.2.
   The Windows media build selects Rust's static CRT to match LiveKit's prebuilt
   libwebrtc archive; do not remove that target-specific release setting or mix `/MT`
   and `/MD` objects in the extension.

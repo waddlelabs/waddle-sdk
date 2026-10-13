@@ -104,6 +104,9 @@ The default `waddle-sdk` wheel carries gRPC.
 `pip install "waddle-sdk[media]"` adds the LiveKit media companion on Linux x86-64,
 Linux ARM64, macOS Intel/Apple Silicon, and Windows x64.
 Camera adapters are lazy extras: `[orbbec]`, `[realsense]`, or `[cameras]`.
+The [macOS RealSense source recipe](docs/porting/camera.md#native-macos-source-qualification)
+creates a separately identified arm64/macOS 15+ wheel, with software checks and
+shared USB dependencies. Physical access and timing still require qualification.
 Physical adapters are lazy too: `[xarm]`, `[alicia]`, `[alicia-d]`, or the
 combined `[robots]`; the Synria vendor SDKs currently require Python 3.11+
 while the base SDK remains Python 3.10+.
@@ -115,6 +118,12 @@ shipped in this tree:
 ```bash
 pip install "i2rt @ git+https://github.com/i2rt-robotics/i2rt@570ef66681ff12bd8298aba34084307cfecc9f05"
 ```
+
+The [reviewed I2RT runtime builder](docs/porting/robot.md#reviewed-i2rt-runtime-artifact)
+also creates a visibly versioned transport candidate with unchanged model bytes.
+Source inspection verifies its complete reviewed inventory. The shared YAM
+factory accepts explicit [USB-CAN site configuration](docs/porting/robot.md#yam-usb-selection)
+using that runtime; physical control qualification remains separate.
 
 Contributors and agents must read [`AGENTS.md`](AGENTS.md) before changing the
 repository.

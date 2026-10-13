@@ -1,5 +1,10 @@
 # waddle-sdk (Python)
 
+For native arm64/macOS 15+ RealSense builds, follow the source qualification recipe
+in [camera adapters](../docs/porting/camera.md#native-macos-source-qualification).
+The derived wheel retains its patches and native dependency identity; installing
+it does not establish physical camera access or control timing.
+
 The Python frontend owns one customer site: strict configuration, hardware and
 camera lifecycle, the owner envelope, paired timestamps, and raw recordings.
 Applications consume the structural `waddle_sdk.runtime.SdkRuntimePort`; the SDK
@@ -145,6 +150,13 @@ a bitrate mismatch fails with the actual and expected values. Omit or set
 service manages the bus. Custom robot adapters can reuse
 `waddle_sdk.robots.ensure_socketcan_up`; the helper never scans for other links or
 guesses what is attached.
+
+An explicit `connection.usb_can` instead selects the exact-device USB-CAN
+candidate through the same YAM factory. Its mapping contains `selector`
+(`vendor_id`, `product_id`, `bus`, `address`, `serial_number`) and optional absolute
+`libusb_library`. Do not combine it with `channel` or `configure_can`. The selected
+reviewed runtime, lazy opening and remaining physical qualification requirements
+are documented under [YAM USB selection](../docs/porting/robot.md#yam-usb-selection).
 
 Before a live YAM opens I2RT, its reference adapter installs an exact-signature
 workaround for the pinned vendor receive loop. The stock loop polls SocketCAN in
@@ -513,13 +525,17 @@ back to the bundled core. `WADDLE_NO_MEDIA=1` remains an explicit opt-out.
 ### Third-party content in the wheel
 
 This repo is Apache-2.0 and the wheel carries one deliberate exception:
-`waddle_sdk/robots/yam_data/` is a vendored snapshot of I2RT's YAM robot
+`waddle_sdk/robots/yam_data/yam.urdf` is a vendored snapshot of I2RT's YAM robot
 description, shipped under its own MIT licence (`yam_data/LICENSE`, verbatim
 from the source repo) and pinned to the upstream commit its README names. It
 is data rather than code, text only — the STL meshes are not shipped — and it
 earns its 16 KB twice: `waddle_sdk.robots.yam` hands it to a single-arm
 declaration as `kinematics_urdf`, and `tests/test_yam_facts.py` compares every
 constant in that module against the vendor's own numbers in it.
+Adjacent JSON verification data describes the separately built
+[reviewed I2RT runtime](../docs/porting/robot.md#reviewed-i2rt-runtime-artifact).
+Its original model bytes are accepted only after full source/asset and
+metadata/license verification; no runtime code or meshes are added to `yam_data`.
 
 ## Development
 
@@ -532,14 +548,21 @@ cargo fmt --manifest-path rust/Cargo.toml --check
 ```
 
 The full test suite uses the optional MuJoCo scene compiler. On headless Linux,
-set `MUJOCO_GL=egl` before running rendering tests. The base SDK remains usable
-without MuJoCo.
+set `MUJOCO_GL=egl`; on macOS use `MUJOCO_GL=cgl`. Native test workers select the
+corresponding platform backend. Use the lockfile's MuJoCo version for CI
+reproduction. The base SDK remains usable without MuJoCo.
 
 The shim is its own cargo workspace (`rust/`) with path-deps into
 `../waddle-core/crates/*`; pyo3's `extension-module` feature lives only in
 `[tool.maturin].features` so plain `cargo check/clippy` keep working.
 
 ### Connected builds
+
+The SDK and core source builds use the pinned Rust 1.98.1 toolchain, including
+the upstream Mach-O alignment fix for modern macOS loaders. CI imports the
+packaged media core and verifies its selected features before acceptance.
+If an installed companion cannot load, SDK import reports its original fault;
+an explicit LiveKit request raises that fault before session construction.
 
 The transports are cargo features on the shim. `grpc` (the control plane:
 `create_session(transport_url=, transport_token=)`) is in the DEFAULT
@@ -556,6 +579,14 @@ cargo clippy --manifest-path rust/Cargo.toml --features grpc,livekit --all-targe
 Clippy must be clean featureless, `--features grpc`, and
 `--features grpc,livekit`. A build that lacks a feature refuses the
 matching kwarg rather than running offline in silence.
+On macOS, final media binaries must retain the static WebRTC archive's
+Objective-C categories using `-ObjC`. The repository Cargo configuration and
+shim build script supply it for source tests and media wheels respectively.
+The companion's per-target pyproject settings select macOS 13.0 as the wheel
+deployment floor. ScreenCaptureKit requires 12.3; whole-release macOS wheel tags
+cannot express that minor-version minimum accurately.
+External Rust applications using the core media crate need this in their own
+final link settings; see [LiveKit's build requirement](https://github.com/livekit/rust-sdks#macos).
 **`waddle_sdk.FEATURES` is the probe**, not `waddle_sdk._core.FEATURES`:
 `_native` selects which core this process runs on and re-exports that
 core's features, so on a `[media]` install `waddle_sdk._core.FEATURES` still

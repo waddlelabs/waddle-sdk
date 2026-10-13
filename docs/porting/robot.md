@@ -91,6 +91,225 @@ Methods must be thread-safe. Runtime-owned dispatch and pump threads can call th
 driver concurrently with shutdown or observation. `close()` must be idempotent in
 practice even where the structural type does not express that property.
 
+## Periodic host scheduling
+
+An adapter's dedicated periodic thread may use
+`waddle_sdk.scheduling.periodic_thread(period_s=..., computation_s=...,
+constraint_s=...)` around its active loop. Values are seconds and must satisfy
+`0 < constraint/2 <= computation <= constraint <= period`. On macOS this requests
+Mach time-constraint scheduling for the calling thread, restores its original
+policy (including nested requests) on exit and releases the acquired Mach port.
+Other platforms retain their current policy. `SchedulingError.as_dict()` preserves
+the original operation and kernel return under `runtime.scheduling_failed`.
+
+Declare a budget appropriate to the measured work and keep unrelated planning off
+that thread. A request is not a timing guarantee: macOS may demote over-budget
+threads, and timers, hardware and Python execution still need measurement under
+load. Retain the adapter's existing stale-feedback, missed-deadline, cancellation
+and stop gates. Never extend those bounds to compensate for scheduling failures.
+The yielded mapping identifies the requested policy; it does not claim measured
+cadence, physical arrival or real-time qualification.
+
+`periodic_wait(event, timeout_s, period_s=...)` confines the request to the blocking
+wait and restores policy before capture, rendering or customer callbacks. The
+standard robot/camera pumps and camera-only inspection use it. Already-stopped
+and zero-duration waits return without requesting a policy. Other hosts retain
+their ordinary wait behavior; fresh feedback and measured deadlines still govern.
+
+`RobotPump.fault` retains a terminal publishing/wait exception. Its optional
+`on_fault(error)` callback receives that exact exception; `Rig.on_pump_fault` can
+connect it to an application fault channel. Normal site composition emits the
+original fault for every part served by that shared publisher and refuses to
+stamp their observations as fresh after it fails. This is a common publisher
+failure, distinct from one driver's ordinary part fault, which remains independent
+and does not stop siblings. Hold/e-stop remain available.
+
+## USB-CAN transport candidate
+
+`waddle-sdk[can-usb]` provides the optional
+`waddle_sdk.robots.usbcan.{UsbCanSelector,UsbCanBus,UsbCanFault}` transport.
+This is a software-tested qualification candidate. YAM accepts explicit selection
+with the reviewed runtime below; `transport_evidence.qualified` is explicitly false. Installing the
+extra imports no bus and does not identify the attached robot.
+
+The selector requires a supported Candlelight VID/PID, exact serial number and
+current USB bus/address. A different serial at the declared location is refused
+before any control request. Opening claims interface zero and configures only the
+selected, single-channel adapter. It never resets USB, detaches a kernel driver,
+falls back to an enumeration index or reconfigures another adapter on shutdown.
+A usable libusb library is required; `libusb_library` can select its exact path.
+Distribution of that native dependency remains part of host qualification.
+
+The provider implements classic CAN only. It validates device bit-timing limits,
+uses finite control/read/write timeouts and stamps receives at host acquisition.
+It does not claim a hardware clock. `recv(0)` inspects only the bounded queue;
+positive submillisecond timeouts never become an infinite USB read. Sending keeps
+the original message intact and acknowledges USB submission, not CAN delivery or
+motor arrival. A positive send timeout is required because this synchronous USB
+provider cannot perform a genuine nonblocking write. Millisecond USB timeout
+rounding is explicit: an observed submission overrun is a terminal fault.
+`hardware.usb_can_write_timeout` retains the phase, elapsed caller time, original
+budget and rounded USB timeout. That duration includes Python/host scheduling;
+it does not isolate USB transfer time or establish a hardware timestamp.
+
+USB access/disconnect failures, controller error frames, malformed frames and
+device/host overflow fence subsequent reads and writes. `UsbCanFault` retains the
+operation, selected device, original exception/cause, errno and backend code;
+the ordinary runtime fault wrapper preserves that chain. It deliberately does not
+inherit retryable `can.CanError`, so a vendor transaction cannot replace terminal
+transport evidence with a final generic motor timeout. Device error reporting is
+enabled when its firmware advertises that feature, and absence remains visible
+in `transport_evidence.berr_reporting`. This is not yet qualified fault parity.
+
+Shutdown wakes waiting receivers, drains the reader and in-flight write, then
+stops/releases the selected interface. An undrained operation retains the device
+and reports `hardware.usb_can_drain`; it does not release a live handle. Site locks
+and actual USB claim semantics remain relevant: direct vendor access or another
+site ID is outside the SDK's cooperative site lock. Multi-owner exclusion must be
+qualified before deployment.
+
+[The I2RT injection patch](patches/i2rt-570ef666-transport-injection.patch) applies
+to upstream commit `570ef66681ff12bd8298aba34084307cfecc9f05`. It adds optional
+keyword-only `get_yam_robot(..., motor_interface_factory=..., control_wait=...)`,
+`DMChainCanInterface(..., motor_interface_factory=..., control_wait=...)` and
+`DMSingleMotorCanInterface(..., bus_factory=...)` seams. Each factory returns a
+fresh owned interface/bus. The default SocketCAN path and original motor/gain/
+gripper code remain in the vendor; simulation ignores the injected transport/wait.
+Partial interface initialization and notifier failures still drain their bus and
+retain the primary exception plus cleanup diagnostics.
+
+The optional `control_wait(stop_event, timeout_s, *, period_s)` callback surrounds
+only the blocking delay; `waddle_sdk.scheduling.periodic_wait` supplies the native
+macOS policy. The server and CAN writer retain their original computation, motor
+recovery and command values. Control loops retain one thread and the original
+background exception. Startup waits for a completed first iteration rather than
+a fixed sleep; stop wakes cadence waits and bounds drain before transport close.
+A failed drain retains the selected handle and reports its original scoped timeout.
+Constructor/factory failures clean up started loops and owned interfaces, preserving
+the primary fault plus any cleanup uncertainty. Readiness proves software progress,
+not measured hardware timing or arrival.
+
+YAM consumes optional retained `control_fault` evidence before a generic stopped-
+thread observation, and explicit server/writer drain methods before closing the
+transport. The pristine vendor retains its existing compatibility path. The patch's
+software cases live in `tests/test_can_transport.py`, `tests/test_control_loop.py`
+and `tests/test_control_lifecycle.py`; SDK cases live in `sdk/tests/test_usbcan.py`
+and `sdk/tests/test_robots_yam.py`. These selections open no hardware.
+
+Apply and test the patch in a separate checkout of that exact upstream commit.
+Do not change an installed vendor tree or its `RECORD`/`direct_url.json` to hide
+source differences. The [reviewed derived runtime](#reviewed-i2rt-runtime-artifact)
+retains unchanged source geometry and supports non-opening model inspection.
+Physical cadence under load, stop/fault behavior and multi-owner checks remain
+required before deployment. Explicit selection does not establish that acceptance.
+The patch is a shared transport seam, not a separate macOS controller fork.
+
+### Reviewed I2RT runtime artifact
+
+`tools/build_i2rt_transport_runtime.py` builds
+`i2rt==1.1.2+waddle.transport.570ef666` from an immutable archive of the upstream
+pin plus the reviewed SDK patch. It leaves the input checkout and installed
+packages untouched and refuses an existing output directory. With `uv==0.11.26`
+available, run from the SDK repository root:
+
+```bash
+python tools/build_i2rt_transport_runtime.py \
+  --source-repo /path/to/i2rt \
+  --output tmp/i2rt-transport-build
+```
+
+The source repository must contain the exact upstream commit. The tool creates
+the visibly versioned wheel, retains the MIT license and source provenance,
+checks every package file and selected metadata/license byte against the SDK's
+reviewed manifest, and writes `build-evidence.json` with the actual wheel digest.
+It fixes archive timestamps to the upstream commit time. The wheel build backend
+is pinned to Flit Core 4.1.0. Five production files contain the transport/lifecycle changes;
+the other 112 production files, including model assets, retain their upstream
+bytes. The extra provenance file declares these differences without claiming a
+pristine Git installation or physical qualification.
+
+Linux retains the vendor NumPy 2.2.6 requirement. Darwin requires NumPy 2.3.1 or
+later to include the upstream native SME/FPSR corrections. The unchanged vendor
+Ruckig 0.15.3 build uses an older option; with the current build backend, install
+the candidate using its documented compatibility setting:
+
+```bash
+uv pip install --config-settings-package ruckig:minimum-version=0.9 \
+  tmp/i2rt-transport-build/wheels/i2rt-1.1.2+waddle.transport.570ef666-py3-none-any.whl
+```
+
+The YAM model-source provider accepts this exact reviewed distribution as well as
+the original Git pin. It verifies the candidate's version, complete source/asset
+inventory, SDK-approved hashes, installed package records, metadata and license.
+A rewritten RECORD, self-declared provenance, extra vendor source or changed
+model cannot establish acceptance. The returned geometry remains identical to
+the pristine source. Provenance retains the upstream base pin and the actual
+distribution's license-record path; inspection imports no vendor Python code.
+These checks establish source identity, not a sandbox against a malicious user
+who can change the interpreter or installed SDK. This artifact does not select
+USB-CAN, open a device or qualify physical control behavior.
+
+### YAM USB selection
+
+The shared YAM adapter accepts `arm(usb_can=...)` and `ArmSite(usb_can=...)`
+for explicitly selected live parts. `waddle_sdk.robots.usbcan_config` supplies
+immutable `UsbCanSelector` and `UsbCanConfig` without importing optional CAN/USB
+or vendor code. The existing selector import from `robots.usbcan` remains valid.
+An ordinary Site manifest can supply the equivalent configuration under its
+YAM part's `connection`:
+
+```yaml
+connection:
+  usb_can:
+    selector:
+      vendor_id: 7504       # 0x1d50; use the discovered supported VID/PID
+      product_id: 24687     # 0x606f
+      bus: 7               # replace with this adapter's current USB location
+      address: 3
+      serial_number: "replace-with-exact-adapter-serial"
+    # Optional absolute path to the host's selected libusb library:
+    # libusb_library: /absolute/path/libusb-1.0.dylib
+```
+
+Omit `channel` and `configure_can`. The current reviewed vendor chain assumes
+1,000,000 bit/s; another `can_bitrate` is refused before any USB/motor command.
+Selectors sharing either a location or a VID/PID/serial identity are refused
+for distinct live parts before the first arm opens. Configuration mappings are
+frozen at declaration, so later caller mutation cannot change the selected arm.
+Simulation can retain valid live configuration without importing/opening its
+transport. Reconnection that changes the bus/address requires updating the site.
+
+Opening a USB-selected arm first verifies the exact derived I2RT source against
+the SDK manifest, then imports the optional transport/vendor implementation.
+Each injected motor interface owns a fresh selected bus. The existing YAM
+receive/transaction handling, gains, gravity compensation, measured gripper
+decisions, feedback freshness, envelopes and stop authority remain in place.
+The scoped `periodic_wait` callback surrounds only each control thread's wait;
+it does not change control frequency or execute the controller remotely.
+
+`LiveDriver.transport_evidence` includes the original bus evidence and exact
+reviewed `runtime_source`, with physical qualification false. A startup report
+makes that scope visible. There is no discovery-based automatic USB selection
+or reduced motion/arrival acceptance. Physical feedback, transport timing under
+load, error reporting, multi-owner exclusion and clean measured stopping still
+require live qualification before production use.
+An original control-thread fault takes precedence over generic stopped-worker
+evidence during live startup. Draining a worker and releasing USB are distinct
+from confirming a delivered zero-torque command; a transport fault can prevent
+that command. Preserve physical stop and the exact uncertainty after such a fault.
+
+Explicit USB teardown now latches commands and drains both reviewed control
+writers, then sends the existing motor-disable frame to each of the seven motors.
+The original 5 ms USB submission budget remains unchanged. Each motor must return
+its matching classic eight-byte feedback frame, acquired after submission began,
+with disabled state zero within 50 ms of submission completion. Cached replies,
+enabled state and interface/thread closure cannot qualify disable. All motors
+are attempted; the first original fault is re-raised unchanged and complete stop
+attempts/errors stay in `LiveDriver.usb_shutdown_evidence`. Transport closure
+requires all disabled replies; failed drain/disable retains uncertain ownership.
+These are protocol acknowledgements, separate from measured mechanical stopping
+or a physical power cut. The default SocketCAN lifecycle remains unchanged.
+
 ## Declaration and envelope must agree
 
 One facts source should produce the driver width/order, action declaration, `Arm`

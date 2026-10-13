@@ -37,7 +37,6 @@ from importlib.resources import files
 
 import numpy as np
 import pytest
-
 from waddle_sdk import descriptors
 from waddle_sdk.robots import base, yam
 
@@ -134,6 +133,8 @@ def test_the_model_ships_as_text_with_no_meshes():
     assert sorted(p.name for p in DATA.iterdir()) == [
         "LICENSE",
         "README.md",
+        "i2rt-transport-provenance.json",
+        "i2rt-transport-runtime.json",
         "yam.urdf",
     ]
     readme = (DATA / "README.md").read_text(encoding="utf-8")

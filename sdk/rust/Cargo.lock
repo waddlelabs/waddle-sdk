@@ -3394,6 +3394,7 @@ dependencies = [
  "tonic-prost-build",
  "uuid",
  "waddle-fsm",
+ "waddle-ingest",
  "waddle-types",
 ]
 

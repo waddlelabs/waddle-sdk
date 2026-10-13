@@ -1,8 +1,9 @@
 # I2RT YAM URDF (vendored, patched) — third-party content
 
-This directory is **not** waddle-sdk code. It is a point-in-time snapshot of
-a robot description published by the robot's maker, shipped inside an
-Apache-2.0 wheel under its own MIT licence.
+`yam.urdf` is a point-in-time snapshot of a robot description published by the
+robot's maker, shipped inside an Apache-2.0 wheel under its own MIT licence.
+The adjacent JSON files are SDK verification data for a separately built derived
+vendor runtime; they contain no robot code or meshes.
 
 | | |
 |---|---|
@@ -82,3 +83,14 @@ There is no generator to re-run: this is a hand-made snapshot. Re-vendor by
 applying the same patches to a fresh checkout of the upstream repo at whatever
 commit is then current, updating `I2RT_PIN` in `waddle_sdk/robots/yam.py`, and
 running the fact gate — which is what says whether any number moved.
+
+## Reviewed transport runtime
+
+`i2rt-transport-runtime.json` records SDK-approved hashes for all source, assets,
+metadata and license bytes of `i2rt==1.1.2+waddle.transport.570ef666`.
+`i2rt-transport-provenance.json` is the explicit provenance file copied into that
+derived package. It describes the five reviewed production changes and 112
+unchanged upstream production files. Both retain the original source pin above;
+no manufacturer model or gripper relationship changes. The public
+[transport documentation](https://waddle-sdk.readthedocs.io/en/latest/porting/robot/#reviewed-i2rt-runtime-artifact)
+describes rebuilding, inspection and physical qualification limits.

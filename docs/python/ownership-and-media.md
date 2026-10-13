@@ -21,6 +21,13 @@ Repeated context exit does not turn that uncertainty into success. Process exit
 releases OS resources; it does not establish that a physical robot is safe.
 A failed configuration before hardware opens can release ownership normally.
 
+After confirmed pump, native-session and device teardown, the managed rig
+detaches its native core reference. This lets closed lifecycles and captured
+camera buffers be reclaimed even when native reset callbacks referenced that
+rig. Arm counters and the declaration remain available on a retained rig;
+the closed core is no longer an open runtime handle. Uncertain teardown keeps
+the native reference, original failure evidence and site ownership intact.
+
 This is cooperative site ownership for one OS user, not hardware identity discovery
 or command authority. Different site IDs, different users, direct vendor access
 and lower-level driver construction do not share this guarantee. Keep one stable
@@ -29,6 +36,22 @@ Third-party factories must clean up partial resources they never return and repo
 uncertain cleanup; the SDK cannot verify hidden handles inside a vendor factory.
 
 ## Optional media contract
+
+The media companion declares macOS 13.0+ in its per-target build configuration.
+ScreenCaptureKit needs 12.3, while modern wheel tags express only whole releases;
+the build must not advertise 12.0–12.2 compatibility.
+
+Native macOS media builds retain WebRTC's Objective-C category code with the
+`-ObjC` final-link setting. SDK media wheels select it in their build script;
+repository Cargo tests select it in `.cargo/config.toml`. An external Rust final
+target using the media crate must supply the same setting. See
+[LiveKit's macOS build instructions](https://github.com/livekit/rust-sdks#macos).
+Compiling the transport alone does not establish startup or viewer acceptance.
+Source toolchain pins use Rust 1.98.1 for the upstream Mach-O LINKEDIT alignment
+fix. Packaged-core import and unavailable-service refusal are part of software
+acceptance. An installed companion load failure warns with the original error;
+explicit media selection raises that same error before session/driver opening.
+Absence of the optional companion remains an ordinary capability absence.
 
 `SiteSession.media_tracks()` implements the optional structural
 `waddle_sdk.runtime.MediaRuntimePort`. It returns native publisher snapshots:

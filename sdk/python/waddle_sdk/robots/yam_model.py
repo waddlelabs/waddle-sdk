@@ -1,6 +1,6 @@
 """Verified YAM source geometry and hardware relationships; no device lifecycle.
 
-The optional pinned I2RT distribution supplies mesh bytes. No vendor Python code
+The optional pinned or reviewed derived I2RT distribution supplies mesh bytes. No vendor Python code
 is imported. This module returns source geometry, never collision approximations,
 planner selections, workspace files or runtime authority.
 """
@@ -18,6 +18,11 @@ from xml.etree import ElementTree as ET
 import numpy as np
 
 from . import yam
+from ._i2rt_runtime import (
+    TRANSPORT_VERSION,
+    I2rtRuntimeError,
+    verify_transport_runtime,
+)
 from .models import ModelSourceError, ModelSources
 
 _ARM = "i2rt/robot_models/arm/yam/"
@@ -69,7 +74,12 @@ def _vendor():
             "Install the SDK's pinned I2RT dependency before selecting YAM"
         ) from None
     origin = json.loads(dist.read_text("direct_url.json") or "{}")
-    if (
+    if getattr(dist, "version", None) == TRANSPORT_VERSION:
+        try:
+            verify_transport_runtime(dist)
+        except I2rtRuntimeError as error:
+            raise _fail(f"YAM derived runtime verification failed: {error}") from error
+    elif (
         origin.get("url", "").removesuffix(".git") != yam.I2RT_REPO.removesuffix(".git")
         or origin.get("vcs_info", {}).get("commit_id") != yam.I2RT_PIN
     ):
@@ -106,8 +116,10 @@ def _vendor():
 def model_sources(
     *, factory: str, part_name: str, part: Mapping
 ) -> ModelSources | None:
-    """Read the exact installed vendor pin and verify every consumed asset hash.
+    """Read the pinned vendor assets and verify the selected distribution's hashes.
 
+    Accepts the documented pristine pin or the exact reviewed derived runtime;
+    the latter's complete source inventory is checked before reading geometry.
     Requires the documented I2RT install only when explicitly called. Missing,
     changed or unverified selected sources raise :class:`ModelSourceError`; there
     is no network download, device construction or approximate fallback.

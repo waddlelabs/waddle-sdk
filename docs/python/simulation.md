@@ -10,6 +10,12 @@ capability facts; importing a simulator does not establish sensor or motion supp
 
 ## Reference engines and scenes
 
+Use `MUJOCO_GL=cgl` for native macOS rendering and `MUJOCO_GL=egl` for headless
+Linux. The test suite selects the platform backend in isolated workers and uses
+the locked MuJoCo version for CI reproduction. Different native engine versions
+require their own mechanics and RGB-D acceptance; unchanged scene bytes alone
+do not establish equivalent behavior.
+
 | Selector | Role | Installation |
 | --- | --- | --- |
 | `mujoco` | Native URDF import, MuJoCo position drives and RGB-D | `pip install 'waddle-sdk[mujoco]'` |

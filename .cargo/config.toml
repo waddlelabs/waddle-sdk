@@ -1,0 +1,5 @@
+# LiveKit's static WebRTC archive contains Objective-C categories whose methods
+# are resolved at runtime. Retain them in final macOS binaries and test targets.
+# See https://github.com/livekit/rust-sdks#macos
+[target.'cfg(target_os = "macos")']
+rustflags = ["-C", "link-arg=-ObjC"]

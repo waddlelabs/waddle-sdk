@@ -18,6 +18,7 @@ from typing import Any
 
 import numpy as np
 
+from ..scheduling import periodic_wait
 from ._factory import CameraFactoryError, open_camera_driver, resolve_camera_factory
 from .base import CameraDriver, CameraFrame
 from .site import CameraConfig
@@ -279,12 +280,16 @@ class _InspectionPump(threading.Thread):
                         depth=captured.depth,
                     )
                 )
+                deadline += period
+                periodic_wait(
+                    self._stopping,
+                    max(0.0, deadline - time.monotonic()),
+                    period_s=period,
+                )
             except Exception as exc:  # noqa: BLE001 -- vendor capture boundary
                 if not self._stopping.is_set():
                     self._latest.fail(self._camera_name, exc)
                 return
-            deadline += period
-            self._stopping.wait(max(0.0, deadline - time.monotonic()))
 
     def request_stop(self) -> None:
         self._stopping.set()

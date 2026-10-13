@@ -68,6 +68,7 @@ def test_modified_pinned_asset_rejected_before_publish(tmp_path, monkeypatch):
     modified.write_text("unverified geometry")
 
     class ChangedDistribution:
+        version = original.version
         files = original.files
         read_text = original.read_text
 

@@ -1,6 +1,7 @@
 """Content timing bounds remain independent of delivery and session stamps."""
 
 import os
+import sys
 import time
 from dataclasses import FrozenInstanceError
 from types import SimpleNamespace
@@ -58,7 +59,10 @@ def test_timing_must_cover_exactly_the_available_planes():
 
 def test_native_worker_preserves_content_timing_across_ipc(tmp_path, monkeypatch):
     pytest.importorskip("mujoco")
-    monkeypatch.setenv("MUJOCO_GL", os.environ.get("MUJOCO_GL", "egl"))
+    monkeypatch.setenv(
+        "MUJOCO_GL",
+        os.environ.get("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl"),
+    )
     from waddle_sdk.simulators.adapters import Camera, World
     from waddle_sdk.simulators.scene import make_site
 

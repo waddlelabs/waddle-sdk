@@ -14,6 +14,9 @@ a partition is survivable.
 
 from __future__ import annotations
 
+import builtins
+import importlib.metadata
+import re
 import socket
 import sys
 import time
@@ -75,6 +78,20 @@ def test_public_features_describe_the_selected_native_core():
     assert waddle_sdk.FEATURES is _native.FEATURES
     assert isinstance(waddle_sdk.FEATURES, frozenset)
     assert "FEATURES" in waddle_sdk.__all__
+
+
+@pytest.mark.skipif(
+    sys.platform != "darwin" or "livekit" not in _native.FEATURES,
+    reason="requires the packaged macOS media companion",
+)
+def test_media_wheel_does_not_advertise_macos_without_required_frameworks():
+    if _native.core is _core:
+        pytest.skip("in-place media build has no separate companion wheel")
+    wheel = importlib.metadata.distribution("waddle-sdk-media").read_text("WHEEL")
+    assert wheel is not None
+    versions = re.findall(r"macosx_(\d+)_(\d+)_", wheel)
+    assert versions, "media companion must carry native macOS wheel tags"
+    assert all((int(major), int(minor)) >= (13, 0) for major, minor in versions)
 
 
 def test_the_default_build_carries_the_control_transport():
@@ -190,6 +207,39 @@ def test_select_core_without_the_companion_returns_the_bundled_core(monkeypatch)
     assert _native._select_core() is _core
 
 
+@pytest.mark.parametrize(
+    "fault",
+    [
+        ImportError("Original native media binary load refusal"),
+        ModuleNotFoundError("Original missing media dependency", name="media_dependency"),
+    ],
+)
+def test_broken_companion_retains_original_fault_before_any_session(monkeypatch, fault):
+    original_import = builtins.__import__
+
+    def import_module(name, *args, **kwargs):
+        if name == "waddle_media":
+            raise fault
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.delenv("WADDLE_NO_MEDIA", raising=False)
+    monkeypatch.setattr(builtins, "__import__", import_module)
+    failures = []
+    with pytest.warns(RuntimeWarning, match=str(fault)):
+        assert _native._select_core(_import_failures=failures) is _core
+    assert failures == [fault]
+    monkeypatch.setattr(_native, "_MEDIA_IMPORT_ERROR", failures[0])
+    monkeypatch.setattr(_native, "FEATURES", frozenset({"grpc"}))
+    with pytest.raises(ImportError) as caught:
+        create_core_session(
+            "py-features-broken-media",
+            _camera_robot(),
+            _control(),
+            media=waddle_sdk.LiveKit(url="ws://127.0.0.1:9", token="fixture-token"),
+        )
+    assert caught.value is fault
+
+
 def test_select_core_prefers_a_matching_companion(monkeypatch):
     media = _fake_media_core(_core.__version__)
     _install_fake_media(monkeypatch, media)
@@ -247,6 +297,31 @@ def test_media_without_livekit_names_the_media_extra(monkeypatch):
             media=waddle_sdk.LiveKit(url="wss://example.invalid", token="tok"),
         )
     assert "not compiled" in str(excinfo.value)
+
+
+@pytest.mark.skipif("livekit" not in _native.FEATURES, reason="requires the media core")
+def test_native_media_unavailable_service_fails_before_control_dispatch():
+    calls = []
+    control = Control(
+        send=lambda _chunk: calls.append("send"),
+        hold=lambda: calls.append("hold"),
+        resume=lambda: calls.append("resume"),
+    )
+    # Keep the port reserved without listening, so the refusal cannot race
+    # another service binding a supposedly unused port. This opens no driver.
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as reserved:
+        reserved.bind(("127.0.0.1", 0))
+        port = reserved.getsockname()[1]
+        with pytest.raises(RuntimeError, match="media"):
+            create_core_session(
+                "py-features-native-media",
+                _camera_robot(),
+                control,
+                media=waddle_sdk.LiveKit(
+                    url=f"ws://127.0.0.1:{port}", token="fixture-token"
+                ),
+            )
+    assert not calls
 
 
 def test_transport_without_grpc_names_the_from_source_build(monkeypatch):
