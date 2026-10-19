@@ -60,6 +60,72 @@ camera acceptance remains a separate case.
 Configuration resolves from `--live-config`, `WADDLE_SDK_LIVE_CONFIG`, or
 `.live-tests.json` in the working directory. `--live-site` or `WADDLE_LIVE_SITE`
 can select a site independently. The JSON schema name is `waddle.live-bench/v1`.
+
+### Attended single-motor OpenArm commissioning
+
+`test_06_openarm_commissioning.py` requires a separately reviewed
+`openarm_commissioning` bench object and `torque_release_authorized: true`.
+Select exactly its one part in `parts`; the monitor manifest supplies bus/USB/ID
+identity only. The test opens the commissioning owner, never the monitor Site.
+Example shape (every physical bound requires review for the actual setup):
+
+```json
+{
+  "part": "bus_a",
+  "motor_id": 7,
+  "feedback_id": 23,
+  "guards": {
+    "all_bus_actuators_supported_and_clear": true,
+    "cutoff_attended": true,
+    "max_excursion_rad": 0.06,
+    "max_velocity_rad_s": 0.2,
+    "max_nominal_effort_nm": 0.3,
+    "max_temperature_c": 50,
+    "max_peer_drift_rad": 0.02
+  },
+  "trial": {
+    "offset_rad": 0,
+    "kp": 2,
+    "kd": 0.1,
+    "slew_rad_s": 0.02,
+    "duration_s": 10,
+    "arrival_tolerance_rad": 0.01
+  }
+}
+```
+
+Put that object under `openarm_commissioning` in an ordinary bench file with
+`site`, `parts`, `evidence_directory` and shutdown authorization. Run only:
+
+```bash
+python -m pytest --live --live-config=/absolute/commissioning-bench.json \
+  tests/live/test_06_openarm_commissioning.py -q
+```
+
+The zero offset qualifies watchdog withdrawal and cleanup without a position
+trial. Review that retained result before a separate profile uses a nonzero
+offset. Defaults remain 0.03 rad at 0.02 rad/s; an explicitly reviewed profile may
+use up to 0.1 rad at 0.025 rad/s, with a corresponding explicit local excursion
+window. KP remains at most 2; an explicit reviewed damping change may select KD
+up to 0.5 (default 0.1), retaining the same decoded-effort/speed guards.
+No shortfall automatically selects a
+larger offset. Every invocation captures complete RX/TX and the
+owner report in a distinct `openarm-commissioning-*.json`, including failure and
+cleanup evidence. Motion acceptance requires outbound travel in the requested
+direction greater than two encoder bins. Exact target arrival and return error
+are reported separately; shortfall never increases gains or retries and is not
+classified as a motor fault. This establishes neither calibrated zero/FK nor joint/side identity;
+record physical observations separately. Cameras can be independently acquired
+without issuing arm commands from their capture thread.
+
+The intentional watchdog fault is cleared once through the documented clear-error
+packet, with fresh disabled confirmation before further progression. Unrelated
+faults remain terminal. A retained failed watchdog-only trial can be passed to
+the explicit `CommissioningOwner.recover_watchdog` API for a matching, no-enable
+recovery; preserve the original failure and the separate recovery report.
+
+### Ordinary motion profiles
+
 Use `site`, `evidence_directory`, `parts`, `cameras`, `cases`, and explicit
 `torque_release_authorized`. Each motion case names `case_id`, `part`,
 `joint_names`, `start_rad`, `target_rad`, positive `velocity_rad_s`,

@@ -13,6 +13,17 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Add a separate attended OpenArm single-motor commissioning owner, with explicit
+  whole-bus support/clearance and cutoff inputs, silent watchdog qualification,
+  bounded raw-coordinate out-and-back references, decoded MIT effort checks,
+  fresh peer/status/temperature guards and independent disable on failure.
+  Restore original RAM mode/TIMEOUT only after confirmed disable, retain original
+  and cleanup errors, and keep the ordinary monitor adapter read-only. Include
+  fake-wire cancellation/error/cleanup checks and an explicit opt-in live profile
+  with complete wire evidence; physical qualification remains separately measured.
+  Clear only the deliberately qualified watchdog fault, with fresh disabled
+  confirmation; support separately requested, retained-evidence recovery without
+  enable/MIT. Distinguish observed displacement, exact arrival and hardware faults.
 - Add the monitor-only `waddle_sdk.robots.openarm:arm` adapter for seven arm
   encoder coordinates and a raw gripper-motor radian coordinate. Bind exact USB
   adapter serials and CAN IDs, query current encoding spans independently of

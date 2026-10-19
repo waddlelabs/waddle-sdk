@@ -72,6 +72,87 @@ checks both declared buses through a real passive Site, with guarded wire captur
 and advancing kernel receipt evidence. See the live test guide for selection and
 retained JSON evidence. This case never commands physical motion.
 
+## Attended OpenArm single-motor commissioning
+
+`waddle_sdk.robots.openarm_commissioning.CommissioningOwner` owns one explicitly
+bound bus and permits actuation of exactly one declared motor address. It is a
+commissioning API, separate from the monitor-only `arm` factory. It does not open
+a Site/run or grant ordinary robot motion capabilities. Supply all eight motor
+addresses and exact adapter serial. The same local bus lock excludes simultaneous
+monitor and commissioning owners. External raw-CAN programs remain outside this
+lock and must be closed.
+
+Construction reads identity, PMAX/VMAX/TMAX, current mode/TIMEOUT and fresh status
+only. Initial mode must be POS_VEL (`2`) and every peer must be disabled. Explicit
+`Guards` require whole-bus actuator support/clearance, an attended cutoff, and
+positive local excursion, speed, nominal effort, temperature and peer-drift
+bounds. These bounds describe this attended experiment; encoding ranges and
+monitor manifest limits do not establish mechanical safety. Raw motor IDs need
+not yet be assigned physical joint or left/right labels when support and
+clearance cover every possible actuator, including the gripper.
+
+`run(offset_rad=0)` performs watchdog qualification only. It sets TIMEOUT to
+2000 ticks in RAM, switches the disabled selected motor to MIT, seeds zero KP/KD
+and nearest-representable zero feedforward, requires fresh enabled feedback,
+then sends no frames for 200 ms. A subsequent fresh batch must show selected
+communication-loss status `13` and disabled peers. This deliberately induced
+fault is cleared once with `FF FF FF FF FF FF FF FB`; fresh refresh must show
+normal disabled `0`, followed by a confirmed disable command. An immediate
+clear-command reply is not required. Unexpected faults are never cleared.
+The manufacturer [control protocol V1.4](https://gitee.com/kit-miao/damiao-document/blob/master/%E8%B0%83%E8%AF%95%E5%8A%A9%E6%89%8B%E4%BD%BF%E7%94%A8%E8%AF%B4%E6%98%8E%E4%B9%A6%EF%BC%88%E8%BE%BE%E5%A6%99%E9%A9%B1%E5%8A%A8%E6%8E%A7%E5%88%B6%E5%8D%8F%E8%AE%AE%EF%BC%89V1.4.pdf)
+specifies 50 microseconds per tick. This test measures withdrawal by the next
+observation, not exact firmware timing or whether read/refresh traffic resets
+the watchdog. Mode switching clears command values according to the
+[manufacturer protocol description](https://damiao.enactic.ai/en/products/hardware/dm-j4340p-2ec-v1.0/).
+Firmware behavior must still pass the selected physical qualification.
+
+A nonzero offset additionally executes one raw-coordinate out-and-back after
+qualification: explicitly configured offset at most 0.1 rad, KP at most 2,
+positive KD at most 0.5, reference slew at most 0.025 rad/s, total run at most
+ten seconds. Defaults remain 0.03 rad, 0.02 rad/s and KD 0.1. A larger local trial or
+damping change requires
+a separately reviewed profile and excursion window; shortfall never changes
+these settings automatically. Every actually
+encoded reference is checked against the original local window; implied nominal
+effort uses decoded quantized position, velocity, KP, KD and feedforward.
+Feedback checks raw excursion, speed, nominal effort, temperature and peer state.
+Local guard violations report `safety_refusal`; received motor fault statuses
+retain `motor_failure`, while packet/timeout failures retain `transport_lost`.
+MIT's symmetric 12-bit velocity/torque encoding has no exact zero. Low gains and
+these checks are not a hard motor current cap or calibrated torque estimate.
+POS_VEL's speed ceiling alone is not a force limit.
+
+Every run is terminal. `close()` requests cancellation before waiting for the
+current bounded transaction. Ordinary reads can overrun the run deadline by at
+most their configured transaction timeout; cleanup has separate finite deadlines.
+Cleanup attempts selected-motor disable even after a poisoned transaction or
+receive error, requires fresh disabled status, then restores original mode and
+TIMEOUT with write acknowledgements and readback. An uncertain disable prevents
+parameter restoration. No zero-setting, flash storage, automatic re-enable or
+gain escalation is available. Returned reports preserve original and cleanup
+faults independently, quantized commands, encoder arrival/nonarrival and host/
+kernel receipt times. Receipt times do not establish sensor acquisition timing.
+Use the maintained live commissioning case described in the live test guide;
+review a watchdog-only result before a separate attended motion trial.
+
+For a retained watchdog-only failure that left status `13` latched,
+`CommissioningOwner.recover_watchdog(prior_report=..., **connection)` is an
+explicit separate recovery entry. It requires matching retained bus/motor
+identity, original mode `2`/TIMEOUT `0`, a 2000-tick watchdog observation and only
+zero-gain/nearest-zero-feedforward commands. Current mode `1`/TIMEOUT `2000`,
+selected status `13` and disabled peers must still match. It sends one clear,
+checks fresh disabled state, disables and restores RAM; it sends no MIT or
+enable. A mismatch remains a scoped failure. The control manual's section 4.8
+and the pinned [manufacturer clear-error command](https://github.com/enactic/openarm_can/blob/f340d4b808fb177e1f297af54eb55fd51c6c7c10/setup/cli/commands/clear_error_commands.cpp)
+define this packet; a fault code itself is never relabeled normal disabled.
+
+Motion reports distinguish observed requested-direction displacement from exact
+arrival. The maintained first-motion case requires outward displacement greater
+than two encoder bins, and retains start, peak, outbound end, return end and
+per-leg target errors. Ordinary shortfall is not a motor fault and never causes
+automatic gain escalation. A motionless run can pass communication/cleanup while
+failing the live motion-evidence predicate.
+
 ## The factory seam
 
 Expose a callable that explicitly accepts `config: PartConfig` and returns a `Rig`:

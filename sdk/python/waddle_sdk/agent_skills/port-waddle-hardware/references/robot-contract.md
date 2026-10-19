@@ -66,6 +66,13 @@ disables or commands a motor; unsupported actions and physical stops fail
 explicitly. See the public robot adapter guide's OpenArm section for the
 connection, freshness and protocol-source contracts.
 
+The separate `robots.openarm_commissioning.CommissioningOwner` permits one
+explicitly attended raw motor-ID experiment with whole-bus support/clearance,
+watchdog qualification, bounded references and confirmed disable/restoration.
+It grants no Site motion capability and supplies no calibrated robot model.
+Use the public adapter guide and the explicit live commissioning profile;
+monitor coordinate bounds never authorize commissioning motion.
+
 When multiple parts or cameras need one shared simulator scene, implement the
 [shared simulation backend contract](simulation-contract.md) instead of opening one
 world from every part.

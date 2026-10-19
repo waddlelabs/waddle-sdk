@@ -1,5 +1,22 @@
 # AGENTS.md — waddle-sdk monorepo
 
+`robots.openarm_commissioning.CommissioningOwner` is a separate attended,
+single-motor commissioning owner. It shares the exact USB bus lock with the
+monitor, reads all eight declared peers, permits selected-ID MIT/enable/disable
+and RAM-only mode/TIMEOUT changes, qualifies watchdog withdrawal before movement,
+and restores original parameters only after fresh disabled feedback. Every run is
+terminal, bounded to ten seconds plus bounded cleanup; cancellation prevents the
+next ordinary write. Guarded raw-coordinate observations and quantized implied
+effort are not calibrated joint models or hard current limits. The monitor factory
+remains entirely read-only. See the robot adapter guide and opt-in
+`sdk/tests/live/test_06_openarm_commissioning.py`; no motion is inferred from
+software checks or watchdog-only qualification.
+Only the deliberately observed watchdog fault may be cleared once, followed by
+fresh disabled feedback. Explicit retained-evidence recovery sends no enable/MIT;
+unrelated faults are never cleared automatically. Motion evidence distinguishes
+directional encoder displacement from exact arrival and never escalates gains on
+ordinary tracking shortfall.
+
 Orbbec capture selects an optional exact vendor serial and proves aligned RGB-D
 startup before returning. Full-pair aggregation and vendor synchronization do not
 establish exposure timing. Color distortion and per-frame depth scale are retained;
