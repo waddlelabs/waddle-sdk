@@ -1,5 +1,35 @@
 # AGENTS.md — waddle-sdk monorepo
 
+Orbbec capture selects an optional exact vendor serial and proves aligned RGB-D
+startup before returning. Full-pair aggregation and vendor synchronization do not
+establish exposure timing. Color distortion and per-frame depth scale are retained;
+changes during streaming fail rather than silently rewriting calibration. No
+distortion-aware point resolver or robot registration is inferred. See
+`sdk/tests/test_orbbec.py` and [camera adapters](docs/porting/camera.md).
+
+OpenArm `robots.openarm:arm` now provides monitor-only seven-axis plus raw gripper
+encoder observations. Two manifest parts use explicit independent SocketCAN buses,
+USB serial bindings and eight send/reply IDs each. The read-only transport emits
+only parameter-read/refresh frames, matches exact IDs and kernel receive freshness,
+and preserves bounded timeout/malformed/motor-fault evidence without cached fallback.
+Failed transactions require reopen. Explicit site coordinate bounds remain separate
+from queried motor encoding spans; no calibrated zeros, FK, jaw metres, motion or
+physical stop is inferred. No active posture is accepted. See
+[adapter configuration](docs/porting/robot.md#openarm-observation-bring-up) and
+`sdk/tests/test_robots_openarm.py`; physical acceptance remains separate.
+`sdk/tests/live/test_05_openarm_monitor.py` is opt-in two-part read-only hardware
+acceptance using an explicit Site/bench profile, ordinary close, kernel receipt
+advancement and guarded TX/RX capture. Its `openarm_monitor` selection requires
+two monitor parts and discovered CAN interfaces; no torque-release authorization
+is needed for this explicitly passive adapter. Cameras remain separately owned.
+Optional driver booleans `actuation_supported`, `estop_supported` and
+`close_releases_torque` permit explicitly passive hardware without relabeling it
+as simulation. Absence preserves legacy behavior; malformed values are refused.
+Unsupported actuation facts and global e-stop registration are withheld, missing
+Site stop implementations raise `unsupported`, and a driver explicitly declaring
+no close-time torque release avoids the parking gate. Physical stop/torque claims
+must describe actual device behavior, not just monitor posture.
+
 RealSense RGB intrinsics retain the active vendor distortion model. The public
 descriptor/wire enum distinguishes modified and inverse Brown–Conrady from ROS
 plumb_bob; older unspecified declarations remain unspecified. Images are not

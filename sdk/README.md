@@ -337,6 +337,11 @@ Alicia-M, Alicia-D, MuJoCo, ROS 2, and camera adapters import vendor SDKs lazily
 imports require no hardware packages. The three manifest-native physical
 families expose a single joint space with a normalized 0..1 gripper row;
 Applications own IK and planning above this boundary.
+`waddle_sdk.robots.openarm:arm` adds explicitly bound, read-only SocketCAN
+monitoring for seven arm motors plus a raw gripper-motor radian coordinate.
+It requires no vendor package and does not enable, disable or command motors.
+Motion postures, calibrated FK and physical jaw mapping are not implemented;
+see [OpenArm bring-up](../docs/porting/robot.md#openarm-observation-bring-up).
 For no-hardware work, `waddle_sdk.robots.mock:arm` is a manifest-native
 configurable simulated arm with planar FK and conservative body geometry.
 `waddle_sdk.robots.mujoco:arm` keeps the compatible private-world factory.
@@ -368,7 +373,12 @@ A driver is any object with the ten members of `base.Driver` (`kind`,
 on its ancestry. `kind` is your driver's own word for itself, and this layer
 reads it in ONE direction: `"sim"` alone selects the harmless branch of the
 two questions it asks (does closing this drop all torque, is homing it a
-motion nobody is watching), and every other word is treated as metal.
+motion nobody is watching), and every other word is treated as metal. A passive
+hardware observer may explicitly narrow its action, physical-stop and close
+effects through the optional boolean facts documented under
+[passive hardware observation](../docs/porting/robot.md#passive-hardware-observation).
+This avoids claiming unimplemented controls or waiting for torque release from a
+handle that never owns motor torque, while retaining conservative legacy defaults.
 Drivers that can atomically command a position and a known trajectory velocity
 may additionally implement
 `write_position_velocity(target, velocity_feedforward_rad_s) -> bool`.

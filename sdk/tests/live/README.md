@@ -19,9 +19,43 @@ does not establish which robot is connected or that it can execute a command.
 Missing prerequisites skip only dependent tests and appear in the discovery
 summary. Driver/service failures during execution fail the test with their origin
 information; discovery never converts a failing device into a successful test.
+An explicitly configured camera serial may match same-driver discovery metadata
+when the candidate supplies no executable serial selector. A candidate's explicit
+connection serial remains authoritative when present. This only determines test
+eligibility; it never creates a selector, and the camera driver must verify the
+selected device when opened.
 `--collect-only` enumerates metadata without opening drivers or sending commands.
 `CI` and `GITHUB_ACTIONS` reject `--live`; release jobs run the normal suite.
 Physical execution is sequential and stops at the first failure.
+
+### Passive OpenArm bring-up
+
+The maintained `test_05_openarm_monitor.py` case requires an explicit site with
+two selected `waddle_sdk.robots.openarm:arm` parts in `monitor` posture. Use
+locally assigned names (for example `bus_a` and `bus_b`) until physical side
+mapping is established. Supply exact USB serials/CAN IDs and explicit
+observer-only coordinate bounds; do not substitute encoding PMAX for mechanical
+limits. The adapter currently cannot command or release torque, so this case
+does not require `torque_release_authorized` and never opens a run or submits a
+target. The existing motion tests retain their own prerequisites.
+
+```bash
+python -m pytest --live --live-site=/absolute/openarm-monitor.yaml \
+  tests/live/test_05_openarm_monitor.py -q
+```
+
+An optional ordinary `--live-config` supplies `parts` and `evidence_directory`.
+Collection checks transport discovery only; execution verifies exact bus serials
+and motor IDs. The test opens the selected two parts under the original Site
+identity and projects out cameras/unselected parts. It checks ten complete named
+observations, advancing per-motor kernel receipt timestamps, absent actuation/
+stop/FK/jaw-mapping capabilities and ordinary socket teardown. A guarded wire
+capture refuses any outgoing frame other than declared parameter-read/refresh
+requests and retains TX/RX bytes in `openarm-monitor-*.json`, including failures.
+Latest device-feedback timestamps may include a background-pump batch newer
+than the observation; they do not establish synchronized motor acquisition or
+physical movement. Identical stationary encoder values are valid. SDK-aligned
+camera acceptance remains a separate case.
 
 Configuration resolves from `--live-config`, `WADDLE_SDK_LIVE_CONFIG`, or
 `.live-tests.json` in the working directory. `--live-site` or `WADDLE_LIVE_SITE`

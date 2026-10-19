@@ -13,6 +13,23 @@ from waddle_sdk.discovery import discover_hardware
 from .sdk_live.config import load, reject_ci
 
 
+def _matches_declared_connection(candidate, driver, identity):
+    if candidate.driver != driver and candidate.kind != "transport":
+        return False
+    for key, value in identity.items():
+        if key in candidate.connection:
+            actual = candidate.connection[key]
+        elif key == "serial" and candidate.driver == driver:
+            # Metadata can make an explicit selector eligible for a live test;
+            # it never supplies a selector or bypasses the driver's exact check.
+            actual = candidate.metadata.get("serial")
+        else:
+            return False
+        if actual != value:
+            return False
+    return True
+
+
 def pytest_addoption(parser):
     group = parser.getgroup("live devices")
     group.addoption(
@@ -38,6 +55,7 @@ def pytest_configure(config):
         ("named_parts", "two selected arms and device feedback probes"),
         ("named_motion", "reviewed independent motion and timing profile"),
         ("named_envelope", "reviewed out-of-envelope refusal profile"),
+        ("openarm_monitor", "two explicitly configured passive OpenArm query owners"),
     ):
         config.addinivalue_line("markers", f"{name}: {text}")
     config.live_bench = {"parts": [], "cameras": [], "cases": []}
@@ -92,12 +110,12 @@ def pytest_configure(config):
                     for key, value in connection.items()
                     if key in ("channel", "serial", "device", "port")
                 }
+                if "interface" in connection:
+                    # The public transport discovery calls this Linux CAN name
+                    # `channel`; adapters may call their exact selector `interface`.
+                    identity["channel"] = connection["interface"]
                 matched = any(
-                    (candidate.driver == row["driver"] or candidate.kind == "transport")
-                    and all(
-                        candidate.connection.get(key) == value
-                        for key, value in identity.items()
-                    )
+                    _matches_declared_connection(candidate, row["driver"], identity)
                     for candidate in report.candidates
                 )
                 if not identity or not matched:
@@ -179,6 +197,25 @@ def reason(item):
         return None
     if "site" in missing:
         return missing["site"]
+    if hasattr(item, "get_closest_marker") and item.get_closest_marker(
+        "openarm_monitor"
+    ):
+        parts = item.config.live_bench.get("parts", [])
+        if len(parts) != 2 or len(set(parts)) != 2:
+            return "OpenArm monitor acceptance needs exactly two selected parts"
+        site = load_site(item.config.live_bench["site"])
+        for part in parts:
+            declaration = site.manifest["parts"].get(part, {})
+            if (
+                declaration.get("driver") != "waddle_sdk.robots.openarm:arm"
+                or declaration.get("posture") != "monitor"
+            ):
+                return f"{part}: requires the monitor-only OpenArm adapter"
+            if f"parts:{part}" in missing:
+                return missing[f"parts:{part}"]
+        # This adapter explicitly cannot release torque on close. It needs no
+        # authorization to drop torque and is never selected as a motion test.
+        return None
     named = (
         item.get_closest_marker("named_parts")
         if hasattr(item, "get_closest_marker")

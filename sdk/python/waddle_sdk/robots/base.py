@@ -294,6 +294,14 @@ class Driver(Protocol):
     ``close()``
         Drop the connection.
 
+    Optional boolean implementation facts may narrow this contract:
+    ``actuation_supported=False`` declares that motion/hold cannot be provided;
+    ``estop_supported=False`` declares that a physical stop cannot be provided;
+    ``close_releases_torque=False`` declares that closing this handle cannot
+    release holding torque. Absent facts retain the legacy action/stop support
+    and kind-based close policy. These are device facts, not command authority.
+    Unsupported driver methods must refuse explicitly rather than report success.
+
     A protocol rather than a base class on purpose: a driver you wrote, a
     vendor's own object with a thin shim over it, and the twin below are all
     equally admissible, and `isinstance(obj, Driver)` asks only whether the
@@ -319,6 +327,14 @@ class Driver(Protocol):
     def home(self, values: Sequence[float]) -> bool: ...
 
     def close(self) -> None: ...
+
+
+def _driver_boolean(driver: Driver, name: str, default: bool) -> bool:
+    """Read an optional implementation fact without truth-value coercion."""
+    value = getattr(driver, name, default)
+    if not isinstance(value, bool):
+        raise TypeError(f"Driver.{name} must be a boolean when declared")
+    return value
 
 
 @runtime_checkable
@@ -692,6 +708,8 @@ class Arm:
     rejected: int = field(default=0, init=False)
 
     def __post_init__(self) -> None:
+        for name in ("actuation_supported", "estop_supported", "close_releases_torque"):
+            _driver_boolean(self.driver, name, True)
         self.joint_names = tuple(str(n) for n in self.joint_names)
         self.joint_limits = tuple(
             (float(lo), float(hi)) for lo, hi in self.joint_limits
@@ -1480,15 +1498,20 @@ def drives_metal(driver: Driver) -> bool:
 
 
 def closing_drops_torque(arms: Mapping[str, Arm]) -> bool:
-    """Whether closing these drivers drops all torque — asked of the DRIVERS
-    (:func:`drives_metal`), not of the flag that built them.
+    """Whether closing any driver may release holding torque.
 
     A twin has nothing to hold and nothing to sag. A live unit typically holds
     its pose only while this process keeps the vendor's command re-send alive:
     close the connection and the motors' own watchdog cuts everything, gravity
     compensation included. That difference is the whole reason a finished
-    mission may exit on its own in sim and may not on metal."""
-    return any(drives_metal(arm.driver) for arm in arms.values())
+    mission may exit on its own in sim and may not on metal. A passive driver
+    can explicitly declare ``close_releases_torque=False``; missing declarations
+    retain the conservative :func:`drives_metal` default. Monitor posture alone
+    never establishes that closing is harmless."""
+    return any(
+        _driver_boolean(arm.driver, "close_releases_torque", drives_metal(arm.driver))
+        for arm in arms.values()
+    )
 
 
 def estop_all(
@@ -2255,8 +2278,9 @@ RIG_DEFAULT = _RigDefault()
 #: plans against.
 #:
 #: ``"monitor"``
-#:     Nothing may command this robot. One verb — the owner's stop — is
-#:     registered, so the session says on the wire that it accepts no motion
+#:     Nothing may command this robot through the supervision plane. The owner's
+#:     stop is registered when every driver supports it, so the session says
+#:     on the wire that it accepts no motion
 #:     rather than accepting motion it intends to drop. This is bring-up stage
 #:     one, and it is a property of the declaration rather than of a flag
 #:     somebody remembered to check.
@@ -2266,8 +2290,8 @@ RIG_DEFAULT = _RigDefault()
 #:     a hand-guided arm can honour. It is that waddle-core reads a registered
 #:     ``hold`` as a live engage path and refuses to build any session that
 #:     offers one with no ``send`` to follow it. A posture with no ``send``
-#:     therefore has no room for a ``hold``, and the owner's stop is the one
-#:     verb it offers the supervision side.
+#:     therefore has no room for a ``hold``. A passive observer whose driver
+#:     declares ``estop_supported=False`` offers no control verbs at all.
 #:
 #:     For the same reason a monitor session wires no MEDIA plane. The media
 #:     plane carries the teleoperator's stream as well as the video, so wiring
@@ -2315,6 +2339,20 @@ def control(
     if posture not in POSTURES:
         raise ValueError(f"posture={posture!r}: expected one of {', '.join(POSTURES)}")
 
+    actuation = all(
+        _driver_boolean(arm.driver, "actuation_supported", True)
+        for arm in arms.values()
+    )
+    supports_estop = all(
+        _driver_boolean(arm.driver, "estop_supported", True) for arm in arms.values()
+    )
+    if posture == "supervised" and not actuation:
+        raise ValueError("Supervised control requires actuation support on every part")
+    if estop_hardware and not supports_estop:
+        raise ValueError(
+            "Hardware e-stop declaration requires e-stop support on every part"
+        )
+
     def estop() -> None:
         estop_all(arms, report=report)
 
@@ -2326,14 +2364,14 @@ def control(
                 "used; pass posture='supervised' if this session may be driven"
             )
         return Control(
-            estop=estop,
+            estop=estop if supports_estop else None,
             estop_hardware=estop_hardware,
             estop_latency_bound_ms=estop_latency_bound_ms,
         )
     return Control(
         send=send if send is not None else chunk_sender(arms, report=report),
         hold=lambda: hold_all(arms),
-        estop=estop,
+        estop=estop if supports_estop else None,
         estop_hardware=estop_hardware,
         estop_latency_bound_ms=estop_latency_bound_ms,
     )

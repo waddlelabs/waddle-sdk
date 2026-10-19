@@ -40,13 +40,31 @@ When feedback is already outside a workspace box, the owner may submit checked
 intermediate commands that reduce its TCP/body violation without worsening any
 other side. This does not relax the other envelope rules.
 
-`posture="monitor"` registers observation and the owner stop without a send path. `posture="supervised"` registers send, hold, and e-stop. Posture is not authority.
+`posture="monitor"` registers observation and the supported owner stop without a send path. `posture="supervised"` registers send, hold, and the supported e-stop. Posture is not authority.
+
+Passive hardware drivers may explicitly declare optional boolean
+`actuation_supported=False`, `estop_supported=False`, and
+`close_releases_torque=False`. Their unsupported methods must refuse rather than
+report physical success. The SDK withholds unsupported action facts and omits
+the whole-session stop when any part lacks it; only an explicit harmless close
+effect bypasses the parking wait. Missing declarations preserve legacy behavior.
+See `docs/porting/robot.md#passive-hardware-observation` for the normative contract;
+test outgoing messages, ordinary close, and partial startup cleanup.
 
 ## Facts and packaging
 
 Ship hardware facts with citations to a pinned manual, model, firmware contract, or vendored machine-readable artifact. Pass that citation through the scaffold's required `--facts-source`; for a simulator, cite the explicit synthetic or test model. The generated `FACTS_SOURCE` records the text verbatim but cannot prove its authority. Directionally test facts where possible: a declared safe limit may be tighter, never wider, than the source. Keep vendor packages optional and lazily imported. Put credentials in named secret references, never source or ordinary manifest values.
 
 Build external adapters as ordinary installable packages. Do not patch an SDK registry: `site.yaml` imports the package factory directly.
+
+The built-in `waddle_sdk.robots.openarm:arm` is a monitor-only reference for
+bounded raw SocketCAN feedback, exact USB-adapter identity and scoped protocol
+faults. It exposes seven arm encoder coordinates plus `gripper_motor_rad`, all
+in radians, with explicit site coordinate bounds. No motion, calibrated zero,
+FK or physical jaw-width mapping is implied. Its lifecycle never enables,
+disables or commands a motor; unsupported actions and physical stops fail
+explicitly. See the public robot adapter guide's OpenArm section for the
+connection, freshness and protocol-source contracts.
 
 When multiple parts or cameras need one shared simulator scene, implement the
 [shared simulation backend contract](simulation-contract.md) instead of opening one

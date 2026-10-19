@@ -1,5 +1,77 @@
 # Robot adapters
 
+## OpenArm observation bring-up
+
+`waddle_sdk.robots.openarm:arm` supplies one seven-axis OpenArm plus its eighth
+gripper motor through the ordinary named-part Site lifecycle. Declare two parts
+for two independently connected buses. This stage implements **monitor only**:
+any other posture fails before opening hardware. It has no motor-enable,
+motor-disable, control-mode, zero-setting or motion command encoder. Opening,
+observing and closing send only Damiao parameter reads (`0x33`) and state refresh
+requests (`0xCC`) to arbitration ID `0x7ff`. Unsupported write, hold, e-stop and
+re-enable methods raise `RuntimeFault(UNSUPPORTED)` without sending a frame.
+It does not physically stop another controller's motion.
+
+The adapter requires 64-bit Linux SocketCAN; no vendor Python package is needed.
+The factory is non-opening. Its connection fields are:
+
+| Field | Meaning |
+| --- | --- |
+| `interface` | Exact Linux interface name, such as `can0`; never selected by enumeration order. |
+| `usb_serial` | Exact serial of that interface's USB adapter, checked before link setup and after socket binding. |
+| `motor_ids` | Eight unique standard CAN transmit IDs, in seven arm motors then gripper-motor order. |
+| `feedback_ids` | Eight unique standard CAN reply IDs in the same order; queried MST_ID/ESC_ID must match. |
+| `bitrate` | Positive integer bit/s, default `1000000`. |
+| `configure_can` | Default `false`: require an already-up link at the declared bitrate. Explicit `true` uses the ordinary bounded SocketCAN setup helper; an up mismatch is refused. |
+
+An interface opened with `configure_can: true` remains up after socket close,
+as with the shared SocketCAN helper. The site operator owns subsequent link
+restoration. Adapter serial binding identifies a bus, not physical left/right
+placement. Reserved motor SN/hardware fields are not used as unique identities.
+A serial-keyed local lock prevents duplicate OpenArm adapter owners (including
+different Site IDs) for one OS user; it cannot exclude unrelated raw CAN programs
+or other users.
+
+Supply eight explicit finite `joint_limits` pairs, or a mapping keyed by
+`joint_1` through `joint_7` and `gripper_motor_rad`. These are the site's
+declared coordinate bounds, not evidence of commissioned safe motion. The
+adapter publishes raw encoder radians and rad/s. No encoder-zero calibration,
+joint direction, FK, physical jaw metres, gripper force, velocity limit, body
+geometry or source model is inferred. In particular, the queried PMAX/VMAX
+values only decode packed state feedback; they are never used as mechanical
+limits. The eighth coordinate is **gripper motor radians**, not jaw opening.
+Workspace bounds requiring FK are refused. Use reviewed physical mappings and
+models before a subsequent motion-capable adapter stage.
+
+Options are `rate_hz` (default `10`, positive and at most `100`) and `timeout_s`
+(default `0.2`, positive and at most `1`). All parts in one Site still use the
+same declared rate. Each read serializes a complete eight-motor request/reply
+batch against the background pump. Queued old frames are drained; matching
+arbitration and motor IDs plus Linux receive timestamps reject pre-request
+traffic. Missing, malformed, nonfinite or faulted feedback raises a scoped
+error instead of returning a partial batch, zero velocities or cached samples.
+After a transaction failure the handle refuses further queries until reopened,
+so a delayed failed reply cannot satisfy a retry. No automatic retry extends
+the deadline.
+
+Damiao feedback has no transaction counter or acquisition timestamp. The retained
+`MonitorDriver.last_feedback` records kernel receipt times, motor status and
+temperatures; these are **receipt freshness**, not proof of simultaneous motor
+sampling or causal pairing with the refresh. Both ordinary disabled (`0`) and
+enabled (`1`) states are readable; other status nibbles fail with original motor
+ID/status/payload evidence. The monitor does not alter the motor's enable state.
+
+The wire implementation follows the pinned manufacturer
+[OpenArm CAN encoder/decoder](https://github.com/enactic/openarm_can/blob/f340d4b808fb177e1f297af54eb55fd51c6c7c10/src/openarm/damiao_motor/dm_motor_control.cpp)
+and [status/register definitions](https://github.com/enactic/openarm_can/blob/f340d4b808fb177e1f297af54eb55fd51c6c7c10/include/openarm/damiao_motor/dm_motor_constants.hpp).
+`sdk/tests/test_robots_openarm.py` exercises the fake-wire and ordinary monitor
+Site paths, including cleanup, stale/malformed/faulted replies and duplicate bus
+owners. These tests establish software behavior, not physical motion acceptance.
+The maintained opt-in `sdk/tests/live/test_05_openarm_monitor.py` additionally
+checks both declared buses through a real passive Site, with guarded wire capture
+and advancing kernel receipt evidence. See the live test guide for selection and
+retained JSON evidence. This case never commands physical motion.
+
 ## The factory seam
 
 Expose a callable that explicitly accepts `config: PartConfig` and returns a `Rig`:
@@ -90,6 +162,36 @@ providing the following members:
 Methods must be thread-safe. Runtime-owned dispatch and pump threads can call the
 driver concurrently with shutdown or observation. `close()` must be idempotent in
 practice even where the structural type does not express that property.
+
+### Passive hardware observation
+
+A driver that only reads hardware can declare these optional boolean facts:
+
+| Driver attribute | Meaning when `False` | Default when absent |
+|---|---|---|
+| `actuation_supported` | No motion or hold implementation; action support facts are withheld, and supervised control construction is refused | Existing action support |
+| `estop_supported` | No physical e-stop implementation | Existing e-stop support |
+| `close_releases_torque` | Closing the handle cannot release motor holding torque | Every non-`"sim"` driver requires the parking/support wait |
+
+Declare these facts on the driver before constructing `Arm`; non-boolean values
+are refused. A passive hardware observer keeps its real `kind`, uses monitor
+posture, and ordinarily sets all three to `False`. Unsupported `write`, `hold`,
+`estop`, and `re_enable` methods must explicitly refuse; a software latch alone
+must not report that physical motors stopped. Its `close()` releases resources
+without enabling, disabling or commanding motors.
+
+Monitor posture still controls registration only: it does not by itself prove
+that hardware access or closing is passive. The whole-session e-stop verb is
+omitted if any part explicitly lacks that implementation; the SDK never claims
+an all-parts stop from a subset. `SiteSession.hold()` and `estop()` report
+`unsupported` when their implementation is absent. Named observations remain
+available, including original per-part faults. Support facts describe device
+implementation separately from grants; legacy monitor drivers that omit these
+attributes retain their existing local-policy action behavior.
+
+Test ordinary context exit, partial startup cleanup, unavailable control calls,
+and a fresh open after close. Assert actual outgoing device messages so that
+read-only status is demonstrated throughout the lifecycle.
 
 ## Declaration and envelope must agree
 

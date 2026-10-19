@@ -1115,7 +1115,9 @@ class SiteSession:
     def close(self, *, torque_release_authorized: bool = False) -> None:
         """Finish the run and release this session's devices and ownership.
 
-        Normal close preserves the site operator's parking/support wait. Pass
+        Normal close preserves the site operator's parking/support wait when
+        any driver may release holding torque on close. Passive drivers may
+        explicitly declare otherwise. Pass
         ``torque_release_authorized=True`` only when the site operator has
         explicitly authorized releasing motor holding torque for this shutdown.
         This permits attended test harnesses without a console to close cleanly;
@@ -1481,6 +1483,7 @@ class SiteSession:
         manifest_parts = self.site.manifest["parts"]
         rows: list[SupportRow] = []
         for name, arm in managed.arms.items():
+            actuation = base._driver_boolean(arm.driver, "actuation_supported", True)
             facts = {
                 SupportFact.JOINT_POSITION_OBSERVATION,
                 SupportFact.JOINT_VELOCITY_OBSERVATION,
@@ -1490,8 +1493,11 @@ class SiteSession:
             part_space = part_spaces.get(name, {})
             joint_position = part_space.get("jointPosition")
             if isinstance(joint_position, Mapping):
-                facts.add(SupportFact.JOINT_POSITION_ACTION)
-                facts.update((SupportFact.PART_ACTION, SupportFact.PART_OBSERVATION))
+                facts.add(SupportFact.PART_OBSERVATION)
+                if actuation:
+                    facts.update(
+                        (SupportFact.JOINT_POSITION_ACTION, SupportFact.PART_ACTION)
+                    )
                 joints = joint_position.get("joints", [])
                 if isinstance(joints, list) and joints:
                     if all(
@@ -1510,10 +1516,10 @@ class SiteSession:
                 isinstance(arm.driver, base.GripperForceDriver)
                 and arm.driver.gripper_force_supported
             ):
-                facts.update(
-                    (SupportFact.GRIPPER_FORCE, SupportFact.GRIPPER_FORCE_OBSERVATION)
-                )
-            if isinstance(arm.driver, base.PositionVelocityDriver):
+                facts.add(SupportFact.GRIPPER_FORCE_OBSERVATION)
+                if actuation:
+                    facts.add(SupportFact.GRIPPER_FORCE)
+            if actuation and isinstance(arm.driver, base.PositionVelocityDriver):
                 facts.add(SupportFact.VELOCITY_FEEDFORWARD)
             if arm.fk is not None:
                 facts.update(
@@ -1758,6 +1764,10 @@ class SiteSession:
         managed = self._require()
         if not isinstance(reason, str) or not reason:
             raise ValueError("hold reason must be a non-empty string")
+        if managed.control is None or managed.control.hold is None:
+            raise RuntimeFault(
+                FaultCode.UNSUPPORTED, "This session has no hold implementation"
+            )
         try:
             managed.core.request_hold(reason)
         except AttributeError as exc:
@@ -1779,6 +1789,10 @@ class SiteSession:
         managed = self._require()
         if not isinstance(reason, str) or not reason:
             raise ValueError("e-stop reason must be a non-empty string")
+        if managed.control is None or managed.control.estop is None:
+            raise RuntimeFault(
+                FaultCode.UNSUPPORTED, "This session has no e-stop implementation"
+            )
         try:
             managed.core.request_estop()
         except RuntimeFault:

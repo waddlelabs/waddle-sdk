@@ -11,7 +11,30 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+### Added
+
+- Add the monitor-only `waddle_sdk.robots.openarm:arm` adapter for seven arm
+  encoder coordinates and a raw gripper-motor radian coordinate. Bind exact USB
+  adapter serials and CAN IDs, query current encoding spans independently of
+  explicit site limits, retain complete fresh feedback and scoped motor/bus
+  failures, and fence duplicate local query owners. All lifecycle paths remain
+  read-only; motion postures, physical stops, FK and jaw metres are unavailable.
+  Include fake-wire and ordinary Site lifecycle checks; hardware motion is not
+  qualified by this addition.
+  Maintain a capability-gated live two-bus monitor case with guarded read-only
+  wire capture, named receipt-freshness checks and ordinary close evidence.
+- Support explicit passive-driver lifecycle facts (`actuation_supported`,
+  `estop_supported`, `close_releases_torque`) without claiming simulation or a
+  physical stop. Preserve legacy drivers; withhold unsupported actuation facts
+  and global stop registration, report missing Site stop implementations, and
+  bypass parking only when close explicitly cannot release torque.
+
 ### Fixed
+
+- Fix Orbbec startup and alignment: skip incomplete startup output, cast aligned
+  frames to a frameset, require paired RGB/depth and own captured pixels. Support
+  exact serial selection, preserve active color intrinsics/distortion and metric
+  depth scale, reject changes during streaming, and close partial starts.
 
 - Preserve active RealSense RGB distortion identity, including append-only wire values for modified and inverse Brown–Conrady. Do not mislabel these images as rectified or ROS plumb_bob.
 

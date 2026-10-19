@@ -6,6 +6,16 @@ RealSense active RGB intrinsics retain their distortion model and coefficients.
 metadata does not rectify pixels. Consumers must use the declared model, and
 leave unsupported or unspecified nonzero distortion explicitly unresolved.
 
+The Orbbec adapter accepts an optional exact vendor `serial` in `connection`.
+It requires complete RGB/Y16 pairs, enables vendor frame synchronization, and
+aligns depth onto the color pixel grid. Startup waits at most three seconds for
+a valid aligned sample; failed starts close the pipeline. Active color intrinsics
+retain their distortion model (including all eight rational-polynomial
+coefficients), and depth units come from the acquired depth frame. A changed
+scale or calibration fails capture instead of silently changing declared units.
+Alignment does not establish exposure timing, robot calibration or rectified
+pixels. Orbbec does not currently provide a distortion-aware point resolver.
+
 A camera entry names an importable factory:
 
 ```yaml
