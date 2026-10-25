@@ -13,6 +13,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Compute native MuJoCo YAM force hold from the motor tendon's length and velocity
+  so unequal finger loading does not bias the requested actuator force. Retain
+  force limits, native contact dynamics, measured feedback and explicit release.
+
 - Declare zero distortion for default reference-simulation pinhole cameras so
   metric image consumers receive explicit rectified intrinsics. Preserve
   supplied camera profiles and their declared optical properties.

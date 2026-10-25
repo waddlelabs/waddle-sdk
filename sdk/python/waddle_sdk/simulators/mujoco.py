@@ -294,8 +294,15 @@ class Engine:
             if holding:
                 name = self._controls[part][-1]
                 kp = float(self.model.actuator(name).gainprm[0])
+                # The motor drives the shared tendon, not the observed finger.
+                # Compliant coupling permits unequal jaw displacement under
+                # contact; using one encoder biases the requested motor force.
+                # Cancel the position servo's velocity bias while holding force.
                 self.data.actuator(name).ctrl[0] = (
-                    self.description.hand_position(q[-1]) - 2 * force / kp
+                    float(self.data.actuator(name).length[0])
+                    + self._velocity_ratio[part][-1]
+                    * float(self.data.actuator(name).velocity[0])
+                    - 2 * force / kp
                 )
 
     def hold(self, part=None):

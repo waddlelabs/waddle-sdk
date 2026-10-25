@@ -61,6 +61,64 @@ def test_native_force_closure_reports_actual_effort_and_retains_force(tmp_path, 
         engine.close()
 
 
+def test_native_force_hold_tracks_request_under_unequal_finger_load(tmp_path):
+    pytest.importorskip("mujoco")
+    from waddle_sdk.simulators.mujoco import Engine
+
+    fixture = next(
+        row
+        for row in json.loads(
+            (Path(__file__).parent / "fixtures/tube_transport.json").read_text()
+        )
+        if row["robot"] == "yam"
+    )
+    _, config = make_site(
+        "loaded-force",
+        backend="mujoco",
+        robot="yam",
+        environment="load-clear-test-tubes",
+        width=32,
+        height=32,
+    )
+    engine = Engine(config, tmp_path)
+    try:
+        target = np.array(fixture["grasp"])
+        target[-1] = 1.0
+        engine.home(target)
+        for _ in range(500):
+            engine.step()
+        # Unequal external load on one finger exercises the compliant coupling;
+        # the native solver still owns both jaw positions and object contacts.
+        follower = engine.model.joint(engine.description.hand_names[1])
+        engine.data.qfrc_applied[follower.dofadr[0]] = -40
+        force = engine.gripper_force_limits()[1]
+        measured = []
+        for tick in range(150):
+            target[-1] = max(0, engine.read()[0][-1] - 0.05)
+            engine.write_force(target, force)
+            for _ in range(round(0.04 / engine.model.opt.timestep)):
+                engine.step()
+            q, dq = engine.read()
+            if tick >= 125:
+                measured.append(
+                    (q[-1] * engine.profile.opening, dq[-1], engine.gripper_force())
+                )
+        assert all(opening > 0.001 for opening, _, _ in measured)
+        assert all(
+            abs(speed) * engine.profile.opening < 0.001 for _, speed, _ in measured
+        )
+        assert all(abs(effort - force) <= 0.5 for _, _, effort in measured), measured
+        engine.data.qfrc_applied[follower.dofadr[0]] = 0
+        target[-1] = 1.0
+        engine.write_force(target, 0)
+        for _ in range(1000):
+            engine.step()
+        assert engine.read()[0][-1] * engine.profile.opening > 0.09
+        assert engine.gripper_force() < 0.5
+    finally:
+        engine.close()
+
+
 @pytest.mark.parametrize("arms", [1, 2])
 def test_public_named_sdk_force_command_reaches_native_worker(tmp_path, arms):
     pytest.importorskip("mujoco")
