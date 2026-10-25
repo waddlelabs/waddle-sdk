@@ -13,6 +13,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Isolate reference MuJoCo rendering from physics/control with bounded camera work,
+  one inherited rendering CPU, acquisition-time robot feedback and reset-generation
+  fencing. Keep measured motion outcomes and image freshness checks unchanged.
+
 - Read completed immutable YAM feedback publications without waiting on the CAN
   transaction lock for the verified pinned I2RT implementation. Preserve original
   motor-loop behavior and feedback liveness/stall checks; unverified revisions

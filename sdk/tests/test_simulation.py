@@ -169,7 +169,7 @@ def test_dual_task_environment_requires_two_arms():
 
 def test_yam_pick_lift_near_base_pose_distribution_is_default(tmp_path, monkeypatch):
     pytest.importorskip("mujoco")
-    monkeypatch.setenv("MUJOCO_GL", "egl")
+    monkeypatch.setenv("MUJOCO_GL", os.environ.get("MUJOCO_GL", "egl"))
     from waddle_sdk.simulators.mujoco import Engine
 
     _, config = documents(tmp_path, "mujoco", "yam", "pick_lift")
@@ -606,7 +606,7 @@ def test_native_two_arm_mujoco_keeps_commands_and_cameras_part_scoped(
     tmp_path, monkeypatch, robot
 ):
     pytest.importorskip("mujoco")
-    monkeypatch.setenv("MUJOCO_GL", "egl")
+    monkeypatch.setenv("MUJOCO_GL", os.environ.get("MUJOCO_GL", "egl"))
     from waddle_sdk.simulators.mujoco import Engine
 
     _, config = make_site(
@@ -896,7 +896,7 @@ def test_native_models_rgbd_and_bounded_joint_motion(
     tmp_path, monkeypatch, backend, robot, environment
 ):
     interpreter = _native_python(backend, environment)
-    monkeypatch.setenv("MUJOCO_GL", "egl")
+    monkeypatch.setenv("MUJOCO_GL", os.environ.get("MUJOCO_GL", "egl"))
     monkeypatch.setenv(
         "PYTHONPATH", str(Path(__file__).resolve().parents[1] / "python")
     )
@@ -975,7 +975,7 @@ def test_native_render_presets_preserve_rgbd_and_motion(
     tmp_path, monkeypatch, backend, quality
 ):
     interpreter = _native_python(backend, "two_cubes")
-    monkeypatch.setenv("MUJOCO_GL", "egl")
+    monkeypatch.setenv("MUJOCO_GL", os.environ.get("MUJOCO_GL", "egl"))
     monkeypatch.setenv(
         "PYTHONPATH", str(Path(__file__).resolve().parents[1] / "python")
     )
@@ -1009,7 +1009,7 @@ def test_native_xarm_gripper_preserves_linkage_under_contact(
     tmp_path, monkeypatch, backend
 ):
     interpreter = _native_python(backend, "bottle_cap")
-    monkeypatch.setenv("MUJOCO_GL", "egl")
+    monkeypatch.setenv("MUJOCO_GL", os.environ.get("MUJOCO_GL", "egl"))
     monkeypatch.setenv(
         "PYTHONPATH", str(Path(__file__).resolve().parents[1] / "python")
     )
@@ -1033,7 +1033,7 @@ def test_native_mujoco_cap_retains_axial_load_and_unscrews_freely(
     tmp_path, monkeypatch, robot
 ):
     pytest.importorskip("mujoco")
-    monkeypatch.setenv("MUJOCO_GL", "egl")
+    monkeypatch.setenv("MUJOCO_GL", os.environ.get("MUJOCO_GL", "egl"))
     monkeypatch.setenv(
         "PYTHONPATH", str(Path(__file__).resolve().parents[1] / "python")
     )
@@ -2683,7 +2683,7 @@ def _wave_c_single_prop_conformance(engine, advance, config, environment):
 @pytest.mark.parametrize("robot", ROBOTS)
 def test_native_split_workspace_sorting_scene(tmp_path, monkeypatch, robot):
     mujoco = pytest.importorskip("mujoco")
-    monkeypatch.setenv("MUJOCO_GL", "egl")
+    monkeypatch.setenv("MUJOCO_GL", os.environ.get("MUJOCO_GL", "egl"))
     from waddle_sdk.simulators.mujoco import Engine
 
     _, config = documents(
@@ -2790,7 +2790,7 @@ def test_native_split_workspace_sorting_scene(tmp_path, monkeypatch, robot):
 )
 def test_native_medium_dual_arm_task_scenes(tmp_path, monkeypatch, robot, environment):
     mujoco = pytest.importorskip("mujoco")
-    monkeypatch.setenv("MUJOCO_GL", "egl")
+    monkeypatch.setenv("MUJOCO_GL", os.environ.get("MUJOCO_GL", "egl"))
     from waddle_sdk.simulators.mujoco import Engine
 
     _, config = documents(
@@ -2959,7 +2959,7 @@ def test_native_medium_dual_arm_task_scenes(tmp_path, monkeypatch, robot, enviro
 )
 def test_native_hard_dual_arm_task_scenes(tmp_path, monkeypatch, robot, environment):
     mujoco = pytest.importorskip("mujoco")
-    monkeypatch.setenv("MUJOCO_GL", "egl")
+    monkeypatch.setenv("MUJOCO_GL", os.environ.get("MUJOCO_GL", "egl"))
     from waddle_sdk.simulators.mujoco import Engine
 
     _, config = documents(
@@ -3341,7 +3341,7 @@ def test_episode_boundary_preserves_state_unless_reset_requested(
     tmp_path, monkeypatch, backend, reset_on_episode
 ):
     interpreter = _native_python(backend, "two_cubes")
-    monkeypatch.setenv("MUJOCO_GL", "egl")
+    monkeypatch.setenv("MUJOCO_GL", os.environ.get("MUJOCO_GL", "egl"))
     site, _ = documents(tmp_path, backend=backend, worker_python=interpreter)
     if reset_on_episode:
         site["worlds"]["cell"]["options"] = {"reset_on_episode": True}
@@ -3364,7 +3364,10 @@ def test_mujoco_administration_reports_ground_truth_and_resets_inside_run(
     tmp_path, monkeypatch
 ):
     interpreter = _native_python("mujoco", "drawer")
-    monkeypatch.setenv("MUJOCO_GL", "egl")
+    provider_revision = subprocess.check_output(
+        [interpreter, "-c", "import mujoco; print(mujoco.__version__)"], text=True
+    ).strip()
+    monkeypatch.setenv("MUJOCO_GL", os.environ.get("MUJOCO_GL", "egl"))
     documents(
         tmp_path,
         backend="mujoco",
@@ -3385,7 +3388,7 @@ def test_mujoco_administration_reports_ground_truth_and_resets_inside_run(
             assert world["schema"] == "waddle.simulation-state/mujoco-v1"
             assert world["identity"] == {
                 "provider": "mujoco",
-                "provider_revision": "3.11.0",
+                "provider_revision": provider_revision,
                 "robot_family": "yam",
                 "embodiment_revision": "1.0.0",
                 "arm_count": 1,
@@ -3416,7 +3419,7 @@ def test_site_owns_one_world_and_reopens_an_independent_world(
     tmp_path, monkeypatch, backend
 ):
     interpreter = _native_python(backend, "two_cubes")
-    monkeypatch.setenv("MUJOCO_GL", "egl")
+    monkeypatch.setenv("MUJOCO_GL", os.environ.get("MUJOCO_GL", "egl"))
     documents(tmp_path, backend=backend, worker_python=interpreter)
     site = load_site(tmp_path / "site.yaml")
     processes = []
@@ -3462,7 +3465,7 @@ def test_site_preserves_custom_part_camera_and_base_frame_names(
     tmp_path, monkeypatch, backend
 ):
     interpreter = _native_python(backend, "two_cubes")
-    monkeypatch.setenv("MUJOCO_GL", "egl")
+    monkeypatch.setenv("MUJOCO_GL", os.environ.get("MUJOCO_GL", "egl"))
     site, simulation = documents(tmp_path, backend=backend, worker_python=interpreter)
     site["parts"]["left"] = site["parts"].pop("arm")
     simulation["parts"]["left"] = simulation["parts"].pop("arm")

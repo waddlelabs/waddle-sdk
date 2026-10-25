@@ -1,5 +1,10 @@
 # AGENTS.md — waddle-sdk monorepo
 
+Reference MuJoCo rendering runs separately from physics/control, with bounded
+camera work, one inherited rendering CPU, acquisition-time robot feedback and
+reset-generation fencing. Keep measured motion outcomes and image freshness
+checks unchanged.
+
 YAM feedback reads use a single completed immutable vendor JointStates publication
 when the installed I2RT observation/publication/allocation code matches the
 verified semantic source hashes. This avoids the motor-transaction lock without

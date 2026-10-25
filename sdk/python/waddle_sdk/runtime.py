@@ -80,6 +80,7 @@ class SupportFact(str, enum.Enum):
     CAMERA_RGB = "camera.rgb"
     CAMERA_INTRINSICS = "camera.intrinsics"
     CAMERA_CONTENT_TIMING = "camera.content_timing"
+    CAMERA_CAPTURE_STATE = "camera.capture_state"
     SEND_GRANT = "grant.send"
     HOLD_GRANT = "grant.hold"
     RESUME_GRANT = "grant.resume"

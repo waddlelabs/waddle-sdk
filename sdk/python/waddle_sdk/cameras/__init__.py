@@ -6,7 +6,14 @@ adapter you need explicitly (``waddle_sdk.cameras.realsense`` or
 driver is constructed.
 """
 
-from .base import CameraCalibrationDriver, CameraDriver, CameraFrame, CameraSample
+from .base import (
+    CameraCalibrationDriver,
+    CameraCaptureStateDriver,
+    CameraDriver,
+    CameraFrame,
+    CameraSample,
+)
+from .capture_state import CameraCaptureState
 from .inspection import (
     CameraInspection,
     CameraInspectionError,
@@ -20,6 +27,8 @@ from .timing import CameraContentTiming
 
 __all__ = [
     "CameraCalibrationDriver",
+    "CameraCaptureState",
+    "CameraCaptureStateDriver",
     "CameraConfig",
     "CameraContentTiming",
     "CameraDriver",

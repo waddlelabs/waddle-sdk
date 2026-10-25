@@ -6,7 +6,9 @@ import hashlib
 import json
 import math
 import os
+import pickle
 import sys
+import time
 from dataclasses import asdict
 from pathlib import Path
 
@@ -827,6 +829,23 @@ class Engine:
 
     def capture(self, name):
         return self.capture_timed(name)[:2]
+
+    def render_snapshot(self, generation, known_generation):
+        """Copy native state and ordinary feedback for a read-only renderer."""
+        model = None if generation == known_generation else pickle.dumps(self.model)
+        began = time.monotonic_ns()
+        specification = self.mj.mjtState.mjSTATE_INTEGRATION
+        state = np.empty(self.mj.mj_stateSize(self.model, specification))
+        self.mj.mj_getState(self.model, self.data, state, specification)
+        parts = {name: self.read(name) for name in self.parts}
+        ended = time.monotonic_ns()
+        return {
+            "model": model,
+            "state": state,
+            "parts": parts,
+            "generation": generation,
+            "interval": (began, ended),
+        }
 
     def capture_timed(self, name):
         row = self.config["cameras"][name]

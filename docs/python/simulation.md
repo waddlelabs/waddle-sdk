@@ -8,6 +8,30 @@ latch. Ordinary position commands and holds clear velocity feedforward.
 Only the site adapters and their configuration select an engine. Programs must use
 capability facts; importing a simulator does not establish sensor or motion support.
 
+## Camera rendering and control timing
+
+Reference MuJoCo worlds keep one physics/control process and a separate read-only
+renderer. The renderer copies an immutable integration state; it never steps the
+world or writes a target. Its bounded camera queue acquires state only when a
+render slot is available. On Linux it uses one CPU from the inherited allowed set,
+with one software-rendering thread, so optional rendering cannot occupy every
+available control CPU. This is not an exclusive CPU reservation.
+
+Real-time physics advances fixed native timesteps while idle and before accepting
+new commands, bounding autonomous catch-up to one timestep plus one native step
+when physics itself is too slow. Request-driven backends retain their existing
+20 ms bound. Explicit rollout stepping is unchanged. Camera FPS may fall under load;
+commands, feedback and Hold do not wait for GL. Renderer failure remains a camera
+failure, and shutdown can terminate it without delaying the control owner's Hold.
+
+RGB-D samples preserve snapshot content bounds and optional exact captured robot
+feedback through the normal [camera contract](../porting/camera.md#optional-capture-time-robot-feedback).
+Reset replaces the renderer's model/state and rejects frames from an earlier source
+generation. Large model transfers precede a fresh timed state acquisition; a
+snapshot transfer exceeding the 50 ms pairing bound refuses camera acquisition.
+No motion deadline, measured arrival/contact rule, physical parameter or image
+freshness limit is relaxed.
+
 ## Reference engines and scenes
 
 | Selector | Role | Installation |
