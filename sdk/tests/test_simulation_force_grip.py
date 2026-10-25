@@ -9,7 +9,10 @@ from waddle_sdk.simulators.scene import make_site
 
 
 @pytest.mark.parametrize("empty", [False, True])
-def test_native_force_closure_reports_actual_effort_and_retains_force(tmp_path, empty):
+@pytest.mark.parametrize("release", ["zero", "hold"])
+def test_native_force_closure_reports_actual_effort_and_retains_force(
+    tmp_path, empty, release
+):
     pytest.importorskip("mujoco")
     from waddle_sdk.simulators.mujoco import Engine
 
@@ -53,10 +56,16 @@ def test_native_force_closure_reports_actual_effort_and_retains_force(tmp_path, 
             for _ in range(1000):
                 engine.step()
             assert engine.gripper_force() == pytest.approx(10, abs=1)
-        engine.write_force(target, 0)
+        target[-1] = 1.0
+        if release == "zero":
+            engine.write_force(target, 0)
+        else:
+            engine.hold()
+            engine.write(target)
         assert not engine._force_modes
-        engine.hold()
-        assert not engine._force_modes
+        for _ in range(1000):
+            engine.step()
+        assert engine.read()[0][-1] * engine.profile.opening > 0.09
     finally:
         engine.close()
 
@@ -108,6 +117,17 @@ def test_native_force_hold_tracks_request_under_unequal_finger_load(tmp_path):
             abs(speed) * engine.profile.opening < 0.001 for _, speed, _ in measured
         )
         assert all(abs(effort - force) <= 0.5 for _, _, effort in measured), measured
+        # Force hold must remain an effort request while the load changes, too.
+        # A position-servo approximation can read correctly only after settling.
+        moving_effort = []
+        for tick in range(500):
+            engine.data.qfrc_applied[follower.dofadr[0]] = -40 + 20 * np.sin(
+                tick * engine.model.opt.timestep * 2 * np.pi * 5
+            )
+            engine.step()
+            moving_effort.append(engine.gripper_force())
+        assert min(moving_effort) >= force - 0.5, min(moving_effort)
+        assert max(moving_effort) <= force + 1e-6
         engine.data.qfrc_applied[follower.dofadr[0]] = 0
         target[-1] = 1.0
         engine.write_force(target, 0)

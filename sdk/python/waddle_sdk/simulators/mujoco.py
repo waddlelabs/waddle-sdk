@@ -62,6 +62,8 @@ class Engine:
         self._velocity_ratio = {}
         self._force_modes = {}
         self._force_ranges = {}
+        self._force_servos = {}
+        self._force_damping = {}
         for part in self.parts:
             prefix = self._prefix(part)
             joints = [
@@ -94,9 +96,27 @@ class Engine:
                     )
                 ratios.append(float(-bias[2] / kp))
             self._velocity_ratio[part] = np.asarray(ratios)
-            self._force_ranges[part] = self.model.actuator(
-                self._controls[part][-1]
-            ).forcerange.copy()
+            actuator = self.model.actuator(self._controls[part][-1])
+            self._force_ranges[part] = actuator.forcerange.copy()
+            self._force_servos[part] = (
+                actuator.gainprm.copy(),
+                actuator.biasprm.copy(),
+                int(actuator.ctrllimited[0]),
+            )
+            transmission = int(actuator.trnid[0])
+            if actuator.trntype[0] == mujoco.mjtTrn.mjTRN_TENDON:
+                damping, index = self.model.tendon_damping, transmission
+            elif actuator.trntype[0] in (
+                mujoco.mjtTrn.mjTRN_JOINT,
+                mujoco.mjtTrn.mjTRN_JOINTINPARENT,
+            ):
+                damping = self.model.dof_damping
+                index = int(self.model.jnt_dofadr[transmission])
+            else:
+                damping = None
+            self._force_damping[part] = (
+                None if damping is None else (damping, index, float(damping[index]))
+            )
         if "native_scene" in config:
             from .native_scene import initialize, validate_cameras
 
@@ -267,6 +287,7 @@ class Engine:
         else:
             previous = self._force_modes.get(part)
             if previous is None or previous[0] != force:
+                self._clear_force(part)
                 self._force_modes[part] = (force, False)
             # Restrict actual native actuation from the first step, including
             # moving contact. The scalar force is conjugate to total jaw width.
@@ -278,9 +299,15 @@ class Engine:
 
     def _clear_force(self, part):
         self._force_modes.pop(part, None)
-        self.model.actuator(self._controls[part][-1]).forcerange[:] = (
-            self._force_ranges[part]
-        )
+        actuator = self.model.actuator(self._controls[part][-1])
+        actuator.forcerange[:] = self._force_ranges[part]
+        gain, bias, limited = self._force_servos[part]
+        actuator.gainprm[:] = gain
+        actuator.biasprm[:] = bias
+        self.model.actuator_ctrllimited[actuator.id] = limited
+        if retained := self._force_damping[part]:
+            damping, index, original = retained
+            damping[index] = original
 
     def _apply_force_modes(self):
         for part, (force, holding) in tuple(self._force_modes.items()):
@@ -293,17 +320,19 @@ class Engine:
             self._force_modes[part] = (force, holding)
             if holding:
                 name = self._controls[part][-1]
-                kp = float(self.model.actuator(name).gainprm[0])
-                # The motor drives the shared tendon, not the observed finger.
-                # Compliant coupling permits unequal jaw displacement under
-                # contact; using one encoder biases the requested motor force.
-                # Cancel the position servo's velocity bias while holding force.
-                self.data.actuator(name).ctrl[0] = (
-                    float(self.data.actuator(name).length[0])
-                    + self._velocity_ratio[part][-1]
-                    * float(self.data.actuator(name).velocity[0])
-                    - 2 * force / kp
-                )
+                # Once contact is acquired, use native motor effort. A moving
+                # position-servo offset only approximates force and inherits
+                # transmission asymmetry and one-step feedback delay.
+                actuator = self.model.actuator(name)
+                actuator.gainprm[0] = 1.0
+                actuator.biasprm[:3] = 0.0
+                self.model.actuator_ctrllimited[actuator.id] = False
+                # Retain the drive's viscous damping as a native passive load,
+                # separate from its requested and measured active motor effort.
+                if retained := self._force_damping[part]:
+                    damping, index, original = retained
+                    damping[index] = original - self._force_servos[part][1][2]
+                self.data.actuator(name).ctrl[0] = -2 * force
 
     def hold(self, part=None):
         parts = self.parts if part is None else (self._part(part),)

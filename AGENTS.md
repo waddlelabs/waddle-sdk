@@ -29,10 +29,12 @@ Hold/e-stop/close and selected supervision streams clear that mode. Capability
 facts and explicit force limits are required; kinematic drivers cannot invent
 force feedback. YAM LINEAR_4310 and native MuJoCo YAM provide nominal motor/actuator
 estimates with provenance, not calibrated contact-force qualification.
-MuJoCo YAM force hold uses the native motor transmission's length and velocity,
-including unequal finger loading, rather than one finger encoder. The original
-force ceiling, contact acquisition, empty-jaw behavior and release remain in force.
-Native uneven-load, retention and release checks live in
+MuJoCo YAM force hold switches the existing actuator to bounded native motor
+effort after contact acquisition, retaining the drive's damping as a passive
+transmission load. Zero force, Hold and reset restore the original position servo,
+control limits and passive damping. Force feedback remains native actuator effort;
+empty jaws do not qualify as object contact. Native constant/changing unequal-load,
+retention and release checks live in
 `sdk/tests/test_simulation_force_grip.py`.
 The YAM force-limiter seam also smooths ordinary accepted jaw position steps
 over 40 ms at motor rate, bounded to 1.0 normalized action/s for direct goals.

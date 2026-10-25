@@ -343,12 +343,13 @@ No per-step contact forces or object attachments implement grasping.
 
 MuJoCo uses Menagerie's single-motor fixed tendon to distribute force between
 opposing jaws, preserving the combined gain, force limit, and reflected inertia.
-For YAM force hold, the controller uses this transmission's measured length and
-velocity to offset the position servo and maintain the requested motor force.
-It does not use a single finger encoder: the compliant coupling can permit unequal
-finger displacement under contact. Native actuator feedback remains an estimated
-force; it does not prove an object grasp or calibrated fingertip force. Explicit
-zero force and Hold release the retained force mode.
+After YAM force acquisition, the existing actuator applies bounded native motor
+effort. The drive's original viscous damping remains as a passive transmission
+load, so changing finger loads do not turn the force request into a position-servo
+approximation. Explicit zero force, Hold and reset restore the position servo,
+its control limits and the original passive damping. Native actuator feedback
+remains an estimated force; it does not prove an object grasp or calibrated
+fingertip force. The force ceiling and contact/material parameters are unchanged.
 The native hand equality uses Menagerie's 5 ms time constant. MuJoCo also
 retains the xArm passive-hand joints' reference armature of 0.1 kg m² and the
 driver/follower limits' 5 ms response. These native numerical settings support
