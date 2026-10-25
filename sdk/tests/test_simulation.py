@@ -18,6 +18,7 @@ import numpy as np
 import pytest
 import yaml
 from waddle_sdk import load_site
+from waddle_sdk.descriptors import Intrinsics
 from waddle_sdk.robots import yam
 from waddle_sdk.simulation import SimulationAdministration
 from waddle_sdk.simulators import reference_model_sources
@@ -247,6 +248,10 @@ def test_reference_camera_capabilities_match_each_embodiment(
         }
         for camera in document["cameras"].values():
             assert ("depth_scale_mm" in camera["intrinsics"]) is depth
+            # Consumers of the wire declaration must distinguish rectified
+            # pixels from an unknown distortion model.
+            intrinsics = Intrinsics(**camera["intrinsics"])._compile()
+            assert intrinsics["distortion"] == [0.0] * 5
 
 
 def test_physical_camera_profiles_replace_every_simulated_optical_contract(tmp_path):

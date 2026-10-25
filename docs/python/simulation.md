@@ -369,6 +369,11 @@ New drawer and single-arm MuJoCo development-task sites place the scene camera i
 the interactive fixture, at
 `(-0.45, -0.55, 0.55)` m looking toward `(0.4, 0, 0.2)` m, so its handle face is
 visible at the reference home and task targets do not face away from the camera.
+Default reference-camera intrinsics explicitly declare zero distortion because
+the rendered images are pinhole projections. Supplied camera profiles keep their
+declared optical properties. Existing published scenes are immutable; add the
+explicit zero coefficients to both site and simulation camera declarations when
+preparing a new version of an older default-camera scene.
 The dual-arm sorting scene uses an overhead camera that shows both arms, cubes,
 and bins in the shared workspace.
 The other scenes retain their overhead oblique view. Existing scene files retain

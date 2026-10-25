@@ -13,6 +13,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Declare zero distortion for default reference-simulation pinhole cameras so
+  metric image consumers receive explicit rectified intrinsics. Preserve
+  supplied camera profiles and their declared optical properties.
+
 - Isolate reference MuJoCo rendering from physics/control with bounded camera work,
   at most two inherited rendering CPUs, acquisition-time robot feedback and reset-generation
   fencing. Keep measured motion outcomes and image freshness checks unchanged.

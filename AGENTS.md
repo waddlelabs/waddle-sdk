@@ -126,7 +126,10 @@ drivers, shared admission or jaw velocity commands. Focused behavior checks live
 in `sdk/tests/test_simulation_admission.py` and `sdk/tests/test_native_scene.py`.
 MuJoCo also supports a shared two-arm instance with part-scoped control and wrist
 cameras. Exact physical stream/intrinsics/mount rows can replace the clearly marked
-development camera defaults before publication. Its public planner-source helper
+development camera defaults before publication. Default pinhole camera
+declarations explicitly include zero distortion coefficients, allowing metric
+consumers to distinguish rectified pixels from unknown distortion. Supplied
+camera profiles remain authoritative. Its public planner-source helper
 uses the same pinned chain and builds bounded deterministic spatial hulls from
 complete source collision pieces for every reference family. It
 records the proxy method and its fixed-open-hand/no-scene scope. The
