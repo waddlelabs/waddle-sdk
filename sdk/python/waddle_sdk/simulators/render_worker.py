@@ -75,8 +75,12 @@ def serve(connection):
             # the independent control owner. Stay inside its allowed CPU set;
             # this is a bound on optional rendering, not a resource reservation.
             allowed = sorted(os.sched_getaffinity(0))
-            os.sched_setaffinity(0, {allowed[-1]})
-        os.environ["LP_NUM_THREADS"] = "1"
+            count = min(2, max(1, len(allowed) // 2))
+            selected = set(allowed[-count:])
+            os.sched_setaffinity(0, selected)
+        else:
+            count = 1
+        os.environ["LP_NUM_THREADS"] = str(count)
         config, initial = connection.recv()
         renderer = SnapshotRenderer(config)
         renderer.restore(initial)

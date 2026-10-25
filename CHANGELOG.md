@@ -14,7 +14,7 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 ### Fixed
 
 - Isolate reference MuJoCo rendering from physics/control with bounded camera work,
-  one inherited rendering CPU, acquisition-time robot feedback and reset-generation
+  at most two inherited rendering CPUs, acquisition-time robot feedback and reset-generation
   fencing. Keep measured motion outcomes and image freshness checks unchanged.
 
 - Read completed immutable YAM feedback publications without waiting on the CAN

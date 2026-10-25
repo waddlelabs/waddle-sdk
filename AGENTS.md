@@ -1,7 +1,7 @@
 # AGENTS.md — waddle-sdk monorepo
 
 Reference MuJoCo rendering runs separately from physics/control, with bounded
-camera work, one inherited rendering CPU, acquisition-time robot feedback and
+camera work, at most two inherited rendering CPUs, acquisition-time robot feedback and
 reset-generation fencing. Keep measured motion outcomes and image freshness
 checks unchanged.
 

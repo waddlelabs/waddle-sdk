@@ -13,9 +13,10 @@ capability facts; importing a simulator does not establish sensor or motion supp
 Reference MuJoCo worlds keep one physics/control process and a separate read-only
 renderer. The renderer copies an immutable integration state; it never steps the
 world or writes a target. Its bounded camera queue acquires state only when a
-render slot is available. On Linux it uses one CPU from the inherited allowed set,
-with one software-rendering thread, so optional rendering cannot occupy every
-available control CPU. This is not an exclusive CPU reservation.
+render slot is available. On Linux it uses at most two CPUs and half the inherited allowed set (one CPU
+when fewer than two are available), with matching software-rendering threads.
+This leaves control headroom while keeping multi-camera acquisition fresh. It is
+not an exclusive CPU reservation.
 
 Real-time physics advances fixed native timesteps while idle and before accepting
 new commands, bounding autonomous catch-up to one timestep plus one native step
