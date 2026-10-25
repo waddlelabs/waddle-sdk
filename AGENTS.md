@@ -35,7 +35,9 @@ transmission load. Zero force, Hold and reset restore the original position serv
 control limits and passive damping. Force feedback remains native actuator effort;
 empty jaws do not qualify as object contact. Native constant/changing unequal-load,
 retention and release checks live in
-`sdk/tests/test_simulation_force_grip.py`.
+`sdk/tests/test_simulation_force_grip.py`, including a shampoo force grasp with
+stationary jaws, bilateral-contact lift and gravity release on unchanged scene
+physics. This controlled native witness does not establish autonomous task success.
 The YAM force-limiter seam also smooths ordinary accepted jaw position steps
 over 40 ms at motor rate, bounded to 1.0 normalized action/s for direct goals.
 Vendor clog correction and force mode remain immediate; this is position

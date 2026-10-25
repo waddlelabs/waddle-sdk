@@ -16,7 +16,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 - Use bounded native motor effort for MuJoCo YAM force hold under unequal and
   changing finger loads. Retain the drive's damping as a passive transmission
   load; restore the original position servo and limits on release, Hold or reset.
-  Preserve force ceilings, native contact dynamics and measured feedback.
+  Preserve force ceilings, native contact dynamics and measured feedback. Cover
+  stationary force acquisition, a bilateral-contact bottle lift and gravity release
+  on the unchanged shampoo scene.
 
 - Declare zero distortion for default reference-simulation pinhole cameras so
   metric image consumers receive explicit rectified intrinsics. Preserve

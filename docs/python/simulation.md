@@ -350,6 +350,9 @@ approximation. Explicit zero force, Hold and reset restore the position servo,
 its control limits and the original passive damping. Native actuator feedback
 remains an estimated force; it does not prove an object grasp or calibrated
 fingertip force. The force ceiling and contact/material parameters are unchanged.
+Native regression coverage includes a stationary force grasp, bottle lift with both fingers in
+contact, and gravity release in the shampoo scene; this controlled fixture does
+not establish autonomous packing success.
 The native hand equality uses Menagerie's 5 ms time constant. MuJoCo also
 retains the xArm passive-hand joints' reference armature of 0.1 kg m² and the
 driver/follower limits' 5 ms response. These native numerical settings support

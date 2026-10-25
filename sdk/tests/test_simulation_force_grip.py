@@ -139,6 +139,87 @@ def test_native_force_hold_tracks_request_under_unequal_finger_load(tmp_path):
         engine.close()
 
 
+def test_native_force_grasp_retains_a_bottle_during_lift_and_releases(tmp_path):
+    mujoco = pytest.importorskip("mujoco")
+    from waddle_sdk.simulators.mujoco import Engine
+
+    fixture = json.loads(
+        (Path(__file__).parent / "fixtures/shampoo_transport.json").read_text()
+    )
+    _, config = make_site(
+        "force-transport",
+        backend="mujoco",
+        robot="yam",
+        environment="shampoo-packing",
+        width=32,
+        height=32,
+    )
+    engine = Engine(config, tmp_path)
+    try:
+        target = np.array(fixture["initial"])
+        engine.home(target)
+        # Initialize only the arm; the ordinary native pile and contacts remain.
+        for motion in fixture["motions"][:2]:
+            start, target = target, np.array(motion["end"])
+            steps = round(motion["seconds"] / engine.model.opt.timestep)
+            for step in range(steps):
+                t = (step + 1) / steps
+                blend = t**3 * (10 - 15 * t + 6 * t * t)
+                engine.write(start + blend * (target - start))
+                engine.step()
+        force = engine.gripper_force_limits()[1]
+        consecutive = 0
+        for _ in range(125):
+            target[-1] = max(0, engine.read()[0][-1] - 0.05)
+            engine.write_force(target, force)
+            for _ in range(round(0.04 / engine.model.opt.timestep)):
+                engine.step()
+            q, dq = engine.read()
+            qualified = (
+                q[-1] * engine.profile.opening > 0.003
+                and abs(dq[-1]) * engine.profile.opening < 0.001
+                and engine.gripper_force() >= force - 0.5
+            )
+            consecutive = consecutive + 1 if qualified else 0
+            if consecutive == 3:
+                break
+        assert consecutive == 3
+        bottle = engine.data.body(fixture["target"])
+        initial_z = float(bottle.xpos[2])
+        start = target.copy()
+        lift = next(m for m in fixture["motions"] if m["phase"] == "lift")
+        target = np.array(lift["end"])
+        steps = round(lift["seconds"] / engine.model.opt.timestep)
+        for step in range(steps):
+            t = (step + 1) / steps
+            blend = t**3 * (10 - 15 * t + 6 * t * t)
+            engine.write(start + blend * (target - start))
+            engine.step()
+        assert bottle.xpos[2] > initial_z + 0.03
+        touched = set()
+        contact_force = np.zeros(6)
+        for index, contact in enumerate(engine.data.contact):
+            names = {
+                engine.model.body(int(engine.model.geom_bodyid[g])).name
+                for g in contact.geom
+            }
+            if fixture["target"] in names:
+                mujoco.mj_contactForce(engine.model, engine.data, index, contact_force)
+                if contact_force[0] > 0.01:
+                    touched.update(names & {"tip_left", "tip_right"})
+        assert touched == {"tip_left", "tip_right"}
+        assert engine.gripper_force() == pytest.approx(force, abs=0.5)
+        lifted_z = float(bottle.xpos[2])
+        target[-1] = 1.0
+        engine.write_force(target, 0)
+        for _ in range(1000):
+            engine.step()
+        assert engine.read()[0][-1] * engine.profile.opening > 0.09
+        assert bottle.xpos[2] < lifted_z - 0.02
+    finally:
+        engine.close()
+
+
 @pytest.mark.parametrize("arms", [1, 2])
 def test_public_named_sdk_force_command_reaches_native_worker(tmp_path, arms):
     pytest.importorskip("mujoco")
