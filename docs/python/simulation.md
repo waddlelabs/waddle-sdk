@@ -29,7 +29,11 @@ RGB-D samples preserve snapshot content bounds and optional exact captured robot
 feedback through the normal [camera contract](../porting/camera.md#optional-capture-time-robot-feedback).
 Reset replaces the renderer's model/state and rejects frames from an earlier source
 generation. Large model transfers precede a fresh timed state acquisition; a
-snapshot transfer exceeding the 50 ms pairing bound refuses camera acquisition.
+snapshot transfer exceeding the 50 ms pairing bound is discarded. Acquisition
+tries at most three fresh snapshots to recover transient scheduling delays.
+Only a newly acquired state and its matching stamp can be rendered; all three
+late acquisitions still refuse the camera with the original pairing-bound error.
+Transport and native snapshot faults retain their original failure behavior.
 No motion deadline, measured arrival/contact rule, physical parameter or image
 freshness limit is relaxed.
 

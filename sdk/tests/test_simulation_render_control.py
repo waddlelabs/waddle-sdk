@@ -155,6 +155,7 @@ def test_native_stalled_renderer_retains_acquisition_and_refuses_pre_reset_frame
 @pytest.mark.parametrize("handoff_ns", [49_000_000, 51_000_000])
 def test_pairing_bound_includes_native_clock_handoff(monkeypatch, handoff_ns):
     now = [1]
+    stamps = []
     monkeypatch.setattr(time, "monotonic_ns", lambda: now[0])
 
     class Renderer:
@@ -164,6 +165,7 @@ def test_pairing_bound_includes_native_clock_handoff(monkeypatch, handoff_ns):
 
     def stamp():
         now[0] += handoff_ns
+        stamps.append(now[0])
         return SimpleNamespace(session_ns=now[0], unix_ns=now[0])
 
     world = World({"backend": "mujoco"})
@@ -172,8 +174,10 @@ def test_pairing_bound_includes_native_clock_handoff(monkeypatch, handoff_ns):
     if handoff_ns > 50_000_000:
         with pytest.raises(RuntimeError, match="50 ms pairing bound"):
             world.capture("scene", stamp=stamp)
+        assert len(stamps) == 3
     else:
         assert world.capture("scene", stamp=stamp)[3].session_ns == now[0]
+        assert len(stamps) == 1
 
 
 def test_latest_slot_withdraws_a_prior_source_revision():
@@ -187,6 +191,48 @@ def test_latest_slot_withdraws_a_prior_source_revision():
     generation[0] = 1
     assert latest.get("scene") is None
     assert latest.wait("scene", timeout=0) is None
+
+
+def test_late_pairing_recovers_only_with_new_snapshot_and_matching_model(monkeypatch):
+    now = [1]
+    monkeypatch.setattr(time, "monotonic_ns", lambda: now[0])
+    requests, stamps = [], []
+    snapshots = iter(
+        [
+            {"generation": 1, "model": b"replacement"},
+            {"generation": 1, "interval": (0, 1), "state": "late"},
+            {"generation": 1, "interval": (51_000_000, 51_000_001), "state": "fresh"},
+        ]
+    )
+
+    def snapshot(operation, generation):
+        requests.append((operation, generation))
+        return next(snapshots)
+
+    def stamp():
+        now[0] += 51_000_000 if not stamps else 1_000_000
+        result = SimpleNamespace(session_ns=now[0], unix_ns=now[0])
+        stamps.append(result)
+        return result
+
+    class Renderer:
+        def capture(self, camera, acquire, cancelled):
+            state, captured_stamp = acquire(0)
+            return None, None, state, captured_stamp
+
+    world = World({"backend": "mujoco"})
+    world._generation = 1
+    world._renderer = Renderer()
+    world.call = snapshot
+    _, _, state, captured_stamp = world.capture("scene", stamp=stamp)
+    assert requests == [
+        ("render_snapshot", 0),
+        ("render_snapshot", 1),
+        ("render_snapshot", 1),
+    ]
+    assert state["state"] == "fresh"
+    assert state["model"] == b"replacement"
+    assert captured_stamp is stamps[1]
 
 
 def test_renderer_preserves_the_original_snapshot_failure():

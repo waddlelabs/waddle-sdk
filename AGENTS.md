@@ -4,6 +4,9 @@ Reference MuJoCo rendering runs separately from physics/control, with bounded
 camera work, at most two inherited rendering CPUs, acquisition-time robot feedback and
 reset-generation fencing. Keep measured motion outcomes and image freshness
 checks unchanged.
+Late snapshot pairing discards the acquisition and permits at most three fresh
+attempts under the same 50 ms bound; it never restamps old feedback. Persistent
+lateness and original snapshot/transport failures remain camera faults.
 
 YAM feedback reads use a single completed immutable vendor JointStates publication
 when the installed I2RT observation/publication/allocation code matches the

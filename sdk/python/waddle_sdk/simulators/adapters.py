@@ -178,23 +178,30 @@ class World:
             raise RuntimeError("simulation renderer is unavailable")
 
         def acquire(known_generation):
-            snapshot = self.call("render_snapshot", known_generation)
             model = None
-            while snapshot.get("model") is not None:
-                # Model replacement can be large. Acquire fresh feedback only
-                # after that transfer, so its cost cannot restamp old state.
-                model = snapshot["model"]
-                snapshot = self.call("render_snapshot", snapshot["generation"])
-            captured_stamp = None if stamp is None else stamp()
-            if (
-                stamp is not None
-                and time.monotonic_ns() - snapshot["interval"][1] > 50_000_000
-            ):
-                raise RuntimeError(
-                    "simulation camera snapshot transport exceeded 50 ms pairing bound"
-                )
-            snapshot["model"] = model
-            return snapshot, captured_stamp
+            for _ in range(3):
+                if cancelled():
+                    raise RuntimeError("simulation camera is closed")
+                snapshot = self.call("render_snapshot", known_generation)
+                while snapshot.get("model") is not None:
+                    # Model replacement can be large. Acquire fresh feedback
+                    # after transfer; its cost cannot restamp old state.
+                    model = snapshot["model"]
+                    snapshot = self.call("render_snapshot", snapshot["generation"])
+                captured_stamp = None if stamp is None else stamp()
+                if (
+                    stamp is None
+                    or time.monotonic_ns() - snapshot["interval"][1] <= 50_000_000
+                ):
+                    snapshot["model"] = model
+                    return snapshot, captured_stamp
+                # Discard a late acquisition completely. A fresh snapshot can
+                # recover a scheduling interruption without relaxing pairing
+                # or relabeling old feedback with a new clock stamp.
+                known_generation = snapshot["generation"]
+            raise RuntimeError(
+                "simulation camera snapshot transport exceeded 50 ms pairing bound"
+            )
 
         while not cancelled():
             rgb, depth, snapshot, captured_stamp = renderer.capture(
