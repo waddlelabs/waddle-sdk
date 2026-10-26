@@ -25,6 +25,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Reduce excessive retention in editable scenes: moderate sliding friction, a
+  1 mm torsional patch and three NoSlip iterations retain centered grasps while
+  letting weak/edge grasps fall. Preserve native actuation, force limits and release.
+
 - Use bounded native motor effort for MuJoCo YAM force hold under unequal and
   changing finger loads. Retain the drive's damping as a passive transmission
   load; restore the original position servo and limits on release, Hold or reset.

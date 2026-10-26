@@ -158,7 +158,7 @@ def _object(world, obj, easy_grasp):
             "size": numbers(shape[1]),
             "pos": numbers(shape[2]),
             "rgba": numbers([*obj["color"], 1]),
-            "friction": "2.5 0.02 0.002" if easy_grasp else "1 0.005 0.0001",
+            "friction": "0.8 0.001 0.0001" if easy_grasp else "1 0.005 0.0001",
             "condim": "4" if easy_grasp else "3",
             "margin": "0.000001",
             "solref": "0.004 1",
@@ -231,7 +231,7 @@ def compile_scene(config, scene, output: Path, *, revision=1, easy_grasp=True):
         name for obj in scene["objects"] for name in _object(world, obj, easy_grasp)
     ]
     if easy_grasp:
-        root.find("option").set("noslip_iterations", "10")
+        root.find("option").set("noslip_iterations", "3")
         tips = {
             "yam": ("tip_left", "tip_right"),
             "so101": ("gripper_link", "moving_jaw_so101_v1_link"),
@@ -253,7 +253,9 @@ def compile_scene(config, scene, output: Path, *, revision=1, easy_grasp=True):
                     geom1=finger,
                     geom2=prop,
                     condim="4",
-                    friction="3 3 0.02 0.002 0.002",
+                    # A small finite patch stabilizes ordinary grasps without
+                    # making marginal edge contacts resist arbitrary torque.
+                    friction="0.8 0.8 0.001 0.0001 0.0001",
                     margin="0.000001",
                     solref="0.004 1",
                     solimp="0.95 0.99 0.001",

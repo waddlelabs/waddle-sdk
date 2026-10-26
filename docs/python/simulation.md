@@ -50,8 +50,9 @@ prefix the native model and file-manifest paths from the **site root**; native
 manifest paths are not relative to the simulation JSON. Existing output directories
 are refused, so callers retain prior revisions instead of overwriting live worlds.
 
-The default easy-grasp profile uses high-friction fingertip/object contacts,
-finite torsional friction and ten NoSlip solver iterations. Actual native contact,
+The default easy-grasp profile uses a sliding friction coefficient of 0.8, a
+1 mm effective torsional patch and three NoSlip solver iterations. This stabilizes
+centered grasps while allowing weak and marginal edge grasps to fall. Actual native contact,
 force feedback, missed grasps, gravity and release remain authoritative. It adds no
 attachment constraint and does not increase robot force limits. `easy_grasp=False`
 selects ordinary prop material and omits the additional contact pairs/NoSlip tuning

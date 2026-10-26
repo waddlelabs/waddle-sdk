@@ -1135,7 +1135,9 @@ or vendor interpolation is introduced. See
 
 `simulators.playground` compiles immutable native scenes from bounded object data.
 Preserve reference actuation/capabilities and measured outcomes; easy contacts must
-never fabricate a grasp or attach a missed object. Native manifests resolve from
+never fabricate a grasp or attach a missed object. The moderate material profile
+uses a 1 mm torsional patch; centered retention, marginal/weak drops and opening
+release are checked in `sdk/tests/test_playground_grasp.py`. Native manifests resolve from
 the SDK site root. See [authoring contract](docs/python/simulation.md#editable-tabletop-scenes).
 
 Trusted scene editors can use the optional `SimulationSceneReplacementBackend`
