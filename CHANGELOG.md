@@ -11,6 +11,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Reacquire reference simulation camera state after a transient snapshot-transfer
+  delay, with at most three attempts under the unchanged 50 ms pairing bound.
+  Retain replacement model identity and original persistent errors; never
+  restamp or render a rejected snapshot.
+
 ### Added
 
 - Optional trusted scene replacement for prepared native MuJoCo environments.

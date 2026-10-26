@@ -189,6 +189,41 @@ def test_latest_slot_withdraws_a_prior_source_revision():
     assert latest.wait("scene", timeout=0) is None
 
 
+def test_delayed_snapshot_reacquires_state_and_retains_replacement_model(monkeypatch):
+    now = [1]
+    stamps, snapshots = [], []
+    monkeypatch.setattr(time, "monotonic_ns", lambda: now[0])
+
+    class Renderer:
+        def capture(self, camera, acquire, cancelled):
+            snapshot, stamp = acquire(0)
+            return None, None, snapshot, stamp
+
+    def read(operation, generation):
+        assert operation == "render_snapshot"
+        value = {"generation": 1, "interval": (now[0], now[0]), "state": len(snapshots)}
+        if generation == 0:
+            value["model"] = b"replacement model"
+        snapshots.append(value)
+        return value
+
+    def stamp():
+        now[0] += 51_000_000 if not stamps else 1_000_000
+        value = SimpleNamespace(session_ns=now[0], unix_ns=now[0])
+        stamps.append(value)
+        return value
+
+    world = World({"backend": "mujoco"})
+    world._generation = 1
+    world._renderer = Renderer()
+    world.call = read
+    _, _, snapshot, captured = world.capture("scene", stamp=stamp)
+    assert len(stamps) == 2 and len(snapshots) == 3
+    assert captured is stamps[-1]
+    assert snapshot["state"] == 2 and snapshot["model"] == b"replacement model"
+    assert captured.session_ns - snapshot["interval"][1] == 1_000_000
+
+
 def test_renderer_preserves_the_original_snapshot_failure():
     from waddle_sdk.simulators.render_client import RenderClient
 
