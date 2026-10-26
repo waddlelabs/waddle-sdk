@@ -1130,3 +1130,10 @@ and the `limits.position_error` support fact; exact refusal context retains the
 enforced vector. Callers own reference timing/convergence; no extra SDK controller
 or vendor interpolation is introduced. See
 [position tracking allowance](docs/porting/robot.md#position-tracking-allowance).
+
+## Editable reference scenes
+
+`simulators.playground` compiles immutable native scenes from bounded object data.
+Preserve reference actuation/capabilities and measured outcomes; easy contacts must
+never fabricate a grasp or attach a missed object. Native manifests resolve from
+the SDK site root. See [authoring contract](docs/python/simulation.md#editable-tabletop-scenes).

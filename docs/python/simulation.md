@@ -33,6 +33,30 @@ snapshot transfer exceeding the 50 ms pairing bound refuses camera acquisition.
 No motion deadline, measured arrival/contact rule, physical parameter or image
 freshness limit is relaxed.
 
+## Editable tabletop scenes
+
+`waddle_sdk.simulators.playground.compile_scene(config, scene, output)` composes
+an immutable native scene from a reference MuJoCo robot configuration. The scene
+contains `id`, `name` and `objects`; each object declares a stable `id`, catalogue
+`kind`, `position` in metres, XYZ `rotation` in degrees, full `size` in metres and
+RGB `color` in [0, 1]. Available kinds are block, bottle, ball, cylinder, open bowl,
+open tray and fixed visual target. Up to 64 objects are accepted; invalid/nonfinite
+geometry and duplicate identifiers are refused before compilation.
+
+The compiler retains reference robots, Home, actuators, cameras and capability
+facts, and emits `simulation.json`, a hash-bound `world.xml` and local assets.
+Place the site at that output root. If embedding the output in a site subdirectory,
+prefix the native model and file-manifest paths from the **site root**; native
+manifest paths are not relative to the simulation JSON. Existing output directories
+are refused, so callers retain prior revisions instead of overwriting live worlds.
+
+The default easy-grasp profile uses high-friction fingertip/object contacts,
+finite torsional friction and ten NoSlip solver iterations. Actual native contact,
+force feedback, missed grasps, gravity and release remain authoritative. It adds no
+attachment constraint and does not increase robot force limits. `easy_grasp=False`
+selects ordinary prop material and omits the additional contact pairs/NoSlip tuning
+for controlled comparisons. RGB-only references remain RGB-only.
+
 ## Reference engines and scenes
 
 | Selector | Role | Installation |

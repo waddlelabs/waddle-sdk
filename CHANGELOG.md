@@ -11,6 +11,13 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+### Added
+
+- Compile bounded editable tabletop scenes with native reference robots, cameras,
+  immutable reset state and an easier contact profile. Preserve actual force,
+  missed-grasp and release outcomes; all six robot/arm configurations retain their
+  declared camera capabilities.
+
 ### Fixed
 
 - Use bounded native motor effort for MuJoCo YAM force hold under unequal and
