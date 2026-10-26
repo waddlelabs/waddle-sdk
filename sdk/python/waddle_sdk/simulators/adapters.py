@@ -228,11 +228,15 @@ class World:
             if len(arguments) == 2 and arguments[1] is True:
                 return rgb, depth, _capture_timing(snapshot, depth)
             return rgb, depth
-        # A capture already rendering must finish, but a second camera must
-        # not get ahead of queued state/control requests. Preserve FIFO order
-        # within each priority and one outstanding transaction on the pipe.
+        # An active snapshot must finish, but queued camera/viewer snapshots
+        # must not get ahead of state/control requests. This also covers the
+        # independent renderer, which acquires state via render_snapshot.
+        # Preserve FIFO within each priority and one transaction on the pipe.
         with self._requests:
-            ticket = (operation == "capture", self._request_sequence)
+            ticket = (
+                operation in {"capture", "render_snapshot", "evaluation_snapshot"},
+                self._request_sequence,
+            )
             self._request_sequence += 1
             self._pending.append(ticket)
             try:

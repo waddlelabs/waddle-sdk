@@ -3242,7 +3242,10 @@ def test_explicit_worker_advances_only_on_the_shared_sdk_clock(monkeypatch, dura
 
 
 @pytest.mark.parametrize("operation", ["read", "write", "hold"])
-def test_world_control_is_served_before_a_second_queued_camera(operation):
+@pytest.mark.parametrize(
+    "snapshot", ["capture", "render_snapshot", "evaluation_snapshot"]
+)
+def test_world_control_is_served_before_a_second_queued_camera(operation, snapshot):
     import threading
     from concurrent.futures import ThreadPoolExecutor
 
@@ -3276,19 +3279,19 @@ def test_world_control_is_served_before_a_second_queued_camera(operation):
             time.sleep(0.001)
 
     with ThreadPoolExecutor(max_workers=3) as pool:
-        first = pool.submit(world.call, "capture", "scene")
+        first = pool.submit(world.call, snapshot, "scene")
         try:
             assert capture_started.wait(2)
-            second = pool.submit(world.call, "capture", "wrist")
+            second = pool.submit(world.call, snapshot, "wrist")
             wait_queued(1)
             control = pool.submit(world.call, operation)
             wait_queued(2)
         finally:
             release_capture.set()
-        assert first.result(timeout=2) == "capture"
+        assert first.result(timeout=2) == snapshot
         assert control.result(timeout=2) == operation
-        assert second.result(timeout=2) == "capture"
-    assert calls == ["capture", operation, "capture"]
+        assert second.result(timeout=2) == snapshot
+    assert calls == [snapshot, operation, snapshot]
 
 
 def test_world_close_waits_for_active_io_and_unblocks_queued_camera():

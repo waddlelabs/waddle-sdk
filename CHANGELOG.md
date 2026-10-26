@@ -30,6 +30,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Prioritize queued robot feedback/control over reference simulation camera and
+  viewer snapshots, including the independent renderer's state acquisition.
+  Preserve FIFO within each priority and finish the active pipe transaction.
+
 - Reduce excessive retention in editable scenes: moderate sliding friction, a
   1 mm torsional patch and three NoSlip iterations retain centered grasps while
   letting weak/edge grasps fall. Preserve native actuation, force limits and release.

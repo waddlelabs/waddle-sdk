@@ -1135,6 +1135,11 @@ or vendor interpolation is introduced. See
 
 ## Editable reference scenes
 
+Reference worker IPC prioritizes queued robot feedback/control over camera and
+viewer snapshots, including independent rendering's `render_snapshot` requests.
+Keep FIFO within each priority and complete the active transaction before the
+next; never bypass synchronization or relax camera content bounds.
+
 `simulators.playground` compiles immutable native scenes from bounded object data.
 Preserve reference actuation/capabilities and measured outcomes; easy contacts must
 never fabricate a grasp or attach a missed object. The moderate material profile

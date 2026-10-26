@@ -465,7 +465,8 @@ between requests unless overload rebases the clock. State reporting uses the
 ordinary SDK pump at the declared physical command rate: SO-101 30 Hz, YAM 10 Hz,
 and xArm7 50 Hz. New scenes use a 1 rad/s joint-speed limit. Explicit site settings
 remain authoritative. Available compute still bounds achievable throughput.
-Queued state/control requests take priority over queued camera captures, retaining
+Queued state/control requests take priority over queued camera captures and
+render/viewer state snapshots, retaining
 FIFO order within each group and one native transaction at a time. An in-progress
 capture cannot be interrupted. Real-time pump ticks need no extra clock request:
 reads, writes and captures already advance elapsed time. Explicit-step rollouts
