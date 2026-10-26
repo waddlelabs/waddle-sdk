@@ -127,10 +127,15 @@ def serve(connection: Connection) -> None:
                     "home_part",
                     "evaluation_snapshot",
                     "evaluation_reset",
+                    "evaluation_replace_scene",
                 }:
                     raise ValueError("unsupported simulation operation")
                 try:
-                    if operation in {"reset", "evaluation_reset"}:
+                    if operation in {
+                        "reset",
+                        "evaluation_reset",
+                        "evaluation_replace_scene",
+                    }:
                         generation += 1
                     if operation == "step":
                         # Explicit stepping remains available for rollouts;
@@ -148,6 +153,14 @@ def serve(connection: Connection) -> None:
                         result = engine.capture_timed(arguments[0])
                     elif operation == "evaluation_snapshot":
                         result = engine.evaluation_snapshot()
+                    elif operation == "evaluation_replace_scene":
+                        replacement = engine.replacement(arguments[0], Path(scratch))
+                        engine.hold()
+                        engine.close()
+                        engine = replacement
+                        pending_time = 0.0
+                        last_time = time.monotonic()
+                        result = True
                     elif operation == "evaluation_reset":
                         variation = arguments[1] if len(arguments) > 1 else None
                         result = engine.evaluation_reset(
@@ -172,13 +185,13 @@ def serve(connection: Connection) -> None:
                             pending_time = 0.0
                             last_time = time.monotonic()
                     connection.send((True, result))
-                except Exception as error:
+                except Exception as error:  # noqa: BLE001 -- preserve native faults across the private pipe
                     engine.hold()
                     traceback.print_exc(file=sys.stderr)
                     connection.send((False, f"{type(error).__name__}: {error}"))
         except (EOFError, BrokenPipeError):
             pass
-        except BaseException as error:
+        except BaseException as error:  # noqa: BLE001 -- preserve worker startup faults across the private pipe
             traceback.print_exc(file=sys.stderr)
             try:
                 connection.send((False, f"{type(error).__name__}: {error}"))

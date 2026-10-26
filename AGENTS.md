@@ -1137,3 +1137,10 @@ or vendor interpolation is introduced. See
 Preserve reference actuation/capabilities and measured outcomes; easy contacts must
 never fabricate a grasp or attach a missed object. Native manifests resolve from
 the SDK site root. See [authoring contract](docs/python/simulation.md#editable-tabletop-scenes).
+
+Trusted scene editors can use the optional `SimulationSceneReplacementBackend`
+through `SimulationAdministration.can_replace_scene/replace_scene`. Reference
+MuJoCo retains its physics/render processes for self-contained native scenes with
+unchanged robot/camera contracts. Keep participant drain, episode invalidation,
+render-generation fencing, immutable source bytes and failed-admin fencing.
+Unsupported worlds retain close/open; this capability is never a participant tool.

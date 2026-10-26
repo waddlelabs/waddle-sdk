@@ -538,6 +538,24 @@ confirm that the current tool call and all admitted operations are terminal befo
 reset. A reset advances only the administration episode revision, so prepared
 plans from a higher layer must bind and check that revision themselves.
 
+A trusted editor can check `administration.can_replace_scene` and call
+`replace_scene({world_name: WorldConfig(...)})` with prepared, digest-bound native
+scenes. The optional `SimulationSceneReplacementBackend` facet leaves the site,
+robot ports, camera ports, physics process and render process open. The reference
+MuJoCo implementation accepts self-contained native XML with unchanged robot
+assembly, assets, drives, constraints, camera contracts and initial robot state;
+it resets the new environment and fences old images by render generation. A
+changed robot/camera contract requires reopening the site. Unsupported backends
+report the capability unavailable and can use the normal close/open lifecycle.
+
+As with reset, the caller must drain all participant operations, invalidate plans
+and retained state using the returned episode revision, and refresh its scene
+consumer before admitting new work. An admitted replacement failure fences
+administration until reopen; the original error remains attached. This authority
+is never supplied through the participant runtime or tools. Each prepared scene
+remains immutable; replacement selects new bytes rather than rewriting the old
+world.
+
 For a MuJoCo-only continuation reset, the trusted evaluator may also pass
 `preserve_free_bodies=(...)` and `retire_free_bodies=(...)`. The former retains
 each named free prop's measured pose and velocity across the reset; the latter

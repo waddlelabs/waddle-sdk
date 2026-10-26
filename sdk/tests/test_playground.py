@@ -5,7 +5,7 @@ from copy import deepcopy
 import numpy as np
 import pytest
 from waddle_sdk.simulators.playground import CATALOG, compile_scene, validate_scene
-from waddle_sdk.simulators.scene import load_scene, make_site
+from waddle_sdk.simulators.scene import load_scene, make_site, profile
 
 
 def scene():
@@ -103,3 +103,86 @@ def test_scene_rejects_invalid_geometry_before_compiling(mutation):
     mutation(value)
     with pytest.raises(ValueError, match="playground"):
         validate_scene(value)
+
+
+def test_scene_replacement_keeps_ports_and_native_processes_and_fences_old_images(
+    tmp_path,
+):
+    import json
+
+    import yaml
+    from waddle_sdk import load_site
+    from waddle_sdk.simulation import (
+        SimulationAdministration,
+        SimulationAdministrationError,
+        WorldConfig,
+    )
+
+    site, config = make_site(
+        "editable",
+        backend="mujoco",
+        robot="yam",
+        environment="two_cubes",
+        width=96,
+        height=72,
+    )
+    site["worlds"]["cell"]["options"] = {"real_time": False}
+    first, second = tmp_path / "first", tmp_path / "second"
+    empty = {"id": "empty", "name": "Empty", "objects": []}
+    changed = deepcopy(empty)
+    changed["objects"] = [
+        {
+            "id": "block",
+            "kind": "block",
+            "position": [0.3, -0.1, 0.021],
+            "rotation": [0, 0, 0],
+            "size": [0.04, 0.04, 0.04],
+            "color": [1, 0, 0],
+        }
+    ]
+    compile_scene(config, empty, first)
+    compile_scene(config, changed, second, revision=2)
+    (first / "site.yaml").write_text(yaml.safe_dump(site))
+    admin = SimulationAdministration()
+    with load_site(first / "site.yaml").open(
+        console=False, _testing=True, simulation_administration=admin
+    ) as session:
+        world = session._managed.arms["arm"].driver.world
+        pids = world._process.pid, world._renderer.process.pid
+        assert admin.can_replace_scene
+        before = world.capture("scene")[0]
+        # Replacement must also restore robot state, not replay a previous target.
+        pose = np.array(world.call("read_part", "arm")[0])
+        pose[0] += 0.1
+        world.call("home_part", "arm", pose)
+        result = admin.replace_scene(
+            {
+                "cell": WorldConfig(
+                    "cell", {"simulation": "simulation.json"}, site_root=second
+                )
+            }
+        )
+        assert result.episode_revision == 1
+        assert "prop_block" in result.worlds["cell"]["bodies"]
+        assert (world._process.pid, world._renderer.process.pid) == pids
+        np.testing.assert_allclose(
+            world.call("read_part", "arm")[0], profile("yam").home, atol=1e-8
+        )
+        after, _, snapshot, _ = world.capture("scene")
+        assert snapshot["generation"] == world._generation == 1
+        assert np.abs(after.astype(float) - before).max() > 20
+        assert "prop_block" in admin.reset(seed=0).worlds["cell"]["bodies"]
+        # An admitted contract violation cannot leave plans or admin state usable.
+        invalid = json.loads((second / "simulation.json").read_text())
+        invalid["cameras"]["scene"]["stream"]["width"] += 1
+        (second / "simulation.json").write_text(json.dumps(invalid))
+        with pytest.raises(SimulationAdministrationError, match="not confirmed"):
+            admin.replace_scene(
+                {
+                    "cell": WorldConfig(
+                        "cell", {"simulation": "simulation.json"}, site_root=second
+                    )
+                }
+            )
+        with pytest.raises(SimulationAdministrationError, match="failed; reopen"):
+            admin.snapshot()

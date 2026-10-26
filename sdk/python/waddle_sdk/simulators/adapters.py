@@ -247,7 +247,11 @@ class World:
             ):
                 raise RuntimeError("simulation world is unavailable")
             try:
-                if operation in {"reset", "evaluation_reset"}:
+                if operation in {
+                    "reset",
+                    "evaluation_reset",
+                    "evaluation_replace_scene",
+                }:
                     self._generation += 1
                 self._connection.send((operation, arguments))
                 return self._receive(15.0 if operation == "capture" else 5.0)
@@ -337,8 +341,21 @@ class World:
 class AdministrativeWorld(World):
     """Reference MuJoCo world with a separate trusted evaluation facet."""
 
+    @property
+    def supports_scene_replacement(self) -> bool:
+        return "native_scene" in self.config
+
     def evaluation_snapshot(self):
         return self.call("evaluation_snapshot")
+
+    def evaluation_replace_scene(self, config: WorldConfig) -> bool:
+        _, definition = load_scene(
+            config.site_root, config.connection.get("simulation")
+        )
+        accepted = self.call("evaluation_replace_scene", definition)
+        if accepted:
+            self.config = definition
+        return accepted
 
     def evaluation_reset(
         self,

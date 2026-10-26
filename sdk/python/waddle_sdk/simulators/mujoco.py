@@ -219,6 +219,31 @@ class Engine:
             else f"{part}__"
         )
 
+    def replacement(self, config, scratch):
+        """Prepare a new environment while preserving the opened port contracts."""
+        from .native_scene import replacement_signature
+
+        ignored = {"native_scene", "_native_root", "scene_revision", "_real_time"}
+        if {k: v for k, v in config.items() if k not in ignored} != {
+            k: v for k, v in self.config.items() if k not in ignored
+        } or replacement_signature(config) != replacement_signature(self.config):
+            raise ValueError(
+                "simulation.scene_contract: replacement changed robot or camera contracts"
+            )
+        candidate = type(self)(config, scratch)
+        try:
+            candidate.evaluation_reset(seed=0)
+            # Initial robot commands are part of the preserved execution contract.
+            for part in self.parts:
+                np.testing.assert_array_equal(
+                    candidate.data.qpos[candidate._qpos[part]],
+                    self.model.key_qpos[self._native_key, self._qpos[part]],
+                )
+        except BaseException:
+            candidate.close()
+            raise
+        return candidate
+
     def _restore_prop_initial(self):
         for name, value in self._prop_initial.items():
             joint = self.model.joint(name)

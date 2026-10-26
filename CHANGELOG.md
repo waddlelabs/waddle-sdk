@@ -13,6 +13,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Optional trusted scene replacement for prepared native MuJoCo environments.
+  Retain the opened site, robot/camera ports and physics/render processes;
+  preserve robot/camera contracts, reset changed objects and fence old images.
+  Unsupported backends retain ordinary close/open behavior.
+
 - Compile bounded editable tabletop scenes with native reference robots, cameras,
   immutable reset state and an easier contact profile. Preserve actual force,
   missed-grasp and release outcomes; all six robot/arm configurations retain their

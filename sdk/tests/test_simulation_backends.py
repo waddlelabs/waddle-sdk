@@ -338,3 +338,16 @@ def test_backend_listing_is_nonopening_and_includes_installed_names(monkeypatch)
         "mujoco",
         "ros2",
     )
+
+
+def test_optional_scene_replacement_refuses_before_mutation_when_unavailable(tmp_path):
+    administration = SimulationAdministration()
+    with waddle_sdk.load_site(_write_site(tmp_path)).open(
+        console=False,
+        _testing=True,
+        simulation_administration=administration,
+    ):
+        assert not administration.can_replace_scene
+        with pytest.raises(SimulationAdministrationError, match="do not support"):
+            administration.replace_scene({"cell": simulation.WorldConfig("cell", {})})
+        assert administration.reset(seed=0).episode_revision == 1
