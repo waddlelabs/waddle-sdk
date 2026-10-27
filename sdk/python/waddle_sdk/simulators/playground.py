@@ -234,6 +234,12 @@ def compile_scene(config, scene, output: Path, *, revision=1, easy_grasp=True):
             contact.remove(node)
     if fixture:
         place_fixture(world, fixture, scene.get("seed", 0))
+        # Reference benchmark MJCF may leave free joints unnamed. Authored scenes
+        # need stable coordinate identities for consumers of native state.
+        for body in world.iter("body"):
+            for joint in body.findall("freejoint"):
+                if not joint.get("name"):
+                    joint.set("name", body.get("name") + "_free")
     if single:
         part = next(iter(config["parts"]))
         robot = world.find("body[@name='base']")
