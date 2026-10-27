@@ -16,6 +16,7 @@ from copy import deepcopy
 from pathlib import Path
 
 from .model import mjcf, numbers
+from .playground_fixtures import FIXTURES, place_fixture
 from .scene import profile, quaternion, rotation
 
 CATALOG = {
@@ -50,8 +51,28 @@ def _vector(value, length, low, high, name):
 
 def validate_scene(scene):
     """Validate bounded metric scene data; never accept executable XML or paths."""
-    if not isinstance(scene, dict) or set(scene) != {"id", "name", "objects"}:
+    required = {"id", "name", "objects"}
+    if (
+        not isinstance(scene, dict)
+        or not required <= set(scene)
+        or set(scene) - required - {"fixture", "seed", "instruction"}
+    ):
         raise ValueError("playground.scene: expected id, name and objects")
+    if "fixture" in scene and (
+        not isinstance(scene["fixture"], str) or scene["fixture"] not in FIXTURES
+    ):
+        raise ValueError("playground.fixture: unknown reference assembly")
+    if "seed" in scene and (
+        "fixture" not in scene
+        or type(scene["seed"]) is not int
+        or not 0 <= scene["seed"] <= 999999
+    ):
+        raise ValueError("playground.seed: reference fixture seed must be 0..999999")
+    if "instruction" in scene and (
+        not isinstance(scene["instruction"], str)
+        or not 1 <= len(scene["instruction"]) <= 1000
+    ):
+        raise ValueError("playground.instruction: expected 1 to 1000 characters")
     if not isinstance(scene["id"], str) or not IDENTIFIER.fullmatch(scene["id"]):
         raise ValueError("playground.scene_id: invalid scene identifier")
     if not isinstance(scene["name"], str) or not 1 <= len(scene["name"]) <= 80:
@@ -183,6 +204,11 @@ def compile_scene(config, scene, output: Path, *, revision=1, easy_grasp=True):
     contact material/solver parameters, never object attachment or outcomes.
     """
     scene = validate_scene(scene)
+    fixture = scene.get("fixture")
+    if fixture and (len(config["parts"]) != 2 or config["robot"] != "yam"):
+        raise ValueError(
+            "playground.fixture: these reference assemblies require two YAMs"
+        )
     if output.exists():
         raise ValueError("playground.output: scene revision already exists")
     output.mkdir(parents=True)
@@ -190,14 +216,14 @@ def compile_scene(config, scene, output: Path, *, revision=1, easy_grasp=True):
     config.pop("native_scene", None)
     config.pop("_native_root", None)
     config.pop("pose_profile", None)
-    config["environment"] = "two_cubes"
+    config["environment"] = FIXTURES[fixture] if fixture else "two_cubes"
     root = ET.fromstring(mjcf(profile(config["robot"]), config))
     world = root.find("worldbody")
     single = len(config["parts"]) == 1
     bases = {"base"} if single else {f"{p}__base" for p in config["parts"]}
     removed = set()
     for body in list(world.findall("body")):
-        if body.get("name") not in bases | {"table"}:
+        if not fixture and body.get("name") not in bases | {"table"}:
             removed.update(n.get("name") for n in body.iter() if n.get("name"))
             world.remove(body)
     contact = root.find("contact")
@@ -206,6 +232,8 @@ def compile_scene(config, scene, output: Path, *, revision=1, easy_grasp=True):
     for node in list(contact):
         if any(value in removed for value in node.attrib.values()):
             contact.remove(node)
+    if fixture:
+        place_fixture(world, fixture, scene.get("seed", 0))
     if single:
         part = next(iter(config["parts"]))
         robot = world.find("body[@name='base']")
@@ -230,6 +258,15 @@ def compile_scene(config, scene, output: Path, *, revision=1, easy_grasp=True):
     props = [
         name for obj in scene["objects"] for name in _object(world, obj, easy_grasp)
     ]
+    if fixture:
+        props.extend(
+            geom.get("name")
+            for body in world.findall("body")
+            if body.get("name") not in bases | {"table"}
+            and not body.get("name", "").startswith("prop_")
+            for geom in body.iter("geom")
+            if geom.get("name") and geom.get("group") == "3"
+        )
     if easy_grasp:
         root.find("option").set("noslip_iterations", "3")
         tips = {
@@ -247,6 +284,11 @@ def compile_scene(config, scene, output: Path, *, revision=1, easy_grasp=True):
                         fingers.append(name)
         for finger in fingers:
             for prop in props:
+                if any(
+                    {pair.get("geom1"), pair.get("geom2")} == {finger, prop}
+                    for pair in contact.findall("pair")
+                ):
+                    continue
                 ET.SubElement(
                     contact,
                     "pair",

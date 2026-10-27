@@ -18,6 +18,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Optional finite two-YAM reference assemblies in authored scenes: handover,
+  movable container, peg/socket and loaded tray, with bounded repeatable XY
+  variations, native contacts and ordinary editable extra props.
+
 - Optional trusted scene replacement for prepared native MuJoCo environments.
   Retain the opened site, robot/camera ports and physics/render processes;
   preserve robot/camera contracts, reset changed objects and fence old images.

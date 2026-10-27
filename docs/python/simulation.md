@@ -61,6 +61,18 @@ attachment constraint and does not increase robot force limits. `easy_grasp=Fals
 selects ordinary prop material and omits the additional contact pairs/NoSlip tuning
 for controlled comparisons. RGB-only references remain RGB-only.
 
+Two-YAM scenes may additionally select `fixture`: `handover`, `hold_container`,
+`peg_socket`, or `loaded_tray`. These reuse the native handover block, movable
+open container, peg/socket and loaded two-handle tray assemblies. Their compound
+geometry, free-body physics and collision identities are retained. Optional
+`seed` (integer 0–999999) applies a repeatable shared XY translation within
+±12 mm; zero is canonical. It preserves assembled geometry and tray contents.
+Optional `instruction` is bounded descriptive text, never executable code.
+Ordinary editable `objects` may coexist with a fixture. Fixture internals are
+not individual editable props. Unsupported robot/arm combinations refuse before
+creating output. The easy-grasp setting also applies to fixture/finger contacts;
+it does not alter mass, robot force limits or create attachment constraints.
+
 ## Reference engines and scenes
 
 | Selector | Role | Installation |

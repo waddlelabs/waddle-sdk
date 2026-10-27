@@ -8,6 +8,83 @@ from waddle_sdk.simulators.playground import CATALOG, compile_scene, validate_sc
 from waddle_sdk.simulators.scene import load_scene, make_site, profile
 
 
+@pytest.mark.parametrize(
+    "fixture", ["handover", "hold_container", "peg_socket", "loaded_tray"]
+)
+@pytest.mark.parametrize("seed", [0, 1, 9])
+def test_bimanual_assemblies_are_stable_visible_and_resettable(tmp_path, fixture, seed):
+    pytest.importorskip("mujoco")
+    from waddle_sdk.simulators.mujoco import Engine
+
+    _, config = make_site(
+        "assemblies",
+        backend="mujoco",
+        robot="yam",
+        arms=2,
+        environment="two_cubes",
+        width=96,
+        height=72,
+    )
+    authored = {
+        "id": "task",
+        "name": "Task",
+        "objects": [],
+        "fixture": fixture,
+        "seed": seed,
+    }
+    output = tmp_path / "world"
+    compile_scene(config, authored, output)
+    _, compiled = load_scene(output, "simulation.json")
+    engine = Engine(compiled, output)
+    try:
+        initial = engine.data.qpos.copy()
+        for _ in range(500):
+            engine.step()
+        assert np.isfinite(engine.data.qpos).all()
+        for contact in engine.data.contact:
+            names = [
+                engine.model.body(int(engine.model.geom(g).bodyid[0])).name
+                for g in contact.geom
+            ]
+            robot_contact = any(
+                name.startswith(("left__", "right__")) for name in names
+            )
+            same_arm = any(
+                all(name.startswith(part + "__") for name in names)
+                for part in ("left", "right")
+            )
+            assert not (robot_contact and not same_arm and contact.dist < -0.002), names
+        expected = {
+            "handover": ["handover_block"],
+            "hold_container": ["movable_container", "target_object"],
+            "peg_socket": ["receiving_part", "target_peg"],
+            "loaded_tray": ["loaded_tray", "tray_content_1", "tray_content_2"],
+        }[fixture]
+        state = engine.evaluation_snapshot()
+        for name in expected:
+            body = state["bodies"][name]
+            assert body["position_m"][2] > -0.005
+            assert np.linalg.norm(body["linear_velocity_m_s"]) < 0.02, (name, body)
+        for camera in ("scene", "left_wrist", "right_wrist"):
+            rgb, depth = engine.capture(camera)
+            assert rgb.shape == (72, 96, 3) and np.ptp(rgb) > 20
+            assert depth.shape == (72, 96) and (depth > 0).any()
+        engine.reset()
+        np.testing.assert_array_equal(engine.data.qpos, initial)
+    finally:
+        engine.close()
+
+
+def test_reference_fixture_requires_its_declared_embodiment(tmp_path):
+    _, config = make_site(
+        "unsupported", backend="mujoco", robot="yam", arms=1, environment="two_cubes"
+    )
+    authored = {"id": "task", "name": "Task", "objects": [], "fixture": "handover"}
+    with pytest.raises(ValueError, match="require two YAMs"):
+        compile_scene(config, authored, tmp_path / "world")
+    assert not (tmp_path / "world").exists()
+
+
 def scene():
     return {
         "id": "test",

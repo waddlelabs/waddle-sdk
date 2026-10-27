@@ -1135,6 +1135,11 @@ or vendor interpolation is introduced. See
 
 ## Editable reference scenes
 
+Authored two-YAM scenes may select a finite native `fixture` and bounded `seed`.
+Reuse reference assemblies and preserve compound geometry/contact identity;
+never accept executable scene imports through authoring data. Seed zero remains
+canonical and reset repeats the compiled variation. Added props remain separate.
+
 Reference worker IPC prioritizes queued robot feedback/control over camera and
 viewer snapshots, including independent rendering's `render_snapshot` requests.
 Keep FIFO within each priority and complete the active transaction before the
