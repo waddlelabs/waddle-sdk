@@ -271,7 +271,12 @@ def _read_sources(part_name):
 
 
 def _text(values):
-    return " ".join(format(float(value), ".17g") for value in values)
+    # Generated poses need portable bytes: BLAS eigensolvers differ in their
+    # last bits across hosts. Keep picometre/component precision and one zero.
+    return " ".join(
+        format(round(float(value), 12) + 0.0, ".12f").rstrip("0").rstrip(".")
+        for value in values
+    )
 
 
 def _urdf_pose(element):

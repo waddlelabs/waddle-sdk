@@ -46,6 +46,23 @@ def test_optional_grasp_metadata_preserves_standard_physical_sources():
     assert enriched.provenance == baseline.provenance
 
 
+def test_source_bytes_ignore_eigensolver_roundoff(monkeypatch):
+    pytest.importorskip("i2rt")
+    baseline = sources_for_arm()
+    original = np.linalg.eigh
+
+    def other_host(matrix):
+        values, vectors = original(matrix)
+        # Different BLAS kernels produced these last-bit differences on two
+        # x86_64 hosts with the same Python source and NumPy version.
+        return values, np.nextafter(vectors, np.inf)
+
+    monkeypatch.setattr(np.linalg, "eigh", other_host)
+    rebuilt = sources_for_arm()
+    assert rebuilt.model == baseline.model
+    assert rebuilt.assets == baseline.assets
+
+
 @pytest.mark.parametrize(
     "changed",
     [

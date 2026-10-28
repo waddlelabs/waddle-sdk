@@ -13,6 +13,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Serialize generated YAM source poses at twelve decimal places with canonical
+  zero. Equivalent BLAS results on different hosts now produce matching model
+  bytes, while exact vendor asset checks and saved model identities remain intact.
+
 - Use bounded native motor effort for MuJoCo YAM force hold under unequal and
   changing finger loads. Retain the drive's damping as a passive transmission
   load; restore the original position servo and limits on release, Hold or reset.

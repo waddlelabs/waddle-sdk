@@ -1,5 +1,10 @@
 # AGENTS.md — waddle-sdk monorepo
 
+Generated YAM source poses serialize at twelve decimal places with canonical zero
+to remove insignificant cross-host BLAS differences from model hashes. Preserve
+vendor asset verification and existing saved model bytes; consumers must explicitly
+regenerate for the new source serialization. See docs/porting/source-models.md.
+
 Reference MuJoCo rendering runs separately from physics/control, with bounded
 camera work, at most two inherited rendering CPUs, acquisition-time robot feedback and
 reset-generation fencing. Keep measured motion outcomes and image freshness
