@@ -14,6 +14,61 @@ from pathlib import Path
 import numpy as np
 
 
+def replacement_signature(config):
+    """Bind a reference native scene's robot assembly and shared model assets.
+
+    Replacement is optional and intentionally limited to self-contained native
+    XML. Included models must reopen normally. Environment bodies and their
+    contact pairs may change; robot sources, drives and constraints may not.
+    """
+    if "native_scene" not in config:
+        raise ValueError(
+            "simulation.scene_contract: replacement requires native scenes"
+        )
+    root = ET.parse(resolve(config["_native_root"], config)).getroot()
+    if root.find(".//include") is not None:
+        raise ValueError(
+            "simulation.scene_contract: included native scenes require reopen"
+        )
+    for mesh in root.findall("asset/mesh"):
+        # MuJoCo's cached source export may omit this filename-inferred default.
+        if mesh.get("content_type") == "model/stl" and mesh.get("file", "").endswith(
+            ".stl"
+        ):
+            mesh.attrib.pop("content_type")
+    selected = config["native_scene"]
+    values = [selected["prefixes"], selected["camera_names"]]
+    for name in (
+        "compiler",
+        "default",
+        "asset",
+        "actuator",
+        "tendon",
+        "equality",
+        "extension",
+    ):
+        values.append(
+            [ET.tostring(node, encoding="unicode") for node in root.findall(name)]
+        )
+    world = root.find("worldbody")
+    for prefix in selected["prefixes"].values():
+        body = world.find(f"body[@name='{prefix}base']")
+        if body is None:
+            raise ValueError(
+                "simulation.scene_contract: missing reference robot assembly"
+            )
+        values.append(ET.tostring(body, encoding="unicode"))
+    # Referenced assets are digest-bound, even when their filenames are unchanged.
+    values.append(
+        {
+            name: digest
+            for name, digest in selected["files"].items()
+            if not name.endswith(".xml")
+        }
+    )
+    return values
+
+
 def resolve(root, config):
     """Validate confined, hash-bound files without importing a physics engine."""
     root = Path(root).resolve(strict=True)

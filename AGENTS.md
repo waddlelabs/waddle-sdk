@@ -1138,3 +1138,29 @@ and the `limits.position_error` support fact; exact refusal context retains the
 enforced vector. Callers own reference timing/convergence; no extra SDK controller
 or vendor interpolation is introduced. See
 [position tracking allowance](docs/porting/robot.md#position-tracking-allowance).
+
+## Editable reference scenes
+
+Authored two-YAM scenes may select a finite native `fixture` and bounded `seed`.
+Reuse reference assemblies and preserve compound geometry/contact identity;
+never accept executable scene imports through authoring data. Seed zero remains
+canonical and reset repeats the compiled variation. Added props remain separate.
+
+Reference worker IPC prioritizes queued robot feedback/control over camera and
+viewer snapshots, including independent rendering's `render_snapshot` requests.
+Keep FIFO within each priority and complete the active transaction before the
+next; never bypass synchronization or relax camera content bounds.
+
+`simulators.playground` compiles immutable native scenes from bounded object data.
+Preserve reference actuation/capabilities and measured outcomes; easy contacts must
+never fabricate a grasp or attach a missed object. The moderate material profile
+uses a 1 mm torsional patch; centered retention, marginal/weak drops and opening
+release are checked in `sdk/tests/test_playground_grasp.py`. Native manifests resolve from
+the SDK site root. See [authoring contract](docs/python/simulation.md#editable-tabletop-scenes).
+
+Trusted scene editors can use the optional `SimulationSceneReplacementBackend`
+through `SimulationAdministration.can_replace_scene/replace_scene`. Reference
+MuJoCo retains its physics/render processes for self-contained native scenes with
+unchanged robot/camera contracts. Keep participant drain, episode invalidation,
+render-generation fencing, immutable source bytes and failed-admin fencing.
+Unsupported worlds retain close/open; this capability is never a participant tool.

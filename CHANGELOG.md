@@ -11,11 +11,40 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Reacquire reference simulation camera state after a transient snapshot-transfer
+  delay, with at most three attempts under the unchanged 50 ms pairing bound.
+  Retain replacement model identity and original persistent errors; never
+  restamp or render a rejected snapshot.
+
+### Added
+
+- Optional finite two-YAM reference assemblies in authored scenes: handover,
+  movable container, peg/socket and loaded tray, with bounded repeatable XY
+  variations, native contacts and ordinary editable extra props.
+
+- Optional trusted scene replacement for prepared native MuJoCo environments.
+  Retain the opened site, robot/camera ports and physics/render processes;
+  preserve robot/camera contracts, reset changed objects and fence old images.
+  Unsupported backends retain ordinary close/open behavior.
+
+- Compile bounded editable tabletop scenes with native reference robots, cameras,
+  immutable reset state and an easier contact profile. Preserve actual force,
+  missed-grasp and release outcomes; all six robot/arm configurations retain their
+  declared camera capabilities.
+
 ### Fixed
 
 - Serialize generated YAM source poses at twelve decimal places with canonical
   zero. Equivalent BLAS results on different hosts now produce matching model
   bytes, while exact vendor asset checks and saved model identities remain intact.
+
+- Prioritize queued robot feedback/control over reference simulation camera and
+  viewer snapshots, including the independent renderer's state acquisition.
+  Preserve FIFO within each priority and finish the active pipe transaction.
+
+- Reduce excessive retention in editable scenes: moderate sliding friction, a
+  1 mm torsional patch and three NoSlip iterations retain centered grasps while
+  letting weak/edge grasps fall. Preserve native actuation, force limits and release.
 
 - Use bounded native motor effort for MuJoCo YAM force hold under unequal and
   changing finger loads. Retain the drive's damping as a passive transmission

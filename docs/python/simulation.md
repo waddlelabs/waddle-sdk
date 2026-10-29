@@ -37,6 +37,43 @@ Transport and native snapshot faults retain their original failure behavior.
 No motion deadline, measured arrival/contact rule, physical parameter or image
 freshness limit is relaxed.
 
+## Editable tabletop scenes
+
+`waddle_sdk.simulators.playground.compile_scene(config, scene, output)` composes
+an immutable native scene from a reference MuJoCo robot configuration. The scene
+contains `id`, `name` and `objects`; each object declares a stable `id`, catalogue
+`kind`, `position` in metres, XYZ `rotation` in degrees, full `size` in metres and
+RGB `color` in [0, 1]. Available kinds are block, bottle, ball, cylinder, open bowl,
+open tray and fixed visual target. Up to 64 objects are accepted; invalid/nonfinite
+geometry and duplicate identifiers are refused before compilation.
+
+The compiler retains reference robots, Home, actuators, cameras and capability
+facts, and emits `simulation.json`, a hash-bound `world.xml` and local assets.
+Place the site at that output root. If embedding the output in a site subdirectory,
+prefix the native model and file-manifest paths from the **site root**; native
+manifest paths are not relative to the simulation JSON. Existing output directories
+are refused, so callers retain prior revisions instead of overwriting live worlds.
+
+The default easy-grasp profile uses a sliding friction coefficient of 0.8, a
+1 mm effective torsional patch and three NoSlip solver iterations. This stabilizes
+centered grasps while allowing weak and marginal edge grasps to fall. Actual native contact,
+force feedback, missed grasps, gravity and release remain authoritative. It adds no
+attachment constraint and does not increase robot force limits. `easy_grasp=False`
+selects ordinary prop material and omits the additional contact pairs/NoSlip tuning
+for controlled comparisons. RGB-only references remain RGB-only.
+
+Two-YAM scenes may additionally select `fixture`: `handover`, `hold_container`,
+`peg_socket`, or `loaded_tray`. These reuse the native handover block, movable
+open container, peg/socket and loaded two-handle tray assemblies. Their compound
+geometry, free-body physics and collision identities are retained. Optional
+`seed` (integer 0–999999) applies a repeatable shared XY translation within
+±12 mm; zero is canonical. It preserves assembled geometry and tray contents.
+Optional `instruction` is bounded descriptive text, never executable code.
+Ordinary editable `objects` may coexist with a fixture. Fixture internals are
+not individual editable props. Unsupported robot/arm combinations refuse before
+creating output. The easy-grasp setting also applies to fixture/finger contacts;
+it does not alter mass, robot force limits or create attachment constraints.
+
 ## Reference engines and scenes
 
 | Selector | Role | Installation |
@@ -441,7 +478,8 @@ between requests unless overload rebases the clock. State reporting uses the
 ordinary SDK pump at the declared physical command rate: SO-101 30 Hz, YAM 10 Hz,
 and xArm7 50 Hz. New scenes use a 1 rad/s joint-speed limit. Explicit site settings
 remain authoritative. Available compute still bounds achievable throughput.
-Queued state/control requests take priority over queued camera captures, retaining
+Queued state/control requests take priority over queued camera captures and
+render/viewer state snapshots, retaining
 FIFO order within each group and one native transaction at a time. An in-progress
 capture cannot be interrupted. Real-time pump ticks need no extra clock request:
 reads, writes and captures already advance elapsed time. Explicit-step rollouts
@@ -517,6 +555,24 @@ higher-level motion executor. The evaluator must pause participant dispatch and
 confirm that the current tool call and all admitted operations are terminal before
 reset. A reset advances only the administration episode revision, so prepared
 plans from a higher layer must bind and check that revision themselves.
+
+A trusted editor can check `administration.can_replace_scene` and call
+`replace_scene({world_name: WorldConfig(...)})` with prepared, digest-bound native
+scenes. The optional `SimulationSceneReplacementBackend` facet leaves the site,
+robot ports, camera ports, physics process and render process open. The reference
+MuJoCo implementation accepts self-contained native XML with unchanged robot
+assembly, assets, drives, constraints, camera contracts and initial robot state;
+it resets the new environment and fences old images by render generation. A
+changed robot/camera contract requires reopening the site. Unsupported backends
+report the capability unavailable and can use the normal close/open lifecycle.
+
+As with reset, the caller must drain all participant operations, invalidate plans
+and retained state using the returned episode revision, and refresh its scene
+consumer before admitting new work. An admitted replacement failure fences
+administration until reopen; the original error remains attached. This authority
+is never supplied through the participant runtime or tools. Each prepared scene
+remains immutable; replacement selects new bytes rather than rewriting the old
+world.
 
 For a MuJoCo-only continuation reset, the trusted evaluator may also pass
 `preserve_free_bodies=(...)` and `retire_free_bodies=(...)`. The former retains

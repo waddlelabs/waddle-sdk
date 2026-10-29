@@ -229,11 +229,15 @@ class World:
             if len(arguments) == 2 and arguments[1] is True:
                 return rgb, depth, _capture_timing(snapshot, depth)
             return rgb, depth
-        # A capture already rendering must finish, but a second camera must
-        # not get ahead of queued state/control requests. Preserve FIFO order
-        # within each priority and one outstanding transaction on the pipe.
+        # An active snapshot must finish, but queued camera/viewer snapshots
+        # must not get ahead of state/control requests. This also covers the
+        # independent renderer, which acquires state via render_snapshot.
+        # Preserve FIFO within each priority and one transaction on the pipe.
         with self._requests:
-            ticket = (operation == "capture", self._request_sequence)
+            ticket = (
+                operation in {"capture", "render_snapshot", "evaluation_snapshot"},
+                self._request_sequence,
+            )
             self._request_sequence += 1
             self._pending.append(ticket)
             try:
@@ -254,7 +258,11 @@ class World:
             ):
                 raise RuntimeError("simulation world is unavailable")
             try:
-                if operation in {"reset", "evaluation_reset"}:
+                if operation in {
+                    "reset",
+                    "evaluation_reset",
+                    "evaluation_replace_scene",
+                }:
                     self._generation += 1
                 self._connection.send((operation, arguments))
                 return self._receive(15.0 if operation == "capture" else 5.0)
@@ -344,8 +352,21 @@ class World:
 class AdministrativeWorld(World):
     """Reference MuJoCo world with a separate trusted evaluation facet."""
 
+    @property
+    def supports_scene_replacement(self) -> bool:
+        return "native_scene" in self.config
+
     def evaluation_snapshot(self):
         return self.call("evaluation_snapshot")
+
+    def evaluation_replace_scene(self, config: WorldConfig) -> bool:
+        _, definition = load_scene(
+            config.site_root, config.connection.get("simulation")
+        )
+        accepted = self.call("evaluation_replace_scene", definition)
+        if accepted:
+            self.config = definition
+        return accepted
 
     def evaluation_reset(
         self,

@@ -147,6 +147,20 @@ class SimulationAdministrationError(RuntimeError):
     """A trusted simulation operation was unavailable or became uncertain."""
 
 
+@runtime_checkable
+class SimulationSceneReplacementBackend(Protocol):
+    """Optional trusted facet for replacing a scene without reopening its site.
+
+    Implementations must preserve the opened robot and camera contracts, reset
+    the new scene, and fence camera samples from the previous model.
+    """
+
+    @property
+    def supports_scene_replacement(self) -> bool: ...
+
+    def evaluation_replace_scene(self, config: WorldConfig) -> bool: ...
+
+
 @dataclass(frozen=True)
 class SimulationSnapshot:
     """Immutable evaluator-owned state from one complete simulated site."""
@@ -329,6 +343,57 @@ class SimulationAdministration:
                     "simulation reset was not confirmed; reopen the site"
                 ) from error
             return self._snapshot(worlds)
+
+    @property
+    def can_replace_scene(self) -> bool:
+        """Whether every bound world implements the optional replacement facet."""
+        with self._lock:
+            return all(
+                isinstance(backend, SimulationSceneReplacementBackend)
+                and backend.supports_scene_replacement
+                for backend in self._require().worlds.values()
+            )
+
+    def replace_scene(self, worlds: Mapping[str, WorldConfig]) -> SimulationSnapshot:
+        """Replace prepared scenes after the caller drains participant operations.
+
+        The same site, robot ports and camera ports remain open. As with reset,
+        callers must invalidate plans and observations using the new episode.
+        An admitted failure fences administration until the site is reopened.
+        """
+        with self._lock:
+            binding = self._require()
+            if set(worlds) != set(binding.worlds) or any(
+                not isinstance(config, WorldConfig) or config.name != name
+                for name, config in worlds.items()
+            ):
+                raise ValueError(
+                    "scene replacement requires every bound world's WorldConfig"
+                )
+            if not self.can_replace_scene:
+                raise SimulationAdministrationError(
+                    "simulation worlds do not support scene replacement"
+                )
+            try:
+                with binding.dispatch_lock, binding.lifecycle_lock:
+                    for name, backend in binding.worlds.items():
+                        if not backend.evaluation_replace_scene(worlds[name]):
+                            raise SimulationAdministrationError(
+                                "a simulation world refused scene replacement"
+                            )
+                    self._episode_revision += 1
+                    state = {
+                        name: _evaluation_document(backend.evaluation_snapshot())
+                        for name, backend in binding.worlds.items()
+                    }
+            except Exception as error:
+                self._failed = True
+                if isinstance(error, SimulationAdministrationError):
+                    raise
+                raise SimulationAdministrationError(
+                    f"simulation scene replacement was not confirmed; reopen the site: {error}"
+                ) from error
+            return self._snapshot(state)
 
     def _snapshot(self, worlds: Mapping[str, Any]) -> SimulationSnapshot:
         worlds_json = json.dumps(
