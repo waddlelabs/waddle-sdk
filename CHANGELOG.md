@@ -13,6 +13,16 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Simulation driver command paths (`write`, `write_position_velocity`,
+  `write_gripper_force`) now refuse after `Driver.close()`, matching the
+  existing `hold()` closed guard, so a closed simulated arm cannot still accept
+  motion commands through its world connection.
+- xArm `Driver.hold()` now checks the closed flag alongside the device and
+  e-stop checks, matching `write()`'s `_require_device()` guard, so a closed
+  xArm driver cannot hold after teardown.
+- `SiteSession.__enter__` no longer lets a failed `__exit__` cleanup mask the
+  original reason a site open failed; cleanup errors are reported separately and
+  the open failure still propagates.
 - Read completed immutable YAM feedback publications without waiting on the CAN
   transaction lock for the verified pinned I2RT implementation. Preserve original
   motor-loop behavior and feedback liveness/stall checks; unverified revisions

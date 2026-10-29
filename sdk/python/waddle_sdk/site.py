@@ -1067,7 +1067,11 @@ class SiteSession:
             return self._open()
         except BaseException:
             # Opening and teardown share the same path, including partial starts.
-            self.__exit__(*sys.exc_info())
+            # Cleanup errors are reported but never mask the reason opening failed.
+            try:
+                self.__exit__(*sys.exc_info())
+            except BaseException as cleanup_error:  # noqa: BLE001
+                self._report(f"cleanup during failed open: {cleanup_error!r}")
             raise
 
     def _open(self) -> SiteSession:

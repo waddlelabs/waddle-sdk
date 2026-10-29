@@ -311,6 +311,8 @@ class Driver:
         )
 
     def write_gripper_force(self, target, force_n, velocity=None):
+        if self._closed:
+            raise RuntimeError("simulation driver is closed")
         if self._monitor or self._estopped:
             raise RuntimeError("simulation arm is monitor-only or e-stopped")
         values = np.asarray(target, dtype=float)
@@ -338,6 +340,8 @@ class Driver:
         return True
 
     def _write(self, target, velocity=None):
+        if self._closed:
+            raise RuntimeError("simulation driver is closed")
         if self._monitor or self._estopped:
             raise RuntimeError("simulation arm is monitor-only or e-stopped")
         values = np.asarray(target, dtype=float)

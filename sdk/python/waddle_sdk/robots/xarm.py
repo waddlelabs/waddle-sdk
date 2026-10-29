@@ -267,7 +267,7 @@ class XArmDriver:
 
     def hold(self) -> None:
         with self._lock:
-            if self._monitor or self._estopped or self._device is None:
+            if self._monitor or self._estopped or self._device is None or self._closed:
                 return
             position, _velocity = self.read()
             _expect(
