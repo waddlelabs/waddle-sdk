@@ -13,6 +13,14 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Camera inspection close failures are no longer silently swallowed during
+  teardown when an exception is already in flight; the close error is reported
+  alongside the original exception.
+- Site camera mounts are validated at manifest load time: a wrist camera's
+  mount part must name an existing robot part in the site manifest.
+- Simulation `Driver.read()` now refuses after `Driver.close()`, matching the
+  existing closed guard on `write()`/`hold()`, so a closed simulated arm cannot
+  still be read through its world connection.
 - Read completed immutable YAM feedback publications without waiting on the CAN
   transaction lock for the verified pinned I2RT implementation. Preserve original
   motor-loop behavior and feedback liveness/stall checks; unverified revisions

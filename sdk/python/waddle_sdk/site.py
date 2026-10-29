@@ -905,6 +905,20 @@ class Site:
                 _call_camera_factory, target, camera_config
             )
 
+        # A wrist camera mount must name a part that exists in the site
+        # manifest; a dangling part reference is a configuration error, not
+        # something to discover at hardware-open time.
+        part_names = set(raw["parts"])
+        for name, camera in raw.get("cameras", {}).items():
+            mount = camera.get("mount")
+            if mount is not None and str(mount.get("kind", "")) == "wrist":
+                part = mount.get("part")
+                if not isinstance(part, str) or not part or part not in part_names:
+                    raise ManifestValidationError(
+                        f"cameras.{name}.mount.part: wrist camera references "
+                        f"unknown part {part!r}"
+                    )
+
         frame_descriptions = [
             descriptors.FrameTransform(
                 parent=value["parent"],

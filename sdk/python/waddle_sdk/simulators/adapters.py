@@ -285,6 +285,8 @@ class Driver:
         return self._estopped
 
     def read(self):
+        if self._closed:
+            raise RuntimeError("simulation driver is closed")
         q, dq = (
             np.asarray(x, dtype=float) for x in self.world.part_call("read", self.part)
         )

@@ -10,6 +10,7 @@ from __future__ import annotations
 import math
 import threading
 import time
+import warnings
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -474,9 +475,16 @@ class CameraInspection:
         if session is not None:
             try:
                 session.close()
-            except CameraInspectionError:
+            except CameraInspectionError as close_error:
                 if exc_type is None:
                     raise
+                # A close failure during teardown must not be silently
+                # swallowed; report it alongside the original exception.
+                warnings.warn(
+                    f"camera inspection close failed: {close_error}",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
         return False
 
 
