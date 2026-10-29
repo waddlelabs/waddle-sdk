@@ -18,6 +18,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Optional private compiled MuJoCo model reuse for verified native scenes. Fresh
+  model/data instances preserve independent state; source/native-version identity
+  and binary checksums prevent stale/corrupt cache reuse. Existing source errors,
+  simulation ownership, camera capture and control gates remain unchanged.
+
 - Optional finite two-YAM reference assemblies in authored scenes: handover,
   movable container, peg/socket and loaded tray, with bounded repeatable XY
   variations, native contacts and ordinary editable extra props.

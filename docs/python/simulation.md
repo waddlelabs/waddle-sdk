@@ -827,3 +827,32 @@ substituted. Jaw velocity hints remain zero. MuJoCo's existing control/force lim
 and any declared actuator filtering remain active; this conversion does not
 calibrate dynamics or establish physical controller parity. See the
 [MuJoCo position-servo definition](https://mujoco.readthedocs.io/en/stable/XMLreference.html#actuator-position).
+
+### Compiled model cache
+
+Reference MuJoCo native scenes may set `WADDLE_SIMULATION_MODEL_CACHE` to an
+absolute private directory. This avoids parsing the same verified XML/mesh inputs
+again for separately owned physics and render instances. Default behavior stays
+uncached. The directory must be private to the trusted runtime and excluded from
+untrusted code/input mounts; use a separate directory for each isolated runtime.
+
+`waddle_sdk.simulators.compiled_model.load_model(model_name, contents, cache=...)`
+accepts a complete, confined, verified mapping of relative source names to bytes.
+`load_native(root, config, cache=...)` first validates the normal native-scene
+selection. Inputs are hashed on every load. Cache identity includes all native
+source bytes, the MuJoCo version and platform; compiled binaries carry their own
+checksum. Missing or invalid cache evidence compiles the original sources, keeping
+original model failures. Unavailable cache storage also falls back to compilation.
+The cache retains at most sixteen models and 256 MiB.
+
+Each hit loads an independent model; callers create fresh `MjData`. Changes to
+model arrays or runtime state cannot affect another instance. The cache contains
+no acquired images, current joints, authorization or outcomes, and does not change
+physics, reset, capture freshness or ownership. An optional `timings` dictionary
+reports cache hits, native compilation and binary-load time separately.
+
+The cache path also reaches the private physics/render child processes. Other
+`WADDLE_` configuration and credential variables retain their existing filtering.
+Offline tabletop authoring uses the same optional byte-keyed compilation path,
+so changed scenes can reuse unchanged robot mesh assets while preserving each
+scene's own XML, contacts and canonical reset state.

@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import re
 import shutil
 import xml.etree.ElementTree as ET
@@ -317,7 +318,18 @@ def compile_scene(config, scene, output: Path, *, revision=1, easy_grasp=True):
     model_path.write_text(ET.tostring(root, encoding="unicode"))
     import mujoco as mj
 
-    model = mj.MjModel.from_xml_path(str(model_path))
+    if os.environ.get("WADDLE_SIMULATION_MODEL_CACHE"):
+        from .compiled_model import load_model
+
+        model = load_model(
+            "world.xml",
+            {
+                p.relative_to(output).as_posix(): p.read_bytes()
+                for p in [model_path, *sorted((output / "assets").glob("*"))]
+            },
+        )
+    else:
+        model = mj.MjModel.from_xml_path(str(model_path))
     data = mj.MjData(model)
     from .description import description
 

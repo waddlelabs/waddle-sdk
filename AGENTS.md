@@ -1,5 +1,13 @@
 # AGENTS.md — waddle-sdk monorepo
 
+Imported reference MuJoCo worlds optionally use an allocation-private compiled
+model cache selected by `WADDLE_SIMULATION_MODEL_CACHE`. The loader hashes the
+complete confined source inventory and binds the native version/platform; each
+hit loads a new model, and each owner creates fresh state. Missing/corrupt cache
+evidence recompiles the original source. Keep this directory outside untrusted
+code/input mounts; no samples, authority or outcomes are cached. See
+[simulation caching](docs/python/simulation.md#compiled-model-cache).
+
 Generated YAM source poses serialize at twelve decimal places with canonical zero
 to remove insignificant cross-host BLAS differences from model hashes. Preserve
 vendor asset verification and existing saved model bytes; consumers must explicitly

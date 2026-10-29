@@ -83,7 +83,10 @@ class World:
                 env = {
                     k: v
                     for k, v in os.environ.items()
-                    if not k.startswith("WADDLE_")
+                    if (
+                        not k.startswith("WADDLE_")
+                        or k == "WADDLE_SIMULATION_MODEL_CACHE"
+                    )
                     and not k.endswith(("_API_KEY", "_TOKEN", "_SECRET"))
                 }
                 source = str(Path(__file__).resolve().parents[2])
