@@ -21,6 +21,13 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Optional measured playback policies on the existing native worker, with binding
+  API 12 and a separate support fact: held-coordinate correction, measured-row
+  passthrough, directional velocity hints and bounded encoder-window settling.
+  Preserve exact moving curves, native owner admission, original timeout and
+  distinct arrival/stationary-miss outcomes. Snapshots retain settling evidence;
+  no force/contact or physical performance qualification is implied.
+
 - Optional exact polynomial playback on the existing native worker, with a
   separate paced-playback support fact and binding API 11. Progress advances on
   acknowledgements within measured headroom, never from late wall time; partial

@@ -6,8 +6,9 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use waddle_runtime::playback::{
-    Completion, ExecutionFailure, ExecutionHandle, ExecutionSnapshot, Feedback, PacedCurve,
-    PlaybackError, PlaybackIo, PlaybackIoError, PlaybackPolicy, ReferenceReceipt,
+    Completion, ExecutionFailure, ExecutionHandle, ExecutionSnapshot, Feedback, FeedbackPolicy,
+    HeldJointGroup, PacedCurve, PlaybackError, PlaybackIo, PlaybackIoError, PlaybackPolicy,
+    PositionWindow, ReferenceReceipt, VelocityHints,
 };
 use waddle_types::Step;
 
@@ -24,6 +25,30 @@ pub(crate) struct Policy {
     timeout_ns: i64,
     allow_settled: bool,
     paced_curve: Option<Curve>,
+    feedback: Option<FeedbackOptions>,
+}
+
+#[derive(FromPyObject)]
+struct FeedbackOptions {
+    held_groups: Vec<HeldGroup>,
+    measured_indices: Vec<usize>,
+    velocity_hints: String,
+    position_window: Option<Window>,
+}
+
+#[derive(FromPyObject)]
+struct HeldGroup {
+    indices: Vec<usize>,
+    position_error: Vec<f64>,
+    period_ns: i64,
+}
+
+#[derive(FromPyObject)]
+struct Window {
+    max_drift: Vec<f64>,
+    max_gap_ns: Option<i64>,
+    during_motion: bool,
+    consecutive_samples: usize,
 }
 
 #[derive(FromPyObject)]
@@ -37,9 +62,41 @@ struct Curve {
     sample_times_s: Option<Vec<f64>>,
 }
 
-impl From<Policy> for PlaybackPolicy {
-    fn from(p: Policy) -> Self {
-        Self {
+impl TryFrom<Policy> for PlaybackPolicy {
+    type Error = PyErr;
+
+    fn try_from(p: Policy) -> PyResult<Self> {
+        let feedback = p
+            .feedback
+            .map(|f| -> PyResult<FeedbackPolicy> {
+                let velocity_hints = match f.velocity_hints.as_str() {
+                    "curve" => VelocityHints::Curve,
+                    "toward_reference" => VelocityHints::TowardReference,
+                    "toward_goal" => VelocityHints::TowardGoal,
+                    _ => return Err(PyValueError::new_err("unknown playback velocity hint mode")),
+                };
+                Ok(FeedbackPolicy {
+                    held_groups: f
+                        .held_groups
+                        .into_iter()
+                        .map(|g| HeldJointGroup {
+                            indices: g.indices,
+                            position_error: g.position_error,
+                            period_ns: g.period_ns,
+                        })
+                        .collect(),
+                    measured_indices: f.measured_indices,
+                    velocity_hints,
+                    position_window: f.position_window.map(|w| PositionWindow {
+                        max_drift: w.max_drift,
+                        max_gap_ns: w.max_gap_ns,
+                        during_motion: w.during_motion,
+                        consecutive_samples: w.consecutive_samples,
+                    }),
+                })
+            })
+            .transpose()?;
+        Ok(Self {
             indices: p.indices,
             start_tolerance: p.start_tolerance,
             position_tolerance: p.position_tolerance,
@@ -57,7 +114,8 @@ impl From<Policy> for PlaybackPolicy {
                 tracking_tolerance: c.tracking_tolerance,
                 sample_times_s: c.sample_times_s,
             }),
-        }
+            feedback,
+        })
     }
 }
 
@@ -200,7 +258,7 @@ pub(crate) fn start(
         .start_playback(
             id,
             &chunk,
-            policy.into(),
+            policy.try_into()?,
             Arc::new(PyIo { observe, dispatch }),
         )
         .map(PyExecutionHandle)
@@ -257,6 +315,19 @@ fn snapshot(py: Python<'_>, value: ExecutionSnapshot) -> PyResult<Py<PyDict>> {
         })
         .transpose()?;
     out.set_item("curve_progress", progress)?;
+    let settling = value
+        .settling
+        .map(|e| -> PyResult<Py<PyDict>> {
+            let result = PyDict::new(py);
+            result.set_item("samples", e.samples)?;
+            result.set_item("span_ns", e.span_ns)?;
+            result.set_item("joint_spans", e.joint_spans)?;
+            result.set_item("raw_velocity_peak", e.raw_velocity_peak)?;
+            result.set_item("consecutive_samples", e.consecutive_samples)?;
+            Ok(result.unbind())
+        })
+        .transpose()?;
+    out.set_item("settling", settling)?;
     out.set_item(
         "feedback",
         value

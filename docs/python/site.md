@@ -31,6 +31,10 @@ The separate `execution.paced_joint_playback` fact permits a `PacedJointCurve`
 in that policy: native evaluation follows a supplied polynomial with measured
 headroom, minimum submission spacing and acknowledgement-paced progress. See the
 same contract for input validation, status and unsupported execution modes.
+`execution.feedback_joint_playback` additionally permits `PlaybackFeedbackPolicy`
+for measured holding, directional hints and encoder-window settling. These
+options execute locally through the same worker and owner checks; they do not
+add force/contact classification or geometry validation.
 
 ## Minimal manifest shape
 

@@ -66,6 +66,7 @@ class SupportFact(str, enum.Enum):
     PART_ACTION = "action.named_parts"
     FINITE_JOINT_PLAYBACK = "execution.finite_joint_playback"
     PACED_JOINT_PLAYBACK = "execution.paced_joint_playback"
+    FEEDBACK_JOINT_PLAYBACK = "execution.feedback_joint_playback"
     VELOCITY_FEEDFORWARD = "actuation.velocity_feedforward"
     FORWARD_KINEMATICS = "kinematics.fk"
     BODY_SPHERES = "geometry.body_spheres"
@@ -565,6 +566,65 @@ class PacedJointCurve:
 
 
 @dataclass(frozen=True)
+class HeldJointGroup:
+    """Hold unselected rows toward their unchanged target with measured headroom.
+
+    ``position_error`` is the per-row cap before 90% headroom. Opposing measured
+    velocity reserves another ``period_ns`` of travel; all rows scale together.
+    The ordinary owner envelope still decides whether each write is accepted.
+    """
+
+    indices: tuple[int, ...]
+    position_error: tuple[float, ...]
+    period_ns: int
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "indices", tuple(self.indices))
+        object.__setattr__(self, "position_error", tuple(self.position_error))
+
+
+@dataclass(frozen=True)
+class PositionWindow:
+    """Measure encoder drift over ``PlaybackPolicy.settle_ns``.
+
+    At least three fresh samples must span the window. Velocity remains
+    diagnostic. A declared gap resets history; ``None`` adds no gap limit.
+    ``during_motion`` allows eligible pre-endpoint history, but completion still
+    requires the final acknowledgement and fresh feedback. ``consecutive_samples``
+    counts qualifying windows after that acknowledgement.
+    """
+
+    max_drift: tuple[float, ...]
+    max_gap_ns: int | None = None
+    during_motion: bool = False
+    consecutive_samples: int = 1
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "max_drift", tuple(self.max_drift))
+
+
+@dataclass(frozen=True)
+class PlaybackFeedbackPolicy:
+    """Optional local reference adaptation; never a planner or force controller.
+
+    Held groups and measured rows must be disjoint from each other and from the
+    moving rows. ``measured_indices`` copies feedback, preserving an already
+    active local jaw mode without asserting grasp/contact. Velocity hints use
+    ``curve`` unchanged, ``toward_reference`` only toward current position error,
+    or ``toward_goal`` with a per-row stop latch after crossing the final goal.
+    """
+
+    held_groups: tuple[HeldJointGroup, ...] = ()
+    measured_indices: tuple[int, ...] = ()
+    velocity_hints: str = "curve"
+    position_window: PositionWindow | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "held_groups", tuple(self.held_groups))
+        object.__setattr__(self, "measured_indices", tuple(self.measured_indices))
+
+
+@dataclass(frozen=True)
 class PlaybackPolicy:
     """Explicit measured completion and local timing bounds; validated by core."""
 
@@ -577,6 +637,7 @@ class PlaybackPolicy:
     timeout_ns: int
     allow_settled: bool = False
     paced_curve: PacedJointCurve | None = None
+    feedback: PlaybackFeedbackPolicy | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -753,6 +814,7 @@ __all__ = [
     "FiniteJointMotion",
     "FinitePlaybackRunPort",
     "GripperForce",
+    "HeldJointGroup",
     "JSONValue",
     "JointPositionCommand",
     "JointReference",
@@ -762,9 +824,11 @@ __all__ = [
     "Observation",
     "PacedJointCurve",
     "PartObservation",
+    "PlaybackFeedbackPolicy",
     "PlaybackHandlePort",
     "PlaybackPolicy",
     "Pose",
+    "PositionWindow",
     "RunPort",
     "RuntimeEvent",
     "RuntimeFault",

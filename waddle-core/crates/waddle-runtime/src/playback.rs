@@ -13,6 +13,11 @@ use waddle_types::{ActionChunk, Step};
 mod curve;
 use curve::CurveCursor;
 pub use curve::{CurveProgress, PacedCurve};
+mod feedback;
+use feedback::FeedbackState;
+pub use feedback::{
+    FeedbackPolicy, HeldJointGroup, PositionWindow, SettlingEvidence, VelocityHints,
+};
 pub(crate) mod execution;
 pub use execution::{
     ExecutionFailure, ExecutionHandle, ExecutionResult, ExecutionSnapshot, PlaybackIo,
@@ -36,6 +41,8 @@ pub struct PlaybackPolicy {
     /// Optional exact polynomial evaluation with acknowledgement-paced progress.
     /// Omission retains fixed offsets and the original lateness guard.
     pub paced_curve: Option<PacedCurve>,
+    /// Optional measured holding, velocity-hint direction and encoder settling.
+    pub feedback: Option<FeedbackPolicy>,
 }
 
 /// Measured feedback stamped on the same session clock as playback.
@@ -197,6 +204,23 @@ impl FiniteReferences {
                 }
             }
         }
+        if let Some(feedback) = &policy.feedback {
+            feedback.validate(&policy, width)?;
+            for step in &chunk.steps {
+                if (0..width).any(|i| {
+                    !policy.indices.contains(&i)
+                        && (step.values[i] != first.values[i]
+                            || step
+                                .velocity_feedforward
+                                .as_ref()
+                                .is_some_and(|h| h[i] != 0.0))
+                }) {
+                    return Err(invalid(
+                        "feedback playback requires unchanged unselected targets and zero hints",
+                    ));
+                }
+            }
+        }
         Ok(Self { chunk, policy })
     }
 
@@ -235,12 +259,14 @@ pub struct Playback {
     curve: Option<CurveCursor>,
     proposed: Option<Step>,
     dispatched_ns: Option<i64>,
+    feedback: FeedbackState,
 }
 
 impl Playback {
     #[must_use]
     pub fn new(references: FiniteReferences, started_ns: i64) -> Self {
         let curve = references.policy.paced_curve.clone().map(CurveCursor::new);
+        let feedback = FeedbackState::new(references.chunk.steps[0].values.len());
         Self {
             references,
             started_ns,
@@ -256,12 +282,13 @@ impl Playback {
             curve,
             proposed: None,
             dispatched_ns: None,
+            feedback,
         }
     }
 
     #[must_use]
     pub fn reference(&self, index: usize) -> Option<&Step> {
-        if self.curve.is_some() {
+        if self.curve.is_some() || self.references.policy.feedback.is_some() {
             self.proposed.as_ref().filter(|_| index == self.next)
         } else {
             self.references.reference(index)
@@ -271,6 +298,11 @@ impl Playback {
     #[must_use]
     pub fn curve_progress(&self) -> Option<CurveProgress> {
         self.curve.as_ref().map(|curve| curve.progress.clone())
+    }
+
+    #[must_use]
+    pub fn settling_evidence(&self) -> Option<SettlingEvidence> {
+        self.feedback.evidence.clone()
     }
 
     #[must_use]
@@ -353,6 +385,9 @@ impl Playback {
             return self.fail(PlaybackError::Deadline);
         }
         let fresh = self.observed_ns != Some(measured.observed_ns);
+        if !fresh {
+            self.feedback.reset_window();
+        }
         self.observed_ns = Some(measured.observed_ns);
         if self.next == 0
             && !within(
@@ -374,6 +409,42 @@ impl Playback {
             if let Err(error) = curve.check_tracking(measured, &self.references.policy.indices) {
                 return self.fail(error);
             }
+        }
+        let finished = self
+            .curve
+            .as_ref()
+            .map_or(self.next == self.references.chunk.steps.len(), |curve| {
+                curve.progress.endpoint_acknowledged
+            });
+        let goal = &self
+            .references
+            .chunk
+            .steps
+            .last()
+            .expect("validated buffer")
+            .values;
+        let arrived = within(
+            &measured.positions,
+            goal,
+            &self.references.policy.position_tolerance,
+            &self.references.policy.indices,
+        );
+        let after_ack = self
+            .acknowledged_ns
+            .is_some_and(|at| measured.observed_ns > at);
+        match self.feedback.observe(
+            measured,
+            &self.references.policy,
+            arrived,
+            finished && after_ack,
+            fresh,
+        ) {
+            Ok(Some(outcome)) => {
+                self.completion = Some(outcome);
+                return Ok(PlaybackPoll::Complete(outcome));
+            }
+            Err(error) => return self.fail(error),
+            Ok(None) => {}
         }
         if let Some(curve) = self
             .curve
@@ -410,6 +481,8 @@ impl Playback {
             if step.velocity_feedforward.is_some() {
                 step.velocity_feedforward = Some(hints.into());
             }
+            self.feedback
+                .adapt(&mut step, measured, &self.references.policy, goal);
             self.proposed = Some(step);
             self.pending = true;
             return Ok(PlaybackPoll::Dispatch(self.next));
@@ -439,7 +512,22 @@ impl Playback {
                 return Ok(PlaybackPoll::Observe);
             }
             self.pending = true;
+            if self.references.policy.feedback.is_some() {
+                let mut step = step.clone();
+                self.feedback
+                    .adapt(&mut step, measured, &self.references.policy, goal);
+                self.proposed = Some(step);
+            }
             return Ok(PlaybackPoll::Dispatch(self.next));
+        }
+        if self
+            .references
+            .policy
+            .feedback
+            .as_ref()
+            .is_some_and(|s| s.position_window.is_some())
+        {
+            return Ok(PlaybackPoll::Observe);
         }
         // Only measurements acquired after the final dispatch can settle it.
         if !fresh

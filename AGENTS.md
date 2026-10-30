@@ -15,7 +15,7 @@ Adapters must retain the ordinary episode gate and owner envelope. Cancellation,
 episode closure and shutdown drain references; original failures and separate
 verb outcomes survive cleanup. `Run.start_playback(FiniteJointMotion)` now adapts
 local observations and the ordinary Run gate/owner submission, using binding API
-11 and the per-part `execution.finite_joint_playback` fact. Direct writes refuse
+12 and the per-part `execution.finite_joint_playback` fact. Direct writes refuse
 while a buffer is active; run/site closure drains before parking/device teardown.
 No new thread or authority is introduced. Connector integration remains pending. See
 docs/core/finite-reference-playback.md, native tests/finite_playback.rs and
@@ -29,8 +29,17 @@ bounded bisection stays on the supplied polynomial, partial steps scale velocity
 hints and repeats use zero hints. Preserve minimum local submission spacing,
 original absolute timeout, measured tracking bounds and terminal faults. Fixed
 offset playback retains its lateness guard. Curves contain no planner or geometry
-policy; consumer validation and held-coordinate/contact orchestration remain
-separate. See native tests/paced_playback.rs and sdk/tests/test_paced_playback.py.
+policy; consumer validation and contact orchestration remain separate.
+See native tests/paced_playback.rs and sdk/tests/test_paced_playback.py.
+
+Optional `PlaybackFeedbackPolicy` adds measured holding of unselected groups,
+measured-row passthrough, direction-aware velocity hints and encoder-window
+settling on the same worker. Require `execution.feedback_joint_playback`, preserve
+selected curve coordinates, exact held endpoints, ordinary owner limits and
+original timeout. A stationary miss cannot become arrival from one in-tolerance
+sample. Snapshot settling evidence uses SDK observation time; this does not prove
+motor acquisition cadence, contact or physical performance. Native
+tests/feedback_playback.rs and sdk/tests/test_feedback_playback.py cover this path.
 
 Imported reference MuJoCo worlds optionally use an allocation-private compiled
 model cache selected by `WADDLE_SIMULATION_MODEL_CACHE`. The loader hashes the

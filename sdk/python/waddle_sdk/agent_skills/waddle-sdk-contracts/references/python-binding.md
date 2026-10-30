@@ -71,7 +71,7 @@ The handle's `snapshot` and `wait` retain identity, dispatch count, measured sta
 status and original failure evidence. `cancel` requests native drain/Hold. A
 terminal handle cannot cancel a successor. Direct steps return Busy while playback
 is active, and run/site teardown drains before hardware parking/close. Binding API
-11 prevents stale native wheels from opening hardware through this surface. Force
+12 prevents stale native wheels from opening hardware through this surface. Force
 modifiers, dynamic reference updates and coupled multi-part execution remain
 unsupported. See `docs/core/finite-reference-playback.md` in a source checkout.
 
@@ -79,7 +79,16 @@ An optional `PacedJointCurve` in the policy requires the separate
 `execution.paced_joint_playback` fact. Supply an already checked polynomial;
 native code owns bounded evaluation, acknowledged progress, measured headroom
 and minimum submission spacing. A late read never skips curve phase. This does
-not add planning, held-coordinate compensation or measured grasp completion.
+not add planning or measured grasp completion.
+
+Optional `PlaybackFeedbackPolicy` requires `execution.feedback_joint_playback`.
+It adapts unselected held groups and measured rows locally, filters velocity hints
+by measured error, and optionally uses `PositionWindow` encoder stability in place
+of instantaneous velocity. Preserve disjoint rows, exact selected curves, owner
+admission, original timeout and distinct arrival/miss evidence. `during_motion`
+may retain eligible stability history, but completion still needs the endpoint
+acknowledgement and fresh feedback. No Python execution loop or force/contact
+classification is added; see the same normative playback page.
 
 ## Imported simulation worlds
 

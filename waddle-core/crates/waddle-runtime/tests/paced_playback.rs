@@ -50,6 +50,7 @@ fn inputs() -> (ActionChunk, PlaybackPolicy) {
             timeout_ns: 2_000_000_000,
             allow_settled: false,
             paced_curve: Some(curve()),
+            feedback: None,
         },
     )
 }
