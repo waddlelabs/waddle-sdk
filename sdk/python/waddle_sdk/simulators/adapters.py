@@ -462,7 +462,9 @@ class Driver:
                 if generation == self.world._generation:
                     self._force_limits_cache = generation, limits
                     return limits
-            raise RuntimeError("simulation model changed while reading gripper force limits")
+            raise RuntimeError(
+                "simulation model changed while reading gripper force limits"
+            )
 
     def read_gripper_force(self):
         from ..runtime import GripperForce

@@ -3,7 +3,6 @@
 from types import SimpleNamespace
 
 import pytest
-
 from waddle_sdk.simulators.adapters import Driver
 
 
@@ -14,7 +13,9 @@ def test_descriptions_reuse_model_limits_but_force_stays_live_after_reset():
     def call(operation, part):
         calls.append(operation)
         assert part == "arm"
-        return state["limits"] if operation == "gripper_force_limits" else state["force"]
+        return (
+            state["limits"] if operation == "gripper_force_limits" else state["force"]
+        )
 
     world = SimpleNamespace(config={"robot": "yam"}, _generation=0, part_call=call)
     driver = Driver(world, part="arm", posture="supervised")
