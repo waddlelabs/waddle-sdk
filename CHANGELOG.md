@@ -39,6 +39,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Apply authored scenes' finger-contact material to unnamed two-YAM fixture
+  collision shapes, including compound children. Existing compiled scenes stay
+  immutable; both-arm peg retention/release and ordinary-material drop controls
+  exercise actual native contact outcomes.
+
 - Serialize generated YAM source poses at twelve decimal places with canonical
   zero. Equivalent BLAS results on different hosts now produce matching model
   bytes, while exact vendor asset checks and saved model identities remain intact.

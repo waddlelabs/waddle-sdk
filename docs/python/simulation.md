@@ -73,6 +73,10 @@ Ordinary editable `objects` may coexist with a fixture. Fixture internals are
 not individual editable props. Unsupported robot/arm combinations refuse before
 creating output. The easy-grasp setting also applies to fixture/finger contacts;
 it does not alter mass, robot force limits or create attachment constraints.
+Unnamed fixture collision shapes receive stable names before those contact pairs
+are selected, including shapes on compound child bodies. Existing shape names
+and explicitly declared pairs are retained. This applies to newly compiled
+scenes; previously published scene bytes are unchanged.
 
 ## Reference engines and scenes
 

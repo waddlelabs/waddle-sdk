@@ -1153,6 +1153,12 @@ Authored two-YAM scenes may select a finite native `fixture` and bounded `seed`.
 Reuse reference assemblies and preserve compound geometry/contact identity;
 never accept executable scene imports through authoring data. Seed zero remains
 canonical and reset repeats the compiled variation. Added props remain separate.
+The authored-scene compiler assigns stable names to unnamed fixture collision
+shapes, including compound children, before applying its finger-contact profile.
+Keep existing shape names and contact pairs. Both-arm peg pickup, unsupported
+hold, ordinary-material drop control and opening release are covered in
+`sdk/tests/test_playground_grasp.py`; static stability alone does not qualify grasp
+behavior. Existing compiled scenes remain immutable.
 
 Reference worker IPC prioritizes queued robot feedback/control over camera and
 viewer snapshots, including independent rendering's `render_snapshot` requests.
