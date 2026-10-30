@@ -82,16 +82,19 @@ def _build_wheel(
 
 
 def _package_files() -> dict[str, bytes]:
+    from waddle_sdk import _core
+
     files: dict[str, bytes] = {}
     for path in PACKAGE.rglob("*"):
         if not path.is_file() or "__pycache__" in path.parts:
             continue
+        if path.name.startswith("_core.") and path.suffix in {".so", ".pyd"}:
+            continue
         files[path.relative_to(SDK / "python").as_posix()] = path.read_bytes()
-    if not any(name.startswith("waddle_sdk/_core.") for name in files):
-        raise AssertionError(
-            "the clean-install test needs the extension built by uv sync or "
-            "maturin develop"
-        )
+    # Use this test process's matching built extension. A wheel-based test need
+    # not overwrite an older editable extension left in the source checkout.
+    native = Path(_core.__file__)
+    files[f"waddle_sdk/{native.name}"] = native.read_bytes()
     return files
 
 
@@ -235,7 +238,7 @@ def wheelhouse(tmp_path_factory: pytest.TempPathFactory) -> Path:
             "waddle_media/__init__.py": b"",
             "waddle_media/_core.py": (
                 f"__version__ = {VERSION!r}\n"
-                "BINDING_API_VERSION = 9\n"
+                "BINDING_API_VERSION = 10\n"
                 'FEATURES = frozenset({"grpc", "livekit"})\n'
                 "class SessionStamp:\n"
                 "    pass\n"

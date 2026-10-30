@@ -64,6 +64,7 @@ class SupportFact(str, enum.Enum):
     JOINT_POSITION_ACTION = "action.joint_position"
     PART_OBSERVATION = "observation.named_parts"
     PART_ACTION = "action.named_parts"
+    FINITE_JOINT_PLAYBACK = "execution.finite_joint_playback"
     VELOCITY_FEEDFORWARD = "actuation.velocity_feedforward"
     FORWARD_KINEMATICS = "kinematics.fk"
     BODY_SPHERES = "geometry.body_spheres"
@@ -518,6 +519,78 @@ class SubmitResult:
     dispatch_completed_monotonic_s: float | None = None
 
 
+@dataclass(frozen=True)
+class JointReference:
+    """One exact position reference in declared joint units; held until the next."""
+
+    offset_ns: int
+    command: JointPositionCommand
+
+
+@dataclass(frozen=True)
+class PlaybackPolicy:
+    """Explicit measured completion and local timing bounds; validated by core."""
+
+    indices: tuple[int, ...]
+    start_tolerance: tuple[float, ...]
+    position_tolerance: tuple[float, ...]
+    stationary_velocity: tuple[float, ...]
+    settle_ns: int
+    max_lateness_ns: int
+    timeout_ns: int
+    allow_settled: bool = False
+
+    def __post_init__(self) -> None:
+        for name in (
+            "indices",
+            "start_tolerance",
+            "position_tolerance",
+            "stationary_velocity",
+        ):
+            object.__setattr__(self, name, tuple(getattr(self, name)))
+
+
+@dataclass(frozen=True)
+class FiniteJointMotion:
+    """An immutable, complete buffer for one named part, never a planner request.
+
+    Offsets use the device session's local start, not a remote clock. Bounds,
+    scope, measured start and each reference remain subject to native admission
+    and the ordinary gate/owner envelope. Force modifiers are not supported;
+    an existing held-jaw mode is preserved on an unchanged caller action.
+    """
+
+    part: str
+    references: tuple[JointReference, ...]
+    policy: PlaybackPolicy
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "references", tuple(self.references))
+
+
+@runtime_checkable
+class PlaybackHandlePort(Protocol):
+    """Retained execution identity and measured status; terminal means drained.
+
+    Snapshots contain id, episode_id, dispatched, references, feedback, status
+    (running/arrived/settled/failed), and original failure evidence. A terminal
+    reference loop alone does not prove that a safety verb stopped hardware.
+    """
+
+    def snapshot(self) -> Mapping[str, JSONValue]: ...
+
+    def wait(self) -> Mapping[str, JSONValue]: ...
+
+    def cancel(self, reason: str) -> None: ...
+
+
+@runtime_checkable
+class FinitePlaybackRunPort(Protocol):
+    """Optional finite execution, declared by a per-part support fact."""
+
+    def start_playback(self, motion: FiniteJointMotion) -> PlaybackHandlePort: ...
+
+
 @runtime_checkable
 class RunPort(Protocol):
     @property
@@ -639,14 +712,19 @@ __all__ = [
     "Action",
     "BodySphere",
     "FaultCode",
+    "FiniteJointMotion",
+    "FinitePlaybackRunPort",
     "GripperForce",
     "JSONValue",
     "JointPositionCommand",
+    "JointReference",
     "MediaRuntimePort",
     "NamedPartsObservationPort",
     "NamedPartsRunPort",
     "Observation",
     "PartObservation",
+    "PlaybackHandlePort",
+    "PlaybackPolicy",
     "Pose",
     "RunPort",
     "RuntimeEvent",

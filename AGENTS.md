@@ -13,10 +13,14 @@ now validates the declared joint-position scope and executes through local
 `PlaybackIo` on the existing serialized control thread, alongside Hold/e-stop.
 Adapters must retain the ordinary episode gate and owner envelope. Cancellation,
 episode closure and shutdown drain references; original failures and separate
-verb outcomes survive cleanup. No new thread, authority or Python support fact
-is introduced. Public Python owner/connector integration remains pending. See
+verb outcomes survive cleanup. `Run.start_playback(FiniteJointMotion)` now adapts
+local observations and the ordinary Run gate/owner submission, using binding API
+10 and the per-part `execution.finite_joint_playback` fact. Direct writes refuse
+while a buffer is active; run/site closure drains before parking/device teardown.
+No new thread or authority is introduced. Connector integration remains pending. See
 docs/core/finite-reference-playback.md, native tests/finite_playback.rs and
-src/playback/worker_tests.rs. No physical timing acceptance is implied.
+src/playback/worker_tests.rs, and sdk/tests/test_finite_playback.py. No physical
+timing acceptance is implied; do not replace an active installed owner to test it.
 
 Imported reference MuJoCo worlds optionally use an allocation-private compiled
 model cache selected by `WADDLE_SIMULATION_MODEL_CACHE`. The loader hashes the

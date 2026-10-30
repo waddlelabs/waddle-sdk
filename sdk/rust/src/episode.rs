@@ -113,6 +113,29 @@ impl PyEpisode {
 
 #[pymethods]
 impl PyEpisode {
+    /// Admit a fully received finite buffer; callbacks only adapt local owner I/O.
+    fn start_playback(
+        &self,
+        chunk_json: &str,
+        policy: crate::playback::Policy,
+        observe: Py<PyAny>,
+        dispatch: Py<PyAny>,
+    ) -> PyResult<crate::playback::PyExecutionHandle> {
+        crate::playback::start(
+            &self.session,
+            &self.id,
+            chunk_json,
+            policy,
+            observe,
+            dispatch,
+        )
+    }
+
+    #[getter]
+    fn playback_active(&self) -> bool {
+        self.session.playback_active(&self.id)
+    }
+
     #[getter]
     fn id(&self) -> String {
         self.id.to_string()

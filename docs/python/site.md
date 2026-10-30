@@ -20,6 +20,14 @@ The contexts are nested intentionally:
 
 Only one run may be active in one `SiteSession`.
 
+For fully received finite joint references, the optional
+[`Run.start_playback`](../core/finite-reference-playback.md#python-run-execution)
+uses the native local worker and the same gate/owner path as `step`. Check the
+part's `execution.finite_joint_playback` support fact and use `FiniteJointMotion`,
+`JointReference`, and `PlaybackPolicy` from `waddle_sdk.runtime`. Admission and
+dispatch are distinct from measured completion. While playback is active,
+ordinary steps return Busy; run/site exit drains it before hardware can close.
+
 ## Minimal manifest shape
 
 ```yaml
