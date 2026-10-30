@@ -5,6 +5,15 @@ acceptance separately in a configured simulator environment.
 
 # AGENTS.md — waddle-sdk monorepo
 
+Native `waddle_runtime::playback` provides deterministic finite joint-reference
+accounting over validated `ActionChunk` values: bounded ordered references,
+selected-row start/settling checks, fresh feedback, exact acknowledgements and
+terminal cancellation/deadline/uncertain-dispatch errors. It does not dispatch,
+own a thread, change authority or expose a new Python support fact yet. Public
+execution/connector integration remains pending; retain the ordinary episode gate
+and owner envelope. See docs/core/finite-reference-playback.md and native
+tests/finite_playback.rs. No physical timing acceptance is implied.
+
 Imported reference MuJoCo worlds optionally use an allocation-private compiled
 model cache selected by `WADDLE_SIMULATION_MODEL_CACHE`. The loader hashes the
 complete confined source inventory and binds the native version/platform; each

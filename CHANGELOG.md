@@ -21,6 +21,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Native finite joint-reference accounting using existing action chunks. Separate
+  admission/dispatch from measured arrival and optional settled misses; refuse
+  stale starts, late or unacknowledged references, invalid feedback and cancellation
+  without replay. Public Python execution and connector integration remain pending.
+
 - Optional private compiled MuJoCo model reuse for verified native scenes. Fresh
   model/data instances preserve independent state; source/native-version identity
   and binary checksums prevent stale/corrupt cache reuse. Existing source errors,

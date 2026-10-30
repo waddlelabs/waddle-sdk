@@ -31,6 +31,11 @@ without a device or network.
 - `waddle-runtime` owns thread lifecycles. A language binding creates one runtime and
   shuts it down deterministically; it does not grow a second authority machine.
 
+The runtime's optional [finite reference accounting](finite-reference-playback.md)
+reuses validated action chunks and separates dispatch receipts from measured
+completion. It does not alter the gate, grants, leases or existing intervention
+stream. Public execution/connector integration remains pending.
+
 ## Build and conformance
 
 From `waddle-core/`:
