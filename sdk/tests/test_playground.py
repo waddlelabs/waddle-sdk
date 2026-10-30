@@ -185,6 +185,7 @@ def test_scene_rejects_invalid_geometry_before_compiling(mutation):
 def test_scene_replacement_keeps_ports_and_native_processes_and_fences_old_images(
     tmp_path,
 ):
+    pytest.importorskip("mujoco")
     import json
 
     import yaml

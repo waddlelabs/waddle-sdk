@@ -53,7 +53,12 @@ class Engine:
         else:
             path = scratch / "scene.xml"
             path.write_text(mjcf(p, config))
-        self.model = mujoco.MjModel.from_xml_path(str(path))
+        if "native_scene" in config and os.environ.get("WADDLE_SIMULATION_MODEL_CACHE"):
+            from .compiled_model import load_native
+
+            self.model = load_native(config["_native_root"], config)
+        else:
+            self.model = mujoco.MjModel.from_xml_path(str(path))
         self.data = mujoco.MjData(self.model)
         self.parts = tuple(config["parts"])
         self._qpos = {}

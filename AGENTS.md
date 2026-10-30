@@ -1,4 +1,17 @@
+Native MuJoCo scene lifecycle tests require the optional `mujoco` extra and must
+skip before importing/opening a simulator when it is unavailable. Keep normal
+package installation independent of simulation dependencies. Run native lifecycle
+acceptance separately in a configured simulator environment.
+
 # AGENTS.md — waddle-sdk monorepo
+
+Imported reference MuJoCo worlds optionally use an allocation-private compiled
+model cache selected by `WADDLE_SIMULATION_MODEL_CACHE`. The loader hashes the
+complete confined source inventory and binds the native version/platform; each
+hit loads a new model, and each owner creates fresh state. Missing/corrupt cache
+evidence recompiles the original source. Keep this directory outside untrusted
+code/input mounts; no samples, authority or outcomes are cached. See
+[simulation caching](docs/python/simulation.md#compiled-model-cache).
 
 Generated YAM source poses serialize at twelve decimal places with canonical zero
 to remove insignificant cross-host BLAS differences from model hashes. Preserve
@@ -1145,6 +1158,12 @@ Authored two-YAM scenes may select a finite native `fixture` and bounded `seed`.
 Reuse reference assemblies and preserve compound geometry/contact identity;
 never accept executable scene imports through authoring data. Seed zero remains
 canonical and reset repeats the compiled variation. Added props remain separate.
+The authored-scene compiler assigns stable names to unnamed fixture collision
+shapes, including compound children, before applying its finger-contact profile.
+Keep existing shape names and contact pairs. Both-arm peg pickup, unsupported
+hold, ordinary-material drop control and opening release are covered in
+`sdk/tests/test_playground_grasp.py`; static stability alone does not qualify grasp
+behavior. Existing compiled scenes remain immutable.
 
 Reference worker IPC prioritizes queued robot feedback/control over camera and
 viewer snapshots, including independent rendering's `render_snapshot` requests.

@@ -11,12 +11,20 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Gate native scene-replacement tests on the optional MuJoCo capability, matching
+  the remaining simulation suite and preserving the base installation footprint.
+
 - Reacquire reference simulation camera state after a transient snapshot-transfer
   delay, with at most three attempts under the unchanged 50 ms pairing bound.
   Retain replacement model identity and original persistent errors; never
   restamp or render a rejected snapshot.
 
 ### Added
+
+- Optional private compiled MuJoCo model reuse for verified native scenes. Fresh
+  model/data instances preserve independent state; source/native-version identity
+  and binary checksums prevent stale/corrupt cache reuse. Existing source errors,
+  simulation ownership, camera capture and control gates remain unchanged.
 
 - Optional finite two-YAM reference assemblies in authored scenes: handover,
   movable container, peg/socket and loaded tray, with bounded repeatable XY
@@ -33,6 +41,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   declared camera capabilities.
 
 ### Fixed
+
+- Apply authored scenes' finger-contact material to unnamed two-YAM fixture
+  collision shapes, including compound children. Existing compiled scenes stay
+  immutable; both-arm peg retention/release and ordinary-material drop controls
+  exercise actual native contact outcomes.
 
 - Serialize generated YAM source poses at twelve decimal places with canonical
   zero. Equivalent BLAS results on different hosts now produce matching model

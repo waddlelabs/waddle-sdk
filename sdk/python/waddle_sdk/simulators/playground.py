@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import re
 import shutil
 import xml.etree.ElementTree as ET
@@ -265,14 +266,22 @@ def compile_scene(config, scene, output: Path, *, revision=1, easy_grasp=True):
         name for obj in scene["objects"] for name in _object(world, obj, easy_grasp)
     ]
     if fixture:
-        props.extend(
-            geom.get("name")
-            for body in world.findall("body")
-            if body.get("name") not in bases | {"table"}
-            and not body.get("name", "").startswith("prop_")
-            for geom in body.iter("geom")
-            if geom.get("name") and geom.get("group") == "3"
-        )
+        for body in world.findall("body"):
+            if body.get("name") in bases | {"table"} or body.get("name", "").startswith(
+                "prop_"
+            ):
+                continue
+            for index, geom in enumerate(body.iter("geom")):
+                if geom.get("group") != "3":
+                    continue
+                # Imported reference collision shapes may be unnamed. Give each
+                # one a stable identity before selecting the same finger contact
+                # material used by authored props, including compound children.
+                name = geom.get("name")
+                if not name:
+                    name = f"{body.get('name')}__playground_contact_{index}"
+                    geom.set("name", name)
+                props.append(name)
     if easy_grasp:
         root.find("option").set("noslip_iterations", "3")
         tips = {
@@ -317,7 +326,18 @@ def compile_scene(config, scene, output: Path, *, revision=1, easy_grasp=True):
     model_path.write_text(ET.tostring(root, encoding="unicode"))
     import mujoco as mj
 
-    model = mj.MjModel.from_xml_path(str(model_path))
+    if os.environ.get("WADDLE_SIMULATION_MODEL_CACHE"):
+        from .compiled_model import load_model
+
+        model = load_model(
+            "world.xml",
+            {
+                p.relative_to(output).as_posix(): p.read_bytes()
+                for p in [model_path, *sorted((output / "assets").glob("*"))]
+            },
+        )
+    else:
+        model = mj.MjModel.from_xml_path(str(model_path))
     data = mj.MjData(model)
     from .description import description
 
