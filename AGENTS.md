@@ -1,3 +1,7 @@
+Reference simulation capability reads retain immutable gripper force limits per
+world generation, invalidating on reset/replacement. Measured force remains a
+fresh native read; model/transport failures are never cached as success.
+
 Native MuJoCo scene lifecycle tests require the optional `mujoco` extra and must
 skip before importing/opening a simulator when it is unavailable. Keep normal
 package installation independent of simulation dependencies. Run native lifecycle

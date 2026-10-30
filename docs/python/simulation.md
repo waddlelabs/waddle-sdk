@@ -10,6 +10,11 @@ capability facts; importing a simulator does not establish sensor or motion supp
 
 ## Camera rendering and control timing
 
+Reference capability descriptions reuse immutable gripper force limits within
+one world generation. Reset or scene replacement invalidates this metadata.
+Measured gripper force still comes from a fresh native read; no commanded target,
+observation, contact result or admission outcome is cached by this optimization.
+
 Reference MuJoCo worlds keep one physics/control process and a separate read-only
 renderer. The renderer copies an immutable integration state; it never steps the
 world or writes a target. Its bounded camera queue acquires state only when a

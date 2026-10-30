@@ -11,6 +11,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Reuse immutable reference-simulation gripper force-limit metadata within one
+  world generation. Reset/replacement invalidates it; measured force stays live
+  and original native failures remain authoritative.
+
 - Gate native scene-replacement tests on the optional MuJoCo capability, matching
   the remaining simulation suite and preserving the base installation footprint.
 

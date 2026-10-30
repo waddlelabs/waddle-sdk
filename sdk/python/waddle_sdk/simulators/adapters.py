@@ -421,6 +421,8 @@ class Driver:
         self._closed = False
         self._estopped = False
         self._max_joint_speed = max_joint_speed
+        self._force_metadata_lock = threading.Lock()
+        self._force_limits_cache = None
 
     @property
     def estopped(self):
@@ -441,7 +443,26 @@ class Driver:
 
     @property
     def gripper_force_limits_n(self):
-        return tuple(self.world.part_call("gripper_force_limits", self.part))
+        # These are immutable model metadata, not a force observation. Avoid
+        # serializing every capability read through the physics connection.
+        # Reset/replacement changes the world generation before its RPC begins.
+        with self._force_metadata_lock:
+            for _ in range(3):
+                generation = self.world._generation
+                cached = self._force_limits_cache
+                if (
+                    cached is not None
+                    and cached[0] == generation
+                    and not self._closed
+                    and not getattr(self.world, "_failed", False)
+                    and not getattr(self.world, "_closing", False)
+                ):
+                    return cached[1]
+                limits = tuple(self.world.part_call("gripper_force_limits", self.part))
+                if generation == self.world._generation:
+                    self._force_limits_cache = generation, limits
+                    return limits
+            raise RuntimeError("simulation model changed while reading gripper force limits")
 
     def read_gripper_force(self):
         from ..runtime import GripperForce
