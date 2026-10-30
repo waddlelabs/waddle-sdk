@@ -8,7 +8,9 @@ use parking_lot::{Condvar, Mutex};
 use waddle_types::time::Clock;
 use waddle_types::{EpisodeId, Step};
 
-use super::{Completion, Feedback, FiniteReferences, Playback, PlaybackError, PlaybackPoll};
+use super::{
+    Completion, CurveProgress, Feedback, FiniteReferences, Playback, PlaybackError, PlaybackPoll,
+};
 use crate::mirror::Mirror;
 
 /// The original owner failure and optional opaque structured evidence. The
@@ -25,6 +27,8 @@ pub struct PlaybackIoError {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ReferenceReceipt {
     Dispatched,
+    /// Local session-clock start of the actual owner submission, for pacing.
+    DispatchedAt(i64),
     /// The ordinary gate selected another stream, Hold or Noop. The adapter
     /// applies that decision normally; this buffer cannot continue afterward.
     Superseded(String),
@@ -64,6 +68,8 @@ pub struct ExecutionSnapshot {
     pub dispatched: usize,
     pub references: usize,
     pub feedback: Option<Feedback>,
+    pub curve_progress: Option<CurveProgress>,
+    pub last_reference: Option<Step>,
     pub result: Option<ExecutionResult>,
 }
 
@@ -159,6 +165,8 @@ impl ExecutionSlot {
                     dispatched: 0,
                     references,
                     feedback: None,
+                    curve_progress: None,
+                    last_reference: None,
                     result: None,
                 },
                 cancelled: None,
@@ -306,20 +314,32 @@ impl ExecutionTask {
             )
         });
         self.control.state.lock().snapshot.feedback = Some(measured.clone());
-        let action = match player.poll(now, &measured) {
+        let polled = player.poll(now, &measured);
+        self.control.state.lock().snapshot.curve_progress = player.curve_progress();
+        let action = match polled {
             Ok(action) => action,
             Err(error) => return Some(Err(ExecutionFailure::Playback(error))),
         };
         match action {
             PlaybackPoll::Dispatch(index) => {
-                let reference = player.reference(index).expect("admitted reference");
-                match self.io.dispatch(reference, &measured) {
-                    Ok(ReferenceReceipt::Dispatched) => {
-                        if let Err(error) = player.acknowledge(index, clock.stamp_now().mono_ns().0)
-                        {
+                let reference = player.reference(index).expect("admitted reference").clone();
+                match self.io.dispatch(&reference, &measured) {
+                    Ok(
+                        receipt
+                        @ (ReferenceReceipt::Dispatched | ReferenceReceipt::DispatchedAt(_)),
+                    ) => {
+                        let completed = clock.stamp_now().mono_ns().0;
+                        let started = match receipt {
+                            ReferenceReceipt::DispatchedAt(at) => at,
+                            _ => completed,
+                        };
+                        if let Err(error) = player.acknowledge_at(index, started, completed) {
                             return Some(Err(ExecutionFailure::Playback(error)));
                         }
-                        self.control.state.lock().snapshot.dispatched = player.dispatched();
+                        let mut state = self.control.state.lock();
+                        state.snapshot.dispatched = player.dispatched();
+                        state.snapshot.curve_progress = player.curve_progress();
+                        state.snapshot.last_reference = Some(reference);
                         // The next poll establishes its exact due time; it never
                         // skips an entry or catches up by dispatching a batch.
                         self.next_poll_ns = now;

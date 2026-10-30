@@ -15,12 +15,22 @@ Adapters must retain the ordinary episode gate and owner envelope. Cancellation,
 episode closure and shutdown drain references; original failures and separate
 verb outcomes survive cleanup. `Run.start_playback(FiniteJointMotion)` now adapts
 local observations and the ordinary Run gate/owner submission, using binding API
-10 and the per-part `execution.finite_joint_playback` fact. Direct writes refuse
+11 and the per-part `execution.finite_joint_playback` fact. Direct writes refuse
 while a buffer is active; run/site closure drains before parking/device teardown.
 No new thread or authority is introduced. Connector integration remains pending. See
 docs/core/finite-reference-playback.md, native tests/finite_playback.rs and
 src/playback/worker_tests.rs, and sdk/tests/test_finite_playback.py. No physical
 timing acceptance is implied; do not replace an active installed owner to test it.
+
+Optional `PlaybackPolicy.paced_curve` supplies an exact `PacedJointCurve` for
+native acknowledgement-paced execution, advertised separately as
+`execution.paced_joint_playback`. Delayed feedback never advances curve phase;
+bounded bisection stays on the supplied polynomial, partial steps scale velocity
+hints and repeats use zero hints. Preserve minimum local submission spacing,
+original absolute timeout, measured tracking bounds and terminal faults. Fixed
+offset playback retains its lateness guard. Curves contain no planner or geometry
+policy; consumer validation and held-coordinate/contact orchestration remain
+separate. See native tests/paced_playback.rs and sdk/tests/test_paced_playback.py.
 
 Imported reference MuJoCo worlds optionally use an allocation-private compiled
 model cache selected by `WADDLE_SIMULATION_MODEL_CACHE`. The loader hashes the

@@ -18,7 +18,7 @@ velocity hints must be finite and rectangular; the final hint must be at rest.
 Grippers represented by a joint row are valid; gripper sidechannel actions are
 not part of this interface.
 
-Each reference uses hold interpolation. This module never fits a new curve,
+By default each reference uses hold interpolation. This mode never fits a curve,
 rescales time, drops a reference or substitutes a new target. Applications must
 prepare and validate the exact reference sequence they intend to execute.
 The intervention jitter buffer retains its existing latest-wins semantics;
@@ -31,6 +31,54 @@ need not become an arm arrival condition. The policy also supplies a positive
 settling interval, a total timeout of at most 180 seconds, and permitted reference
 lateness of at most one second. These are caller-selected bounds, not measured
 hardware performance guarantees. No default widens an owner's limits.
+
+## Optional acknowledgement-paced curves
+
+`PlaybackPolicy.paced_curve` selects local evaluation of a supplied `PacedCurve`
+(Python: `PacedJointCurve`). Check the separate per-part
+`execution.paced_joint_playback` support fact. The curve contains exact boundary
+times/positions and six normalized polynomial coefficients per segment, in
+segment → increasing power → selected coordinate order. Coordinates follow the
+parent policy's `indices`; unselected command rows retain their input targets.
+The caller remains responsible for checking the complete polynomial's limits,
+geometry and dependency identity. This API does not plan, fit, certify collision
+clearance, correct a goal or change a held target to make it admissible.
+
+Timing is bounded to 120 seconds and 16,384 segments. Native admission checks
+dimensions, finite values, increasing times, declared boundaries, stationary
+final velocity and agreement with the supplied nominal joint references. Boundary
+consistency uses 1e-9 coordinate units, nominal reference agreement uses 1e-8,
+and the curve duration must agree with the integer chunk horizon within 1 ns.
+These numerical consistency checks do not widen the owner's safety envelope.
+Velocity hints, if enabled, must agree with the nominal polynomial and be zero
+on unselected rows. Every generated command still passes the ordinary episode
+gate and full owner checks.
+
+`period_ns` is the minimum interval between local submissions; its cadence cannot
+exceed the declared command rate. Each successful acknowledgement advances nominal
+curve time by at most that period. If the next sample exceeds 90% of the supplied
+per-coordinate `position_error`, bounded bisection selects a shorter step on the
+same polynomial, or repeats the prior reference. Leaving the supplied
+`tracking_tolerance` or the admissible prior-reference window fails explicitly.
+Partial steps scale analytical velocity by actual phase advance; repeated
+references have zero feedforward. No reference is skipped to catch up.
+
+Optional `sample_times_s` retains an exact nominal grid for rest-to-rest quintics.
+The grid includes all segment boundaries, never has an interval longer than
+`period_ns`, and leaves a partially reached sample pending until acknowledged.
+Without it, the next sample is one period beyond the last acknowledged phase.
+The original absolute timeout bounds both traversal and settling. The fixed-mode
+`max_lateness_ns` guard is not used for acknowledged progression: late feedback
+consumes the same timeout and slows progress instead of jumping ahead.
+
+The worker uses a locally stamped submission start when the adapter returns
+`DispatchedAt(started_ns)`; otherwise it conservatively spaces from the completed
+acknowledgement. Delayed or unconfirmed writes cannot be replayed. Native snapshots
+retain `curve_progress` and the complete `last_reference` only after a confirmed
+dispatch. `references` counts input references; `dispatched` counts actual
+acknowledgements and can be larger with polynomial evaluation/partial steps.
+The optional curve does not provide dynamic world updates, contact detection,
+force-grasp completion, coordinated parts or held-coordinate compensation.
 
 ## Driving the state
 
@@ -113,14 +161,16 @@ Build the immutable request using `JointReference(offset_ns, command)` and
 joint order and units, with optional declared velocity feedforward. The first
 reference must match measured start within the supplied tolerances. The final
 hint must be zero. Supply the entire validated sequence before admission; this
-interface performs no planning, fitting or interpolation beyond holding each
-reference until the next one. Force modifiers are refused. An existing force
+interface performs no planning or fitting. By default it holds each reference
+until the next one; the optional paced curve evaluates supplied coefficients
+as described above. Force modifiers are refused. An existing force
 mode survives an unchanged caller action under the ordinary owner rules.
 
 The returned handle provides:
 
 - `snapshot()`: an independent dictionary with `id`, `episode_id`, `dispatched`,
-  `references`, `feedback`, `status`, and `failure`. Feedback retains `observed_ns`,
+  `references`, `feedback`, `last_reference`, `curve_progress`, `status`, and
+  `failure`. Feedback retains `observed_ns`,
   positions and velocities. Status is `running`, `arrived`, `settled`, or `failed`.
 - `wait()`: the same snapshot after native drain, releasing the Python interpreter
   lock while waiting; it creates no polling thread.
@@ -130,7 +180,7 @@ The returned handle provides:
 Failure includes a stable `code`, original `detail`, `outcome_unknown` and
 structured `evidence` for owner failures. Observation and dispatch failures remain
 distinct. Native failures retain codes such as `stale_start`, `late_reference`,
-`deadline`, `invalid_feedback`, `cancelled` and `superseded`; late references also
+`tracking`, `deadline`, `invalid_feedback`, `cancelled` and `superseded`; late references also
 retain their index and lateness. A raising write is conservatively uncertain,
 even when cleanup later succeeds. There is no automatic retry.
 
@@ -144,7 +194,7 @@ physical stop measurements remain required; draining a callback is not physical
 stop proof. A connector must supply its explicit disconnect cancellation policy;
 this local API does not observe network liveness.
 
-Python/native binding API 10 is required. Install matching SDK/media wheels from
+Python/native binding API 11 is required. Install matching SDK/media wheels from
 one revision in an idle environment; never replace a running hardware owner's
 native module to test this API.
 

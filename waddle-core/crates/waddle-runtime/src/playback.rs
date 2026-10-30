@@ -1,14 +1,18 @@
 //! Lossless finite joint-reference accounting for a local execution loop.
 //!
 //! This reuses the ordinary action chunk, without the intervention jitter
-//! buffer's latest-wins shedding. Every reference must be dispatched through
-//! the existing episode gate and owner envelope and acknowledged exactly once.
+//! buffer's latest-wins shedding. Fixed offsets retain every input reference;
+//! optional paced curves evaluate the supplied polynomial on acknowledgements.
+//! Every dispatch crosses the existing episode gate and owner envelope.
 //! The caller supplies session-monotonic times and fresh measured feedback;
 //! neither a receipt nor exhaustion of the buffer establishes physical arrival.
 //! This module grants no authority, opens no device and performs no planning.
 
 use waddle_types::{ActionChunk, Step};
 
+mod curve;
+use curve::CurveCursor;
+pub use curve::{CurveProgress, PacedCurve};
 pub(crate) mod execution;
 pub use execution::{
     ExecutionFailure, ExecutionHandle, ExecutionResult, ExecutionSnapshot, PlaybackIo,
@@ -29,6 +33,9 @@ pub struct PlaybackPolicy {
     pub timeout_ns: i64,
     /// Permit a separately reported stationary miss, never an arrival claim.
     pub allow_settled: bool,
+    /// Optional exact polynomial evaluation with acknowledgement-paced progress.
+    /// Omission retains fixed offsets and the original lateness guard.
+    pub paced_curve: Option<PacedCurve>,
 }
 
 /// Measured feedback stamped on the same session clock as playback.
@@ -55,6 +62,8 @@ pub enum PlaybackError {
     InvalidAction(String),
     #[error("measured start differs from the admitted first reference")]
     StaleStart,
+    #[error("measured joints left the admitted reference tracking window")]
+    Tracking,
     #[error("reference {index} is {lateness_ns} ns late")]
     LateReference { index: usize, lateness_ns: i64 },
     #[error("finite reference deadline expired")]
@@ -151,6 +160,43 @@ impl FiniteReferences {
         {
             return Err(invalid("invalid bounded settling, lateness or deadline"));
         }
+        if let Some(curve) = &policy.paced_curve {
+            curve.validate(policy.indices.len())?;
+            if (curve.duration_s() * 1e9 - chunk.horizon_ns as f64).abs() > 1.0 {
+                return Err(invalid(
+                    "polynomial duration differs from the admitted buffer",
+                ));
+            }
+            for step in &chunk.steps {
+                let (q, velocity) = curve.sample(step.offset_ns as f64 * 1e-9);
+                if policy
+                    .indices
+                    .iter()
+                    .zip(q)
+                    .any(|(i, q)| (step.values[*i] - q).abs() > 1e-8)
+                {
+                    return Err(invalid("polynomial differs from admitted joint references"));
+                }
+                if (0..width)
+                    .any(|i| !policy.indices.contains(&i) && step.values[i] != first.values[i])
+                {
+                    return Err(invalid("paced playback must retain unselected coordinates"));
+                }
+                if step.velocity_feedforward.is_some() != first.velocity_feedforward.is_some() {
+                    return Err(invalid("paced velocity hints must be consistently enabled"));
+                }
+                if let Some(hints) = &step.velocity_feedforward
+                    && (policy
+                        .indices
+                        .iter()
+                        .zip(velocity)
+                        .any(|(i, v)| (hints[*i] - v).abs() > 1e-8)
+                        || (0..width).any(|i| !policy.indices.contains(&i) && hints[i] != 0.0))
+                {
+                    return Err(invalid("paced velocity hints must match the polynomial"));
+                }
+            }
+        }
         Ok(Self { chunk, policy })
     }
 
@@ -186,11 +232,15 @@ pub struct Playback {
     arrived_since: Option<i64>,
     completion: Option<Completion>,
     failure: Option<PlaybackError>,
+    curve: Option<CurveCursor>,
+    proposed: Option<Step>,
+    dispatched_ns: Option<i64>,
 }
 
 impl Playback {
     #[must_use]
     pub fn new(references: FiniteReferences, started_ns: i64) -> Self {
+        let curve = references.policy.paced_curve.clone().map(CurveCursor::new);
         Self {
             references,
             started_ns,
@@ -203,12 +253,24 @@ impl Playback {
             arrived_since: None,
             completion: None,
             failure: None,
+            curve,
+            proposed: None,
+            dispatched_ns: None,
         }
     }
 
     #[must_use]
     pub fn reference(&self, index: usize) -> Option<&Step> {
-        self.references.reference(index)
+        if self.curve.is_some() {
+            self.proposed.as_ref().filter(|_| index == self.next)
+        } else {
+            self.references.reference(index)
+        }
+    }
+
+    #[must_use]
+    pub fn curve_progress(&self) -> Option<CurveProgress> {
+        self.curve.as_ref().map(|curve| curve.progress.clone())
     }
 
     #[must_use]
@@ -227,6 +289,9 @@ impl Playback {
         let deadline = self
             .started_ns
             .saturating_add(self.references.policy.timeout_ns);
+        if self.curve.is_some() {
+            return deadline;
+        }
         self.references
             .chunk
             .steps
@@ -299,7 +364,63 @@ impl Playback {
         {
             return self.fail(PlaybackError::StaleStart);
         }
-        if let Some(step) = self.references.chunk.steps.get(self.next) {
+        if let Some(curve) = &self.curve {
+            if self
+                .acknowledged_ns
+                .is_some_and(|at| measured.observed_ns <= at)
+            {
+                return Ok(PlaybackPoll::Observe);
+            }
+            if let Err(error) = curve.check_tracking(measured, &self.references.policy.indices) {
+                return self.fail(error);
+            }
+        }
+        if let Some(curve) = self
+            .curve
+            .as_mut()
+            .filter(|c| !c.progress.endpoint_acknowledged)
+        {
+            let due = self.dispatched_ns.map_or(self.started_ns, |at| {
+                at.saturating_add(curve.spec.period_ns)
+            });
+            if now_ns < due {
+                return Ok(PlaybackPoll::WaitUntil(due));
+            }
+            let (positions, velocity) =
+                match curve.propose(measured, &self.references.policy.indices) {
+                    Ok(state) => state,
+                    Err(error) => return self.fail(error),
+                };
+            let mut step = self.references.chunk.steps[0].clone();
+            let mut values = step.values.to_vec();
+            let mut hints = vec![0.0; values.len()];
+            for ((index, q), v) in self
+                .references
+                .policy
+                .indices
+                .iter()
+                .zip(positions)
+                .zip(velocity)
+            {
+                values[*index] = q;
+                hints[*index] = v;
+            }
+            step.values = values.into();
+            step.offset_ns = (curve.proposed_s * 1e9).round() as i64;
+            if step.velocity_feedforward.is_some() {
+                step.velocity_feedforward = Some(hints.into());
+            }
+            self.proposed = Some(step);
+            self.pending = true;
+            return Ok(PlaybackPoll::Dispatch(self.next));
+        }
+        if let Some(step) = self
+            .references
+            .chunk
+            .steps
+            .get(self.next)
+            .filter(|_| self.curve.is_none())
+        {
             let due = self.started_ns.saturating_add(step.offset_ns);
             if now_ns < due {
                 return Ok(PlaybackPoll::WaitUntil(due));
@@ -376,19 +497,34 @@ impl Playback {
     /// Record a confirmed dispatch only. On rejection or unknown outcome the
     /// owner stops playback and retains its original fault; it must not ack.
     pub fn acknowledge(&mut self, index: usize, now_ns: i64) -> Result<(), PlaybackError> {
+        self.acknowledge_at(index, now_ns, now_ns)
+    }
+
+    /// Exact local submission start when provided by the owner adapter. Without
+    /// it, callers conservatively use acknowledgement time for minimum spacing.
+    pub fn acknowledge_at(
+        &mut self,
+        index: usize,
+        started_ns: i64,
+        now_ns: i64,
+    ) -> Result<(), PlaybackError> {
         if let Some(error) = &self.failure {
             return Err(error.clone());
         }
         if self.completion.is_some() {
             return Err(PlaybackError::InvalidAcknowledgement);
         }
-        if !self.pending || index != self.next || now_ns < self.now_ns {
+        if !self.pending || index != self.next || started_ns < self.now_ns || now_ns < started_ns {
             return self.fail(PlaybackError::InvalidAcknowledgement);
         }
         self.next += 1;
         self.pending = false;
         self.now_ns = now_ns;
         self.acknowledged_ns = Some(now_ns);
+        self.dispatched_ns = Some(started_ns);
+        if let Some(curve) = &mut self.curve {
+            curve.acknowledge();
+        }
         Ok(())
     }
 }

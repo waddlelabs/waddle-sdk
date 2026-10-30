@@ -38,6 +38,9 @@ and local gate/owner adapters, with cancellation and episode/shutdown drain. It
 does not alter the gate, grants, leases or existing intervention stream. Python
 `Run.start_playback` adapts local observation and the ordinary owner submission;
 connector transport integration remains pending.
+An optional supplied polynomial uses acknowledgement-paced progression on that
+same worker, with local tracking bounds, minimum submission spacing and the
+original absolute timeout. Curve checking and task orchestration stay with callers.
 
 ## Build and conformance
 
