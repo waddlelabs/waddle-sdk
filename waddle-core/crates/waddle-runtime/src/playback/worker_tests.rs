@@ -270,6 +270,27 @@ fn native_worker_advances_complete_buffer_without_planner_round_trips() {
 }
 
 #[test]
+fn slow_declared_feedback_rate_cannot_postpone_the_buffer_deadline() {
+    let h = Harness::new();
+    let handle = h
+        .dispatch
+        .start_playback(
+            h.mirror.clone(),
+            EpisodeId::new("episode"),
+            references(),
+            h.io.clone(),
+            1_000_000_000_000,
+        )
+        .unwrap();
+    assert_eq!(
+        finished(&handle).result,
+        Some(Err(ExecutionFailure::Playback(PlaybackError::Deadline)))
+    );
+    assert_eq!(h.io.writes.lock().len(), 3);
+    assert_eq!(h.outcome().verb, Verb::Hold);
+}
+
+#[test]
 fn cancellation_between_observation_and_dispatch_writes_nothing_and_drains_hold() {
     let h = Harness::new();
     let (p, entered, release) = pause();

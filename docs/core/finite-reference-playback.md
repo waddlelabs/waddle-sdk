@@ -76,6 +76,8 @@ detail, opaque structured evidence and uncertainty flag. Neither callback may
 wait on a remote planner or synchronously wait for a verb on the same thread.
 The session clock determines reference deadlines; observation sampling between
 references uses the declared scope rate.
+Deadline and reference-lateness checks still occur by their configured bounds
+when that feedback rate is slower.
 
 The returned `ExecutionHandle` retains an ID, confirmed dispatch count, latest
 feedback and eventual result. `snapshot` is read-only; `wait` blocks on completion

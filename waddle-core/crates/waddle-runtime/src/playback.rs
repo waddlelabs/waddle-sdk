@@ -221,6 +221,26 @@ impl Playback {
         self.completion
     }
 
+    /// The worker must revisit accounting by this time even when the declared
+    /// feedback cadence is slower. This changes no reference or tolerance.
+    pub(crate) fn check_by_ns(&self) -> i64 {
+        let deadline = self
+            .started_ns
+            .saturating_add(self.references.policy.timeout_ns);
+        self.references
+            .chunk
+            .steps
+            .get(self.next)
+            .map_or(deadline, |step| {
+                deadline.min(
+                    self.started_ns
+                        .saturating_add(step.offset_ns)
+                        .saturating_add(self.references.policy.max_lateness_ns)
+                        .saturating_add(1),
+                )
+            })
+    }
+
     pub fn cancel(&mut self, reason: &str) {
         if self.completion.is_none() && self.failure.is_none() {
             self.failure = Some(PlaybackError::Cancelled(reason.to_owned()));

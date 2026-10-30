@@ -334,6 +334,7 @@ impl ExecutionTask {
             PlaybackPoll::Observe => self.next_poll_ns = now.saturating_add(self.sample_period_ns),
             PlaybackPoll::Complete(result) => return Some(Ok(result)),
         }
+        self.next_poll_ns = self.next_poll_ns.min(player.check_by_ns());
         None
     }
 }

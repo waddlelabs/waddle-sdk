@@ -25,7 +25,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   control thread. Validate the declared scope before local I/O; retain measured
   completion, original faults and separate Hold/e-stop outcomes. Cancel/drain on
   control takeover, episode closure and shutdown without replaying references or
-  letting stale handles stop successors. Python adaptation and connector transport
+  letting stale handles stop successors. Slow declared feedback cannot postpone
+  reference-lateness checks or the buffer deadline. Python adaptation and connector transport
   remain pending; no installed runtime or physical owner is activated.
 
 - Native finite joint-reference accounting using existing action chunks. Separate
