@@ -11,6 +11,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Gate native scene-replacement tests on the optional MuJoCo capability, matching
+  the remaining simulation suite and preserving the base installation footprint.
+
 - Reacquire reference simulation camera state after a transient snapshot-transfer
   delay, with at most three attempts under the unchanged 50 ms pairing bound.
   Retain replacement model identity and original persistent errors; never

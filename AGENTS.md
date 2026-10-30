@@ -1,3 +1,8 @@
+Native MuJoCo scene lifecycle tests require the optional `mujoco` extra and must
+skip before importing/opening a simulator when it is unavailable. Keep normal
+package installation independent of simulation dependencies. Run native lifecycle
+acceptance separately in a configured simulator environment.
+
 # AGENTS.md — waddle-sdk monorepo
 
 Imported reference MuJoCo worlds optionally use an allocation-private compiled
