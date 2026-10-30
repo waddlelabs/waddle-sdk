@@ -2,7 +2,7 @@ Reference simulation capability reads retain immutable gripper force limits per
 
 ## October 30 peer-collision follow-up
 
-Reference planning exports preserve each moving-hand collision source piece independently. Arm-link spatial compaction remains; never fill finger cutouts by joining source pieces. This changes newly generated identities only, without altering native contact physics. See `docs/python/simulation.md`.
+Reference planning exports preserve each linear-finger collision source piece independently. Arm-link spatial compaction remains; never fill finger cutouts by joining source pieces. This changes newly generated identities only, without altering native contact physics. See `docs/python/simulation.md`.
 world generation, invalidating on reset/replacement. Measured force remains a
 fresh native read; model/transport failures are never cached as success.
 

@@ -131,7 +131,9 @@ def _collision_geometry(name: str, scratch: Path):
     planner_geometries = 0
     robot = description(name)
     hand_links = {
-        link.name for link in robot.native_links() if link.joint in robot.hand_names
+        link.name
+        for link in robot.native_links()
+        if link.joint in robot.hand_names and link.kind == "prismatic"
     }
     for link in _fixed_hand(name):
         pieces = []

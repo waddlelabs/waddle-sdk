@@ -868,4 +868,4 @@ scene's own XML, contacts and canonical reset state.
 
 ### Moving-hand collision detail
 
-New reference planning exports keep each source collision piece on moving-hand links independent. Spatial hull compaction still applies to other links. Joining finger pieces can fill real jaw cutouts and falsely classify two nearby fingers as intersecting. The `independent_hand_source_pieces` provenance lists these links. Source CAD, frames, fixed-open hand contract and native contact physics are unchanged; regenerate exported assets to use the corrected identity.
+New reference planning exports keep each source collision piece on prismatic hand links independent. Spatial hull compaction still applies to other links. Joining finger pieces can fill real jaw cutouts and falsely classify two nearby fingers as intersecting. The `independent_hand_source_pieces` provenance lists these links. Source CAD, frames, fixed-open hand contract and native contact physics are unchanged; regenerate exported assets to use the corrected identity.
