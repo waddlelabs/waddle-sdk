@@ -6,7 +6,9 @@ import hashlib
 import json
 import math
 import os
+import pickle
 import sys
+import time
 from dataclasses import asdict
 from pathlib import Path
 
@@ -51,7 +53,12 @@ class Engine:
         else:
             path = scratch / "scene.xml"
             path.write_text(mjcf(p, config))
-        self.model = mujoco.MjModel.from_xml_path(str(path))
+        if "native_scene" in config and os.environ.get("WADDLE_SIMULATION_MODEL_CACHE"):
+            from .compiled_model import load_native
+
+            self.model = load_native(config["_native_root"], config)
+        else:
+            self.model = mujoco.MjModel.from_xml_path(str(path))
         self.data = mujoco.MjData(self.model)
         self.parts = tuple(config["parts"])
         self._qpos = {}
@@ -60,6 +67,8 @@ class Engine:
         self._velocity_ratio = {}
         self._force_modes = {}
         self._force_ranges = {}
+        self._force_servos = {}
+        self._force_damping = {}
         for part in self.parts:
             prefix = self._prefix(part)
             joints = [
@@ -92,9 +101,27 @@ class Engine:
                     )
                 ratios.append(float(-bias[2] / kp))
             self._velocity_ratio[part] = np.asarray(ratios)
-            self._force_ranges[part] = self.model.actuator(
-                self._controls[part][-1]
-            ).forcerange.copy()
+            actuator = self.model.actuator(self._controls[part][-1])
+            self._force_ranges[part] = actuator.forcerange.copy()
+            self._force_servos[part] = (
+                actuator.gainprm.copy(),
+                actuator.biasprm.copy(),
+                int(actuator.ctrllimited[0]),
+            )
+            transmission = int(actuator.trnid[0])
+            if actuator.trntype[0] == mujoco.mjtTrn.mjTRN_TENDON:
+                damping, index = self.model.tendon_damping, transmission
+            elif actuator.trntype[0] in (
+                mujoco.mjtTrn.mjTRN_JOINT,
+                mujoco.mjtTrn.mjTRN_JOINTINPARENT,
+            ):
+                damping = self.model.dof_damping
+                index = int(self.model.jnt_dofadr[transmission])
+            else:
+                damping = None
+            self._force_damping[part] = (
+                None if damping is None else (damping, index, float(damping[index]))
+            )
         if "native_scene" in config:
             from .native_scene import initialize, validate_cameras
 
@@ -197,6 +224,31 @@ class Engine:
             else f"{part}__"
         )
 
+    def replacement(self, config, scratch):
+        """Prepare a new environment while preserving the opened port contracts."""
+        from .native_scene import replacement_signature
+
+        ignored = {"native_scene", "_native_root", "scene_revision", "_real_time"}
+        if {k: v for k, v in config.items() if k not in ignored} != {
+            k: v for k, v in self.config.items() if k not in ignored
+        } or replacement_signature(config) != replacement_signature(self.config):
+            raise ValueError(
+                "simulation.scene_contract: replacement changed robot or camera contracts"
+            )
+        candidate = type(self)(config, scratch)
+        try:
+            candidate.evaluation_reset(seed=0)
+            # Initial robot commands are part of the preserved execution contract.
+            for part in self.parts:
+                np.testing.assert_array_equal(
+                    candidate.data.qpos[candidate._qpos[part]],
+                    self.model.key_qpos[self._native_key, self._qpos[part]],
+                )
+        except BaseException:
+            candidate.close()
+            raise
+        return candidate
+
     def _restore_prop_initial(self):
         for name, value in self._prop_initial.items():
             joint = self.model.joint(name)
@@ -265,6 +317,7 @@ class Engine:
         else:
             previous = self._force_modes.get(part)
             if previous is None or previous[0] != force:
+                self._clear_force(part)
                 self._force_modes[part] = (force, False)
             # Restrict actual native actuation from the first step, including
             # moving contact. The scalar force is conjugate to total jaw width.
@@ -276,9 +329,15 @@ class Engine:
 
     def _clear_force(self, part):
         self._force_modes.pop(part, None)
-        self.model.actuator(self._controls[part][-1]).forcerange[:] = (
-            self._force_ranges[part]
-        )
+        actuator = self.model.actuator(self._controls[part][-1])
+        actuator.forcerange[:] = self._force_ranges[part]
+        gain, bias, limited = self._force_servos[part]
+        actuator.gainprm[:] = gain
+        actuator.biasprm[:] = bias
+        self.model.actuator_ctrllimited[actuator.id] = limited
+        if retained := self._force_damping[part]:
+            damping, index, original = retained
+            damping[index] = original
 
     def _apply_force_modes(self):
         for part, (force, holding) in tuple(self._force_modes.items()):
@@ -291,10 +350,19 @@ class Engine:
             self._force_modes[part] = (force, holding)
             if holding:
                 name = self._controls[part][-1]
-                kp = float(self.model.actuator(name).gainprm[0])
-                self.data.actuator(name).ctrl[0] = (
-                    self.description.hand_position(q[-1]) - 2 * force / kp
-                )
+                # Once contact is acquired, use native motor effort. A moving
+                # position-servo offset only approximates force and inherits
+                # transmission asymmetry and one-step feedback delay.
+                actuator = self.model.actuator(name)
+                actuator.gainprm[0] = 1.0
+                actuator.biasprm[:3] = 0.0
+                self.model.actuator_ctrllimited[actuator.id] = False
+                # Retain the drive's viscous damping as a native passive load,
+                # separate from its requested and measured active motor effort.
+                if retained := self._force_damping[part]:
+                    damping, index, original = retained
+                    damping[index] = original - self._force_servos[part][1][2]
+                self.data.actuator(name).ctrl[0] = -2 * force
 
     def hold(self, part=None):
         parts = self.parts if part is None else (self._part(part),)
@@ -827,6 +895,23 @@ class Engine:
 
     def capture(self, name):
         return self.capture_timed(name)[:2]
+
+    def render_snapshot(self, generation, known_generation):
+        """Copy native state and ordinary feedback for a read-only renderer."""
+        model = None if generation == known_generation else pickle.dumps(self.model)
+        began = time.monotonic_ns()
+        specification = self.mj.mjtState.mjSTATE_INTEGRATION
+        state = np.empty(self.mj.mj_stateSize(self.model, specification))
+        self.mj.mj_getState(self.model, self.data, state, specification)
+        parts = {name: self.read(name) for name in self.parts}
+        ended = time.monotonic_ns()
+        return {
+            "model": model,
+            "state": state,
+            "parts": parts,
+            "generation": generation,
+            "interval": (began, ended),
+        }
 
     def capture_timed(self, name):
         row = self.config["cameras"][name]

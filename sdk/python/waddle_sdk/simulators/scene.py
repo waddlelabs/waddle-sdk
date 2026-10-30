@@ -361,6 +361,7 @@ def make_site(
         "fy": width * 0.9,
         "cx": (width - 1) / 2,
         "cy": (height - 1) / 2,
+        "distortion": [0.0] * 5,
     }
     depth = robot != "so101"
     if depth:

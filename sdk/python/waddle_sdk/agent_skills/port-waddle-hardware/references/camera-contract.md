@@ -52,3 +52,11 @@ depth previews while preserving original RGB-D samples. Transport waits and
 encoding belong outside capture/control; native video and still workers are
 separate. See the public ownership-and-media guide for configuration and timing
 qualification. Preview bitrate ceilings exclude signaling/transport overhead.
+
+Optional `CameraCaptureStateDriver` declares `capture_state_supported` and a
+`capture_revision`. `capture_with_state(stamp)` calls the supplied native paired
+clock callback at acquisition and returns `CameraCaptureState` with exact named
+`PartObservation` feedback. The SDK advertises `camera.capture_state`, keeps the
+image acquisition stamp through deferred processing and withdraws old revisions
+from latest samples. Use captured feedback for image geometry only; fresh control
+observations remain separate. No object truth, calibration or wire support is added.

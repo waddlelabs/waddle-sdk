@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -49,7 +50,12 @@ class World:
         self._process: subprocess.Popen | None = None
         self._connection = None
         self._failed = False
+        self._closing = False
         self._part_names: set[str] = set()
+        self._part_frames: dict[str, str | None] = {}
+        self._renderer = None
+        self._independent_render = False
+        self._generation = 0
         self.content_timing_kind = None
 
     @property
@@ -66,6 +72,9 @@ class World:
             if self._failed:
                 raise RuntimeError("simulation failed; reopen the site to recover")
             if self._process is None:
+                self._closing = False
+                self._generation = 0
+                self._independent_render = False
                 if os.name != "posix":
                     raise RuntimeError(
                         "physics workspace workers currently require Linux or macOS"
@@ -74,7 +83,10 @@ class World:
                 env = {
                     k: v
                     for k, v in os.environ.items()
-                    if not k.startswith("WADDLE_")
+                    if (
+                        not k.startswith("WADDLE_")
+                        or k == "WADDLE_SIMULATION_MODEL_CACHE"
+                    )
                     and not k.endswith(("_API_KEY", "_TOKEN", "_SECRET"))
                 }
                 source = str(Path(__file__).resolve().parents[2])
@@ -112,12 +124,97 @@ class World:
                         raise ValueError(
                             "simulation worker advertised invalid camera timing"
                         )
+                    if isinstance(ready, dict) and ready.get("independent_render"):
+                        self._start_renderer(env)
                 except BaseException:
                     child.close()
                     parent.close()
                     self._shutdown()
                     self._failed = True
                     raise
+
+    def _start_renderer(self, env):
+        from .render_client import RenderClient
+
+        parent, child = multiprocessing.Pipe(duplex=True)
+        process = None
+        try:
+            process = subprocess.Popen(
+                [
+                    self.config.get("worker_python", sys.executable),
+                    "-m",
+                    "waddle_sdk.simulators.render_worker",
+                    str(child.fileno()),
+                ],
+                pass_fds=(child.fileno(),),
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=sys.stderr,
+                start_new_session=True,
+            )
+            child.close()
+            snapshot = self.call("render_snapshot", None)
+            parent.send((self.config, snapshot))
+            if not parent.poll(180):
+                raise TimeoutError("simulation renderer startup timed out")
+            ok, result = parent.recv()
+            if not ok:
+                raise RuntimeError(f"simulation renderer startup failed: {result}")
+            self._renderer = RenderClient(
+                process,
+                parent,
+                cameras=self.config["cameras"],
+                generation=snapshot["generation"],
+            )
+            self._independent_render = True
+        except BaseException:
+            child.close()
+            parent.close()
+            if process is not None:
+                process.kill()
+                process.wait()
+            raise
+
+    def capture(self, name, *, stamp=None, cancelled=lambda: False):
+        renderer = self._renderer
+        if renderer is None:
+            raise RuntimeError("simulation renderer is unavailable")
+
+        def acquire(known_generation):
+            model = None
+            for _ in range(3):
+                if cancelled():
+                    raise RuntimeError("simulation camera is closed")
+                snapshot = self.call("render_snapshot", known_generation)
+                while snapshot.get("model") is not None:
+                    # Model replacement can be large. Acquire fresh feedback
+                    # after transfer; its cost cannot restamp old state.
+                    model = snapshot["model"]
+                    snapshot = self.call("render_snapshot", snapshot["generation"])
+                captured_stamp = None if stamp is None else stamp()
+                if (
+                    stamp is None
+                    or time.monotonic_ns() - snapshot["interval"][1] <= 50_000_000
+                ):
+                    snapshot["model"] = model
+                    return snapshot, captured_stamp
+                # Discard a late acquisition completely. A fresh snapshot can
+                # recover a scheduling interruption without relaxing pairing
+                # or relabeling old feedback with a new clock stamp.
+                known_generation = snapshot["generation"]
+            raise RuntimeError(
+                "simulation camera snapshot transport exceeded 50 ms pairing bound"
+            )
+
+        while not cancelled():
+            rgb, depth, snapshot, captured_stamp = renderer.capture(
+                name,
+                acquire,
+                cancelled,
+            )
+            if snapshot["generation"] == self._generation:
+                return rgb, depth, snapshot, captured_stamp
+        raise RuntimeError("simulation camera is closed")
 
     def _receive(self, timeout: float):
         if self._connection is None or not self._connection.poll(timeout):
@@ -128,11 +225,22 @@ class World:
         return result
 
     def call(self, operation: str, *arguments):
-        # A capture already rendering must finish, but a second camera must
-        # not get ahead of queued state/control requests. Preserve FIFO order
-        # within each priority and one outstanding transaction on the pipe.
+        if operation == "capture" and (
+            self._independent_render or self._renderer is not None
+        ):
+            rgb, depth, snapshot, _ = self.capture(arguments[0])
+            if len(arguments) == 2 and arguments[1] is True:
+                return rgb, depth, _capture_timing(snapshot, depth)
+            return rgb, depth
+        # An active snapshot must finish, but queued camera/viewer snapshots
+        # must not get ahead of state/control requests. This also covers the
+        # independent renderer, which acquires state via render_snapshot.
+        # Preserve FIFO within each priority and one transaction on the pipe.
         with self._requests:
-            ticket = (operation == "capture", self._request_sequence)
+            ticket = (
+                operation in {"capture", "render_snapshot", "evaluation_snapshot"},
+                self._request_sequence,
+            )
             self._request_sequence += 1
             self._pending.append(ticket)
             try:
@@ -146,9 +254,19 @@ class World:
             self._pending.remove(ticket)
             self._busy = True
         try:
-            if self._failed or self._connection is None:
+            if (
+                self._failed
+                or self._connection is None
+                or (self._closing and operation != "close")
+            ):
                 raise RuntimeError("simulation world is unavailable")
             try:
+                if operation in {
+                    "reset",
+                    "evaluation_reset",
+                    "evaluation_replace_scene",
+                }:
+                    self._generation += 1
                 self._connection.send((operation, arguments))
                 return self._receive(15.0 if operation == "capture" else 5.0)
             except (OSError, EOFError, TimeoutError):
@@ -187,6 +305,7 @@ class World:
             raise ValueError("robot part was declared more than once")
         rig = _arm(self, config=config)
         self._part_names.add(config.name)
+        self._part_frames[config.name] = config.base_frame
         return rig
 
     def part_call(self, operation: str, part: str, *arguments):
@@ -198,15 +317,25 @@ class World:
         return _camera(self, config=config)
 
     def close(self) -> None:
-        with self._lock:
-            if self._connection is not None and not self._failed:
-                try:
-                    self.call("close")
-                except (RuntimeError, OSError):
-                    pass
-            self._shutdown()
+        renderer = None
+        try:
+            with self._lock:
+                self._closing = True
+                renderer, self._renderer = self._renderer, None
+                if self._connection is not None and not self._failed:
+                    try:
+                        self.call("close")
+                    except (RuntimeError, OSError):
+                        pass
+                self._shutdown()
+        finally:
+            if renderer is not None:
+                renderer.close()
 
     def _shutdown(self):
+        renderer, self._renderer = self._renderer, None
+        if renderer is not None:
+            renderer.close()
         process, self._process = self._process, None
         if self._connection is not None:
             self._connection.close()
@@ -226,8 +355,21 @@ class World:
 class AdministrativeWorld(World):
     """Reference MuJoCo world with a separate trusted evaluation facet."""
 
+    @property
+    def supports_scene_replacement(self) -> bool:
+        return "native_scene" in self.config
+
     def evaluation_snapshot(self):
         return self.call("evaluation_snapshot")
+
+    def evaluation_replace_scene(self, config: WorldConfig) -> bool:
+        _, definition = load_scene(
+            config.site_root, config.connection.get("simulation")
+        )
+        accepted = self.call("evaluation_replace_scene", definition)
+        if accepted:
+            self.config = definition
+        return accepted
 
     def evaluation_reset(
         self,
@@ -450,9 +592,7 @@ def _arm(owner: World, *, config: PartConfig) -> base.Rig:
             "max_joint_position_error_rad must be one finite positive value "
             f"or {p.dof} finite positive arm-joint values"
         )
-    position_error_caps = tuple(float(value) for value in values) + (
-        hand_speed / rate,
-    )
+    position_error_caps = tuple(float(value) for value in values) + (hand_speed / rate,)
 
     def build():
         driver = Driver(
@@ -525,9 +665,66 @@ class Camera:
     def intrinsics(self):
         return self._intrinsics
 
+    @property
+    def capture_state_supported(self):
+        return self.world._independent_render or self.world._renderer is not None
+
+    @property
+    def capture_revision(self):
+        return str(self.world._generation)
+
+    def capture_with_state(self, stamp):
+        from ..cameras.capture_state import CameraCaptureState
+        from ..runtime import PartObservation
+
+        if not self.capture_state_supported:
+            return self.capture()
+        rgb, depth, snapshot, captured_stamp = self.world.capture(
+            self.name,
+            stamp=stamp,
+            cancelled=lambda: self._closed,
+        )
+        parts = {}
+        for name, (q, dq) in snapshot["parts"].items():
+            q = np.asarray(q, dtype=float).copy()
+            q[-1] = np.clip(q[-1], 0, 1)
+            robot = self.world.config["robot"]
+            arm_q = tuple(q[: profile(robot).dof]) + (0.0,)
+            tcp = description(robot).poses(arm_q)["tcp"]
+            frame = self.world._part_frames.get(name)
+            parts[name] = PartObservation(
+                q,
+                np.asarray(dq, dtype=float),
+                None
+                if frame is None
+                else np.concatenate((tcp[:3, 3], base.quaternion_wxyz(tcp[:3, :3]))),
+                frame,
+            )
+        return CameraFrame(
+            rgb=rgb,
+            depth=depth,
+            content_timing=CameraContentTiming(**_capture_timing(snapshot, depth)),
+            capture_state=CameraCaptureState(
+                captured_stamp, parts, str(snapshot["generation"])
+            ),
+        )
+
     def capture(self):
         if self._closed:
             raise RuntimeError("simulation camera is closed")
+        if self.capture_state_supported:
+            rgb, depth, snapshot, _ = self.world.capture(
+                self.name,
+                cancelled=lambda: self._closed,
+            )
+            timing = _capture_timing(snapshot, depth)
+            return CameraFrame(
+                rgb=rgb,
+                depth=depth,
+                content_timing=None
+                if timing is None
+                else CameraContentTiming(**timing),
+            )
         if self.content_timing_kind is None:
             rgb, depth = self.world.call("capture", self.name)
             return CameraFrame(rgb=rgb, depth=depth)
@@ -539,6 +736,18 @@ class Camera:
     def close(self):
         if not self._closed:
             self._closed = True
+
+
+def _capture_timing(snapshot, depth):
+    interval = snapshot.get("interval")
+    if interval is None:
+        return None
+    return {
+        "kind": "simulated_state",
+        "clock_revision": "local-host-monotonic/v1",
+        "rgb_monotonic_ns": interval,
+        "depth_monotonic_ns": interval if depth is not None else None,
+    }
 
 
 def _camera(owner: World, *, config: CameraConfig) -> Camera:

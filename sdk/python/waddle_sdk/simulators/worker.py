@@ -24,14 +24,24 @@ def serve(connection: Connection) -> None:
             engine = engine_type(config, Path(scratch))
             # Readiness means both sensor streams render, not merely that an
             # engine module imports. Startup failure never degrades to a mock.
-            for name in config["cameras"]:
-                engine.capture(name)
+            independent_render = callable(getattr(engine, "render_snapshot", None))
+            if not independent_render:
+                for name in config["cameras"]:
+                    engine.capture(name)
             timing_kind = (
                 getattr(engine, "content_timing_kind", None)
                 if callable(getattr(engine, "capture_timed", None))
                 else None
             )
-            connection.send((True, {"camera_content_timing_kind": timing_kind}))
+            connection.send(
+                (
+                    True,
+                    {
+                        "camera_content_timing_kind": timing_kind,
+                        "independent_render": independent_render,
+                    },
+                )
+            )
             dt = config["timestep"]
             pending_time = 0.0
             real_time = config.get("_real_time", False)
@@ -56,17 +66,32 @@ def serve(connection: Connection) -> None:
                 return True
 
             warned_slow = False
+            generation = 0
             while True:
-                operation, arguments = connection.recv()
+                # Physics keeps its own fixed-step cadence even while no
+                # control request arrives. Rendering runs on another process.
+                autonomous = real_time and independent_render
+                delay = (
+                    max(0.0, dt - pending_time - (time.monotonic() - last_time))
+                    if autonomous
+                    else dt
+                )
+                available = not autonomous or connection.poll(delay)
+                if available:
+                    operation, arguments = connection.recv()
                 if real_time:
                     # Advance the OLD targets up to this request before reading
                     # state or installing a new target. Render/IPC delays must
                     # not replay new commands into the past. Bound catch-up work
-                    # to 20 ms (plus one native step), so sustained overload
+                    # to one timestep for autonomous physics (20 ms for legacy
+                    # request-driven engines), plus one native step. Overload
                     # slows simulation instead of starving controls/sensors.
                     # Explicit rollouts retain their full requested duration.
                     now = time.monotonic()
-                    caught_up = advance(now - last_time, deadline=now + 0.02)
+                    caught_up = advance(
+                        now - last_time,
+                        deadline=now + (min(dt, 0.02) if autonomous else 0.02),
+                    )
                     last_time = now if caught_up else time.monotonic()
                     if not caught_up and not warned_slow:
                         logging.getLogger(__name__).warning(
@@ -75,6 +100,8 @@ def serve(connection: Connection) -> None:
                             "Motion and camera throughput may be slower."
                         )
                         warned_slow = True
+                if not available:
+                    continue
                 if operation == "close":
                     engine.hold()
                     connection.send((True, None))
@@ -85,6 +112,7 @@ def serve(connection: Connection) -> None:
                     "hold",
                     "home",
                     "capture",
+                    "render_snapshot",
                     "step",
                     "reset",
                     "gripper_force",
@@ -99,15 +127,24 @@ def serve(connection: Connection) -> None:
                     "home_part",
                     "evaluation_snapshot",
                     "evaluation_reset",
+                    "evaluation_replace_scene",
                 }:
                     raise ValueError("unsupported simulation operation")
                 try:
+                    if operation in {
+                        "reset",
+                        "evaluation_reset",
+                        "evaluation_replace_scene",
+                    }:
+                        generation += 1
                     if operation == "step":
                         # Explicit stepping remains available for rollouts;
                         # interactive sites use elapsed time on the same worker.
                         if not real_time:
                             advance(arguments[0])
                         result = None
+                    elif operation == "render_snapshot":
+                        result = engine.render_snapshot(generation, arguments[0])
                     elif (
                         operation == "capture"
                         and len(arguments) == 2
@@ -116,6 +153,14 @@ def serve(connection: Connection) -> None:
                         result = engine.capture_timed(arguments[0])
                     elif operation == "evaluation_snapshot":
                         result = engine.evaluation_snapshot()
+                    elif operation == "evaluation_replace_scene":
+                        replacement = engine.replacement(arguments[0], Path(scratch))
+                        engine.hold()
+                        engine.close()
+                        engine = replacement
+                        pending_time = 0.0
+                        last_time = time.monotonic()
+                        result = True
                     elif operation == "evaluation_reset":
                         variation = arguments[1] if len(arguments) > 1 else None
                         result = engine.evaluation_reset(
@@ -140,13 +185,13 @@ def serve(connection: Connection) -> None:
                             pending_time = 0.0
                             last_time = time.monotonic()
                     connection.send((True, result))
-                except Exception as error:
+                except Exception as error:  # noqa: BLE001 -- preserve native faults across the private pipe
                     engine.hold()
                     traceback.print_exc(file=sys.stderr)
                     connection.send((False, f"{type(error).__name__}: {error}"))
         except (EOFError, BrokenPipeError):
             pass
-        except BaseException as error:
+        except BaseException as error:  # noqa: BLE001 -- preserve worker startup faults across the private pipe
             traceback.print_exc(file=sys.stderr)
             try:
                 connection.send((False, f"{type(error).__name__}: {error}"))

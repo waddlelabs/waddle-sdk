@@ -8,6 +8,76 @@ latch. Ordinary position commands and holds clear velocity feedforward.
 Only the site adapters and their configuration select an engine. Programs must use
 capability facts; importing a simulator does not establish sensor or motion support.
 
+## Camera rendering and control timing
+
+Reference MuJoCo worlds keep one physics/control process and a separate read-only
+renderer. The renderer copies an immutable integration state; it never steps the
+world or writes a target. Its bounded camera queue acquires state only when a
+render slot is available. On Linux it uses at most two CPUs and half the inherited allowed set (one CPU
+when fewer than two are available), with matching software-rendering threads.
+This leaves control headroom while keeping multi-camera acquisition fresh. It is
+not an exclusive CPU reservation.
+
+Real-time physics advances fixed native timesteps while idle and before accepting
+new commands, bounding autonomous catch-up to one timestep plus one native step
+when physics itself is too slow. Request-driven backends retain their existing
+20 ms bound. Explicit rollout stepping is unchanged. Camera FPS may fall under load;
+commands, feedback and Hold do not wait for GL. Renderer failure remains a camera
+failure, and shutdown can terminate it without delaying the control owner's Hold.
+
+RGB-D samples preserve snapshot content bounds and optional exact captured robot
+feedback through the normal [camera contract](../porting/camera.md#optional-capture-time-robot-feedback).
+Reset replaces the renderer's model/state and rejects frames from an earlier source
+generation. Large model transfers precede a fresh timed state acquisition; a
+snapshot transfer exceeding the 50 ms pairing bound is discarded. Acquisition
+tries at most three fresh snapshots to recover transient scheduling delays.
+Only a newly acquired state and its matching stamp can be rendered; all three
+late acquisitions still refuse the camera with the original pairing-bound error.
+Transport and native snapshot faults retain their original failure behavior.
+No motion deadline, measured arrival/contact rule, physical parameter or image
+freshness limit is relaxed.
+
+## Editable tabletop scenes
+
+`waddle_sdk.simulators.playground.compile_scene(config, scene, output)` composes
+an immutable native scene from a reference MuJoCo robot configuration. The scene
+contains `id`, `name` and `objects`; each object declares a stable `id`, catalogue
+`kind`, `position` in metres, XYZ `rotation` in degrees, full `size` in metres and
+RGB `color` in [0, 1]. Available kinds are block, bottle, ball, cylinder, open bowl,
+open tray and fixed visual target. Up to 64 objects are accepted; invalid/nonfinite
+geometry and duplicate identifiers are refused before compilation.
+
+The compiler retains reference robots, Home, actuators, cameras and capability
+facts, and emits `simulation.json`, a hash-bound `world.xml` and local assets.
+Place the site at that output root. If embedding the output in a site subdirectory,
+prefix the native model and file-manifest paths from the **site root**; native
+manifest paths are not relative to the simulation JSON. Existing output directories
+are refused, so callers retain prior revisions instead of overwriting live worlds.
+
+The default easy-grasp profile uses a sliding friction coefficient of 0.8, a
+1 mm effective torsional patch and three NoSlip solver iterations. This stabilizes
+centered grasps while allowing weak and marginal edge grasps to fall. Actual native contact,
+force feedback, missed grasps, gravity and release remain authoritative. It adds no
+attachment constraint and does not increase robot force limits. `easy_grasp=False`
+selects ordinary prop material and omits the additional contact pairs/NoSlip tuning
+for controlled comparisons. RGB-only references remain RGB-only.
+
+Two-YAM scenes may additionally select `fixture`: `handover`, `hold_container`,
+`peg_socket`, or `loaded_tray`. These reuse the native handover block, movable
+open container, peg/socket and loaded two-handle tray assemblies. Their compound
+geometry, free-body physics and collision identities are retained. Optional
+`seed` (integer 0–999999) applies a repeatable shared XY translation within
+±12 mm; zero is canonical. It preserves assembled geometry and tray contents.
+Optional `instruction` is bounded descriptive text, never executable code.
+Ordinary editable `objects` may coexist with a fixture. Fixture internals are
+not individual editable props. Unsupported robot/arm combinations refuse before
+creating output. The easy-grasp setting also applies to fixture/finger contacts;
+it does not alter mass, robot force limits or create attachment constraints.
+Unnamed fixture collision shapes receive stable names before those contact pairs
+are selected, including shapes on compound child bodies. Existing shape names
+and explicitly declared pairs are retained. This applies to newly compiled
+scenes; previously published scene bytes are unchanged.
+
 ## Reference engines and scenes
 
 | Selector | Role | Installation |
@@ -318,6 +388,16 @@ No per-step contact forces or object attachments implement grasping.
 
 MuJoCo uses Menagerie's single-motor fixed tendon to distribute force between
 opposing jaws, preserving the combined gain, force limit, and reflected inertia.
+After YAM force acquisition, the existing actuator applies bounded native motor
+effort. The drive's original viscous damping remains as a passive transmission
+load, so changing finger loads do not turn the force request into a position-servo
+approximation. Explicit zero force, Hold and reset restore the position servo,
+its control limits and the original passive damping. Native actuator feedback
+remains an estimated force; it does not prove an object grasp or calibrated
+fingertip force. The force ceiling and contact/material parameters are unchanged.
+Native regression coverage includes a stationary force grasp, bottle lift with both fingers in
+contact, and gravity release in the shampoo scene; this controlled fixture does
+not establish autonomous packing success.
 The native hand equality uses Menagerie's 5 ms time constant. MuJoCo also
 retains the xArm passive-hand joints' reference armature of 0.1 kg m² and the
 driver/follower limits' 5 ms response. These native numerical settings support
@@ -344,6 +424,11 @@ New drawer and single-arm MuJoCo development-task sites place the scene camera i
 the interactive fixture, at
 `(-0.45, -0.55, 0.55)` m looking toward `(0.4, 0, 0.2)` m, so its handle face is
 visible at the reference home and task targets do not face away from the camera.
+Default reference-camera intrinsics explicitly declare zero distortion because
+the rendered images are pinhole projections. Supplied camera profiles keep their
+declared optical properties. Existing published scenes are immutable; add the
+explicit zero coefficients to both site and simulation camera declarations when
+preparing a new version of an older default-camera scene.
 The dual-arm sorting scene uses an overhead camera that shows both arms, cubes,
 and bins in the shared workspace.
 The other scenes retain their overhead oblique view. Existing scene files retain
@@ -397,7 +482,8 @@ between requests unless overload rebases the clock. State reporting uses the
 ordinary SDK pump at the declared physical command rate: SO-101 30 Hz, YAM 10 Hz,
 and xArm7 50 Hz. New scenes use a 1 rad/s joint-speed limit. Explicit site settings
 remain authoritative. Available compute still bounds achievable throughput.
-Queued state/control requests take priority over queued camera captures, retaining
+Queued state/control requests take priority over queued camera captures and
+render/viewer state snapshots, retaining
 FIFO order within each group and one native transaction at a time. An in-progress
 capture cannot be interrupted. Real-time pump ticks need no extra clock request:
 reads, writes and captures already advance elapsed time. Explicit-step rollouts
@@ -473,6 +559,24 @@ higher-level motion executor. The evaluator must pause participant dispatch and
 confirm that the current tool call and all admitted operations are terminal before
 reset. A reset advances only the administration episode revision, so prepared
 plans from a higher layer must bind and check that revision themselves.
+
+A trusted editor can check `administration.can_replace_scene` and call
+`replace_scene({world_name: WorldConfig(...)})` with prepared, digest-bound native
+scenes. The optional `SimulationSceneReplacementBackend` facet leaves the site,
+robot ports, camera ports, physics process and render process open. The reference
+MuJoCo implementation accepts self-contained native XML with unchanged robot
+assembly, assets, drives, constraints, camera contracts and initial robot state;
+it resets the new environment and fences old images by render generation. A
+changed robot/camera contract requires reopening the site. Unsupported backends
+report the capability unavailable and can use the normal close/open lifecycle.
+
+As with reset, the caller must drain all participant operations, invalidate plans
+and retained state using the returned episode revision, and refresh its scene
+consumer before admitting new work. An admitted replacement failure fences
+administration until reopen; the original error remains attached. This authority
+is never supplied through the participant runtime or tools. Each prepared scene
+remains immutable; replacement selects new bytes rather than rewriting the old
+world.
 
 For a MuJoCo-only continuation reset, the trusted evaluator may also pass
 `preserve_free_bodies=(...)` and `retire_free_bodies=(...)`. The former retains
@@ -727,3 +831,32 @@ substituted. Jaw velocity hints remain zero. MuJoCo's existing control/force lim
 and any declared actuator filtering remain active; this conversion does not
 calibrate dynamics or establish physical controller parity. See the
 [MuJoCo position-servo definition](https://mujoco.readthedocs.io/en/stable/XMLreference.html#actuator-position).
+
+### Compiled model cache
+
+Reference MuJoCo native scenes may set `WADDLE_SIMULATION_MODEL_CACHE` to an
+absolute private directory. This avoids parsing the same verified XML/mesh inputs
+again for separately owned physics and render instances. Default behavior stays
+uncached. The directory must be private to the trusted runtime and excluded from
+untrusted code/input mounts; use a separate directory for each isolated runtime.
+
+`waddle_sdk.simulators.compiled_model.load_model(model_name, contents, cache=...)`
+accepts a complete, confined, verified mapping of relative source names to bytes.
+`load_native(root, config, cache=...)` first validates the normal native-scene
+selection. Inputs are hashed on every load. Cache identity includes all native
+source bytes, the MuJoCo version and platform; compiled binaries carry their own
+checksum. Missing or invalid cache evidence compiles the original sources, keeping
+original model failures. Unavailable cache storage also falls back to compilation.
+The cache retains at most sixteen models and 256 MiB.
+
+Each hit loads an independent model; callers create fresh `MjData`. Changes to
+model arrays or runtime state cannot affect another instance. The cache contains
+no acquired images, current joints, authorization or outcomes, and does not change
+physics, reset, capture freshness or ownership. An optional `timings` dictionary
+reports cache hits, native compilation and binary-load time separately.
+
+The cache path also reaches the private physics/render child processes. Other
+`WADDLE_` configuration and credential variables retain their existing filtering.
+Offline tabletop authoring uses the same optional byte-keyed compilation path,
+so changed scenes can reuse unchanged robot mesh assets while preserving each
+scene's own XML, contacts and canonical reset state.

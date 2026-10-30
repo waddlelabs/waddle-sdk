@@ -161,3 +161,9 @@ contact margins while retaining native rest offsets and material friction. Keep 
 from SDK control and sensor rates; a stable-looking pose alone does not prove
 that native joint velocities have converged under contact. Consumer completion
 thresholds must not mask a native solver defect.
+
+Reference MuJoCo native scenes optionally use the private compiled-model cache
+documented in `docs/python/simulation.md#compiled-model-cache`. Reuse only verified
+immutable inputs; each owner still needs independent model/data, fresh samples
+and ordinary lifecycle supervision. This is an initialization optimization, not
+a robot skill or a change to the simulation backend contract.

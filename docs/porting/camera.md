@@ -91,8 +91,9 @@ The built-in Orbbec adapter requests complete native color/depth framesets befor
 software depth-to-color alignment. Missing aligned output remains a scoped capture
 failure; an unaligned or partial pair is never returned as a valid RGB-D sample.
 
-One `CameraSample` receives an atomic session-monotonic/Unix timestamp pair after
-capture. Raw metric depth remains local. A media-enabled session may publish RGB and
+One `CameraSample` receives an atomic session-monotonic/Unix timestamp pair at
+acquisition when paired capture state is supported, otherwise after capture. Raw
+metric depth remains local. A media-enabled session may publish RGB and
 a deterministic colorized depth preview on separate tracks; the adapter does not
 encode or route those tracks.
 
@@ -146,6 +147,26 @@ Mock and both native MuJoCo camera paths report `simulated_state`, bounding the
 state snapshot used for rendering. The subprocess worker preserves those host
 intervals through IPC; rendering/transport delays do not restamp the content.
 This is simulation state timing, not physical sensor calibration or exposure.
+
+### Optional capture-time robot feedback
+
+A `CameraCaptureStateDriver` explicitly declares `capture_state_supported = True`
+and a bounded `capture_revision` string. Its `capture_with_state(stamp)` returns
+`CameraFrame.capture_state = CameraCaptureState(stamp(), parts, revision)`, with
+named public `PartObservation` feedback from the exact image acquisition. Invoke
+the supplied native paired-clock callback at acquisition, before deferred rendering
+or processing; do not reconstruct Unix time from a later wall-clock read.
+
+The camera support row advertises `camera.capture_state`. The pump preserves the
+same stamp and immutable feedback on `CameraSample.capture_state`. Consumers may
+use it for image geometry; current `Observation.parts` still contains fresh
+control feedback. Images retain their original age after processing. Drivers
+without this extension keep the existing capture behavior and pairing checks.
+
+Changing `capture_revision` withdraws older samples from the latest-camera slot,
+including frames completing during a reset. Historical retained samples are not
+rewritten. A driver must still unblock captures on close. This local extension
+adds no robot writer, object geometry, camera calibration or wire capability.
 
 ## Intrinsics and deprojection
 

@@ -2065,21 +2065,28 @@ class _LatestCameraSamples:
 
     def __init__(self) -> None:
         self._samples: dict[str, CameraSample] = {}
+        self._current: dict[str, Callable[[], bool]] = {}
         self._changed = threading.Condition()
 
     def clear(self) -> None:
         with self._changed:
             self._samples.clear()
+            self._current.clear()
             self._changed.notify_all()
 
-    def publish(self, name: str, sample: CameraSample) -> None:
+    def publish(self, name: str, sample: CameraSample, *, current=None) -> None:
         with self._changed:
             self._samples[name] = sample
+            self._current[name] = current or (lambda: True)
             self._changed.notify_all()
 
     def get(self, name: str) -> CameraSample | None:
         with self._changed:
-            return self._samples.get(name)
+            return (
+                self._samples.get(name)
+                if self._current.get(name, lambda: True)()
+                else None
+            )
 
     def wait(
         self, name: str, *, after_session_ns: int = -1, timeout: float | None = None
@@ -2087,7 +2094,7 @@ class _LatestCameraSamples:
         deadline = None if timeout is None else time.monotonic() + timeout
         with self._changed:
             while True:
-                sample = self._samples.get(name)
+                sample = self.get(name)
                 if sample is not None and sample.session_ns > after_session_ns:
                     return sample
                 if deadline is None:
@@ -2138,11 +2145,20 @@ class CameraPump(threading.Thread):
         deadline = time.monotonic()
         try:
             while not self._stopping.is_set():
-                frame = self._driver.capture()
+                paired = getattr(self._driver, "capture_state_supported", False)
+                frame = (
+                    self._driver.capture_with_state(self._session.stamp)
+                    if paired
+                    else self._driver.capture()
+                )
                 if self._stopping.is_set():
                     return
                 if not isinstance(frame, CameraFrame):
                     raise TypeError("CameraDriver.capture() must return CameraFrame")
+                if paired and frame.capture_state is None:
+                    raise ValueError("camera declared capture state but returned none")
+                if not paired and frame.capture_state is not None:
+                    raise ValueError("camera returned undeclared capture state")
                 declared_timing = getattr(self._driver, "content_timing_kind", None)
                 if (
                     frame.content_timing is not None
@@ -2154,12 +2170,15 @@ class CameraPump(threading.Thread):
                     )
                 self._next_sequence += 1
                 sample = CameraSample(
-                    stamp=self._session.stamp(),
+                    stamp=frame.capture_state.stamp
+                    if paired
+                    else self._session.stamp(),
                     rgb=frame.rgb,
                     depth=frame.depth,
                     frame_sequence=self._next_sequence,
                     point_resolver=frame.point_resolver,
                     content_timing=frame.content_timing,
+                    capture_state=frame.capture_state,
                 )
                 expected = (self._description.height, self._description.width)
                 if sample.rgb.shape[:2] != expected:
@@ -2168,7 +2187,17 @@ class CameraPump(threading.Thread):
                         f"{sample.rgb.shape[1]}x{sample.rgb.shape[0]}, declaration is "
                         f"{self._description.width}x{self._description.height}"
                     )
-                self._latest.publish(self._camera_name, sample)
+
+                def current(sample=sample):
+                    return (
+                        sample.capture_state is None
+                        or sample.capture_state.revision
+                        == self._driver.capture_revision
+                    )
+
+                if not current():
+                    continue
+                self._latest.publish(self._camera_name, sample, current=current)
                 self._session.publish_frame(self._camera_name, sample.rgb)
                 if sample.depth is not None and getattr(
                     self._session, "depth_preview_enabled", True

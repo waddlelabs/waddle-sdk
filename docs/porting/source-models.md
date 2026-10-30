@@ -87,6 +87,12 @@ Additional grasp metadata, such as a closing axis, pinch offset and preferred
 orientation, does not change that mapping and is accepted without changing the
 source geometry. A changed physical mapping still requires a matching custom model.
 
+Generated YAM pose components use twelve decimal places with canonical zero,
+so insignificant BLAS eigensolver rounding does not change model bytes between
+hosts. Original vendor assets and their exact hash checks are unchanged. This
+serialization revision changes newly generated model hashes; retain existing
+saved models and explicitly regenerate consumers that need the new source bytes.
+
 Tests in `sdk/tests/test_model_sources.py` cover independent adapter resolution,
 absence, selected failures, frozen metadata and path/binding refusal.
 `sdk/tests/test_yam_model_sources.py` retains vendor provenance/relationship checks.

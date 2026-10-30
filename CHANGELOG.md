@@ -11,7 +11,68 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Gate native scene-replacement tests on the optional MuJoCo capability, matching
+  the remaining simulation suite and preserving the base installation footprint.
+
+- Reacquire reference simulation camera state after a transient snapshot-transfer
+  delay, with at most three attempts under the unchanged 50 ms pairing bound.
+  Retain replacement model identity and original persistent errors; never
+  restamp or render a rejected snapshot.
+
+### Added
+
+- Optional private compiled MuJoCo model reuse for verified native scenes. Fresh
+  model/data instances preserve independent state; source/native-version identity
+  and binary checksums prevent stale/corrupt cache reuse. Existing source errors,
+  simulation ownership, camera capture and control gates remain unchanged.
+
+- Optional finite two-YAM reference assemblies in authored scenes: handover,
+  movable container, peg/socket and loaded tray, with bounded repeatable XY
+  variations, native contacts and ordinary editable extra props.
+
+- Optional trusted scene replacement for prepared native MuJoCo environments.
+  Retain the opened site, robot/camera ports and physics/render processes;
+  preserve robot/camera contracts, reset changed objects and fence old images.
+  Unsupported backends retain ordinary close/open behavior.
+
+- Compile bounded editable tabletop scenes with native reference robots, cameras,
+  immutable reset state and an easier contact profile. Preserve actual force,
+  missed-grasp and release outcomes; all six robot/arm configurations retain their
+  declared camera capabilities.
+
 ### Fixed
+
+- Apply authored scenes' finger-contact material to unnamed two-YAM fixture
+  collision shapes, including compound children. Existing compiled scenes stay
+  immutable; both-arm peg retention/release and ordinary-material drop controls
+  exercise actual native contact outcomes.
+
+- Serialize generated YAM source poses at twelve decimal places with canonical
+  zero. Equivalent BLAS results on different hosts now produce matching model
+  bytes, while exact vendor asset checks and saved model identities remain intact.
+
+- Prioritize queued robot feedback/control over reference simulation camera and
+  viewer snapshots, including the independent renderer's state acquisition.
+  Preserve FIFO within each priority and finish the active pipe transaction.
+
+- Reduce excessive retention in editable scenes: moderate sliding friction, a
+  1 mm torsional patch and three NoSlip iterations retain centered grasps while
+  letting weak/edge grasps fall. Preserve native actuation, force limits and release.
+
+- Use bounded native motor effort for MuJoCo YAM force hold under unequal and
+  changing finger loads. Retain the drive's damping as a passive transmission
+  load; restore the original position servo and limits on release, Hold or reset.
+  Preserve force ceilings, native contact dynamics and measured feedback. Cover
+  stationary force acquisition, a bilateral-contact bottle lift and gravity release
+  on the unchanged shampoo scene.
+
+- Declare zero distortion for default reference-simulation pinhole cameras so
+  metric image consumers receive explicit rectified intrinsics. Preserve
+  supplied camera profiles and their declared optical properties.
+
+- Isolate reference MuJoCo rendering from physics/control with bounded camera work,
+  at most two inherited rendering CPUs, acquisition-time robot feedback and reset-generation
+  fencing. Keep measured motion outcomes and image freshness checks unchanged.
 
 - Read completed immutable YAM feedback publications without waiting on the CAN
   transaction lock for the verified pinned I2RT implementation. Preserve original

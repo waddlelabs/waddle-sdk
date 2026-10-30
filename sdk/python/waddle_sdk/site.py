@@ -75,12 +75,12 @@ _SEMVER = re.compile(
 _UTC_DEADLINE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
 
 
-
 # A run records one `run.step` event per submitted command (25 Hz on a YAM). Keeping
 # every one for a long session grew the heap without bound, and each full garbage
 # collection then held the GIL long enough to starve the motor loop. Steps keep a
 # recent window; every other event is kept for the session.
 STEP_EVENT_HISTORY = 4096
+
 
 class ConnectorCompatibilityWarning(UserWarning):
     """The connected host recommends an SDK upgrade before a deadline."""
@@ -1564,6 +1564,8 @@ class SiteSession:
             facts = {SupportFact.CAMERA_RGB}
             if description.intrinsics is not None:
                 facts.add(SupportFact.CAMERA_INTRINSICS)
+            if getattr(managed.cameras[name], "capture_state_supported", False):
+                facts.add(SupportFact.CAMERA_CAPTURE_STATE)
             if getattr(managed.cameras[name], "content_timing_kind", None) in (
                 "simulated_state",
                 "sensor_exposure",
@@ -1794,7 +1796,9 @@ class SiteSession:
             raise ValueError("after_cursor must be non-negative")
         with self._event_lock:
             rows = [event for event in self._events if event.cursor > after_cursor]
-            rows += [event for event in self._step_events if event.cursor > after_cursor]
+            rows += [
+                event for event in self._step_events if event.cursor > after_cursor
+            ]
         return tuple(sorted(rows, key=lambda event: event.cursor))
 
     def calibration_measurement(

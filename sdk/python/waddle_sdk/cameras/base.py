@@ -10,13 +10,20 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import numpy as np
 
+from .capture_state import CameraCaptureState
 from .timing import CameraContentTiming, validate_content_timing
 
 if TYPE_CHECKING:
     from .. import SessionStamp
     from ..descriptors import Intrinsics
 
-__all__ = ["CameraCalibrationDriver", "CameraDriver", "CameraFrame", "CameraSample"]
+__all__ = [
+    "CameraCalibrationDriver",
+    "CameraCaptureStateDriver",
+    "CameraDriver",
+    "CameraFrame",
+    "CameraSample",
+]
 
 _DEPTH_PREVIEW_NEAR_M = 0.15
 _DEPTH_PREVIEW_FAR_M = 3.0
@@ -161,12 +168,17 @@ class CameraFrame:
         )
     )
     content_timing: CameraContentTiming | None = None
+    capture_state: CameraCaptureState | None = None
 
     def __post_init__(self) -> None:
         rgb = _frozen_rgb(self.rgb)
         object.__setattr__(self, "rgb", rgb)
         object.__setattr__(self, "depth", _frozen_depth(self.depth, rgb.shape))
         validate_content_timing(self.content_timing, self.depth)
+        if self.capture_state is not None and not isinstance(
+            self.capture_state, CameraCaptureState
+        ):
+            raise TypeError("capture_state must be CameraCaptureState or None")
         if self.point_resolver is not None and not callable(self.point_resolver):
             raise TypeError("camera point_resolver must be callable")
 
@@ -198,11 +210,27 @@ class CameraCalibrationDriver(Protocol):
     def intrinsics(self) -> Intrinsics: ...
 
 
+@runtime_checkable
+class CameraCaptureStateDriver(Protocol):
+    """Optional exact acquisition-time robot feedback and paired clock port.
+
+    ``capture_state_supported`` explicitly gates the extension. The supplied
+    ``stamp`` callback must run at acquisition, before deferred processing.
+    Drivers retain ordinary capture/close for clients without this extension.
+    """
+
+    capture_state_supported: bool
+    capture_revision: str
+
+    def capture_with_state(self, stamp: Callable[[], SessionStamp]) -> CameraFrame: ...
+
+
 @dataclass(frozen=True, eq=False)
 class CameraSample:
     """An immutable RGB or RGB-D sample on the session's paired clocks.
 
-    ``stamp`` is minted once by ``Session.stamp()`` immediately after capture;
+    ``stamp`` is minted once by ``Session.stamp()`` at acquisition when paired
+    capture state is supported, otherwise immediately after capture;
     its session-monotonic and Unix twins therefore remain an atomic pair.
     Raw metric depth is aligned to RGB and remains local to the owning rig.
     A derived RGB8 visualization may independently ride the media plane.
@@ -220,6 +248,7 @@ class CameraSample:
         )
     )
     content_timing: CameraContentTiming | None = None
+    capture_state: CameraCaptureState | None = None
 
     def __post_init__(self) -> None:
         session_ns = getattr(self.stamp, "session_ns", None)
@@ -247,6 +276,16 @@ class CameraSample:
         object.__setattr__(self, "rgb", rgb)
         object.__setattr__(self, "depth", _frozen_depth(self.depth, rgb.shape))
         validate_content_timing(self.content_timing, self.depth)
+        if self.capture_state is not None:
+            if not isinstance(self.capture_state, CameraCaptureState):
+                raise TypeError("capture_state must be CameraCaptureState or None")
+            if (self.stamp.session_ns, self.stamp.unix_ns) != (
+                self.capture_state.stamp.session_ns,
+                self.capture_state.stamp.unix_ns,
+            ):
+                raise ValueError(
+                    "camera sample and capture state must share the exact paired stamp"
+                )
         if self.point_resolver is not None and not callable(self.point_resolver):
             raise TypeError("camera point_resolver must be callable")
 

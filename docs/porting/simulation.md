@@ -236,7 +236,13 @@ bodies:
 The generated MuJoCo backend exposes these named joints, body poses and contacts only
 through a separately retained `SimulationAdministration`. Reset restores the resolved
 initial body state, robot state, controls, sensors, and simulation clock without
-reopening the participant's SDK session.
+reopening the participant's SDK session. Backends may separately implement
+`SimulationSceneReplacementBackend`: advertise `supports_scene_replacement` and
+accept `evaluation_replace_scene(WorldConfig)` only when existing robot/camera
+contracts remain valid. Trusted callers check `SimulationAdministration.can_replace_scene`
+and drain work before replacement; unsupported worlds remain usable through the
+normal lifecycle. See [trusted administration](../python/simulation.md) for
+revision, stale-image and failure obligations.
 
 An authored scene may add a complete non-secret runtime identity when a trusted
 controller must admit only an exact scene/embodiment combination:

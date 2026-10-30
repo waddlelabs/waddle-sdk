@@ -1,4 +1,30 @@
+Native MuJoCo scene lifecycle tests require the optional `mujoco` extra and must
+skip before importing/opening a simulator when it is unavailable. Keep normal
+package installation independent of simulation dependencies. Run native lifecycle
+acceptance separately in a configured simulator environment.
+
 # AGENTS.md — waddle-sdk monorepo
+
+Imported reference MuJoCo worlds optionally use an allocation-private compiled
+model cache selected by `WADDLE_SIMULATION_MODEL_CACHE`. The loader hashes the
+complete confined source inventory and binds the native version/platform; each
+hit loads a new model, and each owner creates fresh state. Missing/corrupt cache
+evidence recompiles the original source. Keep this directory outside untrusted
+code/input mounts; no samples, authority or outcomes are cached. See
+[simulation caching](docs/python/simulation.md#compiled-model-cache).
+
+Generated YAM source poses serialize at twelve decimal places with canonical zero
+to remove insignificant cross-host BLAS differences from model hashes. Preserve
+vendor asset verification and existing saved model bytes; consumers must explicitly
+regenerate for the new source serialization. See docs/porting/source-models.md.
+
+Reference MuJoCo rendering runs separately from physics/control, with bounded
+camera work, at most two inherited rendering CPUs, acquisition-time robot feedback and
+reset-generation fencing. Keep measured motion outcomes and image freshness
+checks unchanged.
+Late snapshot pairing discards the acquisition and permits at most three fresh
+attempts under the same 50 ms bound; it never restamps old feedback. Persistent
+lateness and original snapshot/transport failures remain camera faults.
 
 YAM feedback reads use a single completed immutable vendor JointStates publication
 when the installed I2RT observation/publication/allocation code matches the
@@ -24,6 +50,15 @@ Hold/e-stop/close and selected supervision streams clear that mode. Capability
 facts and explicit force limits are required; kinematic drivers cannot invent
 force feedback. YAM LINEAR_4310 and native MuJoCo YAM provide nominal motor/actuator
 estimates with provenance, not calibrated contact-force qualification.
+MuJoCo YAM force hold switches the existing actuator to bounded native motor
+effort after contact acquisition, retaining the drive's damping as a passive
+transmission load. Zero force, Hold and reset restore the original position servo,
+control limits and passive damping. Force feedback remains native actuator effort;
+empty jaws do not qualify as object contact. Native constant/changing unequal-load,
+retention and release checks live in
+`sdk/tests/test_simulation_force_grip.py`, including a shampoo force grasp with
+stationary jaws, bilateral-contact lift and gravity release on unchanged scene
+physics. This controlled native witness does not establish autonomous task success.
 The YAM force-limiter seam also smooths ordinary accepted jaw position steps
 over 40 ms at motor rate, bounded to 1.0 normalized action/s for direct goals.
 Vendor clog correction and force mode remain immediate; this is position
@@ -121,7 +156,10 @@ drivers, shared admission or jaw velocity commands. Focused behavior checks live
 in `sdk/tests/test_simulation_admission.py` and `sdk/tests/test_native_scene.py`.
 MuJoCo also supports a shared two-arm instance with part-scoped control and wrist
 cameras. Exact physical stream/intrinsics/mount rows can replace the clearly marked
-development camera defaults before publication. Its public planner-source helper
+development camera defaults before publication. Default pinhole camera
+declarations explicitly include zero distortion coefficients, allowing metric
+consumers to distinguish rectified pixels from unknown distortion. Supplied
+camera profiles remain authoritative. Its public planner-source helper
 uses the same pinned chain and builds bounded deterministic spatial hulls from
 complete source collision pieces for every reference family. It
 records the proxy method and its fixed-open-hand/no-scene scope. The
@@ -1113,3 +1151,35 @@ and the `limits.position_error` support fact; exact refusal context retains the
 enforced vector. Callers own reference timing/convergence; no extra SDK controller
 or vendor interpolation is introduced. See
 [position tracking allowance](docs/porting/robot.md#position-tracking-allowance).
+
+## Editable reference scenes
+
+Authored two-YAM scenes may select a finite native `fixture` and bounded `seed`.
+Reuse reference assemblies and preserve compound geometry/contact identity;
+never accept executable scene imports through authoring data. Seed zero remains
+canonical and reset repeats the compiled variation. Added props remain separate.
+The authored-scene compiler assigns stable names to unnamed fixture collision
+shapes, including compound children, before applying its finger-contact profile.
+Keep existing shape names and contact pairs. Both-arm peg pickup, unsupported
+hold, ordinary-material drop control and opening release are covered in
+`sdk/tests/test_playground_grasp.py`; static stability alone does not qualify grasp
+behavior. Existing compiled scenes remain immutable.
+
+Reference worker IPC prioritizes queued robot feedback/control over camera and
+viewer snapshots, including independent rendering's `render_snapshot` requests.
+Keep FIFO within each priority and complete the active transaction before the
+next; never bypass synchronization or relax camera content bounds.
+
+`simulators.playground` compiles immutable native scenes from bounded object data.
+Preserve reference actuation/capabilities and measured outcomes; easy contacts must
+never fabricate a grasp or attach a missed object. The moderate material profile
+uses a 1 mm torsional patch; centered retention, marginal/weak drops and opening
+release are checked in `sdk/tests/test_playground_grasp.py`. Native manifests resolve from
+the SDK site root. See [authoring contract](docs/python/simulation.md#editable-tabletop-scenes).
+
+Trusted scene editors can use the optional `SimulationSceneReplacementBackend`
+through `SimulationAdministration.can_replace_scene/replace_scene`. Reference
+MuJoCo retains its physics/render processes for self-contained native scenes with
+unchanged robot/camera contracts. Keep participant drain, episode invalidation,
+render-generation fencing, immutable source bytes and failed-admin fencing.
+Unsupported worlds retain close/open; this capability is never a participant tool.
