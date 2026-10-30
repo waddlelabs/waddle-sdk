@@ -3,8 +3,8 @@
 `waddle_runtime::playback` accounts for a fully received, bounded sequence of
 joint-position references on a local session clock. `Session.start_playback`
 executes an admitted buffer on the existing serialized `waddle-verbs` thread.
-**The Python Site/Run API does not yet expose it, and no current connector
-automatically uses it.** It opens no device and creates no additional thread,
+The Python `Run.start_playback` interface uses this worker; current connectors
+do not automatically use it. It opens no device and creates no additional thread,
 claim or lease.
 
 ## Input and timing
@@ -97,8 +97,56 @@ an uncertain write safe.
 
 A terminal execution result means the reference loop has drained. It is not a
 claim that a safety verb physically stopped the device: the original verb outcome
-and owner measurements remain separate evidence. Public Python owner adaptation,
-support facts and connector transport integration are still pending.
+and owner measurements remain separate evidence. Connector transport integration
+is still pending.
+
+## Python Run execution
+
+The optional `FinitePlaybackRunPort` in `waddle_sdk.runtime` exposes
+`start_playback(FiniteJointMotion)`. Check the addressed part's
+`execution.finite_joint_playback` support fact. The local Site implementation
+declares it for a joint-position part with registered Send and Hold verbs;
+the fact never grants permission or bypasses native gating.
+
+Build the immutable request using `JointReference(offset_ns, command)` and
+`PlaybackPolicy`. Commands use `JointPositionCommand` in the part's declared
+joint order and units, with optional declared velocity feedforward. The first
+reference must match measured start within the supplied tolerances. The final
+hint must be zero. Supply the entire validated sequence before admission; this
+interface performs no planning, fitting or interpolation beyond holding each
+reference until the next one. Force modifiers are refused. An existing force
+mode survives an unchanged caller action under the ordinary owner rules.
+
+The returned handle provides:
+
+- `snapshot()`: an independent dictionary with `id`, `episode_id`, `dispatched`,
+  `references`, `feedback`, `status`, and `failure`. Feedback retains `observed_ns`,
+  positions and velocities. Status is `running`, `arrived`, `settled`, or `failed`.
+- `wait()`: the same snapshot after native drain, releasing the Python interpreter
+  lock while waiting; it creates no polling thread.
+- `cancel(reason)`: native cancellation and the registered Hold path, without
+  replaying or changing a terminal result.
+
+Failure includes a stable `code`, original `detail`, `outcome_unknown` and
+structured `evidence` for owner failures. Observation and dispatch failures remain
+distinct. Native failures retain codes such as `stale_start`, `late_reference`,
+`deadline`, `invalid_feedback`, `cancelled` and `superseded`; late references also
+retain their index and lateness. A raising write is conservatively uncertain,
+even when cleanup later succeeds. There is no automatic retry.
+
+Each reference crosses the same native episode gate and complete owner envelope
+as `Run.step`, including configured cross-part checks. Gate-selected substitutions
+are applied normally and end this buffer as superseded. Direct `step`/`step_parts`
+and another buffer return Busy while playback is active. Run exit always drains,
+including an already terminal episode, before site teardown may park or close
+hardware. Unconfirmed drain retains site ownership. Hardware watchdogs and
+physical stop measurements remain required; draining a callback is not physical
+stop proof. A connector must supply its explicit disconnect cancellation policy;
+this local API does not observe network liveness.
+
+Python/native binding API 10 is required. Install matching SDK/media wheels from
+one revision in an idle environment; never replace a running hardware owner's
+native module to test this API.
 
 ## Failure and evidence
 

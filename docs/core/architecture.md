@@ -36,7 +36,8 @@ reuses validated action chunks and separates dispatch receipts from measured
 completion. `Session.start_playback` uses the existing serialized control thread
 and local gate/owner adapters, with cancellation and episode/shutdown drain. It
 does not alter the gate, grants, leases or existing intervention stream. Python
-owner adaptation and connector integration remain pending.
+`Run.start_playback` adapts local observation and the ordinary owner submission;
+connector transport integration remains pending.
 
 ## Build and conformance
 

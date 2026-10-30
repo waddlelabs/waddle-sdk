@@ -559,14 +559,11 @@ fn retake_successor_inherits_session_post_reset_hook() {
         reason: "done".to_owned(),
         at: waddle_types::MonoNs(4_000_000),
     });
+    // The mirror publishes PostReset before the separate hook pump invokes the
+    // callback. Observe both facts instead of racing that dispatch thread.
     wait_for(&session, |s| {
-        matches!(s.episode_state, Some(Phase::PostReset))
+        matches!(s.episode_state, Some(Phase::PostReset)) && invoked.load(Ordering::SeqCst) == 1
     });
-    assert_eq!(
-        invoked.load(Ordering::SeqCst),
-        1,
-        "the successor's inherited session post-reset hook ran"
-    );
 
     drop(release);
     wait_for(&session, |s| {

@@ -38,10 +38,12 @@ from .runtime import (
     SUPPORT_CONTRACT_VERSION,
     BodySphere,
     FaultCode,
+    FiniteJointMotion,
     JointPositionCommand,
     JSONValue,
     Observation,
     PartObservation,
+    PlaybackHandlePort,
     Pose,
     RuntimeEvent,
     RuntimeFault,
@@ -1147,6 +1149,17 @@ class SiteSession:
                 if self._active is not None:
                     self._active.__exit__(exc_type, exc, tb)
             finally:
+                # Do not park or close devices while a failed run teardown may
+                # still be executing a reference. Keep ownership on uncertainty.
+                if (
+                    self._active is not None
+                    and self._active._episode is not None
+                    and self._active._episode.playback_active
+                ):
+                    raise SiteOwnershipError(
+                        "site_close_unknown",
+                        "Finite playback did not drain; ownership remains held",
+                    )
                 self._service_stop.set()
                 if self._service_thread is not None:
                     self._service_thread.join(timeout=5.0)
@@ -1492,6 +1505,8 @@ class SiteSession:
             if isinstance(joint_position, Mapping):
                 facts.add(SupportFact.JOINT_POSITION_ACTION)
                 facts.update((SupportFact.PART_ACTION, SupportFact.PART_OBSERVATION))
+                if {SupportFact.SEND_GRANT, SupportFact.HOLD_GRANT} <= grant_facts:
+                    facts.add(SupportFact.FINITE_JOINT_PLAYBACK)
                 joints = joint_position.get("joints", [])
                 if isinstance(joints, list) and joints:
                     if all(
@@ -1924,7 +1939,7 @@ class Run:
 
     def __exit__(self, exc_type, exc, tb) -> bool:
         try:
-            if self._episode is not None and not self._episode.done:
+            if self._episode is not None:
                 reason = (
                     "run exited before a terminal outcome"
                     if exc_type is None
@@ -1944,7 +1959,9 @@ class Run:
                     {"run_id": self.id, "outcome": self._episode.outcome or "abort"},
                 )
         finally:
-            if self._session._active is self:
+            if self._session._active is self and not (
+                self._episode is not None and self._episode.playback_active
+            ):
                 self._session._active = None
         return False
 
@@ -1954,7 +1971,9 @@ class Run:
         return self._session.observe()
 
     def step(self, action, observation=None) -> SubmitResult:
+        self._require_idle_playback()
         with self._session._dispatch_lock:
+            self._require_idle_playback()
             started = time.monotonic()
             result = self._step(action, observation)
             return replace(
@@ -1970,6 +1989,7 @@ class Run:
         exception does not erase prior receipts or skip other submissions. This
         does not guarantee isolation from shared hardware or envelope dependencies.
         """
+        self._require_idle_playback()
         arms = self._session._require().arms
         if not isinstance(commands, Mapping) or not commands:
             raise RuntimeFault(
@@ -1985,6 +2005,7 @@ class Run:
             )
         results = {}
         with self._session._dispatch_lock:
+            self._require_idle_playback()
             for part, command in commands.items():
                 started = time.monotonic()
                 try:
@@ -2012,6 +2033,18 @@ class Run:
                     dispatch_completed_monotonic_s=time.monotonic(),
                 )
         return results
+
+    def _require_idle_playback(self) -> None:
+        if self._episode is not None and self._episode.playback_active:
+            raise RuntimeFault(FaultCode.BUSY, "finite playback is still active")
+
+    def start_playback(self, motion: FiniteJointMotion) -> PlaybackHandlePort:
+        """Admit finite references to the local native worker; never wait for motion."""
+        from ._playback import start
+
+        self._require_idle_playback()
+        with self._session._dispatch_lock:
+            return start(self, motion)
 
     def _step(self, action, observation=None, *, part=None) -> SubmitResult:
         if self._episode is None:

@@ -21,18 +21,26 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Public `Run.start_playback(FiniteJointMotion)` and optional structural execution
+  ports, using native timing and the ordinary local gate/owner envelope. Add a
+  per-part support fact, measured status/fault snapshots, cancellation, and drain
+  before run/site teardown. Preserve exact references and velocity hints; reject
+  concurrent direct writes and unsupported force modifiers. Python/native binding
+  API 10 rejects stale extensions before hardware opens. Connector integration
+  and physical qualification remain pending.
+
 - Native session execution of finite reference buffers on the existing serialized
   control thread. Validate the declared scope before local I/O; retain measured
   completion, original faults and separate Hold/e-stop outcomes. Cancel/drain on
   control takeover, episode closure and shutdown without replaying references or
   letting stale handles stop successors. Slow declared feedback cannot postpone
-  reference-lateness checks or the buffer deadline. Python adaptation and connector transport
-  remain pending; no installed runtime or physical owner is activated.
+  reference-lateness checks or the buffer deadline. Connector transport remains
+  pending; no installed runtime or physical owner is activated.
 
 - Native finite joint-reference accounting using existing action chunks. Separate
   admission/dispatch from measured arrival and optional settled misses; refuse
   stale starts, late or unacknowledged references, invalid feedback and cancellation
-  without replay. Public Python execution and connector integration remain pending.
+  without replay. Connector integration remains pending.
 
 - Optional private compiled MuJoCo model reuse for verified native scenes. Fresh
   model/data instances preserve independent state; source/native-version identity

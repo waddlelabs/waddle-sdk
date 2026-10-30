@@ -57,6 +57,24 @@ SDK-owned receipts include local monotonic bounds for the dispatch call after it
 acquires the shared dispatch boundary; applications may use the start bound for
 cadence without counting unrelated lock wait as driver execution.
 
+## Finite joint playback
+
+`FinitePlaybackRunPort.start_playback(FiniteJointMotion)` admits one complete,
+bounded buffer for a named part when `execution.finite_joint_playback` is present.
+`JointReference` carries an exact position command and local offset;
+`PlaybackPolicy` supplies selected-row start/completion tolerances and bounded
+settling, lateness and timeout. Core validates and executes it on the existing
+control thread. Python adapts observation and the same gate/owner envelope used
+by `Run.step`; never add a frontend timer, replay loop or remote per-step call.
+
+The handle's `snapshot` and `wait` retain identity, dispatch count, measured state,
+status and original failure evidence. `cancel` requests native drain/Hold. A
+terminal handle cannot cancel a successor. Direct steps return Busy while playback
+is active, and run/site teardown drains before hardware parking/close. Binding API
+10 prevents stale native wheels from opening hardware through this surface. Force
+modifiers, dynamic reference updates and coupled multi-part execution remain
+unsupported. See `docs/core/finite-reference-playback.md` in a source checkout.
+
 ## Imported simulation worlds
 
 Reference MuJoCo configuration can select an explicit `native_scene` with
