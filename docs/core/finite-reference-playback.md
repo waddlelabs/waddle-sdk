@@ -1,10 +1,11 @@
-# Finite reference playback accounting
+# Finite reference playback
 
 `waddle_runtime::playback` accounts for a fully received, bounded sequence of
-joint-position references on a local session clock. It is the native foundation
-for buffered execution. **The Python Site/Run API does not yet expose it, and no
-current connector automatically uses it.** It opens no device and creates no
-thread, claim or lease.
+joint-position references on a local session clock. `Session.start_playback`
+executes an admitted buffer on the existing serialized `waddle-verbs` thread.
+**The Python Site/Run API does not yet expose it, and no current connector
+automatically uses it.** It opens no device and creates no additional thread,
+claim or lease.
 
 ## Input and timing
 
@@ -50,11 +51,52 @@ original observation timestamp. Remote emission time is not the execution clock.
 - `Complete(Settled)` is an explicitly enabled stationary miss, distinct from
   arrival. The final observation alone cannot relabel a miss as arrived.
 
-The execution owner must keep local observation and playback advancing without
-network requests. It must cancel/drain on run closure, preserve original hardware
-faults and apply the ordinary Hold/e-stop behavior. These owner and public-API
-integration points remain separate work; this accounting type alone is not a
-supervised execution service.
+The pure accounting interface is useful for deterministic tests. Actual native
+execution uses the session interface below; callers must not build a second
+frontend timing loop around it.
+
+## Native session execution
+
+`Session.start_playback(episode_id, wire_chunk, policy, io)` validates the complete
+chunk against the session's declared action space before admitting it. It accepts
+one joint-position scope, including one named part of a composite robot. It
+refuses a whole composite space, mixed scopes, inert actions and gripper side
+channels. A registered Hold callback is required. One reference loop can be
+outstanding; another admission or an outstanding control/safety request returns
+`Busy`. This is execution serialization, not an additional actuation lease.
+
+Implement `PlaybackIo` as local observation and dispatch adapters. `observe`
+returns fresh, original session-stamped positions and velocities. `dispatch`
+must use that episode's ordinary gate and owner's complete safety envelope.
+It returns `Dispatched` only for a confirmed write of the exact requested
+reference. A gate substitution, Hold or Noop follows its normal dispatch
+semantics and returns `Superseded`, ending this buffer without overriding the
+selected stream. Failed or uncertain writes return the original `PlaybackIoError`
+detail, opaque structured evidence and uncertainty flag. Neither callback may
+wait on a remote planner or synchronously wait for a verb on the same thread.
+The session clock determines reference deadlines; observation sampling between
+references uses the declared scope rate.
+
+The returned `ExecutionHandle` retains an ID, confirmed dispatch count, latest
+feedback and eventual result. `snapshot` is read-only; `wait` blocks on completion
+and language bindings must release their language lock while waiting. `cancel`
+ends future references and the worker requests the registered Hold. An in-flight
+callback finishes before that Hold; no buffered reference follows it. A terminal
+handle cannot cancel a successor or rewrite its own result. Cancellation racing
+an arrival waits for local cleanup instead of publishing arrival.
+
+Ordinary control verbs, priority Hold and e-stop cancel the buffer and use the
+same dispatch thread. Failed cleanup cannot erase an original observation/write
+failure. Session episode termination drains playback before terminal/reset
+processing; a stale episode exits without holding a successor. Shutdown joins
+the dispatch path before hardware may close. A stuck device callback still needs
+the owner's ordinary watchdog and fault handling; this API cannot forcibly make
+an uncertain write safe.
+
+A terminal execution result means the reference loop has drained. It is not a
+claim that a safety verb physically stopped the device: the original verb outcome
+and owner measurements remain separate evidence. Public Python owner adaptation,
+support facts and connector transport integration are still pending.
 
 ## Failure and evidence
 
@@ -64,6 +106,10 @@ or retry. An outstanding unacknowledged write stays uncertain rather than being
 offered again. Merely exhausting the buffer establishes neither arrival nor
 physical task success. `dispatched()` counts confirmed receipts only.
 
-`waddle-runtime/tests/finite_playback.rs` exercises these rules with explicit
-timestamps, without wall-clock races or hardware. It does not establish device
-timing, network performance or physical acceptance.
+`waddle-runtime/tests/finite_playback.rs` exercises accounting, declared-space
+admission and episode drain. Native worker tests in
+`waddle-runtime/src/playback/worker_tests.rs` use an advancing fake clock, the
+real native gate and callback barriers to check execution, stop ordering,
+supersession, retained faults and shutdown. No hardware or remote planner is
+involved. These tests do not establish device timing, WAN performance or physical
+acceptance.

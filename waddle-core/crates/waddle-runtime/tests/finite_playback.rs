@@ -5,6 +5,186 @@ use waddle_runtime::playback::{
 };
 use waddle_types::{ActionChunk, ProvenanceTag, SourceId, Step};
 
+mod session_execution {
+    use super::*;
+    use parking_lot::Mutex;
+    use std::sync::{Arc, mpsc};
+    use std::time::Duration;
+    use waddle_runtime::playback::{
+        ExecutionFailure, PlaybackIo, PlaybackIoError, ReferenceReceipt,
+    };
+    use waddle_runtime::{ControlRegistry, Session};
+    use waddle_types::{TerminalOutcome, pb::v0 as pb};
+
+    fn robot() -> pb::RobotDescription {
+        pb::RobotDescription {
+            name: "finite-reference-test".into(),
+            robot_id: "finite-reference-test".into(),
+            cell_id: "test".into(),
+            action_space: Some(pb::ActionSpace {
+                space: Some(pb::action_space::Space::JointPosition(pb::JointPosition {
+                    joints: ["j0", "j1"]
+                        .map(|name| pb::JointDescriptor {
+                            name: name.into(),
+                            ..Default::default()
+                        })
+                        .into(),
+                })),
+                rate_hz: 50.0,
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    fn input() -> pb::ActionChunk {
+        pb::ActionChunk {
+            actions: vec![pb::Action {
+                target: Some(pb::action::Target::JointPosition(pb::JointVector {
+                    values: vec![0.0, 0.5],
+                })),
+                ..Default::default()
+            }],
+            ..Default::default()
+        }
+    }
+
+    struct NoDispatch {
+        session: Session,
+        observe: Mutex<Option<(mpsc::Sender<()>, mpsc::Receiver<()>)>>,
+    }
+
+    impl PlaybackIo for NoDispatch {
+        fn observe(&self) -> Result<Feedback, PlaybackIoError> {
+            let (entered, release) = self.observe.lock().take().expect("one observation only");
+            entered.send(()).unwrap();
+            let _ = release.recv();
+            Ok(feedback(self.session.stamp().session_ns, 0.0))
+        }
+        fn dispatch(&self, _: &Step, _: &Feedback) -> Result<ReferenceReceipt, PlaybackIoError> {
+            panic!("rejected or cancelled input must never dispatch")
+        }
+    }
+
+    #[test]
+    fn session_validates_declared_action_space_before_starting_io() {
+        let dir = tempfile::tempdir().unwrap();
+        let session = Session::builder("finite-intake")
+            .robot(robot())
+            .control(ControlRegistry {
+                send: Some(Arc::new(|_: &ActionChunk| Ok(()))),
+                hold: Some(Arc::new(|| Ok(()))),
+                ..Default::default()
+            })
+            .recording_dir(dir.path())
+            .build()
+            .unwrap();
+        let ep = session.start_episode("validation").unwrap();
+        let io = Arc::new(NoDispatch {
+            session: session.clone(),
+            observe: Mutex::new(None),
+        });
+        for bad in [
+            pb::ActionChunk::default(),
+            pb::ActionChunk {
+                actions: vec![pb::Action {
+                    part: "unknown".into(),
+                    ..input().actions.remove(0)
+                }],
+                ..Default::default()
+            },
+            pb::ActionChunk {
+                actions: vec![pb::Action {
+                    target: Some(pb::action::Target::JointPosition(pb::JointVector {
+                        values: vec![0.0],
+                    })),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+        ] {
+            assert!(
+                session
+                    .start_playback(ep.id(), &bad, policy(), io.clone())
+                    .is_err()
+            );
+        }
+        assert!(!session.playback_active(ep.id()));
+        session.terminate_episode(ep.id(), TerminalOutcome::Abort, "test done");
+        assert_eq!(
+            session
+                .start_playback(ep.id(), &input(), policy(), io)
+                .unwrap_err(),
+            PlaybackError::Cancelled("episode ended".into())
+        );
+        session.shutdown();
+    }
+
+    #[test]
+    fn episode_termination_drains_reference_io_and_hold_before_terminal() {
+        let dir = tempfile::tempdir().unwrap();
+        let (hold_tx, hold_rx) = mpsc::channel();
+        let (release_hold, wait_hold) = mpsc::channel();
+        let wait_hold = Mutex::new(Some(wait_hold));
+        let session = Session::builder("finite-drain")
+            .robot(robot())
+            .control(ControlRegistry {
+                send: Some(Arc::new(|_: &ActionChunk| Ok(()))),
+                hold: Some(Arc::new(move || {
+                    if let Some(wait) = wait_hold.lock().take() {
+                        hold_tx.send(()).unwrap();
+                        let _ = wait.recv();
+                    }
+                    Ok(())
+                })),
+                ..Default::default()
+            })
+            .recording_dir(dir.path())
+            .build()
+            .unwrap();
+        let ep = session.start_episode("drain").unwrap();
+        let (observe_tx, observe_rx) = mpsc::channel();
+        let (release_observe, wait_observe) = mpsc::channel();
+        let handle = session
+            .start_playback(
+                ep.id(),
+                &input(),
+                policy(),
+                Arc::new(NoDispatch {
+                    session: session.clone(),
+                    observe: Mutex::new(Some((observe_tx, wait_observe))),
+                }),
+            )
+            .unwrap();
+        observe_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        handle.cancel("close");
+        let (done_tx, done_rx) = mpsc::channel();
+        let close_session = session.clone();
+        let id = ep.id().clone();
+        let closing = std::thread::spawn(move || {
+            close_session.terminate_episode(&id, TerminalOutcome::Abort, "test close");
+            done_tx.send(()).unwrap();
+        });
+        release_observe.send(()).unwrap();
+        hold_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(handle.snapshot().result.is_none());
+        assert!(session.playback_active(ep.id()));
+        assert!(!session.episode_done(ep.id()));
+        assert!(done_rx.try_recv().is_err());
+        release_hold.send(()).unwrap();
+        done_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        closing.join().unwrap();
+        assert_eq!(
+            handle.wait().result,
+            Some(Err(ExecutionFailure::Playback(PlaybackError::Cancelled(
+                "close".into()
+            ))))
+        );
+        assert!(session.episode_done(ep.id()));
+        session.shutdown();
+    }
+}
+
 fn chunk() -> ActionChunk {
     ActionChunk {
         steps: [0.0, 0.1, 0.2]

@@ -7,14 +7,25 @@
 
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
 use parking_lot::Mutex;
 use waddle_types::time::Clock;
-use waddle_types::{ActionChunk, Verb, VerbRequest};
+use waddle_types::{ActionChunk, EpisodeId, Verb, VerbRequest};
+
+use crate::mirror::Mirror;
+use crate::playback::execution::{ExecutionSlot, ExecutionTask};
+use crate::playback::{
+    ExecutionFailure, ExecutionHandle, FiniteReferences, PlaybackError, PlaybackIo,
+};
+
+enum Work {
+    Verb(VerbRequest),
+    Playback(Box<ExecutionTask>),
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum VerbError {
@@ -123,9 +134,12 @@ impl DispatchStats {
 /// Handle to the dispatch thread.
 #[derive(Debug)]
 pub struct VerbDispatch {
-    tx: Sender<VerbRequest>,
-    estop_flag: Arc<AtomicBool>,
-    priority_hold_flag: Arc<AtomicBool>,
+    tx: Sender<Work>,
+    estop_flag: Arc<AtomicUsize>,
+    priority_hold_flag: Arc<AtomicUsize>,
+    pending_verbs: Arc<AtomicUsize>,
+    playback: ExecutionSlot,
+    playback_available: bool,
     pub stats: Arc<DispatchStats>,
     thread: Option<JoinHandle<()>>,
     shutdown: Arc<AtomicBool>,
@@ -137,9 +151,11 @@ impl VerbDispatch {
         clock: C,
         outcomes: Sender<VerbOutcome>,
     ) -> Self {
-        let (tx, rx) = std::sync::mpsc::channel::<VerbRequest>();
-        let estop_flag = Arc::new(AtomicBool::new(false));
-        let priority_hold_flag = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = std::sync::mpsc::channel::<Work>();
+        let estop_flag = Arc::new(AtomicUsize::new(0));
+        let priority_hold_flag = Arc::new(AtomicUsize::new(0));
+        let pending_verbs = Arc::new(AtomicUsize::new(0));
+        let playback_available = registry.hold.is_some();
         let stats = Arc::new(DispatchStats::default());
         let shutdown = Arc::new(AtomicBool::new(false));
 
@@ -147,6 +163,7 @@ impl VerbDispatch {
         let hold_flag = priority_hold_flag.clone();
         let stats_thread = stats.clone();
         let shutdown_thread = shutdown.clone();
+        let pending_thread = pending_verbs.clone();
         let thread = std::thread::Builder::new()
             .name("waddle-verbs".into())
             .spawn(move || {
@@ -159,6 +176,7 @@ impl VerbDispatch {
                     &hold_flag,
                     &stats_thread,
                     &shutdown_thread,
+                    &pending_thread,
                 );
             })
             .expect("spawn verb dispatch");
@@ -170,27 +188,75 @@ impl VerbDispatch {
             stats,
             thread: Some(thread),
             shutdown,
+            pending_verbs,
+            playback: ExecutionSlot::default(),
+            playback_available,
         }
     }
 
     /// Queue a verb request (serialized, in order). Estop never queues: it
     /// rides the priority flag, checked before every dequeue.
     pub fn request(&self, req: VerbRequest) {
-        if matches!(req, VerbRequest::Estop) {
-            self.estop_flag.store(true, Ordering::SeqCst);
-            return;
-        }
-        let _ = self.tx.send(req);
+        self.playback.interrupt("control verb requested", || {
+            if matches!(req, VerbRequest::Estop) {
+                self.estop_flag.fetch_add(1, Ordering::SeqCst);
+            } else {
+                self.pending_verbs.fetch_add(1, Ordering::SeqCst);
+                if self.tx.send(Work::Verb(req)).is_err() {
+                    self.pending_verbs.fetch_sub(1, Ordering::SeqCst);
+                }
+            }
+        });
     }
 
     /// Queue a local HOLD ahead of ordinary verb traffic. Unlike e-stop this
     /// does not revoke authority; it is the core-owned energized hold path.
     pub fn request_priority_hold(&self) {
-        self.priority_hold_flag.store(true, Ordering::SeqCst);
+        self.playback.interrupt("priority Hold requested", || {
+            self.priority_hold_flag.fetch_add(1, Ordering::SeqCst);
+        });
+    }
+
+    pub(crate) fn start_playback(
+        &self,
+        mirror: Arc<Mirror>,
+        episode: EpisodeId,
+        references: FiniteReferences,
+        io: Arc<dyn PlaybackIo>,
+        sample_period_ns: i64,
+    ) -> Result<ExecutionHandle, PlaybackError> {
+        if !self.playback_available {
+            return Err(PlaybackError::Invalid(
+                "requires a registered Hold callback",
+            ));
+        }
+        let handle = self
+            .playback
+            .register(episode.clone(), references.len(), || {
+                self.shutdown.load(Ordering::SeqCst)
+                    || self.pending_verbs.load(Ordering::SeqCst) != 0
+                    || self.estop_flag.load(Ordering::SeqCst) != 0
+                    || self.priority_hold_flag.load(Ordering::SeqCst) != 0
+            })?;
+        let task = ExecutionTask::new(mirror, episode, references, io, &handle, sample_period_ns);
+        self.tx
+            .send(Work::Playback(Box::new(task)))
+            .map_err(|_| PlaybackError::Cancelled("local execution worker stopped".into()))?;
+        Ok(handle)
+    }
+
+    pub(crate) fn playback_active(&self, episode: &EpisodeId) -> bool {
+        self.playback.active(episode)
+    }
+
+    pub(crate) fn drain_playback(&self, episode: &EpisodeId) {
+        if let Some(handle) = self.playback.cancel_episode(episode) {
+            handle.wait();
+        }
     }
 
     pub fn shutdown(mut self) {
-        self.shutdown.store(true, Ordering::SeqCst);
+        self.stop();
         if let Some(t) = self.thread.take() {
             let _ = t.join();
         }
@@ -200,7 +266,9 @@ impl VerbDispatch {
     /// the session's ordered teardown: stopping dispatch drops the outcome
     /// sender, which lets the outcome pump exit.
     pub fn stop(&self) {
-        self.shutdown.store(true, Ordering::SeqCst);
+        self.playback.interrupt("session shutdown", || {
+            self.shutdown.store(true, Ordering::SeqCst);
+        });
     }
 }
 
@@ -217,33 +285,106 @@ impl Drop for VerbDispatch {
 fn dispatch_loop<C: Clock>(
     registry: &ControlRegistry,
     clock: &C,
-    rx: &Receiver<VerbRequest>,
+    rx: &Receiver<Work>,
     outcomes: &Sender<VerbOutcome>,
-    estop_flag: &AtomicBool,
-    priority_hold_flag: &AtomicBool,
+    estop_flag: &AtomicUsize,
+    priority_hold_flag: &AtomicUsize,
     stats: &DispatchStats,
     shutdown: &AtomicBool,
+    pending_verbs: &AtomicUsize,
 ) {
+    let mut active: Option<Box<ExecutionTask>> = None;
     loop {
         if shutdown.load(Ordering::SeqCst) {
+            if active.is_some() {
+                let stop = if estop_flag.load(Ordering::SeqCst) != 0 {
+                    VerbRequest::Estop
+                } else {
+                    VerbRequest::Hold
+                };
+                execute(registry, clock, &stop, outcomes, stats);
+            }
             return;
         }
         // Estop preempts anything queued.
-        if estop_flag.swap(false, Ordering::SeqCst) {
+        let estops = estop_flag.load(Ordering::SeqCst);
+        if estops != 0 {
             execute(registry, clock, &VerbRequest::Estop, outcomes, stats);
+            finish_cancelled(&mut active);
+            estop_flag.fetch_sub(estops, Ordering::SeqCst);
             continue;
         }
         // An energized HOLD preempts ordinary traffic but never e-stop.
-        if priority_hold_flag.swap(false, Ordering::SeqCst) {
+        let holds = priority_hold_flag.load(Ordering::SeqCst);
+        if holds != 0 {
             execute(registry, clock, &VerbRequest::Hold, outcomes, stats);
+            finish_cancelled(&mut active);
+            priority_hold_flag.fetch_sub(holds, Ordering::SeqCst);
             continue;
         }
-        match rx.recv_timeout(Duration::from_millis(5)) {
-            Ok(req) => execute(registry, clock, &req, outcomes, stats),
-            Err(RecvTimeoutError::Timeout) => {}
+        let wait = active.as_ref().map_or(Duration::from_millis(5), |task| {
+            task.wait_duration(clock.stamp_now().mono_ns().0)
+        });
+        match rx.recv_timeout(wait) {
+            Ok(Work::Verb(req)) => {
+                execute(registry, clock, &req, outcomes, stats);
+                finish_cancelled(&mut active);
+                pending_verbs.fetch_sub(1, Ordering::SeqCst);
+            }
+            Ok(Work::Playback(task)) => {
+                if let Some(result) = task.cancelled_result() {
+                    task.finish(result);
+                } else {
+                    debug_assert!(active.is_none());
+                    active = Some(task);
+                }
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                if let Some(task) = active.as_mut()
+                    && let Some(result) = task.tick(clock)
+                {
+                    // A selected substitute stream retains its own normal gate
+                    // semantics. Other failures stop this task through Hold;
+                    // an already requested e-stop takes priority over that Hold.
+                    // A queued control request owns cancellation and its stop
+                    // semantics. Process it before marking this loop drained.
+                    if task.cancelled_result().is_some()
+                        && (pending_verbs.load(Ordering::SeqCst) != 0
+                            || estop_flag.load(Ordering::SeqCst) != 0
+                            || priority_hold_flag.load(Ordering::SeqCst) != 0)
+                    {
+                        continue;
+                    }
+                    if result
+                        .as_ref()
+                        .is_err_and(|e| !matches!(e, ExecutionFailure::Superseded(_)))
+                        && !task.scope_ended()
+                    {
+                        let estops = estop_flag.load(Ordering::SeqCst);
+                        if estops != 0 {
+                            execute(registry, clock, &VerbRequest::Estop, outcomes, stats);
+                            estop_flag.fetch_sub(estops, Ordering::SeqCst);
+                        } else {
+                            execute(registry, clock, &VerbRequest::Hold, outcomes, stats);
+                        }
+                    }
+                    if task.finish(result) {
+                        active = None;
+                    }
+                }
+            }
             Err(RecvTimeoutError::Disconnected) => return,
         }
     }
+}
+
+fn finish_cancelled(active: &mut Option<Box<ExecutionTask>>) {
+    if let Some(task) = active.take()
+        && let Some(result) = task.terminal_failure().or_else(|| task.cancelled_result())
+    {
+        task.finish(result);
+    }
+    // Drop retains a cancellation even when the request raced admission.
 }
 
 fn execute<C: Clock>(
@@ -290,6 +431,10 @@ fn execute<C: Clock>(
 fn unit(slot: &Option<Arc<dyn UnitVerb>>, verb: Verb) -> Result<(), VerbError> {
     slot.as_ref().ok_or(VerbError::NotRegistered(verb))?.call()
 }
+
+#[cfg(test)]
+#[path = "playback/worker_tests.rs"]
+mod playback_tests;
 
 #[cfg(test)]
 mod tests {

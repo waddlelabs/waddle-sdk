@@ -21,6 +21,13 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Native session execution of finite reference buffers on the existing serialized
+  control thread. Validate the declared scope before local I/O; retain measured
+  completion, original faults and separate Hold/e-stop outcomes. Cancel/drain on
+  control takeover, episode closure and shutdown without replaying references or
+  letting stale handles stop successors. Python adaptation and connector transport
+  remain pending; no installed runtime or physical owner is activated.
+
 - Native finite joint-reference accounting using existing action chunks. Separate
   admission/dispatch from measured arrival and optional settled misses; refuse
   stale starts, late or unacknowledged references, invalid feedback and cancellation

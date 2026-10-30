@@ -36,8 +36,11 @@ Every action source crosses the same gate and owner envelope. No language fronte
 The runtime's `playback` module accounts for finite joint-reference buffers using
 the existing `ActionChunk` types. It distinguishes dispatch acknowledgement from
 measured arrival and refuses stale starts, missing acknowledgements, late steps
-and cancellation without retry. It does not create authority or a device owner;
-public Python execution and connector integration are still pending. See
+and cancellation without retry. `Session.start_playback` validates the declared
+scope and runs local observation/gate/owner callbacks on the existing serialized
+control thread. Hold/e-stop, episode closure and shutdown drain the reference loop;
+original faults and stop outcomes stay separate. It creates no authority or device
+owner. Public Python execution and connector integration are still pending. See
 `docs/core/finite-reference-playback.md` in a source checkout for the contract.
 
 ## Conformance change protocol
