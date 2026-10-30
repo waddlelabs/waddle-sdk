@@ -45,6 +45,7 @@ nav:
       - Normative FSM: core/fsm.md
       - Normative versioning rules: core/versioning.md
       - Architecture: core/architecture.md
+      - Finite reference playback: core/finite-reference-playback.md
       - Rust API reference: core/rust-reference.md
   - Python:
       - Python SDK: python/index.md

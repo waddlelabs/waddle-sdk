@@ -14,6 +14,7 @@ mod jog;
 mod media_uplink;
 pub mod mirror;
 mod plane_events;
+pub mod playback;
 pub mod pumps;
 pub mod reducer;
 pub mod session;

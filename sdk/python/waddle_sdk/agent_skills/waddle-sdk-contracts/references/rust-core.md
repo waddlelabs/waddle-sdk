@@ -33,6 +33,13 @@ Keep low-level crates free of I/O and async dependencies. Confine Tokio to trans
 
 Every action source crosses the same gate and owner envelope. No language frontend, media path, hardware adapter, or helper may create an alternate dispatch route.
 
+The runtime's `playback` module accounts for finite joint-reference buffers using
+the existing `ActionChunk` types. It distinguishes dispatch acknowledgement from
+measured arrival and refuses stale starts, missing acknowledgements, late steps
+and cancellation without retry. It does not create authority or a device owner;
+public Python execution and connector integration are still pending. See
+`docs/core/finite-reference-playback.md` in a source checkout for the contract.
+
 ## Conformance change protocol
 
 When behavior changes:
