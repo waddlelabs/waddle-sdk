@@ -44,6 +44,12 @@ owner. Python `Run.start_playback` uses these callbacks through the ordinary loc
 owner; connector integration is still pending. See
 `docs/core/finite-reference-playback.md` in a source checkout for the contract.
 
+Optional `PacedCurve` evaluation uses that same worker: exact supplied polynomial,
+acknowledged progress, bounded measured headroom and minimum local submission
+spacing. Fixed offsets retain their original lateness guard. Keep trajectory
+validation outside this evaluator and preserve absolute deadlines, native gates
+and original unknown outcomes.
+
 ## Conformance change protocol
 
 When behavior changes:

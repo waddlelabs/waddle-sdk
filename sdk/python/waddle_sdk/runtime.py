@@ -65,6 +65,7 @@ class SupportFact(str, enum.Enum):
     PART_OBSERVATION = "observation.named_parts"
     PART_ACTION = "action.named_parts"
     FINITE_JOINT_PLAYBACK = "execution.finite_joint_playback"
+    PACED_JOINT_PLAYBACK = "execution.paced_joint_playback"
     VELOCITY_FEEDFORWARD = "actuation.velocity_feedforward"
     FORWARD_KINEMATICS = "kinematics.fk"
     BODY_SPHERES = "geometry.body_spheres"
@@ -528,6 +529,42 @@ class JointReference:
 
 
 @dataclass(frozen=True)
+class PacedJointCurve:
+    """An already checked polynomial, evaluated locally without path fitting.
+
+    Coefficients use normalized segment time, in segment/power/coordinate order,
+    with six powers (zero through five). Coordinates match policy ``indices``.
+    Progress advances only on acknowledged submissions, within measured position
+    headroom and a minimum local command period. Optional exact sample times
+    retain waypoints on rest-to-rest quintics. This performs no planning.
+    """
+
+    times_s: tuple[float, ...]
+    positions: tuple[tuple[float, ...], ...]
+    coefficients: tuple[tuple[tuple[float, ...], ...], ...]
+    period_ns: int
+    position_error: tuple[float, ...]
+    tracking_tolerance: tuple[float, ...]
+    sample_times_s: tuple[float, ...] | None = None
+
+    def __post_init__(self) -> None:
+        for name in ("times_s", "position_error", "tracking_tolerance"):
+            object.__setattr__(self, name, tuple(getattr(self, name)))
+        object.__setattr__(
+            self, "positions", tuple(tuple(row) for row in self.positions)
+        )
+        object.__setattr__(
+            self,
+            "coefficients",
+            tuple(
+                tuple(tuple(row) for row in segment) for segment in self.coefficients
+            ),
+        )
+        if self.sample_times_s is not None:
+            object.__setattr__(self, "sample_times_s", tuple(self.sample_times_s))
+
+
+@dataclass(frozen=True)
 class PlaybackPolicy:
     """Explicit measured completion and local timing bounds; validated by core."""
 
@@ -539,6 +576,7 @@ class PlaybackPolicy:
     max_lateness_ns: int
     timeout_ns: int
     allow_settled: bool = False
+    paced_curve: PacedJointCurve | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -722,6 +760,7 @@ __all__ = [
     "NamedPartsObservationPort",
     "NamedPartsRunPort",
     "Observation",
+    "PacedJointCurve",
     "PartObservation",
     "PlaybackHandlePort",
     "PlaybackPolicy",

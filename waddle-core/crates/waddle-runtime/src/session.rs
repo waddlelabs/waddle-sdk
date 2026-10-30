@@ -1745,6 +1745,16 @@ impl Session {
                 "requires a declared joint-position scope",
             ));
         }
+        let sample_period_ns = (1_000_000_000.0 / scope.rate_hz).round().max(1.0) as i64;
+        if policy
+            .paced_curve
+            .as_ref()
+            .is_some_and(|curve| curve.period_ns < sample_period_ns)
+        {
+            return Err(PlaybackError::Invalid(
+                "paced curve exceeds the declared command cadence",
+            ));
+        }
         let references = FiniteReferences::new(flattened.chunk, policy)?;
         if self.episode_done(id) {
             return Err(PlaybackError::Cancelled("episode ended".into()));
@@ -1754,7 +1764,7 @@ impl Session {
             id.clone(),
             references,
             io,
-            (1_000_000_000.0 / scope.rate_hz).round().max(1.0) as i64,
+            sample_period_ns,
         )
     }
 

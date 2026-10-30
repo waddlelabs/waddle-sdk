@@ -21,12 +21,20 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Optional exact polynomial playback on the existing native worker, with a
+  separate paced-playback support fact and binding API 11. Progress advances on
+  acknowledgements within measured headroom, never from late wall time; partial
+  steps retain the curve and scale velocity hints. Preserve minimum command
+  spacing, tracking errors, absolute timeout and original lifecycle drain. Status
+  includes acknowledged curve progress and the last confirmed reference. Fixed
+  reference offsets and lateness semantics remain unchanged.
+
 - Public `Run.start_playback(FiniteJointMotion)` and optional structural execution
   ports, using native timing and the ordinary local gate/owner envelope. Add a
   per-part support fact, measured status/fault snapshots, cancellation, and drain
   before run/site teardown. Preserve exact references and velocity hints; reject
   concurrent direct writes and unsupported force modifiers. Python/native binding
-  API 10 rejects stale extensions before hardware opens. Connector integration
+  API 11 rejects stale extensions before hardware opens. Connector integration
   and physical qualification remain pending.
 
 - Native session execution of finite reference buffers on the existing serialized

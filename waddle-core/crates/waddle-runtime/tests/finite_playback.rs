@@ -218,6 +218,7 @@ fn policy() -> PlaybackPolicy {
         max_lateness_ns: 10_000_000,
         timeout_ns: 200_000_000,
         allow_settled: false,
+        paced_curve: None,
     }
 }
 

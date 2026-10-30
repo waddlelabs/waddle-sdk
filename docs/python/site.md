@@ -27,6 +27,10 @@ part's `execution.finite_joint_playback` support fact and use `FiniteJointMotion
 `JointReference`, and `PlaybackPolicy` from `waddle_sdk.runtime`. Admission and
 dispatch are distinct from measured completion. While playback is active,
 ordinary steps return Busy; run/site exit drains it before hardware can close.
+The separate `execution.paced_joint_playback` fact permits a `PacedJointCurve`
+in that policy: native evaluation follows a supplied polynomial with measured
+headroom, minimum submission spacing and acknowledgement-paced progress. See the
+same contract for input validation, status and unsupported execution modes.
 
 ## Minimal manifest shape
 

@@ -232,6 +232,7 @@ fn references() -> FiniteReferences {
             max_lateness_ns: 50_000_000,
             timeout_ns: 500_000_000,
             allow_settled: false,
+            paced_curve: None,
         },
     )
     .unwrap()

@@ -61,6 +61,11 @@ def start(run: Run, motion: FiniteJointMotion) -> PlaybackHandle:
         raise RuntimeFault(
             FaultCode.UNSUPPORTED, "part does not support finite playback"
         )
+    if (
+        motion.policy.paced_curve is not None
+        and SupportFact.PACED_JOINT_PLAYBACK not in row.facts
+    ):
+        raise RuntimeFault(FaultCode.UNSUPPORTED, "part does not support paced curves")
     if any(r.command.gripper_force_n is not None for r in motion.references):
         raise RuntimeFault(
             FaultCode.UNSUPPORTED, "finite playback does not set jaw force"
@@ -112,6 +117,7 @@ def start(run: Run, motion: FiniteJointMotion) -> PlaybackHandle:
     def dispatch(reference, measured):
         try:
             with session._dispatch_lock:
+                started_ns = session._require().core.stamp().session_ns
                 result = run._step(
                     JointPositionCommand(
                         reference["positions"], reference["velocity_feedforward"]
@@ -128,6 +134,7 @@ def start(run: Run, motion: FiniteJointMotion) -> PlaybackHandle:
             return {
                 "dispatched": result.dispatched and result.gate == "pass",
                 "detail": result.gate,
+                "started_ns": started_ns,
             }
         except Exception as error:  # noqa: BLE001 -- an unexpected write failure must retain uncertainty
             # A raising write may have reached the device. Preserve its evidence,

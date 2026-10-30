@@ -6,8 +6,8 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use waddle_runtime::playback::{
-    Completion, ExecutionFailure, ExecutionHandle, ExecutionSnapshot, Feedback, PlaybackError,
-    PlaybackIo, PlaybackIoError, PlaybackPolicy, ReferenceReceipt,
+    Completion, ExecutionFailure, ExecutionHandle, ExecutionSnapshot, Feedback, PacedCurve,
+    PlaybackError, PlaybackIo, PlaybackIoError, PlaybackPolicy, ReferenceReceipt,
 };
 use waddle_types::Step;
 
@@ -23,6 +23,18 @@ pub(crate) struct Policy {
     max_lateness_ns: i64,
     timeout_ns: i64,
     allow_settled: bool,
+    paced_curve: Option<Curve>,
+}
+
+#[derive(FromPyObject)]
+struct Curve {
+    times_s: Vec<f64>,
+    positions: Vec<Vec<f64>>,
+    coefficients: Vec<Vec<Vec<f64>>>,
+    period_ns: i64,
+    position_error: Vec<f64>,
+    tracking_tolerance: Vec<f64>,
+    sample_times_s: Option<Vec<f64>>,
 }
 
 impl From<Policy> for PlaybackPolicy {
@@ -36,6 +48,15 @@ impl From<Policy> for PlaybackPolicy {
             max_lateness_ns: p.max_lateness_ns,
             timeout_ns: p.timeout_ns,
             allow_settled: p.allow_settled,
+            paced_curve: p.paced_curve.map(|c| PacedCurve {
+                times_s: c.times_s,
+                positions: c.positions,
+                coefficients: c.coefficients,
+                period_ns: c.period_ns,
+                position_error: c.position_error,
+                tracking_tolerance: c.tracking_tolerance,
+                sample_times_s: c.sample_times_s,
+            }),
         }
     }
 }
@@ -69,6 +90,7 @@ struct Measured {
 struct Receipt {
     dispatched: bool,
     detail: String,
+    started_ns: i64,
 }
 
 pub(crate) struct PyIo {
@@ -110,6 +132,18 @@ fn feedback(py: Python<'_>, value: &Feedback) -> PyResult<Py<PyDict>> {
     Ok(out.unbind())
 }
 
+fn reference(py: Python<'_>, value: &Step) -> PyResult<Py<PyDict>> {
+    let step = PyDict::new(py);
+    step.set_item("positions", value.values.as_ref())?;
+    step.set_item(
+        "velocity_feedforward",
+        value.velocity_feedforward.as_deref(),
+    )?;
+    step.set_item("part", value.part.as_deref())?;
+    step.set_item("offset_ns", value.offset_ns)?;
+    Ok(step.unbind())
+}
+
 impl PlaybackIo for PyIo {
     fn observe(&self) -> Result<Feedback, PlaybackIoError> {
         callback(false, |py| {
@@ -128,28 +162,20 @@ impl PlaybackIo for PyIo {
 
     fn dispatch(
         &self,
-        reference: &Step,
+        step: &Step,
         measured: &Feedback,
     ) -> Result<ReferenceReceipt, PlaybackIoError> {
         callback(true, |py| {
-            let step = PyDict::new(py);
-            step.set_item("positions", reference.values.as_ref())?;
-            step.set_item(
-                "velocity_feedforward",
-                reference.velocity_feedforward.as_deref(),
-            )?;
-            step.set_item("part", reference.part.as_deref())?;
-            step.set_item("offset_ns", reference.offset_ns)?;
             let value = self
                 .dispatch
                 .bind(py)
-                .call1((step, feedback(py, measured)?))?;
+                .call1((reference(py, step)?, feedback(py, measured)?))?;
             if let Ok(error) = value.extract::<PyRef<'_, PyIoError>>() {
                 return Ok(Err(error.0.clone()));
             }
             let receipt: Receipt = value.extract()?;
             Ok(Ok(if receipt.dispatched {
-                ReferenceReceipt::Dispatched
+                ReferenceReceipt::DispatchedAt(receipt.started_ns)
             } else {
                 ReferenceReceipt::Superseded(receipt.detail)
             }))
@@ -207,6 +233,31 @@ fn snapshot(py: Python<'_>, value: ExecutionSnapshot) -> PyResult<Py<PyDict>> {
     out.set_item("dispatched", value.dispatched)?;
     out.set_item("references", value.references)?;
     out.set_item(
+        "last_reference",
+        value
+            .last_reference
+            .as_ref()
+            .map(|r| reference(py, r))
+            .transpose()?,
+    )?;
+    let progress = value
+        .curve_progress
+        .map(|progress| -> PyResult<Py<PyDict>> {
+            let result = PyDict::new(py);
+            result.set_item(
+                "acknowledged_curve_time_s",
+                progress.acknowledged_curve_time_s,
+            )?;
+            result.set_item("next_curve_time_s", progress.next_curve_time_s)?;
+            result.set_item("endpoint_acknowledged", progress.endpoint_acknowledged)?;
+            result.set_item("limited_ticks", progress.limited_ticks)?;
+            result.set_item("partial_ticks", progress.partial_ticks)?;
+            result.set_item("held_ticks", progress.held_ticks)?;
+            Ok(result.unbind())
+        })
+        .transpose()?;
+    out.set_item("curve_progress", progress)?;
+    out.set_item(
         "feedback",
         value
             .feedback
@@ -240,6 +291,7 @@ fn failure(py: Python<'_>, error: ExecutionFailure) -> PyResult<Py<PyDict>> {
                 PlaybackError::Busy => "busy",
                 PlaybackError::Invalid(_) | PlaybackError::InvalidAction(_) => "invalid",
                 PlaybackError::StaleStart => "stale_start",
+                PlaybackError::Tracking => "tracking",
                 PlaybackError::LateReference { index, lateness_ns } => {
                     out.set_item("reference_index", index)?;
                     out.set_item("lateness_ns", lateness_ns)?;
