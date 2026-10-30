@@ -1379,7 +1379,12 @@ impl Session {
         loop {
             let s = self.inner.mirror.read();
             match s.episode_state {
-                None | Some(Phase::Terminal(_)) => break,
+                None | Some(Phase::Terminal(_)) => {
+                    if let Some(id) = s.episode_id {
+                        self.inner._verbs.drain_playback(&id);
+                    }
+                    break;
+                }
                 Some(Phase::PostReset) => {
                     let status = self
                         .inner
@@ -1665,6 +1670,7 @@ impl Session {
     /// POST_RESET (a declared post-reset, FSM.md E14), this still blocks
     /// until Terminal — through the cleanup — per the design contract.
     pub fn terminate_episode(&self, id: &EpisodeId, outcome: TerminalOutcome, reason: &str) {
+        self.inner._verbs.drain_playback(id);
         if self.episode_done(id) {
             return;
         }
@@ -1685,6 +1691,78 @@ impl Session {
     #[must_use]
     pub fn status(&self) -> crate::mirror::Status {
         self.inner.mirror.read()
+    }
+
+    /// Admit one complete finite joint-position buffer for the current episode.
+    /// This grants no authority: the local `io` adapter must dispatch every
+    /// reference through that episode's ordinary gate and owner envelope. No
+    /// remote round trip is needed to advance an admitted buffer. A handle's
+    /// completion is measured separately from dispatch receipts and stop verbs.
+    ///
+    /// Only one joint-position scope is supported. Mixed/composite whole-body
+    /// streams, gripper side channels and online target replacement are refused.
+    pub fn start_playback(
+        &self,
+        id: &EpisodeId,
+        chunk: &pb::ActionChunk,
+        policy: crate::playback::PlaybackPolicy,
+        io: Arc<dyn crate::playback::PlaybackIo>,
+    ) -> Result<crate::playback::ExecutionHandle, crate::playback::PlaybackError> {
+        use crate::playback::{FiniteReferences, PlaybackError};
+        use waddle_types::{ActionChunk, PartPolicy, SpaceSpec, VelocityFeedforwardPolicy};
+
+        if !(1..=16_385).contains(&chunk.actions.len()) {
+            return Err(PlaybackError::Invalid("requires 1..=16385 references"));
+        }
+        let flattened = ActionChunk::from_pb_with_velocity_feedforward(
+            chunk,
+            &self.inner.action_space,
+            PartPolicy::Honor,
+            VelocityFeedforwardPolicy::Honor,
+        )
+        .map_err(|error| PlaybackError::InvalidAction(error.to_string()))?;
+        if !flattened.inert.is_empty() {
+            return Err(PlaybackError::Invalid("inert references cannot execute"));
+        }
+        let scope = match (
+            &self.inner.action_space.spec,
+            flattened.chunk.steps[0].part.as_deref(),
+        ) {
+            (SpaceSpec::Composite { parts }, Some(part)) => parts
+                .iter()
+                .find(|(name, _)| name == part)
+                .map(|(_, space)| space)
+                .expect("part validated by ordinary intake"),
+            (_, None) => &self.inner.action_space,
+            _ => {
+                return Err(PlaybackError::Invalid(
+                    "requires a declared joint-position scope",
+                ));
+            }
+        };
+        if !matches!(scope.spec, SpaceSpec::JointPosition { .. }) {
+            return Err(PlaybackError::Invalid(
+                "requires a declared joint-position scope",
+            ));
+        }
+        let references = FiniteReferences::new(flattened.chunk, policy)?;
+        if self.episode_done(id) {
+            return Err(PlaybackError::Cancelled("episode ended".into()));
+        }
+        self.inner._verbs.start_playback(
+            self.inner.mirror.clone(),
+            id.clone(),
+            references,
+            io,
+            (1_000_000_000.0 / scope.rate_hz).round().max(1.0) as i64,
+        )
+    }
+
+    /// Whether this episode still has a local finite reference loop to drain.
+    /// This is execution status, never an authority or physical-stop answer.
+    #[must_use]
+    pub fn playback_active(&self, id: &EpisodeId) -> bool {
+        self.inner._verbs.playback_active(id)
     }
 
     /// Request the registered energized HOLD path locally, ahead of ordinary

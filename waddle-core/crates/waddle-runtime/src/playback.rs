@@ -9,6 +9,12 @@
 
 use waddle_types::{ActionChunk, Step};
 
+pub(crate) mod execution;
+pub use execution::{
+    ExecutionFailure, ExecutionHandle, ExecutionResult, ExecutionSnapshot, PlaybackIo,
+    PlaybackIoError, ReferenceReceipt,
+};
+
 /// Bounded completion/timing choices supplied with a finite reference buffer.
 /// `indices` selects the moving rows for start/completion measurements; untouched
 /// rows still cross the complete ordinary owner envelope on every dispatch.
@@ -41,8 +47,12 @@ pub enum Completion {
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum PlaybackError {
+    #[error("another local execution or safety request is still active")]
+    Busy,
     #[error("invalid finite reference buffer: {0}")]
     Invalid(&'static str),
+    #[error("finite reference action-space intake refused: {0}")]
+    InvalidAction(String),
     #[error("measured start differs from the admitted first reference")]
     StaleStart,
     #[error("reference {index} is {lateness_ns} ns late")]
@@ -70,6 +80,10 @@ pub struct FiniteReferences {
 }
 
 impl FiniteReferences {
+    pub(crate) fn len(&self) -> usize {
+        self.chunk.steps.len()
+    }
+
     pub fn new(chunk: ActionChunk, policy: PlaybackPolicy) -> Result<Self, PlaybackError> {
         let invalid = PlaybackError::Invalid;
         if !(1..=16_385).contains(&chunk.steps.len()) {
@@ -205,6 +219,26 @@ impl Playback {
     #[must_use]
     pub fn completion(&self) -> Option<Completion> {
         self.completion
+    }
+
+    /// The worker must revisit accounting by this time even when the declared
+    /// feedback cadence is slower. This changes no reference or tolerance.
+    pub(crate) fn check_by_ns(&self) -> i64 {
+        let deadline = self
+            .started_ns
+            .saturating_add(self.references.policy.timeout_ns);
+        self.references
+            .chunk
+            .steps
+            .get(self.next)
+            .map_or(deadline, |step| {
+                deadline.min(
+                    self.started_ns
+                        .saturating_add(step.offset_ns)
+                        .saturating_add(self.references.policy.max_lateness_ns)
+                        .saturating_add(1),
+                )
+            })
     }
 
     pub fn cancel(&mut self, reason: &str) {

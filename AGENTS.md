@@ -8,11 +8,15 @@ acceptance separately in a configured simulator environment.
 Native `waddle_runtime::playback` provides deterministic finite joint-reference
 accounting over validated `ActionChunk` values: bounded ordered references,
 selected-row start/settling checks, fresh feedback, exact acknowledgements and
-terminal cancellation/deadline/uncertain-dispatch errors. It does not dispatch,
-own a thread, change authority or expose a new Python support fact yet. Public
-execution/connector integration remains pending; retain the ordinary episode gate
-and owner envelope. See docs/core/finite-reference-playback.md and native
-tests/finite_playback.rs. No physical timing acceptance is implied.
+terminal cancellation/deadline/uncertain-dispatch errors. `Session.start_playback`
+now validates the declared joint-position scope and executes through local
+`PlaybackIo` on the existing serialized control thread, alongside Hold/e-stop.
+Adapters must retain the ordinary episode gate and owner envelope. Cancellation,
+episode closure and shutdown drain references; original failures and separate
+verb outcomes survive cleanup. No new thread, authority or Python support fact
+is introduced. Public Python owner/connector integration remains pending. See
+docs/core/finite-reference-playback.md, native tests/finite_playback.rs and
+src/playback/worker_tests.rs. No physical timing acceptance is implied.
 
 Imported reference MuJoCo worlds optionally use an allocation-private compiled
 model cache selected by `WADDLE_SIMULATION_MODEL_CACHE`. The loader hashes the
