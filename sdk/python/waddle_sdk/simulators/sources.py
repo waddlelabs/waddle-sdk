@@ -129,6 +129,10 @@ def _collision_geometry(name: str, scratch: Path):
     generated = {}
     source_pieces = 0
     planner_geometries = 0
+    robot = description(name)
+    hand_links = {
+        link.name for link in robot.native_links() if link.joint in robot.hand_names
+    }
     for link in _fixed_hand(name):
         pieces = []
         for shape in link.shapes:
@@ -147,6 +151,11 @@ def _collision_geometry(name: str, scratch: Path):
             bins = np.floor((centers - centers.min()) / _HULL_BUCKET_WIDTH_M).astype(
                 int
             )
+            # Joining finger pieces fills concave jaw features and can report
+            # contact across a gap present in the native collision assembly.
+            # Keep each moving-hand source piece independent, in the same frame.
+            if link.name in hand_links:
+                bins = np.arange(len(pieces))
             for bucket in np.unique(bins):
                 triangles = np.concatenate(
                     [
@@ -177,6 +186,7 @@ def _collision_geometry(name: str, scratch: Path):
             "bucket_width_m": _HULL_BUCKET_WIDTH_M,
             "source_piece_count": source_pieces,
             "planner_geometry_count": planner_geometries,
+            "independent_hand_source_pieces": sorted(hand_links),
         },
     )
 
