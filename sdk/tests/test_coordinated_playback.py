@@ -277,18 +277,13 @@ def _engage(sdk):
     return native
 
 
-def _takeover_request():
-    motion = request()
-    # Intake is synchronous; the native jitter buffer admits a chunk after 20 ms.
-    # A 50 ms first-reference offset guarantees it is due before the first gate
-    # tick. The claim stays engaged until teardown; no scheduler race is needed.
-    return replace(
-        motion,
-        references=tuple(
-            replace(row, offset_ns=row.offset_ns + 50_000_000)
-            for row in motion.references
-        ),
-    )
+def _push_due_chunk(native, values, **kwargs):
+    native._testing_push_chunk(values, **kwargs)
+    # Intake is synchronous. Wait through the runtime's declared 20 ms jitter
+    # delay on its own clock; this chunk remains queued under the engaged claim.
+    due_ns = native.stamp().session_ns + 20_000_000
+    while native.stamp().session_ns < due_ns:
+        threading.Event().wait(0.005)
 
 
 def test_named_takeover_of_group_keeps_neighbor_collision_checks(
@@ -311,8 +306,8 @@ def test_named_takeover_of_group_keeps_neighbor_collision_checks(
                 ),
             )
         native = _engage(sdk)
-        native._testing_push_chunk([0.1, 0], part="right")
-        result = run.start_playback(_takeover_request()).wait()
+        _push_due_chunk(native, [0.1, 0], part="right")
+        result = run.start_playback(request()).wait()
         assert result["status"] == "failed", result
         assert isinstance(result["failure"]["evidence"], dict), result
         assert result["failure"]["evidence"]["code"] == FaultCode.SAFETY_REFUSAL
@@ -341,10 +336,10 @@ def test_named_takeover_of_group_keeps_the_selected_velocity_hint(
 
         monkeypatch.setattr(driver, "write_position_velocity", write, raising=False)
         native = _engage(sdk)
-        native._testing_push_chunk(
-            [0.02, -0.01], part="right", velocity_feedforward=[0.1, -0.05]
+        _push_due_chunk(
+            native, [0.02, -0.01], part="right", velocity_feedforward=[0.1, -0.05]
         )
-        result = run.start_playback(_takeover_request()).wait()
+        result = run.start_playback(request()).wait()
         assert result["failure"]["code"] == "superseded", result
         assert received == [((0.02, -0.01), (0.1, -0.05))]
         assert result["dispatched"] == 0
