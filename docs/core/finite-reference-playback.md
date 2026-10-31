@@ -616,7 +616,7 @@ this local API does not observe network liveness.
 
 Binding API 14 introduced retained cleanup receipts; the optional additions
 above require their separately listed binding APIs and capability facts. The
-current Python/native binding is API 25. Install matching SDK/media wheels from
+current Python/native binding is API 26. Install matching SDK/media wheels from
 one revision in an idle environment; never replace a running hardware owner's
 native module to test this API.
 

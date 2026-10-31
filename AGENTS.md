@@ -11,8 +11,10 @@ reference-only polynomial curves, without pacing credit. Every curve remains
 finite and ends at zero velocity/acceleration. The existing native worker keeps
 the resting endpoint supervised and accepts a revision-checked continuation at
 that endpoint; finite integer timeouts retain their prior deadlines/completion.
-No new clock, writer, planner or unbounded curve/history is added. Source tests
-are pending; this does not establish application integration or physical timing.
+No new clock, writer, planner or unbounded curve/history is added. The full
+243-case native runtime suite and subsequent 24-case curve boundary suite pass;
+public/transport validation is pending. This does not establish application
+integration or physical timing.
 
 Binding API 25 adds optional `PlaybackWatchdog(observed_ns, timeout_ns)` under
 `execution.watchdog_playback`. The existing serialized native worker checks
