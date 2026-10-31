@@ -72,6 +72,13 @@ def start(run: Run, motion: FiniteJointMotion) -> PlaybackHandle:
             "set constant playback force through the gripper policy",
         )
     gripper = motion.policy.gripper
+    if (
+        motion.policy.minimum_settle_samples != 1
+        and SupportFact.SAMPLED_JOINT_PLAYBACK not in row.facts
+    ):
+        raise RuntimeFault(
+            FaultCode.UNSUPPORTED, "part does not support counted settling samples"
+        )
     if gripper is not None:
         if SupportFact.GRIPPER_PLAYBACK not in row.facts:
             raise RuntimeFault(

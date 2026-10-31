@@ -39,6 +39,8 @@ pub struct PlaybackPolicy {
     pub position_tolerance: Vec<f64>,
     pub stationary_velocity: Vec<f64>,
     pub settle_ns: i64,
+    /// Fresh eligible observations required in addition to the settling span.
+    pub minimum_settle_samples: usize,
     pub max_lateness_ns: i64,
     pub timeout_ns: i64,
     /// Permit a separately reported stationary miss, never an arrival claim.
@@ -173,6 +175,8 @@ impl FiniteReferences {
             }
         }
         if policy.settle_ns <= 0
+            || !(1..=16_385).contains(&policy.minimum_settle_samples)
+            || (policy.gripper.is_some() && policy.minimum_settle_samples != 1)
             || policy.timeout_ns <= chunk.horizon_ns
             || policy.timeout_ns > 180_000_000_000
             || policy.settle_ns >= policy.timeout_ns - chunk.horizon_ns
@@ -290,6 +294,8 @@ pub struct Playback {
     observed_ns: Option<i64>,
     settled_since: Option<i64>,
     arrived_since: Option<i64>,
+    settled_samples: usize,
+    arrived_samples: usize,
     completion: Option<Completion>,
     failure: Option<PlaybackError>,
     curve: Option<CurveCursor>,
@@ -314,6 +320,8 @@ impl Playback {
             observed_ns: None,
             settled_since: None,
             arrived_since: None,
+            settled_samples: 0,
+            arrived_samples: 0,
             completion: None,
             failure: None,
             curve,
@@ -621,20 +629,28 @@ impl Playback {
         if !stationary || (!arrived && !self.references.policy.allow_settled) {
             self.settled_since = None;
             self.arrived_since = None;
+            self.settled_samples = 0;
+            self.arrived_samples = 0;
             return Ok(PlaybackPoll::Observe);
         }
         if arrived {
             self.arrived_since.get_or_insert(measured.observed_ns);
+            self.arrived_samples += 1;
         } else {
             self.arrived_since = None;
+            self.arrived_samples = 0;
         }
+        self.settled_samples += 1;
         let since = *self.settled_since.get_or_insert(measured.observed_ns);
-        if measured.observed_ns - since < self.references.policy.settle_ns {
+        if measured.observed_ns - since < self.references.policy.settle_ns
+            || self.settled_samples < self.references.policy.minimum_settle_samples
+        {
             return Ok(PlaybackPoll::Observe);
         }
         let outcome = if self
             .arrived_since
             .is_some_and(|since| measured.observed_ns - since >= self.references.policy.settle_ns)
+            && self.arrived_samples >= self.references.policy.minimum_settle_samples
         {
             Completion::Arrived
         } else {

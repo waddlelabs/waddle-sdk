@@ -239,7 +239,7 @@ impl FeedbackState {
                 self.arrived_since = None;
             }
             self.rows.push_back(measured.clone());
-            while self.rows.len() > 3
+            while self.rows.len() > policy.minimum_settle_samples.max(3)
                 && self.rows[1].observed_ns <= measured.observed_ns - policy.settle_ns
             {
                 self.rows.pop_front();
@@ -271,7 +271,7 @@ impl FeedbackState {
             .front()
             .zip(self.rows.back())
             .map_or(0, |(first, last)| last.observed_ns - first.observed_ns);
-        let stable = self.rows.len() >= 3
+        let stable = self.rows.len() >= policy.minimum_settle_samples.max(3)
             && span_ns >= policy.settle_ns
             && spans
                 .iter()

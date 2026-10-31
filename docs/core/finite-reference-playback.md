@@ -1,5 +1,14 @@
 # Finite reference playback
 
+Binding API 15 adds `PlaybackPolicy.minimum_settle_samples` (default one), gated
+by `execution.sampled_joint_playback` when nondefault. Both the count of fresh
+eligible observations and `settle_ns` must qualify. Duplicate timestamps do not
+count; velocity or required-goal loss resets eligibility. Encoder windows retain
+at least the requested count and three samples. Gripper policies keep their
+separate outcome-specific rules and require the default count. These are SDK
+observation samples, not a claim of independent motor acquisition or physical
+performance.
+
 `waddle_runtime::playback` accounts for a fully received, bounded sequence of
 joint-position references on a local session clock. `Session.start_playback`
 executes an admitted buffer on the existing serialized `waddle-verbs` thread.
