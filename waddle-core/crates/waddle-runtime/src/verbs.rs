@@ -356,9 +356,14 @@ fn dispatch_loop<C: Clock>(
                 pending_verbs.fetch_sub(1, Ordering::SeqCst);
             }
             Ok(Work::Playback(task)) => {
-                if let Some(result) = task.cancelled_result() {
+                if let Some(result) = task.cancelled_result()
+                    && pending_verbs.load(Ordering::SeqCst) == 0
+                    && estop_flag.load(Ordering::SeqCst) == 0
+                    && priority_hold_flag.load(Ordering::SeqCst) == 0
+                {
                     // Cleanup is retained in the slot even when a global stop
-                    // precedes this queued admission on the worker.
+                    // precedes this queued admission on the worker. If the stop
+                    // is still queued, keep this task until its callback finishes.
                     task.finish(result);
                 } else {
                     active.push_back(task);
