@@ -72,6 +72,12 @@ cadence without counting unrelated lock wait as driver execution.
 
 ## Finite joint playback
 
+Binding API 25 adds optional `PlaybackWatchdog` and `WatchdogPlaybackHandlePort`
+under `execution.watchdog_playback`. Use acquired SDK feedback time and reconcile
+the native renewal receipt; delayed requests cannot revive expiry. Preserve
+ordinary Hold/cleanup and the application input policy. See the normative
+finite-reference-playback page for timing and blocked-callback limits.
+
 `BoundedPlaybackRunPort.set_playback_bounds` optionally installs run-wide
 `JointPositionBounds` under `execution.joint_playback_bounds`. The existing local
 worker checks fresh bounded-part feedback and each reference before dispatch;

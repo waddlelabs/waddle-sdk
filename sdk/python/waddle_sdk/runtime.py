@@ -67,6 +67,7 @@ class SupportFact(str, enum.Enum):
     FINITE_JOINT_PLAYBACK = "execution.finite_joint_playback"
     COORDINATED_JOINT_PLAYBACK = "execution.coordinated_joint_playback"
     PARALLEL_JOINT_PLAYBACK = "execution.parallel_joint_playback"
+    WATCHDOG_PLAYBACK = "execution.watchdog_playback"
     PART_HOLD_PLAYBACK = "execution.part_hold_playback"
     JOINT_PLAYBACK_BOUNDS = "execution.joint_playback_bounds"
     PACED_JOINT_PLAYBACK = "execution.paced_joint_playback"
@@ -700,6 +701,20 @@ class PlaybackCurveUpdate:
 
 
 @dataclass(frozen=True)
+class PlaybackWatchdog:
+    """Local caller-liveness bound anchored to acquired SDK feedback time.
+
+    ``observed_ns`` comes from this session's observation clock. The native
+    worker expires at that stamp plus ``timeout_ns``; delayed request arrival
+    cannot renew liveness or revive an expired execution. This does not change
+    the motion deadline, authorize commands or preempt a blocked driver callback.
+    """
+
+    observed_ns: int
+    timeout_ns: int
+
+
+@dataclass(frozen=True)
 class PlaybackPolicy:
     """Explicit measured completion and local timing bounds; validated by core.
 
@@ -737,6 +752,10 @@ class PlaybackPolicy:
     cancellation or failure. It leaves siblings running and retains the cleanup
     scope and owner error. Global control verbs and shutdown still drain all
     buffers. Default false uses site-wide cleanup. This is not collision proof.
+
+    ``watchdog`` optionally requires caller liveness on the local session clock,
+    under separately declared watchdog-playback support. Expiry uses the same
+    failure/Hold path and retains its original error and cleanup receipt.
     """
 
     indices: tuple[int, ...]
@@ -756,6 +775,7 @@ class PlaybackPolicy:
     allow_curve_updates: bool = False
     credit_pacing_delay: bool = False
     part_hold: bool = False
+    watchdog: PlaybackWatchdog | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -825,6 +845,20 @@ class PlaybackHandlePort(Protocol):
     def wait(self) -> Mapping[str, JSONValue]: ...
 
     def cancel(self, reason: str) -> None: ...
+
+
+@runtime_checkable
+class WatchdogPlaybackHandlePort(PlaybackHandlePort, Protocol):
+    """Renew optional local liveness using an acquired SDK observation stamp.
+
+    Queueing returns promptly; ``watchdog_refresh`` retains pending/accepted/
+    rejected evidence. Only acceptance changes ``watchdog.deadline_ns``. Repeated
+    stamps cannot extend it, and rejected stamps leave the incumbent unchanged.
+    Expiry is checked before queued renewals, so delayed requests cannot revive
+    execution. Neither the timeout interval nor motion deadline can change.
+    """
+
+    def refresh_watchdog(self, observed_ns: int) -> None: ...
 
 
 @runtime_checkable
@@ -1032,6 +1066,7 @@ __all__ = [
     "PlaybackFeedbackPolicy",
     "PlaybackHandlePort",
     "PlaybackPolicy",
+    "PlaybackWatchdog",
     "Pose",
     "PositionWindow",
     "RunPort",
@@ -1046,4 +1081,5 @@ __all__ = [
     "SupportFact",
     "SupportMatrix",
     "SupportRow",
+    "WatchdogPlaybackHandlePort",
 ]

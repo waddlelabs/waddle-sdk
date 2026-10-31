@@ -11,6 +11,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Add optional local playback watchdogs on the existing native worker (binding
+  API 25), with session-clock feedback renewal and retained receipt evidence.
+  Expiry keeps the original failure and ordinary Hold/cleanup; delayed or repeated
+  messages cannot revive or extend expired execution. No frontend timing loop.
+
 - Distinguish direct playback-bound refusals from synchronous owner-envelope
   cleanup: their global Hold is queued, not yet a completed stop receipt.
 

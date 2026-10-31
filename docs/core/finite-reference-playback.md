@@ -1,5 +1,48 @@
 # Finite reference playback
 
+Binding API 25 adds optional `PlaybackWatchdog(observed_ns, timeout_ns)` under
+`execution.watchdog_playback`. The existing serialized native worker checks
+expiry before I/O and after observation; expiry retains `watchdog_expired` and
+ordinary selected Hold/cleanup. `WatchdogPlaybackHandlePort.refresh_watchdog`
+queues an acquired SDK feedback stamp, with pending/accepted/rejected evidence.
+Only the native worker accepts renewal. Stale/future stamps refuse, duplicates
+cannot extend time, and delayed requests cannot revive an expired buffer.
+No motion timeout extension, authority, clock or writer is added. Blocked callbacks still drain
+before Hold; this is neither physical-stop proof nor a complete teleoperation
+input policy. See the finite-playback contract and watchdog tests.
+
+A watchdog requires `observed_ns >= 0` and `0 < timeout_ns <= policy.timeout_ns`,
+without integer overflow. Its initial stamp and renewals use this SDK session's
+observation clock, never the caller's clock or request-arrival time. The worker
+checks the incumbent deadline before applying a pending renewal, including after
+blocked observation. A blocked write can finish, but no next reference follows
+expiry; its original write failure takes precedence if it fails.
+
+`snapshot()["watchdog"]` retains accepted `observed_ns`, `timeout_ns` and
+`deadline_ns`. `watchdog_refresh` retains the requested stamp, status and accepted
+deadline or refusal text. Only one renewal may be pending; repeat submission of
+the same stamp is idempotent. Refused future stamps do not prevent a later valid
+renewal. A terminal buffer cannot renew. Original motion timeout, pacing credit,
+curves and ownership remain unchanged. Default `None` adds no liveness check.
+The caller still owns its human-input/deadman policy and must stop renewing when
+that input expires; this primitive does not interpret human input.
+
+```python
+from dataclasses import replace
+from waddle_sdk.runtime import PlaybackWatchdog
+
+# motion is an already validated FiniteJointMotion; session/run are already open.
+observed = session.observe()
+motion = replace(motion, policy=replace(
+    motion.policy, watchdog=PlaybackWatchdog(observed.session_ns, 250_000_000)
+))
+handle = run.start_playback(motion)
+# While application input remains valid, use newly acquired feedback timestamps:
+# handle.refresh_watchdog(session.observe().session_ns)
+# Reconcile watchdog_refresh in the retained snapshot; never assume queueing
+# extended the deadline. Expiry needs a new explicit application action.
+```
+
 `Run.set_playback_bounds` supplies optional run-wide joint envelopes through
 `BoundedPlaybackRunPort` and `execution.joint_playback_bounds`. Its mapping binds
 declared part names to `JointPositionBounds(lower, upper)` in each part's full
@@ -542,7 +585,7 @@ this local API does not observe network liveness.
 
 Binding API 14 introduced retained cleanup receipts; the optional additions
 above require their separately listed binding APIs and capability facts. The
-current Python/native binding is API 23. Install matching SDK/media wheels from
+current Python/native binding is API 25. Install matching SDK/media wheels from
 one revision in an idle environment; never replace a running hardware owner's
 native module to test this API.
 

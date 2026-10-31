@@ -9,7 +9,7 @@ use waddle_runtime::playback::{
     Completion, ContactCondition, CurveUpdate, ExecutionFailure, ExecutionHandle,
     ExecutionSnapshot, Feedback, FeedbackPolicy, ForceCondition, GripperPolicy, HeldJointGroup,
     MeasuredForce, PacedCurve, PlaybackError, PlaybackIo, PlaybackIoError, PlaybackPolicy,
-    PositionWindow, ReferenceReceipt, VelocityHints,
+    PlaybackWatchdog, PositionWindow, ReferenceReceipt, VelocityHints,
 };
 use waddle_types::Step;
 
@@ -31,9 +31,16 @@ pub(crate) struct Policy {
     allow_curve_updates: bool,
     credit_pacing_delay: bool,
     part_hold: bool,
+    watchdog: Option<Watchdog>,
     paced_curve: Option<Curve>,
     feedback: Option<FeedbackOptions>,
     gripper: Option<Gripper>,
+}
+
+#[derive(FromPyObject)]
+struct Watchdog {
+    observed_ns: i64,
+    timeout_ns: i64,
 }
 
 #[derive(FromPyObject)]
@@ -177,6 +184,10 @@ impl TryFrom<Policy> for PlaybackPolicy {
             allow_curve_updates: p.allow_curve_updates,
             credit_pacing_delay: p.credit_pacing_delay,
             part_hold: p.part_hold,
+            watchdog: p.watchdog.map(|w| PlaybackWatchdog {
+                observed_ns: w.observed_ns,
+                timeout_ns: w.timeout_ns,
+            }),
             paced_curve: p.paced_curve.map(Into::into),
             feedback,
             gripper: p.gripper.map(|g| GripperPolicy {
@@ -418,6 +429,14 @@ impl PyExecutionHandle {
     fn cancel(&self, reason: &str) {
         self.0.cancel(reason);
     }
+    fn refresh_watchdog(&self, observed_ns: i64) -> PyResult<()> {
+        self.0
+            .refresh_watchdog(observed_ns)
+            .map_err(|error| match error {
+                PlaybackError::Busy => PlaybackBusyError::new_err(error.to_string()),
+                _ => PyValueError::new_err(error.to_string()),
+            })
+    }
     fn withdraw_curve(&self, request_id: u64, expected_revision: u64) -> PyResult<u64> {
         self.0
             .withdraw_curve(request_id, expected_revision)
@@ -447,6 +466,42 @@ fn snapshot(py: Python<'_>, value: ExecutionSnapshot) -> PyResult<Py<PyDict>> {
     out.set_item("dispatched", value.dispatched)?;
     out.set_item("references", value.references)?;
     out.set_item("last_acknowledged_ns", value.last_acknowledged_ns)?;
+    let watchdog = value
+        .watchdog
+        .map(|w| -> PyResult<Py<PyDict>> {
+            let result = PyDict::new(py);
+            result.set_item("observed_ns", w.observed_ns)?;
+            result.set_item("timeout_ns", w.timeout_ns)?;
+            result.set_item("deadline_ns", w.deadline_ns())?;
+            Ok(result.unbind())
+        })
+        .transpose()?;
+    out.set_item("watchdog", watchdog)?;
+    let refresh = value
+        .watchdog_refresh
+        .map(|r| -> PyResult<Py<PyDict>> {
+            let result = PyDict::new(py);
+            result.set_item("observed_ns", r.observed_ns)?;
+            result.set_item(
+                "status",
+                match &r.result {
+                    None => "pending",
+                    Some(Ok(_)) => "accepted",
+                    Some(Err(_)) => "rejected",
+                },
+            )?;
+            result.set_item(
+                "deadline_ns",
+                r.result.as_ref().and_then(|r| r.as_ref().ok()).copied(),
+            )?;
+            result.set_item(
+                "error",
+                r.result.and_then(Result::err).map(|e| e.to_string()),
+            )?;
+            Ok(result.unbind())
+        })
+        .transpose()?;
+    out.set_item("watchdog_refresh", refresh)?;
     let update = value
         .curve_update
         .map(|receipt| -> PyResult<Py<PyDict>> {
@@ -626,6 +681,7 @@ fn failure(py: Python<'_>, error: ExecutionFailure) -> PyResult<Py<PyDict>> {
                     "late_reference"
                 }
                 PlaybackError::Deadline => "deadline",
+                PlaybackError::WatchdogExpired => "watchdog_expired",
                 PlaybackError::DispatchPending => {
                     unknown = true;
                     "dispatch_pending"

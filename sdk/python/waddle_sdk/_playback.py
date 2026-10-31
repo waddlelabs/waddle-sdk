@@ -52,6 +52,17 @@ class PlaybackHandle:
     def cancel(self, reason: str) -> None:
         self._native.cancel(reason)
 
+    def refresh_watchdog(self, observed_ns: int) -> None:
+        """Queue feedback time; acceptance is retained in the native snapshot."""
+        try:
+            self._native.refresh_watchdog(observed_ns)
+        except core.PlaybackBusyError as error:
+            raise RuntimeFault(FaultCode.BUSY, str(error)) from error
+        except (TypeError, ValueError, OverflowError) as error:
+            raise RuntimeFault.from_exception(
+                error, code=FaultCode.INVALID_REQUEST
+            ) from error
+
     def withdraw_curve(self, request_id: int, expected_revision: int) -> int:
         """Queue withdrawal; only an accepted native receipt confirms removal."""
         try:
@@ -117,6 +128,13 @@ def start(
         group or SupportFact.PARALLEL_JOINT_PLAYBACK not in facts
     ):
         raise RuntimeFault(FaultCode.BUSY, "finite playback is still active")
+    if (
+        motion.policy.watchdog is not None
+        and SupportFact.WATCHDOG_PLAYBACK not in facts
+    ):
+        raise RuntimeFault(
+            FaultCode.UNSUPPORTED, "part does not support playback watchdogs"
+        )
     if motion.policy.part_hold and (
         group or SupportFact.PART_HOLD_PLAYBACK not in facts
     ):
