@@ -15,6 +15,8 @@ This includes direct run commands and supervision substitutions. A missing
 or failed required read, nonfinite value, or range violation requests the ordinary
 site-wide Hold, including when individual buffers selected `part_hold`. Retain
 the original scoped fault and the completed global cleanup receipt separately.
+Direct run refusals use `SubmitResult.gate == "playback_bounds_refusal"`: their
+Hold request is queued, not a completed owner-Hold acknowledgement.
 This is a shared dependency failure; unrelated ordinary part failures retain
 their existing scope when no shared envelope is installed.
 

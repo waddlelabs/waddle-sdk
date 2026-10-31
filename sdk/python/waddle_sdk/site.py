@@ -2138,6 +2138,7 @@ class Run:
         dispatched = decided is not None
         detail = ""
         refusal_faults: list[RuntimeFault] = []
+        bounds_refusal = False
         if kind != "pass":
             # A non-pass action belongs to the core's selected stream, never
             # to the caller. Clear the caller's hint even when the selected
@@ -2191,6 +2192,7 @@ class Run:
                         observe_bounded(self, tuple(rows), rows)
                     except RuntimeFault as fault:
                         refusal_faults.append(fault)
+                        bounds_refusal = True
                         dispatched = False
                 if dispatched:
                     dispatched = base.apply_decision(
@@ -2215,7 +2217,7 @@ class Run:
             except Exception as exc:
                 raise _operation_fault("dispatch robot action", exc) from exc
             if not dispatched:
-                kind = "owner_refusal"
+                kind = "playback_bounds_refusal" if bounds_refusal else "owner_refusal"
                 if refusal_faults:
                     detail = refusal_faults[0].detail
                     part = refusal_faults[0].context.get("part", part)

@@ -170,6 +170,7 @@ def test_final_selected_command_cannot_escape_bounds(site_path, monkeypatch, sou
         if source == "direct":
             result = run.step_parts({"right": JointPositionCommand((0.2, 0))})["right"]
             assert not result.dispatched
+            assert result.gate == "playback_bounds_refusal"
             fault = result.fault.as_dict()
         else:
             native = _engage(sdk)
