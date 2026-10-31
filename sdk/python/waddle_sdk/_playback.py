@@ -6,7 +6,9 @@ import json
 from typing import TYPE_CHECKING
 
 from ._native import core
+from .robots import base
 from .runtime import (
+    CoordinatedJointMotion,
     FaultCode,
     FiniteJointMotion,
     JointPositionCommand,
@@ -73,31 +75,54 @@ class PlaybackHandle:
             ) from error
 
 
-def start(run: Run, motion: FiniteJointMotion) -> PlaybackHandle:
+def start(
+    run: Run, motion: FiniteJointMotion | CoordinatedJointMotion
+) -> PlaybackHandle:
     """Called under the ordinary dispatch lock; admission does not wait for I/O."""
     session = run._session
     if run._episode is None:
         raise RuntimeFault(FaultCode.NOT_OPEN, "run has not started")
     if run._episode.done:
         raise RuntimeFault(FaultCode.CONFLICT, "run is already terminal")
-    if not isinstance(motion, FiniteJointMotion):
-        raise RuntimeFault(FaultCode.INVALID_REQUEST, "provide a FiniteJointMotion")
+    if not isinstance(motion, (FiniteJointMotion, CoordinatedJointMotion)):
+        raise RuntimeFault(
+            FaultCode.INVALID_REQUEST,
+            "provide a FiniteJointMotion or CoordinatedJointMotion",
+        )
+    group = isinstance(motion, CoordinatedJointMotion)
+    parts = motion.parts if group else (motion.part,)
+    arms = session._require().arms
+    if group and (len(parts) < 2 or parts != tuple(arms)):
+        raise RuntimeFault(
+            FaultCode.INVALID_REQUEST,
+            "coordinated parts must match the complete Site declaration order",
+        )
     support = session.support()
-    row = next((r for r in support.rows if r.scope == f"robot:{motion.part}"), None)
-    if row is None or SupportFact.FINITE_JOINT_PLAYBACK not in row.facts:
+    rows = [
+        next((r for r in support.rows if r.scope == f"robot:{p}"), None) for p in parts
+    ]
+    if any(
+        row is None or SupportFact.FINITE_JOINT_PLAYBACK not in row.facts
+        for row in rows
+    ):
         raise RuntimeFault(
             FaultCode.UNSUPPORTED, "part does not support finite playback"
         )
+    facts = set.intersection(*(set(row.facts) for row in rows))
+    if group and SupportFact.COORDINATED_JOINT_PLAYBACK not in facts:
+        raise RuntimeFault(
+            FaultCode.UNSUPPORTED, "parts do not support coordinated playback"
+        )
     if (
         motion.policy.credit_pacing_delay
-        and SupportFact.PACED_PLAYBACK_DEADLINE not in row.facts
+        and SupportFact.PACED_PLAYBACK_DEADLINE not in facts
     ):
         raise RuntimeFault(
             FaultCode.UNSUPPORTED, "part does not support paced playback deadlines"
         )
     if (
         motion.policy.paced_curve is not None
-        and SupportFact.PACED_JOINT_PLAYBACK not in row.facts
+        and SupportFact.PACED_JOINT_PLAYBACK not in facts
     ):
         raise RuntimeFault(FaultCode.UNSUPPORTED, "part does not support paced curves")
     if any(r.command.gripper_force_n is not None for r in motion.references):
@@ -106,36 +131,40 @@ def start(run: Run, motion: FiniteJointMotion) -> PlaybackHandle:
             "set constant playback force through the gripper policy",
         )
     gripper = motion.policy.gripper
+    if group and gripper is not None:
+        raise RuntimeFault(
+            FaultCode.UNSUPPORTED, "coordinated playback has no scalar gripper policy"
+        )
     if (
         motion.policy.allow_curve_updates
-        and SupportFact.REVISABLE_JOINT_PLAYBACK not in row.facts
+        and SupportFact.REVISABLE_JOINT_PLAYBACK not in facts
     ):
         raise RuntimeFault(
             FaultCode.UNSUPPORTED, "part does not support revisable playback"
         )
     if (
         motion.policy.checkpoint_offsets_ns
-        and SupportFact.CHECKPOINTED_JOINT_PLAYBACK not in row.facts
+        and SupportFact.CHECKPOINTED_JOINT_PLAYBACK not in facts
     ):
         raise RuntimeFault(
             FaultCode.UNSUPPORTED, "part does not support playback checkpoint evidence"
         )
     if (
         motion.policy.reference_only
-        and SupportFact.REFERENCE_JOINT_PLAYBACK not in row.facts
+        and SupportFact.REFERENCE_JOINT_PLAYBACK not in facts
     ):
         raise RuntimeFault(
             FaultCode.UNSUPPORTED, "part does not support reference-only completion"
         )
     if (
         motion.policy.minimum_settle_samples != 1
-        and SupportFact.SAMPLED_JOINT_PLAYBACK not in row.facts
+        and SupportFact.SAMPLED_JOINT_PLAYBACK not in facts
     ):
         raise RuntimeFault(
             FaultCode.UNSUPPORTED, "part does not support counted settling samples"
         )
     if gripper is not None:
-        if SupportFact.GRIPPER_PLAYBACK not in row.facts:
+        if SupportFact.GRIPPER_PLAYBACK not in facts:
             raise RuntimeFault(
                 FaultCode.UNSUPPORTED, "part does not support gripper playback"
             )
@@ -156,21 +185,25 @@ def start(run: Run, motion: FiniteJointMotion) -> PlaybackHandle:
                 FaultCode.INVALID_REQUEST,
                 "playback must use the Site's declared jaw and mapping",
             )
-        if gripper.force is not None and not {
-            SupportFact.GRIPPER_FORCE,
-            SupportFact.GRIPPER_FORCE_OBSERVATION,
-        } <= set(row.facts):
+        if (
+            gripper.force is not None
+            and not {
+                SupportFact.GRIPPER_FORCE,
+                SupportFact.GRIPPER_FORCE_OBSERVATION,
+            }
+            <= facts
+        ):
             raise RuntimeFault(
                 FaultCode.UNSUPPORTED, "part does not support sourced gripper force"
             )
     if (
         motion.policy.feedback is not None
-        and SupportFact.FEEDBACK_JOINT_PLAYBACK not in row.facts
+        and SupportFact.FEEDBACK_JOINT_PLAYBACK not in facts
     ):
         raise RuntimeFault(
             FaultCode.UNSUPPORTED, "part does not support feedback playback"
         )
-    if SupportFact.VELOCITY_FEEDFORWARD not in row.facts and any(
+    if SupportFact.VELOCITY_FEEDFORWARD not in facts and any(
         r.command.velocity_feedforward_rad_s is not None for r in motion.references
     ):
         raise RuntimeFault(
@@ -178,14 +211,31 @@ def start(run: Run, motion: FiniteJointMotion) -> PlaybackHandle:
         )
     robot = session._registered_robot_description(session._require())
     composite = "composite" in robot["actionSpace"]
-    part = motion.part if composite else None
+    part = motion.part if composite and not group else None
     actions = []
     for reference in motion.references:
         command = reference.command
-        action = {
-            "jointPosition": {"values": command.positions},
-            "tOffsetNs": reference.offset_ns,
-        }
+        if group:
+            try:
+                targets = base.split_by_part(arms, command.positions)
+            except (TypeError, ValueError) as error:
+                raise RuntimeFault.from_exception(
+                    error, code=FaultCode.INVALID_REQUEST
+                ) from error
+            action = {
+                "composite": {
+                    "parts": [
+                        {
+                            "name": name,
+                            "action": {"jointPosition": {"values": target.tolist()}},
+                        }
+                        for name, target in targets.items()
+                    ]
+                }
+            }
+        else:
+            action = {"jointPosition": {"values": command.positions}}
+        action["tOffsetNs"] = reference.offset_ns
         if part is not None:
             action["part"] = part
         if command.velocity_feedforward_rad_s is not None:
@@ -202,15 +252,20 @@ def start(run: Run, motion: FiniteJointMotion) -> PlaybackHandle:
 
     def observe():
         try:
-            observation = session.observe_parts((motion.part,))
-            if motion.part in observation.faults:
-                raise observation.faults[motion.part]
-            measured = observation.parts[motion.part]
+            observation = session.observe_parts(parts)
+            for name in parts:
+                if name in observation.faults:
+                    raise observation.faults[name]
+            measured = [observation.parts[name] for name in parts]
             return {
                 "observed_ns": observation.session_ns,
-                "positions": measured.joint_position.tolist(),
-                "velocities": measured.joint_velocity.tolist(),
-                "gripper_force": measured.gripper_force,
+                "positions": [
+                    q for row in measured for q in row.joint_position.tolist()
+                ],
+                "velocities": [
+                    v for row in measured for v in row.joint_velocity.tolist()
+                ],
+                "gripper_force": None if group else measured[0].gripper_force,
             }
         except Exception as error:  # noqa: BLE001 -- retain any vendor fault across the native callback
             return _error(error, unknown=False)

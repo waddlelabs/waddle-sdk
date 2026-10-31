@@ -224,6 +224,7 @@ impl VerbDispatch {
         references: FiniteReferences,
         io: Arc<dyn PlaybackIo>,
         sample_period_ns: i64,
+        dispatch_period_ns: i64,
     ) -> Result<ExecutionHandle, PlaybackError> {
         if !self.playback_available {
             return Err(PlaybackError::Invalid(
@@ -238,7 +239,15 @@ impl VerbDispatch {
                     || self.estop_flag.load(Ordering::SeqCst) != 0
                     || self.priority_hold_flag.load(Ordering::SeqCst) != 0
             })?;
-        let task = ExecutionTask::new(mirror, episode, references, io, &handle, sample_period_ns);
+        let task = ExecutionTask::new(
+            mirror,
+            episode,
+            references,
+            io,
+            &handle,
+            sample_period_ns,
+            dispatch_period_ns,
+        );
         self.tx
             .send(Work::Playback(Box::new(task)))
             .map_err(|_| PlaybackError::Cancelled("local execution worker stopped".into()))?;

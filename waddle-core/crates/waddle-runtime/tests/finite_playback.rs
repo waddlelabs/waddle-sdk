@@ -52,6 +52,7 @@ mod session_execution {
     struct NoDispatch {
         session: Session,
         observe: Mutex<Option<(mpsc::Sender<()>, mpsc::Receiver<()>)>>,
+        positions: Vec<f64>,
     }
 
     impl PlaybackIo for NoDispatch {
@@ -59,7 +60,12 @@ mod session_execution {
             let (entered, release) = self.observe.lock().take().expect("one observation only");
             entered.send(()).unwrap();
             let _ = release.recv();
-            Ok(feedback(self.session.stamp().session_ns, 0.0))
+            Ok(Feedback {
+                observed_ns: self.session.stamp().session_ns,
+                positions: self.positions.clone(),
+                velocities: vec![0.0; self.positions.len()],
+                gripper_force: None,
+            })
         }
         fn dispatch(
             &self,
@@ -88,6 +94,7 @@ mod session_execution {
         let io = Arc::new(NoDispatch {
             session: session.clone(),
             observe: Mutex::new(None),
+            positions: vec![0.0, 0.5],
         });
         for bad in [
             pb::ActionChunk::default(),
@@ -158,6 +165,7 @@ mod session_execution {
                 Arc::new(NoDispatch {
                     session: session.clone(),
                     observe: Mutex::new(Some((observe_tx, wait_observe))),
+                    positions: vec![0.0, 0.5],
                 }),
             )
             .unwrap();
@@ -186,6 +194,99 @@ mod session_execution {
             ))))
         );
         assert!(session.episode_done(ep.id()));
+        session.shutdown();
+    }
+
+    #[test]
+    fn whole_joint_composite_keeps_declared_layout_and_slowest_cadence() {
+        let mut description = robot();
+        let joint_space = description.action_space.take().unwrap();
+        description.action_space = Some(pb::ActionSpace {
+            space: Some(pb::action_space::Space::Composite(pb::Composite {
+                parts: [("left", 50.0), ("right", 20.0)]
+                    .map(|(name, rate)| pb::composite::Part {
+                        name: name.into(),
+                        space: Some(pb::ActionSpace {
+                            rate_hz: rate,
+                            ..joint_space.clone()
+                        }),
+                    })
+                    .into(),
+            })),
+            rate_hz: 50.0,
+            ..Default::default()
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let session = Session::builder("composite-finite-intake")
+            .robot(description)
+            .control(ControlRegistry {
+                send: Some(Arc::new(|_: &ActionChunk| Ok(()))),
+                hold: Some(Arc::new(|| Ok(()))),
+                ..Default::default()
+            })
+            .recording_dir(dir.path())
+            .build()
+            .unwrap();
+        let ep = session.start_episode("composite").unwrap();
+        let (entered, observed) = mpsc::channel();
+        let (release, waiting) = mpsc::channel();
+        let io = Arc::new(NoDispatch {
+            session: session.clone(),
+            observe: Mutex::new(Some((entered, waiting))),
+            positions: vec![0.0, 0.5, 0.0, 0.5],
+        });
+        let mut input = input();
+        let target = input.actions[0].clone();
+        input.actions[0].target = Some(pb::action::Target::Composite(pb::CompositeAction {
+            parts: ["right", "left"]
+                .map(|name| pb::composite_action::PartAction {
+                    name: name.into(),
+                    action: Some(target.clone()),
+                })
+                .into(),
+        }));
+        let mut policy = policy();
+        policy.indices = vec![0, 1, 2, 3];
+        policy.start_tolerance = vec![0.01; 4];
+        policy.position_tolerance = vec![0.005; 4];
+        policy.stationary_velocity = vec![0.01; 4];
+        policy.paced_curve = Some(waddle_runtime::playback::PacedCurve {
+            times_s: vec![0.0, 0.1],
+            positions: vec![vec![0.0, 0.5, 0.0, 0.5]; 2],
+            coefficients: vec![vec![vec![0.0, 0.5, 0.0, 0.5]]],
+            period_ns: 20_000_000,
+            position_error: vec![0.1; 4],
+            tracking_tolerance: vec![0.2; 4],
+            sample_times_s: None,
+        });
+        assert_eq!(
+            session
+                .start_playback(ep.id(), &input, policy.clone(), io.clone())
+                .unwrap_err(),
+            PlaybackError::Invalid("playback exceeds the declared command cadence")
+        );
+        policy.paced_curve = None;
+        let mut too_fast = input.clone();
+        too_fast.actions.push(pb::Action {
+            t_offset_ns: 1_000_000,
+            ..too_fast.actions[0].clone()
+        });
+        too_fast.horizon_ns = 1_000_000;
+        assert_eq!(
+            session
+                .start_playback(ep.id(), &too_fast, policy.clone(), io.clone())
+                .unwrap_err(),
+            PlaybackError::Invalid("playback exceeds the declared command cadence")
+        );
+        let handle = session.start_playback(ep.id(), &input, policy, io).unwrap();
+        observed.recv_timeout(Duration::from_secs(5)).unwrap();
+        handle.cancel("admission checked");
+        release.send(()).unwrap();
+        assert!(matches!(
+            handle.wait().result,
+            Some(Err(ExecutionFailure::Playback(PlaybackError::Cancelled(_))))
+        ));
+        session.terminate_episode(ep.id(), TerminalOutcome::Abort, "test done");
         session.shutdown();
     }
 }

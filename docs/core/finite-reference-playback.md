@@ -1,5 +1,33 @@
 # Finite reference playback
 
+Binding API 22 adds `CoordinatedJointMotion(parts, references, policy)` for the
+complete joint-position Site. `parts` must name every part in declaration order;
+positions, velocity hints, polynomial rows and policy indices use that flattened
+layout. Every part must advertise `execution.coordinated_joint_playback` and all
+other policy support. A named `FiniteJointMotion` retains its original behavior.
+
+The group occupies the existing single execution slot and uses one native clock,
+curve phase and acknowledgement. Local observations copy every participating part;
+completion evaluates the selected joint rows together. Native admission enforces
+the slowest participating command cadence (and the composite cadence). Each full
+fixed-reference interval must respect that cadence; a late acknowledged write
+cannot trigger faster catch-up writes. Original lateness/deadline limits still
+apply rather than extending the motion budget. Each reference crosses the
+ordinary episode gate and all addressed owner envelopes
+before the first driver write. Those writes are sequential: if a later write
+raises, earlier side effects remain possible, the original failure stays uncertain
+and ordinary site Hold/drain follows. Cancellation waits for an in-flight reference
+before cleanup. This does not add independent concurrent buffers, planning,
+application geometry validation or physical synchronization guarantees. Scalar
+gripper outcome/force policies are refused for a group; ordinary held-jaw behavior
+and generic feedback/curve policies retain their existing contracts.
+
+If supervision selects a command for one part in place of a whole-site reference,
+its velocity hint and required neighbor checks use that selected part. An accepted
+substitution ends the original buffer as `superseded` without sending another Hold
+over the selected stream. Owner refusal retains its original evidence and normal
+Hold/drain.
+
 Binding API 19 adds `feedback_reference`, advertised by
 `execution.playback_feedback_reference`. Each snapshot pairs its `feedback` with
 the last acknowledged reference before that observation was acquired. It has the
@@ -344,8 +372,8 @@ frontend timing loop around it.
 
 `Session.start_playback(episode_id, wire_chunk, policy, io)` validates the complete
 chunk against the session's declared action space before admitting it. It accepts
-one joint-position scope, including one named part of a composite robot. It
-refuses a whole composite space, mixed scopes, inert actions and gripper side
+one joint-position scope, including a named part or a complete composite of
+joint-position parts. It refuses mixed action spaces, mixed scopes, inert actions and gripper side
 channels. A registered Hold callback is required. One reference loop can be
 outstanding; another admission or an outstanding control/safety request returns
 `Busy`. This is execution serialization, not an additional actuation lease.
@@ -448,7 +476,7 @@ this local API does not observe network liveness.
 
 Binding API 14 introduced retained cleanup receipts; the optional additions
 above require their separately listed binding APIs and capability facts. The
-current Python/native binding is API 21. Install matching SDK/media wheels from
+current Python/native binding is API 22. Install matching SDK/media wheels from
 one revision in an idle environment; never replace a running hardware owner's
 native module to test this API.
 

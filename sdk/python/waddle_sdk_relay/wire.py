@@ -39,6 +39,7 @@ _TYPES = {
 # optional execution facet can encode/decode its finite values.
 for _name in (
     "FiniteJointMotion",
+    "CoordinatedJointMotion",
     "JointReference",
     "PlaybackPolicy",
     "PacedJointCurve",

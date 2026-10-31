@@ -65,6 +65,7 @@ class SupportFact(str, enum.Enum):
     PART_OBSERVATION = "observation.named_parts"
     PART_ACTION = "action.named_parts"
     FINITE_JOINT_PLAYBACK = "execution.finite_joint_playback"
+    COORDINATED_JOINT_PLAYBACK = "execution.coordinated_joint_playback"
     PACED_JOINT_PLAYBACK = "execution.paced_joint_playback"
     FEEDBACK_JOINT_PLAYBACK = "execution.feedback_joint_playback"
     SAMPLED_JOINT_PLAYBACK = "execution.sampled_joint_playback"
@@ -777,6 +778,28 @@ class FiniteJointMotion:
         object.__setattr__(self, "references", tuple(self.references))
 
 
+@dataclass(frozen=True)
+class CoordinatedJointMotion:
+    """One finite buffer for every declared part, under one local clock.
+
+    ``parts`` must exactly match the Site's complete declaration order. Reference
+    positions, velocity hints, curve rows and policy indices use that flattened
+    joint layout. Every part must advertise coordinated playback and all selected
+    policy support. Each whole-site reference passes the existing native gate and
+    all addressed owner envelopes before any write; driver writes themselves are
+    sequential, not physically atomic. Failure/cancel uses the normal site Hold.
+    Scalar gripper outcome/force policies are not supported for a group.
+    """
+
+    parts: tuple[str, ...]
+    references: tuple[JointReference, ...]
+    policy: PlaybackPolicy
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "parts", tuple(self.parts))
+        object.__setattr__(self, "references", tuple(self.references))
+
+
 @runtime_checkable
 class PlaybackHandlePort(Protocol):
     """Retained execution identity and measured status; terminal means drained.
@@ -828,7 +851,9 @@ class WithdrawablePlaybackHandlePort(RevisablePlaybackHandlePort, Protocol):
 class FinitePlaybackRunPort(Protocol):
     """Optional finite execution, declared by a per-part support fact."""
 
-    def start_playback(self, motion: FiniteJointMotion) -> PlaybackHandlePort: ...
+    def start_playback(
+        self, motion: FiniteJointMotion | CoordinatedJointMotion
+    ) -> PlaybackHandlePort: ...
 
 
 @runtime_checkable

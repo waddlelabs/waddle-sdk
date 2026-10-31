@@ -24,7 +24,11 @@ For fully received finite joint references, the optional
 [`Run.start_playback`](../core/finite-reference-playback.md#python-run-execution)
 uses the native local worker and the same gate/owner path as `step`. Check the
 part's `execution.finite_joint_playback` support fact and use `FiniteJointMotion`,
-`JointReference`, and `PlaybackPolicy` from `waddle_sdk.runtime`. Admission and
+`JointReference`, and `PlaybackPolicy` from `waddle_sdk.runtime`. Whole-site
+`CoordinatedJointMotion` requires every declared part in declaration order and
+`execution.coordinated_joint_playback` on every part. It shares one native clock
+and all-part envelope preflight, with sequential driver writes and normal site
+Hold/drain; it does not create independent buffers or planning. Admission and
 dispatch are distinct from measured completion. While playback is active,
 ordinary steps return Busy; run/site exit drains it before hardware can close.
 The separate `execution.paced_joint_playback` fact permits a `PacedJointCurve`
@@ -148,6 +152,9 @@ Configured cross-part collision checks still require fresh neighbor geometry; a
 missing required neighbor can refuse an otherwise healthy part's command. Applications
 own trajectory scheduling, completion and cancellation; this API adds no automatic
 sibling cancellation, motion replay or fault-domain policy.
+When supervision changes a command's scope, neighbor checks and velocity hints
+follow the part selected by the native gate, including a named command replacing
+a whole-site caller.
 
 
 ## Guided site creation

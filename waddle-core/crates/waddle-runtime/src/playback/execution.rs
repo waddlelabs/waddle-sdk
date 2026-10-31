@@ -326,6 +326,7 @@ pub(crate) struct ExecutionTask {
     control: Arc<Control>,
     next_poll_ns: i64,
     sample_period_ns: i64,
+    dispatch_period_ns: i64,
     failure: Option<ExecutionResult>,
     pending_update_id: Option<u64>,
 }
@@ -338,6 +339,7 @@ impl ExecutionTask {
         io: Arc<dyn PlaybackIo>,
         handle: &ExecutionHandle,
         sample_period_ns: i64,
+        dispatch_period_ns: i64,
     ) -> Self {
         Self {
             mirror,
@@ -348,6 +350,7 @@ impl ExecutionTask {
             control: handle.control.clone(),
             next_poll_ns: 0,
             sample_period_ns,
+            dispatch_period_ns,
             failure: None,
             pending_update_id: None,
         }
@@ -515,7 +518,8 @@ impl ExecutionTask {
                         state.snapshot.last_acknowledged_ns = Some(completed);
                         // The next poll establishes its exact due time; it never
                         // skips an entry or catches up by dispatching a batch.
-                        self.next_poll_ns = now;
+                        self.next_poll_ns =
+                            now.max(started.saturating_add(self.dispatch_period_ns));
                     }
                     Ok(ReferenceReceipt::Superseded(gate)) => {
                         return Some(Err(ExecutionFailure::Superseded(gate)));

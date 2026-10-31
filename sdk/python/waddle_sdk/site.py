@@ -37,6 +37,7 @@ from .robots.site import PartConfig
 from .runtime import (
     SUPPORT_CONTRACT_VERSION,
     BodySphere,
+    CoordinatedJointMotion,
     FaultCode,
     FiniteJointMotion,
     JointPositionCommand,
@@ -1491,6 +1492,10 @@ class SiteSession:
         digest = self._composite_embodiment_digest(robot, base_frames)
         grant_facts = self._grant_facts(grants)
         part_spaces = self._part_space_descriptions(action_space, tuple(managed.arms))
+        coordinated = len(managed.arms) > 1 and all(
+            isinstance(part_spaces.get(name, {}).get("jointPosition"), Mapping)
+            for name in managed.arms
+        )
         manifest_parts = self.site.manifest["parts"]
         rows: list[SupportRow] = []
         for name, arm in managed.arms.items():
@@ -1507,6 +1512,8 @@ class SiteSession:
                 facts.update((SupportFact.PART_ACTION, SupportFact.PART_OBSERVATION))
                 if {SupportFact.SEND_GRANT, SupportFact.HOLD_GRANT} <= grant_facts:
                     facts.add(SupportFact.FINITE_JOINT_PLAYBACK)
+                    if coordinated:
+                        facts.add(SupportFact.COORDINATED_JOINT_PLAYBACK)
                     facts.add(SupportFact.PACED_JOINT_PLAYBACK)
                     facts.add(SupportFact.FEEDBACK_JOINT_PLAYBACK)
                     facts.add(SupportFact.SAMPLED_JOINT_PLAYBACK)
@@ -2049,7 +2056,9 @@ class Run:
         if self._episode is not None and self._episode.playback_active:
             raise RuntimeFault(FaultCode.BUSY, "finite playback is still active")
 
-    def start_playback(self, motion: FiniteJointMotion) -> PlaybackHandlePort:
+    def start_playback(
+        self, motion: FiniteJointMotion | CoordinatedJointMotion
+    ) -> PlaybackHandlePort:
         """Admit finite references to the local native worker; never wait for motion."""
         from ._playback import start
 
@@ -2119,8 +2128,12 @@ class Run:
                 gate.velocity_feedforward, dtype=np.float64
             )
             if isinstance(decided, dict):
-                velocity_feedforward = base.split_by_part(
-                    self._session._require().arms, velocity_feedforward
+                velocity_feedforward = (
+                    {part: velocity_feedforward}
+                    if part is not None
+                    else base.split_by_part(
+                        self._session._require().arms, velocity_feedforward
+                    )
                 )
         if dispatched:
             try:
@@ -2153,7 +2166,7 @@ class Run:
                     velocity_feedforward_rad_s=velocity_feedforward,
                     gripper_force_n=force_rows,
                     on_refusal=refusal_faults.append,
-                    check_neighbors=caller_part is not None,
+                    check_neighbors=part is not None,
                 )
             except RuntimeFault:
                 raise
