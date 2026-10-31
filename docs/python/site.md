@@ -152,6 +152,9 @@ Configured cross-part collision checks still require fresh neighbor geometry; a
 missing required neighbor can refuse an otherwise healthy part's command. Applications
 own trajectory scheduling, completion and cancellation; this API adds no automatic
 sibling cancellation, motion replay or fault-domain policy.
+When supervision changes a command's scope, neighbor checks and velocity hints
+follow the part selected by the native gate, including a named command replacing
+a whole-site caller.
 
 
 ## Guided site creation

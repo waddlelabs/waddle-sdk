@@ -12,8 +12,8 @@ completion evaluates the selected joint rows together. Native admission enforces
 the slowest participating command cadence (and the composite cadence). Each full
 fixed-reference interval must respect that cadence; a late acknowledged write
 cannot trigger faster catch-up writes. Original lateness/deadline limits still
-apply rather than extending the motion budget. Each full
-reference crosses the ordinary episode gate and all addressed owner envelopes
+apply rather than extending the motion budget. Each reference crosses the
+ordinary episode gate and all addressed owner envelopes
 before the first driver write. Those writes are sequential: if a later write
 raises, earlier side effects remain possible, the original failure stays uncertain
 and ordinary site Hold/drain follows. Cancellation waits for an in-flight reference
@@ -21,6 +21,12 @@ before cleanup. This does not add independent concurrent buffers, planning,
 application geometry validation or physical synchronization guarantees. Scalar
 gripper outcome/force policies are refused for a group; ordinary held-jaw behavior
 and generic feedback/curve policies retain their existing contracts.
+
+If supervision selects a command for one part in place of a whole-site reference,
+its velocity hint and required neighbor checks use that selected part. An accepted
+substitution ends the original buffer as `superseded` without sending another Hold
+over the selected stream. Owner refusal retains its original evidence and normal
+Hold/drain.
 
 Binding API 19 adds `feedback_reference`, advertised by
 `execution.playback_feedback_reference`. Each snapshot pairs its `feedback` with

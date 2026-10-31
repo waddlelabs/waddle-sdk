@@ -2128,8 +2128,12 @@ class Run:
                 gate.velocity_feedforward, dtype=np.float64
             )
             if isinstance(decided, dict):
-                velocity_feedforward = base.split_by_part(
-                    self._session._require().arms, velocity_feedforward
+                velocity_feedforward = (
+                    {part: velocity_feedforward}
+                    if part is not None
+                    else base.split_by_part(
+                        self._session._require().arms, velocity_feedforward
+                    )
                 )
         if dispatched:
             try:
@@ -2162,7 +2166,7 @@ class Run:
                     velocity_feedforward_rad_s=velocity_feedforward,
                     gripper_force_n=force_rows,
                     on_refusal=refusal_faults.append,
-                    check_neighbors=caller_part is not None,
+                    check_neighbors=part is not None,
                 )
             except RuntimeFault:
                 raise

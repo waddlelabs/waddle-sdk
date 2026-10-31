@@ -147,6 +147,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Use the native gate's selected scope for neighbor collision checks and velocity
+  hints when a named supervision command replaces a whole-site caller. Preserve
+  the selected stream, original owner refusals and ordinary playback cleanup.
+
 - Apply authored scenes' finger-contact material to unnamed two-YAM fixture
   collision shapes, including compound children. Existing compiled scenes stay
   immutable; both-arm peg retention/release and ordinary-material drop controls

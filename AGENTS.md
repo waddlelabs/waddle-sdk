@@ -14,6 +14,10 @@ site Hold/drain; this is not physically atomic dispatch or independent buffers.
 Scalar group gripper policies are refused. See the finite-playback page and
 sdk/tests/test_coordinated_playback.py. Application geometry/planning and physical
 qualification remain separate.
+When supervision selects a named part instead of a whole-site caller, velocity
+hints and neighbor checks use the selected part. Accepted substitution ends the
+old buffer without an extra Hold; owner refusal retains its original fault and
+normal cleanup.
 
 Binding API 21 adds opt-in `PlaybackPolicy.credit_pacing_delay` with the separate
 `execution.paced_playback_deadline` fact. Only complete acknowledged moving ticks
