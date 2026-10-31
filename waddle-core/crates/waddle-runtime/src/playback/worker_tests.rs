@@ -205,6 +205,10 @@ impl Harness {
 }
 
 fn references() -> FiniteReferences {
+    references_on(None)
+}
+
+fn references_on(part: Option<&str>) -> FiniteReferences {
     FiniteReferences::new(
         ActionChunk {
             steps: [0.0, 0.1, 0.2]
@@ -215,7 +219,7 @@ fn references() -> FiniteReferences {
                     values: vec![q].into(),
                     velocity_feedforward: None,
                     gripper: None,
-                    part: None,
+                    part: part.map(Into::into),
                 })
                 .collect(),
             dims: 1,
@@ -246,6 +250,65 @@ fn references() -> FiniteReferences {
         },
     )
     .unwrap()
+}
+
+fn sibling_io(h: &Harness) -> Arc<MemoryIo> {
+    let (shared, _) = GateShared::new(
+        GatePlan::passthrough(MonoNs(0)),
+        16,
+        0,
+        ReplanPolicy::Immediate,
+    );
+    let (gate, _) = Gate::new(shared, h.io.clock.clone(), 32);
+    Arc::new(MemoryIo {
+        clock: h.io.clock.clone(),
+        gate: Mutex::new(gate),
+        q: Mutex::new(0.0),
+        events: h.io.events.clone(),
+        writes: Mutex::new(Vec::new()),
+        observation_pause: Mutex::new(None),
+        dispatch_pause: Mutex::new(None),
+        error: Mutex::new(None),
+        panic: AtomicBool::new(false),
+    })
+}
+
+fn start_named(
+    h: &Harness,
+    part: &str,
+    io: Arc<MemoryIo>,
+) -> Result<ExecutionHandle, PlaybackError> {
+    h.dispatch.start_playback(
+        h.mirror.clone(),
+        EpisodeId::new("episode"),
+        references_on(Some(part)),
+        io,
+        10_000_000,
+        0,
+    )
+}
+
+#[test]
+fn disjoint_buffers_share_the_worker_but_reject_overlapping_scopes() {
+    let h = Harness::new();
+    let right_io = sibling_io(&h);
+    let (p, entered, release) = pause();
+    *h.io.observation_pause.lock() = Some(p);
+    let left = start_named(&h, "left", h.io.clone()).unwrap();
+    entered.recv_timeout(Duration::from_secs(5)).unwrap();
+    let right = start_named(&h, "right", right_io.clone());
+    // Always release the callback even when the old single-slot baseline refuses.
+    let duplicate = start_named(&h, "left", h.io.clone());
+    let whole_site = h.start();
+    release.send(()).unwrap();
+    let right = right.unwrap();
+    assert!(matches!(duplicate, Err(PlaybackError::Busy)));
+    assert!(matches!(whole_site, Err(PlaybackError::Busy)));
+    assert_eq!(finished(&left).result, Some(Ok(Completion::Arrived)));
+    assert_eq!(finished(&right).result, Some(Ok(Completion::Arrived)));
+    assert_eq!(h.io.writes.lock().len(), 3);
+    assert_eq!(right_io.writes.lock().len(), 3);
+    assert!(h.outcomes.try_recv().is_err());
 }
 
 fn finished(handle: &ExecutionHandle) -> ExecutionSnapshot {
