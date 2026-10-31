@@ -277,6 +277,20 @@ def _engage(sdk):
     return native
 
 
+def _takeover_request():
+    motion = request()
+    # Intake is synchronous; the native jitter buffer admits a chunk after 20 ms.
+    # A 50 ms first-reference offset guarantees it is due before the first gate
+    # tick. The claim stays engaged until teardown; no scheduler race is needed.
+    return replace(
+        motion,
+        references=tuple(
+            replace(row, offset_ns=row.offset_ns + 50_000_000)
+            for row in motion.references
+        ),
+    )
+
+
 def test_named_takeover_of_group_keeps_neighbor_collision_checks(
     site_path, monkeypatch
 ):
@@ -298,8 +312,9 @@ def test_named_takeover_of_group_keeps_neighbor_collision_checks(
             )
         native = _engage(sdk)
         native._testing_push_chunk([0.1, 0], part="right")
-        result = run.start_playback(request()).wait()
+        result = run.start_playback(_takeover_request()).wait()
         assert result["status"] == "failed", result
+        assert isinstance(result["failure"]["evidence"], dict), result
         assert result["failure"]["evidence"]["code"] == FaultCode.SAFETY_REFUSAL
         assert "self-collision" in result["failure"]["evidence"]["detail"]
         assert result["failure"]["evidence"]["context"]["addressed_parts"] == ["right"]
@@ -329,7 +344,7 @@ def test_named_takeover_of_group_keeps_the_selected_velocity_hint(
         native._testing_push_chunk(
             [0.02, -0.01], part="right", velocity_feedforward=[0.1, -0.05]
         )
-        result = run.start_playback(request()).wait()
+        result = run.start_playback(_takeover_request()).wait()
         assert result["failure"]["code"] == "superseded", result
         assert received == [((0.02, -0.01), (0.1, -0.05))]
         assert result["dispatched"] == 0
