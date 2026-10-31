@@ -11,6 +11,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Distinguish direct playback-bound refusals from synchronous owner-envelope
+  cleanup: their global Hold is queued, not yet a completed stop receipt.
+
 - Add optional run-wide joint envelopes for buffered execution, with a separately
   declared capability and active-run relay binding. The existing local worker
   validates fresh required-part feedback and each reference, requesting global

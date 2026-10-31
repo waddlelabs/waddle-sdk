@@ -9,7 +9,8 @@ Optional `BoundedPlaybackRunPort.set_playback_bounds` installs copied per-part
 joint envelopes under `execution.joint_playback_bounds`. The existing worker
 checks fresh bounded-part feedback and references under the dispatch boundary;
 a required read/range failure requests global Hold and retains its original fault.
-These shared dependencies override per-buffer scoped cleanup. Callers own geometry
+Direct commands report `playback_bounds_refusal`, retaining queued Hold separately
+from completed owner cleanup. These shared dependencies override per-buffer scoped cleanup. Callers own geometry
 proof and serialized, acknowledged replacement. Empty bounds remove the envelope;
 new Runs start clear. Direct run commands and supervision substitutions are checked after gate
 selection; explicit control verbs keep their takeover/drain semantics. No planner, native ABI change, owner, clock or writer is added. Keep unknown
