@@ -30,6 +30,7 @@ pub(crate) struct Policy {
     checkpoint_offsets_ns: Vec<i64>,
     allow_curve_updates: bool,
     credit_pacing_delay: bool,
+    part_hold: bool,
     paced_curve: Option<Curve>,
     feedback: Option<FeedbackOptions>,
     gripper: Option<Gripper>,
@@ -175,6 +176,7 @@ impl TryFrom<Policy> for PlaybackPolicy {
             checkpoint_offsets_ns: p.checkpoint_offsets_ns,
             allow_curve_updates: p.allow_curve_updates,
             credit_pacing_delay: p.credit_pacing_delay,
+            part_hold: p.part_hold,
             paced_curve: p.paced_curve.map(Into::into),
             feedback,
             gripper: p.gripper.map(|g| GripperPolicy {
@@ -239,6 +241,7 @@ struct Receipt {
 pub(crate) struct PyIo {
     pub observe: Py<PyAny>,
     pub dispatch: Py<PyAny>,
+    pub hold_part: Option<Py<PyAny>>,
 }
 
 fn callback<T>(
@@ -300,6 +303,26 @@ fn reference(py: Python<'_>, value: &Step) -> PyResult<Py<PyDict>> {
 }
 
 impl PlaybackIo for PyIo {
+    fn supports_part_hold(&self) -> bool {
+        self.hold_part.is_some()
+    }
+
+    fn hold_part(&self, part: &str) -> Result<(), PlaybackIoError> {
+        callback(true, |py| {
+            let value = self
+                .hold_part
+                .as_ref()
+                .expect("validated part Hold")
+                .bind(py)
+                .call1((part,))?;
+            if let Ok(error) = value.extract::<PyRef<'_, PyIoError>>() {
+                return Ok(Err(error.0.clone()));
+            }
+            value.extract::<()>()?;
+            Ok(Ok(()))
+        })
+    }
+
     fn observe(&self) -> Result<Feedback, PlaybackIoError> {
         callback(false, |py| {
             let value = self.observe.bind(py).call0()?;
@@ -352,6 +375,7 @@ pub(crate) fn start(
     policy: Policy,
     observe: Py<PyAny>,
     dispatch: Py<PyAny>,
+    hold_part: Option<Py<PyAny>>,
 ) -> PyResult<PyExecutionHandle> {
     let chunk = waddle_sidecar::json::message_from_json::<waddle_types::pb::v0::ActionChunk>(
         "waddle.v0.ActionChunk",
@@ -363,7 +387,11 @@ pub(crate) fn start(
             id,
             &chunk,
             policy.try_into()?,
-            Arc::new(PyIo { observe, dispatch }),
+            Arc::new(PyIo {
+                observe,
+                dispatch,
+                hold_part,
+            }),
         )
         .map(PyExecutionHandle)
         .map_err(|error| match error {
@@ -534,7 +562,14 @@ fn snapshot(py: Python<'_>, value: ExecutionSnapshot) -> PyResult<Py<PyDict>> {
                     "unknown"
                 },
             )?;
-            result.set_item("error", receipt.result.err().map(|e| e.to_string()))?;
+            if let Some(part) = receipt.part {
+                result.set_item("part", part)?;
+                result.set_item(
+                    "evidence",
+                    receipt.result.as_ref().err().map(|e| &e.evidence),
+                )?;
+            }
+            result.set_item("error", receipt.result.err().map(|e| e.detail))?;
             result.set_item("completed_ns", receipt.at.0)?;
             result.set_item("measured_stationary", false)?;
             Ok(result.unbind())

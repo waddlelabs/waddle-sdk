@@ -43,6 +43,7 @@ fn inputs(targets: &[f64]) -> (ActionChunk, PlaybackPolicy) {
             checkpoint_offsets_ns: vec![],
             allow_curve_updates: false,
             credit_pacing_delay: false,
+            part_hold: false,
             paced_curve: None,
             feedback: Some(FeedbackPolicy::default()),
             gripper: None,

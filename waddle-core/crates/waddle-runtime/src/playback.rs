@@ -26,7 +26,7 @@ pub use gripper::{
 pub(crate) mod execution;
 pub use execution::{
     CurveUpdateReceipt, ExecutionFailure, ExecutionHandle, ExecutionResult, ExecutionSnapshot,
-    PlaybackIo, PlaybackIoError, ReferenceReceipt,
+    PlaybackCleanup, PlaybackIo, PlaybackIoError, ReferenceReceipt,
 };
 
 /// Bounded completion/timing choices supplied with a finite reference buffer.
@@ -55,6 +55,9 @@ pub struct PlaybackPolicy {
     pub allow_curve_updates: bool,
     /// Credit only completed moving reference ticks; false keeps a wall deadline.
     pub credit_pacing_delay: bool,
+    /// Use the named owner's Hold for this buffer's cancellation/failure only.
+    /// Explicit control verbs, episode closure and shutdown remain site-wide.
+    pub part_hold: bool,
     /// Optional exact polynomial evaluation with acknowledgement-paced progress.
     /// Omission retains fixed offsets and the original lateness guard.
     pub paced_curve: Option<PacedCurve>,
@@ -137,6 +140,10 @@ impl FiniteReferences {
         self.chunk.steps[0].part.as_deref()
     }
 
+    pub(crate) fn part_hold(&self) -> bool {
+        self.policy.part_hold
+    }
+
     pub(crate) fn len(&self) -> usize {
         self.chunk.steps.len()
     }
@@ -147,6 +154,9 @@ impl FiniteReferences {
             return Err(invalid("requires 1..=16385 references"));
         }
         let first = &chunk.steps[0];
+        if policy.part_hold && first.part.is_none() {
+            return Err(invalid("part Hold requires a named playback scope"));
+        }
         let width = first.values.len();
         if !(1..=128).contains(&width) || first.offset_ns != 0 {
             return Err(invalid("requires 1..=128 joints and a zero-offset start"));

@@ -114,12 +114,14 @@ impl PyEpisode {
 #[pymethods]
 impl PyEpisode {
     /// Admit a fully received finite buffer; callbacks only adapt local owner I/O.
+    #[pyo3(signature = (chunk_json, policy, observe, dispatch, hold_part=None))]
     fn start_playback(
         &self,
         chunk_json: &str,
         policy: crate::playback::Policy,
         observe: Py<PyAny>,
         dispatch: Py<PyAny>,
+        hold_part: Option<Py<PyAny>>,
     ) -> PyResult<crate::playback::PyExecutionHandle> {
         crate::playback::start(
             &self.session,
@@ -128,6 +130,7 @@ impl PyEpisode {
             policy,
             observe,
             dispatch,
+            hold_part,
         )
     }
 

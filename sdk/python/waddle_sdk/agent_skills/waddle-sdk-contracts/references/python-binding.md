@@ -72,6 +72,13 @@ cadence without counting unrelated lock wait as driver execution.
 
 ## Finite joint playback
 
+Binding API 24 adds opt-in `PlaybackPolicy.part_hold`, requiring the separate
+`execution.part_hold_playback` fact on a named scope. Cancellation/failure uses
+that owner's existing Hold while siblings continue. Preserve scoped receipts,
+original faults and unknown cleanup. Whole-site/group buffers refuse this policy;
+explicit global controls and closure still drain all buffers. Geometry clearance
+and uncertain-operation ownership remain application responsibilities.
+
 Binding API 23 adds `execution.parallel_joint_playback`: distinct named buffers
 interleave on the existing worker, with separate completion and unchanged owner
 checks. Whole-site or overlapping scopes conflict. Site-wide Hold/e-stop/failure

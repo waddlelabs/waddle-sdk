@@ -67,6 +67,7 @@ class SupportFact(str, enum.Enum):
     FINITE_JOINT_PLAYBACK = "execution.finite_joint_playback"
     COORDINATED_JOINT_PLAYBACK = "execution.coordinated_joint_playback"
     PARALLEL_JOINT_PLAYBACK = "execution.parallel_joint_playback"
+    PART_HOLD_PLAYBACK = "execution.part_hold_playback"
     PACED_JOINT_PLAYBACK = "execution.paced_joint_playback"
     FEEDBACK_JOINT_PLAYBACK = "execution.feedback_joint_playback"
     SAMPLED_JOINT_PLAYBACK = "execution.sampled_joint_playback"
@@ -730,6 +731,11 @@ class PlaybackPolicy:
     accumulated ``curve_progress.pacing_extension_ns``; cloud receipt time never
     contributes. Default false keeps the original absolute timeout. Updates and
     withdrawals preserve, but do not themselves increase, the accumulated credit.
+
+    ``part_hold`` opts a supported named buffer into local per-part Hold on
+    cancellation or failure. It leaves siblings running and retains the cleanup
+    scope and owner error. Global control verbs and shutdown still drain all
+    buffers. Default false uses site-wide cleanup. This is not collision proof.
     """
 
     indices: tuple[int, ...]
@@ -748,6 +754,7 @@ class PlaybackPolicy:
     checkpoint_offsets_ns: tuple[int, ...] = ()
     allow_curve_updates: bool = False
     credit_pacing_delay: bool = False
+    part_hold: bool = False
 
     def __post_init__(self) -> None:
         for name in (

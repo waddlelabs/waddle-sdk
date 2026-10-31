@@ -108,6 +108,8 @@ def _default(value):
             and data.get("credit_pacing_delay") is False
         ):
             data.pop("credit_pacing_delay")
+        if type(value).__name__ == "PlaybackPolicy" and data.get("part_hold") is False:
+            data.pop("part_hold")
         if isinstance(value, runtime.SubmitResult):
             # These optional clocks belong to the SDK host, not this executor.
             data["dispatch_started_monotonic_s"] = None

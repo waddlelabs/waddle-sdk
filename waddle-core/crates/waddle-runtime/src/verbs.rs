@@ -235,6 +235,11 @@ impl VerbDispatch {
                 "requires a registered Hold callback",
             ));
         }
+        if references.part_hold() && !io.supports_part_hold() {
+            return Err(PlaybackError::Invalid(
+                "requires a local part Hold callback",
+            ));
+        }
         let handle = self.playback.register(
             episode.clone(),
             references.scope().map(str::to_owned),
@@ -357,6 +362,7 @@ fn dispatch_loop<C: Clock>(
             }
             Ok(Work::Playback(task)) => {
                 if let Some(result) = task.cancelled_result()
+                    && task.cleanup_complete()
                     && pending_verbs.load(Ordering::SeqCst) == 0
                     && estop_flag.load(Ordering::SeqCst) == 0
                     && priority_hold_flag.load(Ordering::SeqCst) == 0
@@ -390,6 +396,20 @@ fn dispatch_loop<C: Clock>(
                     .is_err_and(|e| !matches!(e, ExecutionFailure::Superseded(_)))
                     && !task.scope_ended()
                 {
+                    if task.hold_part(clock) {
+                        // A site-wide request may arrive during the owner callback.
+                        // Keep its original failure until that control verb drains.
+                        if shutdown.load(Ordering::SeqCst)
+                            || pending_verbs.load(Ordering::SeqCst) != 0
+                            || estop_flag.load(Ordering::SeqCst) != 0
+                            || priority_hold_flag.load(Ordering::SeqCst) != 0
+                        {
+                            active.push_back(task);
+                        } else {
+                            task.finish(result);
+                        }
+                        continue;
+                    }
                     // The registered Hold is site-wide. Fence all admissions
                     // while it runs, and cancel queued siblings before they can
                     // write again. The originating task retains its own failure.

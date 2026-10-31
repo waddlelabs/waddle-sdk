@@ -329,6 +329,7 @@ fn policy() -> PlaybackPolicy {
         checkpoint_offsets_ns: vec![],
         allow_curve_updates: false,
         credit_pacing_delay: false,
+        part_hold: false,
         paced_curve: None,
         feedback: None,
         gripper: None,
@@ -712,4 +713,14 @@ fn reference_receipt_never_extends_deadline_or_hides_cancellation() {
             }
         );
     }
+}
+
+#[test]
+fn whole_site_references_cannot_select_part_hold() {
+    let mut policy = policy();
+    policy.part_hold = true;
+    assert!(matches!(
+        FiniteReferences::new(chunk(), policy),
+        Err(PlaybackError::Invalid(_))
+    ));
 }
