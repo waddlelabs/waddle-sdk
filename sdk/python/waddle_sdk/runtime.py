@@ -70,6 +70,7 @@ class SupportFact(str, enum.Enum):
     SAMPLED_JOINT_PLAYBACK = "execution.sampled_joint_playback"
     REFERENCE_JOINT_PLAYBACK = "execution.reference_joint_playback"
     CHECKPOINTED_JOINT_PLAYBACK = "execution.checkpointed_joint_playback"
+    REVISABLE_JOINT_PLAYBACK = "execution.revisable_joint_playback"
     GRIPPER_PLAYBACK = "execution.gripper_playback"
     VELOCITY_FEEDFORWARD = "actuation.velocity_feedforward"
     FORWARD_KINEMATICS = "kinematics.fk"
@@ -676,6 +677,22 @@ class GripperPlaybackPolicy:
 
 
 @dataclass(frozen=True)
+class PlaybackCurveUpdate:
+    """A checked future suffix for a revisable, reference-only paced execution.
+
+    ``switch_ns`` uses the original execution's reference phase, not wall time.
+    ``curve`` starts at zero and must preserve position/velocity/acceleration at
+    that switch. Limits, coordinate order, held rows and the original timeout
+    cannot change. Only one future suffix may await its acknowledged handoff.
+    Stale revisions and discontinuities refuse without disturbing the incumbent.
+    """
+
+    expected_revision: int
+    switch_ns: int
+    curve: PacedJointCurve
+
+
+@dataclass(frozen=True)
 class PlaybackPolicy:
     """Explicit measured completion and local timing bounds; validated by core.
 
@@ -696,6 +713,10 @@ class PlaybackPolicy:
     the first fresh local feedback after acknowledged reference phase crosses
     its offset. These are not intermediate arrival gates or interpolated
     measurements. Gripper outcome policies cannot request checkpoints.
+
+    ``allow_curve_updates`` requires revisable-playback support and reference-only
+    paced execution without checkpoints, exact sample grids or goal-latched hints.
+    Updates use the same local worker; they do not extend the original timeout.
     """
 
     indices: tuple[int, ...]
@@ -712,6 +733,7 @@ class PlaybackPolicy:
     minimum_settle_samples: int = 1
     reference_only: bool = False
     checkpoint_offsets_ns: tuple[int, ...] = ()
+    allow_curve_updates: bool = False
 
     def __post_init__(self) -> None:
         for name in (
@@ -759,6 +781,20 @@ class PlaybackHandlePort(Protocol):
     def wait(self) -> Mapping[str, JSONValue]: ...
 
     def cancel(self, reason: str) -> None: ...
+
+
+@runtime_checkable
+class RevisablePlaybackHandlePort(PlaybackHandlePort, Protocol):
+    """Optional future updates, separate from ordinary finite playback support.
+
+    ``update_curve`` returns a request ID without waiting for device I/O. The
+    latest ``curve_update`` snapshot receipt is pending/accepted/rejected; accepted
+    means scheduled, not executed. ``curve_progress.revision`` advances only at
+    an acknowledged handoff. Serialize requests and reconcile uncertain replies
+    from this same retained handle; never replay an update after a lost response.
+    """
+
+    def update_curve(self, update: PlaybackCurveUpdate) -> int: ...
 
 
 @runtime_checkable

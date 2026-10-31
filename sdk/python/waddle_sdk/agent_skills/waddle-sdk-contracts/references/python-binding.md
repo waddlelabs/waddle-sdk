@@ -72,6 +72,14 @@ cadence without counting unrelated lock wait as driver execution.
 
 ## Finite joint playback
 
+Binding API 18 adds `PlaybackCurveUpdate` and the optional
+`RevisablePlaybackHandlePort` under `execution.revisable_joint_playback`. Opt-in
+reference-only curves accept one revision-checked future suffix while local
+playback continues. Preserve handoff position/velocity/acceleration, original
+limits and deadline; reconcile request receipts and acknowledged revisions
+without replaying uncertain updates. See the normative finite-playback page for
+admission restrictions, clock semantics and the separate application checks.
+
 Binding API 17 optionally records bounded `PlaybackPolicy.checkpoint_offsets_ns`
 under `execution.checkpointed_joint_playback`. Retained snapshots bind fresh local
 feedback to acknowledged reference phase; markers do not imply arrival or motor

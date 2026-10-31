@@ -10,6 +10,7 @@ from .runtime import (
     FaultCode,
     FiniteJointMotion,
     JointPositionCommand,
+    PlaybackCurveUpdate,
     RuntimeFault,
     SupportFact,
 )
@@ -45,6 +46,21 @@ class PlaybackHandle:
     def cancel(self, reason: str) -> None:
         self._native.cancel(reason)
 
+    def update_curve(self, update: PlaybackCurveUpdate) -> int:
+        """Queue a future suffix; inspect its retained receipt before another."""
+        if not isinstance(update, PlaybackCurveUpdate):
+            raise RuntimeFault(
+                FaultCode.INVALID_REQUEST, "provide a PlaybackCurveUpdate"
+            )
+        try:
+            return self._native.update_curve(update)
+        except core.PlaybackBusyError as error:
+            raise RuntimeFault(FaultCode.BUSY, str(error)) from error
+        except (TypeError, ValueError, OverflowError) as error:
+            raise RuntimeFault.from_exception(
+                error, code=FaultCode.INVALID_REQUEST
+            ) from error
+
 
 def start(run: Run, motion: FiniteJointMotion) -> PlaybackHandle:
     """Called under the ordinary dispatch lock; admission does not wait for I/O."""
@@ -72,6 +88,13 @@ def start(run: Run, motion: FiniteJointMotion) -> PlaybackHandle:
             "set constant playback force through the gripper policy",
         )
     gripper = motion.policy.gripper
+    if (
+        motion.policy.allow_curve_updates
+        and SupportFact.REVISABLE_JOINT_PLAYBACK not in row.facts
+    ):
+        raise RuntimeFault(
+            FaultCode.UNSUPPORTED, "part does not support revisable playback"
+        )
     if (
         motion.policy.checkpoint_offsets_ns
         and SupportFact.CHECKPOINTED_JOINT_PLAYBACK not in row.facts

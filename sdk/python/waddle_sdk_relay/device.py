@@ -235,7 +235,7 @@ class Device:
                 snapshot = handle.snapshot()
                 self._playbacks[(snapshot["episode_id"], snapshot["id"])] = handle
                 return snapshot
-            if method in {"playback_status", "playback_cancel"}:
+            if method in {"playback_status", "playback_cancel", "playback_update"}:
                 handle = self._playbacks.get((arguments["run_id"], arguments["id"]))
                 if handle is None:
                     raise RelayError(
@@ -244,6 +244,15 @@ class Device:
                     )
                 if method == "playback_cancel":
                     handle.cancel(arguments["reason"])
+                if method == "playback_update":
+                    update = getattr(handle, "update_curve", None)
+                    if not callable(update):
+                        raise RuntimeFault(
+                            FaultCode.UNSUPPORTED,
+                            "SDK handle does not support curve updates",
+                        )
+                    request_id = update(arguments["update"])
+                    return {"request_id": request_id, "snapshot": handle.snapshot()}
                 # Never wait here: the admission lock must remain available to
                 # Hold, disconnect and teardown while local playback advances.
                 return handle.snapshot()

@@ -6,10 +6,10 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use waddle_runtime::playback::{
-    Completion, ContactCondition, ExecutionFailure, ExecutionHandle, ExecutionSnapshot, Feedback,
-    FeedbackPolicy, ForceCondition, GripperPolicy, HeldJointGroup, MeasuredForce, PacedCurve,
-    PlaybackError, PlaybackIo, PlaybackIoError, PlaybackPolicy, PositionWindow, ReferenceReceipt,
-    VelocityHints,
+    Completion, ContactCondition, CurveUpdate, ExecutionFailure, ExecutionHandle,
+    ExecutionSnapshot, Feedback, FeedbackPolicy, ForceCondition, GripperPolicy, HeldJointGroup,
+    MeasuredForce, PacedCurve, PlaybackError, PlaybackIo, PlaybackIoError, PlaybackPolicy,
+    PositionWindow, ReferenceReceipt, VelocityHints,
 };
 use waddle_types::Step;
 
@@ -28,6 +28,7 @@ pub(crate) struct Policy {
     allow_settled: bool,
     reference_only: bool,
     checkpoint_offsets_ns: Vec<i64>,
+    allow_curve_updates: bool,
     paced_curve: Option<Curve>,
     feedback: Option<FeedbackOptions>,
     gripper: Option<Gripper>,
@@ -104,6 +105,27 @@ struct Curve {
     sample_times_s: Option<Vec<f64>>,
 }
 
+impl From<Curve> for PacedCurve {
+    fn from(c: Curve) -> Self {
+        Self {
+            times_s: c.times_s,
+            positions: c.positions,
+            coefficients: c.coefficients,
+            period_ns: c.period_ns,
+            position_error: c.position_error,
+            tracking_tolerance: c.tracking_tolerance,
+            sample_times_s: c.sample_times_s,
+        }
+    }
+}
+
+#[derive(FromPyObject)]
+struct Update {
+    expected_revision: u64,
+    switch_ns: i64,
+    curve: Curve,
+}
+
 impl TryFrom<Policy> for PlaybackPolicy {
     type Error = PyErr;
 
@@ -150,15 +172,8 @@ impl TryFrom<Policy> for PlaybackPolicy {
             allow_settled: p.allow_settled,
             reference_only: p.reference_only,
             checkpoint_offsets_ns: p.checkpoint_offsets_ns,
-            paced_curve: p.paced_curve.map(|c| PacedCurve {
-                times_s: c.times_s,
-                positions: c.positions,
-                coefficients: c.coefficients,
-                period_ns: c.period_ns,
-                position_error: c.position_error,
-                tracking_tolerance: c.tracking_tolerance,
-                sample_times_s: c.sample_times_s,
-            }),
+            allow_curve_updates: p.allow_curve_updates,
+            paced_curve: p.paced_curve.map(Into::into),
             feedback,
             gripper: p.gripper.map(|g| GripperPolicy {
                 period_ns: g.period_ns,
@@ -369,6 +384,18 @@ impl PyExecutionHandle {
     fn cancel(&self, reason: &str) {
         self.0.cancel(reason);
     }
+    fn update_curve(&self, update: Update) -> PyResult<u64> {
+        CurveUpdate::new(
+            update.expected_revision,
+            update.switch_ns,
+            update.curve.into(),
+        )
+        .and_then(|update| self.0.update_curve(update))
+        .map_err(|error| match error {
+            PlaybackError::Busy => PlaybackBusyError::new_err(error.to_string()),
+            _ => PyValueError::new_err(error.to_string()),
+        })
+    }
 }
 
 fn snapshot(py: Python<'_>, value: ExecutionSnapshot) -> PyResult<Py<PyDict>> {
@@ -378,6 +405,27 @@ fn snapshot(py: Python<'_>, value: ExecutionSnapshot) -> PyResult<Py<PyDict>> {
     out.set_item("dispatched", value.dispatched)?;
     out.set_item("references", value.references)?;
     out.set_item("last_acknowledged_ns", value.last_acknowledged_ns)?;
+    let update = value
+        .curve_update
+        .map(|receipt| -> PyResult<Py<PyDict>> {
+            let result = PyDict::new(py);
+            result.set_item("request_id", receipt.request_id)?;
+            result.set_item(
+                "status",
+                match &receipt.result {
+                    None => "pending",
+                    Some(Ok(())) => "accepted",
+                    Some(Err(_)) => "rejected",
+                },
+            )?;
+            result.set_item(
+                "error",
+                receipt.result.and_then(Result::err).map(|e| e.to_string()),
+            )?;
+            Ok(result.unbind())
+        })
+        .transpose()?;
+    out.set_item("curve_update", update)?;
     let checkpoints = value
         .checkpoints
         .iter()
@@ -404,6 +452,8 @@ fn snapshot(py: Python<'_>, value: ExecutionSnapshot) -> PyResult<Py<PyDict>> {
         .curve_progress
         .map(|progress| -> PyResult<Py<PyDict>> {
             let result = PyDict::new(py);
+            result.set_item("revision", progress.revision)?;
+            result.set_item("pending_revision", progress.pending_revision)?;
             result.set_item(
                 "acknowledged_curve_time_s",
                 progress.acknowledged_curve_time_s,

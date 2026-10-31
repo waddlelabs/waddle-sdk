@@ -1,5 +1,8 @@
 # Finite reference playback
 
+Binding API 18 adds opt-in future curve suffixes, described below. Existing
+policies remain immutable by default and retain their previous behavior.
+
 Binding API 17 adds optional `PlaybackPolicy.checkpoint_offsets_ns`, gated by
 `execution.checkpointed_joint_playback`. Up to 256 strictly increasing offsets
 in the inclusive buffer range retain diagnostic measurements on the same local
@@ -115,6 +118,46 @@ dispatch. `references` counts input references; `dispatched` counts actual
 acknowledgements and can be larger with polynomial evaluation/partial steps.
 The optional curve does not provide dynamic world updates, contact detection,
 force-grasp completion or coordinated parts.
+
+## Optional future curve updates
+
+`PlaybackPolicy.allow_curve_updates=True` requires the separate
+`execution.revisable_joint_playback` fact and reference-only paced execution.
+Gripper outcome policies, checkpoints, exact sample grids and `toward_goal`
+velocity hints cannot be combined with updates. Coordinate order, held targets,
+feedback policy, pacing/tracking limits and the original absolute timeout stay
+fixed for the execution.
+
+`RevisablePlaybackHandlePort.update_curve(PlaybackCurveUpdate(...))` queues one
+request without waiting for device I/O. The new curve starts at zero;
+`switch_ns` is a future offset on the original execution's **acknowledged curve
+phase**, not a wall clock. `expected_revision` must match the active revision
+(initially zero). The switch must still lie on the incumbent curve when the local
+worker checks it. The combined end must stay within 120 seconds. Dimensions and
+polynomial admission are unchanged; position, velocity and acceleration must
+agree at the handoff within 1e-8 coordinate units and their time derivatives.
+The caller must check the complete new curve's limits, geometry and dependencies.
+The SDK does not certify those checks or plan a replacement.
+
+The returned request ID identifies the latest `curve_update` receipt: `pending`,
+`accepted` or `rejected`, with the original refusal text. Acceptance schedules
+one future suffix; it is not execution or arrival. `curve_progress` retains
+`revision` and `pending_revision`; the active revision advances only when an
+acknowledged reference crosses the switch. Global phase never resets. Another
+suffix cannot replace an accepted pending suffix. Serialize requests and inspect
+their receipts; this bounded status keeps the latest request, not a history.
+
+Stale, discontinuous or incompatible updates leave the incumbent intact. A
+queued request rejected by cancellation/closure cannot resurrect execution or
+alter a later run. The same worker retains ordinary feedback, tracking, pacing,
+gate and Hold/e-stop behavior. An accepted suffix never renews the deadline.
+Without an accepted replacement the incumbent continues to its checked resting
+endpoint. A lost response requires reconciliation from the retained handle;
+never automatically replay an update. Stop/cleanup receipts remain distinct from
+measured physical stopping.
+
+These contracts supply future references, not live collision-world validation,
+reactive goal logic, multi-arm coordination or physical/WAN qualification.
 
 ## Optional measured execution policy
 

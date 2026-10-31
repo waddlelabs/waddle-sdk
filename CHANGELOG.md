@@ -11,6 +11,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Add opt-in revision-checked future curve suffixes on the existing native worker
+  (binding API 18), with nonblocking update admission and retained receipts through
+  the public handle and relay. Preserve handoff position/velocity/acceleration,
+  local pacing, original deadlines and ordinary stop/drain behavior. Refused
+  updates leave the incumbent intact; accepted updates do not imply arrival.
+
 - Retain optional bounded checkpoint measurements inside local finite playback
   (binding API 17). Delayed polling preserves intermediate feedback and its actual
   acknowledgement/observation times without adding intermediate arrival gates.

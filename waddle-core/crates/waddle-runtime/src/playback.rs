@@ -12,7 +12,7 @@ use waddle_types::{ActionChunk, Step};
 
 mod curve;
 use curve::CurveCursor;
-pub use curve::{CurveProgress, PacedCurve};
+pub use curve::{CurveProgress, CurveUpdate, PacedCurve};
 mod feedback;
 use feedback::FeedbackState;
 pub use feedback::{
@@ -25,8 +25,8 @@ pub use gripper::{
 };
 pub(crate) mod execution;
 pub use execution::{
-    ExecutionFailure, ExecutionHandle, ExecutionResult, ExecutionSnapshot, PlaybackIo,
-    PlaybackIoError, ReferenceReceipt,
+    CurveUpdateReceipt, ExecutionFailure, ExecutionHandle, ExecutionResult, ExecutionSnapshot,
+    PlaybackIo, PlaybackIoError, ReferenceReceipt,
 };
 
 /// Bounded completion/timing choices supplied with a finite reference buffer.
@@ -51,6 +51,8 @@ pub struct PlaybackPolicy {
     /// Retain the first fresh post-acknowledgement feedback at these offsets.
     /// These are evidence markers, not arrival conditions or authority changes.
     pub checkpoint_offsets_ns: Vec<i64>,
+    /// Permit revision-checked future suffixes on a reference-only paced curve.
+    pub allow_curve_updates: bool,
     /// Optional exact polynomial evaluation with acknowledgement-paced progress.
     /// Omission retains fixed offsets and the original lateness guard.
     pub paced_curve: Option<PacedCurve>,
@@ -163,6 +165,23 @@ impl FiniteReferences {
         }
         if chunk.horizon_ns != previous {
             return Err(invalid("horizon must equal the final reference offset"));
+        }
+        if policy.allow_curve_updates
+            && (!policy.reference_only
+                || policy.gripper.is_some()
+                || !policy.checkpoint_offsets_ns.is_empty()
+                || policy
+                    .paced_curve
+                    .as_ref()
+                    .is_none_or(|c| c.sample_times_s.is_some())
+                || policy
+                    .feedback
+                    .as_ref()
+                    .is_some_and(|f| f.velocity_hints == VelocityHints::TowardGoal))
+        {
+            return Err(invalid(
+                "curve updates require reference-only paced playback without checkpoint or goal-hint policies",
+            ));
         }
         if policy.checkpoint_offsets_ns.len() > 256
             || policy
@@ -341,6 +360,25 @@ pub struct Playback {
 }
 
 impl Playback {
+    /// Refusal leaves the incumbent intact; it is not a motion failure.
+    pub fn update_curve(&mut self, update: CurveUpdate) -> Result<(), PlaybackError> {
+        if !self.references.policy.allow_curve_updates
+            || self.completion.is_some()
+            || self.failure.is_some()
+        {
+            return Err(PlaybackError::Invalid(
+                "execution does not admit curve updates",
+            ));
+        }
+        if self.pending {
+            return Err(PlaybackError::DispatchPending);
+        }
+        self.curve
+            .as_mut()
+            .expect("validated revisable curve")
+            .schedule(update)
+    }
+
     #[must_use]
     pub fn new(references: FiniteReferences, started_ns: i64) -> Self {
         let curve = references.policy.paced_curve.clone().map(CurveCursor::new);

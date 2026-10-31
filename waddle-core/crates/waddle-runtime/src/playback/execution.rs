@@ -9,8 +9,8 @@ use waddle_types::time::Clock;
 use waddle_types::{EpisodeId, Step};
 
 use super::{
-    CheckpointEvidence, Completion, CurveProgress, Feedback, FiniteReferences, GripperEvidence,
-    Playback, PlaybackError, PlaybackPoll, SettlingEvidence,
+    CheckpointEvidence, Completion, CurveProgress, CurveUpdate, Feedback, FiniteReferences,
+    GripperEvidence, Playback, PlaybackError, PlaybackPoll, SettlingEvidence,
 };
 use crate::mirror::Mirror;
 use crate::verbs::VerbOutcome;
@@ -62,6 +62,15 @@ pub enum ExecutionFailure {
 
 pub type ExecutionResult = Result<Completion, ExecutionFailure>;
 
+/// Latest suffix request. Acceptance schedules a future curve; it does not
+/// prove that its handoff was acknowledged or that the device arrived.
+#[derive(Clone, Debug)]
+pub struct CurveUpdateReceipt {
+    pub request_id: u64,
+    /// None until the local worker processes the request.
+    pub result: Option<Result<(), PlaybackError>>,
+}
+
 /// An execution snapshot. A terminal result means the reference loop has ended;
 /// it is not proof that a requested safety verb physically stopped the device.
 #[derive(Clone, Debug)]
@@ -72,6 +81,7 @@ pub struct ExecutionSnapshot {
     pub references: usize,
     pub feedback: Option<Feedback>,
     pub curve_progress: Option<CurveProgress>,
+    pub curve_update: Option<CurveUpdateReceipt>,
     pub settling: Option<SettlingEvidence>,
     pub gripper: Option<GripperEvidence>,
     pub checkpoints: Vec<CheckpointEvidence>,
@@ -89,6 +99,7 @@ pub struct ExecutionSnapshot {
 struct State {
     snapshot: ExecutionSnapshot,
     cancelled: Option<String>,
+    curve_update: Option<CurveUpdate>,
 }
 
 #[derive(Debug)]
@@ -114,6 +125,17 @@ impl Control {
                 return false;
             }
             state.snapshot.result = Some(result);
+            state.curve_update = None;
+            if let Some(receipt) = state
+                .snapshot
+                .curve_update
+                .as_mut()
+                .filter(|r| r.result.is_none())
+            {
+                receipt.result = Some(Err(PlaybackError::Cancelled(
+                    "execution ended before curve update".into(),
+                )));
+            }
             self.changed.notify_all();
         }
         true
@@ -136,6 +158,37 @@ impl ExecutionHandle {
     /// terminal handle cannot stop a later execution or rewrite its own result.
     pub fn cancel(&self, reason: &str) {
         self.control.mark_cancelled(reason);
+    }
+
+    /// Enqueue one suffix for validation by the existing local worker. Returns
+    /// promptly even while device I/O is in flight. Poll `curve_update` for the
+    /// result and `curve_progress.revision` for the acknowledged handoff. A lost
+    /// response never authorizes retry; reconcile the retained execution first.
+    pub fn update_curve(&self, update: CurveUpdate) -> Result<u64, PlaybackError> {
+        let mut state = self.control.state.lock();
+        if state.snapshot.result.is_some() || state.cancelled.is_some() {
+            return Err(PlaybackError::Invalid("execution is closing or terminal"));
+        }
+        if state
+            .snapshot
+            .curve_update
+            .as_ref()
+            .is_some_and(|r| r.result.is_none())
+        {
+            return Err(PlaybackError::Busy);
+        }
+        let id = state
+            .snapshot
+            .curve_update
+            .as_ref()
+            .map_or(Some(1), |r| r.request_id.checked_add(1))
+            .ok_or(PlaybackError::Invalid("curve request sequence exhausted"))?;
+        state.curve_update = Some(update);
+        state.snapshot.curve_update = Some(CurveUpdateReceipt {
+            request_id: id,
+            result: None,
+        });
+        Ok(id)
     }
 
     /// Wait for the local reference loop to finish, without a polling thread.
@@ -178,6 +231,7 @@ impl ExecutionSlot {
                     references,
                     feedback: None,
                     curve_progress: None,
+                    curve_update: None,
                     settling: None,
                     gripper: None,
                     checkpoints: Vec::new(),
@@ -187,6 +241,7 @@ impl ExecutionSlot {
                     result: None,
                 },
                 cancelled: None,
+                curve_update: None,
             }),
             changed: Condvar::new(),
         });
@@ -340,6 +395,18 @@ impl ExecutionTask {
             )
         });
         self.control.state.lock().snapshot.feedback = Some(measured.clone());
+        let update = self.control.state.lock().curve_update.take();
+        if let Some(update) = update {
+            let result = player.update_curve(update);
+            self.control
+                .state
+                .lock()
+                .snapshot
+                .curve_update
+                .as_mut()
+                .expect("queued receipt")
+                .result = Some(result);
+        }
         let polled = player.poll(now, &measured);
         self.control.state.lock().snapshot.curve_progress = player.curve_progress();
         self.control.state.lock().snapshot.settling = player.settling_evidence();
