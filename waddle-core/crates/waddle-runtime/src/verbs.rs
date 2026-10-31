@@ -296,29 +296,30 @@ fn dispatch_loop<C: Clock>(
     let mut active: Option<Box<ExecutionTask>> = None;
     loop {
         if shutdown.load(Ordering::SeqCst) {
-            if active.is_some() {
+            if let Some(task) = active.as_ref() {
                 let stop = if estop_flag.load(Ordering::SeqCst) != 0 {
                     VerbRequest::Estop
                 } else {
                     VerbRequest::Hold
                 };
-                execute(registry, clock, &stop, outcomes, stats);
+                let outcome = execute(registry, clock, &stop, outcomes, stats);
+                task.record_cleanup(&outcome);
             }
             return;
         }
         // Estop preempts anything queued.
         let estops = estop_flag.load(Ordering::SeqCst);
         if estops != 0 {
-            execute(registry, clock, &VerbRequest::Estop, outcomes, stats);
-            finish_cancelled(&mut active);
+            let outcome = execute(registry, clock, &VerbRequest::Estop, outcomes, stats);
+            finish_cancelled(&mut active, &outcome);
             estop_flag.fetch_sub(estops, Ordering::SeqCst);
             continue;
         }
         // An energized HOLD preempts ordinary traffic but never e-stop.
         let holds = priority_hold_flag.load(Ordering::SeqCst);
         if holds != 0 {
-            execute(registry, clock, &VerbRequest::Hold, outcomes, stats);
-            finish_cancelled(&mut active);
+            let outcome = execute(registry, clock, &VerbRequest::Hold, outcomes, stats);
+            finish_cancelled(&mut active, &outcome);
             priority_hold_flag.fetch_sub(holds, Ordering::SeqCst);
             continue;
         }
@@ -327,8 +328,8 @@ fn dispatch_loop<C: Clock>(
         });
         match rx.recv_timeout(wait) {
             Ok(Work::Verb(req)) => {
-                execute(registry, clock, &req, outcomes, stats);
-                finish_cancelled(&mut active);
+                let outcome = execute(registry, clock, &req, outcomes, stats);
+                finish_cancelled(&mut active, &outcome);
                 pending_verbs.fetch_sub(1, Ordering::SeqCst);
             }
             Ok(Work::Playback(task)) => {
@@ -362,10 +363,14 @@ fn dispatch_loop<C: Clock>(
                     {
                         let estops = estop_flag.load(Ordering::SeqCst);
                         if estops != 0 {
-                            execute(registry, clock, &VerbRequest::Estop, outcomes, stats);
+                            let outcome =
+                                execute(registry, clock, &VerbRequest::Estop, outcomes, stats);
+                            task.record_cleanup(&outcome);
                             estop_flag.fetch_sub(estops, Ordering::SeqCst);
                         } else {
-                            execute(registry, clock, &VerbRequest::Hold, outcomes, stats);
+                            let outcome =
+                                execute(registry, clock, &VerbRequest::Hold, outcomes, stats);
+                            task.record_cleanup(&outcome);
                         }
                     }
                     if task.finish(result) {
@@ -378,11 +383,12 @@ fn dispatch_loop<C: Clock>(
     }
 }
 
-fn finish_cancelled(active: &mut Option<Box<ExecutionTask>>) {
-    if let Some(task) = active.take()
-        && let Some(result) = task.terminal_failure().or_else(|| task.cancelled_result())
-    {
-        task.finish(result);
+fn finish_cancelled(active: &mut Option<Box<ExecutionTask>>, outcome: &VerbOutcome) {
+    if let Some(task) = active.take() {
+        task.record_cleanup(outcome);
+        if let Some(result) = task.terminal_failure().or_else(|| task.cancelled_result()) {
+            task.finish(result);
+        }
     }
     // Drop retains a cancellation even when the request raced admission.
 }
@@ -393,7 +399,7 @@ fn execute<C: Clock>(
     req: &VerbRequest,
     outcomes: &Sender<VerbOutcome>,
     stats: &DispatchStats,
-) {
+) -> VerbOutcome {
     let verb = req.verb();
     let started = clock.stamp_now();
 
@@ -420,12 +426,14 @@ fn execute<C: Clock>(
     let finished = clock.stamp_now();
     let latency_ns = finished.mono_ns().0 - started.mono_ns().0;
     stats.record(latency_ns);
-    let _ = outcomes.send(VerbOutcome {
+    let outcome = VerbOutcome {
         verb,
         result,
         latency_ns,
         at: finished.mono_ns(),
-    });
+    };
+    let _ = outcomes.send(outcome.clone());
+    outcome
 }
 
 fn unit(slot: &Option<Arc<dyn UnitVerb>>, verb: Verb) -> Result<(), VerbError> {

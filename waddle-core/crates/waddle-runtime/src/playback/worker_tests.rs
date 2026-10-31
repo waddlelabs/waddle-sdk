@@ -331,7 +331,11 @@ fn inflight_reference_finishes_before_stop_and_buffer_never_resumes() {
         }
         assert!(handle.snapshot().result.is_none());
         release.send(()).unwrap();
-        assert!(finished(&handle).result.unwrap().is_err());
+        let result = finished(&handle);
+        assert!(result.result.unwrap().is_err());
+        let cleanup = result.cleanup.unwrap();
+        assert_eq!(cleanup.verb, if estop { Verb::Estop } else { Verb::Hold });
+        assert_eq!(cleanup.result, Ok(()));
         assert_eq!(
             *h.io.events.lock(),
             ["dispatch", "write", if estop { "estop" } else { "hold" }]
@@ -350,9 +354,13 @@ fn unknown_dispatch_preserves_original_fault_even_when_hold_fails() {
     };
     *h.io.error.lock() = Some(error.clone());
     h.hold_error.store(true, Ordering::SeqCst);
+    let result = finished(&h.start().unwrap());
+    assert_eq!(result.result, Some(Err(ExecutionFailure::Dispatch(error))));
+    let cleanup = result.cleanup.unwrap();
+    assert_eq!(cleanup.verb, Verb::Hold);
     assert_eq!(
-        finished(&h.start().unwrap()).result,
-        Some(Err(ExecutionFailure::Dispatch(error)))
+        cleanup.result,
+        Err(VerbError::Failed("original Hold failure".into()))
     );
     assert_eq!(*h.io.events.lock(), ["dispatch", "hold"]);
     assert_eq!(
@@ -376,6 +384,7 @@ fn gate_supersession_does_not_ack_or_override_the_selected_stream() {
         Some(Err(ExecutionFailure::Superseded(_)))
     ));
     assert_eq!(result.dispatched, 0);
+    assert!(result.cleanup.is_none());
     assert!(h.io.writes.lock().is_empty());
     assert!(h.outcomes.try_recv().is_err());
 }
@@ -408,6 +417,34 @@ fn pending_safety_callback_blocks_admission_until_it_finishes() {
     assert_eq!(h.start().unwrap_err(), PlaybackError::Busy);
     release.send(()).unwrap();
     assert_eq!(h.outcome().verb, Verb::Hold);
+}
+
+#[test]
+fn failed_playback_publishes_cleanup_only_after_the_stop_callback_returns() {
+    let h = Harness::new();
+    *h.io.error.lock() = Some(PlaybackIoError {
+        detail: "original write failure".into(),
+        evidence: String::new(),
+        outcome_unknown: true,
+    });
+    let (p, entered, release) = pause();
+    *h.hold_pause.lock() = Some(p);
+    let handle = h.start().unwrap();
+    entered.recv_timeout(Duration::from_secs(5)).unwrap();
+    let pending = handle.snapshot();
+    assert!(pending.result.is_none());
+    assert!(pending.cleanup.is_none());
+    assert_eq!(h.start().unwrap_err(), PlaybackError::Busy);
+    release.send(()).unwrap();
+    let result = finished(&handle);
+    assert!(matches!(
+        result.result,
+        Some(Err(ExecutionFailure::Dispatch(_)))
+    ));
+    let cleanup = result.cleanup.unwrap();
+    assert_eq!(cleanup.verb, Verb::Hold);
+    assert_eq!(cleanup.result, Ok(()));
+    assert!(cleanup.at.0 > 0);
 }
 
 #[test]

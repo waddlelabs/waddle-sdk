@@ -71,7 +71,11 @@ The handle's `snapshot` and `wait` retain identity, dispatch count, measured sta
 status and original failure evidence. `cancel` requests native drain/Hold. A
 terminal handle cannot cancel a successor. Direct steps return Busy while playback
 is active, and run/site teardown drains before hardware parking/close. Binding API
-13 prevents stale native wheels from opening hardware through this surface.
+14 prevents stale native wheels from opening hardware through this surface.
+Snapshots retain the completed stop callback in `cleanup`, separately from the
+original motion failure. Missing or failed cleanup is not confirmation, and a
+queued Hold/e-stop request cannot replace it. Callback success is not measured
+physical stopping; preserve its session-clock timestamp and original error.
 Per-reference force modifiers, dynamic reference updates and coupled multi-part execution remain
 unsupported. See `docs/core/finite-reference-playback.md` in a source checkout.
 

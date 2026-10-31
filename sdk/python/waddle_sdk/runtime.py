@@ -723,8 +723,9 @@ class PlaybackHandlePort(Protocol):
 
     Snapshots contain id, episode_id, dispatched, references, feedback, status
     (running/arrived/settled/contact_stall/force_reached/failed), and original
-    failure evidence. A terminal reference loop alone does not prove that a
-    safety verb stopped hardware.
+    failure evidence. Optional cleanup retains the completed Hold/e-stop callback
+    and its original error separately. A terminal reference loop or successful
+    callback alone does not prove that a safety verb stopped hardware.
     """
 
     def snapshot(self) -> Mapping[str, JSONValue]: ...

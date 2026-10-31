@@ -218,7 +218,10 @@ def test_force_request_still_crosses_the_ordinary_owner_force_limit(jaw):
     assert writes == [] and state["force"] == 0
 
 
-def test_unknown_force_write_is_not_retried_or_reported_as_contact(jaw, monkeypatch):
+@pytest.mark.parametrize("hold_fails", [False, True])
+def test_unknown_force_write_is_not_retried_or_reported_as_contact(
+    jaw, monkeypatch, hold_fails
+):
     _, run, driver, state, _ = jaw
     original = RuntimeFault(FaultCode.MOTOR_FAILURE, "lost force write acknowledgement")
     calls = []
@@ -228,9 +231,21 @@ def test_unknown_force_write_is_not_retried_or_reported_as_contact(jaw, monkeypa
         raise original
 
     monkeypatch.setattr(driver, "write_gripper_force", write)
+    if hold_fails:
+
+        def hold():
+            raise RuntimeError("original Hold failure")
+
+        monkeypatch.setattr(driver, "hold", hold)
     result = run.start_playback(motion(force=5)).wait()
     assert result["status"] == "failed"
     assert result["failure"]["code"] == "dispatch"
     assert result["failure"]["outcome_unknown"] is True
     assert result["failure"]["evidence"] == original.as_dict()
+    assert result["cleanup"]["request"] == "hold"
+    assert result["cleanup"]["outcome"] == ("unknown" if hold_fails else "acknowledged")
+    assert result["cleanup"]["measured_stationary"] is False
+    assert (result["cleanup"]["error"] is not None) == hold_fails
+    if hold_fails:
+        assert "original Hold failure" in result["cleanup"]["error"]
     assert calls == [5] and state["force"] == 0

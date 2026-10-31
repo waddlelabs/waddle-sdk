@@ -13,6 +13,7 @@ use super::{
     PlaybackError, PlaybackPoll, SettlingEvidence,
 };
 use crate::mirror::Mirror;
+use crate::verbs::VerbOutcome;
 
 /// The original owner failure and optional opaque structured evidence. The
 /// runtime neither interprets nor replaces that evidence. Unknown writes are
@@ -74,6 +75,9 @@ pub struct ExecutionSnapshot {
     pub settling: Option<SettlingEvidence>,
     pub gripper: Option<GripperEvidence>,
     pub last_reference: Option<Step>,
+    /// The completed stop callback, separate from the original motion result.
+    /// Callback success alone does not establish measured physical stopping.
+    pub cleanup: Option<VerbOutcome>,
     pub result: Option<ExecutionResult>,
 }
 
@@ -173,6 +177,7 @@ impl ExecutionSlot {
                     settling: None,
                     gripper: None,
                     last_reference: None,
+                    cleanup: None,
                     result: None,
                 },
                 cancelled: None,
@@ -275,6 +280,15 @@ impl ExecutionTask {
 
     pub(crate) fn finish(&self, result: ExecutionResult) -> bool {
         self.control.finish(result)
+    }
+
+    pub(crate) fn record_cleanup(&self, outcome: &VerbOutcome) {
+        if matches!(
+            outcome.verb,
+            waddle_types::Verb::Hold | waddle_types::Verb::Estop
+        ) {
+            self.control.state.lock().snapshot.cleanup = Some(outcome.clone());
+        }
     }
 
     /// `Some` is terminal. Callback panics retain uncertainty and never retry.
