@@ -5,9 +5,19 @@ acceptance separately in a configured simulator environment.
 
 # AGENTS.md — waddle-sdk monorepo
 
+Binding API 23 prepares independent named playback buffers on the existing
+serialized control worker under `execution.parallel_joint_playback`. Distinct
+part scopes may coexist; a whole-site buffer excludes all other scopes. Normal
+completion is per buffer. Registered Hold/e-stop and failure cleanup are site-wide
+and must drain active and queued siblings, retaining original faults and receipts.
+Never let an old queued buffer resume after cleanup or admit new work during it.
+Named direct steps may address idle parts; whole-site steps remain excluded.
+This adds no writer thread or collision planner. Consumers still own geometry and
+selective-stop policy; native/software and physical qualification stay separate.
+
 Binding API 22 adds `CoordinatedJointMotion` for the complete declared joint-part
 layout, under `execution.coordinated_joint_playback` on every participating part.
-The existing native worker/slot uses one curve clock and the slowest declared
+The existing native worker uses one curve clock and the slowest declared
 cadence. Every whole-site target passes the ordinary gate and all owner envelopes
 before any sequential driver write. Preserve partial-write uncertainty and normal
 site Hold/drain; this is not physically atomic dispatch or independent buffers.

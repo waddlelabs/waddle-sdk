@@ -11,6 +11,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Admit independent named finite buffers on one serialized worker (binding API 23).
+  Preserve per-buffer clocks/completion, reject overlapping or whole-site scopes,
+  and permit named direct commands only on idle scopes. Site-wide stops and failure
+  cleanup drain every active/queued buffer, retain original faults and fence new
+  admission until cleanup completes; no extra device owner or writer is created.
+
 - Add coordinated whole-site joint buffers on the existing native playback worker
   (binding API 22). Preserve declared part order, one shared curve/acknowledgement
   clock, the slowest command cadence, all-part envelope preflight and normal

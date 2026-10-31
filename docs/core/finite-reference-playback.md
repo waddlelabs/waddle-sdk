@@ -1,12 +1,34 @@
 # Finite reference playback
 
+Binding API 23 adds `execution.parallel_joint_playback` for independent named
+buffers. Distinct parts can execute concurrently on the existing serialized
+control worker, with their own local clocks, completion and retained handles.
+The worker interleaves callbacks; a blocking device callback still delays other
+parts. Duplicate scopes are Busy, and a whole-site buffer conflicts with every
+named buffer. Normal completion of one part leaves other buffers running.
+
+Registered Hold/e-stop callbacks remain site-wide. When cancellation or a failure
+uses that cleanup path, every active or queued sibling is cancelled too. Cleanup
+receipts reach queued handles even when the stop precedes their worker admission;
+old queued buffers never resume afterward. New admission is fenced while cleanup
+runs. The originating failure remains distinct from sibling cancellation and
+from the cleanup result. This does not implement a selectively scoped stop or an
+application collision proof; consumers must preserve those requirements before
+selecting this capability. Episode closure drains all retained loops.
+
+Named `Run.step_parts` commands can address idle scopes while another part plays.
+Any addressed overlap refuses the entire call before writing. Whole-site `step`
+stays Busy while any buffer is active. The public native conflict query
+`Session.playback_active_on(episode_id, part)` is status, not a reservation or
+permission to bypass the ordinary gate/owner envelope.
+
 Binding API 22 adds `CoordinatedJointMotion(parts, references, policy)` for the
 complete joint-position Site. `parts` must name every part in declaration order;
 positions, velocity hints, polynomial rows and policy indices use that flattened
 layout. Every part must advertise `execution.coordinated_joint_playback` and all
 other policy support. A named `FiniteJointMotion` retains its original behavior.
 
-The group occupies the existing single execution slot and uses one native clock,
+The group exclusively occupies the whole-site scope and uses one native clock,
 curve phase and acknowledgement. Local observations copy every participating part;
 completion evaluates the selected joint rows together. Native admission enforces
 the slowest participating command cadence (and the composite cadence). Each full
@@ -17,8 +39,8 @@ ordinary episode gate and all addressed owner envelopes
 before the first driver write. Those writes are sequential: if a later write
 raises, earlier side effects remain possible, the original failure stays uncertain
 and ordinary site Hold/drain follows. Cancellation waits for an in-flight reference
-before cleanup. This does not add independent concurrent buffers, planning,
-application geometry validation or physical synchronization guarantees. Scalar
+before cleanup. This group interface adds no planning, application geometry
+validation or physical synchronization guarantees. Scalar
 gripper outcome/force policies are refused for a group; ordinary held-jaw behavior
 and generic feedback/curve policies retain their existing contracts.
 
@@ -374,9 +396,9 @@ frontend timing loop around it.
 chunk against the session's declared action space before admitting it. It accepts
 one joint-position scope, including a named part or a complete composite of
 joint-position parts. It refuses mixed action spaces, mixed scopes, inert actions and gripper side
-channels. A registered Hold callback is required. One reference loop can be
-outstanding; another admission or an outstanding control/safety request returns
-`Busy`. This is execution serialization, not an additional actuation lease.
+channels. A registered Hold callback is required. Distinct named scopes may have
+outstanding loops; overlapping scopes or an outstanding control/safety request
+return `Busy`. This is execution serialization, not an additional actuation lease.
 
 Implement `PlaybackIo` as local observation and dispatch adapters. `observe`
 returns fresh, original session-stamped positions and velocities. `dispatch`
@@ -466,8 +488,8 @@ even when cleanup later succeeds. There is no automatic retry.
 
 Each reference crosses the same native episode gate and complete owner envelope
 as `Run.step`, including configured cross-part checks. Gate-selected substitutions
-are applied normally and end this buffer as superseded. Direct `step`/`step_parts`
-and another buffer return Busy while playback is active. Run exit always drains,
+are applied normally and end this buffer as superseded. Direct steps and another
+buffer return Busy when their addressed scope overlaps active playback. Run exit always drains,
 including an already terminal episode, before site teardown may park or close
 hardware. Unconfirmed drain retains site ownership. Hardware watchdogs and
 physical stop measurements remain required; draining a callback is not physical
@@ -476,7 +498,7 @@ this local API does not observe network liveness.
 
 Binding API 14 introduced retained cleanup receipts; the optional additions
 above require their separately listed binding APIs and capability facts. The
-current Python/native binding is API 22. Install matching SDK/media wheels from
+current Python/native binding is API 23. Install matching SDK/media wheels from
 one revision in an idle environment; never replace a running hardware owner's
 native module to test this API.
 

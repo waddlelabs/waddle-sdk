@@ -133,6 +133,10 @@ pub struct FiniteReferences {
 }
 
 impl FiniteReferences {
+    pub(crate) fn scope(&self) -> Option<&str> {
+        self.chunk.steps[0].part.as_deref()
+    }
+
     pub(crate) fn len(&self) -> usize {
         self.chunk.steps.len()
     }

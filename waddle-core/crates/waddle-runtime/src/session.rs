@@ -1702,7 +1702,9 @@ impl Session {
     /// A named joint-position scope or a complete composite of joint-position
     /// scopes is supported. Composite references share one clock and must respect
     /// the slowest declared command cadence. Mixed action spaces and scalar
-    /// gripper policies on a composite are refused.
+    /// gripper policies on a composite are refused. Distinct named scopes may
+    /// coexist on the serialized worker; whole-site scopes exclude them. Registered
+    /// safety callbacks remain site-wide and drain every active or queued loop.
     pub fn start_playback(
         &self,
         id: &EpisodeId,
@@ -1812,7 +1814,14 @@ impl Session {
     /// This is execution status, never an authority or physical-stop answer.
     #[must_use]
     pub fn playback_active(&self, id: &EpisodeId) -> bool {
-        self.inner._verbs.playback_active(id)
+        self.inner._verbs.playback_active(id, None)
+    }
+
+    /// Whether an active buffer overlaps a named scope (or the whole site).
+    /// This is a conflict query, not a reservation or an authority grant.
+    #[must_use]
+    pub fn playback_active_on(&self, id: &EpisodeId, part: Option<&str>) -> bool {
+        self.inner._verbs.playback_active(id, part)
     }
 
     /// Request the registered energized HOLD path locally, ahead of ordinary

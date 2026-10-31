@@ -72,6 +72,13 @@ cadence without counting unrelated lock wait as driver execution.
 
 ## Finite joint playback
 
+Binding API 23 adds `execution.parallel_joint_playback`: distinct named buffers
+interleave on the existing worker, with separate completion and unchanged owner
+checks. Whole-site or overlapping scopes conflict. Site-wide Hold/e-stop/failure
+cleanup drains active and queued siblings; never infer selectively scoped stop
+or application collision clearance from this capability. Named direct commands
+may address idle parts. See the normative finite-playback page for limits.
+
 Binding API 22 adds `CoordinatedJointMotion` for every declared Site part in exact
 declaration order. Require `execution.coordinated_joint_playback` on every part;
 flatten reference/policy/curve rows in that same order. One native worker/clock
@@ -142,15 +149,14 @@ by `Run.step`; never add a frontend timer, replay loop or remote per-step call.
 
 The handle's `snapshot` and `wait` retain identity, dispatch count, measured state,
 status and original failure evidence. `cancel` requests native drain/Hold. A
-terminal handle cannot cancel a successor. Direct steps return Busy while playback
-is active, and run/site teardown drains before hardware parking/close. Binding API
+terminal handle cannot cancel a successor. Direct steps return Busy on scopes
+that overlap active playback, and run/site teardown drains before hardware parking/close. Binding API
 14 prevents stale native wheels from opening hardware through this surface.
 Snapshots retain the completed stop callback in `cleanup`, separately from the
 original motion failure. Missing or failed cleanup is not confirmation, and a
 queued Hold/e-stop request cannot replace it. Callback success is not measured
 physical stopping; preserve its session-clock timestamp and original error.
-Per-reference force modifiers and independent concurrent playback buffers remain
-unsupported. See `docs/core/finite-reference-playback.md` in a source checkout.
+Per-reference force modifiers remain unsupported. See `docs/core/finite-reference-playback.md` in a source checkout.
 
 An optional `PacedJointCurve` in the policy requires the separate
 `execution.paced_joint_playback` fact. Supply an already checked polynomial;

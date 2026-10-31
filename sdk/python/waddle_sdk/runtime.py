@@ -66,6 +66,7 @@ class SupportFact(str, enum.Enum):
     PART_ACTION = "action.named_parts"
     FINITE_JOINT_PLAYBACK = "execution.finite_joint_playback"
     COORDINATED_JOINT_PLAYBACK = "execution.coordinated_joint_playback"
+    PARALLEL_JOINT_PLAYBACK = "execution.parallel_joint_playback"
     PACED_JOINT_PLAYBACK = "execution.paced_joint_playback"
     FEEDBACK_JOINT_PLAYBACK = "execution.feedback_joint_playback"
     SAMPLED_JOINT_PLAYBACK = "execution.sampled_joint_playback"
