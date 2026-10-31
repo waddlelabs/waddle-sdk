@@ -5,6 +5,11 @@ acceptance separately in a configured simulator environment.
 
 # AGENTS.md — waddle-sdk monorepo
 
+The native reference-only terminal-window regression now checks the final fresh
+sample, including drift and a declared observation gap. Preserve reference-only
+completion semantics while making its optional diagnostic evidence current.
+The correction is under development; this regression is a retained baseline.
+
 Binding API 28 adds optional `control.completed_stop` and `SiteSession.stop`.
 The existing priority worker returns a fresh callback receipt even after finite
 playback terminates. Requests arriving during a callback wait for the next callback;
