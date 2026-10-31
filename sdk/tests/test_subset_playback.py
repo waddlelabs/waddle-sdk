@@ -32,10 +32,20 @@ def test_subset_completion_never_commands_or_observes_unrelated_part(
             pytest.fail("subset playback touched the unrelated part")
 
         monkeypatch.setattr(DRIVERS["unused"], "write", unrelated)
-        monkeypatch.setattr(DRIVERS["unused"], "read", unrelated)
+        observe = sdk.observe_parts
+        selections = []
+
+        def selected(parts=None):
+            selections.append(tuple(parts))
+            return observe(parts)
+
+        # The ordinary background feedback pump still observes the whole site.
+        # Record the actual playback reads without disabling that pump.
+        monkeypatch.setattr(sdk, "observe_parts", selected)
         motion = request(paced=paced)
         result = run.start_playback(motion).wait()
         assert result["status"] == "arrived", result
+        assert selections and set(selections) == {("left", "right")}
         assert result["feedback"]["positions"] == pytest.approx(
             motion.references[-1].command.positions
         )
