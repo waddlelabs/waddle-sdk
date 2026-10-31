@@ -1,12 +1,14 @@
 """Whole-site references through the actual native worker and mock owners."""
 
 import threading
+import time
 from dataclasses import replace
 
 import pytest
 from test_named_parts import DRIVERS
 from test_named_parts import site_path as site_path  # noqa: PLC0414 -- pytest fixture
 from waddle_sdk import load_site
+from waddle_sdk.robots import base
 from waddle_sdk.runtime import (
     CoordinatedJointMotion,
     FaultCode,
@@ -263,3 +265,73 @@ def test_partial_driver_failure_retains_uncertainty_and_holds_both_parts(
         assert sdk._managed.arms["right"].accepted == 0
         assert holds == ["left", "right"]
         assert result["cleanup"]["error"] is None, result
+
+
+def _engage(sdk):
+    native = sdk._managed.core
+    native._testing_engage("coordinated-takeover", "agent")
+    deadline = time.monotonic() + 5
+    while native.status()["gate_mode"] != "Intervention":
+        assert time.monotonic() < deadline, "native claim did not engage"
+        threading.Event().wait(0.005)
+    return native
+
+
+def test_named_takeover_of_group_keeps_neighbor_collision_checks(
+    site_path, monkeypatch
+):
+    with (
+        load_site(site_path).open(console=False, _testing=True) as sdk,
+        sdk.run(task="takeover", actor="test") as run,
+    ):
+        run.step((0, 0, 0, 0))
+        for name, arm in sdk._managed.arms.items():
+            monkeypatch.setattr(arm, "self_collision_enabled", True)
+            monkeypatch.setattr(
+                arm,
+                "collision_spheres",
+                lambda q, name=name: (
+                    base.CollisionSphere(
+                        "body", (0.1 if name == "left" else float(q[0]), 0, 0), 0.02
+                    ),
+                ),
+            )
+        native = _engage(sdk)
+        native._testing_push_chunk([0.1, 0], part="right")
+        result = run.start_playback(request()).wait()
+        assert result["status"] == "failed", result
+        assert result["failure"]["evidence"]["code"] == FaultCode.SAFETY_REFUSAL
+        assert "self-collision" in result["failure"]["evidence"]["detail"]
+        assert result["failure"]["evidence"]["context"]["addressed_parts"] == ["right"]
+        assert (
+            sdk._managed.arms["right"].accepted == 1
+        )  # only the initial caller reference
+        assert result["cleanup"]["error"] is None
+
+
+def test_named_takeover_of_group_keeps_the_selected_velocity_hint(
+    site_path, monkeypatch
+):
+    with (
+        load_site(site_path).open(console=False, _testing=True) as sdk,
+        sdk.run(task="takeover", actor="test") as run,
+    ):
+        run.step((0, 0, 0, 0))
+        received = []
+        driver = DRIVERS["right"]
+
+        def write(target, velocity):
+            received.append((tuple(target), tuple(velocity)))
+            driver.write(target)
+
+        monkeypatch.setattr(driver, "write_position_velocity", write, raising=False)
+        native = _engage(sdk)
+        native._testing_push_chunk(
+            [0.02, -0.01], part="right", velocity_feedforward=[0.1, -0.05]
+        )
+        result = run.start_playback(request()).wait()
+        assert result["failure"]["code"] == "superseded", result
+        assert received == [((0.02, -0.01), (0.1, -0.05))]
+        assert result["dispatched"] == 0
+        assert sdk._managed.arms["left"].accepted == 1
+        assert result["cleanup"] is None  # do not Hold over the new native claimant
