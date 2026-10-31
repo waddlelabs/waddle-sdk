@@ -41,6 +41,7 @@ for _name in (
     "FiniteJointMotion",
     "CoordinatedJointMotion",
     "JointReference",
+    "JointPositionBounds",
     "PlaybackPolicy",
     "PacedJointCurve",
     "PlaybackCurveUpdate",

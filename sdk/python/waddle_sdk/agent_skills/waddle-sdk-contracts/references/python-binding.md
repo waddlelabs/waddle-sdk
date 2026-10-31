@@ -72,6 +72,15 @@ cadence without counting unrelated lock wait as driver execution.
 
 ## Finite joint playback
 
+`BoundedPlaybackRunPort.set_playback_bounds` optionally installs run-wide
+`JointPositionBounds` under `execution.joint_playback_bounds`. The existing local
+worker checks fresh bounded-part feedback and each reference before dispatch;
+a shared bound/read failure requests global Hold even for scoped-cleanup buffers.
+The caller owns geometry proof and serialized, acknowledged configuration. Empty
+bounds remove the envelope. Direct commands and supervision substitutions check
+the final gate-selected target; explicit controls retain takeover/drain semantics.
+Bounds do not widen site limits or prove a physical stop.
+
 Binding API 24 adds opt-in `PlaybackPolicy.part_hold`, requiring the separate
 `execution.part_hold_playback` fact on a named scope. Cancellation/failure uses
 that owner's existing Hold while siblings continue. Preserve scoped receipts,

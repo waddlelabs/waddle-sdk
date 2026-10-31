@@ -1,5 +1,31 @@
 # Finite reference playback
 
+`Run.set_playback_bounds` supplies optional run-wide joint envelopes through
+`BoundedPlaybackRunPort` and `execution.joint_playback_bounds`. Its mapping binds
+declared part names to `JointPositionBounds(lower, upper)` in each part's full
+joint order and position units. Installation validates and copies the complete
+mapping at the normal dispatch boundary. It performs no motion or hardware read.
+An empty mapping removes the envelope; a new Run starts without one. Native
+binding API 24 is unchanged.
+
+While any envelope is installed, the existing local worker reads every bounded
+part before playback feedback and again before each run command dispatch. It checks
+measured positions and the final gate-selected targets against inclusive bounds.
+This includes direct run commands and supervision substitutions. A missing
+or failed required read, nonfinite value, or range violation requests the ordinary
+site-wide Hold, including when individual buffers selected `part_hold`. Retain
+the original scoped fault and the completed global cleanup receipt separately.
+This is a shared dependency failure; unrelated ordinary part failures retain
+their existing scope when no shared envelope is installed.
+
+The caller owns geometry/planning, serializes envelope replacements, and waits
+for configuration acknowledgement before dependent admission. An uncertain reply
+leaves configuration unknown; it does not authorize continuing dependent motion.
+Replacing bounds does not change an accepted curve, its clock or timeout. The
+envelope never widens existing site/owner limits. Explicit control verbs retain
+their takeover and drain semantics; they are not trajectory references. A successful setter is neither a collision proof
+nor evidence of physical stopping.
+
 Binding API 24 adds opt-in `PlaybackPolicy.part_hold` under the separate
 `execution.part_hold_playback` fact. For supported named buffers, cancellation
 or ordinary execution failure invokes only that part's existing owner Hold,

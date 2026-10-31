@@ -68,6 +68,7 @@ class SupportFact(str, enum.Enum):
     COORDINATED_JOINT_PLAYBACK = "execution.coordinated_joint_playback"
     PARALLEL_JOINT_PLAYBACK = "execution.parallel_joint_playback"
     PART_HOLD_PLAYBACK = "execution.part_hold_playback"
+    JOINT_PLAYBACK_BOUNDS = "execution.joint_playback_bounds"
     PACED_JOINT_PLAYBACK = "execution.paced_joint_playback"
     FEEDBACK_JOINT_PLAYBACK = "execution.feedback_joint_playback"
     SAMPLED_JOINT_PLAYBACK = "execution.sampled_joint_playback"
@@ -862,6 +863,33 @@ class FinitePlaybackRunPort(Protocol):
     def start_playback(
         self, motion: FiniteJointMotion | CoordinatedJointMotion
     ) -> PlaybackHandlePort: ...
+
+
+@dataclass(frozen=True)
+class JointPositionBounds:
+    """Inclusive bounds in one declared part's joint order and position units."""
+
+    lower: tuple[float, ...]
+    upper: tuple[float, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "lower", tuple(self.lower))
+        object.__setattr__(self, "upper", tuple(self.upper))
+
+
+@runtime_checkable
+class BoundedPlaybackRunPort(FinitePlaybackRunPort, Protocol):
+    """Optional run-wide local bounds for playback feedback and references.
+
+    Callers supply and serialize their own checked bounds. A successful setter
+    acknowledges configuration, never movement or physical stopping. An uncertain
+    reply leaves the installed bounds unknown; do not continue dependent motion.
+    An empty mapping removes the bounds. Existing site limits remain authoritative.
+    """
+
+    def set_playback_bounds(
+        self, bounds: Mapping[str, JointPositionBounds]
+    ) -> None: ...
 
 
 @runtime_checkable

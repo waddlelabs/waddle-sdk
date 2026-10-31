@@ -40,6 +40,7 @@ from .runtime import (
     CoordinatedJointMotion,
     FaultCode,
     FiniteJointMotion,
+    JointPositionBounds,
     JointPositionCommand,
     JSONValue,
     Observation,
@@ -1512,6 +1513,7 @@ class SiteSession:
                 facts.update((SupportFact.PART_ACTION, SupportFact.PART_OBSERVATION))
                 if {SupportFact.SEND_GRANT, SupportFact.HOLD_GRANT} <= grant_facts:
                     facts.add(SupportFact.FINITE_JOINT_PLAYBACK)
+                    facts.add(SupportFact.JOINT_PLAYBACK_BOUNDS)
                     if coordinated:
                         facts.add(SupportFact.COORDINATED_JOINT_PLAYBACK)
                         facts.add(SupportFact.PARALLEL_JOINT_PLAYBACK)
@@ -1922,6 +1924,7 @@ class Run:
         self._session = session
         self._task, self._task_metadata = _task(task, actor)
         self._episode = None
+        self._playback_bounds: dict[str, JointPositionBounds] = {}
 
     @property
     def id(self) -> str:
@@ -2065,6 +2068,12 @@ class Run:
         ):
             raise RuntimeFault(FaultCode.BUSY, "finite playback is still active")
 
+    def set_playback_bounds(self, bounds: Mapping[str, JointPositionBounds]) -> None:
+        """Replace local playback envelopes without opening or commanding hardware."""
+        from ._playback_bounds import install
+
+        install(self, bounds)
+
     def start_playback(
         self, motion: FiniteJointMotion | CoordinatedJointMotion
     ) -> PlaybackHandlePort:
@@ -2170,17 +2179,31 @@ class Run:
                         if isinstance(arms[name].driver, base.GripperForceDriver)
                         and arms[name].driver.gripper_force_supported
                     }
-                dispatched = base.apply_decision(
-                    self._session._require().arms,
-                    decided,
-                    # The value now belongs to the exact action the core selected:
-                    # caller on pass, selected stream on substitute/anchorless
-                    # blend, absent on an actually interpolated blend.
-                    velocity_feedforward_rad_s=velocity_feedforward,
-                    gripper_force_n=force_rows,
-                    on_refusal=refusal_faults.append,
-                    check_neighbors=part is not None,
-                )
+                if self._playback_bounds:
+                    from ._playback_bounds import observe as observe_bounded
+
+                    rows = (
+                        decided
+                        if isinstance(decided, dict)
+                        else base.split_by_part(self._session._require().arms, decided)
+                    )
+                    try:
+                        observe_bounded(self, tuple(rows), rows)
+                    except RuntimeFault as fault:
+                        refusal_faults.append(fault)
+                        dispatched = False
+                if dispatched:
+                    dispatched = base.apply_decision(
+                        self._session._require().arms,
+                        decided,
+                        # The value now belongs to the exact action the core selected:
+                        # caller on pass, selected stream on substitute/anchorless
+                        # blend, absent on an actually interpolated blend.
+                        velocity_feedforward_rad_s=velocity_feedforward,
+                        gripper_force_n=force_rows,
+                        on_refusal=refusal_faults.append,
+                        check_neighbors=part is not None,
+                    )
             except RuntimeFault:
                 raise
             except (TypeError, ValueError) as exc:
@@ -2195,7 +2218,7 @@ class Run:
                 kind = "owner_refusal"
                 if refusal_faults:
                     detail = refusal_faults[0].detail
-                    part = str(refusal_faults[0].context["part"])
+                    part = refusal_faults[0].context.get("part", part)
         fault = refusal_faults[0] if refusal_faults else None
         result = SubmitResult(
             dispatched=dispatched, gate=kind, part=part, detail=detail, fault=fault

@@ -170,3 +170,21 @@ def test_native_playback_uses_the_site_run_and_retains_its_receipt(tmp_path):
         device.disconnect()
         assert site_fixtures.opened == site_fixtures.closed
         site_fixtures.reset()
+
+
+def test_playback_bounds_require_active_run_and_roundtrip_public_values(tmp_path):
+    from waddle_sdk.runtime import JointPositionBounds
+
+    calls = []
+    device = Device(None, tmp_path)
+    device.sdk = object()
+    device.run = SimpleNamespace(id="current", set_playback_bounds=calls.append)
+    bounds = {"left": JointPositionBounds((-0.2, 0), (0.2, 1))}
+    copied = decode(encode(bounds))
+    assert copied == bounds
+    with pytest.raises(RelayError) as caught:
+        device.dispatch("playback_bounds", {"run_id": "old", "bounds": copied})
+    assert caught.value.code == "sdk_run_binding"
+    assert not calls
+    device.dispatch("playback_bounds", {"run_id": "current", "bounds": copied})
+    assert calls == [bounds]

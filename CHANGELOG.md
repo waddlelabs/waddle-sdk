@@ -11,6 +11,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Add optional run-wide joint envelopes for buffered execution, with a separately
+  declared capability and active-run relay binding. The existing local worker
+  validates fresh required-part feedback and each reference, requesting global
+  Hold on shared bounds/read failure while retaining original faults. Bounds are
+  copied atomically; geometry proof remains the caller's responsibility.
+
 - Add opt-in per-part Hold cleanup for named finite buffers (binding API 24).
   Preserve sibling execution, original errors and structured cleanup evidence;
   global Hold/e-stop still drain all buffers. Require separately declared support
