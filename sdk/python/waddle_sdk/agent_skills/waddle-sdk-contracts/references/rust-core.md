@@ -50,6 +50,12 @@ spacing. Fixed offsets retain their original lateness guard. Keep trajectory
 validation outside this evaluator and preserve absolute deadlines, native gates
 and original unknown outcomes.
 
+Optional `FeedbackPolicy` uses that same worker for bounded measured holding,
+measured-row passthrough, velocity-hint direction and encoder-window settling.
+Keep selected curve coordinates unchanged and distinct arrival/stationary-miss
+outcomes. Original owner admission and deadline apply to every adapted reference.
+Settling evidence retains sample spans and raw velocity without inferring contact.
+
 ## Conformance change protocol
 
 When behavior changes:

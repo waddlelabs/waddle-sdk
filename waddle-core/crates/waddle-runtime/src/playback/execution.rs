@@ -10,6 +10,7 @@ use waddle_types::{EpisodeId, Step};
 
 use super::{
     Completion, CurveProgress, Feedback, FiniteReferences, Playback, PlaybackError, PlaybackPoll,
+    SettlingEvidence,
 };
 use crate::mirror::Mirror;
 
@@ -69,6 +70,7 @@ pub struct ExecutionSnapshot {
     pub references: usize,
     pub feedback: Option<Feedback>,
     pub curve_progress: Option<CurveProgress>,
+    pub settling: Option<SettlingEvidence>,
     pub last_reference: Option<Step>,
     pub result: Option<ExecutionResult>,
 }
@@ -166,6 +168,7 @@ impl ExecutionSlot {
                     references,
                     feedback: None,
                     curve_progress: None,
+                    settling: None,
                     last_reference: None,
                     result: None,
                 },
@@ -316,6 +319,7 @@ impl ExecutionTask {
         self.control.state.lock().snapshot.feedback = Some(measured.clone());
         let polled = player.poll(now, &measured);
         self.control.state.lock().snapshot.curve_progress = player.curve_progress();
+        self.control.state.lock().snapshot.settling = player.settling_evidence();
         let action = match polled {
             Ok(action) => action,
             Err(error) => return Some(Err(ExecutionFailure::Playback(error))),

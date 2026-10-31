@@ -42,7 +42,8 @@ segment → increasing power → selected coordinate order. Coordinates follow t
 parent policy's `indices`; unselected command rows retain their input targets.
 The caller remains responsible for checking the complete polynomial's limits,
 geometry and dependency identity. This API does not plan, fit, certify collision
-clearance, correct a goal or change a held target to make it admissible.
+clearance or correct a goal. Optional measured holding below can approach an
+unchanged held target without changing the selected polynomial coordinates.
 
 Timing is bounded to 120 seconds and 16,384 segments. Native admission checks
 dimensions, finite values, increasing times, declared boundaries, stationary
@@ -78,7 +79,52 @@ retain `curve_progress` and the complete `last_reference` only after a confirmed
 dispatch. `references` counts input references; `dispatched` counts actual
 acknowledgements and can be larger with polynomial evaluation/partial steps.
 The optional curve does not provide dynamic world updates, contact detection,
-force-grasp completion, coordinated parts or held-coordinate compensation.
+force-grasp completion or coordinated parts.
+
+## Optional measured execution policy
+
+`PlaybackPolicy.feedback` accepts `FeedbackPolicy` (Python:
+`PlaybackFeedbackPolicy`) with the separate `execution.feedback_joint_playback`
+support fact and binding API 12. Omission preserves existing behavior.
+
+- `held_groups` contains `HeldJointGroup` values: unselected row indices, positive
+  per-row `position_error`, and a local `period_ns` between 0.1 ms and 1 s. Each
+  group approaches its unchanged input target with 90% headroom. Opposing measured
+  velocity reserves another period of travel. All coordinates in a group scale
+  together; an already-admissible target retains its exact bits. This adjustment
+  never changes the selected curve's coordinates or bypasses the owner's envelope.
+- `measured_indices` copies current measurements for unselected rows, for example
+  a jaw already held by its driver. It does not activate a force mode or prove
+  contact. Held groups, measured rows and selected rows must be disjoint, with
+  no repeated or undeclared indices. All unselected input targets remain constant
+  throughout the buffer and their hints must be zero.
+- `velocity_hints` is `curve`, `toward_reference`, or `toward_goal`. The first
+  retains the original hints, including paced partial-step scaling. The second
+  suppresses hints opposing current reference error and permits later reversals.
+  The third latches each hint off after measured position reaches/crosses the
+  final goal in that hint's direction. It stays off for the rest of the buffer.
+
+An optional `position_window` replaces instantaneous velocity stationarity with
+encoder stability over `settle_ns`. Its positive `max_drift` follows selected-row
+order. At least three fresh samples must cover the full interval; the sample
+immediately before its leading boundary is retained. The optional `max_gap_ns`
+resets history after an excessive gap. Repeated timestamps reset history;
+decreasing/invalid timestamps remain terminal errors. History is bounded to
+16,385 samples; exceeding that bound fails instead of discarding required evidence.
+
+Normally only post-endpoint, in-tolerance samples are eligible. `allow_settled`
+also admits stationary misses. `during_motion=True` explicitly permits eligible
+pre-endpoint history; the final reference must still be acknowledged and followed
+by fresh feedback before completion. `consecutive_samples` (default 1) can require
+additional consecutive qualifying windows after that acknowledgement. A single
+in-tolerance sample cannot relabel a stationary miss as arrival: the full arrival
+interval must remain in tolerance. Raw velocity is diagnostic and still must be
+finite. The original absolute timeout remains binding.
+
+Snapshots expose `settling` with sample count, span, per-row position spans, raw
+velocity peak and consecutive qualifying count. Its time source is the SDK
+observation timestamp, not a claim about motor acquisition timing. Contact/force
+classification, geometry/world validation and dynamic updates remain separate.
 
 ## Driving the state
 
@@ -194,7 +240,7 @@ physical stop measurements remain required; draining a callback is not physical
 stop proof. A connector must supply its explicit disconnect cancellation policy;
 this local API does not observe network liveness.
 
-Python/native binding API 11 is required. Install matching SDK/media wheels from
+Python/native binding API 12 is required. Install matching SDK/media wheels from
 one revision in an idle environment; never replace a running hardware owner's
 native module to test this API.
 

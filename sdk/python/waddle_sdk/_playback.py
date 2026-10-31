@@ -70,6 +70,13 @@ def start(run: Run, motion: FiniteJointMotion) -> PlaybackHandle:
         raise RuntimeFault(
             FaultCode.UNSUPPORTED, "finite playback does not set jaw force"
         )
+    if (
+        motion.policy.feedback is not None
+        and SupportFact.FEEDBACK_JOINT_PLAYBACK not in row.facts
+    ):
+        raise RuntimeFault(
+            FaultCode.UNSUPPORTED, "part does not support feedback playback"
+        )
     if SupportFact.VELOCITY_FEEDFORWARD not in row.facts and any(
         r.command.velocity_feedforward_rad_s is not None for r in motion.references
     ):

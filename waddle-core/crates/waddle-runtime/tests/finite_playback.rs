@@ -219,6 +219,7 @@ fn policy() -> PlaybackPolicy {
         timeout_ns: 200_000_000,
         allow_settled: false,
         paced_curve: None,
+        feedback: None,
     }
 }
 
