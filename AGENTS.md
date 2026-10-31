@@ -30,6 +30,14 @@ original faults and ownership after unconfirmed drain. Atomic absent moves use
 Linux renameat2; do not claim Windows/non-Linux qualification. See
 docs/python/device-relay.md and tests/test_{device_bridge,workspace_files}.py.
 
+Binding API 17 adds bounded `PlaybackPolicy.checkpoint_offsets_ns` with the
+separate `execution.checkpointed_joint_playback` fact. The same local worker
+retains fresh post-acknowledgement feedback after reference phase crosses each
+marker; elapsed wall time never advances paced markers. These are diagnostic
+measurements, not arrival gates or interpolated values. Preserve partial evidence
+through failure/cancellation, original safety/timeout rules and unchanged empty
+policies. See docs/core/finite-reference-playback.md.
+
 Binding API 16 adds optional `PlaybackPolicy.reference_only`, gated by
 `execution.reference_joint_playback`. It ends with `references_dispatched` only
 after every reference is acknowledged and fresh post-endpoint feedback passes

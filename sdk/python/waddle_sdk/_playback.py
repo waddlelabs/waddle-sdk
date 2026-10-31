@@ -73,6 +73,13 @@ def start(run: Run, motion: FiniteJointMotion) -> PlaybackHandle:
         )
     gripper = motion.policy.gripper
     if (
+        motion.policy.checkpoint_offsets_ns
+        and SupportFact.CHECKPOINTED_JOINT_PLAYBACK not in row.facts
+    ):
+        raise RuntimeFault(
+            FaultCode.UNSUPPORTED, "part does not support playback checkpoint evidence"
+        )
+    if (
         motion.policy.reference_only
         and SupportFact.REFERENCE_JOINT_PLAYBACK not in row.facts
     ):

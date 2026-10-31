@@ -27,6 +27,7 @@ pub(crate) struct Policy {
     timeout_ns: i64,
     allow_settled: bool,
     reference_only: bool,
+    checkpoint_offsets_ns: Vec<i64>,
     paced_curve: Option<Curve>,
     feedback: Option<FeedbackOptions>,
     gripper: Option<Gripper>,
@@ -148,6 +149,7 @@ impl TryFrom<Policy> for PlaybackPolicy {
             timeout_ns: p.timeout_ns,
             allow_settled: p.allow_settled,
             reference_only: p.reference_only,
+            checkpoint_offsets_ns: p.checkpoint_offsets_ns,
             paced_curve: p.paced_curve.map(|c| PacedCurve {
                 times_s: c.times_s,
                 positions: c.positions,
@@ -376,6 +378,20 @@ fn snapshot(py: Python<'_>, value: ExecutionSnapshot) -> PyResult<Py<PyDict>> {
     out.set_item("dispatched", value.dispatched)?;
     out.set_item("references", value.references)?;
     out.set_item("last_acknowledged_ns", value.last_acknowledged_ns)?;
+    let checkpoints = value
+        .checkpoints
+        .iter()
+        .map(|sample| -> PyResult<Py<PyDict>> {
+            let item = PyDict::new(py);
+            item.set_item("offset_ns", sample.offset_ns)?;
+            item.set_item("acknowledged_offset_ns", sample.acknowledged_offset_ns)?;
+            item.set_item("acknowledged_ns", sample.acknowledged_ns)?;
+            item.set_item("elapsed_ns", sample.elapsed_ns)?;
+            item.set_item("feedback", feedback(py, &sample.feedback)?)?;
+            Ok(item.unbind())
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+    out.set_item("checkpoints", checkpoints)?;
     out.set_item(
         "last_reference",
         value
