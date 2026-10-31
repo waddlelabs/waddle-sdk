@@ -14,6 +14,11 @@ camera grids and bounded demand-driven RGB-only settings. It opens no site, devi
 run or control transport. The caller owns sampling and process/resource isolation;
 the media core enforces the frame-rate ceiling on original sample timestamps.
 
+`waddle_sdk_relay.connection` shares private key/configuration file parsing without
+loading the SDK runtime. Applications select paths and authorize peers; retain
+private-file checks, bounded JSON, TLS and explicit numeric-loopback exceptions.
+Parsing a saved launcher never executes it or opens hardware.
+
 ## Hollow frontend
 
 The Python package describes hardware and composes lifecycle resources. It must not reproduce Rust decisions about claims, leases, handoffs, feature negotiation, or episode timelines. If Python grows an `if` about those concepts, move the behavior to the core and expose only the narrow result needed by the binding.

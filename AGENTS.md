@@ -5,6 +5,13 @@ acceptance separately in a configured simulator environment.
 
 # AGENTS.md — waddle-sdk monorepo
 
+`waddle_sdk_relay.connection` shares bounded private connection/key-file reading
+and credential-free WSS/numeric-loopback validation without loading the SDK
+runtime. Callers select paths and relative-key roots; no account login,
+environment discovery or launcher execution occurs. Keep original permissions,
+duplicate-field/size guards and structured errors. See docs/python/device-relay.md
+and sdk/tests/test_relay_connection.py.
+
 The optional `relay` extra now supplies the generic device relay, bounded wire
 codec and publisher-field validation in `sdk/python/waddle_sdk_relay`. The caller
 authenticates/authorizes its socket; no listener, login, planner or second native
