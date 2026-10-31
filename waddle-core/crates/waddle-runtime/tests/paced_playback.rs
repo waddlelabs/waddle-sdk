@@ -50,6 +50,7 @@ fn inputs() -> (ActionChunk, PlaybackPolicy) {
             max_lateness_ns: 1,
             timeout_ns: 2_000_000_000,
             allow_settled: false,
+            reference_only: false,
             paced_curve: Some(curve()),
             feedback: None,
             gripper: None,
@@ -216,4 +217,38 @@ fn final_reference_acknowledgement_still_requires_fresh_measured_settling() {
             .unwrap(),
         PlaybackPoll::Complete(waddle_runtime::playback::Completion::Arrived)
     );
+}
+
+#[test]
+fn reference_only_curve_retains_tracking_through_fresh_endpoint_feedback() {
+    for tracking_fault in [false, true] {
+        let (chunk, mut policy) = inputs();
+        policy.reference_only = true;
+        policy.timeout_ns = 20_000_000_000;
+        let mut p = Playback::new(FiniteReferences::new(chunk, policy).unwrap(), 0);
+        let mut q = 0.0;
+        let mut now = 0;
+        loop {
+            let step = dispatch(&mut p, now, q);
+            q = step.values[0];
+            p.acknowledge(p.dispatched(), now).unwrap();
+            if p.curve_progress().unwrap().endpoint_acknowledged {
+                break;
+            }
+            now += 100_000_000;
+        }
+        let mut observation = measured(now + 1, q - if tracking_fault { 0.1 } else { 0.02 });
+        observation.velocities[0] = 1.0;
+        let result = p.poll(now + 1, &observation);
+        if tracking_fault {
+            assert_eq!(result, Err(PlaybackError::Tracking));
+        } else {
+            assert_eq!(
+                result,
+                Ok(PlaybackPoll::Complete(
+                    waddle_runtime::playback::Completion::ReferencesDispatched
+                ))
+            );
+        }
+    }
 }

@@ -5,6 +5,16 @@ acceptance separately in a configured simulator environment.
 
 # AGENTS.md — waddle-sdk monorepo
 
+Binding API 16 adds optional `PlaybackPolicy.reference_only`, gated by
+`execution.reference_joint_playback`. It ends with `references_dispatched` only
+after every reference is acknowledged and fresh post-endpoint feedback passes
+normal tracking checks. It makes no arrival, stationarity or grasp claim and
+cannot be combined with a gripper outcome policy. Start, gate, pacing, tracking,
+deadline and stop behavior are unchanged. Snapshots retain
+`last_acknowledged_ns` on the SDK session clock so callers can budget subsequent
+goal checks from device acknowledgement rather than remote reply receipt.
+No new thread, writer or authority is created; ordinary policies remain unchanged.
+
 Binding API 15 adds optional `PlaybackPolicy.minimum_settle_samples` with the
 separate `execution.sampled_joint_playback` support fact. Fresh eligible samples
 must satisfy both count and dwell; duplicates do not count, velocity/goal loss

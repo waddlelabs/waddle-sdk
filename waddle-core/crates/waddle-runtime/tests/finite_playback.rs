@@ -224,6 +224,7 @@ fn policy() -> PlaybackPolicy {
         max_lateness_ns: 10_000_000,
         timeout_ns: 200_000_000,
         allow_settled: false,
+        reference_only: false,
         paced_curve: None,
         feedback: None,
         gripper: None,
@@ -560,4 +561,51 @@ fn held_jaw_contact_does_not_become_an_arm_start_or_arrival_test() {
         player.poll(measured.observed_ns, &measured).unwrap(),
         PlaybackPoll::Complete(Completion::Arrived)
     );
+}
+
+#[test]
+fn reference_receipt_is_fresh_dispatch_evidence_not_arrival() {
+    let mut policy = policy();
+    policy.reference_only = true;
+    let mut p = Playback::new(FiniteReferences::new(chunk(), policy).unwrap(), 0);
+    dispatch(&mut p, 0, 0.0, 0);
+    dispatch(&mut p, 40_000_000, 0.0, 1);
+    dispatch(&mut p, 80_000_000, 0.0, 2);
+    // An observation from before or at the final acknowledgement cannot finish.
+    assert_eq!(
+        p.poll(80_000_001, &feedback(80_000_000, 0.0)).unwrap(),
+        PlaybackPoll::Observe
+    );
+    let mut miss = feedback(80_000_002, 0.0);
+    miss.velocities = vec![1.0, 1.0];
+    assert_eq!(
+        p.poll(80_000_002, &miss).unwrap(),
+        PlaybackPoll::Complete(Completion::ReferencesDispatched)
+    );
+}
+
+#[test]
+fn reference_receipt_never_extends_deadline_or_hides_cancellation() {
+    for cancelled in [false, true] {
+        let mut policy = policy();
+        policy.reference_only = true;
+        let mut p = Playback::new(FiniteReferences::new(chunk(), policy).unwrap(), 0);
+        dispatch(&mut p, 0, 0.0, 0);
+        dispatch(&mut p, 40_000_000, 0.0, 1);
+        dispatch(&mut p, 80_000_000, 0.0, 2);
+        if cancelled {
+            p.cancel("stop before receipt");
+        }
+        let error = p
+            .poll(200_000_000, &feedback(200_000_000, 0.0))
+            .unwrap_err();
+        assert_eq!(
+            error,
+            if cancelled {
+                PlaybackError::Cancelled("stop before receipt".into())
+            } else {
+                PlaybackError::Deadline
+            }
+        );
+    }
 }

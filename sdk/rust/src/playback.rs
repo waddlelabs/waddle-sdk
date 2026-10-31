@@ -26,6 +26,7 @@ pub(crate) struct Policy {
     max_lateness_ns: i64,
     timeout_ns: i64,
     allow_settled: bool,
+    reference_only: bool,
     paced_curve: Option<Curve>,
     feedback: Option<FeedbackOptions>,
     gripper: Option<Gripper>,
@@ -146,6 +147,7 @@ impl TryFrom<Policy> for PlaybackPolicy {
             max_lateness_ns: p.max_lateness_ns,
             timeout_ns: p.timeout_ns,
             allow_settled: p.allow_settled,
+            reference_only: p.reference_only,
             paced_curve: p.paced_curve.map(|c| PacedCurve {
                 times_s: c.times_s,
                 positions: c.positions,
@@ -373,6 +375,7 @@ fn snapshot(py: Python<'_>, value: ExecutionSnapshot) -> PyResult<Py<PyDict>> {
     out.set_item("episode_id", value.episode_id.to_string())?;
     out.set_item("dispatched", value.dispatched)?;
     out.set_item("references", value.references)?;
+    out.set_item("last_acknowledged_ns", value.last_acknowledged_ns)?;
     out.set_item(
         "last_reference",
         value
@@ -460,6 +463,7 @@ fn snapshot(py: Python<'_>, value: ExecutionSnapshot) -> PyResult<Py<PyDict>> {
     )?;
     let status = match value.result.as_ref() {
         None => "running",
+        Some(Ok(Completion::ReferencesDispatched)) => "references_dispatched",
         Some(Ok(Completion::Arrived)) => "arrived",
         Some(Ok(Completion::Settled)) => "settled",
         Some(Ok(Completion::ContactStall)) => "contact_stall",

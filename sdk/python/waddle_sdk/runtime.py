@@ -68,6 +68,7 @@ class SupportFact(str, enum.Enum):
     PACED_JOINT_PLAYBACK = "execution.paced_joint_playback"
     FEEDBACK_JOINT_PLAYBACK = "execution.feedback_joint_playback"
     SAMPLED_JOINT_PLAYBACK = "execution.sampled_joint_playback"
+    REFERENCE_JOINT_PLAYBACK = "execution.reference_joint_playback"
     GRIPPER_PLAYBACK = "execution.gripper_playback"
     VELOCITY_FEEDFORWARD = "actuation.velocity_feedforward"
     FORWARD_KINEMATICS = "kinematics.fk"
@@ -682,6 +683,12 @@ class PlaybackPolicy:
     Velocity/goal loss resets the count. Position windows retain at least this
     many samples (and never fewer than three). Gripper policies keep their own
     outcome-specific sample rules and require the default value here.
+
+    ``reference_only`` uses separately advertised reference-playback support to
+    report ``references_dispatched`` after all acknowledgements and fresh local
+    feedback. It does not measure arrival/stationarity and excludes gripper
+    outcome policies. Snapshots retain ``last_acknowledged_ns`` on the session
+    clock; remote receipt time must not be substituted for it.
     """
 
     indices: tuple[int, ...]
@@ -696,6 +703,7 @@ class PlaybackPolicy:
     feedback: PlaybackFeedbackPolicy | None = None
     gripper: GripperPlaybackPolicy | None = None
     minimum_settle_samples: int = 1
+    reference_only: bool = False
 
     def __post_init__(self) -> None:
         for name in (

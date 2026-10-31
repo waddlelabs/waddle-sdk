@@ -5,6 +5,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 
+import numpy as np
 import pytest
 import site_fixtures
 from test_site_api import _write_site
@@ -76,6 +77,51 @@ def test_counted_settling_is_admitted_by_its_own_support_fact(opened, monkeypatc
                     row,
                     facts=tuple(
                         f for f in row.facts if f != SupportFact.SAMPLED_JOINT_PLAYBACK
+                    ),
+                )
+                for row in support.rows
+            ),
+        ),
+    )
+    with pytest.raises(RuntimeFault) as caught:
+        run.start_playback(request)
+    assert caught.value.code == FaultCode.UNSUPPORTED
+
+
+def test_reference_receipt_reports_native_ack_time_without_claiming_arrival(
+    opened, monkeypatch
+):
+    session, run = opened
+    driver = session._managed.arms["arm"].driver
+    measured = np.zeros(2)
+
+    def write(target):
+        measured[:] = np.asarray(target) / 2
+
+    monkeypatch.setattr(driver, "write", write)
+    monkeypatch.setattr(driver, "read", lambda: (measured.copy(), np.full(2, 0.02)))
+    request = motion((0, 0), (0.1, -0.05))
+    request = replace(request, policy=replace(request.policy, reference_only=True))
+    result = run.start_playback(request).wait()
+    assert result["status"] == "references_dispatched", result
+    assert result["dispatched"] == 2
+    assert result["feedback"]["positions"] == pytest.approx([0.05, -0.025])
+    assert result["feedback"]["velocities"] == pytest.approx([0.02, 0.02])
+    assert 0 <= result["last_acknowledged_ns"] < result["feedback"]["observed_ns"]
+    assert result["cleanup"] is None
+    support = session.support()
+    monkeypatch.setattr(
+        session,
+        "support",
+        lambda: replace(
+            support,
+            rows=tuple(
+                replace(
+                    row,
+                    facts=tuple(
+                        f
+                        for f in row.facts
+                        if f != SupportFact.REFERENCE_JOINT_PLAYBACK
                     ),
                 )
                 for row in support.rows

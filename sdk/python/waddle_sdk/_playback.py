@@ -73,6 +73,13 @@ def start(run: Run, motion: FiniteJointMotion) -> PlaybackHandle:
         )
     gripper = motion.policy.gripper
     if (
+        motion.policy.reference_only
+        and SupportFact.REFERENCE_JOINT_PLAYBACK not in row.facts
+    ):
+        raise RuntimeFault(
+            FaultCode.UNSUPPORTED, "part does not support reference-only completion"
+        )
+    if (
         motion.policy.minimum_settle_samples != 1
         and SupportFact.SAMPLED_JOINT_PLAYBACK not in row.facts
     ):

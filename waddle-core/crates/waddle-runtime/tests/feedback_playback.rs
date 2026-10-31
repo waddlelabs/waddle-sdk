@@ -39,6 +39,7 @@ fn inputs(targets: &[f64]) -> (ActionChunk, PlaybackPolicy) {
             max_lateness_ns: 10,
             timeout_ns: 1_000,
             allow_settled: false,
+            reference_only: false,
             paced_curve: None,
             feedback: Some(FeedbackPolicy::default()),
             gripper: None,
