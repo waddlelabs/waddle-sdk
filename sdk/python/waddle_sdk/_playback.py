@@ -6,6 +6,7 @@ import json
 from typing import TYPE_CHECKING
 
 from ._native import core
+from ._playback_bounds import observe as observe_bounded
 from .robots import base
 from .runtime import (
     CoordinatedJointMotion,
@@ -265,21 +266,22 @@ def start(
 
     def observe():
         try:
-            observation = session.observe_parts(parts)
-            for name in parts:
-                if name in observation.faults:
-                    raise observation.faults[name]
-            measured = [observation.parts[name] for name in parts]
-            return {
-                "observed_ns": observation.session_ns,
-                "positions": [
-                    q for row in measured for q in row.joint_position.tolist()
-                ],
-                "velocities": [
-                    v for row in measured for v in row.joint_velocity.tolist()
-                ],
-                "gripper_force": None if group else measured[0].gripper_force,
-            }
+            with session._dispatch_lock:
+                observation = observe_bounded(run, parts)
+                for name in parts:
+                    if name in observation.faults:
+                        raise observation.faults[name]
+                measured = [observation.parts[name] for name in parts]
+                return {
+                    "observed_ns": observation.session_ns,
+                    "positions": [
+                        q for row in measured for q in row.joint_position.tolist()
+                    ],
+                    "velocities": [
+                        v for row in measured for v in row.joint_velocity.tolist()
+                    ],
+                    "gripper_force": None if group else measured[0].gripper_force,
+                }
         except Exception as error:  # noqa: BLE001 -- retain any vendor fault across the native callback
             return _error(error, unknown=False)
 

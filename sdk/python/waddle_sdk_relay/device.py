@@ -210,6 +210,15 @@ class Device:
                     self.run.__exit__(None, None, None)
                     self.run = None
                 return None
+            if method == "playback_bounds":
+                if self.run is None or arguments["run_id"] != self.run.id:
+                    raise RelayError("sdk_run_binding", "Bounds require the active run")
+                setter = getattr(self.run, "set_playback_bounds", None)
+                if not callable(setter):
+                    raise RuntimeFault(
+                        FaultCode.UNSUPPORTED, "SDK run has no playback bounds"
+                    )
+                return setter(arguments["bounds"])
             if method == "playback_start":
                 if self.run is None or arguments["run_id"] != self.run.id:
                     raise RelayError(
