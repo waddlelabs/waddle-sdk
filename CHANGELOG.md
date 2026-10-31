@@ -11,6 +11,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Retain the completed Hold/e-stop callback receipt in native playback snapshots
+  (binding API 14), separately from the original motion failure. Failed or absent
+  cleanup cannot be inferred successful from a terminal loop or queued stop
+  request. This records callback completion, not measured physical stopping.
+
 - Gate native scene-replacement tests on the optional MuJoCo capability, matching
   the remaining simulation suite and preserving the base installation footprint.
 

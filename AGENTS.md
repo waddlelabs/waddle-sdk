@@ -5,6 +5,12 @@ acceptance separately in a configured simulator environment.
 
 # AGENTS.md — waddle-sdk monorepo
 
+Playback snapshots in binding API 14 retain the completed native Hold/e-stop
+callback receipt separately from the original motion failure. A terminal loop or
+queued stop request does not prove successful cleanup or physical stopping.
+Keep callback errors, session-clock stamps and missing receipts explicit; no
+extra dispatch, retry, authority or owner thread is introduced.
+
 Native `waddle_runtime::playback` provides deterministic finite joint-reference
 accounting over validated `ActionChunk` values: bounded ordered references,
 selected-row start/settling checks, fresh feedback, exact acknowledgements and

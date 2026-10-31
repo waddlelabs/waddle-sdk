@@ -428,6 +428,26 @@ fn snapshot(py: Python<'_>, value: ExecutionSnapshot) -> PyResult<Py<PyDict>> {
         })
         .transpose()?;
     out.set_item("gripper", gripper)?;
+    let cleanup = value
+        .cleanup
+        .map(|receipt| -> PyResult<Py<PyDict>> {
+            let result = PyDict::new(py);
+            result.set_item("request", format!("{:?}", receipt.verb).to_lowercase())?;
+            result.set_item(
+                "outcome",
+                if receipt.result.is_ok() {
+                    "acknowledged"
+                } else {
+                    "unknown"
+                },
+            )?;
+            result.set_item("error", receipt.result.err().map(|e| e.to_string()))?;
+            result.set_item("completed_ns", receipt.at.0)?;
+            result.set_item("measured_stationary", false)?;
+            Ok(result.unbind())
+        })
+        .transpose()?;
+    out.set_item("cleanup", cleanup)?;
     out.set_item(
         "feedback",
         value

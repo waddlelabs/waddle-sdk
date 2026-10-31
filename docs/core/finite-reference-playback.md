@@ -242,8 +242,16 @@ an uncertain write safe.
 
 A terminal execution result means the reference loop has drained. It is not a
 claim that a safety verb physically stopped the device: the original verb outcome
-and owner measurements remain separate evidence. Connector transport integration
-is still pending.
+and owner measurements remain separate evidence. Binding API 14 includes the
+completed stop callback in `cleanup`, separately from the original motion result.
+It records `request` (`hold` or `estop`), `outcome` (`acknowledged` or `unknown`),
+the original callback error text, `completed_ns` on the session clock, and
+`measured_stationary: false`. The worker publishes this receipt only after the
+callback returns. An uncertain write stays uncertain even when the stop succeeds.
+Missing cleanup is not confirmation: successful motion, a superseding stream,
+an ended scope or cancellation before execution can have no stop receipt.
+`Session.hold` and `Session.estop` still acknowledge only that a request was queued;
+posting another request cannot turn missing/failed cleanup into confirmed cleanup.
 
 ## Python Run execution
 
@@ -268,7 +276,7 @@ The returned handle provides:
 
 - `snapshot()`: an independent dictionary with `id`, `episode_id`, `dispatched`,
   `references`, `feedback`, `last_reference`, `curve_progress`, `status`, and
-  `failure`. Feedback retains `observed_ns`,
+  `failure` and optional `cleanup`. Feedback retains `observed_ns`,
   positions, velocities and optional sourced gripper force. Status is `running`,
   `arrived`, `settled`, `contact_stall`, `force_reached`, or `failed`. Optional
   `gripper` and `settling` fields retain their measured evidence.
@@ -294,7 +302,7 @@ physical stop measurements remain required; draining a callback is not physical
 stop proof. A connector must supply its explicit disconnect cancellation policy;
 this local API does not observe network liveness.
 
-Python/native binding API 12 is required. Install matching SDK/media wheels from
+Python/native binding API 14 supplies the complete interface above. Install matching SDK/media wheels from
 one revision in an idle environment; never replace a running hardware owner's
 native module to test this API.
 
