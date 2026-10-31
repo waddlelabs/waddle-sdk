@@ -913,3 +913,47 @@ fn scoped_hold_requires_supported_io_before_admission() {
         Some(Ok(Completion::Arrived))
     );
 }
+
+#[test]
+fn delayed_cancelled_admission_cannot_override_completed_control_takeover() {
+    for part_hold in [false, true] {
+        let h = Harness::new();
+        let references = references_with_hold(Some("left"), part_hold);
+        // Hold the worker message after native admission, reproducing a control
+        // request overtaking delivery without relying on a wall-clock race.
+        let handle = h
+            .dispatch
+            .playback
+            .register(
+                EpisodeId::new("episode"),
+                Some("left".into()),
+                references.len(),
+                || false,
+            )
+            .unwrap();
+        let task = ExecutionTask::new(
+            h.mirror.clone(),
+            EpisodeId::new("episode"),
+            references,
+            h.io.clone(),
+            &handle,
+            10_000_000,
+            0,
+        );
+        handle.cancel("caller cancelled before worker admission");
+        h.dispatch.request(VerbRequest::Home);
+        assert_eq!(h.outcome().verb, Verb::Home);
+        h.dispatch.tx.send(Work::Playback(Box::new(task))).unwrap();
+        let result = finished(&handle);
+        assert!(matches!(
+            result.result,
+            Some(Err(ExecutionFailure::Playback(PlaybackError::Cancelled(_))))
+        ));
+        assert!(
+            result.cleanup.is_none(),
+            "Home takeover is not a Hold receipt"
+        );
+        assert_eq!(*h.io.events.lock(), ["home"]);
+        assert!(h.io.writes.lock().is_empty());
+    }
+}
