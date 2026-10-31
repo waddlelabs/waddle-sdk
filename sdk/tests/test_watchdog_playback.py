@@ -5,7 +5,7 @@ from dataclasses import replace
 
 import pytest
 from test_finite_playback import motion
-from test_finite_playback import opened as opened
+from test_finite_playback import opened as opened  # noqa: PLC0414 -- pytest fixture
 from waddle_sdk.runtime import (
     FaultCode,
     PlaybackWatchdog,
