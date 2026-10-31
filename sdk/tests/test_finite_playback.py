@@ -504,3 +504,21 @@ def test_unconfirmed_run_drain_keeps_devices_and_site_ownership(opened, monkeypa
         # Test-only recovery after independently confirming the fake callback
         # has drained. Production callers cannot clear uncertain ownership.
         session._teardown_failed = False
+
+
+@pytest.mark.parametrize("estop", [False, True])
+def test_completed_stop_after_terminal_reference_only_motion(opened, estop):
+    session, run = opened
+    request = motion((0, 0), (0.02, -0.01))
+    request = replace(request, policy=replace(request.policy, reference_only=True))
+    handle = run.start_playback(request)
+    original = handle.wait()
+    assert original["status"] == "references_dispatched"
+    assert original["cleanup"] is None
+    receipt = session.stop("stop at held endpoint", estop=estop)
+    assert receipt["request"] == ("estop" if estop else "hold")
+    assert receipt["outcome"] == "acknowledged", receipt
+    assert receipt["completed_ns"] > original["last_acknowledged_ns"]
+    assert receipt["measured_stationary"] is False
+    assert handle.snapshot() == original
+    assert SupportFact.COMPLETED_STOP in session.support().rows[0].facts

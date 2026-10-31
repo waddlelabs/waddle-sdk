@@ -64,6 +64,7 @@ class SupportFact(str, enum.Enum):
     JOINT_POSITION_ACTION = "action.joint_position"
     PART_OBSERVATION = "observation.named_parts"
     PART_ACTION = "action.named_parts"
+    COMPLETED_STOP = "control.completed_stop"
     FINITE_JOINT_PLAYBACK = "execution.finite_joint_playback"
     COORDINATED_JOINT_PLAYBACK = "execution.coordinated_joint_playback"
     COORDINATED_SUBSET_PLAYBACK = "execution.coordinated_subset_playback"
@@ -1026,6 +1027,13 @@ class SdkRuntimePort(Protocol):
         x: int,
         y: int,
     ) -> Mapping[str, JSONValue]: ...
+
+
+@runtime_checkable
+class CompletedStopPort(Protocol):
+    """Optional local stop completion, distinct from queue-only control verbs."""
+
+    def stop(self, reason: str, *, estop: bool = False) -> Mapping[str, JSONValue]: ...
 
 
 @runtime_checkable

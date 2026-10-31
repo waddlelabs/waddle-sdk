@@ -34,3 +34,7 @@ Use the contracts shipped with the installed SDK version rather than remembered 
 ## Output expectations
 
 Name the controlling contract and owning layer. Highlight safety or compatibility consequences. When proposing code, identify the normative text and conformance coverage that must move with it.
+
+For completed local Hold/e-stop cleanup, use the optional `control.completed_stop`
+fact and `SiteSession.stop` described in `docs/core/finite-reference-playback.md`.
+Queue-only control acknowledgements and physical stationarity are separate.

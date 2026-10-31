@@ -120,6 +120,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Add optional completed Hold/e-stop receipts through `SiteSession.stop` and the remote safety lane (binding API 28), including stopping after terminal playback without changing its result.
+
 - Optional native gripper playback, with binding API 13 and an independent support
   fact. Preserve the declared jaw mapping, local acknowledgement spacing and
   ordinary owner gates. Distinguish three-sample measured arrival, sustained
