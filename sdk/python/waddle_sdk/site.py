@@ -1519,6 +1519,7 @@ class SiteSession:
                         facts.add(SupportFact.PARALLEL_JOINT_PLAYBACK)
                         facts.add(SupportFact.PART_HOLD_PLAYBACK)
                     facts.add(SupportFact.WATCHDOG_PLAYBACK)
+                    facts.add(SupportFact.STREAMED_JOINT_PLAYBACK)
                     facts.add(SupportFact.PACED_JOINT_PLAYBACK)
                     facts.add(SupportFact.FEEDBACK_JOINT_PLAYBACK)
                     facts.add(SupportFact.SAMPLED_JOINT_PLAYBACK)

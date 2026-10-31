@@ -124,6 +124,13 @@ def start(
             FaultCode.UNSUPPORTED, "part does not support finite playback"
         )
     facts = set.intersection(*(set(row.facts) for row in rows))
+    if (
+        motion.policy.timeout_ns is None
+        and SupportFact.STREAMED_JOINT_PLAYBACK not in facts
+    ):
+        raise RuntimeFault(
+            FaultCode.UNSUPPORTED, "part does not support streamed playback"
+        )
     if run._episode.playback_active and (
         group or SupportFact.PARALLEL_JOINT_PLAYBACK not in facts
     ):

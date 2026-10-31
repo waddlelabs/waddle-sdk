@@ -85,9 +85,9 @@ impl FeedbackPolicy {
         if let Some(window) = &self.position_window
             && (window.max_drift.len() != policy.indices.len()
                 || window.max_drift.iter().any(|x| !x.is_finite() || *x <= 0.0)
-                || window
-                    .max_gap_ns
-                    .is_some_and(|gap| gap <= 0 || gap > policy.timeout_ns)
+                || window.max_gap_ns.is_some_and(|gap| {
+                    gap <= 0 || policy.timeout_ns.is_some_and(|timeout| gap > timeout)
+                })
                 || !(1..=16_385).contains(&window.consecutive_samples))
         {
             return Err(invalid(

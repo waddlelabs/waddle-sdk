@@ -24,7 +24,7 @@ pub(crate) struct Policy {
     settle_ns: i64,
     minimum_settle_samples: usize,
     max_lateness_ns: i64,
-    timeout_ns: i64,
+    timeout_ns: Option<i64>,
     allow_settled: bool,
     reference_only: bool,
     checkpoint_offsets_ns: Vec<i64>,

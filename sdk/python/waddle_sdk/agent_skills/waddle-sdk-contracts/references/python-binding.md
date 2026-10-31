@@ -72,6 +72,12 @@ cadence without counting unrelated lock wait as driver execution.
 
 ## Finite joint playback
 
+Binding API 26 supports explicit reference streams with `timeout_ns=None` and
+`execution.streamed_joint_playback`. Require a watchdog and revisable reference
+curves ending at zero velocity/acceleration. The local worker retains supervised
+rest until continuation, stop or expiry. Finite deadlines remain unchanged; no
+caller polling or curve update renews input liveness.
+
 Binding API 25 adds optional `PlaybackWatchdog` and `WatchdogPlaybackHandlePort`
 under `execution.watchdog_playback`. Use acquired SDK feedback time and reconcile
 the native renewal receipt; delayed requests cannot revive expiry. Preserve

@@ -37,6 +37,19 @@ pub struct CurveProgress {
 }
 
 impl PacedCurve {
+    pub(crate) fn validate_stream_tail(&self) -> Result<(), PlaybackError> {
+        if self
+            .acceleration(self.duration_s())
+            .iter()
+            .any(|a| !a.is_finite() || a.abs() > 1e-8)
+        {
+            return Err(PlaybackError::Invalid(
+                "streamed curve must end at zero acceleration",
+            ));
+        }
+        Ok(())
+    }
+
     fn moving_until_s(&self) -> f64 {
         self.coefficients
             .iter()
@@ -224,7 +237,9 @@ impl CurveUpdate {
             || expected_revision == u64::MAX
             || switch_ns <= 0
             || curve.times_s.is_empty()
-            || switch_ns as f64 * 1e-9 + curve.duration_s() > 120.0
+            || switch_ns
+                .checked_add((curve.duration_s() * 1e9).ceil() as i64)
+                .is_none()
             || curve.sample_times_s.is_some()
         {
             return Err(PlaybackError::Invalid("invalid bounded curve update"));
@@ -240,6 +255,7 @@ impl CurveUpdate {
 
 #[derive(Debug)]
 pub(crate) struct CurveCursor {
+    streaming: bool,
     pub spec: PacedCurve,
     pub progress: CurveProgress,
     pub proposed_s: f64,
@@ -268,8 +284,9 @@ impl CurveCursor {
         }
         Ok(())
     }
-    pub fn new(spec: PacedCurve, started_ns: i64) -> Self {
+    pub fn new(spec: PacedCurve, started_ns: i64, streaming: bool) -> Self {
         Self {
+            streaming,
             moving_until_s: spec.moving_until_s(),
             deadline_anchor_ns: started_ns,
             deadline_anchor_s: 0.0,
@@ -290,14 +307,22 @@ impl CurveCursor {
             return Err(PlaybackError::Busy);
         }
         let switch = update.switch_ns as f64 * 1e-9;
+        let resting_resume = self.streaming
+            && self.progress.endpoint_acknowledged
+            && (switch - self.duration_s()).abs() <= 1e-9;
         if update.expected_revision != self.progress.revision
-            || self.progress.endpoint_acknowledged
-            || switch <= self.progress.acknowledged_curve_time_s.unwrap_or(0.0)
-            || switch > self.duration_s()
+            || (!self.streaming && switch + update.curve.duration_s() > 120.0)
+            || (!resting_resume
+                && (self.progress.endpoint_acknowledged
+                    || switch <= self.progress.acknowledged_curve_time_s.unwrap_or(0.0)
+                    || switch > self.duration_s()))
         {
             return Err(PlaybackError::Invalid(
                 "curve update is stale or outside its incumbent",
             ));
+        }
+        if self.streaming {
+            update.curve.validate_stream_tail()?;
         }
         if self.spec.sample_times_s.is_some()
             || update.curve.period_ns != self.spec.period_ns
@@ -328,6 +353,11 @@ impl CurveCursor {
         }
         self.progress.pending_revision = Some(update.expected_revision + 1);
         self.update = Some(update);
+        if resting_resume {
+            self.progress.endpoint_acknowledged = false;
+            self.progress.next_curve_time_s =
+                Some(switch.max(self.progress.acknowledged_curve_time_s.unwrap()));
+        }
         self.progress.next_curve_time_s = self
             .progress
             .next_curve_time_s
@@ -343,6 +373,15 @@ impl CurveCursor {
         }
         self.update = None;
         self.progress.pending_revision = None;
+        if self
+            .progress
+            .acknowledged_curve_time_s
+            .is_some_and(|phase| phase >= self.duration_s())
+        {
+            self.progress.endpoint_acknowledged = true;
+            self.progress.next_curve_time_s = None;
+            return Ok(());
+        }
         // Scheduling may have shortened the next step to the suffix endpoint.
         // Restore the incumbent's next acknowledged-paced step, not wall time.
         self.progress.next_curve_time_s = Some(

@@ -68,6 +68,7 @@ class SupportFact(str, enum.Enum):
     COORDINATED_JOINT_PLAYBACK = "execution.coordinated_joint_playback"
     PARALLEL_JOINT_PLAYBACK = "execution.parallel_joint_playback"
     WATCHDOG_PLAYBACK = "execution.watchdog_playback"
+    STREAMED_JOINT_PLAYBACK = "execution.streamed_joint_playback"
     PART_HOLD_PLAYBACK = "execution.part_hold_playback"
     JOINT_PLAYBACK_BOUNDS = "execution.joint_playback_bounds"
     PACED_JOINT_PLAYBACK = "execution.paced_joint_playback"
@@ -756,6 +757,13 @@ class PlaybackPolicy:
     ``watchdog`` optionally requires caller liveness on the local session clock,
     under separately declared watchdog-playback support. Expiry uses the same
     failure/Hold path and retains its original error and cleanup receipt.
+
+    ``timeout_ns=None`` explicitly selects a watchdog-limited reference stream
+    under streamed-playback support. It requires revisable reference-only curves
+    and a watchdog, without pacing credit. Each finite curve ends at zero velocity
+    and acceleration; its acknowledged resting tail remains supervised until a
+    continuation, cancellation or watchdog expiry. Finite integer timeouts retain
+    their original completion and deadline semantics.
     """
 
     indices: tuple[int, ...]
@@ -764,7 +772,7 @@ class PlaybackPolicy:
     stationary_velocity: tuple[float, ...]
     settle_ns: int
     max_lateness_ns: int
-    timeout_ns: int
+    timeout_ns: int | None
     allow_settled: bool = False
     paced_curve: PacedJointCurve | None = None
     feedback: PlaybackFeedbackPolicy | None = None
