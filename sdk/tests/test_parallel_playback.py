@@ -40,15 +40,19 @@ def request(part, target):
 
 def feedback(monkeypatch):
     moving = {part: Event() for part in DRIVERS}
-    observed = {part: Event() for part in DRIVERS}
+    dispatched = {part: Event() for part in DRIVERS}
     for part, driver in DRIVERS.items():
 
         def read(driver=driver, part=part):
-            observed[part].set()
             return driver._target.copy(), np.full(2, float(moving[part].is_set()))
 
+        def write(target, original=driver.write, part=part):
+            original(target)
+            dispatched[part].set()
+
         monkeypatch.setattr(driver, "read", read)
-    return moving, observed
+        monkeypatch.setattr(driver, "write", write)
+    return moving, dispatched
 
 
 def test_independent_completion_and_named_direct_scope_conflicts(
@@ -97,13 +101,13 @@ def test_site_wide_stop_drains_every_independent_buffer(site_path, monkeypatch, 
         load_site(site_path).open(console=False, _testing=True) as sdk,
         sdk.run(task="stop independent", actor="test") as run,
     ):
-        moving, observed = feedback(monkeypatch)
+        moving, dispatched = feedback(monkeypatch)
         for flag in moving.values():
             flag.set()
         left = run.start_playback(request("left", (0.04, -0.02)))
         right = run.start_playback(request("right", (-0.03, 0.01)))
-        assert all(event.wait(5) for event in observed.values())
-        # Both buffers have begun local observation. The cleanup receipt below
+        assert all(event.wait(5) for event in dispatched.values())
+        # Both buffers have entered owner dispatch. The cleanup receipt below
         # remains distinct from measured physical stopping.
         if stop == "cancel":
             left.cancel("end local buffer")
