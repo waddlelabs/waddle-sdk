@@ -236,6 +236,14 @@ fn references_on(part: Option<&str>) -> FiniteReferences {
 }
 
 fn references_with_hold(part: Option<&str>, part_hold: bool) -> FiniteReferences {
+    references_with_watchdog(part, part_hold, None)
+}
+
+fn references_with_watchdog(
+    part: Option<&str>,
+    part_hold: bool,
+    watchdog: Option<crate::playback::PlaybackWatchdog>,
+) -> FiniteReferences {
     FiniteReferences::new(
         ActionChunk {
             steps: [0.0, 0.1, 0.2]
@@ -272,6 +280,7 @@ fn references_with_hold(part: Option<&str>, part_hold: bool) -> FiniteReferences
             allow_curve_updates: false,
             credit_pacing_delay: false,
             part_hold,
+            watchdog,
             paced_curve: None,
             feedback: None,
             gripper: None,
@@ -998,5 +1007,237 @@ fn caller_cancellation_before_worker_admission_still_gets_owner_cleanup() {
             [if part_hold { "part_hold" } else { "hold" }]
         );
         assert!(h.io.writes.lock().is_empty());
+    }
+}
+
+fn watchdog_request(h: &Harness, part_hold: bool, timeout_ns: i64) -> FiniteReferences {
+    references_with_watchdog(
+        Some("left"),
+        part_hold,
+        Some(crate::playback::PlaybackWatchdog {
+            observed_ns: h.io.clock.0.now().0,
+            timeout_ns,
+        }),
+    )
+}
+
+fn start_watchdog(h: &Harness, part_hold: bool, timeout_ns: i64) -> ExecutionHandle {
+    h.dispatch
+        .start_playback(
+            h.mirror.clone(),
+            EpisodeId::new("episode"),
+            watchdog_request(h, part_hold, timeout_ns),
+            h.io.clone(),
+            10_000_000,
+            0,
+        )
+        .unwrap()
+}
+
+#[test]
+fn watchdog_expiry_during_observation_prevents_write_and_retains_cleanup_failure() {
+    for part_hold in [false, true] {
+        let h = Harness::new();
+        h.hold_error.store(true, Ordering::SeqCst);
+        *h.io.part_hold_error.lock() = Some(PlaybackIoError {
+            detail: "original part Hold failure".into(),
+            evidence: "motor offline".into(),
+            outcome_unknown: true,
+        });
+        let (p, entered, release) = pause();
+        *h.io.observation_pause.lock() = Some(p);
+        let handle = start_watchdog(&h, part_hold, 100_000_000);
+        entered.recv_timeout(Duration::from_secs(5)).unwrap();
+        h.io.clock.0.advance(101_000_000);
+        handle.refresh_watchdog(h.io.clock.0.now().0).unwrap();
+        release.send(()).unwrap();
+        let result = finished(&handle);
+        assert_eq!(
+            result.result,
+            Some(Err(ExecutionFailure::Playback(
+                PlaybackError::WatchdogExpired
+            )))
+        );
+        assert_eq!(
+            result.watchdog_refresh.unwrap().result,
+            Some(Err(PlaybackError::WatchdogExpired))
+        );
+        let cleanup = result.cleanup.unwrap();
+        assert_eq!(cleanup.part.as_deref(), part_hold.then_some("left"));
+        assert!(cleanup.result.is_err());
+        assert!(h.io.writes.lock().is_empty());
+    }
+}
+
+#[test]
+fn watchdog_renewal_queued_before_expiry_cannot_revive_a_blocked_write() {
+    let h = Harness::new();
+    let (p, entered, release) = pause();
+    *h.io.dispatch_pause.lock() = Some(p);
+    let handle = start_watchdog(&h, false, 100_000_000);
+    entered.recv_timeout(Duration::from_secs(5)).unwrap();
+    h.io.clock.0.advance(40_000_000);
+    handle.refresh_watchdog(h.io.clock.0.now().0).unwrap();
+    assert!(handle.snapshot().watchdog_refresh.unwrap().result.is_none());
+    h.io.clock.0.advance(101_000_000);
+    release.send(()).unwrap();
+    let result = finished(&handle);
+    assert_eq!(
+        result.result,
+        Some(Err(ExecutionFailure::Playback(
+            PlaybackError::WatchdogExpired
+        )))
+    );
+    assert_eq!(
+        h.io.writes.lock().len(),
+        1,
+        "an in-flight callback is not preempted or replayed"
+    );
+    assert_eq!(result.cleanup.unwrap().result, Ok(()));
+}
+
+#[test]
+fn original_inflight_dispatch_failure_survives_watchdog_expiry() {
+    let h = Harness::new();
+    let (p, entered, release) = pause();
+    *h.io.dispatch_pause.lock() = Some(p);
+    let handle = start_watchdog(&h, false, 100_000_000);
+    entered.recv_timeout(Duration::from_secs(5)).unwrap();
+    let error = PlaybackIoError {
+        detail: "original motor write failure".into(),
+        evidence: "CAN lost".into(),
+        outcome_unknown: true,
+    };
+    *h.io.error.lock() = Some(error.clone());
+    h.io.clock.0.advance(101_000_000);
+    release.send(()).unwrap();
+    let result = finished(&handle);
+    assert_eq!(result.result, Some(Err(ExecutionFailure::Dispatch(error))));
+    assert_eq!(result.cleanup.unwrap().result, Ok(()));
+}
+
+// Exercise receipt boundaries with the exact worker check and an explicitly
+// controlled session clock; the threaded cases above cover actual I/O/cleanup.
+fn watchdog_task(h: &Harness) -> (ExecutionTask, ExecutionHandle) {
+    let references = watchdog_request(h, false, 100_000_000);
+    let handle = h
+        .dispatch
+        .playback
+        .register(
+            EpisodeId::new("episode"),
+            Some("left".into()),
+            references.len(),
+            || false,
+        )
+        .unwrap();
+    let task = ExecutionTask::new(
+        h.mirror.clone(),
+        EpisodeId::new("episode"),
+        references,
+        h.io.clone(),
+        &handle,
+        10_000_000,
+        0,
+    );
+    (task, handle)
+}
+
+#[test]
+fn accepted_watchdog_stamp_advances_deadline_once() {
+    let h = Harness::new();
+    let (task, handle) = watchdog_task(&h);
+    h.io.clock.0.advance(40_000_000);
+    let observed_ns = h.io.clock.0.now().0;
+    handle.refresh_watchdog(observed_ns).unwrap();
+    assert!(task.check_watchdog(&h.io.clock).is_none());
+    let accepted = handle.snapshot();
+    assert_eq!(
+        accepted.watchdog_refresh.unwrap().result,
+        Some(Ok(observed_ns + 100_000_000))
+    );
+    handle.refresh_watchdog(observed_ns).unwrap();
+    h.io.clock.0.advance(101_000_000);
+    assert_eq!(
+        task.check_watchdog(&h.io.clock),
+        Some(Err(ExecutionFailure::Playback(
+            PlaybackError::WatchdogExpired
+        )))
+    );
+    assert_eq!(handle.snapshot().watchdog, accepted.watchdog);
+}
+
+#[test]
+fn refused_watchdog_stamp_does_not_change_deadline_or_poison_later_valid_renewal() {
+    let h = Harness::new();
+    let (task, handle) = watchdog_task(&h);
+    let original = handle.snapshot().watchdog;
+    handle.refresh_watchdog(1_000_000_000).unwrap();
+    assert!(task.check_watchdog(&h.io.clock).is_none());
+    assert!(matches!(
+        handle.snapshot().watchdog_refresh.unwrap().result,
+        Some(Err(PlaybackError::Invalid(_)))
+    ));
+    assert_eq!(handle.snapshot().watchdog, original);
+    let current = h.io.clock.0.now().0;
+    handle.refresh_watchdog(current).unwrap();
+    assert!(task.check_watchdog(&h.io.clock).is_none());
+    assert_eq!(handle.snapshot().watchdog.unwrap().observed_ns, current);
+    handle.refresh_watchdog(current - 1).unwrap();
+    assert!(task.check_watchdog(&h.io.clock).is_none());
+    assert!(matches!(
+        handle.snapshot().watchdog_refresh.unwrap().result,
+        Some(Err(PlaybackError::Invalid(_)))
+    ));
+    assert_eq!(handle.snapshot().watchdog.unwrap().observed_ns, current);
+}
+
+#[test]
+fn watchdog_has_one_pending_receipt_and_terminal_cancel_resolves_it() {
+    let h = Harness::new();
+    let (task, handle) = watchdog_task(&h);
+    handle.refresh_watchdog(0).unwrap();
+    handle.refresh_watchdog(0).unwrap();
+    assert_eq!(handle.refresh_watchdog(1), Err(PlaybackError::Busy));
+    handle.cancel("explicit stop");
+    assert!(handle.refresh_watchdog(0).is_err());
+    task.finish(task.cancelled_result().unwrap());
+    assert!(matches!(
+        handle.snapshot().watchdog_refresh.unwrap().result,
+        Some(Err(PlaybackError::Cancelled(_)))
+    ));
+}
+
+#[test]
+fn watchdog_expiry_preserves_selected_scope_and_sibling_cleanup_policy() {
+    for part_hold in [false, true] {
+        let h = Harness::new();
+        let (p, entered, release) = pause();
+        *h.io.observation_pause.lock() = Some(p);
+        let left = start_watchdog(&h, part_hold, 100_000_000);
+        entered.recv_timeout(Duration::from_secs(5)).unwrap();
+        let right_io = sibling_io(&h);
+        let right = start_named(&h, "right", right_io.clone()).unwrap();
+        h.io.clock.0.advance(101_000_000);
+        release.send(()).unwrap();
+        let left_result = finished(&left);
+        assert_eq!(
+            left_result.result,
+            Some(Err(ExecutionFailure::Playback(
+                PlaybackError::WatchdogExpired
+            )))
+        );
+        assert_eq!(
+            left_result.cleanup.unwrap().part.as_deref(),
+            part_hold.then_some("left")
+        );
+        let right_result = finished(&right);
+        if part_hold {
+            assert_eq!(right_result.result, Some(Ok(Completion::Arrived)));
+            assert!(right_result.cleanup.is_none());
+        } else {
+            assert!(right_result.result.unwrap().is_err());
+            assert_eq!(right_result.cleanup.unwrap().part, None);
+            assert!(right_io.writes.lock().is_empty());
+        }
     }
 }

@@ -56,6 +56,7 @@ fn inputs() -> (ActionChunk, PlaybackPolicy) {
             allow_curve_updates: false,
             credit_pacing_delay: false,
             part_hold: false,
+            watchdog: None,
             paced_curve: Some(curve()),
             feedback: None,
             gripper: None,

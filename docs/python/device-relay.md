@@ -56,6 +56,15 @@ omitted. Missing configuration returns `None`; malformed, duplicate, oversized o
 insecure configuration raises a structured refusal. Applications choose the file
 location and retain responsibility for account authorization.
 
+## Playback liveness
+
+Optional `playback_refresh` carries `run_id`, execution `id` and `observed_ns`
+from acquired SDK feedback. It forwards to the same retained playback handle and
+returns its snapshot without waiting for device I/O. Require the separate
+`execution.watchdog_playback` support fact and an opted-in policy. Only the
+native worker can accept renewal; delayed replies and transport heartbeats do
+not extend it. See [finite playback](../core/finite-reference-playback.md).
+
 ## Relay contract
 
 `waddle_sdk_relay.protocol.PROTOCOL` is the existing binary device protocol. Encode/decode

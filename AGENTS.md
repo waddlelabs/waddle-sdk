@@ -5,6 +5,17 @@ acceptance separately in a configured simulator environment.
 
 # AGENTS.md — waddle-sdk monorepo
 
+Binding API 25 adds optional `PlaybackWatchdog(observed_ns, timeout_ns)` under
+`execution.watchdog_playback`. The existing serialized native worker checks
+expiry before I/O and after observation; expiry retains `watchdog_expired` and
+ordinary selected Hold/cleanup. `WatchdogPlaybackHandlePort.refresh_watchdog`
+queues an acquired SDK feedback stamp, with pending/accepted/rejected evidence.
+Only the native worker accepts renewal. Stale/future stamps refuse, duplicates
+cannot extend time, and delayed requests cannot revive an expired buffer.
+No motion deadline extension, authority, clock or writer is added. Blocked callbacks still drain
+before Hold; this is neither physical-stop proof nor a complete teleoperation
+input policy. See the finite-playback contract and watchdog tests.
+
 Optional `BoundedPlaybackRunPort.set_playback_bounds` installs copied per-part
 joint envelopes under `execution.joint_playback_bounds`. The existing worker
 checks fresh bounded-part feedback and references under the dispatch boundary;

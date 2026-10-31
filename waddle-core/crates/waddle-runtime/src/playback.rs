@@ -26,8 +26,22 @@ pub use gripper::{
 pub(crate) mod execution;
 pub use execution::{
     CurveUpdateReceipt, ExecutionFailure, ExecutionHandle, ExecutionResult, ExecutionSnapshot,
-    PlaybackCleanup, PlaybackIo, PlaybackIoError, ReferenceReceipt,
+    PlaybackCleanup, PlaybackIo, PlaybackIoError, ReferenceReceipt, WatchdogReceipt,
 };
+
+/// Caller liveness measured on the existing session clock. Renewal is anchored
+/// to acquired feedback time, never to a delayed request's arrival time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PlaybackWatchdog {
+    pub observed_ns: i64,
+    pub timeout_ns: i64,
+}
+
+impl PlaybackWatchdog {
+    pub fn deadline_ns(&self) -> i64 {
+        self.observed_ns.saturating_add(self.timeout_ns)
+    }
+}
 
 /// Bounded completion/timing choices supplied with a finite reference buffer.
 /// `indices` selects the moving rows for start/completion measurements; untouched
@@ -58,6 +72,8 @@ pub struct PlaybackPolicy {
     /// Use the named owner's Hold for this buffer's cancellation/failure only.
     /// Explicit control verbs, episode closure and shutdown remain site-wide.
     pub part_hold: bool,
+    /// Optional local liveness bound, separate from the original motion timeout.
+    pub watchdog: Option<PlaybackWatchdog>,
     /// Optional exact polynomial evaluation with acknowledgement-paced progress.
     /// Omission retains fixed offsets and the original lateness guard.
     pub paced_curve: Option<PacedCurve>,
@@ -115,6 +131,8 @@ pub enum PlaybackError {
     LateReference { index: usize, lateness_ns: i64 },
     #[error("finite reference deadline expired")]
     Deadline,
+    #[error("finite playback watchdog expired")]
+    WatchdogExpired,
     #[error("a reference has an unacknowledged dispatch; do not replay it")]
     DispatchPending,
     #[error("dispatch receipt does not match the outstanding reference")]
@@ -150,6 +168,14 @@ impl FiniteReferences {
 
     pub fn new(chunk: ActionChunk, policy: PlaybackPolicy) -> Result<Self, PlaybackError> {
         let invalid = PlaybackError::Invalid;
+        if policy.watchdog.is_some_and(|w| {
+            w.observed_ns < 0
+                || w.timeout_ns <= 0
+                || w.timeout_ns > policy.timeout_ns
+                || w.observed_ns.checked_add(w.timeout_ns).is_none()
+        }) {
+            return Err(invalid("watchdog requires bounded session-clock feedback"));
+        }
         if !(1..=16_385).contains(&chunk.steps.len()) {
             return Err(invalid("requires 1..=16385 references"));
         }

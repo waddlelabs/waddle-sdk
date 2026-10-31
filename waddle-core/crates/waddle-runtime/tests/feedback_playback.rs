@@ -44,6 +44,7 @@ fn inputs(targets: &[f64]) -> (ActionChunk, PlaybackPolicy) {
             allow_curve_updates: false,
             credit_pacing_delay: false,
             part_hold: false,
+            watchdog: None,
             paced_curve: None,
             feedback: Some(FeedbackPolicy::default()),
             gripper: None,

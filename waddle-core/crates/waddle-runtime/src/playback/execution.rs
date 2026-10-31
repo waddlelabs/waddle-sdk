@@ -11,7 +11,7 @@ use waddle_types::{EpisodeId, MonoNs, Step, Verb};
 
 use super::{
     CheckpointEvidence, Completion, CurveProgress, CurveUpdate, Feedback, FiniteReferences,
-    GripperEvidence, Playback, PlaybackError, PlaybackPoll, SettlingEvidence,
+    GripperEvidence, Playback, PlaybackError, PlaybackPoll, PlaybackWatchdog, SettlingEvidence,
 };
 use crate::mirror::Mirror;
 use crate::verbs::VerbOutcome;
@@ -119,6 +119,13 @@ pub struct CurveUpdateReceipt {
     pub result: Option<Result<(), PlaybackError>>,
 }
 
+/// Renewal is confirmed only when the local worker accepts its feedback stamp.
+#[derive(Clone, Debug)]
+pub struct WatchdogReceipt {
+    pub observed_ns: i64,
+    pub result: Option<Result<i64, PlaybackError>>,
+}
+
 /// An execution snapshot. A terminal result means the reference loop has ended;
 /// it is not proof that a requested safety verb physically stopped the device.
 #[derive(Clone, Debug)]
@@ -133,6 +140,8 @@ pub struct ExecutionSnapshot {
     pub feedback_reference: Option<Step>,
     pub curve_progress: Option<CurveProgress>,
     pub curve_update: Option<CurveUpdateReceipt>,
+    pub watchdog: Option<PlaybackWatchdog>,
+    pub watchdog_refresh: Option<WatchdogReceipt>,
     pub settling: Option<SettlingEvidence>,
     pub gripper: Option<GripperEvidence>,
     pub checkpoints: Vec<CheckpointEvidence>,
@@ -190,6 +199,16 @@ impl Control {
             state.curve_update = None;
             if let Some(receipt) = state
                 .snapshot
+                .watchdog_refresh
+                .as_mut()
+                .filter(|r| r.result.is_none())
+            {
+                receipt.result = Some(Err(PlaybackError::Cancelled(
+                    "execution ended before watchdog renewal".into(),
+                )));
+            }
+            if let Some(receipt) = state
+                .snapshot
                 .curve_update
                 .as_mut()
                 .filter(|r| r.result.is_none())
@@ -220,6 +239,31 @@ impl ExecutionHandle {
     /// terminal handle cannot stop a later execution or rewrite its own result.
     pub fn cancel(&self, reason: &str) {
         self.control.mark_cancelled(reason, false);
+    }
+
+    /// Queue a fresh session-clock feedback stamp. Repeating the same stamp is
+    /// idempotent and cannot extend the deadline. No timeout or authority changes.
+    pub fn refresh_watchdog(&self, observed_ns: i64) -> Result<(), PlaybackError> {
+        let mut state = self.control.state.lock();
+        if state.snapshot.result.is_some() || state.cancelled.is_some() {
+            return Err(PlaybackError::Invalid("execution is closing or terminal"));
+        }
+        if state.snapshot.watchdog.is_none() {
+            return Err(PlaybackError::Invalid("execution has no watchdog"));
+        }
+        if let Some(previous) = &state.snapshot.watchdog_refresh {
+            if previous.observed_ns == observed_ns {
+                return Ok(());
+            }
+            if previous.result.is_none() {
+                return Err(PlaybackError::Busy);
+            }
+        }
+        state.snapshot.watchdog_refresh = Some(WatchdogReceipt {
+            observed_ns,
+            result: None,
+        });
+        Ok(())
     }
 
     /// Enqueue one suffix for validation by the existing local worker. Returns
@@ -320,6 +364,8 @@ impl ExecutionSlot {
                     feedback_reference: None,
                     curve_progress: None,
                     curve_update: None,
+                    watchdog: None,
+                    watchdog_refresh: None,
                     settling: None,
                     gripper: None,
                     checkpoints: Vec::new(),
@@ -426,6 +472,7 @@ impl ExecutionTask {
         sample_period_ns: i64,
         dispatch_period_ns: i64,
     ) -> Self {
+        handle.control.state.lock().snapshot.watchdog = references.policy.watchdog;
         Self {
             mirror,
             episode,
@@ -527,11 +574,61 @@ impl ExecutionTask {
         result
     }
 
+    pub(crate) fn check_watchdog<C: Clock>(&self, clock: &C) -> Option<ExecutionResult> {
+        let mut state = self.control.state.lock();
+        let watchdog = state.snapshot.watchdog?;
+        let now = clock.stamp_now().mono_ns().0;
+        // Check the incumbent first: a queued or delayed renewal cannot revive
+        // an expired buffer, including after an in-flight device callback.
+        let failure = if watchdog.observed_ns > now {
+            Some(PlaybackError::Invalid("watchdog feedback is in the future"))
+        } else if now >= watchdog.deadline_ns() {
+            Some(PlaybackError::WatchdogExpired)
+        } else {
+            None
+        };
+        if let Some(error) = failure {
+            if let Some(receipt) = state
+                .snapshot
+                .watchdog_refresh
+                .as_mut()
+                .filter(|r| r.result.is_none())
+            {
+                receipt.result = Some(Err(error.clone()));
+            }
+            return Some(Err(ExecutionFailure::Playback(error)));
+        }
+        let receipt = state
+            .snapshot
+            .watchdog_refresh
+            .as_mut()
+            .filter(|r| r.result.is_none())?;
+        let next = PlaybackWatchdog {
+            observed_ns: receipt.observed_ns,
+            ..watchdog
+        };
+        if next.observed_ns < watchdog.observed_ns
+            || next.observed_ns > now
+            || next.observed_ns.checked_add(next.timeout_ns).is_none()
+        {
+            receipt.result = Some(Err(PlaybackError::Invalid(
+                "watchdog requires current session-clock feedback",
+            )));
+        } else {
+            receipt.result = Some(Ok(next.deadline_ns()));
+            state.snapshot.watchdog = Some(next);
+        }
+        None
+    }
+
     fn tick_inner<C: Clock>(&mut self, clock: &C) -> Option<ExecutionResult> {
         if self.scope_ended() {
             return Some(Err(ExecutionFailure::Superseded("episode ended".into())));
         }
         if let Some(result) = self.cancelled_result() {
+            return Some(result);
+        }
+        if let Some(result) = self.check_watchdog(clock) {
             return Some(result);
         }
         if clock.stamp_now().mono_ns().0 < self.next_poll_ns {
@@ -545,6 +642,9 @@ impl ExecutionTask {
             return Some(Err(ExecutionFailure::Superseded("episode ended".into())));
         }
         if let Some(result) = self.cancelled_result() {
+            return Some(result);
+        }
+        if let Some(result) = self.check_watchdog(clock) {
             return Some(result);
         }
         let now = clock.stamp_now().mono_ns().0;

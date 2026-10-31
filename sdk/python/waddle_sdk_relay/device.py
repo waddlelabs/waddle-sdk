@@ -249,6 +249,7 @@ class Device:
                 "playback_cancel",
                 "playback_update",
                 "playback_withdraw",
+                "playback_refresh",
             }:
                 handle = self._playbacks.get((arguments["run_id"], arguments["id"]))
                 if handle is None:
@@ -258,6 +259,14 @@ class Device:
                     )
                 if method == "playback_cancel":
                     handle.cancel(arguments["reason"])
+                if method == "playback_refresh":
+                    refresh = getattr(handle, "refresh_watchdog", None)
+                    if not callable(refresh):
+                        raise RuntimeFault(
+                            FaultCode.UNSUPPORTED,
+                            "SDK handle does not support playback watchdogs",
+                        )
+                    refresh(arguments["observed_ns"])
                 if method == "playback_update":
                     update = getattr(handle, "update_curve", None)
                     if not callable(update):
