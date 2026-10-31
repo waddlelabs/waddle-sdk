@@ -212,6 +212,7 @@ fn reference_only_terminal_window_includes_final_drift_and_sample_gap() {
             PlaybackPoll::Complete(Completion::ReferencesDispatched)
         );
         let evidence = playback.settling_evidence().unwrap();
+        assert_eq!(evidence.observed_ns, last_at);
         assert_eq!(evidence.samples, expected_samples);
         assert_eq!(evidence.joint_spans, vec![last_q]);
     }

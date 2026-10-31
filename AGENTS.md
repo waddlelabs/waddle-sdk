@@ -5,10 +5,12 @@ acceptance separately in a configured simulator environment.
 
 # AGENTS.md — waddle-sdk monorepo
 
-The native reference-only terminal-window regression now checks the final fresh
-sample, including drift and a declared observation gap. Preserve reference-only
-completion semantics while making its optional diagnostic evidence current.
-The correction is under development; this regression is a retained baseline.
+Binding API 29 adds `execution.reference_settling`: optional native encoder-window
+diagnostics remain current through the final reference-only sample. Window
+`observed_ns` binds the evidence to SDK feedback; publish both in one snapshot
+update. Preserve drift/gap resets, original deadlines and reference-only outcomes.
+Window statistics do not themselves declare goal arrival or physical stationarity.
+The original terminal drift/gap regression is retained; validation is in progress.
 
 Binding API 28 adds optional `control.completed_stop` and `SiteSession.stop`.
 The existing priority worker returns a fresh callback receipt even after finite

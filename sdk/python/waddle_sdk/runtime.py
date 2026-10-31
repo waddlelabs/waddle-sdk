@@ -77,6 +77,7 @@ class SupportFact(str, enum.Enum):
     FEEDBACK_JOINT_PLAYBACK = "execution.feedback_joint_playback"
     SAMPLED_JOINT_PLAYBACK = "execution.sampled_joint_playback"
     REFERENCE_JOINT_PLAYBACK = "execution.reference_joint_playback"
+    REFERENCE_SETTLING = "execution.reference_settling"
     CHECKPOINTED_JOINT_PLAYBACK = "execution.checkpointed_joint_playback"
     REVISABLE_JOINT_PLAYBACK = "execution.revisable_joint_playback"
     PLAYBACK_FEEDBACK_REFERENCE = "execution.playback_feedback_reference"
@@ -732,6 +733,11 @@ class PlaybackPolicy:
     feedback. It does not measure arrival/stationarity and excludes gripper
     outcome policies. Snapshots retain ``last_acknowledged_ns`` on the session
     clock; remote receipt time must not be substituted for it.
+
+    With ``execution.reference_settling``, an optional feedback position window
+    also updates on the final fresh reference-only sample. Its diagnostic
+    ``settling.observed_ns`` identifies that sample; completion still reports
+    only ``references_dispatched``, never arrival or stationarity.
 
     ``checkpoint_offsets_ns`` requests up to 256 strictly increasing diagnostic
     markers within the buffer, with checkpointed-playback support. Each retains

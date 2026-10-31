@@ -203,6 +203,15 @@ def start(
             FaultCode.UNSUPPORTED, "part does not support reference-only completion"
         )
     if (
+        motion.policy.reference_only
+        and motion.policy.feedback is not None
+        and motion.policy.feedback.position_window is not None
+        and SupportFact.REFERENCE_SETTLING not in facts
+    ):
+        raise RuntimeFault(
+            FaultCode.UNSUPPORTED, "part does not support reference-only window evidence"
+        )
+    if (
         motion.policy.minimum_settle_samples != 1
         and SupportFact.SAMPLED_JOINT_PLAYBACK not in facts
     ):
