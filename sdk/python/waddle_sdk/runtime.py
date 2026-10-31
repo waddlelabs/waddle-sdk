@@ -66,6 +66,7 @@ class SupportFact(str, enum.Enum):
     PART_ACTION = "action.named_parts"
     FINITE_JOINT_PLAYBACK = "execution.finite_joint_playback"
     COORDINATED_JOINT_PLAYBACK = "execution.coordinated_joint_playback"
+    COORDINATED_SUBSET_PLAYBACK = "execution.coordinated_subset_playback"
     PARALLEL_JOINT_PLAYBACK = "execution.parallel_joint_playback"
     WATCHDOG_PLAYBACK = "execution.watchdog_playback"
     STREAMED_JOINT_PLAYBACK = "execution.streamed_joint_playback"
@@ -817,12 +818,14 @@ class FiniteJointMotion:
 
 @dataclass(frozen=True)
 class CoordinatedJointMotion:
-    """One finite buffer for every declared part, under one local clock.
+    """One finite buffer for declared parts, under one local clock.
 
-    ``parts`` must exactly match the Site's complete declaration order. Reference
+    ``parts`` must contain at least two distinct parts in declaration order.
+    A subset requires ``execution.coordinated_subset_playback`` on its members;
+    older devices require the complete Site layout. Reference
     positions, velocity hints, curve rows and policy indices use that flattened
     joint layout. Every part must advertise coordinated playback and all selected
-    policy support. Each whole-site reference passes the existing native gate and
+    policy support. Each group reference passes the existing native gate and
     all addressed owner envelopes before any write; driver writes themselves are
     sequential, not physically atomic. Failure/cancel uses the normal site Hold.
     Scalar gripper outcome/force policies are not supported for a group.

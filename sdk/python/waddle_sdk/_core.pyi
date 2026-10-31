@@ -43,6 +43,8 @@ class GateInfo:
     def velocity_feedforward(self) -> list[float] | None: ...
     @property
     def part(self) -> str | None: ...
+    @property
+    def parts(self) -> list[str] | None: ...
     def __repr__(self) -> str: ...
 
 class Chunk:
@@ -76,7 +78,9 @@ class Episode:
     def start_playback(
         self, chunk_json: str, policy: object,
         observe: Callable[[], dict[str, Any] | PlaybackIoError],
-        dispatch: Callable[[dict[str, Any], dict[str, Any]], dict[str, Any] | PlaybackIoError],
+        dispatch: Callable[[dict[str, Any], dict[str, Any], float | None], dict[str, Any] | PlaybackIoError],
+        hold_part: Callable[[str], PlaybackIoError | None] | None = None,
+        *, parts: Sequence[str] | None = None,
     ) -> ExecutionHandle: ...
     @property
     def id(self) -> str: ...
@@ -101,6 +105,7 @@ class Episode:
         gripper: float | None = None,
         *,
         part: str | None = None,
+        parts: Sequence[str] | None = None,
     ) -> Any: ...
     def terminate(self, outcome: str = "abort", reason: str = "") -> None: ...
 

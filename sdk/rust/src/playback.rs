@@ -388,31 +388,24 @@ pub(crate) fn start(
     id: &waddle_types::EpisodeId,
     chunk_json: &str,
     policy: Policy,
-    observe: Py<PyAny>,
-    dispatch: Py<PyAny>,
-    hold_part: Option<Py<PyAny>>,
+    io: PyIo,
+    parts: Option<Vec<String>>,
 ) -> PyResult<PyExecutionHandle> {
     let chunk = waddle_sidecar::json::message_from_json::<waddle_types::pb::v0::ActionChunk>(
         "waddle.v0.ActionChunk",
         chunk_json,
     )
     .map_err(|e| PyValueError::new_err(e.to_string()))?;
-    session
-        .start_playback(
-            id,
-            &chunk,
-            policy.try_into()?,
-            Arc::new(PyIo {
-                observe,
-                dispatch,
-                hold_part,
-            }),
-        )
-        .map(PyExecutionHandle)
-        .map_err(|error| match error {
-            PlaybackError::Busy => PlaybackBusyError::new_err(error.to_string()),
-            _ => PyValueError::new_err(error.to_string()),
-        })
+    let policy = policy.try_into()?;
+    let io = Arc::new(io);
+    let result = match parts {
+        Some(parts) => session.start_playback_parts(id, &parts, &chunk, policy, io),
+        None => session.start_playback(id, &chunk, policy, io),
+    };
+    result.map(PyExecutionHandle).map_err(|error| match error {
+        PlaybackError::Busy => PlaybackBusyError::new_err(error.to_string()),
+        _ => PyValueError::new_err(error.to_string()),
+    })
 }
 
 #[pyclass(name = "ExecutionHandle", frozen)]

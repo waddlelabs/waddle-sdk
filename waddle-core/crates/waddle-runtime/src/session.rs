@@ -28,8 +28,9 @@ use waddle_tripwire::{
 use waddle_types::pb::v0 as pb;
 use waddle_types::time::Clock;
 use waddle_types::{
-    ActorKind, CellId, EpisodeId, HandoffPolicy, InterventionPhase, LeaseEnforcement, MonoNs,
-    ResetVerificationMode, RobotDescription, RobotId, SessionId, TerminalOutcome, VerbRequest,
+    ActionSpace, ActorKind, CellId, EpisodeId, HandoffPolicy, InterventionPhase, LeaseEnforcement,
+    MonoNs, ResetVerificationMode, RobotDescription, RobotId, SessionId, TerminalOutcome,
+    VerbRequest,
 };
 
 use crate::RuntimeError;
@@ -1712,15 +1713,81 @@ impl Session {
         policy: crate::playback::PlaybackPolicy,
         io: Arc<dyn crate::playback::PlaybackIo>,
     ) -> Result<crate::playback::ExecutionHandle, crate::playback::PlaybackError> {
+        self.start_playback_scoped(id, chunk, policy, io, None)
+    }
+
+    /// Admit an ordered subset of declared joint parts as one local curve.
+    /// The group reserves every selected member; unrelated named scopes remain
+    /// available. Failure/cancel retains normal site-wide Hold semantics.
+    pub fn start_playback_parts(
+        &self,
+        id: &EpisodeId,
+        parts: &[String],
+        chunk: &pb::ActionChunk,
+        policy: crate::playback::PlaybackPolicy,
+        io: Arc<dyn crate::playback::PlaybackIo>,
+    ) -> Result<crate::playback::ExecutionHandle, crate::playback::PlaybackError> {
+        self.start_playback_scoped(id, chunk, policy, io, Some(parts))
+    }
+
+    fn selected_joint_space(&self, selected: &[String]) -> Result<ActionSpace, RuntimeError> {
+        let waddle_types::SpaceSpec::Composite { parts } = &self.inner.action_space.spec else {
+            return Err(RuntimeError::InvalidScopedAction(
+                "a group requires a composite declaration".into(),
+            ));
+        };
+        let subset: Vec<_> = parts
+            .iter()
+            .filter(|(name, _)| selected.contains(name))
+            .cloned()
+            .collect();
+        if selected.len() < 2
+            || subset.iter().map(|(name, _)| name).ne(selected.iter())
+            || subset
+                .iter()
+                .any(|(_, s)| !matches!(s.spec, waddle_types::SpaceSpec::JointPosition { .. }))
+        {
+            return Err(RuntimeError::InvalidScopedAction(
+                "requires distinct joint parts in declaration order".into(),
+            ));
+        }
+        Ok(ActionSpace {
+            rate_hz: subset
+                .iter()
+                .map(|(_, s)| s.rate_hz)
+                .fold(f64::INFINITY, f64::min),
+            spec: waddle_types::SpaceSpec::Composite { parts: subset },
+            ..self.inner.action_space.as_ref().clone()
+        })
+    }
+
+    fn start_playback_scoped(
+        &self,
+        id: &EpisodeId,
+        chunk: &pb::ActionChunk,
+        policy: crate::playback::PlaybackPolicy,
+        io: Arc<dyn crate::playback::PlaybackIo>,
+        selected: Option<&[String]>,
+    ) -> Result<crate::playback::ExecutionHandle, crate::playback::PlaybackError> {
         use crate::playback::{FiniteReferences, PlaybackError};
         use waddle_types::{ActionChunk, PartPolicy, SpaceSpec, VelocityFeedforwardPolicy};
 
         if !(1..=16_385).contains(&chunk.actions.len()) {
             return Err(PlaybackError::Invalid("requires 1..=16385 references"));
         }
+        let selected_space = selected
+            .map(|parts| self.selected_joint_space(parts))
+            .transpose()
+            .map_err(|error| PlaybackError::InvalidAction(error.to_string()))?;
+        let action_space = selected_space.as_ref().unwrap_or(&self.inner.action_space);
+        if selected.is_some() && chunk.actions.iter().any(|action| !action.part.is_empty()) {
+            return Err(PlaybackError::Invalid(
+                "group references must address their complete selected layout",
+            ));
+        }
         let flattened = ActionChunk::from_pb_with_velocity_feedforward(
             chunk,
-            &self.inner.action_space,
+            action_space,
             PartPolicy::Honor,
             VelocityFeedforwardPolicy::Honor,
         )
@@ -1728,16 +1795,13 @@ impl Session {
         if !flattened.inert.is_empty() {
             return Err(PlaybackError::Invalid("inert references cannot execute"));
         }
-        let scope = match (
-            &self.inner.action_space.spec,
-            flattened.chunk.steps[0].part.as_deref(),
-        ) {
+        let scope = match (&action_space.spec, flattened.chunk.steps[0].part.as_deref()) {
             (SpaceSpec::Composite { parts }, Some(part)) => parts
                 .iter()
                 .find(|(name, _)| name == part)
                 .map(|(_, space)| space)
                 .expect("part validated by ordinary intake"),
-            (_, None) => &self.inner.action_space,
+            (_, None) => action_space,
             _ => {
                 return Err(PlaybackError::Invalid(
                     "requires a declared joint-position scope",
@@ -1796,7 +1860,10 @@ impl Session {
             } else {
                 0 // Named-part timing is unchanged; paced curves enforce their own spacing.
             };
-        let references = FiniteReferences::new(flattened.chunk, policy)?;
+        let mut references = FiniteReferences::new(flattened.chunk, policy)?;
+        if let Some(parts) = selected {
+            references.parts = Some(parts.to_vec());
+        }
         if self.episode_done(id) {
             return Err(PlaybackError::Cancelled("episode ended".into()));
         }
@@ -2605,6 +2672,46 @@ impl Episode {
             )));
         }
         Ok(self.gate_scoped(values, None, obs, Some(Arc::from(part))))
+    }
+
+    /// Resolve every selected caller through the ordinary gate before the owner
+    /// writes any member. The first non-pass selects the existing takeover/stop
+    /// outcome for the group; no partial caller command is dispatched.
+    pub fn gate_parts(
+        &mut self,
+        parts: &[String],
+        values: &[f64],
+        obs: Option<&[f64]>,
+    ) -> Result<GateOutput, RuntimeError> {
+        let space = self.session.selected_joint_space(parts)?;
+        if space.dims() != Some(values.len())
+            || values.iter().any(|v| !v.is_finite())
+            || obs.is_some_and(|row| row.len() != values.len())
+        {
+            return Err(RuntimeError::InvalidScopedAction(
+                "group values/feedback must match the selected layout".into(),
+            ));
+        }
+        let waddle_types::SpaceSpec::Composite { parts } = space.spec else {
+            unreachable!()
+        };
+        let mut start = 0;
+        let mut result = None;
+        for (part, space) in parts {
+            let end = start + space.dims().expect("selected joint space has a width");
+            let output = self.gate_scoped(
+                &values[start..end],
+                None,
+                obs.map(|row| &row[start..end]),
+                Some(Arc::from(part)),
+            );
+            if !matches!(output, GateOutput::Pass { .. }) {
+                return Ok(output);
+            }
+            result = Some(output);
+            start = end;
+        }
+        Ok(result.expect("selected group is nonempty"))
     }
 
     fn gate_scoped(

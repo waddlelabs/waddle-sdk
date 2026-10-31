@@ -140,7 +140,19 @@ stays Busy while any buffer is active. The public native conflict query
 `Session.playback_active_on(episode_id, part)` is status, not a reservation or
 permission to bypass the ordinary gate/owner envelope.
 
-Binding API 22 adds `CoordinatedJointMotion(parts, references, policy)` for the
+Binding API 27 additionally supports an ordered subset under the separate
+`execution.coordinated_subset_playback` fact. Select at least two distinct declared
+joint parts; all rows use only their concatenated layout. Native intake validates
+the complete selected layout and its slowest command cadence. The group reserves
+all selected members until terminal cleanup, while disjoint named buffers may run
+on the same serialized worker. Normal completion does not write or hold unrelated
+parts. Configured shared bounds and neighbor-collision checks remain dependencies.
+Each selected part crosses the existing native gate before the complete decision
+crosses all owner envelopes; a takeover replaces the group without a partial caller
+write. Group failure/cancel still uses site-wide Hold, and group `part_hold` remains
+unsupported. Neither parallel scopes nor shared cadence imply physical atomicity.
+
+Binding API 22's original `CoordinatedJointMotion(parts, references, policy)` uses the
 complete joint-position Site. `parts` must name every part in declaration order;
 positions, velocity hints, polynomial rows and policy indices use that flattened
 layout. Every part must advertise `execution.coordinated_joint_playback` and all

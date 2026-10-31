@@ -152,11 +152,12 @@ pub enum PlaybackError {
 pub struct FiniteReferences {
     chunk: ActionChunk,
     policy: PlaybackPolicy,
+    pub(crate) parts: Option<Vec<String>>,
 }
 
 impl FiniteReferences {
-    pub(crate) fn scope(&self) -> Option<&str> {
-        self.chunk.steps[0].part.as_deref()
+    pub(crate) fn scope(&self) -> Option<&[String]> {
+        self.parts.as_deref()
     }
 
     pub(crate) fn part_hold(&self) -> bool {
@@ -378,7 +379,11 @@ impl FiniteReferences {
                 ));
             }
         }
-        Ok(Self { chunk, policy })
+        Ok(Self {
+            parts: first.part.as_ref().map(|part| vec![part.to_string()]),
+            chunk,
+            policy,
+        })
     }
 
     #[must_use]

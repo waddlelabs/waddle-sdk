@@ -943,7 +943,7 @@ fn delayed_cancelled_admission_cannot_override_completed_control_takeover() {
             .playback
             .register(
                 EpisodeId::new("episode"),
-                Some("left".into()),
+                Some(vec!["left".into()]),
                 references.len(),
                 || false,
             )
@@ -985,7 +985,7 @@ fn caller_cancellation_before_worker_admission_still_gets_owner_cleanup() {
             .playback
             .register(
                 EpisodeId::new("episode"),
-                Some("left".into()),
+                Some(vec!["left".into()]),
                 references.len(),
                 || false,
             )
@@ -1133,7 +1133,7 @@ fn watchdog_task(h: &Harness) -> (ExecutionTask, ExecutionHandle) {
         .playback
         .register(
             EpisodeId::new("episode"),
-            Some("left".into()),
+            Some(vec!["left".into()]),
             references.len(),
             || false,
         )

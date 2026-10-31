@@ -242,7 +242,7 @@ impl VerbDispatch {
         }
         let handle = self.playback.register(
             episode.clone(),
-            references.scope().map(str::to_owned),
+            references.scope().map(<[String]>::to_vec),
             references.len(),
             || {
                 self.shutdown.load(Ordering::SeqCst)
