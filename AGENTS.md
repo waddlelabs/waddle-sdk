@@ -5,6 +5,14 @@ acceptance separately in a configured simulator environment.
 
 # AGENTS.md — waddle-sdk monorepo
 
+The optional `setup` extra owns the shared hardware wizard, camera snapshot view,
+editable profiles and atomic reviewed-site builder in `workspace/`. Site creation
+never opens an arm; camera preview is explicit and closes its inspection session.
+Application callbacks may add staged configuration, with source recheck and
+absent-destination publication afterward. Keep public setup free of account or
+planning implementations and preserve the Linux-only filesystem qualification.
+See docs/python/site.md and tests/test_workspace_setup.py.
+
 `waddle_sdk_relay.connection` shares bounded private connection/key-file reading
 and credential-free WSS/numeric-loopback validation without loading the SDK
 runtime. Callers select paths and relative-key roots; no account login,

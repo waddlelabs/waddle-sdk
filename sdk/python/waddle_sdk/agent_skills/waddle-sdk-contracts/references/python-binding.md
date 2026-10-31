@@ -140,3 +140,14 @@ Use the ordinary SDK world/part/camera lifecycle; keep trusted reset and ground
 truth outside participant observations. The SDK simulation guide documents the
 configuration and compiled camera/kinematic checks. Imported assets do not
 establish physical calibration or contact fidelity.
+
+
+## Reviewed site setup
+
+The optional `setup` extra supplies `waddle_sdk.workspace.tui.run_initializer`.
+Discovery and reviewed site publication never open an arm; explicit camera preview
+uses the camera inspection lifecycle. `workspace.initialization.build_site` accepts
+reviewed rows or an explicit source manifest, preserving site identity and bounded
+source/calibration snapshots. Its trusted configure callback runs before atomic
+publication and must not open hardware. Linux absent-destination rename is the
+qualified filesystem boundary. Normal SDK imports do not require the terminal UI.

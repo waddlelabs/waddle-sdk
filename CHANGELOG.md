@@ -11,6 +11,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Add optional guided site setup with shared hardware profiles, explicit camera
+  preview and atomic source/calibration copying. Trusted application configuration
+  runs in the private stage; failed or changed inputs never publish a new site.
+
 - Share runtime-independent connection configuration and private credential-file
   reading with relay consumers. Retain bounded versioned JSON, private regular
   files, explicit paths, WSS validation and numeric-loopback development opt-in.
