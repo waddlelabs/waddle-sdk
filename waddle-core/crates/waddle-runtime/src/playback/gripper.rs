@@ -103,7 +103,9 @@ impl GripperPolicy {
                 .iter()
                 .any(|x| !x.is_finite() || *x <= 0.0)
                 || contact.window_ns <= 0
-                || contact.window_ns >= policy.timeout_ns)
+                || policy
+                    .timeout_ns
+                    .is_none_or(|timeout| contact.window_ns >= timeout))
         {
             return Err(invalid(
                 "contact completion requires closing travel and positive bounded measurements",

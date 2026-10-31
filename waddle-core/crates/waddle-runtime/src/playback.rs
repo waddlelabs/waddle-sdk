@@ -56,7 +56,8 @@ pub struct PlaybackPolicy {
     /// Fresh eligible observations required in addition to the settling span.
     pub minimum_settle_samples: usize,
     pub max_lateness_ns: i64,
-    pub timeout_ns: i64,
+    /// None selects a watchdog-limited stream of finite, resting curves.
+    pub timeout_ns: Option<i64>,
     /// Permit a separately reported stationary miss, never an arrival claim.
     pub allow_settled: bool,
     /// Finish after all references are acknowledged and fresh feedback arrives.
@@ -171,10 +172,19 @@ impl FiniteReferences {
         if policy.watchdog.is_some_and(|w| {
             w.observed_ns < 0
                 || w.timeout_ns <= 0
-                || w.timeout_ns > policy.timeout_ns
+                || w.timeout_ns > policy.timeout_ns.unwrap_or(180_000_000_000)
                 || w.observed_ns.checked_add(w.timeout_ns).is_none()
         }) {
             return Err(invalid("watchdog requires bounded session-clock feedback"));
+        }
+        if policy.timeout_ns.is_none()
+            && (policy.watchdog.is_none()
+                || !policy.allow_curve_updates
+                || policy.credit_pacing_delay)
+        {
+            return Err(invalid(
+                "streaming requires a watchdog and revisable reference playback",
+            ));
         }
         if !(1..=16_385).contains(&chunk.steps.len()) {
             return Err(invalid("requires 1..=16385 references"));
@@ -279,15 +289,20 @@ impl FiniteReferences {
             || !(1..=16_385).contains(&policy.minimum_settle_samples)
             || (policy.gripper.is_some() && policy.minimum_settle_samples != 1)
             || (policy.gripper.is_some() && policy.reference_only)
-            || policy.timeout_ns <= chunk.horizon_ns
-            || policy.timeout_ns > 180_000_000_000
-            || policy.settle_ns >= policy.timeout_ns - chunk.horizon_ns
+            || policy.timeout_ns.is_some_and(|timeout| {
+                timeout <= chunk.horizon_ns
+                    || timeout > 180_000_000_000
+                    || policy.settle_ns >= timeout - chunk.horizon_ns
+            })
             || !(0..=1_000_000_000).contains(&policy.max_lateness_ns)
         {
             return Err(invalid("invalid bounded settling, lateness or deadline"));
         }
         if let Some(curve) = &policy.paced_curve {
             curve.validate(policy.indices.len())?;
+            if policy.timeout_ns.is_none() {
+                curve.validate_stream_tail()?;
+            }
             if (curve.duration_s() * 1e9 - chunk.horizon_ns as f64).abs() > 1.0 {
                 return Err(invalid(
                     "polynomial duration differs from the admitted buffer",
@@ -450,11 +465,10 @@ impl Playback {
 
     #[must_use]
     pub fn new(references: FiniteReferences, started_ns: i64) -> Self {
-        let curve = references
-            .policy
-            .paced_curve
-            .clone()
-            .map(|spec| CurveCursor::new(spec, started_ns));
+        let curve =
+            references.policy.paced_curve.clone().map(|spec| {
+                CurveCursor::new(spec, started_ns, references.policy.timeout_ns.is_none())
+            });
         let feedback = FeedbackState::new(references.chunk.steps[0].values.len());
         Self {
             references,
@@ -558,7 +572,9 @@ impl Playback {
     /// The worker must revisit accounting by this time even when the declared
     /// feedback cadence is slower. This changes no reference or tolerance.
     pub(crate) fn check_by_ns(&self) -> i64 {
-        let deadline = self.started_ns.saturating_add(self.timeout_ns());
+        let deadline = self
+            .timeout_ns()
+            .map_or(i64::MAX, |timeout| self.started_ns.saturating_add(timeout));
         if self.curve.is_some() || self.references.policy.gripper.is_some() {
             return deadline;
         }
@@ -576,12 +592,14 @@ impl Playback {
             })
     }
 
-    fn timeout_ns(&self) -> i64 {
-        self.references.policy.timeout_ns.saturating_add(
-            self.curve
-                .as_ref()
-                .map_or(0, |c| c.progress.pacing_extension_ns),
-        )
+    fn timeout_ns(&self) -> Option<i64> {
+        self.references.policy.timeout_ns.map(|timeout| {
+            timeout.saturating_add(
+                self.curve
+                    .as_ref()
+                    .map_or(0, |c| c.progress.pacing_extension_ns),
+            )
+        })
     }
 
     pub fn cancel(&mut self, reason: &str) {
@@ -631,7 +649,10 @@ impl Playback {
             return self.fail(PlaybackError::InvalidFeedback);
         }
         self.now_ns = now_ns;
-        if now_ns.saturating_sub(self.started_ns) >= self.timeout_ns() {
+        if self
+            .timeout_ns()
+            .is_some_and(|timeout| now_ns.saturating_sub(self.started_ns) >= timeout)
+        {
             return self.fail(PlaybackError::Deadline);
         }
         let fresh = self.observed_ns != Some(measured.observed_ns);
@@ -689,7 +710,7 @@ impl Playback {
             .acknowledged_ns
             .is_some_and(|at| measured.observed_ns > at);
         if self.references.policy.reference_only {
-            if finished && after_ack && fresh {
+            if finished && after_ack && fresh && self.references.policy.timeout_ns.is_some() {
                 self.completion = Some(Completion::ReferencesDispatched);
                 return Ok(PlaybackPoll::Complete(Completion::ReferencesDispatched));
             }

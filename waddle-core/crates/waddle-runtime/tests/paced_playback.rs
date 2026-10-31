@@ -49,7 +49,7 @@ fn inputs() -> (ActionChunk, PlaybackPolicy) {
             settle_ns: 50_000_000,
             minimum_settle_samples: 1,
             max_lateness_ns: 1,
-            timeout_ns: 2_000_000_000,
+            timeout_ns: Some(2_000_000_000),
             allow_settled: false,
             reference_only: false,
             checkpoint_offsets_ns: vec![],
@@ -76,6 +76,149 @@ fn measured(at: i64, q: f64) -> Feedback {
         velocities: vec![0.0, 0.0],
         gripper_force: None,
     }
+}
+
+fn stream() -> Playback {
+    let (chunk, mut policy) = inputs();
+    policy.timeout_ns = None;
+    policy.reference_only = true;
+    policy.allow_curve_updates = true;
+    policy.watchdog = Some(waddle_runtime::playback::PlaybackWatchdog {
+        observed_ns: 0,
+        timeout_ns: 250_000_000,
+    });
+    Playback::new(FiniteReferences::new(chunk, policy).unwrap(), 0)
+}
+
+#[test]
+fn streaming_requires_a_watchdog_and_revisable_reference_policy() {
+    let (chunk, mut policy) = inputs();
+    policy.timeout_ns = None;
+    assert!(FiniteReferences::new(chunk.clone(), policy.clone()).is_err());
+    policy.reference_only = true;
+    policy.allow_curve_updates = true;
+    assert!(FiniteReferences::new(chunk.clone(), policy.clone()).is_err());
+    policy.watchdog = Some(waddle_runtime::playback::PlaybackWatchdog {
+        observed_ns: 0,
+        timeout_ns: 250_000_000,
+    });
+    assert!(FiniteReferences::new(chunk.clone(), policy.clone()).is_ok());
+    policy.credit_pacing_delay = true;
+    assert!(FiniteReferences::new(chunk, policy).is_err());
+}
+
+#[test]
+fn streaming_rejects_a_moving_acceleration_at_its_resting_tail() {
+    let (chunk, mut policy) = inputs();
+    policy.reference_only = true;
+    policy.allow_curve_updates = true;
+    // This cubic has zero terminal velocity but nonzero acceleration.
+    let mut curve = curve();
+    curve.coefficients[0] = [0.0, 0.0, 3.0, -2.0, 0.0, 0.0].map(|x| vec![x]).into();
+    policy.paced_curve = Some(curve.clone());
+    assert!(FiniteReferences::new(chunk.clone(), policy.clone()).is_ok());
+    policy.timeout_ns = None;
+    policy.watchdog = Some(waddle_runtime::playback::PlaybackWatchdog {
+        observed_ns: 0,
+        timeout_ns: 250_000_000,
+    });
+    assert!(FiniteReferences::new(chunk, policy).is_err());
+    assert!(
+        stream()
+            .update_curve(CurveUpdate::new(0, 500_000_000, curve).unwrap())
+            .is_err()
+    );
+}
+
+#[test]
+fn only_explicit_streams_can_extend_cumulative_curve_time_past_120_seconds() {
+    for streaming in [false, true] {
+        let (mut chunk, mut policy) = inputs();
+        chunk.steps[1].offset_ns = 100_000_000_000;
+        chunk.steps[1].values = chunk.steps[0].values.clone();
+        chunk.horizon_ns = 100_000_000_000;
+        let mut curve = curve();
+        curve.times_s[1] = 100.0;
+        curve.positions[1][0] = 0.0;
+        curve.coefficients[0] = vec![vec![0.0]; 6];
+        policy.paced_curve = Some(curve.clone());
+        policy.timeout_ns = if streaming {
+            None
+        } else {
+            Some(150_000_000_000)
+        };
+        policy.reference_only = true;
+        policy.allow_curve_updates = true;
+        policy.watchdog = Some(waddle_runtime::playback::PlaybackWatchdog {
+            observed_ns: 0,
+            timeout_ns: 250_000_000,
+        });
+        let mut player = Playback::new(FiniteReferences::new(chunk, policy).unwrap(), 0);
+        curve.times_s[1] = 40.0;
+        assert_eq!(
+            player
+                .update_curve(CurveUpdate::new(0, 90_000_000_000, curve).unwrap())
+                .is_ok(),
+            streaming
+        );
+    }
+}
+
+#[test]
+fn streamed_curves_wait_at_rest_and_resume_beyond_finite_motion_limits() {
+    // Playback's deterministic reducer tests curve lifetime. The worker tests
+    // separately retain actual watchdog renewal/expiry on the session clock.
+    let mut player = stream();
+    let mut now = 0;
+    let mut measured_q = 0.0;
+    for revision in 0..201 {
+        while !player.curve_progress().unwrap().endpoint_acknowledged {
+            let index = player.dispatched();
+            assert_eq!(
+                player.poll(now, &measured(now, measured_q)).unwrap(),
+                PlaybackPoll::Dispatch(index)
+            );
+            measured_q = player.reference(index).unwrap().values[0];
+            player.acknowledge(index, now).unwrap();
+            now += 100_000_000;
+        }
+        assert_eq!(player.curve_progress().unwrap().revision, revision);
+        assert_eq!(
+            player.poll(now, &measured(now, measured_q)).unwrap(),
+            PlaybackPoll::Observe
+        );
+        assert!(player.completion().is_none());
+        let phase = player
+            .curve_progress()
+            .unwrap()
+            .acknowledged_curve_time_s
+            .unwrap();
+        let mut next = curve();
+        for row in &mut next.positions {
+            row[0] += measured_q;
+        }
+        next.coefficients[0][0][0] = measured_q;
+        let update = CurveUpdate::new(revision, (phase * 1e9).round() as i64, next).unwrap();
+        player.update_curve(update.clone()).unwrap();
+        // Withdrawing an unactivated resting continuation must restore the
+        // resting incumbent, not dispatch the removed curve or end the stream.
+        player.withdraw_curve(revision).unwrap();
+        assert!(player.curve_progress().unwrap().endpoint_acknowledged);
+        player.update_curve(update).unwrap();
+    }
+    assert!(
+        player
+            .curve_progress()
+            .unwrap()
+            .acknowledged_curve_time_s
+            .unwrap()
+            > 180.0
+    );
+    player.cancel("released");
+    assert!(matches!(
+        player.poll(now, &measured(now, measured_q)),
+        Err(PlaybackError::Cancelled(_))
+    ));
 }
 
 fn dispatch(p: &mut Playback, at: i64, q: f64) -> Step {
@@ -460,9 +603,16 @@ fn revisable_policy_requires_reference_only_ungridded_curves_without_markers() {
         }
         assert!(FiniteReferences::new(chunk, policy).is_err(), "{invalid}");
     }
-    for switch in [-1, 0, 120_000_000_000] {
+    for switch in [-1, 0, i64::MAX] {
         assert!(CurveUpdate::new(0, switch, suffix()).is_err());
     }
+    // The cumulative bound is contextual: streams may pass 120 s, finite
+    // execution still refuses it before replacing any incumbent reference.
+    assert!(
+        revisable()
+            .update_curve(CurveUpdate::new(0, 120_000_000_000, suffix()).unwrap())
+            .is_err()
+    );
     let mut empty = suffix();
     empty.times_s.clear();
     assert!(CurveUpdate::new(0, 500_000_000, empty).is_err());
@@ -590,7 +740,7 @@ fn reference_only_curve_retains_tracking_through_fresh_endpoint_feedback() {
     for tracking_fault in [false, true] {
         let (chunk, mut policy) = inputs();
         policy.reference_only = true;
-        policy.timeout_ns = 20_000_000_000;
+        policy.timeout_ns = Some(20_000_000_000);
         let mut p = Playback::new(FiniteReferences::new(chunk, policy).unwrap(), 0);
         let mut q = 0.0;
         let mut now = 0;

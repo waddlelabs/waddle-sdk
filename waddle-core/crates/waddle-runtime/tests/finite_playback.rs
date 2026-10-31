@@ -323,7 +323,7 @@ fn policy() -> PlaybackPolicy {
         settle_ns: 20_000_000,
         minimum_settle_samples: 1,
         max_lateness_ns: 10_000_000,
-        timeout_ns: 200_000_000,
+        timeout_ns: Some(200_000_000),
         allow_settled: false,
         reference_only: false,
         checkpoint_offsets_ns: vec![],

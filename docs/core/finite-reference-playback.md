@@ -1,5 +1,35 @@
 # Finite reference playback
 
+## Input-limited reference streams
+
+Binding API 26 adds `execution.streamed_joint_playback`. Set
+`PlaybackPolicy.timeout_ns=None` only for an explicit reference stream, with
+`reference_only=True`, `allow_curve_updates=True` and a `PlaybackWatchdog`.
+Pacing credit is not applicable. The watchdog interval must be positive and at
+most 180 seconds; callers should choose the required input-expiry interval.
+Each curve retains its existing 120-second bound, ordinary tracking/owner gates
+and exact interpolation, and must end with zero velocity and acceleration.
+
+After the endpoint is acknowledged, status stays `running` and
+`curve_progress.endpoint_acknowledged` is true. Fresh feedback and tracking
+supervision continue on the existing worker; no arrival or task success is
+implied. A revision-checked update may resume from that exact resting endpoint.
+Moving handoffs keep the existing future-boundary PVA checks. If planning is
+late, the incumbent reaches rest; no unchecked continuation or replay occurs.
+The stream's cumulative phase may exceed 120 seconds, while only its incumbent
+and single pending finite curve are retained. Withdrawing a pending resting
+continuation restores the supervised resting state.
+
+Only accepted watchdog renewal extends input lifetime. Status polling and curve
+updates cannot do so. Cancellation, expiry, faults and disconnect retain ordinary
+Hold/drain and unknown outcomes. A stream cannot revive after termination.
+Integer `timeout_ns` values keep finite execution, the original deadline and
+`references_dispatched` completion unchanged. Check support before selecting the
+optional stream policy; application input handling and physical stopping still
+require their own qualification.
+
+## Optional playback watchdog
+
 Binding API 25 adds optional `PlaybackWatchdog(observed_ns, timeout_ns)` under
 `execution.watchdog_playback`. The existing serialized native worker checks
 expiry before I/O and after observation; expiry retains `watchdog_expired` and
@@ -11,7 +41,8 @@ No motion timeout extension, authority, clock or writer is added. Blocked callba
 before Hold; this is neither physical-stop proof nor a complete teleoperation
 input policy. See the finite-playback contract and watchdog tests.
 
-A watchdog requires `observed_ns >= 0` and `0 < timeout_ns <= policy.timeout_ns`,
+A watchdog requires `observed_ns >= 0` and `0 < timeout_ns <= policy.timeout_ns`
+(or at most 180 seconds for an explicit stream),
 without integer overflow. Its initial stamp and renewals use this SDK session's
 observation clock, never the caller's clock or request-arrival time. The worker
 checks the incumbent deadline before applying a pending renewal, including after
@@ -585,7 +616,7 @@ this local API does not observe network liveness.
 
 Binding API 14 introduced retained cleanup receipts; the optional additions
 above require their separately listed binding APIs and capability facts. The
-current Python/native binding is API 25. Install matching SDK/media wheels from
+current Python/native binding is API 26. Install matching SDK/media wheels from
 one revision in an idle environment; never replace a running hardware owner's
 native module to test this API.
 

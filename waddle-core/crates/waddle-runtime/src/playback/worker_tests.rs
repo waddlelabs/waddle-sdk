@@ -244,7 +244,16 @@ fn references_with_watchdog(
     part_hold: bool,
     watchdog: Option<crate::playback::PlaybackWatchdog>,
 ) -> FiniteReferences {
-    FiniteReferences::new(
+    let (chunk, policy) = reference_inputs(part, part_hold, watchdog);
+    FiniteReferences::new(chunk, policy).unwrap()
+}
+
+fn reference_inputs(
+    part: Option<&str>,
+    part_hold: bool,
+    watchdog: Option<crate::playback::PlaybackWatchdog>,
+) -> (ActionChunk, PlaybackPolicy) {
+    (
         ActionChunk {
             steps: [0.0, 0.1, 0.2]
                 .into_iter()
@@ -273,7 +282,7 @@ fn references_with_watchdog(
             settle_ns: 20_000_000,
             minimum_settle_samples: 1,
             max_lateness_ns: 50_000_000,
-            timeout_ns: 500_000_000,
+            timeout_ns: Some(500_000_000),
             allow_settled: false,
             reference_only: false,
             checkpoint_offsets_ns: vec![],
@@ -286,7 +295,6 @@ fn references_with_watchdog(
             gripper: None,
         },
     )
-    .unwrap()
 }
 
 fn sibling_io(h: &Harness) -> Arc<MemoryIo> {
@@ -1140,6 +1148,60 @@ fn watchdog_task(h: &Harness) -> (ExecutionTask, ExecutionHandle) {
         0,
     );
     (task, handle)
+}
+
+#[test]
+fn resting_stream_retains_worker_until_watchdog_expiry_and_hold() {
+    for part_hold in [false, true] {
+        let h = Harness::new();
+        let (chunk, mut policy) = reference_inputs(
+            Some("left"),
+            part_hold,
+            Some(crate::playback::PlaybackWatchdog {
+                observed_ns: h.io.clock.0.now().0,
+                timeout_ns: 500_000_000,
+            }),
+        );
+        policy.timeout_ns = None;
+        policy.reference_only = true;
+        policy.allow_curve_updates = true;
+        policy.paced_curve = Some(crate::playback::PacedCurve {
+            times_s: vec![0.0, 0.04, 0.08],
+            positions: vec![vec![0.0], vec![0.1], vec![0.2]],
+            coefficients: vec![
+                [0.0, 0.0, 0.0, 1.0, -1.5, 0.6].map(|x| vec![x]).into(),
+                [0.1, 0.0, 0.0, 1.0, -1.5, 0.6].map(|x| vec![x]).into(),
+            ],
+            period_ns: 10_000_000,
+            position_error: vec![0.2],
+            tracking_tolerance: vec![0.2],
+            sample_times_s: None,
+        });
+        let references = FiniteReferences::new(chunk, policy).unwrap();
+        let handle = h
+            .dispatch
+            .start_playback(
+                h.mirror.clone(),
+                EpisodeId::new("episode"),
+                references,
+                h.io.clone(),
+                10_000_000,
+                0,
+            )
+            .unwrap();
+        let result = finished(&handle);
+        assert_eq!(
+            result.result,
+            Some(Err(ExecutionFailure::Playback(
+                PlaybackError::WatchdogExpired
+            )))
+        );
+        assert!(result.curve_progress.unwrap().endpoint_acknowledged);
+        assert_eq!(result.last_reference.unwrap().values.as_ref(), &[0.2]);
+        let cleanup = result.cleanup.unwrap();
+        assert_eq!(cleanup.part.as_deref(), part_hold.then_some("left"));
+        assert_eq!(cleanup.result, Ok(()));
+    }
 }
 
 #[test]

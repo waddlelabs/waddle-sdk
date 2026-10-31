@@ -11,6 +11,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Add explicit watchdog-limited reference streams through `timeout_ns=None`
+  (binding API 26), with separately declared support. Bounded curves remain at
+  supervised rest until a checked continuation, cancellation or watchdog expiry;
+  finite motion deadlines and completion retain their existing semantics.
+
 - Add optional local playback watchdogs on the existing native worker (binding
   API 25), with session-clock feedback renewal and retained receipt evidence.
   Expiry keeps the original failure and ordinary Hold/cleanup; delayed or repeated

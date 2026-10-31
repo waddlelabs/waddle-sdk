@@ -37,7 +37,7 @@ fn inputs(targets: &[f64]) -> (ActionChunk, PlaybackPolicy) {
             settle_ns: 50,
             minimum_settle_samples: 1,
             max_lateness_ns: 10,
-            timeout_ns: 1_000,
+            timeout_ns: Some(1_000),
             allow_settled: false,
             reference_only: false,
             checkpoint_offsets_ns: vec![],
