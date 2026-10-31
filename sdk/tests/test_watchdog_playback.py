@@ -4,7 +4,8 @@ import threading
 from dataclasses import replace
 
 import pytest
-from test_finite_playback import motion, opened as opened  # noqa: PLC0414
+from test_finite_playback import motion
+from test_finite_playback import opened as opened
 from waddle_sdk.runtime import (
     FaultCode,
     PlaybackWatchdog,

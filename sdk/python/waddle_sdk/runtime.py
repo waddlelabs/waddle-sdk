@@ -1067,7 +1067,6 @@ __all__ = [
     "PlaybackHandlePort",
     "PlaybackPolicy",
     "PlaybackWatchdog",
-    "WatchdogPlaybackHandlePort",
     "Pose",
     "PositionWindow",
     "RunPort",
@@ -1082,4 +1081,5 @@ __all__ = [
     "SupportFact",
     "SupportMatrix",
     "SupportRow",
+    "WatchdogPlaybackHandlePort",
 ]
