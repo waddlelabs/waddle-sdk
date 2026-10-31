@@ -73,6 +73,7 @@ class SupportFact(str, enum.Enum):
     REVISABLE_JOINT_PLAYBACK = "execution.revisable_joint_playback"
     PLAYBACK_FEEDBACK_REFERENCE = "execution.playback_feedback_reference"
     WITHDRAWABLE_JOINT_PLAYBACK = "execution.withdrawable_joint_playback"
+    PACED_PLAYBACK_DEADLINE = "execution.paced_playback_deadline"
     GRIPPER_PLAYBACK = "execution.gripper_playback"
     VELOCITY_FEEDFORWARD = "actuation.velocity_feedforward"
     FORWARD_KINEMATICS = "kinematics.fk"
@@ -719,6 +720,14 @@ class PlaybackPolicy:
     ``allow_curve_updates`` requires revisable-playback support and reference-only
     paced execution without checkpoints, exact sample grids or goal-latched hints.
     Updates use the same local worker; they do not extend the original timeout.
+
+    ``credit_pacing_delay`` requires separately advertised paced-deadline support
+    and reference-only polynomial playback. Only a complete acknowledged moving
+    tick credits its excess local wall time to the original budget. Exact
+    constant tails and stalled phase cannot renew it. Snapshots retain the
+    accumulated ``curve_progress.pacing_extension_ns``; cloud receipt time never
+    contributes. Default false keeps the original absolute timeout. Updates and
+    withdrawals preserve, but do not themselves increase, the accumulated credit.
     """
 
     indices: tuple[int, ...]
@@ -736,6 +745,7 @@ class PlaybackPolicy:
     reference_only: bool = False
     checkpoint_offsets_ns: tuple[int, ...] = ()
     allow_curve_updates: bool = False
+    credit_pacing_delay: bool = False
 
     def __post_init__(self) -> None:
         for name in (

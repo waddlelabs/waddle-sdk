@@ -1515,6 +1515,7 @@ class SiteSession:
                     facts.add(SupportFact.REVISABLE_JOINT_PLAYBACK)
                     facts.add(SupportFact.PLAYBACK_FEEDBACK_REFERENCE)
                     facts.add(SupportFact.WITHDRAWABLE_JOINT_PLAYBACK)
+                    facts.add(SupportFact.PACED_PLAYBACK_DEADLINE)
                 joints = joint_position.get("joints", [])
                 if isinstance(joints, list) and joints:
                     if all(

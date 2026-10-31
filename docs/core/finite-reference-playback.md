@@ -76,7 +76,7 @@ finite reference accounting does not change that stream.
 tolerances for selected moving rows. Other rows remain in the full command and
 still cross the owner's envelope; for example, a held jaw's contact shortfall
 need not become an arm arrival condition. The policy also supplies a positive
-settling interval, a total timeout of at most 180 seconds, and permitted reference
+settling interval, an initial timeout of at most 180 seconds, and permitted reference
 lateness of at most one second. These are caller-selected bounds, not measured
 hardware performance guarantees. No default widens an owner's limits.
 
@@ -116,7 +116,7 @@ Optional `sample_times_s` retains an exact nominal grid for rest-to-rest quintic
 The grid includes all segment boundaries, never has an interval longer than
 `period_ns`, and leaves a partially reached sample pending until acknowledged.
 Without it, the next sample is one period beyond the last acknowledged phase.
-The original absolute timeout bounds both traversal and settling. The fixed-mode
+By default the original absolute timeout bounds both traversal and settling. The fixed-mode
 `max_lateness_ns` guard is not used for acknowledged progression: late feedback
 consumes the same timeout and slows progress instead of jumping ahead.
 
@@ -129,13 +129,42 @@ acknowledgements and can be larger with polynomial evaluation/partial steps.
 The optional curve does not provide dynamic world updates, contact detection,
 force-grasp completion or coordinated parts.
 
+### Optional pacing credit
+
+Binding API 21 adds `PlaybackPolicy.credit_pacing_delay`, requiring
+`execution.paced_playback_deadline` and reference-only polynomial playback.
+Default false preserves the absolute wall-time limit. Enable it only when the
+caller selects a curve-progress budget rather than an explicit wall deadline.
+The original `timeout_ns` remains the initial budget; the effective deadline
+adds `curve_progress.pacing_extension_ns` on the SDK's session clock.
+
+The worker earns credit only after acknowledging at least one complete
+`period_ns` of reference progress (within 1 ns). It adds the positive difference
+between local elapsed acknowledgement time and that phase advance. Partial
+progress must accumulate a full tick before earning credit; a repeated phase
+cannot renew the budget. Exact constant trailing segments, identified by zero
+nonconstant polynomial coefficients, earn no credit and reset the accounting
+anchor. A completely stationary curve earns none. Interior stationary segments
+before the final moving segment remain within the caller's moving prefix.
+
+The native deadline check and worker wake-up use the same accumulated credit.
+No unacknowledged write, cloud polling interval, planned update or withdrawal
+earns credit. A completed local callback may supply the acknowledgement after
+the previous deadline; its completed moving tick is then accounted before the
+next deadline check. A stalled callback still follows the existing owner and
+supervision contracts; this policy adds no callback preemption. Accepted curve
+revisions retain global phase and cumulative credit. The original finish budget,
+tracking/envelope checks, failures and Hold/e-stop/drain behavior stay intact.
+Credit may extend effective wall time beyond the initial 180-second admission
+bound; callers needing a strict total time must leave this option false.
+
 ## Optional future curve updates
 
 `PlaybackPolicy.allow_curve_updates=True` requires the separate
 `execution.revisable_joint_playback` fact and reference-only paced execution.
 Gripper outcome policies, checkpoints, exact sample grids and `toward_goal`
 velocity hints cannot be combined with updates. Coordinate order, held targets,
-feedback policy, pacing/tracking limits and the original absolute timeout stay
+feedback policy, pacing/tracking limits and the original timeout policy stay
 fixed for the execution.
 
 `RevisablePlaybackHandlePort.update_curve(PlaybackCurveUpdate(...))` queues one
@@ -230,7 +259,7 @@ by fresh feedback before completion. `consecutive_samples` (default 1) can requi
 additional consecutive qualifying windows after that acknowledgement. A single
 in-tolerance sample cannot relabel a stationary miss as arrival: the full arrival
 interval must remain in tolerance. Raw velocity is diagnostic and still must be
-finite. The original absolute timeout remains binding.
+finite. The selected deadline policy remains binding.
 
 Snapshots expose `settling` with sample count, span, per-row position spans, raw
 velocity peak and consecutive qualifying count. Its time source is the SDK
@@ -417,7 +446,9 @@ physical stop measurements remain required; draining a callback is not physical
 stop proof. A connector must supply its explicit disconnect cancellation policy;
 this local API does not observe network liveness.
 
-Python/native binding API 14 supplies the complete interface above. Install matching SDK/media wheels from
+Binding API 14 introduced retained cleanup receipts; the optional additions
+above require their separately listed binding APIs and capability facts. The
+current Python/native binding is API 21. Install matching SDK/media wheels from
 one revision in an idle environment; never replace a running hardware owner's
 native module to test this API.
 

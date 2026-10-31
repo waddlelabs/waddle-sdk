@@ -89,6 +89,12 @@ reconcile the retained withdrawal receipt; queueing does not prove removal or
 stopping, and a lost reply never permits replay. A terminal or wrong-run handle
 cannot withdraw work from a replacement execution.
 
+Binding API 21 carries opt-in `PlaybackPolicy.credit_pacing_delay` with the
+`execution.paced_playback_deadline` fact. Read accumulated credit from native
+`curve_progress.pacing_extension_ns`; remote reply latency never contributes.
+The false default is omitted on the wire for older receivers, which must refuse
+an enabled policy they cannot decode.
+
 Sixteen ordinary calls and two reserved Hold/e-stop calls are admitted separately.
 Safety calls bypass ordinary admission and use the existing native SDK stop path.
 Before opening, an idle connection expires after 30 seconds; after a request or

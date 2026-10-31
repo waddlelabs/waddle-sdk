@@ -32,9 +32,18 @@ pub struct CurveProgress {
     pub limited_ticks: usize,
     pub partial_ticks: usize,
     pub held_ticks: usize,
+    /// Local acknowledgement delay credited to an explicitly paced deadline.
+    pub pacing_extension_ns: i64,
 }
 
 impl PacedCurve {
+    fn moving_until_s(&self) -> f64 {
+        self.coefficients
+            .iter()
+            .rposition(|segment| segment[1..].iter().flatten().any(|v| *v != 0.0))
+            .map_or(0.0, |index| self.times_s[index + 1])
+    }
+
     pub(crate) fn validate(&self, width: usize) -> Result<(), PlaybackError> {
         let invalid = PlaybackError::Invalid;
         if !(2..=16_385).contains(&self.times_s.len())
@@ -237,6 +246,9 @@ pub(crate) struct CurveCursor {
     grid_index: usize,
     origin_s: f64,
     update: Option<CurveUpdate>,
+    moving_until_s: f64,
+    deadline_anchor_ns: i64,
+    deadline_anchor_s: f64,
 }
 
 impl CurveCursor {
@@ -256,8 +268,11 @@ impl CurveCursor {
         }
         Ok(())
     }
-    pub fn new(spec: PacedCurve) -> Self {
+    pub fn new(spec: PacedCurve, started_ns: i64) -> Self {
         Self {
+            moving_until_s: spec.moving_until_s(),
+            deadline_anchor_ns: started_ns,
+            deadline_anchor_s: 0.0,
             spec,
             progress: CurveProgress {
                 next_curve_time_s: Some(0.0),
@@ -421,7 +436,7 @@ impl CurveCursor {
         Ok(candidate)
     }
 
-    pub fn acknowledge(&mut self) {
+    pub fn acknowledge(&mut self, now_ns: i64, credit_pacing_delay: bool) {
         if self
             .update
             .as_ref()
@@ -429,9 +444,32 @@ impl CurveCursor {
         {
             let update = self.update.take().unwrap();
             self.origin_s = update.switch_ns as f64 * 1e-9;
+            self.moving_until_s = update.curve.moving_until_s();
             self.spec = update.curve;
             self.progress.revision = update.expected_revision + 1;
             self.progress.pending_revision = None;
+        }
+        if credit_pacing_delay {
+            let moving = self.moving_until_s > 0.0
+                && self.proposed_s - self.origin_s <= self.moving_until_s + 1e-9;
+            if !moving {
+                self.deadline_anchor_ns = now_ns;
+                self.deadline_anchor_s = self.proposed_s;
+            } else if self.proposed_s - self.deadline_anchor_s
+                >= self.spec.period_ns as f64 * 1e-9 - 1e-9
+            {
+                // A complete acknowledged tick is required. Held/partial
+                // progress cannot continually renew the remaining budget.
+                let phase_ns = ((self.proposed_s - self.deadline_anchor_s) * 1e9).round() as i64;
+                let delay = now_ns
+                    .saturating_sub(self.deadline_anchor_ns)
+                    .saturating_sub(phase_ns)
+                    .max(0);
+                self.progress.pacing_extension_ns =
+                    self.progress.pacing_extension_ns.saturating_add(delay);
+                self.deadline_anchor_ns = now_ns;
+                self.deadline_anchor_s = self.proposed_s;
+            }
         }
         self.progress.acknowledged_curve_time_s = Some(self.proposed_s);
         if self.proposed_s >= self.duration_s() {

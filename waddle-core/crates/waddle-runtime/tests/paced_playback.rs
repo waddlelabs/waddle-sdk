@@ -54,6 +54,7 @@ fn inputs() -> (ActionChunk, PlaybackPolicy) {
             reference_only: false,
             checkpoint_offsets_ns: vec![],
             allow_curve_updates: false,
+            credit_pacing_delay: false,
             paced_curve: Some(curve()),
             feedback: None,
             gripper: None,
@@ -222,9 +223,14 @@ fn checkpoint_offsets_are_bounded_and_ordered() {
 }
 
 fn revisable() -> Playback {
+    revisable_with_credit(false)
+}
+
+fn revisable_with_credit(credit: bool) -> Playback {
     let (chunk, mut policy) = inputs();
     policy.reference_only = true;
     policy.allow_curve_updates = true;
+    policy.credit_pacing_delay = credit;
     let curve = policy.paced_curve.as_mut().unwrap();
     curve.position_error = vec![0.3];
     curve.tracking_tolerance = vec![0.4];
@@ -608,5 +614,156 @@ fn reference_only_curve_retains_tracking_through_fresh_endpoint_feedback() {
                 ))
             );
         }
+    }
+}
+
+fn rest_tail(credit: bool, stationary: bool) -> Playback {
+    let (mut chunk, mut policy) = inputs();
+    chunk.horizon_ns = 1_500_000_000;
+    chunk.steps.last_mut().unwrap().offset_ns = chunk.horizon_ns;
+    policy.reference_only = true;
+    policy.credit_pacing_delay = credit;
+    let curve = policy.paced_curve.as_mut().unwrap();
+    curve.position_error = vec![0.3];
+    curve.tracking_tolerance = vec![0.4];
+    curve.times_s.push(1.5);
+    curve.positions.push(vec![1.0]);
+    curve
+        .coefficients
+        .push([1.0, 0.0, 0.0, 0.0, 0.0, 0.0].map(|q| vec![q]).into());
+    if stationary {
+        for step in &mut chunk.steps {
+            step.values[0] = 0.0;
+        }
+        for row in &mut curve.positions {
+            row[0] = 0.0;
+        }
+        for segment in &mut curve.coefficients {
+            for row in segment {
+                row[0] = 0.0;
+            }
+        }
+    }
+    Playback::new(FiniteReferences::new(chunk, policy).unwrap(), 0)
+}
+
+#[test]
+fn pacing_credit_keeps_finish_budget_but_never_credits_stationary_tail() {
+    for credit in [false, true] {
+        let mut p = rest_tail(credit, false);
+        let mut q = 0.0;
+        let mut terminal = false;
+        for tick in 0..30 {
+            let now = tick * 150_000_000; // 0.1 s of phase takes 0.15 s locally.
+            match p.poll(now, &measured(now, q)) {
+                Ok(PlaybackPoll::Dispatch(index)) => {
+                    q = p.reference(index).unwrap().values[0];
+                    p.acknowledge(index, now).unwrap();
+                    let progress = p.curve_progress().unwrap();
+                    if !credit {
+                        assert_eq!(progress.pacing_extension_ns, 0);
+                    }
+                    if credit && progress.acknowledged_curve_time_s.unwrap() > 1.0 {
+                        assert_eq!(progress.pacing_extension_ns, 500_000_000);
+                    }
+                }
+                Ok(PlaybackPoll::Complete(result)) => {
+                    assert!(credit);
+                    assert_eq!(result, Completion::ReferencesDispatched);
+                    assert_eq!(q, 1.0);
+                    assert_eq!(p.curve_progress().unwrap().pacing_extension_ns, 500_000_000);
+                    terminal = true;
+                    break;
+                }
+                Err(error) => {
+                    assert!(!credit);
+                    assert_eq!(error, PlaybackError::Deadline);
+                    assert!(now >= 2_000_000_000);
+                    terminal = true;
+                    break;
+                }
+                other => panic!("unexpected {other:?}"),
+            }
+        }
+        assert!(terminal);
+    }
+}
+
+#[test]
+fn stalled_phase_and_stationary_curves_cannot_renew_a_paced_deadline() {
+    for stationary in [false, true] {
+        let mut p = rest_tail(true, stationary);
+        for tick in 0..30 {
+            let now = tick * 150_000_000;
+            match p.poll(now, &measured(now, 0.0)) {
+                Ok(PlaybackPoll::Dispatch(index)) => {
+                    p.acknowledge(index, now).unwrap();
+                    let credit = p.curve_progress().unwrap().pacing_extension_ns;
+                    assert!(credit <= 250_000_000);
+                    if stationary {
+                        assert_eq!(credit, 0);
+                    }
+                }
+                Err(error) => {
+                    assert_eq!(error, PlaybackError::Deadline);
+                    assert!(now <= 2_400_000_000);
+                    break;
+                }
+                other => panic!("unexpected {other:?}"),
+            }
+            assert!(tick < 29, "frozen feedback renewed the budget");
+        }
+    }
+}
+
+#[test]
+fn curve_updates_and_withdrawal_preserve_accumulated_native_pacing_credit() {
+    for withdraw in [false, true] {
+        let mut p = revisable_with_credit(true);
+        let mut q = 0.0;
+        for tick in 0..20 {
+            let now = tick * 250_000_000;
+            if tick == 2 {
+                let before = p.curve_progress().unwrap().pacing_extension_ns;
+                p.update_curve(CurveUpdate::new(0, 500_000_000, suffix()).unwrap())
+                    .unwrap();
+                assert_eq!(p.curve_progress().unwrap().pacing_extension_ns, before);
+            }
+            if withdraw && tick == 3 {
+                let before = p.curve_progress().unwrap().pacing_extension_ns;
+                p.withdraw_curve(0).unwrap();
+                assert_eq!(p.curve_progress().unwrap().pacing_extension_ns, before);
+            }
+            match p.poll(now, &measured(now, q)).unwrap() {
+                PlaybackPoll::Dispatch(index) => {
+                    q = p.reference(index).unwrap().values[0];
+                    p.acknowledge(index, now).unwrap();
+                }
+                PlaybackPoll::Complete(result) => {
+                    assert_eq!(result, Completion::ReferencesDispatched);
+                    assert_eq!(q, if withdraw { 1.0 } else { 1.25 });
+                    assert_eq!(
+                        p.curve_progress().unwrap().pacing_extension_ns,
+                        1_500_000_000
+                    );
+                    break;
+                }
+                other => panic!("unexpected {other:?}"),
+            }
+            assert!(tick < 19, "did not complete");
+        }
+    }
+}
+
+#[test]
+fn pacing_credit_requires_reference_only_polynomial_execution() {
+    for missing_curve in [false, true] {
+        let (chunk, mut policy) = inputs();
+        policy.credit_pacing_delay = true;
+        if missing_curve {
+            policy.reference_only = true;
+            policy.paced_curve = None;
+        }
+        assert!(FiniteReferences::new(chunk, policy).is_err());
     }
 }

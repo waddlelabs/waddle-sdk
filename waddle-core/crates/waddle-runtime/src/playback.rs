@@ -53,6 +53,8 @@ pub struct PlaybackPolicy {
     pub checkpoint_offsets_ns: Vec<i64>,
     /// Permit revision-checked future suffixes on a reference-only paced curve.
     pub allow_curve_updates: bool,
+    /// Credit only completed moving reference ticks; false keeps a wall deadline.
+    pub credit_pacing_delay: bool,
     /// Optional exact polynomial evaluation with acknowledgement-paced progress.
     /// Omission retains fixed offsets and the original lateness guard.
     pub paced_curve: Option<PacedCurve>,
@@ -165,6 +167,13 @@ impl FiniteReferences {
         }
         if chunk.horizon_ns != previous {
             return Err(invalid("horizon must equal the final reference offset"));
+        }
+        if policy.credit_pacing_delay
+            && (!policy.reference_only || policy.paced_curve.is_none() || policy.gripper.is_some())
+        {
+            return Err(invalid(
+                "paced deadlines require reference-only polynomial playback",
+            ));
         }
         if policy.allow_curve_updates
             && (!policy.reference_only
@@ -401,7 +410,11 @@ impl Playback {
 
     #[must_use]
     pub fn new(references: FiniteReferences, started_ns: i64) -> Self {
-        let curve = references.policy.paced_curve.clone().map(CurveCursor::new);
+        let curve = references
+            .policy
+            .paced_curve
+            .clone()
+            .map(|spec| CurveCursor::new(spec, started_ns));
         let feedback = FeedbackState::new(references.chunk.steps[0].values.len());
         Self {
             references,
@@ -505,9 +518,7 @@ impl Playback {
     /// The worker must revisit accounting by this time even when the declared
     /// feedback cadence is slower. This changes no reference or tolerance.
     pub(crate) fn check_by_ns(&self) -> i64 {
-        let deadline = self
-            .started_ns
-            .saturating_add(self.references.policy.timeout_ns);
+        let deadline = self.started_ns.saturating_add(self.timeout_ns());
         if self.curve.is_some() || self.references.policy.gripper.is_some() {
             return deadline;
         }
@@ -523,6 +534,14 @@ impl Playback {
                         .saturating_add(1),
                 )
             })
+    }
+
+    fn timeout_ns(&self) -> i64 {
+        self.references.policy.timeout_ns.saturating_add(
+            self.curve
+                .as_ref()
+                .map_or(0, |c| c.progress.pacing_extension_ns),
+        )
     }
 
     pub fn cancel(&mut self, reason: &str) {
@@ -572,7 +591,7 @@ impl Playback {
             return self.fail(PlaybackError::InvalidFeedback);
         }
         self.now_ns = now_ns;
-        if now_ns.saturating_sub(self.started_ns) >= self.references.policy.timeout_ns {
+        if now_ns.saturating_sub(self.started_ns) >= self.timeout_ns() {
             return self.fail(PlaybackError::Deadline);
         }
         let fresh = self.observed_ns != Some(measured.observed_ns);
@@ -896,7 +915,7 @@ impl Playback {
             self.gripper.nominal_complete = self.next >= self.references.chunk.steps.len();
         }
         if let Some(curve) = &mut self.curve {
-            curve.acknowledge();
+            curve.acknowledge(now_ns, self.references.policy.credit_pacing_delay);
         }
         Ok(())
     }

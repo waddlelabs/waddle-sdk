@@ -29,6 +29,7 @@ pub(crate) struct Policy {
     reference_only: bool,
     checkpoint_offsets_ns: Vec<i64>,
     allow_curve_updates: bool,
+    credit_pacing_delay: bool,
     paced_curve: Option<Curve>,
     feedback: Option<FeedbackOptions>,
     gripper: Option<Gripper>,
@@ -173,6 +174,7 @@ impl TryFrom<Policy> for PlaybackPolicy {
             reference_only: p.reference_only,
             checkpoint_offsets_ns: p.checkpoint_offsets_ns,
             allow_curve_updates: p.allow_curve_updates,
+            credit_pacing_delay: p.credit_pacing_delay,
             paced_curve: p.paced_curve.map(Into::into),
             feedback,
             gripper: p.gripper.map(|g| GripperPolicy {
@@ -473,6 +475,7 @@ fn snapshot(py: Python<'_>, value: ExecutionSnapshot) -> PyResult<Py<PyDict>> {
             let result = PyDict::new(py);
             result.set_item("revision", progress.revision)?;
             result.set_item("pending_revision", progress.pending_revision)?;
+            result.set_item("pacing_extension_ns", progress.pacing_extension_ns)?;
             result.set_item(
                 "acknowledged_curve_time_s",
                 progress.acknowledged_curve_time_s,

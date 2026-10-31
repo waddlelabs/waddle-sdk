@@ -5,6 +5,14 @@ acceptance separately in a configured simulator environment.
 
 # AGENTS.md — waddle-sdk monorepo
 
+Binding API 21 adds opt-in `PlaybackPolicy.credit_pacing_delay` with the separate
+`execution.paced_playback_deadline` fact. Only complete acknowledged moving ticks
+credit their excess local wall time; stationary trailing segments and stalled
+phase cannot renew the budget. Keep base timeout, phase, correction limits and
+ordinary stop/owner gates intact. Defaults remain absolute; cloud receipt time
+never earns credit. Updates and withdrawals preserve accumulated credit without
+renewal. See finite-playback docs and native paced-playback tests.
+
 Binding API 20 adds `WithdrawablePlaybackHandlePort.withdraw_curve`, advertised
 by `execution.withdrawable_joint_playback`. The existing worker removes only the
 named accepted suffix while its expected incumbent revision remains active.

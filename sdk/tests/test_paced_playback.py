@@ -71,6 +71,7 @@ def test_paced_curve_uses_native_owner_and_retains_acknowledged_progress(opened,
         "limited_ticks": 0,
         "partial_ticks": 0,
         "held_ticks": 0,
+        "pacing_extension_ns": 0,
     }
 
 
@@ -333,7 +334,16 @@ def test_update_admission_does_not_wait_for_device_io_or_replay_on_refusal(
         handle.update_curve(update)
 
 
-def test_revisable_admission_requires_declared_support(opened, monkeypatch):
+@pytest.mark.parametrize(
+    "option,fact",
+    [
+        ("allow_curve_updates", SupportFact.REVISABLE_JOINT_PLAYBACK),
+        ("credit_pacing_delay", SupportFact.PACED_PLAYBACK_DEADLINE),
+    ],
+)
+def test_optional_playback_policy_requires_declared_support(
+    opened, monkeypatch, option, fact
+):
     session, run = opened
     support = session.support()
     monkeypatch.setattr(
@@ -344,11 +354,7 @@ def test_revisable_admission_requires_declared_support(opened, monkeypatch):
             rows=tuple(
                 replace(
                     row,
-                    facts=tuple(
-                        f
-                        for f in row.facts
-                        if f != SupportFact.REVISABLE_JOINT_PLAYBACK
-                    ),
+                    facts=tuple(f for f in row.facts if f != fact),
                 )
                 for row in support.rows
             ),
@@ -357,9 +363,27 @@ def test_revisable_admission_requires_declared_support(opened, monkeypatch):
     motion = request()
     motion = replace(
         motion,
-        policy=replace(motion.policy, reference_only=True, allow_curve_updates=True),
+        policy=replace(motion.policy, reference_only=True, **{option: True}),
     )
     with pytest.raises(RuntimeFault) as caught:
         run.start_playback(motion)
     assert caught.value.code == FaultCode.UNSUPPORTED
     assert session._managed.accepted == 0
+
+
+@pytest.mark.parametrize("credit", [False, True])
+def test_native_deadline_evidence_is_opt_in_and_retained_at_completion(opened, credit):
+    session, run = opened
+    assert SupportFact.PACED_PLAYBACK_DEADLINE in session.support().rows[0].facts
+    motion = request()
+    motion = replace(
+        motion,
+        policy=replace(motion.policy, reference_only=True, credit_pacing_delay=credit),
+    )
+    result = run.start_playback(motion).wait()
+    assert result["status"] == "references_dispatched", result
+    extension = result["curve_progress"]["pacing_extension_ns"]
+    assert isinstance(extension, int) and extension >= 0
+    if not credit:
+        assert extension == 0
+    assert result["last_reference"]["positions"] == [0.1, -0.05]

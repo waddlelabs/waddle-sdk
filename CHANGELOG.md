@@ -11,6 +11,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Add opt-in SDK-local pacing credit for reference-only polynomial playback
+  (binding API 21). Complete acknowledged moving ticks retain the original finish
+  allowance; stationary tails and stalled progress cannot renew it. Default
+  absolute deadlines stay unchanged, and snapshots retain the accumulated credit
+  independently of remote response timing or curve updates/withdrawals.
+
 - Add explicit withdrawal of a named, accepted future curve suffix (binding
   API 20). The existing native worker confirms removal before handoff, refuses
   stale/late withdrawals and preserves the incumbent, pacing and deadline.
