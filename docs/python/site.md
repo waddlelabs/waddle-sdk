@@ -148,3 +148,36 @@ Configured cross-part collision checks still require fresh neighbor geometry; a
 missing required neighbor can refuse an otherwise healthy part's command. Applications
 own trajectory scheduling, completion and cancellation; this API adds no automatic
 sibling cancellation, motion replay or fault-domain policy.
+
+
+## Guided site creation
+
+Install `waddle-sdk[setup]` for the optional terminal wizard. It uses the same SDK
+hardware discovery, reviewed robot/camera profiles, and camera-inspection lifecycle.
+Selecting a transport does not open an arm. Camera preview opens only the selected
+camera for one snapshot and closes it before returning. Physical site creation
+requires review of the hardware settings and workspace bounds.
+
+```python
+from pathlib import Path
+from waddle_sdk.workspace.tui import run_initializer
+
+created, _ = run_initializer(Path("~/workspaces/my-rig").expanduser())
+# None means the operator cancelled. No arm is opened by creating a site.
+```
+
+For an existing manifest, `waddle_sdk.workspace.initialization.build_site`
+accepts `source_site=Path(...)`; `site=` accepts explicitly reviewed SDK rows.
+It preserves physical site identity and copies declared model dependencies and
+calibration through bounded source snapshots. Publication creates a new directory
+atomically and refuses an existing destination. Changed sources, symlinks and
+failed preparation leave no published destination. This filesystem path currently
+requires Linux; other operating systems are not qualified.
+
+An optional trusted `configure(stage, document)` callback can add application
+configuration before publication. It must not open hardware; errors abort the
+whole publication. The returned mapping includes `site`, `site_id` and file
+SHA-256 digests. No account credentials, planning implementation or network
+service is selected by the SDK wizard. `part_defaults`, `camera_defaults` and
+`make_site` remain editable configuration suggestions; custom SDK drivers can be
+provided through an explicit source manifest.

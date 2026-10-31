@@ -1,0 +1,6 @@
+<mujocoinclude>
+  <actuator>
+    <position name="shoulder_motor" joint="shoulder"/>
+    <position name="elbow_motor" joint="elbow"/>
+  </actuator>
+</mujocoinclude>

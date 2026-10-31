@@ -34,6 +34,7 @@ waddle-sdk = "waddle_sdk.cli:main"
 media = ["waddle-sdk-media==0.1.13"]
 # Device relay encoding is opt-in; applications provide authenticated sockets.
 relay = ["msgpack>=1.0.8,<2"]
+setup = ["textual>=8.2,<9", "Pillow>=11,<13"]
 orbbec = ["pyorbbecsdk2"]
 realsense = ["pyrealsense2"]
 usb = ["opencv-python-headless>=4.8"]

@@ -1,0 +1,25 @@
+<mujoco model="explicit two-joint simulation">
+  <compiler angle="radian"/>
+  <option timestep=".002" gravity="0 0 0" integrator="implicitfast"/>
+  <default>
+    <joint damping=".05" armature=".005" limited="true"/>
+    <geom type="capsule" size=".008" mass=".1"/>
+    <position kp="25" kv="1" ctrllimited="true" ctrlrange="-1 1"/>
+  </default>
+  <worldbody>
+    <geom name="floor" type="plane" size=".5 .5 .01" pos="0 0 -.03"/>
+    <geom name="obstacle" type="sphere" size=".012" pos=".12 .08 0"/>
+    <body name="base">
+      <body name="upper">
+        <joint name="shoulder" type="hinge" axis="0 0 1" range="-1 1"/>
+        <geom name="upper_link" fromto="0 0 0 .08 0 0"/>
+        <body name="forearm" pos=".08 0 0">
+          <joint name="elbow" type="hinge" axis="0 0 1" range="-1 1"/>
+          <geom name="forearm_link" fromto="0 0 0 .08 0 0"/>
+          <site name="tcp" pos=".08 0 0"/>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+  <include file="actuators.xml"/>
+</mujoco>
