@@ -1699,8 +1699,10 @@ impl Session {
     /// remote round trip is needed to advance an admitted buffer. A handle's
     /// completion is measured separately from dispatch receipts and stop verbs.
     ///
-    /// Only one joint-position scope is supported. Mixed/composite whole-body
-    /// streams, gripper side channels and online target replacement are refused.
+    /// A named joint-position scope or a complete composite of joint-position
+    /// scopes is supported. Composite references share one clock and must respect
+    /// the slowest declared command cadence. Mixed action spaces and scalar
+    /// gripper policies on a composite are refused.
     pub fn start_playback(
         &self,
         id: &EpisodeId,
@@ -1740,12 +1742,32 @@ impl Session {
                 ));
             }
         };
-        if !matches!(scope.spec, SpaceSpec::JointPosition { .. }) {
-            return Err(PlaybackError::Invalid(
-                "requires a declared joint-position scope",
-            ));
-        }
-        let sample_period_ns = (1_000_000_000.0 / scope.rate_hz).round().max(1.0) as i64;
+        let period = |rate: f64| (1_000_000_000.0 / rate).round().max(1.0) as i64;
+        let sample_period_ns = match &scope.spec {
+            SpaceSpec::JointPosition { .. } => period(scope.rate_hz),
+            SpaceSpec::Composite { parts }
+                if parts
+                    .iter()
+                    .all(|(_, s)| matches!(s.spec, SpaceSpec::JointPosition { .. })) =>
+            {
+                if policy.gripper.is_some() {
+                    return Err(PlaybackError::Invalid(
+                        "composite playback has no scalar gripper policy",
+                    ));
+                }
+                parts
+                    .iter()
+                    .map(|(_, s)| period(s.rate_hz))
+                    .max()
+                    .unwrap()
+                    .max(period(scope.rate_hz))
+            }
+            _ => {
+                return Err(PlaybackError::Invalid(
+                    "requires declared joint-position scopes",
+                ));
+            }
+        };
         if policy
             .paced_curve
             .as_ref()

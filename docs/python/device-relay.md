@@ -95,6 +95,14 @@ Binding API 21 carries opt-in `PlaybackPolicy.credit_pacing_delay` with the
 The false default is omitted on the wire for older receivers, which must refuse
 an enabled policy they cannot decode.
 
+Binding API 22 carries `CoordinatedJointMotion` through the same `playback_start`
+and retained run/execution handles. Require `execution.coordinated_joint_playback`
+on every part and the complete declared joint layout. The device performs one
+local whole-site reference loop; remote status timing does not pace individual
+parts. Older receivers cannot decode this optional request type. See
+[coordinated playback](../core/finite-reference-playback.md) for shared cadence,
+owner preflight and partial-write/cancellation semantics.
+
 Sixteen ordinary calls and two reserved Hold/e-stop calls are admitted separately.
 Safety calls bypass ordinary admission and use the existing native SDK stop path.
 Before opening, an idle connection expires after 30 seconds; after a request or

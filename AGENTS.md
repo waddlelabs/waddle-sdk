@@ -5,6 +5,16 @@ acceptance separately in a configured simulator environment.
 
 # AGENTS.md — waddle-sdk monorepo
 
+Binding API 22 adds `CoordinatedJointMotion` for the complete declared joint-part
+layout, under `execution.coordinated_joint_playback` on every participating part.
+The existing native worker/slot uses one curve clock and the slowest declared
+cadence. Every whole-site target passes the ordinary gate and all owner envelopes
+before any sequential driver write. Preserve partial-write uncertainty and normal
+site Hold/drain; this is not physically atomic dispatch or independent buffers.
+Scalar group gripper policies are refused. See the finite-playback page and
+sdk/tests/test_coordinated_playback.py. Application geometry/planning and physical
+qualification remain separate.
+
 Binding API 21 adds opt-in `PlaybackPolicy.credit_pacing_delay` with the separate
 `execution.paced_playback_deadline` fact. Only complete acknowledged moving ticks
 credit their excess local wall time; stationary trailing segments and stalled

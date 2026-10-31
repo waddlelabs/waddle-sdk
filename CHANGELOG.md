@@ -11,6 +11,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Add coordinated whole-site joint buffers on the existing native playback worker
+  (binding API 22). Preserve declared part order, one shared curve/acknowledgement
+  clock, the slowest command cadence, all-part envelope preflight and normal
+  Hold/drain. Public Python and relay values require separate coordinated support;
+  sequential driver writes retain partial-failure uncertainty.
+
 - Add opt-in SDK-local pacing credit for reference-only polynomial playback
   (binding API 21). Complete acknowledged moving ticks retain the original finish
   allowance; stationary tails and stalled progress cannot renew it. Default

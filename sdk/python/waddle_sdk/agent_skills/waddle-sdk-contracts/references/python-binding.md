@@ -72,6 +72,13 @@ cadence without counting unrelated lock wait as driver execution.
 
 ## Finite joint playback
 
+Binding API 22 adds `CoordinatedJointMotion` for every declared Site part in exact
+declaration order. Require `execution.coordinated_joint_playback` on every part;
+flatten reference/policy/curve rows in that same order. One native worker/clock
+uses all-part owner preflight and normal site Hold/drain. Driver writes remain
+sequential, so preserve partial-write uncertainty. Scalar group gripper policies
+are refused. See the normative finite-playback page for the complete contract.
+
 Binding API 21 adds `PlaybackPolicy.credit_pacing_delay` under
 `execution.paced_playback_deadline`. It is opt-in for reference-only polynomial
 execution: complete acknowledged moving ticks credit only their excess local
@@ -142,7 +149,7 @@ Snapshots retain the completed stop callback in `cleanup`, separately from the
 original motion failure. Missing or failed cleanup is not confirmation, and a
 queued Hold/e-stop request cannot replace it. Callback success is not measured
 physical stopping; preserve its session-clock timestamp and original error.
-Per-reference force modifiers, dynamic reference updates and coupled multi-part execution remain
+Per-reference force modifiers and independent concurrent playback buffers remain
 unsupported. See `docs/core/finite-reference-playback.md` in a source checkout.
 
 An optional `PacedJointCurve` in the policy requires the separate
