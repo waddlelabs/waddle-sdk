@@ -546,9 +546,16 @@ fn revisable_policy_requires_reference_only_ungridded_curves_without_markers() {
         }
         assert!(FiniteReferences::new(chunk, policy).is_err(), "{invalid}");
     }
-    for switch in [-1, 0, 120_000_000_000] {
+    for switch in [-1, 0, i64::MAX] {
         assert!(CurveUpdate::new(0, switch, suffix()).is_err());
     }
+    // The cumulative bound is contextual: streams may pass 120 s, finite
+    // execution still refuses it before replacing any incumbent reference.
+    assert!(
+        revisable()
+            .update_curve(CurveUpdate::new(0, 120_000_000_000, suffix()).unwrap())
+            .is_err()
+    );
     let mut empty = suffix();
     empty.times_s.clear();
     assert!(CurveUpdate::new(0, 500_000_000, empty).is_err());

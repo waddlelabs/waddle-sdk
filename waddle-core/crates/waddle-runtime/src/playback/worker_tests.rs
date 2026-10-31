@@ -244,7 +244,16 @@ fn references_with_watchdog(
     part_hold: bool,
     watchdog: Option<crate::playback::PlaybackWatchdog>,
 ) -> FiniteReferences {
-    FiniteReferences::new(
+    let (chunk, policy) = reference_inputs(part, part_hold, watchdog);
+    FiniteReferences::new(chunk, policy).unwrap()
+}
+
+fn reference_inputs(
+    part: Option<&str>,
+    part_hold: bool,
+    watchdog: Option<crate::playback::PlaybackWatchdog>,
+) -> (ActionChunk, PlaybackPolicy) {
+    (
         ActionChunk {
             steps: [0.0, 0.1, 0.2]
                 .into_iter()
@@ -286,7 +295,6 @@ fn references_with_watchdog(
             gripper: None,
         },
     )
-    .unwrap()
 }
 
 fn sibling_io(h: &Harness) -> Arc<MemoryIo> {
@@ -1146,11 +1154,18 @@ fn watchdog_task(h: &Harness) -> (ExecutionTask, ExecutionHandle) {
 fn resting_stream_retains_worker_until_watchdog_expiry_and_hold() {
     for part_hold in [false, true] {
         let h = Harness::new();
-        let mut references = watchdog_request(&h, part_hold, 500_000_000);
-        references.policy.timeout_ns = None;
-        references.policy.reference_only = true;
-        references.policy.allow_curve_updates = true;
-        references.policy.paced_curve = Some(crate::playback::PacedCurve {
+        let (chunk, mut policy) = reference_inputs(
+            Some("left"),
+            part_hold,
+            Some(crate::playback::PlaybackWatchdog {
+                observed_ns: h.io.clock.0.now().0,
+                timeout_ns: 500_000_000,
+            }),
+        );
+        policy.timeout_ns = None;
+        policy.reference_only = true;
+        policy.allow_curve_updates = true;
+        policy.paced_curve = Some(crate::playback::PacedCurve {
             times_s: vec![0.0, 0.04, 0.08],
             positions: vec![vec![0.0], vec![0.1], vec![0.2]],
             coefficients: vec![
@@ -1162,7 +1177,7 @@ fn resting_stream_retains_worker_until_watchdog_expiry_and_hold() {
             tracking_tolerance: vec![0.2],
             sample_times_s: None,
         });
-        let references = FiniteReferences::new(references.chunk, references.policy).unwrap();
+        let references = FiniteReferences::new(chunk, policy).unwrap();
         let handle = h
             .dispatch
             .start_playback(
