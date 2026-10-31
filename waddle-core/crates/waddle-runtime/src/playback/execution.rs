@@ -1,5 +1,6 @@
 //! Finite local execution on the existing serialized control thread.
 
+use std::collections::HashMap;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::time::Duration;
@@ -241,21 +242,23 @@ impl ExecutionHandle {
 
 #[derive(Debug, Default)]
 pub(crate) struct ExecutionSlot {
-    current: Mutex<Option<Arc<Control>>>,
+    current: Mutex<HashMap<Option<String>, Arc<Control>>>,
 }
 
 impl ExecutionSlot {
     pub(crate) fn register(
         &self,
         episode_id: EpisodeId,
+        scope: Option<String>,
         references: usize,
         unavailable: impl FnOnce() -> bool,
     ) -> Result<ExecutionHandle, PlaybackError> {
         let mut current = self.current.lock();
+        current.retain(|_, c| c.state.lock().snapshot.result.is_none());
         if unavailable()
             || current
-                .as_ref()
-                .is_some_and(|c| c.state.lock().snapshot.result.is_none())
+                .keys()
+                .any(|part| overlaps(part.as_deref(), scope.as_deref()))
         {
             return Err(PlaybackError::Busy);
         }
@@ -283,37 +286,68 @@ impl ExecutionSlot {
             }),
             changed: Condvar::new(),
         });
-        *current = Some(control.clone());
+        current.insert(scope, control.clone());
         Ok(ExecutionHandle { control })
     }
 
     pub(crate) fn interrupt(&self, reason: &str, request: impl FnOnce()) {
         let current = self.current.lock();
-        if let Some(control) = current.as_ref() {
+        for control in current.values() {
             control.mark_cancelled(reason);
         }
         request();
     }
 
-    pub(crate) fn active(&self, episode: &EpisodeId) -> bool {
-        self.current.lock().as_ref().is_some_and(|control| {
+    pub(crate) fn record_cleanup(&self, outcome: &VerbOutcome) {
+        if matches!(
+            outcome.verb,
+            waddle_types::Verb::Hold | waddle_types::Verb::Estop
+        ) {
+            for control in self.current.lock().values() {
+                let mut state = control.state.lock();
+                if state.snapshot.result.is_none() {
+                    state.snapshot.cleanup = Some(outcome.clone());
+                }
+            }
+        }
+    }
+
+    pub(crate) fn any_active(&self) -> bool {
+        self.current
+            .lock()
+            .values()
+            .any(|c| c.state.lock().snapshot.result.is_none())
+    }
+
+    pub(crate) fn active(&self, episode: &EpisodeId, scope: Option<&str>) -> bool {
+        self.current.lock().iter().any(|(part, control)| {
             let state = control.state.lock();
-            &state.snapshot.episode_id == episode && state.snapshot.result.is_none()
+            overlaps(part.as_deref(), scope)
+                && &state.snapshot.episode_id == episode
+                && state.snapshot.result.is_none()
         })
     }
 
-    pub(crate) fn cancel_episode(&self, episode: &EpisodeId) -> Option<ExecutionHandle> {
-        let current = self.current.lock();
-        let control = current.as_ref()?;
-        if &control.state.lock().snapshot.episode_id != episode {
-            return None;
-        }
-        let handle = ExecutionHandle {
-            control: control.clone(),
-        };
-        handle.cancel("episode ended");
-        Some(handle)
+    pub(crate) fn cancel_episode(&self, episode: &EpisodeId) -> Vec<ExecutionHandle> {
+        self.current
+            .lock()
+            .values()
+            .filter_map(|control| {
+                if &control.state.lock().snapshot.episode_id != episode {
+                    return None;
+                }
+                let handle = ExecutionHandle {
+                    control: control.clone(),
+                };
+                handle.cancel("episode ended");
+                Some(handle)
+            })
+            .collect()
     }
+}
+
+fn overlaps(left: Option<&str>, right: Option<&str>) -> bool {
+    left.is_none() || right.is_none() || left == right
 }
 
 /// Owned by `waddle-verbs`, not a second device/authority thread.
@@ -559,7 +593,7 @@ mod tests {
     fn cancellation_winning_completion_waits_for_worker_cleanup() {
         let slot = ExecutionSlot::default();
         let handle = slot
-            .register(EpisodeId::new("episode"), 1, || false)
+            .register(EpisodeId::new("episode"), None, 1, || false)
             .unwrap();
         handle.cancel("stop before completion");
         assert!(!handle.control.finish(Ok(Completion::Arrived)));

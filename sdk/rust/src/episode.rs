@@ -136,6 +136,11 @@ impl PyEpisode {
         self.session.playback_active(&self.id)
     }
 
+    #[pyo3(signature = (part=None))]
+    fn playback_active_on(&self, part: Option<&str>) -> bool {
+        self.session.playback_active_on(&self.id, part)
+    }
+
     #[getter]
     fn id(&self) -> String {
         self.id.to_string()

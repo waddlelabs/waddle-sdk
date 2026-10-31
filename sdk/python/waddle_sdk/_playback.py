@@ -109,6 +109,10 @@ def start(
             FaultCode.UNSUPPORTED, "part does not support finite playback"
         )
     facts = set.intersection(*(set(row.facts) for row in rows))
+    if run._episode.playback_active and (
+        group or SupportFact.PARALLEL_JOINT_PLAYBACK not in facts
+    ):
+        raise RuntimeFault(FaultCode.BUSY, "finite playback is still active")
     if group and SupportFact.COORDINATED_JOINT_PLAYBACK not in facts:
         raise RuntimeFault(
             FaultCode.UNSUPPORTED, "parts do not support coordinated playback"

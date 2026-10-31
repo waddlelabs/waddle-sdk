@@ -5,6 +5,7 @@
 //! callback-dispatch proxy signal). Estop bypasses the queue via a priority
 //! slot checked before every dequeue.
 
+use std::collections::VecDeque;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -138,7 +139,7 @@ pub struct VerbDispatch {
     estop_flag: Arc<AtomicUsize>,
     priority_hold_flag: Arc<AtomicUsize>,
     pending_verbs: Arc<AtomicUsize>,
-    playback: ExecutionSlot,
+    playback: Arc<ExecutionSlot>,
     playback_available: bool,
     pub stats: Arc<DispatchStats>,
     thread: Option<JoinHandle<()>>,
@@ -159,6 +160,8 @@ impl VerbDispatch {
         let stats = Arc::new(DispatchStats::default());
         let shutdown = Arc::new(AtomicBool::new(false));
 
+        let playback = Arc::new(ExecutionSlot::default());
+        let playback_thread = playback.clone();
         let flag = estop_flag.clone();
         let hold_flag = priority_hold_flag.clone();
         let stats_thread = stats.clone();
@@ -177,6 +180,7 @@ impl VerbDispatch {
                     &stats_thread,
                     &shutdown_thread,
                     &pending_thread,
+                    &playback_thread,
                 );
             })
             .expect("spawn verb dispatch");
@@ -189,7 +193,7 @@ impl VerbDispatch {
             thread: Some(thread),
             shutdown,
             pending_verbs,
-            playback: ExecutionSlot::default(),
+            playback,
             playback_available,
         }
     }
@@ -231,14 +235,17 @@ impl VerbDispatch {
                 "requires a registered Hold callback",
             ));
         }
-        let handle = self
-            .playback
-            .register(episode.clone(), references.len(), || {
+        let handle = self.playback.register(
+            episode.clone(),
+            references.scope().map(str::to_owned),
+            references.len(),
+            || {
                 self.shutdown.load(Ordering::SeqCst)
                     || self.pending_verbs.load(Ordering::SeqCst) != 0
                     || self.estop_flag.load(Ordering::SeqCst) != 0
                     || self.priority_hold_flag.load(Ordering::SeqCst) != 0
-            })?;
+            },
+        )?;
         let task = ExecutionTask::new(
             mirror,
             episode,
@@ -254,12 +261,12 @@ impl VerbDispatch {
         Ok(handle)
     }
 
-    pub(crate) fn playback_active(&self, episode: &EpisodeId) -> bool {
-        self.playback.active(episode)
+    pub(crate) fn playback_active(&self, episode: &EpisodeId, scope: Option<&str>) -> bool {
+        self.playback.active(episode, scope)
     }
 
     pub(crate) fn drain_playback(&self, episode: &EpisodeId) {
-        if let Some(handle) = self.playback.cancel_episode(episode) {
+        for handle in self.playback.cancel_episode(episode) {
             handle.wait();
         }
     }
@@ -301,90 +308,114 @@ fn dispatch_loop<C: Clock>(
     stats: &DispatchStats,
     shutdown: &AtomicBool,
     pending_verbs: &AtomicUsize,
+    playback: &ExecutionSlot,
 ) {
-    let mut active: Option<Box<ExecutionTask>> = None;
+    let mut active: VecDeque<Box<ExecutionTask>> = VecDeque::new();
     loop {
         if shutdown.load(Ordering::SeqCst) {
-            if let Some(task) = active.as_ref() {
+            if playback.any_active() {
                 let stop = if estop_flag.load(Ordering::SeqCst) != 0 {
                     VerbRequest::Estop
                 } else {
                     VerbRequest::Hold
                 };
                 let outcome = execute(registry, clock, &stop, outcomes, stats);
-                task.record_cleanup(&outcome);
+                playback.record_cleanup(&outcome);
+                finish_cancelled(&mut active, &outcome);
             }
             return;
         }
-        // Estop preempts anything queued.
+        // Site-wide safety requests preempt every active and queued buffer.
         let estops = estop_flag.load(Ordering::SeqCst);
         if estops != 0 {
             let outcome = execute(registry, clock, &VerbRequest::Estop, outcomes, stats);
-            finish_cancelled(&mut active, &outcome);
+            playback.record_cleanup(&outcome);
             estop_flag.fetch_sub(estops, Ordering::SeqCst);
+            finish_cancelled(&mut active, &outcome);
             continue;
         }
-        // An energized HOLD preempts ordinary traffic but never e-stop.
         let holds = priority_hold_flag.load(Ordering::SeqCst);
         if holds != 0 {
             let outcome = execute(registry, clock, &VerbRequest::Hold, outcomes, stats);
-            finish_cancelled(&mut active, &outcome);
+            playback.record_cleanup(&outcome);
             priority_hold_flag.fetch_sub(holds, Ordering::SeqCst);
+            finish_cancelled(&mut active, &outcome);
             continue;
         }
-        let wait = active.as_ref().map_or(Duration::from_millis(5), |task| {
-            task.wait_duration(clock.stamp_now().mono_ns().0)
-        });
+        let now = clock.stamp_now().mono_ns().0;
+        let wait = active
+            .iter()
+            .map(|task| task.wait_duration(now))
+            .min()
+            .unwrap_or(Duration::from_millis(5));
         match rx.recv_timeout(wait) {
             Ok(Work::Verb(req)) => {
                 let outcome = execute(registry, clock, &req, outcomes, stats);
-                finish_cancelled(&mut active, &outcome);
+                playback.record_cleanup(&outcome);
                 pending_verbs.fetch_sub(1, Ordering::SeqCst);
+                finish_cancelled(&mut active, &outcome);
             }
             Ok(Work::Playback(task)) => {
-                if let Some(result) = task.cancelled_result() {
+                if let Some(result) = task.cancelled_result()
+                    && pending_verbs.load(Ordering::SeqCst) == 0
+                    && estop_flag.load(Ordering::SeqCst) == 0
+                    && priority_hold_flag.load(Ordering::SeqCst) == 0
+                {
+                    // Cleanup is retained in the slot even when a global stop
+                    // precedes this queued admission on the worker. If the stop
+                    // is still queued, keep this task until its callback finishes.
                     task.finish(result);
                 } else {
-                    debug_assert!(active.is_none());
-                    active = Some(task);
+                    active.push_back(task);
                 }
             }
             Err(RecvTimeoutError::Timeout) => {
-                if let Some(task) = active.as_mut()
-                    && let Some(result) = task.tick(clock)
+                let Some(mut task) = active.pop_front() else {
+                    continue;
+                };
+                let Some(result) = task.tick(clock) else {
+                    active.push_back(task);
+                    continue;
+                };
+                if task.cancelled_result().is_some()
+                    && (pending_verbs.load(Ordering::SeqCst) != 0
+                        || estop_flag.load(Ordering::SeqCst) != 0
+                        || priority_hold_flag.load(Ordering::SeqCst) != 0)
                 {
-                    // A selected substitute stream retains its own normal gate
-                    // semantics. Other failures stop this task through Hold;
-                    // an already requested e-stop takes priority over that Hold.
-                    // A queued control request owns cancellation and its stop
-                    // semantics. Process it before marking this loop drained.
-                    if task.cancelled_result().is_some()
-                        && (pending_verbs.load(Ordering::SeqCst) != 0
-                            || estop_flag.load(Ordering::SeqCst) != 0
-                            || priority_hold_flag.load(Ordering::SeqCst) != 0)
-                    {
-                        continue;
+                    active.push_back(task);
+                    continue;
+                }
+                if result
+                    .as_ref()
+                    .is_err_and(|e| !matches!(e, ExecutionFailure::Superseded(_)))
+                    && !task.scope_ended()
+                {
+                    // The registered Hold is site-wide. Fence all admissions
+                    // while it runs, and cancel queued siblings before they can
+                    // write again. The originating task retains its own failure.
+                    playback.interrupt("another local buffer stopped", || {
+                        pending_verbs.fetch_add(1, Ordering::SeqCst);
+                    });
+                    active.push_back(task);
+                    let estops = estop_flag.load(Ordering::SeqCst);
+                    let stop = if estops != 0 {
+                        VerbRequest::Estop
+                    } else {
+                        VerbRequest::Hold
+                    };
+                    let outcome = execute(registry, clock, &stop, outcomes, stats);
+                    playback.record_cleanup(&outcome);
+                    if estops != 0 {
+                        estop_flag.fetch_sub(estops, Ordering::SeqCst);
                     }
-                    if result
-                        .as_ref()
-                        .is_err_and(|e| !matches!(e, ExecutionFailure::Superseded(_)))
-                        && !task.scope_ended()
-                    {
-                        let estops = estop_flag.load(Ordering::SeqCst);
-                        if estops != 0 {
-                            let outcome =
-                                execute(registry, clock, &VerbRequest::Estop, outcomes, stats);
-                            task.record_cleanup(&outcome);
-                            estop_flag.fetch_sub(estops, Ordering::SeqCst);
-                        } else {
-                            let outcome =
-                                execute(registry, clock, &VerbRequest::Hold, outcomes, stats);
-                            task.record_cleanup(&outcome);
-                        }
-                    }
-                    if task.finish(result) {
-                        active = None;
-                    }
+                    pending_verbs.fetch_sub(1, Ordering::SeqCst);
+                    // Cleanup is complete. Clear its admission fence before
+                    // publishing terminal handles: dropping their I/O adapters
+                    // may wait for the caller's interpreter lock. Cancelled old
+                    // scopes remain occupied until their own result is stored.
+                    finish_cancelled(&mut active, &outcome);
+                } else if !task.finish(result) {
+                    active.push_back(task);
                 }
             }
             Err(RecvTimeoutError::Disconnected) => return,
@@ -392,8 +423,8 @@ fn dispatch_loop<C: Clock>(
     }
 }
 
-fn finish_cancelled(active: &mut Option<Box<ExecutionTask>>, outcome: &VerbOutcome) {
-    if let Some(task) = active.take() {
+fn finish_cancelled(active: &mut VecDeque<Box<ExecutionTask>>, outcome: &VerbOutcome) {
+    for task in active.drain(..) {
         task.record_cleanup(outcome);
         if let Some(result) = task.terminal_failure().or_else(|| task.cancelled_result()) {
             task.finish(result);

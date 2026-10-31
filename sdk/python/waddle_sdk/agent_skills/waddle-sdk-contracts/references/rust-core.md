@@ -38,7 +38,8 @@ the existing `ActionChunk` types. It distinguishes dispatch acknowledgement from
 measured arrival and refuses stale starts, missing acknowledgements, late steps
 and cancellation without retry. `Session.start_playback` validates the declared
 scope and runs local observation/gate/owner callbacks on the existing serialized
-control thread. Hold/e-stop, episode closure and shutdown drain the reference loop;
+control thread. Distinct named scopes may have independent loops; whole-site
+scopes exclude them. Hold/e-stop, episode closure and shutdown drain every loop;
 original faults and stop outcomes stay separate. It creates no authority or device
 owner. Python `Run.start_playback` uses these callbacks through the ordinary local
 owner; connector integration is still pending. See

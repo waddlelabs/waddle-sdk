@@ -1514,6 +1514,7 @@ class SiteSession:
                     facts.add(SupportFact.FINITE_JOINT_PLAYBACK)
                     if coordinated:
                         facts.add(SupportFact.COORDINATED_JOINT_PLAYBACK)
+                        facts.add(SupportFact.PARALLEL_JOINT_PLAYBACK)
                     facts.add(SupportFact.PACED_JOINT_PLAYBACK)
                     facts.add(SupportFact.FEEDBACK_JOINT_PLAYBACK)
                     facts.add(SupportFact.SAMPLED_JOINT_PLAYBACK)
@@ -2007,7 +2008,6 @@ class Run:
         exception does not erase prior receipts or skip other submissions. This
         does not guarantee isolation from shared hardware or envelope dependencies.
         """
-        self._require_idle_playback()
         arms = self._session._require().arms
         if not isinstance(commands, Mapping) or not commands:
             raise RuntimeFault(
@@ -2022,8 +2022,9 @@ class Run:
                 "Commands require declared parts and JointPositionCommand values",
             )
         results = {}
+        self._require_idle_playback(commands)
         with self._session._dispatch_lock:
-            self._require_idle_playback()
+            self._require_idle_playback(commands)
             for part, command in commands.items():
                 started = time.monotonic()
                 try:
@@ -2052,8 +2053,15 @@ class Run:
                 )
         return results
 
-    def _require_idle_playback(self) -> None:
-        if self._episode is not None and self._episode.playback_active:
+    def _require_idle_playback(self, parts=None) -> None:
+        if (
+            self._episode is not None
+            and self._episode.playback_active
+            and (
+                parts is None
+                or any(self._episode.playback_active_on(part) for part in parts)
+            )
+        ):
             raise RuntimeFault(FaultCode.BUSY, "finite playback is still active")
 
     def start_playback(
@@ -2062,7 +2070,11 @@ class Run:
         """Admit finite references to the local native worker; never wait for motion."""
         from ._playback import start
 
-        self._require_idle_playback()
+        self._require_idle_playback(
+            (motion.part,)
+            if isinstance(motion, FiniteJointMotion) and isinstance(motion.part, str)
+            else None
+        )
         with self._session._dispatch_lock:
             return start(self, motion)
 
