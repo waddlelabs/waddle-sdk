@@ -150,6 +150,7 @@ pub struct ExecutionSnapshot {
 struct State {
     snapshot: ExecutionSnapshot,
     cancelled: Option<String>,
+    cancelled_by_control: bool,
     curve_update: Option<CurveRequest>,
 }
 
@@ -169,10 +170,11 @@ struct Control {
 }
 
 impl Control {
-    fn mark_cancelled(&self, reason: &str) {
+    fn mark_cancelled(&self, reason: &str, by_control: bool) {
         let mut state = self.state.lock();
         if state.snapshot.result.is_none() {
             state.cancelled.get_or_insert_with(|| reason.to_owned());
+            state.cancelled_by_control |= by_control;
         }
     }
 
@@ -217,7 +219,7 @@ impl ExecutionHandle {
     /// Cancel future references; the worker applies the registered Hold. A
     /// terminal handle cannot stop a later execution or rewrite its own result.
     pub fn cancel(&self, reason: &str) {
-        self.control.mark_cancelled(reason);
+        self.control.mark_cancelled(reason, false);
     }
 
     /// Enqueue one suffix for validation by the existing local worker. Returns
@@ -327,6 +329,7 @@ impl ExecutionSlot {
                     result: None,
                 },
                 cancelled: None,
+                cancelled_by_control: false,
                 curve_update: None,
             }),
             changed: Condvar::new(),
@@ -337,10 +340,12 @@ impl ExecutionSlot {
 
     pub(crate) fn interrupt(&self, reason: &str, request: impl FnOnce()) {
         let current = self.current.lock();
-        for control in current.values() {
-            control.mark_cancelled(reason);
-        }
+        // Make the pending-control fence visible before marking cancellations.
+        // Completed callbacks acquire this same registry lock for their receipts.
         request();
+        for control in current.values() {
+            control.mark_cancelled(reason, true);
+        }
     }
 
     pub(crate) fn record_cleanup(&self, outcome: &VerbOutcome) {
@@ -479,8 +484,8 @@ impl ExecutionTask {
         }
     }
 
-    pub(crate) fn cleanup_complete(&self) -> bool {
-        self.control.state.lock().snapshot.cleanup.is_some()
+    pub(crate) fn cancelled_by_control(&self) -> bool {
+        self.control.state.lock().cancelled_by_control
     }
 
     pub(crate) fn hold_part<C: Clock>(&self, clock: &C) -> bool {

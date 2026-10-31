@@ -362,14 +362,15 @@ fn dispatch_loop<C: Clock>(
             }
             Ok(Work::Playback(task)) => {
                 if let Some(result) = task.cancelled_result()
-                    && task.cleanup_complete()
+                    && task.cancelled_by_control()
                     && pending_verbs.load(Ordering::SeqCst) == 0
                     && estop_flag.load(Ordering::SeqCst) == 0
                     && priority_hold_flag.load(Ordering::SeqCst) == 0
                 {
-                    // Cleanup is retained in the slot even when a global stop
-                    // precedes this queued admission on the worker. If the stop
-                    // is still queued, keep this task until its callback finishes.
+                    // The completed control owns the device now. A global stop
+                    // retains its receipt in the slot; Home and other takeovers
+                    // must not receive an obsolete playback Hold. Individual
+                    // cancellation still needs this buffer's worker cleanup.
                     task.finish(result);
                 } else {
                     active.push_back(task);

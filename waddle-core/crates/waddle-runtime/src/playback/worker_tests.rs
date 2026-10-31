@@ -957,3 +957,46 @@ fn delayed_cancelled_admission_cannot_override_completed_control_takeover() {
         assert!(h.io.writes.lock().is_empty());
     }
 }
+
+#[test]
+fn caller_cancellation_before_worker_admission_still_gets_owner_cleanup() {
+    for part_hold in [false, true] {
+        let h = Harness::new();
+        let references = references_with_hold(Some("left"), part_hold);
+        let handle = h
+            .dispatch
+            .playback
+            .register(
+                EpisodeId::new("episode"),
+                Some("left".into()),
+                references.len(),
+                || false,
+            )
+            .unwrap();
+        let task = ExecutionTask::new(
+            h.mirror.clone(),
+            EpisodeId::new("episode"),
+            references,
+            h.io.clone(),
+            &handle,
+            10_000_000,
+            0,
+        );
+        handle.cancel("caller cancelled before worker admission");
+        h.dispatch.tx.send(Work::Playback(Box::new(task))).unwrap();
+        let result = finished(&handle);
+        assert!(matches!(
+            result.result,
+            Some(Err(ExecutionFailure::Playback(PlaybackError::Cancelled(_))))
+        ));
+        let cleanup = result.cleanup.unwrap();
+        assert_eq!(cleanup.verb, Verb::Hold);
+        assert_eq!(cleanup.part.as_deref(), part_hold.then_some("left"));
+        assert_eq!(cleanup.result, Ok(()));
+        assert_eq!(
+            *h.io.events.lock(),
+            [if part_hold { "part_hold" } else { "hold" }]
+        );
+        assert!(h.io.writes.lock().is_empty());
+    }
+}
