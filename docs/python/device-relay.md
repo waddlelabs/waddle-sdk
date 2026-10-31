@@ -82,6 +82,13 @@ the opt-in revisable policy; neither a lost reply nor an old handle may start or
 replay execution. Ordinary policies omit the new false flag on the wire so older
 receivers can still decode them.
 
+Binding API 20 adds `playback_withdraw` with the original `run_id`, execution
+`id`, accepted update `request_id` and `expected_revision`. It returns a new
+request ID and snapshot. Require `execution.withdrawable_joint_playback` and
+reconcile the retained withdrawal receipt; queueing does not prove removal or
+stopping, and a lost reply never permits replay. A terminal or wrong-run handle
+cannot withdraw work from a replacement execution.
+
 Sixteen ordinary calls and two reserved Hold/e-stop calls are admitted separately.
 Safety calls bypass ordinary admission and use the existing native SDK stop path.
 Before opening, an idle connection expires after 30 seconds; after a request or

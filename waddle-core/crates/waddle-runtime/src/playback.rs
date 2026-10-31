@@ -360,6 +360,26 @@ pub struct Playback {
 }
 
 impl Playback {
+    /// Withdraw a future suffix without changing the incumbent or its deadline.
+    /// An already dispatched handoff must be acknowledged, never retracted.
+    pub fn withdraw_curve(&mut self, expected_revision: u64) -> Result<(), PlaybackError> {
+        if !self.references.policy.allow_curve_updates
+            || self.completion.is_some()
+            || self.failure.is_some()
+        {
+            return Err(PlaybackError::Invalid(
+                "execution does not admit curve withdrawal",
+            ));
+        }
+        if self.pending {
+            return Err(PlaybackError::DispatchPending);
+        }
+        self.curve
+            .as_mut()
+            .expect("validated revisable curve")
+            .withdraw(expected_revision)
+    }
+
     /// Refusal leaves the incumbent intact; it is not a motion failure.
     pub fn update_curve(&mut self, update: CurveUpdate) -> Result<(), PlaybackError> {
         if !self.references.policy.allow_curve_updates
