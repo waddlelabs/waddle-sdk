@@ -5,6 +5,14 @@ acceptance separately in a configured simulator environment.
 
 # AGENTS.md — waddle-sdk monorepo
 
+Binding API 15 adds optional `PlaybackPolicy.minimum_settle_samples` with the
+separate `execution.sampled_joint_playback` support fact. Fresh eligible samples
+must satisfy both count and dwell; duplicates do not count, velocity/goal loss
+resets the count, and a stationary miss never becomes arrival from one sample.
+Default one preserves existing dwell policies. Encoder windows retain at least
+the requested count and three samples; gripper outcome-specific policies keep
+their own rules. Retain native gates, original deadlines and stop receipts.
+
 Playback snapshots in binding API 14 retain the completed native Hold/e-stop
 callback receipt separately from the original motion failure. A terminal loop or
 queued stop request does not prove successful cleanup or physical stopping.

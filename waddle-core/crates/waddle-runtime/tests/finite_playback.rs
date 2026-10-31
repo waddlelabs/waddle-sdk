@@ -220,6 +220,7 @@ fn policy() -> PlaybackPolicy {
         position_tolerance: vec![0.005, 0.005],
         stationary_velocity: vec![0.01, 0.01],
         settle_ns: 20_000_000,
+        minimum_settle_samples: 1,
         max_lateness_ns: 10_000_000,
         timeout_ns: 200_000_000,
         allow_settled: false,
@@ -248,6 +249,81 @@ fn dispatch(player: &mut Playback, at: i64, q: f64, index: usize) {
         PlaybackPoll::Dispatch(index)
     );
     player.acknowledge(index, at).unwrap();
+}
+
+#[test]
+fn slow_feedback_requires_three_samples_in_addition_to_elapsed_settling() {
+    let mut policy = policy();
+    policy.minimum_settle_samples = 3;
+    let mut player = Playback::new(FiniteReferences::new(chunk(), policy).unwrap(), 0);
+    dispatch(&mut player, 0, 0.0, 0);
+    dispatch(&mut player, 40_000_000, 0.0, 1);
+    dispatch(&mut player, 80_000_000, 0.1, 2);
+    assert_eq!(
+        player.poll(81_000_000, &feedback(81_000_000, 0.2)).unwrap(),
+        PlaybackPoll::Observe
+    );
+    // A long observation gap is not a third stationary observation.
+    assert_eq!(
+        player
+            .poll(140_000_000, &feedback(140_000_000, 0.2))
+            .unwrap(),
+        PlaybackPoll::Observe
+    );
+    assert_eq!(
+        player
+            .poll(140_000_001, &feedback(140_000_000, 0.2))
+            .unwrap(),
+        PlaybackPoll::Observe
+    );
+    assert_eq!(
+        player
+            .poll(141_000_000, &feedback(141_000_000, 0.2))
+            .unwrap(),
+        PlaybackPoll::Complete(Completion::Arrived)
+    );
+}
+
+#[test]
+fn velocity_and_goal_failures_reset_the_required_sample_count() {
+    for lose_velocity in [false, true] {
+        let mut policy = policy();
+        policy.minimum_settle_samples = 3;
+        let mut player = Playback::new(FiniteReferences::new(chunk(), policy).unwrap(), 0);
+        dispatch(&mut player, 0, 0.0, 0);
+        dispatch(&mut player, 40_000_000, 0.0, 1);
+        dispatch(&mut player, 80_000_000, 0.1, 2);
+        player.poll(81_000_000, &feedback(81_000_000, 0.2)).unwrap();
+        let mut lost = feedback(82_000_000, if lose_velocity { 0.2 } else { 0.1 });
+        if lose_velocity {
+            lost.velocities[0] = 0.1;
+        }
+        assert_eq!(
+            player.poll(82_000_000, &lost).unwrap(),
+            PlaybackPoll::Observe
+        );
+        for at in [83_000_000, 140_000_000] {
+            assert_eq!(
+                player.poll(at, &feedback(at, 0.2)).unwrap(),
+                PlaybackPoll::Observe
+            );
+        }
+        assert_eq!(
+            player
+                .poll(141_000_000, &feedback(141_000_000, 0.2))
+                .unwrap(),
+            PlaybackPoll::Complete(Completion::Arrived)
+        );
+    }
+}
+
+#[test]
+fn sample_count_limits_refuse_invalid_admission() {
+    for count in [0, 16_386] {
+        let mut policy = policy();
+        policy.minimum_settle_samples = count;
+        assert!(FiniteReferences::new(chunk(), policy).is_err());
+    }
 }
 
 #[test]

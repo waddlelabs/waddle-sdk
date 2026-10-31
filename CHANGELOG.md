@@ -11,6 +11,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Add separately advertised minimum settling-sample counts to native finite
+  playback (binding API 15), in addition to its existing dwell requirement.
+  Slow or duplicate observations cannot stand in for fresh stationary samples;
+  velocity/goal loss resets the count. Existing default policies stay unchanged.
+
 - Retain the completed Hold/e-stop callback receipt in native playback snapshots
   (binding API 14), separately from the original motion failure. Failed or absent
   cleanup cannot be inferred successful from a terminal loop or queued stop

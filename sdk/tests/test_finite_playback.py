@@ -59,6 +59,34 @@ def motion(*targets, feedforward=False):
     )
 
 
+def test_counted_settling_is_admitted_by_its_own_support_fact(opened, monkeypatch):
+    session, run = opened
+    request = motion((0, 0), (0.02, -0.01))
+    request = replace(request, policy=replace(request.policy, minimum_settle_samples=3))
+    result = run.start_playback(request).wait()
+    assert result["status"] == "arrived", result
+    support = session.support()
+    monkeypatch.setattr(
+        session,
+        "support",
+        lambda: replace(
+            support,
+            rows=tuple(
+                replace(
+                    row,
+                    facts=tuple(
+                        f for f in row.facts if f != SupportFact.SAMPLED_JOINT_PLAYBACK
+                    ),
+                )
+                for row in support.rows
+            ),
+        ),
+    )
+    with pytest.raises(RuntimeFault) as caught:
+        run.start_playback(request)
+    assert caught.value.code == FaultCode.UNSUPPORTED
+
+
 def test_measured_completion_and_exact_feedforward_use_the_real_owner(opened):
     session, run = opened
     assert isinstance(run, FinitePlaybackRunPort)

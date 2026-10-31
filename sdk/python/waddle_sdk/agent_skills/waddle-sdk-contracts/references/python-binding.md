@@ -62,6 +62,12 @@ cadence without counting unrelated lock wait as driver execution.
 `FinitePlaybackRunPort.start_playback(FiniteJointMotion)` admits one complete,
 bounded buffer for a named part when `execution.finite_joint_playback` is present.
 `JointReference` carries an exact position command and local offset;
+Binding API 15 adds `minimum_settle_samples` (default one), separately advertised
+as `execution.sampled_joint_playback`. Fresh eligible samples must satisfy both
+the count and existing dwell; duplicates do not count and velocity/goal loss
+resets the velocity-settling count. Encoder windows retain at least the requested
+count and three samples. Gripper policies retain their separate outcome rules.
+
 `PlaybackPolicy` supplies selected-row start/completion tolerances and bounded
 settling, lateness and timeout. Core validates and executes it on the existing
 control thread. Python adapts observation and the same gate/owner envelope used

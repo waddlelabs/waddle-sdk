@@ -67,6 +67,7 @@ class SupportFact(str, enum.Enum):
     FINITE_JOINT_PLAYBACK = "execution.finite_joint_playback"
     PACED_JOINT_PLAYBACK = "execution.paced_joint_playback"
     FEEDBACK_JOINT_PLAYBACK = "execution.feedback_joint_playback"
+    SAMPLED_JOINT_PLAYBACK = "execution.sampled_joint_playback"
     GRIPPER_PLAYBACK = "execution.gripper_playback"
     VELOCITY_FEEDFORWARD = "actuation.velocity_feedforward"
     FORWARD_KINEMATICS = "kinematics.fk"
@@ -674,7 +675,14 @@ class GripperPlaybackPolicy:
 
 @dataclass(frozen=True)
 class PlaybackPolicy:
-    """Explicit measured completion and local timing bounds; validated by core."""
+    """Explicit measured completion and local timing bounds; validated by core.
+
+    ``minimum_settle_samples`` requires fresh eligible observations in addition
+    to the settling span, with separately declared sampled-playback support.
+    Velocity/goal loss resets the count. Position windows retain at least this
+    many samples (and never fewer than three). Gripper policies keep their own
+    outcome-specific sample rules and require the default value here.
+    """
 
     indices: tuple[int, ...]
     start_tolerance: tuple[float, ...]
@@ -687,6 +695,7 @@ class PlaybackPolicy:
     paced_curve: PacedJointCurve | None = None
     feedback: PlaybackFeedbackPolicy | None = None
     gripper: GripperPlaybackPolicy | None = None
+    minimum_settle_samples: int = 1
 
     def __post_init__(self) -> None:
         for name in (

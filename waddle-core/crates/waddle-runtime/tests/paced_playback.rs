@@ -46,6 +46,7 @@ fn inputs() -> (ActionChunk, PlaybackPolicy) {
             position_tolerance: vec![0.001],
             stationary_velocity: vec![0.01],
             settle_ns: 50_000_000,
+            minimum_settle_samples: 1,
             max_lateness_ns: 1,
             timeout_ns: 2_000_000_000,
             allow_settled: false,

@@ -35,6 +35,7 @@ fn inputs(targets: &[f64]) -> (ActionChunk, PlaybackPolicy) {
             position_tolerance: vec![0.001],
             stationary_velocity: vec![0.01],
             settle_ns: 50,
+            minimum_settle_samples: 1,
             max_lateness_ns: 10,
             timeout_ns: 1_000,
             allow_settled: false,
@@ -198,6 +199,27 @@ fn a_short_window_still_retains_three_samples_on_a_slower_feedback_cadence() {
     );
     assert_eq!(p.settling_evidence().unwrap().samples, 3);
     assert_eq!(p.settling_evidence().unwrap().span_ns, 200);
+}
+
+#[test]
+fn a_requested_sample_count_survives_short_window_pruning() {
+    let (chunk, mut policy) = inputs(&[0.0]);
+    window_policy(&mut policy);
+    policy.minimum_settle_samples = 4;
+    let mut p = start(chunk, policy);
+    dispatch(&mut p, &measured(0, 0.0));
+    for at in [1, 101, 201] {
+        assert_eq!(
+            p.poll(at, &measured(at, 0.0)).unwrap(),
+            PlaybackPoll::Observe
+        );
+    }
+    assert_eq!(
+        p.poll(301, &measured(301, 0.0)).unwrap(),
+        PlaybackPoll::Complete(Completion::Arrived)
+    );
+    assert_eq!(p.settling_evidence().unwrap().samples, 4);
+    assert_eq!(p.settling_evidence().unwrap().span_ns, 300);
 }
 
 #[test]
