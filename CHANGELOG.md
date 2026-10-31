@@ -11,6 +11,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Prepare coordinated playback for ordered subsets of declared joint parts
+  (binding API 27), with native member reservations, ordinary gate/owner preflight,
+  and unchanged global group cleanup. A separate support fact gates selection.
+
 - Add explicit watchdog-limited reference streams through `timeout_ns=None`
   (binding API 26), with separately declared support. Bounded curves remain at
   supervised rest until a checked continuation, cancellation or watchdog expiry;

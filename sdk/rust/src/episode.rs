@@ -50,6 +50,9 @@ pub(crate) struct GateInfo {
     /// plane may send one.
     #[pyo3(get)]
     part: Option<String>,
+    /// Explicit selected caller group on Pass; otherwise absent.
+    #[pyo3(get)]
+    parts: Option<Vec<String>>,
 }
 
 #[pymethods]
@@ -114,7 +117,7 @@ impl PyEpisode {
 #[pymethods]
 impl PyEpisode {
     /// Admit a fully received finite buffer; callbacks only adapt local owner I/O.
-    #[pyo3(signature = (chunk_json, policy, observe, dispatch, hold_part=None))]
+    #[pyo3(signature = (chunk_json, policy, observe, dispatch, hold_part=None, *, parts=None))]
     fn start_playback(
         &self,
         chunk_json: &str,
@@ -122,15 +125,19 @@ impl PyEpisode {
         observe: Py<PyAny>,
         dispatch: Py<PyAny>,
         hold_part: Option<Py<PyAny>>,
+        parts: Option<Vec<String>>,
     ) -> PyResult<crate::playback::PyExecutionHandle> {
         crate::playback::start(
             &self.session,
             &self.id,
             chunk_json,
             policy,
-            observe,
-            dispatch,
-            hold_part,
+            crate::playback::PyIo {
+                observe,
+                dispatch,
+                hold_part,
+            },
+            parts,
         )
     }
 
@@ -170,7 +177,7 @@ impl PyEpisode {
     /// The record captures the values at call time; mutating the array
     /// afterwards (before your `send`) makes the dispatched action diverge
     /// from the recorded one.
-    #[pyo3(signature = (action, obs=None, gripper=None, *, part=None))]
+    #[pyo3(signature = (action, obs=None, gripper=None, *, part=None, parts=None))]
     fn gate(
         &self,
         py: Python<'_>,
@@ -178,11 +185,22 @@ impl PyEpisode {
         obs: Option<&Bound<'_, PyAny>>,
         gripper: Option<f64>,
         part: Option<&str>,
+        parts: Option<Vec<String>>,
     ) -> PyResult<Py<PyAny>> {
         let action_row = extract_f64s(action)?;
         let obs_row = obs.map(extract_f64s).transpose()?;
         let observation = obs_row.as_ref().map(crate::convert::F64s::as_slice);
-        let output = if let Some(part) = part {
+        let output = if let Some(parts) = parts.as_ref() {
+            if part.is_some() || gripper.is_some() {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "a selected group has no single part or gripper sidechannel",
+                ));
+            }
+            self.inner
+                .lock()
+                .gate_parts(parts, action_row.as_slice(), observation)
+                .map_err(runtime_err)?
+        } else if let Some(part) = part {
             if gripper.is_some() {
                 return Err(pyo3::exceptions::PyValueError::new_err(
                     "named caller actions use declared joint rows, not the gripper sidechannel",
@@ -208,6 +226,7 @@ impl PyEpisode {
                     gripper: None,
                     velocity_feedforward: None,
                     part: part.map(str::to_owned),
+                    parts: parts.clone(),
                 },
             ),
             GateOutput::Substitute { action, provenance } => (
@@ -222,6 +241,7 @@ impl PyEpisode {
                         .as_ref()
                         .map(|values| values.to_vec()),
                     part: action.part.as_ref().map(ToString::to_string),
+                    parts: None,
                 },
             ),
             GateOutput::Blend {
@@ -240,6 +260,7 @@ impl PyEpisode {
                         .as_ref()
                         .map(|values| values.to_vec()),
                     part: action.part.as_ref().map(ToString::to_string),
+                    parts: None,
                 },
             ),
             GateOutput::Noop { provenance } => (
@@ -251,6 +272,7 @@ impl PyEpisode {
                     gripper: None,
                     velocity_feedforward: None,
                     part: None,
+                    parts: None,
                 },
             ),
             GateOutput::Hold => (
@@ -262,6 +284,7 @@ impl PyEpisode {
                     gripper: None,
                     velocity_feedforward: None,
                     part: None,
+                    parts: None,
                 },
             ),
         };

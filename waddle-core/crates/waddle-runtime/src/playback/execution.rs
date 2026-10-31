@@ -333,14 +333,14 @@ impl ExecutionHandle {
 
 #[derive(Debug, Default)]
 pub(crate) struct ExecutionSlot {
-    current: Mutex<HashMap<Option<String>, Arc<Control>>>,
+    current: Mutex<HashMap<Option<Vec<String>>, Arc<Control>>>,
 }
 
 impl ExecutionSlot {
     pub(crate) fn register(
         &self,
         episode_id: EpisodeId,
-        scope: Option<String>,
+        scope: Option<Vec<String>>,
         references: usize,
         unavailable: impl FnOnce() -> bool,
     ) -> Result<ExecutionHandle, PlaybackError> {
@@ -418,7 +418,8 @@ impl ExecutionSlot {
     pub(crate) fn active(&self, episode: &EpisodeId, scope: Option<&str>) -> bool {
         self.current.lock().iter().any(|(part, control)| {
             let state = control.state.lock();
-            overlaps(part.as_deref(), scope)
+            part.as_ref()
+                .is_none_or(|parts| scope.is_none_or(|name| parts.iter().any(|p| p == name)))
                 && &state.snapshot.episode_id == episode
                 && state.snapshot.result.is_none()
         })
@@ -442,8 +443,11 @@ impl ExecutionSlot {
     }
 }
 
-fn overlaps(left: Option<&str>, right: Option<&str>) -> bool {
-    left.is_none() || right.is_none() || left == right
+fn overlaps(left: Option<&[String]>, right: Option<&[String]>) -> bool {
+    match (left, right) {
+        (Some(left), Some(right)) => left.iter().any(|part| right.contains(part)),
+        _ => true,
+    }
 }
 
 /// Owned by `waddle-verbs`, not a second device/authority thread.
@@ -479,7 +483,7 @@ impl ExecutionTask {
             hold_part: references
                 .policy
                 .part_hold
-                .then(|| references.scope().unwrap().to_owned()),
+                .then(|| references.chunk.steps[0].part.as_ref().unwrap().to_string()),
             references: Some(references),
             player: None,
             io,
@@ -771,6 +775,55 @@ impl Drop for ExecutionTask {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn coordinated_subset_reserves_exact_members_until_terminal() {
+        let slot = ExecutionSlot::default();
+        let episode = EpisodeId::new("group");
+        let selected = Some(vec!["left".into(), "right".into()]);
+        let group = slot
+            .register(episode.clone(), selected.clone(), 2, || false)
+            .unwrap();
+        for part in ["left", "right"] {
+            assert!(slot.active(&episode, Some(part)));
+            assert!(matches!(
+                slot.register(episode.clone(), Some(vec![part.into()]), 2, || false),
+                Err(PlaybackError::Busy)
+            ));
+        }
+        assert!(!slot.active(&episode, Some("unused")));
+        let third = slot
+            .register(episode.clone(), Some(vec!["unused".into()]), 2, || false)
+            .unwrap();
+        assert!(matches!(
+            slot.register(episode.clone(), None, 2, || false),
+            Err(PlaybackError::Busy)
+        ));
+        assert!(matches!(
+            slot.register(
+                episode.clone(),
+                Some(vec!["right".into(), "unused".into()]),
+                2,
+                || false
+            ),
+            Err(PlaybackError::Busy)
+        ));
+        group.cancel("selected group stopped");
+        assert!(matches!(
+            slot.register(episode.clone(), selected.clone(), 2, || false),
+            Err(PlaybackError::Busy)
+        ));
+        assert!(
+            group
+                .control
+                .finish(Err(ExecutionFailure::Playback(PlaybackError::Cancelled(
+                    "selected group stopped".into()
+                ))))
+        );
+        assert!(!slot.active(&episode, Some("left")));
+        assert!(third.snapshot().result.is_none());
+        assert!(slot.register(episode, selected, 2, || false).is_ok());
+    }
 
     #[test]
     fn cancellation_winning_completion_waits_for_worker_cleanup() {

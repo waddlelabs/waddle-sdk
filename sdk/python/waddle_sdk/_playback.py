@@ -107,10 +107,13 @@ def start(
     group = isinstance(motion, CoordinatedJointMotion)
     parts = motion.parts if group else (motion.part,)
     arms = session._require().arms
-    if group and (len(parts) < 2 or parts != tuple(arms)):
+    subset = group and parts != tuple(arms)
+    if group and (
+        len(parts) < 2 or parts != tuple(name for name in arms if name in parts)
+    ):
         raise RuntimeFault(
             FaultCode.INVALID_REQUEST,
-            "coordinated parts must match the complete Site declaration order",
+            "coordinated parts must be distinct and follow Site declaration order",
         )
     support = session.support()
     rows = [
@@ -131,8 +134,12 @@ def start(
         raise RuntimeFault(
             FaultCode.UNSUPPORTED, "part does not support streamed playback"
         )
+    if subset and SupportFact.COORDINATED_SUBSET_PLAYBACK not in facts:
+        raise RuntimeFault(
+            FaultCode.UNSUPPORTED, "parts do not support coordinated subsets"
+        )
     if run._episode.playback_active and (
-        group or SupportFact.PARALLEL_JOINT_PLAYBACK not in facts
+        group and not subset or SupportFact.PARALLEL_JOINT_PLAYBACK not in facts
     ):
         raise RuntimeFault(FaultCode.BUSY, "finite playback is still active")
     if (
@@ -256,7 +263,9 @@ def start(
         command = reference.command
         if group:
             try:
-                targets = base.split_by_part(arms, command.positions)
+                targets = base.split_by_part(
+                    {name: arms[name] for name in parts}, command.positions
+                )
             except (TypeError, ValueError) as error:
                 raise RuntimeFault.from_exception(
                     error, code=FaultCode.INVALID_REQUEST
@@ -322,6 +331,7 @@ def start(
                     ),
                     measured["positions"],
                     part=reference["part"],
+                    **({"parts": parts} if subset else {}),
                 )
             if result.fault is not None or result.gate == "owner_refusal":
                 return _error(
@@ -354,6 +364,7 @@ def start(
             observe,
             dispatch,
             hold_part if motion.policy.part_hold else None,
+            **({"parts": parts} if subset else {}),
         )
     except core.PlaybackBusyError as error:
         raise RuntimeFault(FaultCode.BUSY, str(error)) from error

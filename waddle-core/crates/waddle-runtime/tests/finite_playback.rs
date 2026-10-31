@@ -199,11 +199,22 @@ mod session_execution {
 
     #[test]
     fn whole_joint_composite_keeps_declared_layout_and_slowest_cadence() {
+        composite_intake(false);
+    }
+
+    #[test]
+    fn selected_group_keeps_layout_cadence_and_member_reservations() {
+        composite_intake(true);
+    }
+
+    fn composite_intake(subset: bool) {
         let mut description = robot();
         let joint_space = description.action_space.take().unwrap();
         description.action_space = Some(pb::ActionSpace {
             space: Some(pb::action_space::Space::Composite(pb::Composite {
-                parts: [("left", 50.0), ("right", 20.0)]
+                parts: [("left", 50.0), ("right", 20.0), ("unused", 1.0)]
+                    .into_iter()
+                    .take(if subset { 3 } else { 2 })
                     .map(|(name, rate)| pb::composite::Part {
                         name: name.into(),
                         space: Some(pb::ActionSpace {
@@ -211,7 +222,7 @@ mod session_execution {
                             ..joint_space.clone()
                         }),
                     })
-                    .into(),
+                    .collect(),
             })),
             rate_hz: 50.0,
             ..Default::default()
@@ -259,10 +270,30 @@ mod session_execution {
             tracking_tolerance: vec![0.2; 4],
             sample_times_s: None,
         });
+        let selected = vec!["left".to_owned(), "right".to_owned()];
+        let start = |chunk: &pb::ActionChunk, policy: PlaybackPolicy| {
+            if subset {
+                session.start_playback_parts(ep.id(), &selected, chunk, policy, io.clone())
+            } else {
+                session.start_playback(ep.id(), chunk, policy, io.clone())
+            }
+        };
+        if subset {
+            for parts in [
+                vec!["left".to_owned()],
+                vec!["right".into(), "left".into()],
+                vec!["left".into(), "left".into()],
+                vec!["left".into(), "missing".into()],
+            ] {
+                assert!(
+                    session
+                        .start_playback_parts(ep.id(), &parts, &input, policy.clone(), io.clone())
+                        .is_err()
+                );
+            }
+        }
         assert_eq!(
-            session
-                .start_playback(ep.id(), &input, policy.clone(), io.clone())
-                .unwrap_err(),
+            start(&input, policy.clone()).unwrap_err(),
             PlaybackError::Invalid("playback exceeds the declared command cadence")
         );
         policy.paced_curve = None;
@@ -273,12 +304,15 @@ mod session_execution {
         });
         too_fast.horizon_ns = 1_000_000;
         assert_eq!(
-            session
-                .start_playback(ep.id(), &too_fast, policy.clone(), io.clone())
-                .unwrap_err(),
+            start(&too_fast, policy.clone()).unwrap_err(),
             PlaybackError::Invalid("playback exceeds the declared command cadence")
         );
-        let handle = session.start_playback(ep.id(), &input, policy, io).unwrap();
+        let handle = start(&input, policy).unwrap();
+        assert!(session.playback_active_on(ep.id(), Some("left")));
+        assert!(session.playback_active_on(ep.id(), Some("right")));
+        if subset {
+            assert!(!session.playback_active_on(ep.id(), Some("unused")));
+        }
         observed.recv_timeout(Duration::from_secs(5)).unwrap();
         handle.cancel("admission checked");
         release.send(()).unwrap();

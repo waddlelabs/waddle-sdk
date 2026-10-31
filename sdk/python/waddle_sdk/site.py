@@ -1516,6 +1516,7 @@ class SiteSession:
                     facts.add(SupportFact.JOINT_PLAYBACK_BOUNDS)
                     if coordinated:
                         facts.add(SupportFact.COORDINATED_JOINT_PLAYBACK)
+                        facts.add(SupportFact.COORDINATED_SUBSET_PLAYBACK)
                         facts.add(SupportFact.PARALLEL_JOINT_PLAYBACK)
                         facts.add(SupportFact.PART_HOLD_PLAYBACK)
                     facts.add(SupportFact.WATCHDOG_PLAYBACK)
@@ -2085,12 +2086,14 @@ class Run:
         self._require_idle_playback(
             (motion.part,)
             if isinstance(motion, FiniteJointMotion) and isinstance(motion.part, str)
+            else motion.parts
+            if isinstance(motion, CoordinatedJointMotion)
             else None
         )
         with self._session._dispatch_lock:
             return start(self, motion)
 
-    def _step(self, action, observation=None, *, part=None) -> SubmitResult:
+    def _step(self, action, observation=None, *, part=None, parts=None) -> SubmitResult:
         if self._episode is None:
             raise RuntimeFault(FaultCode.NOT_OPEN, "run has not started")
         if self._episode.done:
@@ -2122,7 +2125,12 @@ class Run:
         else:
             obs = observation
         try:
-            decided = self._episode.gate(gate_action, obs, part=part)
+            decided = self._episode.gate(
+                gate_action,
+                obs,
+                part=part,
+                **({"parts": parts} if parts is not None else {}),
+            )
         except RuntimeFault:
             raise
         except (TypeError, ValueError) as exc:
@@ -2162,6 +2170,15 @@ class Run:
                 )
         if dispatched:
             try:
+                if parts is not None and kind == "pass":
+                    selected = {
+                        name: self._session._require().arms[name] for name in parts
+                    }
+                    decided = base.split_by_part(selected, decided)
+                    if velocity_feedforward is not None:
+                        velocity_feedforward = base.split_by_part(
+                            selected, velocity_feedforward
+                        )
                 if caller_part is not None and kind == "pass":
                     decided = {caller_part: decided}
                     if velocity_feedforward is not None:
@@ -2206,7 +2223,7 @@ class Run:
                         velocity_feedforward_rad_s=velocity_feedforward,
                         gripper_force_n=force_rows,
                         on_refusal=refusal_faults.append,
-                        check_neighbors=part is not None,
+                        check_neighbors=part is not None or parts is not None,
                     )
             except RuntimeFault:
                 raise
@@ -2234,6 +2251,7 @@ class Run:
                 "dispatched": dispatched,
                 "gate": kind,
                 "part": part,
+                **({"parts": parts} if parts is not None and kind == "pass" else {}),
                 **({"gripper_force_n": force_n} if force_n is not None else {}),
                 **({"fault": fault.as_dict()} if fault is not None else {}),
             },

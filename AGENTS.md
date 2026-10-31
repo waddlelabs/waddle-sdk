@@ -5,6 +5,14 @@ acceptance separately in a configured simulator environment.
 
 # AGENTS.md — waddle-sdk monorepo
 
+Binding API 27 prepares coordinated subsets under a separate support fact. Keep
+selected parts in declaration order, validate the complete selected action space,
+and reserve every member on the existing native worker until terminal cleanup.
+All selected gates and owner envelopes precede writes; unrelated owners receive no
+ordinary commands. Shared bounds/neighbor checks and takeover semantics remain.
+Group cancellation/failure retains site-wide Hold; per-part group cleanup is not
+supported. Validation is pending; do not infer deployment or physical acceptance.
+
 Binding API 26 prepares `PlaybackPolicy.timeout_ns=None` under separately
 declared `execution.streamed_joint_playback`. Require a watchdog and revisable
 reference-only polynomial curves, without pacing credit. Every curve remains
