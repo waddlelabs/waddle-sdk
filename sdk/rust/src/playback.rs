@@ -573,6 +573,7 @@ fn snapshot(py: Python<'_>, value: ExecutionSnapshot) -> PyResult<Py<PyDict>> {
         .settling
         .map(|e| -> PyResult<Py<PyDict>> {
             let result = PyDict::new(py);
+            result.set_item("observed_ns", e.observed_ns)?;
             result.set_item("samples", e.samples)?;
             result.set_item("span_ns", e.span_ns)?;
             result.set_item("joint_spans", e.joint_spans)?;

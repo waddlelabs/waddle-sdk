@@ -11,6 +11,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Add sample-bound encoder-window diagnostics for reference-only playback
+  (binding API 29). Include the final fresh sample and its drift/gap resets,
+  while preserving reference completion semantics and existing local execution.
+
 - Confirm failed Site startup cleanup before clearing the device relay's session,
   so ordinary disconnect does not hang on a session already closed by entry.
   Uncertain teardown retains ownership and the original error chain.

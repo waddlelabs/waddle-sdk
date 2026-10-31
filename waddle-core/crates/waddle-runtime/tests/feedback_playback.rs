@@ -189,6 +189,36 @@ fn encoder_window_accepts_stable_positions_with_noisy_velocity_and_retains_evide
 }
 
 #[test]
+fn reference_only_terminal_window_includes_final_drift_and_sample_gap() {
+    for (last_at, last_q, expected_samples) in [(101, 0.003, 4), (161, 0.0, 1)] {
+        let (chunk, mut policy) = inputs(&[0.0, 0.0]);
+        policy.reference_only = true;
+        policy.allow_settled = true;
+        let window = window_policy(&mut policy);
+        window.during_motion = true;
+        window.max_gap_ns = Some(40);
+        let mut playback = start(chunk, policy);
+        dispatch(&mut playback, &measured(0, 0.0));
+        for at in [25, 50, 75] {
+            assert_eq!(
+                playback.poll(at, &measured(at, 0.0)).unwrap(),
+                PlaybackPoll::WaitUntil(100)
+            );
+        }
+        dispatch(&mut playback, &measured(100, 0.0));
+        assert!(playback.settling_evidence().unwrap().samples >= 3);
+        assert_eq!(
+            playback.poll(last_at, &measured(last_at, last_q)).unwrap(),
+            PlaybackPoll::Complete(Completion::ReferencesDispatched)
+        );
+        let evidence = playback.settling_evidence().unwrap();
+        assert_eq!(evidence.observed_ns, last_at);
+        assert_eq!(evidence.samples, expected_samples);
+        assert_eq!(evidence.joint_spans, vec![last_q]);
+    }
+}
+
+#[test]
 fn a_short_window_still_retains_three_samples_on_a_slower_feedback_cadence() {
     let (chunk, mut policy) = inputs(&[0.0]);
     window_policy(&mut policy);

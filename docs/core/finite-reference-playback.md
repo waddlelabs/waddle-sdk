@@ -442,9 +442,19 @@ interval must remain in tolerance. Raw velocity is diagnostic and still must be
 finite. The selected deadline policy remains binding.
 
 Snapshots expose `settling` with sample count, span, per-row position spans, raw
-velocity peak and consecutive qualifying count. Its time source is the SDK
+velocity peak and consecutive qualifying count. Binding API 29 adds `observed_ns`,
+identifying the SDK sample used to update the window, including empty resets.
+Feedback and its window diagnostics publish together. Its time source is the SDK
 observation timestamp, not a claim about motor acquisition timing. Contact/force
 classification, geometry/world validation and dynamic updates remain separate.
+
+`execution.reference_settling` permits these optional diagnostics during
+reference-only playback, including its final fresh sample. Select the ordinary
+feedback position-window policy and its explicit drift/gap bounds. `during_motion`
+and `allow_settled` retain their normal eligibility meanings. The result remains
+`references_dispatched`; a consumer must separately establish a fresh window,
+the required sample count/span, drift bounds and its actual goal. Window diagnostics
+never turn a reference receipt into an arrival or physical-stop guarantee.
 
 ## Optional gripper execution
 

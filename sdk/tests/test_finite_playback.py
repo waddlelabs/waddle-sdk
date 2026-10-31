@@ -19,7 +19,9 @@ from waddle_sdk.runtime import (
     GripperForce,
     JointPositionCommand,
     JointReference,
+    PlaybackFeedbackPolicy,
     PlaybackPolicy,
+    PositionWindow,
     RuntimeFault,
     SupportFact,
 )
@@ -122,6 +124,66 @@ def test_reference_receipt_reports_native_ack_time_without_claiming_arrival(
                         f
                         for f in row.facts
                         if f != SupportFact.REFERENCE_JOINT_PLAYBACK
+                    ),
+                )
+                for row in support.rows
+            ),
+        ),
+    )
+    with pytest.raises(RuntimeFault) as caught:
+        run.start_playback(request)
+    assert caught.value.code == FaultCode.UNSUPPORTED
+
+
+def test_reference_window_is_bound_to_final_feedback_without_claiming_arrival(
+    opened, monkeypatch
+):
+    session, run = opened
+    driver = session._managed.arms["arm"].driver
+    writes = []
+
+    def write(target):
+        writes.append(tuple(target))
+
+    def read():
+        return np.array([0.004 if len(writes) >= 3 else 0.0, 0.0]), np.zeros(2)
+
+    monkeypatch.setattr(driver, "write", write)
+    monkeypatch.setattr(driver, "read", read)
+    request = motion((0, 0), (0, 0), (0, 0))
+    request = replace(
+        request,
+        policy=replace(
+            request.policy,
+            reference_only=True,
+            allow_settled=True,
+            feedback=PlaybackFeedbackPolicy(
+                position_window=PositionWindow(
+                    (0.001, 0.001), max_gap_ns=200_000_000, during_motion=True
+                )
+            ),
+        ),
+    )
+    result = run.start_playback(request).wait()
+    assert result["status"] == "references_dispatched", result
+    evidence = result["settling"]
+    assert evidence["observed_ns"] == result["feedback"]["observed_ns"]
+    assert evidence["samples"] >= 3
+    assert evidence["joint_spans"] == pytest.approx([0.004, 0.0])
+    assert result["cleanup"] is None
+    support = session.support()
+    monkeypatch.setattr(
+        session,
+        "support",
+        lambda: replace(
+            support,
+            rows=tuple(
+                replace(
+                    row,
+                    facts=tuple(
+                        fact
+                        for fact in row.facts
+                        if fact != SupportFact.REFERENCE_SETTLING
                     ),
                 )
                 for row in support.rows
