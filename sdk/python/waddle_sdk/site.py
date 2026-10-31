@@ -1512,6 +1512,7 @@ class SiteSession:
                 facts.add(SupportFact.JOINT_POSITION_ACTION)
                 facts.update((SupportFact.PART_ACTION, SupportFact.PART_OBSERVATION))
                 if {SupportFact.SEND_GRANT, SupportFact.HOLD_GRANT} <= grant_facts:
+                    facts.add(SupportFact.COMPLETED_STOP)
                     facts.add(SupportFact.FINITE_JOINT_PLAYBACK)
                     facts.add(SupportFact.JOINT_PLAYBACK_BOUNDS)
                     if coordinated:
@@ -1795,6 +1796,22 @@ class SiteSession:
         if self._active is None:
             raise RuntimeFault(FaultCode.NOT_OPEN, "no run is active")
         return self._active.step(action, observation)
+
+    def stop(self, reason: str, *, estop: bool = False) -> Mapping[str, JSONValue]:
+        """Wait for a priority Hold/e-stop callback on the local control worker.
+
+        The receipt reports callback completion in session time, not measured
+        stationarity. Existing ``hold``/``estop`` remain queue-only requests.
+        """
+        managed = self._require()
+        if not isinstance(reason, str) or not reason or not isinstance(estop, bool):
+            raise ValueError("stop requires a non-empty reason and a boolean estop")
+        try:
+            receipt = managed.core.completed_stop(estop)
+        except Exception as exc:
+            raise _operation_fault("complete stop", exc) from exc
+        self._event("control.stop", {"reason": reason, **receipt})
+        return receipt
 
     def hold(self, reason: str) -> None:
         managed = self._require()

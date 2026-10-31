@@ -5,6 +5,13 @@ acceptance separately in a configured simulator environment.
 
 # AGENTS.md — waddle-sdk monorepo
 
+Binding API 28 adds optional `control.completed_stop` and `SiteSession.stop`.
+The existing priority worker returns a fresh callback receipt even after finite
+playback terminates. Requests arriving during a callback wait for the next callback;
+retain failures and keep admission fenced through completion. Queue-only Hold/e-stop
+and immutable terminal playback receipts remain unchanged. Callback completion is
+not physical stationarity. See the finite-reference-playback guide.
+
 Binding API 27 prepares coordinated subsets under a separate support fact. Keep
 selected parts in declaration order, validate the complete selected action space,
 and reserve every member on the existing native worker until terminal cleanup.

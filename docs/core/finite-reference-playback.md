@@ -570,6 +570,17 @@ the original callback error text, `completed_ns` on the session clock, and
 callback returns. An uncertain write stays uncertain even when the stop succeeds.
 Missing cleanup is not confirmation: successful motion, a superseding stream,
 an ended scope or cancellation before execution can have no stop receipt.
+Binding API 28 adds the optional `control.completed_stop` support fact and
+`CompletedStopPort.stop(reason, estop=False)`, implemented by `SiteSession.stop`.
+It waits for a fresh registered Hold/e-stop callback on the existing serialized
+worker and returns `request`, `outcome`, `error`, `completed_ns` and
+`measured_stationary: false`. It also works after a buffer is terminal; the old
+buffer's result and cleanup remain immutable. A request made during an existing
+callback waits for the next callback. A callback failure returns `unknown` with
+the original error. Transport loss or a caller timeout does not establish cleanup;
+retain ownership until a completed receipt or independently verified owner closure.
+The receipt proves callback completion, not measured physical stationarity.
+
 `Session.hold` and `Session.estop` still acknowledge only that a request was queued;
 posting another request cannot turn missing/failed cleanup into confirmed cleanup.
 

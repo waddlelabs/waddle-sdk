@@ -1921,6 +1921,19 @@ impl Session {
         Ok(())
     }
 
+    /// Wait for the existing priority Hold/e-stop callback and retain its result.
+    /// This is callback completion, not a measured physical stopping guarantee.
+    pub fn completed_stop(&self, estop: bool) -> Result<crate::verbs::VerbOutcome, RuntimeError> {
+        if self.inner.mirror.read().shutdown {
+            return Err(RuntimeError::ShuttingDown);
+        }
+        self.inner
+            ._verbs
+            .request_completed_stop(estop)
+            .recv()
+            .map_err(|_| RuntimeError::ShuttingDown)
+    }
+
     /// Exclusively hand an engaged remote claim back to the customer loop.
     ///
     /// This is a core-owned FSM operation, not a Python authority shortcut:

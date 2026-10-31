@@ -1303,3 +1303,75 @@ fn watchdog_expiry_preserves_selected_scope_and_sibling_cleanup_policy() {
         }
     }
 }
+
+#[test]
+fn completed_stop_after_terminal_playback_preserves_the_motion_result() {
+    for estop in [false, true] {
+        let h = Harness::new();
+        let handle = h.start().unwrap();
+        let original = finished(&handle).result;
+        let receipt = h
+            .dispatch
+            .request_completed_stop(estop)
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        assert_eq!(receipt.verb, if estop { Verb::Estop } else { Verb::Hold });
+        assert_eq!(receipt.result, Ok(()));
+        assert_eq!(handle.snapshot().result, original);
+        assert!(handle.snapshot().cleanup.is_none());
+    }
+}
+
+#[test]
+fn completed_stop_keeps_original_callback_failure() {
+    let h = Harness::new();
+    h.hold_error.store(true, Ordering::SeqCst);
+    let receipt = h
+        .dispatch
+        .request_completed_stop(false)
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap();
+    assert_eq!(
+        receipt.result,
+        Err(VerbError::Failed("original Hold failure".into()))
+    );
+}
+
+#[test]
+fn new_stop_request_cannot_reuse_an_inflight_callback() {
+    let (calls_tx, calls_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let release_rx = Mutex::new(release_rx);
+    let hold = Arc::new(move || {
+        calls_tx.send(()).unwrap();
+        release_rx
+            .lock()
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        Ok(())
+    });
+    let (outcomes, _) = std::sync::mpsc::channel();
+    let dispatch = VerbDispatch::spawn(
+        ControlRegistry {
+            hold: Some(hold),
+            ..Default::default()
+        },
+        TestClock::default(),
+        outcomes,
+    );
+    dispatch.request_priority_hold();
+    calls_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    let receipt = dispatch.request_completed_stop(false);
+    release_tx.send(()).unwrap();
+    calls_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    let premature = receipt.try_recv();
+    release_tx.send(()).unwrap();
+    assert!(matches!(
+        premature,
+        Err(std::sync::mpsc::TryRecvError::Empty)
+    ));
+    assert_eq!(
+        receipt.recv_timeout(Duration::from_secs(5)).unwrap().result,
+        Ok(())
+    );
+}
