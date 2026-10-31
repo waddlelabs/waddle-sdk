@@ -407,7 +407,7 @@ fn native_worker_advances_complete_buffer_without_planner_round_trips() {
         assert!(*at - start <= *offset + 50_000_000);
     }
     assert!(result.feedback.unwrap().observed_ns > writes.last().unwrap().0);
-    assert!(!h.dispatch.playback_active(&EpisodeId::new("episode")));
+    assert!(!h.dispatch.playback_active(&EpisodeId::new("episode"), None));
     assert!(h.outcomes.try_recv().is_err());
 }
 
