@@ -52,6 +52,7 @@ nav:
       - Site lifecycle and manifest: python/site.md
       - Physics simulation: python/simulation.md
       - Ownership and media: python/ownership-and-media.md
+      - Device relay: python/device-relay.md
       - API reference: python/reference.md
   - Port custom hardware:
       - Porting contract: hardware-backends.md

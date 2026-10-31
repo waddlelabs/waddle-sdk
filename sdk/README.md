@@ -5,6 +5,12 @@ camera lifecycle, the owner envelope, paired timestamps, and raw recordings.
 Applications consume the structural `waddle_sdk.runtime.SdkRuntimePort`; the SDK
 never imports or discovers application implementations.
 
+The optional `relay` extra supplies a device relay over a caller-authenticated
+socket, plus bounded SDK value encoding. It keeps Site/Run ownership and native
+playback local without providing a listener or login. See the
+[device relay contract](../docs/python/device-relay.md) for integration,
+confined file operations and current platform limits.
+
 ## Site lifecycle
 
 ```python

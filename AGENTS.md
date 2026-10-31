@@ -5,6 +5,16 @@ acceptance separately in a configured simulator environment.
 
 # AGENTS.md — waddle-sdk monorepo
 
+The optional `relay` extra now supplies the generic device relay, bounded wire
+codec and publisher-field validation in `sdk/python/waddle_sdk_relay`. The caller
+authenticates/authorizes its socket; no listener, login, planner or second native
+owner is added. Shared confined files live in `waddle_sdk.workspace.files`.
+Keep default imports independent of msgpack/POSIX-only modules, exclude hidden
+components from bridge transfer, and retain reserved stop calls, native gates,
+original faults and ownership after unconfirmed drain. Atomic absent moves use
+Linux renameat2; do not claim Windows/non-Linux qualification. See
+docs/python/device-relay.md and tests/test_{device_bridge,workspace_files}.py.
+
 Binding API 16 adds optional `PlaybackPolicy.reference_only`, gated by
 `execution.reference_joint_playback`. It ends with `references_dispatched` only
 after every reference is acknowledged and fresh post-endpoint feedback passes

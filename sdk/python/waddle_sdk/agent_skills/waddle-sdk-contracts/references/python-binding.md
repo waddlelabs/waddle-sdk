@@ -1,5 +1,13 @@
 # Python binding contract
 
+The optional `waddle_sdk_relay.device.Device` relays public SDK operations over
+an application-authenticated socket. It owns no listener, login or planner and
+preserves the existing Site/Run/native gate. Keep reserved Hold/e-stop capacity,
+run-bound playback receipts, exact camera evidence and uncertain-drain ownership.
+`waddle_sdk.workspace.files` owns the shared POSIX confined file implementation;
+relay transfer excludes hidden components and recordings. See
+`docs/python/device-relay.md` for platform limits and the application boundary.
+
 `waddle_sdk.media.PreviewPublisher` consumes copied RGB8 bytes in a separately
 owned presentation process. It requires the matching optional media core, explicit
 camera grids and bounded demand-driven RGB-only settings. It opens no site, device,
