@@ -12,9 +12,9 @@ finite and ends at zero velocity/acceleration. The existing native worker keeps
 the resting endpoint supervised and accepts a revision-checked continuation at
 that endpoint; finite integer timeouts retain their prior deadlines/completion.
 No new clock, writer, planner or unbounded curve/history is added. The full
-243-case native runtime suite and subsequent 24-case curve boundary suite pass;
-public/transport validation is pending. This does not establish application
-integration or physical timing.
+243-case native runtime suite and subsequent 24-case curve boundary suite pass.
+Public/transport tests and full CI remain promotion gates; software evidence
+does not establish application integration or physical timing.
 
 Binding API 25 adds optional `PlaybackWatchdog(observed_ns, timeout_ns)` under
 `execution.watchdog_playback`. The existing serialized native worker checks

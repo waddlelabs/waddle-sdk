@@ -74,7 +74,9 @@ def test_native_stream_rests_resumes_and_cancels_with_completed_hold(opened):
     finally:
         handle.cancel("released")
         stopped = handle.wait()
-    assert stopped["status"] == "cancelled"
+    assert stopped["status"] == "failed"
+    assert stopped["failure"]["code"] == "cancelled"
+    assert stopped["failure"]["outcome_unknown"] is False
     assert stopped["cleanup"]["error"] is None
 
 
