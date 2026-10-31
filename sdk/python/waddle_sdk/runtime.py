@@ -71,6 +71,7 @@ class SupportFact(str, enum.Enum):
     REFERENCE_JOINT_PLAYBACK = "execution.reference_joint_playback"
     CHECKPOINTED_JOINT_PLAYBACK = "execution.checkpointed_joint_playback"
     REVISABLE_JOINT_PLAYBACK = "execution.revisable_joint_playback"
+    PLAYBACK_FEEDBACK_REFERENCE = "execution.playback_feedback_reference"
     GRIPPER_PLAYBACK = "execution.gripper_playback"
     VELOCITY_FEEDFORWARD = "actuation.velocity_feedforward"
     FORWARD_KINEMATICS = "kinematics.fk"

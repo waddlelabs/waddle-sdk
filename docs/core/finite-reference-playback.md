@@ -1,5 +1,15 @@
 # Finite reference playback
 
+Binding API 19 adds `feedback_reference`, advertised by
+`execution.playback_feedback_reference`. Each snapshot pairs its `feedback` with
+the last acknowledged reference before that observation was acquired. It has the
+same fields as `last_reference`, but later writes may advance `last_reference`
+without changing this pair. `feedback_reference` is `None` before the first
+acknowledgement. Its offset is global curve phase for paced execution; its
+positions are commanded values, not measured state. This avoids interpreting
+delayed status receipt or a newer command as the reference for an older sample.
+SDK observation time still does not establish motor acquisition time.
+
 Binding API 18 adds opt-in future curve suffixes, described below. Existing
 policies remain immutable by default and retain their previous behavior.
 

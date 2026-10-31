@@ -441,6 +441,14 @@ fn snapshot(py: Python<'_>, value: ExecutionSnapshot) -> PyResult<Py<PyDict>> {
         .collect::<PyResult<Vec<_>>>()?;
     out.set_item("checkpoints", checkpoints)?;
     out.set_item(
+        "feedback_reference",
+        value
+            .feedback_reference
+            .as_ref()
+            .map(|r| reference(py, r))
+            .transpose()?,
+    )?;
+    out.set_item(
         "last_reference",
         value
             .last_reference

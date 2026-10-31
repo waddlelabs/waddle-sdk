@@ -11,6 +11,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Pair each native playback feedback sample with its preceding acknowledged
+  reference (binding API 19, `execution.playback_feedback_reference`). Later
+  dispatch and delayed status replies retain that causal pair; no extra writer,
+  command, authority or timing assumption is introduced.
+
 - Add opt-in revision-checked future curve suffixes on the existing native worker
   (binding API 18), with nonblocking update admission and retained receipts through
   the public handle and relay. Preserve handoff position/velocity/acceleration,

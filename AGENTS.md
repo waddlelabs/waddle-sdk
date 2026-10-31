@@ -5,6 +5,13 @@ acceptance separately in a configured simulator environment.
 
 # AGENTS.md — waddle-sdk monorepo
 
+Binding API 19 adds `feedback_reference` to native playback snapshots, advertised
+by `execution.playback_feedback_reference`. It is the last acknowledged command
+before acquiring that exact feedback, not a later command or remote receipt.
+Before the first command it is absent. Keep feedback and reference paired under
+the existing worker lock; later dispatch must not relabel an older observation.
+This is causal command evidence, not proof of motor acquisition time or arrival.
+
 Binding API 18 adds opt-in revisable reference-only curves and a separate
 `execution.revisable_joint_playback` fact. Queue one future suffix on the existing
 worker, preserving PVA continuity, active revision, global reference phase,

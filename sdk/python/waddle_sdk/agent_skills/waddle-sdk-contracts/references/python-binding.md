@@ -72,6 +72,12 @@ cadence without counting unrelated lock wait as driver execution.
 
 ## Finite joint playback
 
+Binding API 19 adds `feedback_reference` and
+`execution.playback_feedback_reference`. This pairs each snapshot's feedback with
+the preceding acknowledged command; a later `last_reference` cannot relabel that
+observation. It is absent before the first acknowledgement. The offset is global
+phase for paced playback, not elapsed wall time or proof of physical arrival.
+
 Binding API 18 adds `PlaybackCurveUpdate` and the optional
 `RevisablePlaybackHandlePort` under `execution.revisable_joint_playback`. Opt-in
 reference-only curves accept one revision-checked future suffix while local
