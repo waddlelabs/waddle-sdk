@@ -96,7 +96,7 @@ impl From<&VerbOutcome> for PlaybackCleanup {
             result: outcome
                 .result
                 .as_ref()
-                .map(|()| ())
+                .copied()
                 .map_err(|error| PlaybackIoError {
                     detail: error.to_string(),
                     evidence: String::new(),
