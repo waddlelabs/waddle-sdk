@@ -193,6 +193,7 @@ impl Harness {
             references(),
             self.io.clone(),
             10_000_000,
+            0,
         )
     }
 
@@ -320,6 +321,31 @@ fn feedback_keeps_its_preceding_reference_when_another_dispatch_completes() {
 }
 
 #[test]
+fn delayed_fixed_group_dispatch_cannot_catch_up_faster_than_its_cadence() {
+    let h = Harness::new();
+    let (blocked, entered, release) = pause();
+    *h.io.dispatch_pause.lock() = Some(blocked);
+    let handle = h
+        .dispatch
+        .start_playback(
+            h.mirror.clone(),
+            EpisodeId::new("episode"),
+            references(),
+            h.io.clone(),
+            10_000_000,
+            40_000_000,
+        )
+        .unwrap();
+    entered.recv_timeout(Duration::from_secs(5)).unwrap();
+    h.io.clock.0.advance(30_000_000);
+    release.send(()).unwrap();
+    assert_eq!(finished(&handle).result, Some(Ok(Completion::Arrived)));
+    let writes = h.io.writes.lock();
+    assert_eq!(writes.len(), 3);
+    assert!(writes.windows(2).all(|w| w[1].0 - w[0].0 >= 40_000_000));
+}
+
+#[test]
 fn slow_declared_feedback_rate_cannot_postpone_the_buffer_deadline() {
     let h = Harness::new();
     let handle = h
@@ -330,6 +356,7 @@ fn slow_declared_feedback_rate_cannot_postpone_the_buffer_deadline() {
             references(),
             h.io.clone(),
             1_000_000_000_000,
+            0,
         )
         .unwrap();
     assert_eq!(

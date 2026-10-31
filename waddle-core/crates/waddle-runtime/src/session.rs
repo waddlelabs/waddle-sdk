@@ -1781,6 +1781,19 @@ impl Session {
                 "playback exceeds the declared command cadence",
             ));
         }
+        let dispatch_period_ns =
+            if matches!(scope.spec, SpaceSpec::Composite { .. }) && policy.paced_curve.is_none() {
+                if flattened.chunk.steps.windows(2).any(|pair| {
+                    pair[1].offset_ns.saturating_sub(pair[0].offset_ns) < sample_period_ns
+                }) {
+                    return Err(PlaybackError::Invalid(
+                        "playback exceeds the declared command cadence",
+                    ));
+                }
+                sample_period_ns
+            } else {
+                0 // Named-part timing is unchanged; paced curves enforce their own spacing.
+            };
         let references = FiniteReferences::new(flattened.chunk, policy)?;
         if self.episode_done(id) {
             return Err(PlaybackError::Cancelled("episode ended".into()));
@@ -1791,6 +1804,7 @@ impl Session {
             references,
             io,
             sample_period_ns,
+            dispatch_period_ns,
         )
     }
 

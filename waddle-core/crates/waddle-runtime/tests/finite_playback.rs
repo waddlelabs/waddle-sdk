@@ -266,6 +266,18 @@ mod session_execution {
             PlaybackError::Invalid("playback exceeds the declared command cadence")
         );
         policy.paced_curve = None;
+        let mut too_fast = input.clone();
+        too_fast.actions.push(pb::Action {
+            t_offset_ns: 1_000_000,
+            ..too_fast.actions[0].clone()
+        });
+        too_fast.horizon_ns = 1_000_000;
+        assert_eq!(
+            session
+                .start_playback(ep.id(), &too_fast, policy.clone(), io.clone())
+                .unwrap_err(),
+            PlaybackError::Invalid("playback exceeds the declared command cadence")
+        );
         let handle = session.start_playback(ep.id(), &input, policy, io).unwrap();
         observed.recv_timeout(Duration::from_secs(5)).unwrap();
         handle.cancel("admission checked");

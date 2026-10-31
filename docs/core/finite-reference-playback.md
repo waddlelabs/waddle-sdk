@@ -10,6 +10,9 @@ The group occupies the existing single execution slot and uses one native clock,
 curve phase and acknowledgement. Local observations copy every participating part;
 completion evaluates the selected joint rows together. Native admission enforces
 the slowest participating command cadence (and the composite cadence). Each full
+fixed-reference interval must respect that cadence; a late acknowledged write
+cannot trigger faster catch-up writes. Original lateness/deadline limits still
+apply rather than extending the motion budget. Each full
 reference crosses the ordinary episode gate and all addressed owner envelopes
 before the first driver write. Those writes are sequential: if a later write
 raises, earlier side effects remain possible, the original failure stays uncertain
