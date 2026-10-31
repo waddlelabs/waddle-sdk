@@ -136,6 +136,9 @@ components from bridge transfer, and retain reserved stop calls, native gates,
 original faults and ownership after unconfirmed drain. Atomic absent moves use
 Linux renameat2; do not claim Windows/non-Linux qualification. See
 docs/python/device-relay.md and tests/test_{device_bridge,workspace_files}.py.
+Failed entry confirms cleanup through public `SiteSession.close()` before the
+relay clears its reference. A close refusal retains the session and ownership;
+do not infer closure from a `NOT_OPEN` fault. Opening stays once per connection.
 
 Binding API 17 adds bounded `PlaybackPolicy.checkpoint_offsets_ns` with the
 separate `execution.checkpointed_joint_playback` fact. The same local worker

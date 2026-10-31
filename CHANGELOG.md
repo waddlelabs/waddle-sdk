@@ -11,6 +11,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Confirm failed Site startup cleanup before clearing the device relay's session,
+  so ordinary disconnect does not hang on a session already closed by entry.
+  Uncertain teardown retains ownership and the original error chain.
+
 - Prepare coordinated playback for ordered subsets of declared joint parts
   (binding API 27), with native member reservations, ordinary gate/owner preflight,
   and unchanged global group cleanup. A separate support fact gates selection.
