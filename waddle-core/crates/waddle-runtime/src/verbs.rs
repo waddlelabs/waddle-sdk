@@ -330,16 +330,16 @@ fn dispatch_loop<C: Clock>(
         if estops != 0 {
             let outcome = execute(registry, clock, &VerbRequest::Estop, outcomes, stats);
             playback.record_cleanup(&outcome);
-            finish_cancelled(&mut active, &outcome);
             estop_flag.fetch_sub(estops, Ordering::SeqCst);
+            finish_cancelled(&mut active, &outcome);
             continue;
         }
         let holds = priority_hold_flag.load(Ordering::SeqCst);
         if holds != 0 {
             let outcome = execute(registry, clock, &VerbRequest::Hold, outcomes, stats);
             playback.record_cleanup(&outcome);
-            finish_cancelled(&mut active, &outcome);
             priority_hold_flag.fetch_sub(holds, Ordering::SeqCst);
+            finish_cancelled(&mut active, &outcome);
             continue;
         }
         let now = clock.stamp_now().mono_ns().0;
@@ -352,8 +352,8 @@ fn dispatch_loop<C: Clock>(
             Ok(Work::Verb(req)) => {
                 let outcome = execute(registry, clock, &req, outcomes, stats);
                 playback.record_cleanup(&outcome);
-                finish_cancelled(&mut active, &outcome);
                 pending_verbs.fetch_sub(1, Ordering::SeqCst);
+                finish_cancelled(&mut active, &outcome);
             }
             Ok(Work::Playback(task)) => {
                 if let Some(result) = task.cancelled_result()
@@ -405,11 +405,15 @@ fn dispatch_loop<C: Clock>(
                     };
                     let outcome = execute(registry, clock, &stop, outcomes, stats);
                     playback.record_cleanup(&outcome);
-                    finish_cancelled(&mut active, &outcome);
                     if estops != 0 {
                         estop_flag.fetch_sub(estops, Ordering::SeqCst);
                     }
                     pending_verbs.fetch_sub(1, Ordering::SeqCst);
+                    // Cleanup is complete. Clear its admission fence before
+                    // publishing terminal handles: dropping their I/O adapters
+                    // may wait for the caller's interpreter lock. Cancelled old
+                    // scopes remain occupied until their own result is stored.
+                    finish_cancelled(&mut active, &outcome);
                 } else if !task.finish(result) {
                     active.push_back(task);
                 }
