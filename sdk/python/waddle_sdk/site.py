@@ -2070,6 +2070,11 @@ class Run:
         """Admit finite references to the local native worker; never wait for motion."""
         from ._playback import start
 
+        self._require_idle_playback(
+            (motion.part,)
+            if isinstance(motion, FiniteJointMotion) and isinstance(motion.part, str)
+            else None
+        )
         with self._session._dispatch_lock:
             return start(self, motion)
 
