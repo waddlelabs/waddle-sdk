@@ -1511,6 +1511,7 @@ class SiteSession:
                     facts.add(SupportFact.FEEDBACK_JOINT_PLAYBACK)
                     facts.add(SupportFact.SAMPLED_JOINT_PLAYBACK)
                     facts.add(SupportFact.REFERENCE_JOINT_PLAYBACK)
+                    facts.add(SupportFact.CHECKPOINTED_JOINT_PLAYBACK)
                 joints = joint_position.get("joints", [])
                 if isinstance(joints, list) and joints:
                     if all(

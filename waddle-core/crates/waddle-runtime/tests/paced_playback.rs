@@ -51,6 +51,7 @@ fn inputs() -> (ActionChunk, PlaybackPolicy) {
             timeout_ns: 2_000_000_000,
             allow_settled: false,
             reference_only: false,
+            checkpoint_offsets_ns: vec![],
             paced_curve: Some(curve()),
             feedback: None,
             gripper: None,
@@ -157,6 +158,65 @@ fn tracking_failure_is_terminal_even_after_feedback_recovers() {
         Err(PlaybackError::Tracking)
     );
     assert_eq!(p.dispatched(), 1);
+}
+
+#[test]
+fn checkpoints_capture_fresh_feedback_after_acknowledged_phase_not_wall_time() {
+    let (chunk, mut policy) = inputs();
+    policy.checkpoint_offsets_ns = vec![100_000_000, 150_000_000, 1_000_000_000];
+    policy.paced_curve.as_mut().unwrap().position_error = vec![0.1];
+    policy.paced_curve.as_mut().unwrap().tracking_tolerance = vec![0.2];
+    let mut p = Playback::new(FiniteReferences::new(chunk, policy).unwrap(), 0);
+    dispatch(&mut p, 0, 0.0);
+    p.acknowledge(0, 0).unwrap();
+    // The wall clock has crossed every marker, but curve phase has not.
+    let first = dispatch(&mut p, 1_100_000_000, 0.0);
+    assert!(p.checkpoints().is_empty());
+    p.acknowledge(1, 1_100_000_000).unwrap();
+    let sample = measured(1_100_000_000, first.values[0]);
+    assert_eq!(
+        p.poll(1_100_000_001, &sample).unwrap(),
+        PlaybackPoll::Observe
+    );
+    assert!(p.checkpoints().is_empty());
+    // Preserve the measured miss, not the nominal polynomial value.
+    let observed = first.values[0] - 0.001;
+    p.poll(1_100_000_002, &measured(1_100_000_002, observed))
+        .unwrap();
+    let checkpoint = &p.checkpoints()[0];
+    assert_eq!(checkpoint.offset_ns, 100_000_000);
+    assert_eq!(checkpoint.acknowledged_offset_ns, 100_000_000);
+    assert_eq!(checkpoint.acknowledged_ns, 1_100_000_000);
+    assert_eq!(checkpoint.elapsed_ns, 1_100_000_002);
+    assert_eq!(checkpoint.feedback.positions[0], observed);
+    let second = dispatch(&mut p, 1_200_000_000, first.values[0]);
+    p.acknowledge(2, 1_200_000_000).unwrap();
+    p.poll(1_200_000_001, &measured(1_200_000_001, second.values[0]))
+        .unwrap();
+    assert_eq!(p.checkpoints().len(), 2);
+    assert_eq!(p.checkpoints()[1].offset_ns, 150_000_000);
+    assert_eq!(p.checkpoints()[1].acknowledged_offset_ns, 200_000_000);
+    p.cancel("stop before endpoint");
+    assert!(
+        p.poll(1_300_000_000, &measured(1_300_000_000, 1.0))
+            .is_err()
+    );
+    assert_eq!(p.checkpoints().len(), 2);
+}
+
+#[test]
+fn checkpoint_offsets_are_bounded_and_ordered() {
+    for offsets in [
+        vec![-1],
+        vec![1_000_000_001],
+        vec![2, 1],
+        vec![1, 1],
+        vec![0; 257],
+    ] {
+        let (chunk, mut policy) = inputs();
+        policy.checkpoint_offsets_ns = offsets;
+        assert!(FiniteReferences::new(chunk, policy).is_err());
+    }
 }
 
 #[test]

@@ -42,6 +42,7 @@ fn inputs() -> (ActionChunk, PlaybackPolicy) {
             timeout_ns: 2_000_000_000,
             allow_settled: false,
             reference_only: false,
+            checkpoint_offsets_ns: vec![],
             paced_curve: None,
             feedback: None,
             gripper: Some(GripperPolicy {

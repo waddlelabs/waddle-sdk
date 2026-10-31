@@ -48,6 +48,9 @@ pub struct PlaybackPolicy {
     /// Finish after all references are acknowledged and fresh feedback arrives.
     /// This reports dispatch completion, never measured arrival or stationarity.
     pub reference_only: bool,
+    /// Retain the first fresh post-acknowledgement feedback at these offsets.
+    /// These are evidence markers, not arrival conditions or authority changes.
+    pub checkpoint_offsets_ns: Vec<i64>,
     /// Optional exact polynomial evaluation with acknowledgement-paced progress.
     /// Omission retains fixed offsets and the original lateness guard.
     pub paced_curve: Option<PacedCurve>,
@@ -63,6 +66,17 @@ pub struct Feedback {
     pub positions: Vec<f64>,
     pub velocities: Vec<f64>,
     pub gripper_force: Option<MeasuredForce>,
+}
+
+/// Measured evidence after an acknowledged reference crosses a requested offset.
+/// Several markers can share one sample; none certifies intermediate arrival.
+#[derive(Clone, Debug)]
+pub struct CheckpointEvidence {
+    pub offset_ns: i64,
+    pub acknowledged_offset_ns: i64,
+    pub acknowledged_ns: i64,
+    pub elapsed_ns: i64,
+    pub feedback: Feedback,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -149,6 +163,21 @@ impl FiniteReferences {
         }
         if chunk.horizon_ns != previous {
             return Err(invalid("horizon must equal the final reference offset"));
+        }
+        if policy.checkpoint_offsets_ns.len() > 256
+            || policy
+                .checkpoint_offsets_ns
+                .iter()
+                .any(|t| *t < 0 || *t > previous)
+            || policy
+                .checkpoint_offsets_ns
+                .windows(2)
+                .any(|t| t[0] >= t[1])
+            || (policy.gripper.is_some() && !policy.checkpoint_offsets_ns.is_empty())
+        {
+            return Err(invalid(
+                "requires at most 256 ordered arm checkpoint offsets within the buffer",
+            ));
         }
         if chunk.steps.last().is_some_and(|step| {
             step.velocity_feedforward
@@ -308,6 +337,7 @@ pub struct Playback {
     dispatched_ns: Option<i64>,
     feedback: FeedbackState,
     gripper: GripperState,
+    checkpoints: Vec<CheckpointEvidence>,
 }
 
 impl Playback {
@@ -334,6 +364,7 @@ impl Playback {
             dispatched_ns: None,
             feedback,
             gripper: GripperState::default(),
+            checkpoints: Vec::new(),
         }
     }
 
@@ -362,6 +393,36 @@ impl Playback {
     #[must_use]
     pub fn gripper_evidence(&self) -> Option<GripperEvidence> {
         self.gripper.evidence.clone()
+    }
+
+    #[must_use]
+    pub fn checkpoints(&self) -> &[CheckpointEvidence] {
+        &self.checkpoints
+    }
+
+    fn record_checkpoints(&mut self, measured: &Feedback) {
+        let Some(acknowledged_ns) = self.acknowledged_ns else {
+            return;
+        };
+        if measured.observed_ns <= acknowledged_ns {
+            return;
+        }
+        let offset_ns = self.curve.as_ref().map_or_else(
+            || self.references.chunk.steps[self.next - 1].offset_ns,
+            |curve| (curve.progress.acknowledged_curve_time_s.unwrap_or(0.0) * 1e9).round() as i64,
+        );
+        for offset in &self.references.policy.checkpoint_offsets_ns[self.checkpoints.len()..] {
+            if *offset > offset_ns {
+                break;
+            }
+            self.checkpoints.push(CheckpointEvidence {
+                offset_ns: *offset,
+                acknowledged_offset_ns: offset_ns,
+                acknowledged_ns,
+                elapsed_ns: measured.observed_ns - self.started_ns,
+                feedback: measured.clone(),
+            });
+        }
     }
 
     pub(crate) fn force_n(&self) -> Option<f64> {
@@ -484,6 +545,9 @@ impl Playback {
             if let Err(error) = curve.check_tracking(measured, &self.references.policy.indices) {
                 return self.fail(error);
             }
+        }
+        if fresh {
+            self.record_checkpoints(measured);
         }
         let finished = self
             .curve

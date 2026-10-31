@@ -236,6 +236,7 @@ fn references() -> FiniteReferences {
             timeout_ns: 500_000_000,
             allow_settled: false,
             reference_only: false,
+            checkpoint_offsets_ns: vec![],
             paced_curve: None,
             feedback: None,
             gripper: None,

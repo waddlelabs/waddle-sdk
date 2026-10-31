@@ -72,6 +72,13 @@ cadence without counting unrelated lock wait as driver execution.
 
 ## Finite joint playback
 
+Binding API 17 optionally records bounded `PlaybackPolicy.checkpoint_offsets_ns`
+under `execution.checkpointed_joint_playback`. Retained snapshots bind fresh local
+feedback to acknowledged reference phase; markers do not imply arrival or motor
+acquisition timing. Delayed polling must use the retained samples, not final
+feedback as a substitute. See `docs/core/finite-reference-playback.md` for limits
+and clock semantics.
+
 `FinitePlaybackRunPort.start_playback(FiniteJointMotion)` admits one complete,
 bounded buffer for a named part when `execution.finite_joint_playback` is present.
 `JointReference` carries an exact position command and local offset;

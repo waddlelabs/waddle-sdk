@@ -9,8 +9,8 @@ use waddle_types::time::Clock;
 use waddle_types::{EpisodeId, Step};
 
 use super::{
-    Completion, CurveProgress, Feedback, FiniteReferences, GripperEvidence, Playback,
-    PlaybackError, PlaybackPoll, SettlingEvidence,
+    CheckpointEvidence, Completion, CurveProgress, Feedback, FiniteReferences, GripperEvidence,
+    Playback, PlaybackError, PlaybackPoll, SettlingEvidence,
 };
 use crate::mirror::Mirror;
 use crate::verbs::VerbOutcome;
@@ -74,6 +74,7 @@ pub struct ExecutionSnapshot {
     pub curve_progress: Option<CurveProgress>,
     pub settling: Option<SettlingEvidence>,
     pub gripper: Option<GripperEvidence>,
+    pub checkpoints: Vec<CheckpointEvidence>,
     pub last_reference: Option<Step>,
     /// Session-clock completion of the last acknowledged owner submission.
     /// This is neither a cloud receipt time nor a measured arrival timestamp.
@@ -179,6 +180,7 @@ impl ExecutionSlot {
                     curve_progress: None,
                     settling: None,
                     gripper: None,
+                    checkpoints: Vec::new(),
                     last_reference: None,
                     last_acknowledged_ns: None,
                     cleanup: None,
@@ -342,6 +344,14 @@ impl ExecutionTask {
         self.control.state.lock().snapshot.curve_progress = player.curve_progress();
         self.control.state.lock().snapshot.settling = player.settling_evidence();
         self.control.state.lock().snapshot.gripper = player.gripper_evidence();
+        {
+            let mut state = self.control.state.lock();
+            let recorded = state.snapshot.checkpoints.len();
+            state
+                .snapshot
+                .checkpoints
+                .extend_from_slice(&player.checkpoints()[recorded..]);
+        }
         let action = match polled {
             Ok(action) => action,
             Err(error) => return Some(Err(ExecutionFailure::Playback(error))),

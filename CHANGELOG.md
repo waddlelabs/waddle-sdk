@@ -11,6 +11,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Retain optional bounded checkpoint measurements inside local finite playback
+  (binding API 17). Delayed polling preserves intermediate feedback and its actual
+  acknowledgement/observation times without adding intermediate arrival gates.
+
 - Add optional guided site setup with shared hardware profiles, explicit camera
   preview and atomic source/calibration copying. Trusted application configuration
   runs in the private stage; failed or changed inputs never publish a new site.

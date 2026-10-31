@@ -1,5 +1,21 @@
 # Finite reference playback
 
+Binding API 17 adds optional `PlaybackPolicy.checkpoint_offsets_ns`, gated by
+`execution.checkpointed_joint_playback`. Up to 256 strictly increasing offsets
+in the inclusive buffer range retain diagnostic measurements on the same local
+worker. Empty offsets preserve existing behavior; gripper outcome policies cannot
+request checkpoints.
+
+Each `checkpoints` snapshot entry contains the requested `offset_ns`, actual
+`acknowledged_offset_ns`, session-clock `acknowledged_ns`, local `elapsed_ns`, and
+the complete fresh `feedback` observed after that acknowledgement. Paced curves
+use acknowledged curve phase, never elapsed wall time. A sample may cross several
+markers; those entries truthfully share the same measurement. The worker does not
+interpolate measurements, pause at a marker or claim intermediate arrival.
+Evidence survives delayed polling and terminal failure/cancellation; unreached
+markers have no entry. Observation timestamps do not establish motor acquisition
+time. Checkpoint recording changes no gate, tracking bound, timeout or stop path.
+
 Binding API 16 adds optional `PlaybackPolicy.reference_only`, gated by
 `execution.reference_joint_playback`. It ends with `references_dispatched` only
 after every reference is acknowledged and fresh post-endpoint feedback passes

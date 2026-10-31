@@ -69,6 +69,7 @@ class SupportFact(str, enum.Enum):
     FEEDBACK_JOINT_PLAYBACK = "execution.feedback_joint_playback"
     SAMPLED_JOINT_PLAYBACK = "execution.sampled_joint_playback"
     REFERENCE_JOINT_PLAYBACK = "execution.reference_joint_playback"
+    CHECKPOINTED_JOINT_PLAYBACK = "execution.checkpointed_joint_playback"
     GRIPPER_PLAYBACK = "execution.gripper_playback"
     VELOCITY_FEEDFORWARD = "actuation.velocity_feedforward"
     FORWARD_KINEMATICS = "kinematics.fk"
@@ -689,6 +690,12 @@ class PlaybackPolicy:
     feedback. It does not measure arrival/stationarity and excludes gripper
     outcome policies. Snapshots retain ``last_acknowledged_ns`` on the session
     clock; remote receipt time must not be substituted for it.
+
+    ``checkpoint_offsets_ns`` requests up to 256 strictly increasing diagnostic
+    markers within the buffer, with checkpointed-playback support. Each retains
+    the first fresh local feedback after acknowledged reference phase crosses
+    its offset. These are not intermediate arrival gates or interpolated
+    measurements. Gripper outcome policies cannot request checkpoints.
     """
 
     indices: tuple[int, ...]
@@ -704,6 +711,7 @@ class PlaybackPolicy:
     gripper: GripperPlaybackPolicy | None = None
     minimum_settle_samples: int = 1
     reference_only: bool = False
+    checkpoint_offsets_ns: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
         for name in (
@@ -711,6 +719,7 @@ class PlaybackPolicy:
             "start_tolerance",
             "position_tolerance",
             "stationary_velocity",
+            "checkpoint_offsets_ns",
         ):
             object.__setattr__(self, name, tuple(getattr(self, name)))
 

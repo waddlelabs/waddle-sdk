@@ -152,6 +152,62 @@ def test_measured_completion_and_exact_feedforward_use_the_real_owner(opened):
     assert handle.snapshot() == result
 
 
+def test_checkpoint_evidence_survives_without_polling_and_requires_support(
+    opened, monkeypatch
+):
+    session, run = opened
+    observations = {}
+    observe = session.observe_parts
+
+    def record(parts):
+        sample = observe(parts)
+        observations[sample.session_ns] = sample.parts["arm"].joint_position.tolist()
+        return sample
+
+    monkeypatch.setattr(session, "observe_parts", record)
+    request = motion((0, 0), (0.02, -0.01), (0.04, -0.02))
+    request = replace(
+        request,
+        policy=replace(request.policy, checkpoint_offsets_ns=(50_000_000, 100_000_000)),
+    )
+    result = run.start_playback(request).wait()
+    assert result["status"] == "arrived", result
+    samples = result["checkpoints"]
+    assert [s["offset_ns"] for s in samples] == list(
+        request.policy.checkpoint_offsets_ns
+    )
+    for sample in samples:
+        assert (
+            sample["feedback"]["positions"]
+            == observations[sample["feedback"]["observed_ns"]]
+        )
+        assert sample["acknowledged_ns"] < sample["feedback"]["observed_ns"]
+        assert sample["acknowledged_offset_ns"] >= sample["offset_ns"]
+    assert samples[0]["feedback"]["positions"] != result["feedback"]["positions"]
+    support = session.support()
+    monkeypatch.setattr(
+        session,
+        "support",
+        lambda: replace(
+            support,
+            rows=tuple(
+                replace(
+                    row,
+                    facts=tuple(
+                        f
+                        for f in row.facts
+                        if f != SupportFact.CHECKPOINTED_JOINT_PLAYBACK
+                    ),
+                )
+                for row in support.rows
+            ),
+        ),
+    )
+    with pytest.raises(RuntimeFault) as caught:
+        run.start_playback(request)
+    assert caught.value.code == FaultCode.UNSUPPORTED
+
+
 def test_owner_refusal_retains_fault_and_never_dispatches_successor(opened):
     session, run = opened
     result = run.start_playback(motion((0, 0), (0.9, 0), (0.95, 0))).wait()
