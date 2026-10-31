@@ -46,6 +46,17 @@ class PlaybackHandle:
     def cancel(self, reason: str) -> None:
         self._native.cancel(reason)
 
+    def withdraw_curve(self, request_id: int, expected_revision: int) -> int:
+        """Queue withdrawal; only an accepted native receipt confirms removal."""
+        try:
+            return self._native.withdraw_curve(request_id, expected_revision)
+        except core.PlaybackBusyError as error:
+            raise RuntimeFault(FaultCode.BUSY, str(error)) from error
+        except (TypeError, ValueError, OverflowError) as error:
+            raise RuntimeFault.from_exception(
+                error, code=FaultCode.INVALID_REQUEST
+            ) from error
+
     def update_curve(self, update: PlaybackCurveUpdate) -> int:
         """Queue a future suffix; inspect its retained receipt before another."""
         if not isinstance(update, PlaybackCurveUpdate):

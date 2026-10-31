@@ -11,6 +11,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Add explicit withdrawal of a named, accepted future curve suffix (binding
+  API 20). The existing native worker confirms removal before handoff, refuses
+  stale/late withdrawals and preserves the incumbent, pacing and deadline.
+  Public handles and the optional device relay retain request identity and
+  pending/accepted/rejected receipts; withdrawal never implies stopping.
+
 - Pair each native playback feedback sample with its preceding acknowledged
   reference (binding API 19, `execution.playback_feedback_reference`). Later
   dispatch and delayed status replies retain that causal pair; no extra writer,

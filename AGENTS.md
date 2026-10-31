@@ -5,6 +5,14 @@ acceptance separately in a configured simulator environment.
 
 # AGENTS.md — waddle-sdk monorepo
 
+Binding API 20 adds `WithdrawablePlaybackHandlePort.withdraw_curve`, advertised
+by `execution.withdrawable_joint_playback`. The existing worker removes only the
+named accepted suffix while its expected incumbent revision remains active.
+Queueing is not removal; retain the separate request receipt and reject a late
+or wrong-identity withdrawal without changing playback. The incumbent continues
+under its original deadline. This is not a stop, replacement or geometry proof.
+Keep uncertain-response reconciliation, no replay and normal Hold/drain.
+
 Binding API 19 adds `feedback_reference` to native playback snapshots, advertised
 by `execution.playback_feedback_reference`. It is the last acknowledged command
 before acquiring that exact feedback, not a later command or remote receipt.

@@ -384,6 +384,14 @@ impl PyExecutionHandle {
     fn cancel(&self, reason: &str) {
         self.0.cancel(reason);
     }
+    fn withdraw_curve(&self, request_id: u64, expected_revision: u64) -> PyResult<u64> {
+        self.0
+            .withdraw_curve(request_id, expected_revision)
+            .map_err(|error| match error {
+                PlaybackError::Busy => PlaybackBusyError::new_err(error.to_string()),
+                _ => PyValueError::new_err(error.to_string()),
+            })
+    }
     fn update_curve(&self, update: Update) -> PyResult<u64> {
         CurveUpdate::new(
             update.expected_revision,
@@ -410,6 +418,9 @@ fn snapshot(py: Python<'_>, value: ExecutionSnapshot) -> PyResult<Py<PyDict>> {
         .map(|receipt| -> PyResult<Py<PyDict>> {
             let result = PyDict::new(py);
             result.set_item("request_id", receipt.request_id)?;
+            if let Some(id) = receipt.withdraws_request_id {
+                result.set_item("withdraws_request_id", id)?;
+            }
             result.set_item(
                 "status",
                 match &receipt.result {

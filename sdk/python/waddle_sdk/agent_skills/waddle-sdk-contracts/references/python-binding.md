@@ -72,6 +72,14 @@ cadence without counting unrelated lock wait as driver execution.
 
 ## Finite joint playback
 
+Binding API 20 adds optional `WithdrawablePlaybackHandlePort.withdraw_curve`
+under `execution.withdrawable_joint_playback`. Bind the accepted update ID and
+incumbent revision; wait for the new receipt's accepted result before treating
+the suffix as removed. Late withdrawal cannot rewind an acknowledged handoff,
+and a delayed old request cannot remove a replacement. The incumbent continues
+with its original deadline. This is not a stop or geometry proof; never replay
+after an uncertain reply. See the normative finite-playback page.
+
 Binding API 19 adds `feedback_reference` and
 `execution.playback_feedback_reference`. This pairs each snapshot's feedback with
 the preceding acknowledged command; a later `last_reference` cannot relabel that

@@ -72,6 +72,7 @@ class SupportFact(str, enum.Enum):
     CHECKPOINTED_JOINT_PLAYBACK = "execution.checkpointed_joint_playback"
     REVISABLE_JOINT_PLAYBACK = "execution.revisable_joint_playback"
     PLAYBACK_FEEDBACK_REFERENCE = "execution.playback_feedback_reference"
+    WITHDRAWABLE_JOINT_PLAYBACK = "execution.withdrawable_joint_playback"
     GRIPPER_PLAYBACK = "execution.gripper_playback"
     VELOCITY_FEEDFORWARD = "actuation.velocity_feedforward"
     FORWARD_KINEMATICS = "kinematics.fk"
@@ -796,6 +797,21 @@ class RevisablePlaybackHandlePort(PlaybackHandlePort, Protocol):
     """
 
     def update_curve(self, update: PlaybackCurveUpdate) -> int: ...
+
+
+@runtime_checkable
+class WithdrawablePlaybackHandlePort(RevisablePlaybackHandlePort, Protocol):
+    """Optional withdrawal of an accepted future suffix, before its handoff.
+
+    ``request_id`` identifies the original accepted update; ``expected_revision``
+    binds the still-active incumbent. The returned ID identifies a new receipt
+    in ``curve_update`` with ``withdraws_request_id``. Only its accepted result
+    confirms removal. A late, wrong-ID or stale withdrawal refuses without
+    changing the trajectory. Withdrawal does not stop motion or extend timeouts;
+    the original incumbent continues. Lost replies never authorize replay.
+    """
+
+    def withdraw_curve(self, request_id: int, expected_revision: int) -> int: ...
 
 
 @runtime_checkable

@@ -2,6 +2,7 @@
 
 import threading
 from dataclasses import replace
+from queue import Queue
 
 import pytest
 from test_finite_playback import opened as opened  # noqa: PLC0414 -- pytest fixture
@@ -16,6 +17,7 @@ from waddle_sdk.runtime import (
     PlaybackPolicy,
     RuntimeFault,
     SupportFact,
+    WithdrawablePlaybackHandlePort,
 )
 
 
@@ -146,6 +148,121 @@ def future_update():
         ),
     )
     return PlaybackCurveUpdate(0, 200_000_000, curve)
+
+
+@pytest.mark.parametrize("outcome", ["withdrawn", "late", "cancelled", "wrong_id"])
+def test_withdrawal_resolves_after_inflight_write_without_rewinding_motion(
+    opened, monkeypatch, outcome
+):
+    session, run = opened
+    assert SupportFact.WITHDRAWABLE_JOINT_PLAYBACK in session.support().rows[0].facts
+    write = SimDriver.write
+    entered = Queue()
+    releases = [threading.Event(), threading.Event()]
+    writes = []
+    blocked = (1, 5 if outcome == "late" else 2)
+
+    def paused(driver, target):
+        writes.append(tuple(target))
+        if len(writes) in blocked:
+            release = releases[blocked.index(len(writes))]
+            entered.put(len(writes))
+            assert release.wait(5)
+        write(driver, target)
+
+    monkeypatch.setattr(SimDriver, "write", paused)
+    motion = request()
+    motion = replace(
+        motion,
+        policy=replace(motion.policy, reference_only=True, allow_curve_updates=True),
+    )
+    handle = run.start_playback(motion)
+    assert isinstance(handle, WithdrawablePlaybackHandlePort)
+    try:
+        assert entered.get(timeout=3) == 1
+        assert handle.update_curve(future_update()) == 1
+        releases[0].set()
+        assert entered.get(timeout=3) == blocked[1]
+        assert handle.snapshot()["curve_update"]["status"] == "accepted"
+        target_id = 999 if outcome == "wrong_id" else 1
+        assert handle.withdraw_curve(target_id, 0) == 2
+        assert handle.snapshot()["curve_update"] == {
+            "request_id": 2,
+            "withdraws_request_id": target_id,
+            "status": "pending",
+            "error": None,
+        }
+        with pytest.raises(RuntimeFault) as caught:
+            handle.withdraw_curve(1, 0)
+        assert caught.value.code == FaultCode.BUSY
+        if outcome == "cancelled":
+            handle.cancel("stop with withdrawal queued")
+    finally:
+        for release in releases:
+            release.set()
+    result = handle.wait()
+    receipt = result["curve_update"]
+    assert receipt["status"] == ("accepted" if outcome == "withdrawn" else "rejected")
+    assert receipt["request_id"] == 2 and receipt["withdraws_request_id"] == target_id
+    if outcome == "cancelled":
+        assert result["failure"]["code"] == "cancelled"
+        assert len(writes) == 2
+        assert result["cleanup"]["error"] is None
+    else:
+        assert result["status"] == "references_dispatched", result
+        changed = outcome != "withdrawn"
+        assert result["curve_progress"]["revision"] == int(changed)
+        assert result["last_reference"]["positions"] == pytest.approx(
+            [0.2, -0.1] if changed else [0.1, -0.05]
+        )
+        assert result["last_reference"]["offset_ns"] == (
+            400_000_000 if changed else 200_000_000
+        )
+
+
+def test_delayed_withdrawal_cannot_remove_a_replacement_with_the_same_revision(
+    opened, monkeypatch
+):
+    _, run = opened
+    write = SimDriver.write
+    entered = Queue()
+    releases = [threading.Event() for _ in range(4)]
+    count = 0
+
+    def paused(driver, target):
+        nonlocal count
+        count += 1
+        if count <= len(releases):
+            entered.put(count)
+            assert releases[count - 1].wait(5)
+        write(driver, target)
+
+    monkeypatch.setattr(SimDriver, "write", paused)
+    motion = request()
+    motion = replace(
+        motion,
+        policy=replace(motion.policy, reference_only=True, allow_curve_updates=True),
+    )
+    handle = run.start_playback(motion)
+    try:
+        for step in range(1, 5):
+            assert entered.get(timeout=3) == step
+            if step > 1:
+                assert handle.snapshot()["curve_update"]["status"] == "accepted"
+            if step % 2:
+                assert handle.update_curve(future_update()) == step
+            else:
+                assert handle.withdraw_curve(1, 0) == step
+            releases[step - 1].set()
+    finally:
+        for release in releases:
+            release.set()
+    result = handle.wait()
+    assert result["status"] == "references_dispatched", result
+    assert result["curve_update"]["status"] == "rejected"
+    assert "identity" in result["curve_update"]["error"]
+    assert result["curve_progress"]["revision"] == 1
+    assert result["last_reference"]["positions"] == pytest.approx([0.2, -0.1])
 
 
 @pytest.mark.parametrize("outcome", ["updated", "stale", "cancelled"])

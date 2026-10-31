@@ -320,6 +320,26 @@ impl CurveCursor {
         Ok(())
     }
 
+    pub fn withdraw(&mut self, expected_revision: u64) -> Result<(), PlaybackError> {
+        if self.progress.revision != expected_revision || self.update.is_none() {
+            return Err(PlaybackError::Invalid(
+                "curve withdrawal is stale or has no pending suffix",
+            ));
+        }
+        self.update = None;
+        self.progress.pending_revision = None;
+        // Scheduling may have shortened the next step to the suffix endpoint.
+        // Restore the incumbent's next acknowledged-paced step, not wall time.
+        self.progress.next_curve_time_s = Some(
+            self.progress
+                .acknowledged_curve_time_s
+                .map_or(0.0, |phase| {
+                    (phase + self.spec.period_ns as f64 * 1e-9).min(self.duration_s())
+                }),
+        );
+        Ok(())
+    }
+
     fn duration_s(&self) -> f64 {
         self.update
             .as_ref()

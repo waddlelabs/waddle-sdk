@@ -169,6 +169,29 @@ measured physical stopping.
 These contracts supply future references, not live collision-world validation,
 reactive goal logic, multi-arm coordination or physical/WAN qualification.
 
+### Withdrawing a future suffix
+
+Binding API 20 separately advertises `execution.withdrawable_joint_playback`.
+`WithdrawablePlaybackHandlePort.withdraw_curve(request_id, expected_revision)`
+queues withdrawal of the original accepted update ID while its incumbent
+revision remains active. It returns a **new** request ID. The latest
+`curve_update` receipt includes `withdraws_request_id` and the ordinary
+`pending`/`accepted`/`rejected` result. Only `accepted` confirms removal.
+The original trajectory then continues with its exact acknowledged phase,
+pacing, held coordinates and deadline. Withdrawal does not stop motion or
+validate that the incumbent is still safe in a changed environment.
+
+The same serialized worker processes withdrawal between device submissions.
+An in-flight handoff finishes first; if it activated the suffix, withdrawal
+refuses. Wrong update IDs, stale revisions and terminal executions also refuse.
+A delayed request cannot remove a newer suffix even when that suffix uses the
+same incumbent revision. Rejected intervening updates do not change the
+accepted suffix's identity. Whole-execution cancellation drains queued requests
+through the ordinary Hold path. A lost response requires reconciliation, never
+automatic replay or an assumption that the suffix was removed. A caller that
+needs a new checked continuation must wait for confirmed withdrawal and admit
+that continuation through the ordinary update checks.
+
 ## Optional measured execution policy
 
 `PlaybackPolicy.feedback` accepts `FeedbackPolicy` (Python:

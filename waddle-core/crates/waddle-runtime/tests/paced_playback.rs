@@ -295,6 +295,80 @@ fn future_pva_suffix_keeps_original_phase_pacing_held_rows_and_reference_complet
 }
 
 #[test]
+fn withdrawn_suffix_never_dispatches_and_preserves_incumbent_phase_and_deadline() {
+    let mut p = revisable();
+    let mut incumbent = revisable();
+    p.update_curve(CurveUpdate::new(0, 500_000_000, suffix()).unwrap())
+        .unwrap();
+    let mut q = 0.0;
+    for tick in 0..14 {
+        let now = tick * 100_000_000;
+        if tick == 3 {
+            assert!(p.withdraw_curve(1).is_err());
+            assert_eq!(p.curve_progress().unwrap().pending_revision, Some(1));
+            p.withdraw_curve(0).unwrap();
+            assert!(p.withdraw_curve(0).is_err());
+            assert_eq!(p.curve_progress().unwrap().pending_revision, None);
+        }
+        let action = p.poll(now, &measured(now, q)).unwrap();
+        assert_eq!(action, incumbent.poll(now, &measured(now, q)).unwrap());
+        match action {
+            PlaybackPoll::Dispatch(index) => {
+                let step = p.reference(index).unwrap().clone();
+                let original = incumbent.reference(index).unwrap();
+                assert_eq!(step.offset_ns, original.offset_ns);
+                assert_eq!(step.values, original.values);
+                assert_eq!(step.velocity_feedforward, original.velocity_feedforward);
+                q = step.values[0];
+                let phase = step.offset_ns as f64 * 1e-9;
+                let expected = 10.0 * phase.powi(3) - 15.0 * phase.powi(4) + 6.0 * phase.powi(5);
+                assert!((q - expected).abs() < 1e-12);
+                assert_eq!(step.values[1], 0.5);
+                p.acknowledge(index, now).unwrap();
+                incumbent.acknowledge(index, now).unwrap();
+                assert_eq!(p.curve_progress().unwrap().revision, 0);
+            }
+            PlaybackPoll::Complete(outcome) => {
+                assert_eq!(outcome, Completion::ReferencesDispatched);
+                assert_eq!(q, 1.0);
+                assert!(p.withdraw_curve(0).is_err());
+                let mut timed = revisable();
+                timed
+                    .update_curve(CurveUpdate::new(0, 500_000_000, suffix()).unwrap())
+                    .unwrap();
+                timed.withdraw_curve(0).unwrap();
+                assert_eq!(
+                    timed.poll(2_000_000_000, &measured(2_000_000_000, 0.0)),
+                    Err(PlaybackError::Deadline)
+                );
+                return;
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+    panic!("did not complete");
+}
+
+#[test]
+fn withdrawal_cannot_retract_an_inflight_or_acknowledged_handoff() {
+    let mut p = revisable();
+    p.update_curve(CurveUpdate::new(0, 500_000_000, suffix()).unwrap())
+        .unwrap();
+    let mut q = 0.0;
+    for tick in 0..6 {
+        let now = tick * 100_000_000;
+        let index = p.dispatched();
+        q = dispatch(&mut p, now, q).values[0];
+        assert_eq!(p.withdraw_curve(0), Err(PlaybackError::DispatchPending));
+        p.acknowledge(index, now).unwrap();
+    }
+    assert_eq!(p.curve_progress().unwrap().revision, 1);
+    assert!(p.withdraw_curve(0).is_err());
+    assert!(p.withdraw_curve(1).is_err());
+    assert_eq!(p.curve_progress().unwrap().revision, 1);
+}
+
+#[test]
 fn update_refusals_keep_the_incumbent_and_never_overwrite_an_unacknowledged_write() {
     let mut p = revisable();
     dispatch(&mut p, 0, 0.0);

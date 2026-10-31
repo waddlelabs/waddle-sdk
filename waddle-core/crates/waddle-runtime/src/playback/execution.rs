@@ -67,6 +67,8 @@ pub type ExecutionResult = Result<Completion, ExecutionFailure>;
 #[derive(Clone, Debug)]
 pub struct CurveUpdateReceipt {
     pub request_id: u64,
+    /// Set only for a withdrawal, identifying the accepted suffix request.
+    pub withdraws_request_id: Option<u64>,
     /// None until the local worker processes the request.
     pub result: Option<Result<(), PlaybackError>>,
 }
@@ -102,7 +104,16 @@ pub struct ExecutionSnapshot {
 struct State {
     snapshot: ExecutionSnapshot,
     cancelled: Option<String>,
-    curve_update: Option<CurveUpdate>,
+    curve_update: Option<CurveRequest>,
+}
+
+#[derive(Debug)]
+enum CurveRequest {
+    Update(CurveUpdate),
+    Withdraw {
+        request_id: u64,
+        expected_revision: u64,
+    },
 }
 
 #[derive(Debug)]
@@ -168,6 +179,24 @@ impl ExecutionHandle {
     /// result and `curve_progress.revision` for the acknowledged handoff. A lost
     /// response never authorizes retry; reconcile the retained execution first.
     pub fn update_curve(&self, update: CurveUpdate) -> Result<u64, PlaybackError> {
+        self.queue_curve(CurveRequest::Update(update))
+    }
+
+    /// Queue withdrawal of one accepted suffix. Only the serialized worker can
+    /// confirm it has not crossed the handoff; queueing is not withdrawal.
+    /// Request identity prevents a delayed withdrawal from removing a replacement.
+    pub fn withdraw_curve(
+        &self,
+        request_id: u64,
+        expected_revision: u64,
+    ) -> Result<u64, PlaybackError> {
+        self.queue_curve(CurveRequest::Withdraw {
+            request_id,
+            expected_revision,
+        })
+    }
+
+    fn queue_curve(&self, request: CurveRequest) -> Result<u64, PlaybackError> {
         let mut state = self.control.state.lock();
         if state.snapshot.result.is_some() || state.cancelled.is_some() {
             return Err(PlaybackError::Invalid("execution is closing or terminal"));
@@ -186,9 +215,14 @@ impl ExecutionHandle {
             .as_ref()
             .map_or(Some(1), |r| r.request_id.checked_add(1))
             .ok_or(PlaybackError::Invalid("curve request sequence exhausted"))?;
-        state.curve_update = Some(update);
+        let withdraws_request_id = match &request {
+            CurveRequest::Update(_) => None,
+            CurveRequest::Withdraw { request_id, .. } => Some(*request_id),
+        };
+        state.curve_update = Some(request);
         state.snapshot.curve_update = Some(CurveUpdateReceipt {
             request_id: id,
+            withdraws_request_id,
             result: None,
         });
         Ok(id)
@@ -293,6 +327,7 @@ pub(crate) struct ExecutionTask {
     next_poll_ns: i64,
     sample_period_ns: i64,
     failure: Option<ExecutionResult>,
+    pending_update_id: Option<u64>,
 }
 
 impl ExecutionTask {
@@ -314,6 +349,7 @@ impl ExecutionTask {
             next_poll_ns: 0,
             sample_period_ns,
             failure: None,
+            pending_update_id: None,
         }
     }
 
@@ -405,15 +441,32 @@ impl ExecutionTask {
         }
         let update = self.control.state.lock().curve_update.take();
         if let Some(update) = update {
-            let result = player.update_curve(update);
-            self.control
-                .state
-                .lock()
+            let mut state = self.control.state.lock();
+            let receipt = state
                 .snapshot
                 .curve_update
                 .as_mut()
-                .expect("queued receipt")
-                .result = Some(result);
+                .expect("queued receipt");
+            let result = match update {
+                CurveRequest::Update(update) => player.update_curve(update).inspect(|()| {
+                    self.pending_update_id = Some(receipt.request_id);
+                }),
+                CurveRequest::Withdraw {
+                    request_id,
+                    expected_revision,
+                } => {
+                    if self.pending_update_id != Some(request_id) {
+                        Err(PlaybackError::Invalid(
+                            "curve withdrawal request identity changed",
+                        ))
+                    } else {
+                        player.withdraw_curve(expected_revision).inspect(|()| {
+                            self.pending_update_id = None;
+                        })
+                    }
+                }
+            };
+            receipt.result = Some(result);
         }
         let polled = player.poll(now, &measured);
         self.control.state.lock().snapshot.curve_progress = player.curve_progress();
@@ -450,6 +503,14 @@ impl ExecutionTask {
                         let mut state = self.control.state.lock();
                         state.snapshot.dispatched = player.dispatched();
                         state.snapshot.curve_progress = player.curve_progress();
+                        if state
+                            .snapshot
+                            .curve_progress
+                            .as_ref()
+                            .is_some_and(|p| p.pending_revision.is_none())
+                        {
+                            self.pending_update_id = None;
+                        }
                         state.snapshot.last_reference = Some(reference);
                         state.snapshot.last_acknowledged_ns = Some(completed);
                         // The next poll establishes its exact due time; it never
