@@ -11,6 +11,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Add opt-in per-part Hold cleanup for named finite buffers (binding API 24).
+  Preserve sibling execution, original errors and structured cleanup evidence;
+  global Hold/e-stop still drain all buffers. Require separately declared support
+  and reject whole-site/group scope before local I/O. Defaults remain unchanged.
+
 - Admit independent named finite buffers on one serialized worker (binding API 23).
   Preserve per-buffer clocks/completion, reject overlapping or whole-site scopes,
   and permit named direct commands only on idle scopes. Site-wide stops and failure

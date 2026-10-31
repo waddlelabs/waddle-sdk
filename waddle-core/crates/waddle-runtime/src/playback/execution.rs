@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use parking_lot::{Condvar, Mutex};
 use waddle_types::time::Clock;
-use waddle_types::{EpisodeId, Step};
+use waddle_types::{EpisodeId, MonoNs, Step, Verb};
 
 use super::{
     CheckpointEvidence, Completion, CurveProgress, CurveUpdate, Feedback, FiniteReferences,
@@ -42,6 +42,19 @@ pub enum ReferenceReceipt {
 /// their original result. It must not send directly to a device, skip the gate,
 /// wait on a remote planner, or wait for a verb on this same control thread.
 pub trait PlaybackIo: Send + Sync + 'static {
+    fn supports_part_hold(&self) -> bool {
+        false
+    }
+
+    /// The same local owner's existing per-part Hold, never a planner request.
+    fn hold_part(&self, _part: &str) -> Result<(), PlaybackIoError> {
+        Err(PlaybackIoError {
+            detail: "part Hold is unsupported".into(),
+            evidence: String::new(),
+            outcome_unknown: false,
+        })
+    }
+
     fn observe(&self) -> Result<Feedback, PlaybackIoError>;
     fn dispatch(
         &self,
@@ -62,6 +75,38 @@ pub enum ExecutionFailure {
 }
 
 pub type ExecutionResult = Result<Completion, ExecutionFailure>;
+
+/// Completed local cleanup, separate from the original motion failure.
+/// `part == None` denotes a site-wide control callback. An acknowledgement is
+/// not a measured physical stop. Unknown owner evidence is retained verbatim.
+#[derive(Clone, Debug)]
+pub struct PlaybackCleanup {
+    pub verb: Verb,
+    pub part: Option<String>,
+    pub result: Result<(), PlaybackIoError>,
+    pub latency_ns: i64,
+    pub at: MonoNs,
+}
+
+impl From<&VerbOutcome> for PlaybackCleanup {
+    fn from(outcome: &VerbOutcome) -> Self {
+        Self {
+            verb: outcome.verb,
+            part: None,
+            result: outcome
+                .result
+                .as_ref()
+                .copied()
+                .map_err(|error| PlaybackIoError {
+                    detail: error.to_string(),
+                    evidence: String::new(),
+                    outcome_unknown: true,
+                }),
+            latency_ns: outcome.latency_ns,
+            at: outcome.at,
+        }
+    }
+}
 
 /// Latest suffix request. Acceptance schedules a future curve; it does not
 /// prove that its handoff was acknowledged or that the device arrived.
@@ -97,7 +142,7 @@ pub struct ExecutionSnapshot {
     pub last_acknowledged_ns: Option<i64>,
     /// The completed stop callback, separate from the original motion result.
     /// Callback success alone does not establish measured physical stopping.
-    pub cleanup: Option<VerbOutcome>,
+    pub cleanup: Option<PlaybackCleanup>,
     pub result: Option<ExecutionResult>,
 }
 
@@ -105,6 +150,7 @@ pub struct ExecutionSnapshot {
 struct State {
     snapshot: ExecutionSnapshot,
     cancelled: Option<String>,
+    cancelled_by_control: bool,
     curve_update: Option<CurveRequest>,
 }
 
@@ -124,10 +170,11 @@ struct Control {
 }
 
 impl Control {
-    fn mark_cancelled(&self, reason: &str) {
+    fn mark_cancelled(&self, reason: &str, by_control: bool) {
         let mut state = self.state.lock();
         if state.snapshot.result.is_none() {
             state.cancelled.get_or_insert_with(|| reason.to_owned());
+            state.cancelled_by_control |= by_control;
         }
     }
 
@@ -172,7 +219,7 @@ impl ExecutionHandle {
     /// Cancel future references; the worker applies the registered Hold. A
     /// terminal handle cannot stop a later execution or rewrite its own result.
     pub fn cancel(&self, reason: &str) {
-        self.control.mark_cancelled(reason);
+        self.control.mark_cancelled(reason, false);
     }
 
     /// Enqueue one suffix for validation by the existing local worker. Returns
@@ -282,6 +329,7 @@ impl ExecutionSlot {
                     result: None,
                 },
                 cancelled: None,
+                cancelled_by_control: false,
                 curve_update: None,
             }),
             changed: Condvar::new(),
@@ -292,10 +340,12 @@ impl ExecutionSlot {
 
     pub(crate) fn interrupt(&self, reason: &str, request: impl FnOnce()) {
         let current = self.current.lock();
-        for control in current.values() {
-            control.mark_cancelled(reason);
-        }
+        // Make the pending-control fence visible before marking cancellations.
+        // Completed callbacks acquire this same registry lock for their receipts.
         request();
+        for control in current.values() {
+            control.mark_cancelled(reason, true);
+        }
     }
 
     pub(crate) fn record_cleanup(&self, outcome: &VerbOutcome) {
@@ -306,7 +356,7 @@ impl ExecutionSlot {
             for control in self.current.lock().values() {
                 let mut state = control.state.lock();
                 if state.snapshot.result.is_none() {
-                    state.snapshot.cleanup = Some(outcome.clone());
+                    state.snapshot.cleanup = Some(outcome.into());
                 }
             }
         }
@@ -363,6 +413,7 @@ pub(crate) struct ExecutionTask {
     dispatch_period_ns: i64,
     failure: Option<ExecutionResult>,
     pending_update_id: Option<u64>,
+    hold_part: Option<String>,
 }
 
 impl ExecutionTask {
@@ -378,6 +429,10 @@ impl ExecutionTask {
         Self {
             mirror,
             episode,
+            hold_part: references
+                .policy
+                .part_hold
+                .then(|| references.scope().unwrap().to_owned()),
             references: Some(references),
             player: None,
             io,
@@ -425,8 +480,36 @@ impl ExecutionTask {
             outcome.verb,
             waddle_types::Verb::Hold | waddle_types::Verb::Estop
         ) {
-            self.control.state.lock().snapshot.cleanup = Some(outcome.clone());
+            self.control.state.lock().snapshot.cleanup = Some(outcome.into());
         }
+    }
+
+    pub(crate) fn cancelled_by_control(&self) -> bool {
+        self.control.state.lock().cancelled_by_control
+    }
+
+    pub(crate) fn hold_part<C: Clock>(&self, clock: &C) -> bool {
+        let Some(part) = &self.hold_part else {
+            return false;
+        };
+        let started = clock.stamp_now().mono_ns();
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| self.io.hold_part(part)))
+            .unwrap_or_else(|_| {
+                Err(PlaybackIoError {
+                    detail: "part Hold callback panicked".into(),
+                    evidence: String::new(),
+                    outcome_unknown: true,
+                })
+            });
+        let at = clock.stamp_now().mono_ns();
+        self.control.state.lock().snapshot.cleanup = Some(PlaybackCleanup {
+            verb: Verb::Hold,
+            part: Some(part.clone()),
+            result,
+            latency_ns: at.0 - started.0,
+            at,
+        });
+        true
     }
 
     /// `Some` is terminal. Callback panics retain uncertainty and never retry.

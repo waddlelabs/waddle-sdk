@@ -1,5 +1,21 @@
 # Finite reference playback
 
+Binding API 24 adds opt-in `PlaybackPolicy.part_hold` under the separate
+`execution.part_hold_playback` fact. For supported named buffers, cancellation
+or ordinary execution failure invokes only that part's existing owner Hold,
+after its in-flight callback drains. Other buffers keep their own outcomes.
+The default remains site-wide cleanup. Coordinated/whole-site buffers cannot
+select part Hold, and native admission requires a local part-Hold callback.
+
+Scoped cleanup adds `part` and optional structured `evidence` to its receipt.
+The original motion failure remains separate; a missing/failed Hold response
+is unknown cleanup, never physical-stop proof or permission to retry motion.
+Registered site Hold/e-stop, control takeover, episode closure and shutdown
+retain their global behavior. A global stop arriving during scoped cleanup
+drains all buffers and supplies global receipts before terminal publication.
+Consumers still own collision proof and retention of uncertain operation state;
+this primitive adds no planner, writer thread or hardware isolation guarantee.
+
 Binding API 23 adds `execution.parallel_joint_playback` for independent named
 buffers. Distinct parts can execute concurrently on the existing serialized
 control worker, with their own local clocks, completion and retained handles.
@@ -12,9 +28,9 @@ uses that cleanup path, every active or queued sibling is cancelled too. Cleanup
 receipts reach queued handles even when the stop precedes their worker admission;
 old queued buffers never resume afterward. New admission is fenced while cleanup
 runs. The originating failure remains distinct from sibling cancellation and
-from the cleanup result. This does not implement a selectively scoped stop or an
-application collision proof; consumers must preserve those requirements before
-selecting this capability. Episode closure drains all retained loops.
+from the cleanup result. Selectively scoped cleanup requires the separate API 24 policy and fact above.
+Consumers must preserve application collision proof before selecting parallel
+playback. Episode closure drains all retained loops.
 
 Named `Run.step_parts` commands can address idle scopes while another part plays.
 Any addressed overlap refuses the entire call before writing. Whole-site `step`

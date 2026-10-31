@@ -5,6 +5,15 @@ acceptance separately in a configured simulator environment.
 
 # AGENTS.md — waddle-sdk monorepo
 
+Binding API 24 adds opt-in `PlaybackPolicy.part_hold`, separately declared by
+`execution.part_hold_playback`. Supported named buffers clean up through their
+local owner's per-part Hold on the same serialized worker. Preserve the original
+motion failure and scoped cleanup evidence, including unknown Hold outcomes;
+siblings continue. Default cleanup, explicit global controls and closure retain
+site-wide behavior. A global stop racing scoped cleanup must drain all buffers
+before publication. No new writer, planner or physical-stop proof is introduced.
+Application geometry and uncertain-state retention remain separate.
+
 Binding API 23 prepares independent named playback buffers on the existing
 serialized control worker under `execution.parallel_joint_playback`. Distinct
 part scopes may coexist; a whole-site buffer excludes all other scopes. Normal

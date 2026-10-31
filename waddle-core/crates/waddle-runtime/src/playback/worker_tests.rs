@@ -49,9 +49,29 @@ struct MemoryIo {
     dispatch_pause: Mutex<Option<Pause>>,
     error: Mutex<Option<PlaybackIoError>>,
     panic: AtomicBool,
+    part_hold_supported: AtomicBool,
+    part_hold_pause: Mutex<Option<Pause>>,
+    part_hold_error: Mutex<Option<PlaybackIoError>>,
 }
 
 impl PlaybackIo for MemoryIo {
+    fn supports_part_hold(&self) -> bool {
+        self.part_hold_supported.load(Ordering::SeqCst)
+    }
+
+    fn hold_part(&self, part: &str) -> Result<(), PlaybackIoError> {
+        assert_eq!(std::thread::current().name(), Some("waddle-verbs"));
+        assert_eq!(part, "left");
+        if let Some(pause) = self.part_hold_pause.lock().take() {
+            pause.wait();
+        }
+        self.events.lock().push("part_hold");
+        match self.part_hold_error.lock().clone() {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
+
     fn observe(&self) -> Result<Feedback, PlaybackIoError> {
         if let Some(pause) = self.observation_pause.lock().take() {
             pause.wait();
@@ -132,6 +152,9 @@ impl Harness {
             dispatch_pause: Mutex::new(None),
             error: Mutex::new(None),
             panic: AtomicBool::new(false),
+            part_hold_supported: AtomicBool::new(true),
+            part_hold_pause: Mutex::new(None),
+            part_hold_error: Mutex::new(None),
         });
         let hold_pause: Arc<Mutex<Option<Pause>>> = Arc::default();
         let hold_error = Arc::new(AtomicBool::new(false));
@@ -209,6 +232,10 @@ fn references() -> FiniteReferences {
 }
 
 fn references_on(part: Option<&str>) -> FiniteReferences {
+    references_with_hold(part, false)
+}
+
+fn references_with_hold(part: Option<&str>, part_hold: bool) -> FiniteReferences {
     FiniteReferences::new(
         ActionChunk {
             steps: [0.0, 0.1, 0.2]
@@ -244,6 +271,7 @@ fn references_on(part: Option<&str>) -> FiniteReferences {
             checkpoint_offsets_ns: vec![],
             allow_curve_updates: false,
             credit_pacing_delay: false,
+            part_hold,
             paced_curve: None,
             feedback: None,
             gripper: None,
@@ -270,6 +298,9 @@ fn sibling_io(h: &Harness) -> Arc<MemoryIo> {
         dispatch_pause: Mutex::new(None),
         error: Mutex::new(None),
         panic: AtomicBool::new(false),
+        part_hold_supported: AtomicBool::new(true),
+        part_hold_pause: Mutex::new(None),
+        part_hold_error: Mutex::new(None),
     })
 }
 
@@ -278,10 +309,19 @@ fn start_named(
     part: &str,
     io: Arc<MemoryIo>,
 ) -> Result<ExecutionHandle, PlaybackError> {
+    start_named_policy(h, part, io, false)
+}
+
+fn start_named_policy(
+    h: &Harness,
+    part: &str,
+    io: Arc<MemoryIo>,
+    part_hold: bool,
+) -> Result<ExecutionHandle, PlaybackError> {
     h.dispatch.start_playback(
         h.mirror.clone(),
         EpisodeId::new("episode"),
-        references_on(Some(part)),
+        references_with_hold(Some(part), part_hold),
         io,
         10_000_000,
         0,
@@ -563,7 +603,11 @@ fn unknown_dispatch_preserves_original_fault_even_when_hold_fails() {
     assert_eq!(cleanup.verb, Verb::Hold);
     assert_eq!(
         cleanup.result,
-        Err(VerbError::Failed("original Hold failure".into()))
+        Err(PlaybackIoError {
+            detail: VerbError::Failed("original Hold failure".into()).to_string(),
+            evidence: String::new(),
+            outcome_unknown: true,
+        })
     );
     assert_eq!(*h.io.events.lock(), ["dispatch", "hold"]);
     assert_eq!(
@@ -756,4 +800,203 @@ fn shutdown_does_not_replace_a_pending_estop_with_hold() {
     h.dispatch.shutdown();
     assert!(handle.snapshot().result.unwrap().is_err());
     assert_eq!(*h.io.events.lock(), ["dispatch", "write", "estop"]);
+}
+
+#[test]
+fn scoped_cancellation_or_failure_holds_only_its_part_and_retains_unknown_cleanup() {
+    for fail_motion in [false, true] {
+        for fail_cleanup in [false, true] {
+            let h = Harness::new();
+            let right_io = sibling_io(&h);
+            let original = PlaybackIoError {
+                detail: "original left write failure".into(),
+                evidence: "left controller evidence".into(),
+                outcome_unknown: true,
+            };
+            let cleanup_error = PlaybackIoError {
+                detail: "left Hold reply lost".into(),
+                evidence: "left Hold evidence".into(),
+                outcome_unknown: true,
+            };
+            if fail_motion {
+                *h.io.error.lock() = Some(original.clone());
+            }
+            if fail_cleanup {
+                *h.io.part_hold_error.lock() = Some(cleanup_error.clone());
+            }
+            let (p, entered, release) = pause();
+            *h.io.dispatch_pause.lock() = Some(p);
+            let left = start_named_policy(&h, "left", h.io.clone(), true).unwrap();
+            entered.recv_timeout(Duration::from_secs(5)).unwrap();
+            let right = start_named_policy(&h, "right", right_io.clone(), true).unwrap();
+            if !fail_motion {
+                left.cancel("left only");
+            }
+            release.send(()).unwrap();
+            let result = finished(&left);
+            if fail_motion {
+                assert_eq!(
+                    result.result,
+                    Some(Err(ExecutionFailure::Dispatch(original)))
+                );
+            } else {
+                assert!(matches!(
+                    result.result,
+                    Some(Err(ExecutionFailure::Playback(PlaybackError::Cancelled(_))))
+                ));
+            }
+            let cleanup = result.cleanup.unwrap();
+            assert_eq!(cleanup.part.as_deref(), Some("left"));
+            assert_eq!(
+                cleanup.result,
+                if fail_cleanup {
+                    Err(cleanup_error)
+                } else {
+                    Ok(())
+                }
+            );
+            let right = finished(&right);
+            assert_eq!(right.result, Some(Ok(Completion::Arrived)));
+            assert!(right.cleanup.is_none());
+            assert_eq!(right_io.writes.lock().len(), 3);
+            assert!(h.outcomes.try_recv().is_err());
+        }
+    }
+}
+
+#[test]
+fn global_stop_during_part_hold_drains_both_with_global_receipts() {
+    for stop in [VerbRequest::Hold, VerbRequest::Estop] {
+        let h = Harness::new();
+        let right_io = sibling_io(&h);
+        let original = PlaybackIoError {
+            detail: "left write lost".into(),
+            evidence: "original".into(),
+            outcome_unknown: true,
+        };
+        *h.io.error.lock() = Some(original.clone());
+        let (p, entered, release) = pause();
+        *h.io.part_hold_pause.lock() = Some(p);
+        let left = start_named_policy(&h, "left", h.io.clone(), true).unwrap();
+        entered.recv_timeout(Duration::from_secs(5)).unwrap();
+        let right = start_named_policy(&h, "right", right_io.clone(), true).unwrap();
+        let verb = stop.verb();
+        h.dispatch.request(stop);
+        assert!(left.snapshot().result.is_none());
+        release.send(()).unwrap();
+        let left = finished(&left);
+        assert_eq!(left.result, Some(Err(ExecutionFailure::Dispatch(original))));
+        let right = finished(&right);
+        assert!(right.result.as_ref().unwrap().is_err());
+        for result in [left, right] {
+            let cleanup = result.cleanup.unwrap();
+            assert_eq!(cleanup.verb, verb);
+            assert_eq!(cleanup.part, None);
+            assert_eq!(cleanup.result, Ok(()));
+        }
+        assert!(right_io.writes.lock().is_empty());
+        assert_eq!(h.outcome().verb, verb);
+    }
+}
+
+#[test]
+fn scoped_hold_requires_supported_io_before_admission() {
+    let h = Harness::new();
+    h.io.part_hold_supported.store(false, Ordering::SeqCst);
+    assert!(matches!(
+        start_named_policy(&h, "left", h.io.clone(), true),
+        Err(PlaybackError::Invalid(_))
+    ));
+    assert!(h.io.events.lock().is_empty());
+    assert_eq!(
+        finished(&start_named(&h, "left", h.io.clone()).unwrap()).result,
+        Some(Ok(Completion::Arrived))
+    );
+}
+
+#[test]
+fn delayed_cancelled_admission_cannot_override_completed_control_takeover() {
+    for part_hold in [false, true] {
+        let h = Harness::new();
+        let references = references_with_hold(Some("left"), part_hold);
+        // Hold the worker message after native admission, reproducing a control
+        // request overtaking delivery without relying on a wall-clock race.
+        let handle = h
+            .dispatch
+            .playback
+            .register(
+                EpisodeId::new("episode"),
+                Some("left".into()),
+                references.len(),
+                || false,
+            )
+            .unwrap();
+        let task = ExecutionTask::new(
+            h.mirror.clone(),
+            EpisodeId::new("episode"),
+            references,
+            h.io.clone(),
+            &handle,
+            10_000_000,
+            0,
+        );
+        handle.cancel("caller cancelled before worker admission");
+        h.dispatch.request(VerbRequest::Home);
+        assert_eq!(h.outcome().verb, Verb::Home);
+        h.dispatch.tx.send(Work::Playback(Box::new(task))).unwrap();
+        let result = finished(&handle);
+        assert!(matches!(
+            result.result,
+            Some(Err(ExecutionFailure::Playback(PlaybackError::Cancelled(_))))
+        ));
+        assert!(
+            result.cleanup.is_none(),
+            "Home takeover is not a Hold receipt"
+        );
+        assert_eq!(*h.io.events.lock(), ["home"]);
+        assert!(h.io.writes.lock().is_empty());
+    }
+}
+
+#[test]
+fn caller_cancellation_before_worker_admission_still_gets_owner_cleanup() {
+    for part_hold in [false, true] {
+        let h = Harness::new();
+        let references = references_with_hold(Some("left"), part_hold);
+        let handle = h
+            .dispatch
+            .playback
+            .register(
+                EpisodeId::new("episode"),
+                Some("left".into()),
+                references.len(),
+                || false,
+            )
+            .unwrap();
+        let task = ExecutionTask::new(
+            h.mirror.clone(),
+            EpisodeId::new("episode"),
+            references,
+            h.io.clone(),
+            &handle,
+            10_000_000,
+            0,
+        );
+        handle.cancel("caller cancelled before worker admission");
+        h.dispatch.tx.send(Work::Playback(Box::new(task))).unwrap();
+        let result = finished(&handle);
+        assert!(matches!(
+            result.result,
+            Some(Err(ExecutionFailure::Playback(PlaybackError::Cancelled(_))))
+        ));
+        let cleanup = result.cleanup.unwrap();
+        assert_eq!(cleanup.verb, Verb::Hold);
+        assert_eq!(cleanup.part.as_deref(), part_hold.then_some("left"));
+        assert_eq!(cleanup.result, Ok(()));
+        assert_eq!(
+            *h.io.events.lock(),
+            [if part_hold { "part_hold" } else { "hold" }]
+        );
+        assert!(h.io.writes.lock().is_empty());
+    }
 }

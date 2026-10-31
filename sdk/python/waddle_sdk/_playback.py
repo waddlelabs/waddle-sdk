@@ -37,6 +37,9 @@ class PlaybackHandle:
         failure = value["failure"]
         if failure is not None and failure["evidence"]:
             failure["evidence"] = json.loads(failure["evidence"])
+        cleanup = value["cleanup"]
+        if cleanup is not None and cleanup.get("evidence"):
+            cleanup["evidence"] = json.loads(cleanup["evidence"])
         return value
 
     def snapshot(self):
@@ -113,6 +116,12 @@ def start(
         group or SupportFact.PARALLEL_JOINT_PLAYBACK not in facts
     ):
         raise RuntimeFault(FaultCode.BUSY, "finite playback is still active")
+    if motion.policy.part_hold and (
+        group or SupportFact.PART_HOLD_PLAYBACK not in facts
+    ):
+        raise RuntimeFault(
+            FaultCode.UNSUPPORTED, "part Hold requires supported named playback"
+        )
     if group and SupportFact.COORDINATED_JOINT_PLAYBACK not in facts:
         raise RuntimeFault(
             FaultCode.UNSUPPORTED, "parts do not support coordinated playback"
@@ -303,8 +312,22 @@ def start(
             # never retry, and do not confuse local loop drain with physical stop.
             return _error(error, unknown=True)
 
+    def hold_part(name):
+        try:
+            with session._dispatch_lock:
+                arms[name].hold()
+        except Exception as error:  # noqa: BLE001 -- retain unknown owner cleanup
+            return _error(error, unknown=True)
+        return None
+
     try:
-        native = run._episode.start_playback(chunk, motion.policy, observe, dispatch)
+        native = run._episode.start_playback(
+            chunk,
+            motion.policy,
+            observe,
+            dispatch,
+            hold_part if motion.policy.part_hold else None,
+        )
     except core.PlaybackBusyError as error:
         raise RuntimeFault(FaultCode.BUSY, str(error)) from error
     except (TypeError, ValueError) as error:
