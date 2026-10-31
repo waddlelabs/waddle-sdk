@@ -38,6 +38,24 @@ loading `waddle_sdk`, native bindings or hardware modules. Device and wire impor
 load the actual SDK runtime only when needed. It is part of the same SDK wheel,
 not a separately installed application or transport service.
 
+## Saved connection settings
+
+`waddle_sdk_relay.connection` provides shared settings without importing the SDK
+runtime. `ConnectionConfig(endpoint, key, allow_loopback_ws=False, rig=None)`
+validates a credential-free WSS URL, a bounded visible-ASCII token and an optional
+rig name. Explicit numeric loopback addresses may use WS for local development.
+The token is excluded from the object's representation.
+
+`read_key(path)` reads a bounded private regular file owned by the current OS user,
+refusing symlinks and group/world permissions. `load_connection(path, root=...)`
+reads version-1 saved connection JSON without opening hardware or reading its
+referenced key. It retains the endpoint, key-file path, loopback flag, optional rig
+and optional launcher arguments; it never executes a launcher. Relative key paths
+resolve against the caller's explicit root, or the configuration directory when
+omitted. Missing configuration returns `None`; malformed, duplicate, oversized or
+insecure configuration raises a structured refusal. Applications choose the file
+location and retain responsibility for account authorization.
+
 ## Relay contract
 
 `waddle_sdk_relay.protocol.PROTOCOL` is the existing binary device protocol. Encode/decode

@@ -11,6 +11,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Share runtime-independent connection configuration and private credential-file
+  reading with relay consumers. Retain bounded versioned JSON, private regular
+  files, explicit paths, WSS validation and numeric-loopback development opt-in.
+
 - Add an optional application-authenticated device relay and shared confined
   workspace files. The relay preserves native ownership, reserved Hold/e-stop
   admission, exact bounded SDK values, run-bound playback and uncertain cleanup.
