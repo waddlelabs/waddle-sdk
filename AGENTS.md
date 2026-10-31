@@ -10,7 +10,9 @@ diagnostics remain current through the final reference-only sample. Window
 `observed_ns` binds the evidence to SDK feedback; publish both in one snapshot
 update. Preserve drift/gap resets, original deadlines and reference-only outcomes.
 Window statistics do not themselves declare goal arrival or physical stationarity.
-The original terminal drift/gap regression is retained; validation is in progress.
+The original terminal drift/gap regression is retained. All 251 native runtime
+and 77 selected public/packaged-skill cases pass; full CI remains the source
+promotion gate. These checks do not establish deployed or physical acceptance.
 
 Binding API 28 adds optional `control.completed_stop` and `SiteSession.stop`.
 The existing priority worker returns a fresh callback receipt even after finite
