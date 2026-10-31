@@ -318,7 +318,11 @@ impl PlaybackIo for PyIo {
             if let Ok(error) = value.extract::<PyRef<'_, PyIoError>>() {
                 return Ok(Err(error.0.clone()));
             }
-            value.extract::<()>()?;
+            if !value.is_none() {
+                return Err(PyValueError::new_err(
+                    "part Hold must return None or PlaybackIoError",
+                ));
+            }
             Ok(Ok(()))
         })
     }

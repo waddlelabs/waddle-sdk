@@ -719,8 +719,12 @@ fn reference_receipt_never_extends_deadline_or_hides_cancellation() {
 fn whole_site_references_cannot_select_part_hold() {
     let mut policy = policy();
     policy.part_hold = true;
+    let mut whole_site = chunk();
+    for step in &mut whole_site.steps {
+        step.part = None;
+    }
     assert!(matches!(
-        FiniteReferences::new(chunk(), policy),
+        FiniteReferences::new(whole_site, policy),
         Err(PlaybackError::Invalid(_))
     ));
 }
