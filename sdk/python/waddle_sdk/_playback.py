@@ -89,6 +89,13 @@ def start(run: Run, motion: FiniteJointMotion) -> PlaybackHandle:
             FaultCode.UNSUPPORTED, "part does not support finite playback"
         )
     if (
+        motion.policy.credit_pacing_delay
+        and SupportFact.PACED_PLAYBACK_DEADLINE not in row.facts
+    ):
+        raise RuntimeFault(
+            FaultCode.UNSUPPORTED, "part does not support paced playback deadlines"
+        )
+    if (
         motion.policy.paced_curve is not None
         and SupportFact.PACED_JOINT_PLAYBACK not in row.facts
     ):

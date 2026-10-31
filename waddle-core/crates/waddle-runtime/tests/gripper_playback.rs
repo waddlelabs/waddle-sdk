@@ -44,6 +44,7 @@ fn inputs() -> (ActionChunk, PlaybackPolicy) {
             reference_only: false,
             checkpoint_offsets_ns: vec![],
             allow_curve_updates: false,
+            credit_pacing_delay: false,
             paced_curve: None,
             feedback: None,
             gripper: Some(GripperPolicy {

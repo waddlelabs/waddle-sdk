@@ -72,6 +72,14 @@ cadence without counting unrelated lock wait as driver execution.
 
 ## Finite joint playback
 
+Binding API 21 adds `PlaybackPolicy.credit_pacing_delay` under
+`execution.paced_playback_deadline`. It is opt-in for reference-only polynomial
+execution: complete acknowledged moving ticks credit only their excess local
+wall time. Exact stationary tails and stalled phase cannot renew the budget.
+Use native `curve_progress.pacing_extension_ns`; never infer credit from cloud
+receipt delays. Default false retains an absolute timeout. Updates/withdrawals
+preserve accrued credit without granting more. See the finite-playback page.
+
 Binding API 20 adds optional `WithdrawablePlaybackHandlePort.withdraw_curve`
 under `execution.withdrawable_joint_playback`. Bind the accepted update ID and
 incumbent revision; wait for the new receipt's accepted result before treating
