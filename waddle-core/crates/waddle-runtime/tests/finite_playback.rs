@@ -61,7 +61,12 @@ mod session_execution {
             let _ = release.recv();
             Ok(feedback(self.session.stamp().session_ns, 0.0))
         }
-        fn dispatch(&self, _: &Step, _: &Feedback) -> Result<ReferenceReceipt, PlaybackIoError> {
+        fn dispatch(
+            &self,
+            _: &Step,
+            _: &Feedback,
+            _: Option<f64>,
+        ) -> Result<ReferenceReceipt, PlaybackIoError> {
             panic!("rejected or cancelled input must never dispatch")
         }
     }
@@ -220,6 +225,7 @@ fn policy() -> PlaybackPolicy {
         allow_settled: false,
         paced_curve: None,
         feedback: None,
+        gripper: None,
     }
 }
 
@@ -232,6 +238,7 @@ fn feedback(at: i64, q: f64) -> Feedback {
         observed_ns: at,
         positions: vec![q, 0.5],
         velocities: vec![0.0, 0.0],
+        gripper_force: None,
     }
 }
 

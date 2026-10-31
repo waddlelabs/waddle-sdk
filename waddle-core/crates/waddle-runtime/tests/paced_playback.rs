@@ -51,6 +51,7 @@ fn inputs() -> (ActionChunk, PlaybackPolicy) {
             allow_settled: false,
             paced_curve: Some(curve()),
             feedback: None,
+            gripper: None,
         },
     )
 }
@@ -65,6 +66,7 @@ fn measured(at: i64, q: f64) -> Feedback {
         observed_ns: at,
         positions: vec![q, 0.5],
         velocities: vec![0.0, 0.0],
+        gripper_force: None,
     }
 }
 

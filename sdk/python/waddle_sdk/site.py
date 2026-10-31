@@ -1552,6 +1552,8 @@ class SiteSession:
             )
             if isinstance(gripper, Mapping):
                 facts.add(SupportFact.GRIPPER_MAPPING)
+                if SupportFact.FINITE_JOINT_PLAYBACK in facts:
+                    facts.add(SupportFact.GRIPPER_PLAYBACK)
                 geometry_fields = (
                     "closing_axis_tcp",
                     "pinch_offset_tcp_m",
