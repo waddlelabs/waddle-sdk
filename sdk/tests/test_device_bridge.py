@@ -52,6 +52,128 @@ def test_bridge_constructs_without_opening_hardware(tmp_path):
     assert device.sdk is None and not device.opened_once
 
 
+@pytest.mark.parametrize("stage", ["factory", "runtime"])
+@pytest.mark.parametrize("error_type", [ValueError, KeyboardInterrupt])
+def test_failed_open_with_confirmed_cleanup_disconnects(
+    tmp_path, monkeypatch, stage, error_type
+):
+    import site_fixtures
+    from test_site_ownership import site
+    from waddle_sdk import SiteSession
+
+    selected = site(tmp_path)
+    device = Device(
+        SimpleNamespace(open=lambda **kw: selected.open(_testing=True, **kw)),
+        tmp_path,
+    )
+    failure = error_type("injected startup failure")
+    original = SiteSession._open
+
+    def fail(*args, **kwargs):
+        if stage == "runtime":
+            original(*args, **kwargs)
+        raise failure
+
+    site_fixtures.reset()
+    with monkeypatch.context() as patch:
+        if stage == "factory":
+            patch.setattr(site_fixtures, "part", fail)
+        else:
+            patch.setattr(SiteSession, "_open", fail)
+        with pytest.raises(error_type) as caught:
+            device.dispatch("open", {})
+        assert caught.value is failure
+    assert site_fixtures.opened == site_fixtures.closed
+    assert site_fixtures.opened["arms"] == (stage == "runtime")
+    with pytest.raises(RelayError) as reused:
+        device.dispatch("open", {})
+    assert reused.value.code == "sdk_owner_reused"
+    device.disconnect()
+    device.disconnect()
+    assert device.sdk is None
+    # A new connection may acquire the normally released site lock.
+    with selected.open(console=False, _testing=True):
+        pass
+    assert site_fixtures.opened == site_fixtures.closed
+
+
+def test_failed_open_with_uncertain_cleanup_retains_owner(tmp_path):
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    import site_fixtures
+    from test_site_ownership import site
+
+    selected = site(tmp_path)
+    # Only synthetic drivers are opened. The subprocess deliberately keeps its
+    # uncertain owner, as in the public SiteSession ownership regression.
+    program = """import sys
+from types import SimpleNamespace
+sys.path.insert(0, sys.argv[2])
+import site_fixtures
+from waddle_sdk import SiteSession, load_site
+from waddle_sdk.ownership import SiteOwnershipError
+from waddle_sdk.runtime import RuntimeFault
+from waddle_sdk_relay.device import Device
+selected = load_site(sys.argv[1])
+original_open = SiteSession._open
+original_close = site_fixtures._Camera.close
+def fail_open(self):
+    original_open(self)
+    raise ValueError("injected startup failure")
+def fail_close(self):
+    original_close(self)
+    raise RuntimeError("injected teardown failure")
+SiteSession._open = fail_open
+site_fixtures._Camera.close = fail_close
+device = Device(SimpleNamespace(open=lambda **kw: selected.open(_testing=True, **kw)), selected.path.parent)
+try:
+    device.dispatch("open", {})
+    raise AssertionError("Failed startup was accepted")
+except SiteOwnershipError as error:
+    assert error.code == "site_close_unknown"
+    import traceback
+    history = "".join(traceback.format_exception(error))
+    assert "injected startup failure" in history
+    assert "injected teardown failure" in history
+assert device.sdk is not None
+try:
+    device.disconnect()
+    raise AssertionError("Uncertain disconnect was accepted")
+except (RuntimeFault, SiteOwnershipError):
+    pass
+assert device.sdk is not None
+try:
+    device.sdk.close()
+    raise AssertionError("Uncertain teardown was cleared")
+except SiteOwnershipError as error:
+    assert error.code == "site_close_unknown"
+try:
+    selected.open(console=False, _testing=True).__enter__()
+    raise AssertionError("Replacement owner was admitted")
+except SiteOwnershipError as error:
+    assert error.code == "site_owned"
+assert site_fixtures.opened == site_fixtures.closed
+print("retained")
+"""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            program,
+            str(selected.path),
+            str(Path(site_fixtures.__file__).parent),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().splitlines()[-1] == "retained"
+
+
 @pytest.mark.parametrize(
     "path",
     [".env", "config/.secrets/key", "../file", "a//b", "/file", "recordings/run"],
