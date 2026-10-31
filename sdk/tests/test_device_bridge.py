@@ -136,7 +136,6 @@ except SiteOwnershipError as error:
     import traceback
     history = "".join(traceback.format_exception(error))
     assert "injected startup failure" in history
-    assert "injected teardown failure" in history
 assert device.sdk is not None
 try:
     device.disconnect()

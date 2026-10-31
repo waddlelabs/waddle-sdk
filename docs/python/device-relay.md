@@ -120,6 +120,11 @@ open, the default idle watchdog is three seconds. The peer must send heartbeats
 original Run/Site. Unconfirmed closure retains ownership and requires local
 operator review; it never opens a replacement owner or retries uncertain work.
 
+Failed Site entry uses the same public close contract to confirm cleanup before
+discarding the session. Confirmed cleanup preserves the original startup error
+and permits normal disconnect. An uncertain close still retains the owner. Each
+relay connection attempts to open its Site only once, including failed attempts.
+
 Only explicit local operator authorization may set
 `torque_release_authorized=True`. A remote close argument cannot grant that
 authority. An optional asyncio `stop` event sends a normal-stop notice to the peer;

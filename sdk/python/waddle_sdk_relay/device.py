@@ -186,7 +186,15 @@ class Device:
                 self.opened_once = True
                 opened = self.site.open(console=False, media=self._media)
                 self.sdk = opened
-                opened.__enter__()
+                try:
+                    opened.__enter__()
+                except BaseException:
+                    # Site entry cleans up partial starts. Confirm that through
+                    # its public close contract; uncertain teardown still raises
+                    # and retains this session for disconnect/operator review.
+                    opened.close()
+                    self.sdk = None
+                    raise
                 self._safety_sdk = opened
                 return {"safety_slots": MAX_SAFETY_CALLS}
             if method == "close":
