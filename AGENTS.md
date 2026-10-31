@@ -5,6 +5,15 @@ acceptance separately in a configured simulator environment.
 
 # AGENTS.md — waddle-sdk monorepo
 
+Binding API 18 adds opt-in revisable reference-only curves and a separate
+`execution.revisable_joint_playback` fact. Queue one future suffix on the existing
+worker, preserving PVA continuity, active revision, global reference phase,
+unchanged pacing/tracking policy and original timeout. Keep update receipts
+separate from motion outcomes; refusals retain the incumbent, cancellation drains
+pending requests, and uncertain replies never authorize replay. This primitive
+does not implement live geometry or application replanning. See
+docs/core/finite-reference-playback.md and sdk/tests/test_paced_playback.py.
+
 The optional `setup` extra owns the shared hardware wizard, camera snapshot view,
 editable profiles and atomic reviewed-site builder in `workspace/`. Site creation
 never opens an arm; camera preview is explicit and closes its inspection session.

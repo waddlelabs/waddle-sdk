@@ -40,7 +40,7 @@ from typing import TYPE_CHECKING
 # package version cannot distinguish two
 # local wheels built from different commits, so the native shim carries this
 # deliberately small compatibility epoch as well.
-_REQUIRED_BINDING_API_VERSION = 17
+_REQUIRED_BINDING_API_VERSION = 18
 
 
 def _binding_api(module: object) -> int | None:

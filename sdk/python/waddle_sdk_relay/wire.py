@@ -42,6 +42,7 @@ for _name in (
     "JointReference",
     "PlaybackPolicy",
     "PacedJointCurve",
+    "PlaybackCurveUpdate",
     "HeldJointGroup",
     "PlaybackFeedbackPolicy",
     "PositionWindow",
@@ -90,10 +91,17 @@ def _default(value):
             # An older receiver must reject an enabled completion mode, but can
             # continue decoding ordinary measured-completion policies.
             data.pop("reference_only")
-        if type(value).__name__ == "PlaybackPolicy" and not data.get("checkpoint_offsets_ns"):
+        if type(value).__name__ == "PlaybackPolicy" and not data.get(
+            "checkpoint_offsets_ns"
+        ):
             # Ordinary policies remain compatible; checkpoint capture requires
             # its separately declared native support fact.
             data.pop("checkpoint_offsets_ns", None)
+        if (
+            type(value).__name__ == "PlaybackPolicy"
+            and data.get("allow_curve_updates") is False
+        ):
+            data.pop("allow_curve_updates")
         if isinstance(value, runtime.SubmitResult):
             # These optional clocks belong to the SDK host, not this executor.
             data["dispatch_started_monotonic_s"] = None

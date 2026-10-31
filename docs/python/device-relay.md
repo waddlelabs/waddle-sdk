@@ -74,6 +74,14 @@ transport acknowledgement is not proof of arrival or physical stopping. See
 [finite playback](../core/finite-reference-playback.md) for measured outcomes and
 completed cleanup receipts.
 
+Matching binding API 18 also accepts `playback_update` with the retained `run_id`,
+execution `id` and a `PlaybackCurveUpdate`. It returns `request_id` and `snapshot`
+after queueing, without waiting on device I/O under the admission lock. Poll the
+same execution for acceptance and acknowledged revision. This operation requires
+the opt-in revisable policy; neither a lost reply nor an old handle may start or
+replay execution. Ordinary policies omit the new false flag on the wire so older
+receivers can still decode them.
+
 Sixteen ordinary calls and two reserved Hold/e-stop calls are admitted separately.
 Safety calls bypass ordinary admission and use the existing native SDK stop path.
 Before opening, an idle connection expires after 30 seconds; after a request or

@@ -22,6 +22,10 @@ pub struct PacedCurve {
 
 #[derive(Clone, Debug, Default)]
 pub struct CurveProgress {
+    /// Revision supplying the last acknowledged reference; zero is the input.
+    pub revision: u64,
+    /// Accepted future suffix, not yet crossed by an acknowledged reference.
+    pub pending_revision: Option<u64>,
     pub acknowledged_curve_time_s: Option<f64>,
     pub next_curve_time_s: Option<f64>,
     pub endpoint_acknowledged: bool,
@@ -170,6 +174,59 @@ impl PacedCurve {
         }
         (q, v)
     }
+
+    fn acceleration(&self, time_s: f64) -> Vec<f64> {
+        let segment = self
+            .times_s
+            .partition_point(|t| *t <= time_s)
+            .saturating_sub(1)
+            .min(self.coefficients.len() - 1);
+        let duration = self.times_s[segment + 1] - self.times_s[segment];
+        let u = (time_s - self.times_s[segment]) / duration;
+        let mut value = vec![0.0; self.positions[0].len()];
+        for power in (2..6).rev() {
+            for (coordinate, out) in value.iter_mut().enumerate() {
+                *out = *out * u
+                    + (power * (power - 1)) as f64 * self.coefficients[segment][power][coordinate]
+                        / duration.powi(2);
+            }
+        }
+        value
+    }
+}
+
+/// One validated future suffix. Curve time starts at zero in the new suffix;
+/// `switch_ns` is on the execution's original acknowledged reference timeline.
+#[derive(Clone, Debug)]
+pub struct CurveUpdate {
+    expected_revision: u64,
+    switch_ns: i64,
+    curve: PacedCurve,
+}
+
+impl CurveUpdate {
+    pub fn new(
+        expected_revision: u64,
+        switch_ns: i64,
+        curve: PacedCurve,
+    ) -> Result<Self, PlaybackError> {
+        let width = curve.positions.first().map_or(0, Vec::len);
+        if !(1..=128).contains(&width)
+            || expected_revision == u64::MAX
+            || switch_ns <= 0
+            || curve.times_s.is_empty()
+            || switch_ns as f64 * 1e-9 + curve.duration_s() > 120.0
+            || curve.sample_times_s.is_some()
+        {
+            return Err(PlaybackError::Invalid("invalid bounded curve update"));
+        }
+        curve.validate(width)?;
+        Ok(Self {
+            expected_revision,
+            switch_ns,
+            curve,
+        })
+    }
 }
 
 #[derive(Debug)]
@@ -178,6 +235,8 @@ pub(crate) struct CurveCursor {
     pub progress: CurveProgress,
     pub proposed_s: f64,
     grid_index: usize,
+    origin_s: f64,
+    update: Option<CurveUpdate>,
 }
 
 impl CurveCursor {
@@ -186,9 +245,7 @@ impl CurveCursor {
         feedback: &Feedback,
         indices: &[usize],
     ) -> Result<(), PlaybackError> {
-        let previous = self
-            .spec
-            .sample(self.progress.acknowledged_curve_time_s.unwrap_or(0.0));
+        let previous = self.sample(self.progress.acknowledged_curve_time_s.unwrap_or(0.0));
         if indices
             .iter()
             .zip(&previous.0)
@@ -208,7 +265,77 @@ impl CurveCursor {
             },
             proposed_s: 0.0,
             grid_index: 0,
+            origin_s: 0.0,
+            update: None,
         }
+    }
+
+    pub fn schedule(&mut self, update: CurveUpdate) -> Result<(), PlaybackError> {
+        if self.update.is_some() {
+            return Err(PlaybackError::Busy);
+        }
+        let switch = update.switch_ns as f64 * 1e-9;
+        if update.expected_revision != self.progress.revision
+            || self.progress.endpoint_acknowledged
+            || switch <= self.progress.acknowledged_curve_time_s.unwrap_or(0.0)
+            || switch > self.duration_s()
+        {
+            return Err(PlaybackError::Invalid(
+                "curve update is stale or outside its incumbent",
+            ));
+        }
+        if self.spec.sample_times_s.is_some()
+            || update.curve.period_ns != self.spec.period_ns
+            || update.curve.position_error != self.spec.position_error
+            || update.curve.tracking_tolerance != self.spec.tracking_tolerance
+            || update.curve.positions[0].len() != self.spec.positions[0].len()
+        {
+            return Err(PlaybackError::Invalid(
+                "curve update changed pacing or coordinate limits",
+            ));
+        }
+        let at = switch - self.origin_s;
+        let (q, v) = self.spec.sample(at);
+        let (next_q, next_v) = update.curve.sample(0.0);
+        let a = self.spec.acceleration(at);
+        let next_a = update.curve.acceleration(0.0);
+        if [(&q, &next_q), (&v, &next_v), (&a, &next_a)]
+            .iter()
+            .any(|(left, right)| {
+                left.iter()
+                    .zip(right.iter())
+                    .any(|(a, b)| !a.is_finite() || !b.is_finite() || (a - b).abs() > 1e-8)
+            })
+        {
+            return Err(PlaybackError::Invalid(
+                "curve update does not preserve handoff PVA",
+            ));
+        }
+        self.progress.pending_revision = Some(update.expected_revision + 1);
+        self.update = Some(update);
+        self.progress.next_curve_time_s = self
+            .progress
+            .next_curve_time_s
+            .map(|t| t.min(self.duration_s()));
+        Ok(())
+    }
+
+    fn duration_s(&self) -> f64 {
+        self.update
+            .as_ref()
+            .map_or(self.origin_s + self.spec.duration_s(), |u| {
+                u.switch_ns as f64 * 1e-9 + u.curve.duration_s()
+            })
+    }
+
+    fn sample(&self, at: f64) -> (Vec<f64>, Vec<f64>) {
+        if let Some(update) = &self.update {
+            let switch = update.switch_ns as f64 * 1e-9;
+            if at >= switch {
+                return update.curve.sample(at - switch);
+            }
+        }
+        self.spec.sample(at - self.origin_s)
     }
 
     pub fn propose(
@@ -219,14 +346,14 @@ impl CurveCursor {
         let previous_s = self.progress.acknowledged_curve_time_s.unwrap_or(0.0);
         let pending_s = self.progress.next_curve_time_s.unwrap_or(previous_s);
         let measured: Vec<_> = indices.iter().map(|i| feedback.positions[*i]).collect();
-        let previous = self.spec.sample(previous_s);
+        let previous = self.sample(previous_s);
         let fits = |q: &[f64], margin: f64| {
             q.iter()
                 .zip(&measured)
                 .zip(&self.spec.position_error)
                 .all(|((q, m), cap)| (q - m).abs() <= cap * margin + 1e-12)
         };
-        let mut candidate = self.spec.sample(pending_s);
+        let mut candidate = self.sample(pending_s);
         self.proposed_s = pending_s;
         if !fits(&candidate.0, 0.9) {
             self.progress.limited_ticks += 1;
@@ -239,7 +366,7 @@ impl CurveCursor {
                 let (mut low, mut high) = (previous_s, pending_s);
                 for _ in 0..24 {
                     let middle = (low + high) / 2.0;
-                    let sample = self.spec.sample(middle);
+                    let sample = self.sample(middle);
                     if fits(&sample.0, 0.9) {
                         low = middle;
                         candidate = sample;
@@ -252,7 +379,7 @@ impl CurveCursor {
             if self.proposed_s - previous_s <= (self.spec.period_ns as f64 * 1e-15).max(1e-9) {
                 self.progress.held_ticks += 1;
                 self.proposed_s = previous_s;
-                candidate = self.spec.sample(previous_s);
+                candidate = self.sample(previous_s);
             } else {
                 self.progress.partial_ticks += 1;
             }
@@ -275,8 +402,19 @@ impl CurveCursor {
     }
 
     pub fn acknowledge(&mut self) {
+        if self
+            .update
+            .as_ref()
+            .is_some_and(|u| self.proposed_s >= u.switch_ns as f64 * 1e-9)
+        {
+            let update = self.update.take().unwrap();
+            self.origin_s = update.switch_ns as f64 * 1e-9;
+            self.spec = update.curve;
+            self.progress.revision = update.expected_revision + 1;
+            self.progress.pending_revision = None;
+        }
         self.progress.acknowledged_curve_time_s = Some(self.proposed_s);
-        if self.proposed_s >= self.spec.duration_s() {
+        if self.proposed_s >= self.duration_s() {
             self.progress.endpoint_acknowledged = true;
             self.progress.next_curve_time_s = None;
         } else if let Some(grid) = &self.spec.sample_times_s {
@@ -285,9 +423,8 @@ impl CurveCursor {
             }
             self.progress.next_curve_time_s = Some(grid[self.grid_index]);
         } else {
-            self.progress.next_curve_time_s = Some(
-                (self.proposed_s + self.spec.period_ns as f64 * 1e-9).min(self.spec.duration_s()),
-            );
+            self.progress.next_curve_time_s =
+                Some((self.proposed_s + self.spec.period_ns as f64 * 1e-9).min(self.duration_s()));
         }
     }
 }
