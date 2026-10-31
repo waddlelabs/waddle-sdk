@@ -987,6 +987,17 @@ class MediaRuntimePort(Protocol):
 
 
 @runtime_checkable
+class ShutdownConfirmationPort(Protocol):
+    """Optional local, nonblocking confirmation of a currently held shutdown.
+
+    The caller must have the site operator's current parking/support consent.
+    False never arms a later shutdown or claims that a robot is at Home.
+    """
+
+    def confirm_supported_shutdown(self) -> bool: ...
+
+
+@runtime_checkable
 class SdkRuntimePort(Protocol):
     """The structural surface applications need from a local or remote SDK session."""
 

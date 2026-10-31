@@ -1116,6 +1116,15 @@ class SiteSession:
         self._event("session.opened", {"site_id": self.site.id})
         return self
 
+    def confirm_supported_shutdown(self) -> bool:
+        """Deliver the operator's fresh support gesture to an already held close.
+
+        This does not verify a pose, start closure or authorize a future close.
+        The ordinary owner still drains and records its original close outcome.
+        """
+        managed = self._managed
+        return bool(self._closing and managed is not None and managed.park.confirm())
+
     def close(self, *, torque_release_authorized: bool = False) -> None:
         """Finish the run and release this session's devices and ownership.
 

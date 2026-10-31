@@ -1001,6 +1001,7 @@ def test_close_keeps_holding_until_release_is_authorized(
     session = site.open(console=False, _testing=True).__enter__()
     park = session._managed.park
     run = session.begin_run(task="close acceptance", actor={"id": "test"})
+    assert not session.confirm_supported_shutdown()  # Never arms future closure.
     with pytest.raises(TypeError, match="boolean"):
         session.close(torque_release_authorized="yes")
     with ThreadPoolExecutor(max_workers=1) as executor:
@@ -1012,12 +1013,13 @@ def test_close_keeps_holding_until_release_is_authorized(
                 )
                 assert not future.done()
                 assert site_fixtures.closed == {"arms": 0, "cameras": 0}
-                assert park.confirm()
+                assert session.confirm_supported_shutdown()
             future.result(timeout=2)
         finally:
             park.confirm()
             future.result(timeout=2)
     assert run.done and run.outcome == "abort"
+    assert not session.confirm_supported_shutdown()
     session.close(torque_release_authorized=True)
     session.__exit__(None, None, None)
     assert site_fixtures.closed == {"arms": 1, "cameras": 1}

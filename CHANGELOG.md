@@ -11,6 +11,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Expose optional local confirmation of an already held shutdown, preserving
+  fresh operator support consent and the original close/drain outcome.
+
 - Confirm failed Site startup cleanup before clearing the device relay's session,
   so ordinary disconnect does not hang on a session already closed by entry.
   Uncertain teardown retains ownership and the original error chain.

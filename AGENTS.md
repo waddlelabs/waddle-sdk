@@ -5,6 +5,11 @@ acceptance separately in a configured simulator environment.
 
 # AGENTS.md — waddle-sdk monorepo
 
+The optional local ShutdownConfirmationPort delivers fresh operator support consent
+only to an already held Site shutdown. False never arms future closure or asserts
+Home. Keep the original close/drain outcome and ownership authoritative; no motion,
+new owner, native ABI, driver behavior or remote control authority is added.
+
 Binding API 27 prepares coordinated subsets under a separate support fact. Keep
 selected parts in declaration order, validate the complete selected action space,
 and reserve every member on the existing native worker until terminal cleanup.

@@ -34,6 +34,12 @@ writing any part; one refusal holds the addressed set and moves none of it. The 
 lifecycle exposes no lease or handoff selector: handoff is fixed to hold-first and
 enforcement placement is derived from the selected integration.
 
+For an already closing local session, the optional
+`runtime.ShutdownConfirmationPort.confirm_supported_shutdown()` delivers a fresh
+operator parking/support gesture to its current holding gate. It returns false
+before that wait or after closure, never arms a future shutdown, and does not
+establish Home arrival. The original close call still owns drain and completion.
+
 The root package deliberately exports only `Site`, `SiteSession`, `Run`,
 `load_site`, `Grpc`, `LiveKit`, `Outcome`, manifest errors,
 `ConnectorRegistrationError`, and `ConnectorCompatibilityWarning`.
