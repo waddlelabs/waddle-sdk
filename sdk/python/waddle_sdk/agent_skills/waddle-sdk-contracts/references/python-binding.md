@@ -71,8 +71,8 @@ The handle's `snapshot` and `wait` retain identity, dispatch count, measured sta
 status and original failure evidence. `cancel` requests native drain/Hold. A
 terminal handle cannot cancel a successor. Direct steps return Busy while playback
 is active, and run/site teardown drains before hardware parking/close. Binding API
-12 prevents stale native wheels from opening hardware through this surface. Force
-modifiers, dynamic reference updates and coupled multi-part execution remain
+13 prevents stale native wheels from opening hardware through this surface.
+Per-reference force modifiers, dynamic reference updates and coupled multi-part execution remain
 unsupported. See `docs/core/finite-reference-playback.md` in a source checkout.
 
 An optional `PacedJointCurve` in the policy requires the separate
@@ -89,6 +89,15 @@ admission, original timeout and distinct arrival/miss evidence. `during_motion`
 may retain eligible stability history, but completion still needs the endpoint
 acknowledgement and fresh feedback. No Python execution loop or force/contact
 classification is added; see the same normative playback page.
+
+`GripperPlaybackPolicy` separately requires `execution.gripper_playback` and
+the Site's declared jaw index and physical mapping. Native code owns bounded
+position correction, acknowledgement-completion spacing and measured arrival,
+contact-stall or force completion. Optional constant force requires both force
+control and sourced feedback; zero releases force. A closed empty jaw cannot
+qualify as a force grasp. Preserve source/estimate evidence, original failure and
+normal stop/drain; successful force completion keeps the driver's mode active.
+This measures generic jaw conditions, not object identity or calibrated contact.
 
 ## Imported simulation worlds
 

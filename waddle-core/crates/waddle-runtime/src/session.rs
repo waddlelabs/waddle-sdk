@@ -1750,9 +1750,13 @@ impl Session {
             .paced_curve
             .as_ref()
             .is_some_and(|curve| curve.period_ns < sample_period_ns)
+            || policy
+                .gripper
+                .as_ref()
+                .is_some_and(|g| g.period_ns < sample_period_ns)
         {
             return Err(PlaybackError::Invalid(
-                "paced curve exceeds the declared command cadence",
+                "playback exceeds the declared command cadence",
             ));
         }
         let references = FiniteReferences::new(flattened.chunk, policy)?;

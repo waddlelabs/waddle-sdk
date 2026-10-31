@@ -21,6 +21,14 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Optional native gripper playback, with binding API 13 and an independent support
+  fact. Preserve the declared jaw mapping, local acknowledgement spacing and
+  ordinary owner gates. Distinguish three-sample measured arrival, sustained
+  closing contact and sourced force completion; reject empty-jaw effort at the
+  closed stop. Constant force is capability-gated, zero releases it, and original
+  failures/cancellation retain normal Hold/drain. Snapshots retain jaw evidence.
+  Native and fake-owner tests do not qualify physical contact or calibrated force.
+
 - Optional measured playback policies on the existing native worker, with binding
   API 12 and a separate support fact: held-coordinate correction, measured-row
   passthrough, directional velocity hints and bounded encoder-window settling.

@@ -60,6 +60,7 @@ impl PlaybackIo for MemoryIo {
             observed_ns: self.clock.stamp_now().mono_ns().0,
             positions: vec![*self.q.lock()],
             velocities: vec![0.0],
+            gripper_force: None,
         })
     }
 
@@ -67,6 +68,7 @@ impl PlaybackIo for MemoryIo {
         &self,
         reference: &Step,
         measured: &Feedback,
+        _force_n: Option<f64>,
     ) -> Result<ReferenceReceipt, PlaybackIoError> {
         assert_eq!(std::thread::current().name(), Some("waddle-verbs"));
         self.events.lock().push("dispatch");
@@ -234,6 +236,7 @@ fn references() -> FiniteReferences {
             allow_settled: false,
             paced_curve: None,
             feedback: None,
+            gripper: None,
         },
     )
     .unwrap()

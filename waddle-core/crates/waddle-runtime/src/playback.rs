@@ -18,6 +18,11 @@ use feedback::FeedbackState;
 pub use feedback::{
     FeedbackPolicy, HeldJointGroup, PositionWindow, SettlingEvidence, VelocityHints,
 };
+mod gripper;
+use gripper::GripperState;
+pub use gripper::{
+    ContactCondition, ForceCondition, GripperEvidence, GripperPolicy, MeasuredForce,
+};
 pub(crate) mod execution;
 pub use execution::{
     ExecutionFailure, ExecutionHandle, ExecutionResult, ExecutionSnapshot, PlaybackIo,
@@ -43,6 +48,7 @@ pub struct PlaybackPolicy {
     pub paced_curve: Option<PacedCurve>,
     /// Optional measured holding, velocity-hint direction and encoder settling.
     pub feedback: Option<FeedbackPolicy>,
+    pub gripper: Option<GripperPolicy>,
 }
 
 /// Measured feedback stamped on the same session clock as playback.
@@ -51,12 +57,15 @@ pub struct Feedback {
     pub observed_ns: i64,
     pub positions: Vec<f64>,
     pub velocities: Vec<f64>,
+    pub gripper_force: Option<MeasuredForce>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Completion {
     Arrived,
     Settled,
+    ContactStall,
+    ForceReached,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -71,6 +80,10 @@ pub enum PlaybackError {
     StaleStart,
     #[error("measured joints left the admitted reference tracking window")]
     Tracking,
+    #[error("gripper force feedback is unavailable")]
+    ForceUnavailable,
+    #[error("the jaw reached its closed stop without a qualified force grasp")]
+    EmptyGripper,
     #[error("reference {index} is {lateness_ns} ns late")]
     LateReference { index: usize, lateness_ns: i64 },
     #[error("finite reference deadline expired")]
@@ -206,6 +219,8 @@ impl FiniteReferences {
         }
         if let Some(feedback) = &policy.feedback {
             feedback.validate(&policy, width)?;
+        }
+        if policy.feedback.is_some() || policy.gripper.is_some() {
             for step in &chunk.steps {
                 if (0..width).any(|i| {
                     !policy.indices.contains(&i)
@@ -219,6 +234,27 @@ impl FiniteReferences {
                         "feedback playback requires unchanged unselected targets and zero hints",
                     ));
                 }
+            }
+        }
+        if let Some(gripper) = &policy.gripper {
+            let index = policy.indices[0];
+            gripper.validate(
+                &policy,
+                first.values[index],
+                chunk.steps.last().unwrap().values[index],
+            )?;
+            let low = gripper.closed_position.min(gripper.open_position);
+            let high = gripper.closed_position.max(gripper.open_position);
+            if chunk.steps.iter().any(|step| {
+                !(low..=high).contains(&step.values[index])
+                    || step
+                        .velocity_feedforward
+                        .as_ref()
+                        .is_some_and(|v| v.iter().any(|x| *x != 0.0))
+            }) {
+                return Err(invalid(
+                    "gripper references require mapped positions and zero velocity hints",
+                ));
             }
         }
         Ok(Self { chunk, policy })
@@ -260,6 +296,7 @@ pub struct Playback {
     proposed: Option<Step>,
     dispatched_ns: Option<i64>,
     feedback: FeedbackState,
+    gripper: GripperState,
 }
 
 impl Playback {
@@ -283,12 +320,16 @@ impl Playback {
             proposed: None,
             dispatched_ns: None,
             feedback,
+            gripper: GripperState::default(),
         }
     }
 
     #[must_use]
     pub fn reference(&self, index: usize) -> Option<&Step> {
-        if self.curve.is_some() || self.references.policy.feedback.is_some() {
+        if self.curve.is_some()
+            || self.references.policy.feedback.is_some()
+            || self.references.policy.gripper.is_some()
+        {
             self.proposed.as_ref().filter(|_| index == self.next)
         } else {
             self.references.reference(index)
@@ -303,6 +344,20 @@ impl Playback {
     #[must_use]
     pub fn settling_evidence(&self) -> Option<SettlingEvidence> {
         self.feedback.evidence.clone()
+    }
+
+    #[must_use]
+    pub fn gripper_evidence(&self) -> Option<GripperEvidence> {
+        self.gripper.evidence.clone()
+    }
+
+    pub(crate) fn force_n(&self) -> Option<f64> {
+        self.references
+            .policy
+            .gripper
+            .as_ref()
+            .and_then(|g| g.force.as_ref())
+            .map(|f| f.target_n)
     }
 
     #[must_use]
@@ -321,7 +376,7 @@ impl Playback {
         let deadline = self
             .started_ns
             .saturating_add(self.references.policy.timeout_ns);
-        if self.curve.is_some() {
+        if self.curve.is_some() || self.references.policy.gripper.is_some() {
             return deadline;
         }
         self.references
@@ -377,6 +432,10 @@ impl Playback {
                 .iter()
                 .chain(&measured.velocities)
                 .any(|v| !v.is_finite())
+            || measured
+                .gripper_force
+                .as_ref()
+                .is_some_and(|f| !f.force_n.is_finite() || f.force_n < 0.0 || f.source.is_empty())
         {
             return self.fail(PlaybackError::InvalidFeedback);
         }
@@ -398,6 +457,9 @@ impl Playback {
             )
         {
             return self.fail(PlaybackError::StaleStart);
+        }
+        if self.references.policy.gripper.is_some() {
+            return self.poll_gripper(now_ns, measured, fresh);
         }
         if let Some(curve) = &self.curve {
             if self
@@ -582,6 +644,68 @@ impl Playback {
         Ok(PlaybackPoll::Complete(outcome))
     }
 
+    fn poll_gripper(
+        &mut self,
+        now_ns: i64,
+        measured: &Feedback,
+        fresh: bool,
+    ) -> Result<PlaybackPoll, PlaybackError> {
+        let policy = &self.references.policy;
+        let spec = policy.gripper.as_ref().expect("gripper mode");
+        let due = self
+            .acknowledged_ns
+            .map_or(self.started_ns, |at| at.saturating_add(spec.period_ns));
+        if now_ns < due {
+            return Ok(PlaybackPoll::WaitUntil(due));
+        }
+        if self
+            .acknowledged_ns
+            .is_some_and(|at| measured.observed_ns <= at)
+            || !fresh
+        {
+            self.gripper.reset_samples();
+            return Ok(PlaybackPoll::Observe);
+        }
+        let index = policy.indices[0];
+        let first = &self.references.chunk.steps[0];
+        let last = self
+            .references
+            .chunk
+            .steps
+            .last()
+            .expect("validated buffer");
+        match self.gripper.observe(
+            measured,
+            policy,
+            first.values[index],
+            last.values[index],
+            fresh,
+        ) {
+            Ok(Some(result)) => {
+                self.completion = Some(result);
+                return Ok(PlaybackPoll::Complete(result));
+            }
+            Err(error) => return self.fail(error),
+            Ok(None) => {}
+        }
+        let nominal = if spec.force_grasp() {
+            last
+        } else {
+            &self.references.chunk.steps[self.next.min(self.references.chunk.steps.len() - 1)]
+        };
+        let mut step = nominal.clone();
+        let mut positions = step.values.to_vec();
+        positions[index] = self
+            .gripper
+            .reference(measured, policy, nominal.values[index]);
+        step.values = positions.into();
+        self.feedback
+            .adapt(&mut step, measured, policy, &last.values);
+        self.proposed = Some(step);
+        self.pending = true;
+        Ok(PlaybackPoll::Dispatch(self.next))
+    }
+
     /// Record a confirmed dispatch only. On rejection or unknown outcome the
     /// owner stops playback and retains its original fault; it must not ack.
     pub fn acknowledge(&mut self, index: usize, now_ns: i64) -> Result<(), PlaybackError> {
@@ -610,6 +734,15 @@ impl Playback {
         self.now_ns = now_ns;
         self.acknowledged_ns = Some(now_ns);
         self.dispatched_ns = Some(started_ns);
+        if self.references.policy.gripper.is_some() {
+            self.gripper.last_command = Some(
+                self.proposed
+                    .as_ref()
+                    .expect("proposed gripper reference")
+                    .values[self.references.policy.indices[0]],
+            );
+            self.gripper.nominal_complete = self.next >= self.references.chunk.steps.len();
+        }
         if let Some(curve) = &mut self.curve {
             curve.acknowledge();
         }

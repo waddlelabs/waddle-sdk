@@ -9,8 +9,8 @@ use waddle_types::time::Clock;
 use waddle_types::{EpisodeId, Step};
 
 use super::{
-    Completion, CurveProgress, Feedback, FiniteReferences, Playback, PlaybackError, PlaybackPoll,
-    SettlingEvidence,
+    Completion, CurveProgress, Feedback, FiniteReferences, GripperEvidence, Playback,
+    PlaybackError, PlaybackPoll, SettlingEvidence,
 };
 use crate::mirror::Mirror;
 
@@ -45,6 +45,7 @@ pub trait PlaybackIo: Send + Sync + 'static {
         &self,
         reference: &Step,
         measured: &Feedback,
+        force_n: Option<f64>,
     ) -> Result<ReferenceReceipt, PlaybackIoError>;
 }
 
@@ -71,6 +72,7 @@ pub struct ExecutionSnapshot {
     pub feedback: Option<Feedback>,
     pub curve_progress: Option<CurveProgress>,
     pub settling: Option<SettlingEvidence>,
+    pub gripper: Option<GripperEvidence>,
     pub last_reference: Option<Step>,
     pub result: Option<ExecutionResult>,
 }
@@ -169,6 +171,7 @@ impl ExecutionSlot {
                     feedback: None,
                     curve_progress: None,
                     settling: None,
+                    gripper: None,
                     last_reference: None,
                     result: None,
                 },
@@ -320,6 +323,7 @@ impl ExecutionTask {
         let polled = player.poll(now, &measured);
         self.control.state.lock().snapshot.curve_progress = player.curve_progress();
         self.control.state.lock().snapshot.settling = player.settling_evidence();
+        self.control.state.lock().snapshot.gripper = player.gripper_evidence();
         let action = match polled {
             Ok(action) => action,
             Err(error) => return Some(Err(ExecutionFailure::Playback(error))),
@@ -327,7 +331,7 @@ impl ExecutionTask {
         match action {
             PlaybackPoll::Dispatch(index) => {
                 let reference = player.reference(index).expect("admitted reference").clone();
-                match self.io.dispatch(&reference, &measured) {
+                match self.io.dispatch(&reference, &measured, player.force_n()) {
                     Ok(
                         receipt
                         @ (ReferenceReceipt::Dispatched | ReferenceReceipt::DispatchedAt(_)),

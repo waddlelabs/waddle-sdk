@@ -6,9 +6,10 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use waddle_runtime::playback::{
-    Completion, ExecutionFailure, ExecutionHandle, ExecutionSnapshot, Feedback, FeedbackPolicy,
-    HeldJointGroup, PacedCurve, PlaybackError, PlaybackIo, PlaybackIoError, PlaybackPolicy,
-    PositionWindow, ReferenceReceipt, VelocityHints,
+    Completion, ContactCondition, ExecutionFailure, ExecutionHandle, ExecutionSnapshot, Feedback,
+    FeedbackPolicy, ForceCondition, GripperPolicy, HeldJointGroup, MeasuredForce, PacedCurve,
+    PlaybackError, PlaybackIo, PlaybackIoError, PlaybackPolicy, PositionWindow, ReferenceReceipt,
+    VelocityHints,
 };
 use waddle_types::Step;
 
@@ -26,6 +27,44 @@ pub(crate) struct Policy {
     allow_settled: bool,
     paced_curve: Option<Curve>,
     feedback: Option<FeedbackOptions>,
+    gripper: Option<Gripper>,
+}
+
+#[derive(FromPyObject)]
+struct Gripper {
+    period_ns: i64,
+    position_error: f64,
+    tracking_tolerance: f64,
+    closed_position: f64,
+    open_position: f64,
+    closed_m: f64,
+    open_m: f64,
+    contact: Option<Contact>,
+    force: Option<Force>,
+}
+
+#[derive(FromPyObject)]
+struct Contact {
+    minimum_opening_m: f64,
+    minimum_progress_m: f64,
+    target_shortfall_m: f64,
+    commanded_shortfall_m: f64,
+    max_drift_m: f64,
+    window_ns: i64,
+}
+
+#[derive(FromPyObject)]
+struct Force {
+    target_n: f64,
+    tolerance_n: f64,
+    closed_tolerance_m: f64,
+}
+
+#[derive(FromPyObject)]
+struct ForceFeedback {
+    force_n: f64,
+    source: String,
+    estimated: bool,
 }
 
 #[derive(FromPyObject)]
@@ -115,6 +154,28 @@ impl TryFrom<Policy> for PlaybackPolicy {
                 sample_times_s: c.sample_times_s,
             }),
             feedback,
+            gripper: p.gripper.map(|g| GripperPolicy {
+                period_ns: g.period_ns,
+                position_error: g.position_error,
+                tracking_tolerance: g.tracking_tolerance,
+                closed_position: g.closed_position,
+                open_position: g.open_position,
+                closed_m: g.closed_m,
+                open_m: g.open_m,
+                contact: g.contact.map(|c| ContactCondition {
+                    minimum_opening_m: c.minimum_opening_m,
+                    minimum_progress_m: c.minimum_progress_m,
+                    target_shortfall_m: c.target_shortfall_m,
+                    commanded_shortfall_m: c.commanded_shortfall_m,
+                    max_drift_m: c.max_drift_m,
+                    window_ns: c.window_ns,
+                }),
+                force: g.force.map(|f| ForceCondition {
+                    target_n: f.target_n,
+                    tolerance_n: f.tolerance_n,
+                    closed_tolerance_m: f.closed_tolerance_m,
+                }),
+            }),
         })
     }
 }
@@ -141,6 +202,7 @@ struct Measured {
     observed_ns: i64,
     positions: Vec<f64>,
     velocities: Vec<f64>,
+    gripper_force: Option<ForceFeedback>,
 }
 
 #[derive(FromPyObject)]
@@ -187,6 +249,18 @@ fn feedback(py: Python<'_>, value: &Feedback) -> PyResult<Py<PyDict>> {
     out.set_item("observed_ns", value.observed_ns)?;
     out.set_item("positions", &value.positions)?;
     out.set_item("velocities", &value.velocities)?;
+    let force = value
+        .gripper_force
+        .as_ref()
+        .map(|f| -> PyResult<Py<PyDict>> {
+            let result = PyDict::new(py);
+            result.set_item("force_n", f.force_n)?;
+            result.set_item("source", &f.source)?;
+            result.set_item("estimated", f.estimated)?;
+            Ok(result.unbind())
+        })
+        .transpose()?;
+    out.set_item("gripper_force", force)?;
     Ok(out.unbind())
 }
 
@@ -214,6 +288,11 @@ impl PlaybackIo for PyIo {
                 observed_ns: measured.observed_ns,
                 positions: measured.positions,
                 velocities: measured.velocities,
+                gripper_force: measured.gripper_force.map(|f| MeasuredForce {
+                    force_n: f.force_n,
+                    source: f.source,
+                    estimated: f.estimated,
+                }),
             }))
         })
     }
@@ -222,12 +301,14 @@ impl PlaybackIo for PyIo {
         &self,
         step: &Step,
         measured: &Feedback,
+        force_n: Option<f64>,
     ) -> Result<ReferenceReceipt, PlaybackIoError> {
         callback(true, |py| {
-            let value = self
-                .dispatch
-                .bind(py)
-                .call1((reference(py, step)?, feedback(py, measured)?))?;
+            let value = self.dispatch.bind(py).call1((
+                reference(py, step)?,
+                feedback(py, measured)?,
+                force_n,
+            ))?;
             if let Ok(error) = value.extract::<PyRef<'_, PyIoError>>() {
                 return Ok(Err(error.0.clone()));
             }
@@ -328,6 +409,25 @@ fn snapshot(py: Python<'_>, value: ExecutionSnapshot) -> PyResult<Py<PyDict>> {
         })
         .transpose()?;
     out.set_item("settling", settling)?;
+    let gripper = value
+        .gripper
+        .map(|e| -> PyResult<Py<PyDict>> {
+            let result = PyDict::new(py);
+            result.set_item("target_opening_m", e.target_opening_m)?;
+            result.set_item("measured_opening_m", e.measured_opening_m)?;
+            result.set_item("commanded_opening_m", e.commanded_opening_m)?;
+            result.set_item("progress_m", e.progress_m)?;
+            result.set_item("target_shortfall_m", e.target_shortfall_m)?;
+            result.set_item("commanded_shortfall_m", e.commanded_shortfall_m)?;
+            result.set_item("window_ns", e.window_ns)?;
+            result.set_item("drift_m", e.drift_m)?;
+            result.set_item("force_target_n", e.force_target_n)?;
+            result.set_item("force_samples", e.force_samples)?;
+            result.set_item("arrival_samples", e.arrival_samples)?;
+            Ok(result.unbind())
+        })
+        .transpose()?;
+    out.set_item("gripper", gripper)?;
     out.set_item(
         "feedback",
         value
@@ -340,6 +440,8 @@ fn snapshot(py: Python<'_>, value: ExecutionSnapshot) -> PyResult<Py<PyDict>> {
         None => "running",
         Some(Ok(Completion::Arrived)) => "arrived",
         Some(Ok(Completion::Settled)) => "settled",
+        Some(Ok(Completion::ContactStall)) => "contact_stall",
+        Some(Ok(Completion::ForceReached)) => "force_reached",
         Some(Err(_)) => "failed",
     };
     out.set_item("status", status)?;
@@ -363,6 +465,8 @@ fn failure(py: Python<'_>, error: ExecutionFailure) -> PyResult<Py<PyDict>> {
                 PlaybackError::Invalid(_) | PlaybackError::InvalidAction(_) => "invalid",
                 PlaybackError::StaleStart => "stale_start",
                 PlaybackError::Tracking => "tracking",
+                PlaybackError::ForceUnavailable => "gripper_force_unavailable",
+                PlaybackError::EmptyGripper => "gripper_empty",
                 PlaybackError::LateReference { index, lateness_ns } => {
                     out.set_item("reference_index", index)?;
                     out.set_item("lateness_ns", lateness_ns)?;

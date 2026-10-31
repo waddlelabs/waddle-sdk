@@ -126,6 +126,57 @@ velocity peak and consecutive qualifying count. Its time source is the SDK
 observation timestamp, not a claim about motor acquisition timing. Contact/force
 classification, geometry/world validation and dynamic updates remain separate.
 
+## Optional gripper execution
+
+`PlaybackPolicy.gripper` selects `GripperPolicy` (Python:
+`GripperPlaybackPolicy`) with binding API 13 and `execution.gripper_playback`.
+It selects exactly the Site's declared jaw row and affine physical opening
+mapping (`closed_position`, `open_position`, `closed_m`, `open_m`). Reversed
+action directions are supported. Unselected nominal targets remain constant;
+optional held groups can still approach them. A paced polynomial, encoder
+position window, nonzero hints and stationary-miss completion cannot be combined
+with this jaw policy.
+
+`period_ns` spaces commands from **completed acknowledgements**, using the local
+clock and no catch-up. It cannot exceed the declared command rate. Nominal jaw
+targets advance once per acknowledgement; after their end, correction continues
+toward the final target under the original absolute timeout. Each correction
+reserves 10% of `position_error` plus one period of opposing measured travel.
+`tracking_tolerance` checks the preceding actual command, except while the
+declared contact/force condition accounts for a blocked jaw. Ordinary owner
+limits remain authoritative for every command. The fixed-offset lateness guard
+does not apply in this mode.
+
+- Position arrival requires three consecutive fresh, stationary, in-tolerance
+  observations after the nominal sequence has been dispatched. Exhausting the
+  sequence alone is not completion.
+- Optional `GripperContactPolicy` requires a closing target, minimum physical
+  opening and measured closing progress, plus shortfalls from both the final goal
+  and the actual preceding command. At least two samples must cover `window_ns`
+  with opening drift within `max_drift_m`; the sample at/before its leading
+  boundary is retained. This yields `contact_stall` even if instantaneous velocity
+  is noisy. It does not identify the object or measure force.
+- Optional `GripperForcePolicy` carries one constant `target_n`, `tolerance_n`
+  and `closed_tolerance_m`. The part must support force control and sourced force
+  observation. Positive force immediately pursues the final jaw target using 50%
+  position-error headroom. Three consecutive fresh, stationary force measurements
+  at least `target_n - tolerance_n` yield `force_reached`; source and estimated
+  status remain attached. Opening at/below the closed stop plus tolerance fails
+  with `gripper_empty`, even with high motor effort. Missing force feedback fails
+  with `gripper_force_unavailable`. These conditions do not calibrate motor effort
+  as fingertip force. Positive force and contact classification cannot coexist.
+- A force target of zero explicitly releases the driver's force mode and uses
+  positional/contact completion. No force policy leaves the ordinary driver mode
+  unchanged. Successful force completion retains the hold; explicit release,
+  Hold/e-stop and teardown use the driver's existing lifecycle.
+
+Repeated or pre-acknowledgement feedback resets completion history. The snapshot's
+`gripper` evidence retains target/measured/commanded opening, progress, shortfalls,
+window span/drift and arrival/force sample counts. Failure and uncertain writes
+retain their original outcome and normal native Hold/drain; no reference retries.
+Geometry checks, object identity and dependent action orchestration belong to the
+consumer. This API does not qualify a physical grasp or multi-part execution.
+
 ## Driving the state
 
 Construct `Playback` with the local session-monotonic start time. For each poll,
@@ -209,7 +260,8 @@ reference must match measured start within the supplied tolerances. The final
 hint must be zero. Supply the entire validated sequence before admission; this
 interface performs no planning or fitting. By default it holds each reference
 until the next one; the optional paced curve evaluates supplied coefficients
-as described above. Force modifiers are refused. An existing force
+as described above. Per-reference force modifiers are refused; a constant force
+uses the optional gripper policy above. An existing force
 mode survives an unchanged caller action under the ordinary owner rules.
 
 The returned handle provides:
@@ -217,7 +269,9 @@ The returned handle provides:
 - `snapshot()`: an independent dictionary with `id`, `episode_id`, `dispatched`,
   `references`, `feedback`, `last_reference`, `curve_progress`, `status`, and
   `failure`. Feedback retains `observed_ns`,
-  positions and velocities. Status is `running`, `arrived`, `settled`, or `failed`.
+  positions, velocities and optional sourced gripper force. Status is `running`,
+  `arrived`, `settled`, `contact_stall`, `force_reached`, or `failed`. Optional
+  `gripper` and `settling` fields retain their measured evidence.
 - `wait()`: the same snapshot after native drain, releasing the Python interpreter
   lock while waiting; it creates no polling thread.
 - `cancel(reason)`: native cancellation and the registered Hold path, without

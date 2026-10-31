@@ -68,8 +68,39 @@ def start(run: Run, motion: FiniteJointMotion) -> PlaybackHandle:
         raise RuntimeFault(FaultCode.UNSUPPORTED, "part does not support paced curves")
     if any(r.command.gripper_force_n is not None for r in motion.references):
         raise RuntimeFault(
-            FaultCode.UNSUPPORTED, "finite playback does not set jaw force"
+            FaultCode.UNSUPPORTED,
+            "set constant playback force through the gripper policy",
         )
+    gripper = motion.policy.gripper
+    if gripper is not None:
+        if SupportFact.GRIPPER_PLAYBACK not in row.facts:
+            raise RuntimeFault(
+                FaultCode.UNSUPPORTED, "part does not support gripper playback"
+            )
+        declared = session.site.manifest["parts"][motion.part]["gripper"]
+        names = session._require().arms[motion.part].joint_names
+        if motion.policy.indices != (names.index(declared["joint"]),) or (
+            gripper.closed_position,
+            gripper.open_position,
+            gripper.closed_m,
+            gripper.open_m,
+        ) != (
+            declared["closed_action"],
+            declared["open_action"],
+            declared["closed_m"],
+            declared["open_m"],
+        ):
+            raise RuntimeFault(
+                FaultCode.INVALID_REQUEST,
+                "playback must use the Site's declared jaw and mapping",
+            )
+        if gripper.force is not None and not {
+            SupportFact.GRIPPER_FORCE,
+            SupportFact.GRIPPER_FORCE_OBSERVATION,
+        } <= set(row.facts):
+            raise RuntimeFault(
+                FaultCode.UNSUPPORTED, "part does not support sourced gripper force"
+            )
     if (
         motion.policy.feedback is not None
         and SupportFact.FEEDBACK_JOINT_PLAYBACK not in row.facts
@@ -117,17 +148,20 @@ def start(run: Run, motion: FiniteJointMotion) -> PlaybackHandle:
                 "observed_ns": observation.session_ns,
                 "positions": measured.joint_position.tolist(),
                 "velocities": measured.joint_velocity.tolist(),
+                "gripper_force": measured.gripper_force,
             }
         except Exception as error:  # noqa: BLE001 -- retain any vendor fault across the native callback
             return _error(error, unknown=False)
 
-    def dispatch(reference, measured):
+    def dispatch(reference, measured, force_n):
         try:
             with session._dispatch_lock:
                 started_ns = session._require().core.stamp().session_ns
                 result = run._step(
                     JointPositionCommand(
-                        reference["positions"], reference["velocity_feedforward"]
+                        reference["positions"],
+                        reference["velocity_feedforward"],
+                        gripper_force_n=force_n,
                     ),
                     measured["positions"],
                     part=reference["part"],

@@ -67,6 +67,7 @@ class SupportFact(str, enum.Enum):
     FINITE_JOINT_PLAYBACK = "execution.finite_joint_playback"
     PACED_JOINT_PLAYBACK = "execution.paced_joint_playback"
     FEEDBACK_JOINT_PLAYBACK = "execution.feedback_joint_playback"
+    GRIPPER_PLAYBACK = "execution.gripper_playback"
     VELOCITY_FEEDFORWARD = "actuation.velocity_feedforward"
     FORWARD_KINEMATICS = "kinematics.fk"
     BODY_SPHERES = "geometry.body_spheres"
@@ -625,6 +626,53 @@ class PlaybackFeedbackPolicy:
 
 
 @dataclass(frozen=True)
+class GripperContactPolicy:
+    """Explicit closing progress, demand and sustained stall requirements."""
+
+    minimum_opening_m: float
+    minimum_progress_m: float
+    target_shortfall_m: float
+    commanded_shortfall_m: float
+    max_drift_m: float
+    window_ns: int
+
+
+@dataclass(frozen=True)
+class GripperForcePolicy:
+    """Positive force needs three stationary samples above target minus tolerance.
+
+    The closed-stop exclusion wins even if motor effort meets the target. Zero
+    explicitly releases an existing force mode and uses positional/contact
+    completion. Force estimates retain their original source and provenance.
+    """
+
+    target_n: float
+    tolerance_n: float
+    closed_tolerance_m: float
+
+
+@dataclass(frozen=True)
+class GripperPlaybackPolicy:
+    """Local jaw execution against the Site's exact declared gripper mapping.
+
+    The parent selects only the jaw row. Nominal references advance once per
+    acknowledgement, with measured step limits and no wall-clock catch-up.
+    Positive force pursues the final target immediately through the same envelope.
+    This is separate from checked polynomial playback for arm coordinates.
+    """
+
+    period_ns: int
+    position_error: float
+    tracking_tolerance: float
+    closed_position: float
+    open_position: float
+    closed_m: float
+    open_m: float
+    contact: GripperContactPolicy | None = None
+    force: GripperForcePolicy | None = None
+
+
+@dataclass(frozen=True)
 class PlaybackPolicy:
     """Explicit measured completion and local timing bounds; validated by core."""
 
@@ -638,6 +686,7 @@ class PlaybackPolicy:
     allow_settled: bool = False
     paced_curve: PacedJointCurve | None = None
     feedback: PlaybackFeedbackPolicy | None = None
+    gripper: GripperPlaybackPolicy | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -655,8 +704,9 @@ class FiniteJointMotion:
 
     Offsets use the device session's local start, not a remote clock. Bounds,
     scope, measured start and each reference remain subject to native admission
-    and the ordinary gate/owner envelope. Force modifiers are not supported;
-    an existing held-jaw mode is preserved on an unchanged caller action.
+    and the ordinary gate/owner envelope. Set a constant force request through
+    the optional gripper policy, not individual nominal references. An existing
+    held-jaw mode is preserved on ordinary arm-only playback.
     """
 
     part: str
@@ -672,8 +722,9 @@ class PlaybackHandlePort(Protocol):
     """Retained execution identity and measured status; terminal means drained.
 
     Snapshots contain id, episode_id, dispatched, references, feedback, status
-    (running/arrived/settled/failed), and original failure evidence. A terminal
-    reference loop alone does not prove that a safety verb stopped hardware.
+    (running/arrived/settled/contact_stall/force_reached/failed), and original
+    failure evidence. A terminal reference loop alone does not prove that a
+    safety verb stopped hardware.
     """
 
     def snapshot(self) -> Mapping[str, JSONValue]: ...
@@ -813,7 +864,10 @@ __all__ = [
     "FaultCode",
     "FiniteJointMotion",
     "FinitePlaybackRunPort",
+    "GripperContactPolicy",
     "GripperForce",
+    "GripperForcePolicy",
+    "GripperPlaybackPolicy",
     "HeldJointGroup",
     "JSONValue",
     "JointPositionCommand",

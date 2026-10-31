@@ -15,7 +15,7 @@ Adapters must retain the ordinary episode gate and owner envelope. Cancellation,
 episode closure and shutdown drain references; original failures and separate
 verb outcomes survive cleanup. `Run.start_playback(FiniteJointMotion)` now adapts
 local observations and the ordinary Run gate/owner submission, using binding API
-12 and the per-part `execution.finite_joint_playback` fact. Direct writes refuse
+13 and the per-part `execution.finite_joint_playback` fact. Direct writes refuse
 while a buffer is active; run/site closure drains before parking/device teardown.
 No new thread or authority is introduced. Connector integration remains pending. See
 docs/core/finite-reference-playback.md, native tests/finite_playback.rs and
@@ -40,6 +40,16 @@ original timeout. A stationary miss cannot become arrival from one in-tolerance
 sample. Snapshot settling evidence uses SDK observation time; this does not prove
 motor acquisition cadence, contact or physical performance. Native
 tests/feedback_playback.rs and sdk/tests/test_feedback_playback.py cover this path.
+
+Optional `GripperPlaybackPolicy` requires `execution.gripper_playback` and the
+Site's exact declared jaw/mapping. The same native worker spaces jaw commands
+from completed acknowledgements, bounds corrections, and distinguishes measured
+arrival, sustained contact and sourced force completion. Positive force rejects
+an empty jaw at its closed stop; zero explicitly releases force. Preserve the
+original timeout, owner force limits, failures and Hold/drain path. Force success
+keeps the driver's hold until explicit release. Tests/gripper_playback.rs and
+sdk/tests/test_gripper_playback.py exercise these generic conditions; they do not
+establish object identity, fingertip-force calibration or physical acceptance.
 
 Imported reference MuJoCo worlds optionally use an allocation-private compiled
 model cache selected by `WADDLE_SIMULATION_MODEL_CACHE`. The loader hashes the
