@@ -11,6 +11,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Add an optional application-authenticated device relay and shared confined
+  workspace files. The relay preserves native ownership, reserved Hold/e-stop
+  admission, exact bounded SDK values, run-bound playback and uncertain cleanup.
+  Hidden paths and recordings stay out of transfer. No planner, login, listener
+  or extra dependency is added to ordinary SDK imports.
+
 - Add separately advertised reference-only completion and native acknowledgement
   timestamps (binding API 16). A finished buffer reports dispatch evidence,
   never arrival or stationarity; original tracking, deadline and stop gates remain.

@@ -1,5 +1,9 @@
 # Python SDK
 
+Applications with a remote policy can use the optional
+[device relay](device-relay.md), keeping hardware ownership and buffered
+execution in the SDK on the robot computer.
+
 The Python frontend owns one configured site. Its public lifecycle is deliberately
 small:
 
