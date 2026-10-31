@@ -80,6 +80,9 @@ pub struct ExecutionSnapshot {
     pub dispatched: usize,
     pub references: usize,
     pub feedback: Option<Feedback>,
+    /// Last acknowledged reference before acquiring `feedback`. Later dispatches
+    /// may advance `last_reference` without changing this causal pair.
+    pub feedback_reference: Option<Step>,
     pub curve_progress: Option<CurveProgress>,
     pub curve_update: Option<CurveUpdateReceipt>,
     pub settling: Option<SettlingEvidence>,
@@ -230,6 +233,7 @@ impl ExecutionSlot {
                     dispatched: 0,
                     references,
                     feedback: None,
+                    feedback_reference: None,
                     curve_progress: None,
                     curve_update: None,
                     settling: None,
@@ -394,7 +398,11 @@ impl ExecutionTask {
                 measured.observed_ns,
             )
         });
-        self.control.state.lock().snapshot.feedback = Some(measured.clone());
+        {
+            let mut state = self.control.state.lock();
+            state.snapshot.feedback = Some(measured.clone());
+            state.snapshot.feedback_reference = state.snapshot.last_reference.clone();
+        }
         let update = self.control.state.lock().curve_update.take();
         if let Some(update) = update {
             let result = player.update_curve(update);

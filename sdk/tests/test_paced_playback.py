@@ -120,6 +120,7 @@ def test_paced_cancel_drains_entered_write_and_preserves_original_failure(
     handle = run.start_playback(request())
     try:
         assert entered.wait(3)
+        assert handle.snapshot()["feedback_reference"] is None
         handle.cancel("stop during write")
         assert handle.snapshot()["status"] == "running"
     finally:
@@ -153,6 +154,7 @@ def test_update_admission_does_not_wait_for_device_io_or_replay_on_refusal(
 ):
     session, run = opened
     assert SupportFact.REVISABLE_JOINT_PLAYBACK in session.support().rows[0].facts
+    assert SupportFact.PLAYBACK_FEEDBACK_REFERENCE in session.support().rows[0].facts
     write = SimDriver.write
     entered, release = threading.Event(), threading.Event()
     writes = []
@@ -209,6 +211,7 @@ def test_update_admission_does_not_wait_for_device_io_or_replay_on_refusal(
         )
         assert writes[-1] == tuple(result["last_reference"]["positions"])
         assert result["feedback"]["observed_ns"] > result["last_acknowledged_ns"]
+        assert result["feedback_reference"] == result["last_reference"]
     with pytest.raises(RuntimeFault):
         handle.update_curve(update)
 

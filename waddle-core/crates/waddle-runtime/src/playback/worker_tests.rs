@@ -279,6 +279,46 @@ fn native_worker_advances_complete_buffer_without_planner_round_trips() {
 }
 
 #[test]
+fn feedback_keeps_its_preceding_reference_when_another_dispatch_completes() {
+    let h = Harness::new();
+    let (p, first_entered, first_release) = pause();
+    *h.io.dispatch_pause.lock() = Some(p);
+    let handle = h.start().unwrap();
+    first_entered.recv_timeout(Duration::from_secs(5)).unwrap();
+    let (p, observed, observe_release) = pause();
+    *h.io.observation_pause.lock() = Some(p);
+    first_release.send(()).unwrap();
+    observed.recv_timeout(Duration::from_secs(5)).unwrap();
+    let first = handle.snapshot();
+    assert_eq!(first.dispatched, 1);
+    assert!(first.feedback_reference.is_none()); // first sample preceded any write
+    assert!(first.last_reference.is_some());
+
+    let (p, second_entered, second_release) = pause();
+    *h.io.dispatch_pause.lock() = Some(p);
+    observe_release.send(()).unwrap();
+    second_entered.recv_timeout(Duration::from_secs(5)).unwrap();
+    let (p, observed, observe_release) = pause();
+    *h.io.observation_pause.lock() = Some(p);
+    second_release.send(()).unwrap();
+    observed.recv_timeout(Duration::from_secs(5)).unwrap();
+    let second = handle.snapshot();
+    assert_eq!(second.dispatched, 2);
+    assert_eq!(second.feedback_reference.as_ref().unwrap().offset_ns, 0);
+    assert_eq!(second.feedback.as_ref().unwrap().positions, [0.0]);
+    assert_eq!(
+        second.last_reference.as_ref().unwrap().offset_ns,
+        40_000_000
+    );
+    assert!(second.feedback.as_ref().unwrap().observed_ns < second.last_acknowledged_ns.unwrap());
+    observe_release.send(()).unwrap();
+    let result = finished(&handle);
+    assert_eq!(result.result, Some(Ok(Completion::Arrived)));
+    assert_eq!(result.feedback_reference.unwrap().offset_ns, 80_000_000);
+    assert_eq!(result.feedback.unwrap().positions, [0.2]);
+}
+
+#[test]
 fn slow_declared_feedback_rate_cannot_postpone_the_buffer_deadline() {
     let h = Harness::new();
     let handle = h
