@@ -75,6 +75,9 @@ pub struct ExecutionSnapshot {
     pub settling: Option<SettlingEvidence>,
     pub gripper: Option<GripperEvidence>,
     pub last_reference: Option<Step>,
+    /// Session-clock completion of the last acknowledged owner submission.
+    /// This is neither a cloud receipt time nor a measured arrival timestamp.
+    pub last_acknowledged_ns: Option<i64>,
     /// The completed stop callback, separate from the original motion result.
     /// Callback success alone does not establish measured physical stopping.
     pub cleanup: Option<VerbOutcome>,
@@ -177,6 +180,7 @@ impl ExecutionSlot {
                     settling: None,
                     gripper: None,
                     last_reference: None,
+                    last_acknowledged_ns: None,
                     cleanup: None,
                     result: None,
                 },
@@ -362,6 +366,7 @@ impl ExecutionTask {
                         state.snapshot.dispatched = player.dispatched();
                         state.snapshot.curve_progress = player.curve_progress();
                         state.snapshot.last_reference = Some(reference);
+                        state.snapshot.last_acknowledged_ns = Some(completed);
                         // The next poll establishes its exact due time; it never
                         // skips an entry or catches up by dispatching a batch.
                         self.next_poll_ns = now;

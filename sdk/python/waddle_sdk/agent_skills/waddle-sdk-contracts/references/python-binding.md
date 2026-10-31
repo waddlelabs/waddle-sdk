@@ -62,6 +62,16 @@ cadence without counting unrelated lock wait as driver execution.
 `FinitePlaybackRunPort.start_playback(FiniteJointMotion)` admits one complete,
 bounded buffer for a named part when `execution.finite_joint_playback` is present.
 `JointReference` carries an exact position command and local offset;
+Binding API 16 adds optional `PlaybackPolicy.reference_only`, gated by
+`execution.reference_joint_playback`. It ends with `references_dispatched` only
+after every reference is acknowledged and fresh post-endpoint feedback passes
+normal tracking checks. It makes no arrival, stationarity or grasp claim and
+cannot be combined with a gripper outcome policy. Start, gate, pacing, tracking,
+deadline and stop behavior are unchanged. Snapshots retain
+`last_acknowledged_ns` on the SDK session clock so callers can budget subsequent
+goal checks from device acknowledgement rather than remote reply receipt.
+No new thread, writer or authority is created; ordinary policies remain unchanged.
+
 Binding API 15 adds `minimum_settle_samples` (default one), separately advertised
 as `execution.sampled_joint_playback`. Fresh eligible samples must satisfy both
 the count and existing dwell; duplicates do not count and velocity/goal loss

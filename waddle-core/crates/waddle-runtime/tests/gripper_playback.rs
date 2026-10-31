@@ -41,6 +41,7 @@ fn inputs() -> (ActionChunk, PlaybackPolicy) {
             max_lateness_ns: 1,
             timeout_ns: 2_000_000_000,
             allow_settled: false,
+            reference_only: false,
             paced_curve: None,
             feedback: None,
             gripper: Some(GripperPolicy {

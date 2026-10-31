@@ -45,6 +45,9 @@ pub struct PlaybackPolicy {
     pub timeout_ns: i64,
     /// Permit a separately reported stationary miss, never an arrival claim.
     pub allow_settled: bool,
+    /// Finish after all references are acknowledged and fresh feedback arrives.
+    /// This reports dispatch completion, never measured arrival or stationarity.
+    pub reference_only: bool,
     /// Optional exact polynomial evaluation with acknowledgement-paced progress.
     /// Omission retains fixed offsets and the original lateness guard.
     pub paced_curve: Option<PacedCurve>,
@@ -64,6 +67,7 @@ pub struct Feedback {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Completion {
+    ReferencesDispatched,
     Arrived,
     Settled,
     ContactStall,
@@ -177,6 +181,7 @@ impl FiniteReferences {
         if policy.settle_ns <= 0
             || !(1..=16_385).contains(&policy.minimum_settle_samples)
             || (policy.gripper.is_some() && policy.minimum_settle_samples != 1)
+            || (policy.gripper.is_some() && policy.reference_only)
             || policy.timeout_ns <= chunk.horizon_ns
             || policy.timeout_ns > 180_000_000_000
             || policy.settle_ns >= policy.timeout_ns - chunk.horizon_ns
@@ -502,6 +507,15 @@ impl Playback {
         let after_ack = self
             .acknowledged_ns
             .is_some_and(|at| measured.observed_ns > at);
+        if self.references.policy.reference_only {
+            if finished && after_ack && fresh {
+                self.completion = Some(Completion::ReferencesDispatched);
+                return Ok(PlaybackPoll::Complete(Completion::ReferencesDispatched));
+            }
+            if finished {
+                return Ok(PlaybackPoll::Observe);
+            }
+        }
         match self.feedback.observe(
             measured,
             &self.references.policy,

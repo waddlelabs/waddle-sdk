@@ -1,5 +1,15 @@
 # Finite reference playback
 
+Binding API 16 adds optional `PlaybackPolicy.reference_only`, gated by
+`execution.reference_joint_playback`. It ends with `references_dispatched` only
+after every reference is acknowledged and fresh post-endpoint feedback passes
+normal tracking checks. It makes no arrival, stationarity or grasp claim and
+cannot be combined with a gripper outcome policy. Start, gate, pacing, tracking,
+deadline and stop behavior are unchanged. Snapshots retain
+`last_acknowledged_ns` on the SDK session clock so callers can budget subsequent
+goal checks from device acknowledgement rather than remote reply receipt.
+No new thread, writer or authority is created; ordinary policies remain unchanged.
+
 Binding API 15 adds `PlaybackPolicy.minimum_settle_samples` (default one), gated
 by `execution.sampled_joint_playback` when nondefault. Both the count of fresh
 eligible observations and `settle_ns` must qualify. Duplicate timestamps do not
@@ -287,7 +297,11 @@ The returned handle provides:
   `references`, `feedback`, `last_reference`, `curve_progress`, `status`, and
   `failure` and optional `cleanup`. Feedback retains `observed_ns`,
   positions, velocities and optional sourced gripper force. Status is `running`,
-  `arrived`, `settled`, `contact_stall`, `force_reached`, or `failed`. Optional
+  `arrived`, `settled`, `contact_stall`, `force_reached`, `references_dispatched`,
+  or `failed`. `last_acknowledged_ns` is the SDK session-clock completion of the
+  latest acknowledged owner submission, or `None` before any acknowledgement.
+  For `references_dispatched` it stamps the final reference; the following
+  feedback has a strictly later SDK observation timestamp. Optional
   `gripper` and `settling` fields retain their measured evidence.
 - `wait()`: the same snapshot after native drain, releasing the Python interpreter
   lock while waiting; it creates no polling thread.

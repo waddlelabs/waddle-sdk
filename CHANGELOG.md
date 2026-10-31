@@ -11,6 +11,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Add separately advertised reference-only completion and native acknowledgement
+  timestamps (binding API 16). A finished buffer reports dispatch evidence,
+  never arrival or stationarity; original tracking, deadline and stop gates remain.
+
 - Add separately advertised minimum settling-sample counts to native finite
   playback (binding API 15), in addition to its existing dwell requirement.
   Slow or duplicate observations cannot stand in for fresh stationary samples;
