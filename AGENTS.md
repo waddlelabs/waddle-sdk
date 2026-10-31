@@ -11,7 +11,8 @@ and reserve every member on the existing native worker until terminal cleanup.
 All selected gates and owner envelopes precede writes; unrelated owners receive no
 ordinary commands. Shared bounds/neighbor checks and takeover semantics remain.
 Group cancellation/failure retains site-wide Hold; per-part group cleanup is not
-supported. Validation is pending; do not infer deployment or physical acceptance.
+supported. All 247 native runtime and 55 selected public playback tests pass;
+full CI remains a promotion gate. Do not infer deployment or physical acceptance.
 
 Binding API 26 prepares `PlaybackPolicy.timeout_ns=None` under separately
 declared `execution.streamed_joint_playback`. Require a watchdog and revisable
