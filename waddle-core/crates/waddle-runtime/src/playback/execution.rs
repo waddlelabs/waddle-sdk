@@ -808,7 +808,7 @@ impl ExecutionTask {
                 .as_mut()
                 .expect("queued receipt");
             let result = match update {
-                CurveRequest::Update(update) => player.update_curve(update).inspect(|()| {
+                CurveRequest::Update(update) => player.update_curve_at(update, now).inspect(|()| {
                     self.pending_update_id = Some(receipt.request_id);
                 }),
                 CurveRequest::Withdraw {

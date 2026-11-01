@@ -256,6 +256,7 @@ impl CurveUpdate {
 #[derive(Debug)]
 pub(crate) struct CurveCursor {
     streaming: bool,
+    resume_at_rest: bool,
     pub spec: PacedCurve,
     pub progress: CurveProgress,
     pub proposed_s: f64,
@@ -284,9 +285,10 @@ impl CurveCursor {
         }
         Ok(())
     }
-    pub fn new(spec: PacedCurve, started_ns: i64, streaming: bool) -> Self {
+    pub fn new(spec: PacedCurve, started_ns: i64, streaming: bool, measured_goal: bool) -> Self {
         Self {
             streaming,
+            resume_at_rest: streaming || measured_goal,
             moving_until_s: spec.moving_until_s(),
             deadline_anchor_ns: started_ns,
             deadline_anchor_s: 0.0,
@@ -307,7 +309,7 @@ impl CurveCursor {
             return Err(PlaybackError::Busy);
         }
         let switch = update.switch_ns as f64 * 1e-9;
-        let resting_resume = self.streaming
+        let resting_resume = self.resume_at_rest
             && self.progress.endpoint_acknowledged
             && (switch - self.duration_s()).abs() <= 1e-9;
         if update.expected_revision != self.progress.revision
@@ -321,7 +323,7 @@ impl CurveCursor {
                 "curve update is stale or outside its incumbent",
             ));
         }
-        if self.streaming {
+        if self.resume_at_rest {
             update.curve.validate_stream_tail()?;
         }
         if self.spec.sample_times_s.is_some()

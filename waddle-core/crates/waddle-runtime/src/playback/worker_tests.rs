@@ -14,6 +14,9 @@ use waddle_types::{MonoNs, ProvenanceTag, ReplanPolicy, SourceId, Step};
 #[path = "queue_tests.rs"]
 mod queue_tests;
 
+#[path = "revisable_goal_tests.rs"]
+mod revisable_goal_tests;
+
 #[derive(Clone, Default)]
 struct TestClock(FakeClock);
 

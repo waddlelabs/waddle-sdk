@@ -167,6 +167,14 @@ def start(
         )
     if goal is not None and not isinstance(goal, PlaybackGoal):
         raise RuntimeFault(FaultCode.INVALID_REQUEST, "provide a PlaybackGoal")
+    if (
+        goal is not None
+        and motion.policy.allow_curve_updates
+        and SupportFact.REVISABLE_GOAL_PLAYBACK not in facts
+    ):
+        raise RuntimeFault(
+            FaultCode.UNSUPPORTED, "part does not support revisable goal playback"
+        )
     if goal is not None and goal.pose is not None:
         if group or SupportFact.CARTESIAN_GOAL_PLAYBACK not in facts:
             raise RuntimeFault(

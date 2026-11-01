@@ -5,6 +5,20 @@ acceptance separately in a configured simulator environment.
 
 # AGENTS.md — waddle-sdk monorepo
 
+Binding API 33 composes measured goals with existing revision-checked paced
+curves under `execution.revisable_goal_playback`. Keep one execution identity,
+original goal and total deadline across checked corrections. Goal curves must
+end at zero velocity/acceleration; they may resume from that resting endpoint.
+Accepted future work must finish or be withdrawn before completion. Original
+checkpoints must all be observed before replacement and are never repeated.
+The worker checks fresh local time before accepting a revision, including after
+blocked observations. Expired allowances cannot be revived. No planner, worker
+or remote finish request is added. Validation passes 540 core, 24 gRPC, 14 LiveKit
+and 1,214 default Python cases, with 413 optional skips and the existing two reset
+warnings. Strict Rust/MkDocs builds pass. The remote consumer passes 42 selected
+WebSocket/completion regressions, including withheld correction acknowledgements.
+Metal's higher-level integration and deployment/physical acceptance remain open.
+
 Binding API 32 adds dependent playback on the existing serialized worker. Keep
 same-SDK/run retained handles, explicit successful outcomes, all selected-part
 reservations, and bounded waiting chains. Before activation, cancellation or

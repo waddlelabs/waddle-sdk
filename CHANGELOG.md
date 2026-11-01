@@ -11,6 +11,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Keep one measured-goal execution across checked curve corrections (binding
+  API 33). Reuse the existing worker and revision/withdrawal API, preserve the
+  original goal, total deadline and checkpoint evidence, and let queued work
+  depend on final local completion. Delayed updates cannot revive expired
+  endpoint or motion allowances, including after blocked observation callbacks.
+
 - Add dependent playback on the existing SDK worker (binding API 32). Reserve
   queued parts, start only after explicitly accepted predecessor results, and
   optionally expire a waiting plan on the SDK clock. Queued cancellation leaves

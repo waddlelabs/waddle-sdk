@@ -6,6 +6,9 @@ use waddle_runtime::playback::{
 };
 use waddle_types::{ActionChunk, ProvenanceTag, SourceId, Step};
 
+#[path = "paced/revisable_goal.rs"]
+mod revisable_goal;
+
 fn curve() -> PacedCurve {
     PacedCurve {
         times_s: vec![0.0, 1.0],
