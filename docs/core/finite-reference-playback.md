@@ -412,6 +412,10 @@ acknowledgement. Delayed or unconfirmed writes cannot be replayed. Native snapsh
 retain `curve_progress` and the complete `last_reference` only after a confirmed
 dispatch. `references` counts input references; `dispatched` counts actual
 acknowledgements and can be larger with polynomial evaluation/partial steps.
+The worker schedules fresh feedback reads within the cadence interval, using
+the read cost observed during that execution. Faster reads cannot dispatch early;
+slower reads still consume the original timeout. This does not cache observations,
+renew input liveness or change the owner's dispatch checks.
 The optional curve does not provide dynamic world updates, contact detection,
 force-grasp completion or coordinated parts.
 
