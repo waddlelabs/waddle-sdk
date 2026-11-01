@@ -5,6 +5,16 @@ acceptance separately in a configured simulator environment.
 
 # AGENTS.md — waddle-sdk monorepo
 
+Binding API 31 adds optional measured goal completion on the existing native
+playback worker. `PlaybackGoal` selects the original joint target or declared
+SDK TCP pose independently of the commanded endpoint. The local clock evaluates
+tolerances, settling and optional post-endpoint allowance; the total deadline,
+owner envelope and normal Hold/drain remain binding. Terminal results survive
+delayed status reads without a remote finish request. Pose completion requires
+local FK and the exact declared base frame; callers resolve other tool frames
+before admission. No planner or additional worker is introduced. Source and
+Metal integration are under validation; this is not deployed acceptance.
+
 Binding API 30 adds optional deferred reference completion for finite, fixed
 paced curves. The existing worker retains ownership and samples after endpoint
 acknowledgement without sending more references. `finish_references()` queues

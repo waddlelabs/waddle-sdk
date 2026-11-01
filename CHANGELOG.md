@@ -11,6 +11,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Add SDK-local completion against an original joint or declared TCP goal,
+  with local tolerance, settling and endpoint-timeout evaluation (binding API 31).
+  Terminal outcomes require no caller polling or explicit finish request.
+
 - Add opt-in deferred reference completion (binding API 30): retain the local
   sampler and owner reservation after a fixed curve ends, without repeating
   references. Explicit finish returns fresh final diagnostics under the original

@@ -72,6 +72,12 @@ cadence without counting unrelated lock wait as driver execution.
 
 ## Finite joint playback
 
+Binding API 31 supports `PlaybackGoal` and local endpoint settling allowances.
+Use SDK-owned measured outcomes for finite trajectories; original joint or
+declared-TCP goals are independent of corrected reference endpoints. Pose goals
+require local FK and the exact SDK base frame. A delayed status read cannot renew
+a deadline or change a retained result. See the normative finite-playback page.
+
 Binding API 30 adds `DeferredPlaybackHandlePort.finish_references` with
 `execution.deferred_reference_completion`. Opt-in finite, fixed reference-only
 curves keep their local sampler and owner reservation after endpoint acknowledgement,
