@@ -1,7 +1,10 @@
 A deterministic native regression now covers slow streamed curves with a shorter
 input watchdog: acquired feedback must advance between writes, accepted input
-may renew it, and sampling alone must still expire. Baseline validation is pending;
-command cadence and expiry authority must remain unchanged.
+may renew it, and sampling alone must still expire. The baseline reproduces
+WatchdogExpired while accepted input keeps arriving. Paced curves now sample
+between slow writes on the same worker, at most half a watchdog interval apart.
+The curve still enforces its write cadence; expiry and renewal authority remain
+unchanged. Fixed-reference dispatch spacing is unchanged. Validation is pending.
 
 Gripper receipts retain contact sample counts, velocity-stationary counts and
 the local compatibility decision on failures as well as success. This is additive

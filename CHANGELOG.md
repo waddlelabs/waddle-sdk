@@ -13,7 +13,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
-- Add a regression for feedback starvation during slow watchdog-limited streams.
+- Sample fresh local feedback between slow paced-curve commands so accepted input
+  can renew its watchdog. Preserve write cadence and expiry without input.
 
 - Retain local gripper contact sample counts and compatibility evidence on failed
   attempts, without changing execution or cleanup.
