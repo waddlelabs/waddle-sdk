@@ -17,6 +17,7 @@ from .runtime import (
     PlaybackCurveUpdate,
     PlaybackDependency,
     PlaybackGoal,
+    PlaybackGoalDwell,
     Pose,
     RuntimeFault,
     SupportFact,
@@ -167,6 +168,13 @@ def start(
         )
     if goal is not None and not isinstance(goal, PlaybackGoal):
         raise RuntimeFault(FaultCode.INVALID_REQUEST, "provide a PlaybackGoal")
+    if goal is not None and goal.dwell is not None:
+        if not isinstance(goal.dwell, PlaybackGoalDwell):
+            raise RuntimeFault(FaultCode.INVALID_REQUEST, "provide a PlaybackGoalDwell")
+        if SupportFact.DWELL_GOAL_PLAYBACK not in facts:
+            raise RuntimeFault(
+                FaultCode.UNSUPPORTED, "part does not support goal dwell"
+            )
     if (
         motion.policy.complete_in_resting_tail
         and SupportFact.RESTING_GOAL_PLAYBACK not in facts

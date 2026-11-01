@@ -298,9 +298,13 @@ impl FeedbackState {
             consecutive_samples: self.consecutive,
         });
         let arrived_stable = arrived
-            && self
-                .arrived_since
-                .is_some_and(|since| measured.observed_ns - since >= policy.settle_ns);
+            && (policy
+                .goal
+                .as_ref()
+                .is_some_and(|goal| goal.dwell.is_some())
+                || self
+                    .arrived_since
+                    .is_some_and(|since| measured.observed_ns - since >= policy.settle_ns));
         // A newly reached explicit goal still needs its full in-tolerance window.
         // Earlier stationary samples outside the goal must not end this attempt.
         if policy.goal.is_some() && arrived && !arrived_stable {

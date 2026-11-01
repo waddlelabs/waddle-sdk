@@ -559,6 +559,22 @@ goal cannot discard accepted future work. Withdrawing that pending correction
 restores the incumbent's completion rules. Expired executions cannot be revived
 by a delayed update, including one queued during an observation callback.
 
+Binding API 37 adds optional `PlaybackGoalDwell(duration_ns,
+exit_tolerance_multiplier)` under `execution.dwell_goal_playback`. Goal dwell
+starts inside nominal tolerance, survives small crossings, and resets outside
+the selected outer band. Arrival still requires current nominal tolerance and
+independent stationarity. For example, a 300 ms dwell with multiplier 2 preserves
+the timer through slight threshold jitter without declaring arrival outside the
+nominal band. SDK observation time drives the timer, even during motion; measured
+motion still prevents completion. Snapshots expose `goal_dwell.observed_ns`,
+`since_ns` and `restarts` separately from encoder-window evidence.
+
+With explicit positive goal dwell, `settle_ns=0` permits immediate velocity-based
+stationarity; minimum sample counts and encoder-window bounds still apply. Default
+goal policies retain their full in-tolerance settling interval. Goal dwell does
+not alter trajectories, deadlines or cancellation and does not itself update a
+moving target. Metal's target resolution and correction strategy remain external.
+
 Binding API 36 adds opt-in `complete_in_resting_tail` under
 `execution.resting_goal_playback` for revisable paced goals. Once every remaining
 polynomial segment is constant, its resting reference has been acknowledged and

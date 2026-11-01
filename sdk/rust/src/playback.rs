@@ -7,10 +7,10 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use waddle_runtime::playback::{
     Completion, ContactCondition, CurveUpdate, ExecutionFailure, ExecutionHandle,
-    ExecutionSnapshot, Feedback, FeedbackPolicy, ForceCondition, GripperPolicy, HeldJointGroup,
-    MeasuredForce, PacedCurve, PlaybackDependency, PlaybackError, PlaybackGoal, PlaybackIo,
-    PlaybackIoError, PlaybackPolicy, PlaybackQueue, PlaybackWatchdog, Pose, PositionWindow,
-    ReferenceReceipt, VelocityHints,
+    ExecutionSnapshot, Feedback, FeedbackPolicy, ForceCondition, GoalDwell, GripperPolicy,
+    HeldJointGroup, MeasuredForce, PacedCurve, PlaybackDependency, PlaybackError, PlaybackGoal,
+    PlaybackIo, PlaybackIoError, PlaybackPolicy, PlaybackQueue, PlaybackWatchdog, Pose,
+    PositionWindow, ReferenceReceipt, VelocityHints,
 };
 use waddle_types::Step;
 
@@ -54,6 +54,13 @@ struct Goal {
     pose: Option<GoalPose>,
     position_tolerance_m: f64,
     orientation_tolerance_rad: Option<f64>,
+    dwell: Option<Dwell>,
+}
+
+#[derive(FromPyObject)]
+struct Dwell {
+    duration_ns: i64,
+    exit_tolerance_multiplier: f64,
 }
 
 #[derive(FromPyObject)]
@@ -212,6 +219,10 @@ impl TryFrom<Policy> for PlaybackPolicy {
             reference_only: p.reference_only,
             defer_reference_completion: p.defer_reference_completion,
             goal: p.goal.map(|g| PlaybackGoal {
+                dwell: g.dwell.map(|d| GoalDwell {
+                    duration_ns: d.duration_ns,
+                    exit_tolerance_multiplier: d.exit_tolerance_multiplier,
+                }),
                 joint_positions: g.joint_positions,
                 pose: g.pose.map(Into::into),
                 position_tolerance_m: g.position_tolerance_m,
@@ -673,6 +684,15 @@ fn snapshot(py: Python<'_>, value: ExecutionSnapshot) -> PyResult<Py<PyDict>> {
         .transpose()?;
     out.set_item("settling", settling)?;
     out.set_item("settled_miss", value.settled_miss)?;
+    if let Some(progress) = value.goal_dwell {
+        let dwell = PyDict::new(py);
+        dwell.set_item("observed_ns", progress.observed_ns)?;
+        dwell.set_item("since_ns", progress.since_ns)?;
+        dwell.set_item("restarts", progress.restarts)?;
+        out.set_item("goal_dwell", dwell)?;
+    } else {
+        out.set_item("goal_dwell", py.None())?;
+    }
     let gripper = value
         .gripper
         .map(|e| -> PyResult<Py<PyDict>> {

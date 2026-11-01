@@ -10,7 +10,8 @@ use waddle_types::{EpisodeId, MonoNs, Step, Verb};
 
 use super::{
     CheckpointEvidence, Completion, CurveProgress, CurveUpdate, Feedback, FiniteReferences,
-    GripperEvidence, Playback, PlaybackError, PlaybackPoll, PlaybackWatchdog, SettlingEvidence,
+    GoalDwellProgress, GripperEvidence, Playback, PlaybackError, PlaybackPoll, PlaybackWatchdog,
+    SettlingEvidence,
 };
 use crate::mirror::Mirror;
 use crate::verbs::VerbOutcome;
@@ -148,6 +149,7 @@ pub struct ExecutionSnapshot {
     pub settling: Option<SettlingEvidence>,
     /// Local settling completed outside the original goal on this feedback sample.
     pub settled_miss: bool,
+    pub goal_dwell: Option<GoalDwellProgress>,
     pub gripper: Option<GripperEvidence>,
     pub checkpoints: Vec<CheckpointEvidence>,
     pub last_reference: Option<Step>,
@@ -465,6 +467,7 @@ impl ExecutionSlot {
                     watchdog_refresh: None,
                     settling: None,
                     settled_miss: false,
+                    goal_dwell: None,
                     gripper: None,
                     checkpoints: Vec::new(),
                     last_reference: None,
@@ -849,6 +852,7 @@ impl ExecutionTask {
             state.snapshot.curve_progress = player.curve_progress();
             state.snapshot.settling = player.settling_evidence();
             state.snapshot.settled_miss = player.settled_miss();
+            state.snapshot.goal_dwell = player.goal_dwell().cloned();
             state.snapshot.gripper = player.gripper_evidence();
             let recorded = state.snapshot.checkpoints.len();
             state

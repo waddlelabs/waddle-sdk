@@ -72,6 +72,7 @@ fn stationary_miss_is_local_progress_until_original_goal_settles() {
         let (chunk, mut policy) = inputs(&[0.0]);
         policy.minimum_settle_samples = 3;
         policy.goal = Some(PlaybackGoal {
+            dwell: None,
             joint_positions: Some(vec![0.1]),
             pose: None,
             position_tolerance_m: 0.001,
@@ -122,6 +123,7 @@ fn miss_progress_resets_on_local_motion_and_never_renews_the_deadline() {
         let (chunk, mut policy) = inputs(&[0.0]);
         policy.minimum_settle_samples = 3;
         policy.goal = Some(PlaybackGoal {
+            dwell: None,
             joint_positions: Some(vec![0.1]),
             pose: None,
             position_tolerance_m: 0.001,
@@ -190,6 +192,7 @@ fn window_policy(policy: &mut PlaybackPolicy) -> &mut PositionWindow {
 fn completion_scores_original_goal_instead_of_corrected_command() {
     let (chunk, mut policy) = inputs(&[0.0, 0.03]);
     policy.goal = Some(PlaybackGoal {
+        dwell: None,
         joint_positions: Some(vec![0.01]),
         pose: None,
         position_tolerance_m: 0.002,
@@ -236,6 +239,7 @@ fn cartesian_goal_requires_same_frame_and_valid_local_pose() {
     ] {
         let (chunk, mut policy) = inputs(&[0.0]);
         policy.goal = Some(PlaybackGoal {
+            dwell: None,
             joint_positions: None,
             pose: Some(pose.clone()),
             position_tolerance_m: 0.001,
@@ -477,6 +481,7 @@ fn explicit_goal_waits_for_in_tolerance_settling_without_extending_deadline() {
             policy.allow_settled = true;
             policy.timeout_ns = Some(deadline);
             policy.goal = Some(PlaybackGoal {
+                dwell: None,
                 joint_positions: Some(vec![0.0]),
                 pose: None,
                 position_tolerance_m: 0.001,
@@ -617,3 +622,6 @@ fn feedback_admission_refuses_overlapping_rows_and_invalid_bounds() {
         );
     }
 }
+
+#[path = "feedback/goal_dwell.rs"]
+mod goal_dwell;

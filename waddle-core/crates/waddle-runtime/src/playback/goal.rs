@@ -22,11 +22,45 @@ impl Pose {
 /// Exactly one original joint or Cartesian goal; this performs no planning.
 #[derive(Clone, Debug)]
 pub struct PlaybackGoal {
+    /// Optional pose dwell with a wider reset band, independent of stationarity.
+    pub dwell: Option<GoalDwell>,
     pub joint_positions: Option<Vec<f64>>,
     pub pose: Option<Pose>,
     pub position_tolerance_m: f64,
     /// None means position-only completion.
     pub orientation_tolerance_rad: Option<f64>,
+}
+
+/// Local goal dwell. Completion still requires current nominal tolerance.
+#[derive(Clone, Debug)]
+pub struct GoalDwell {
+    pub duration_ns: i64,
+    pub exit_tolerance_multiplier: f64,
+}
+
+/// Retained local timing for an independently dwelled goal.
+#[derive(Clone, Debug, Default)]
+pub struct GoalDwellProgress {
+    pub observed_ns: Option<i64>,
+    pub since_ns: Option<i64>,
+    pub restarts: usize,
+}
+
+impl GoalDwellProgress {
+    pub(super) fn observe(&mut self, spec: &GoalDwell, observed_ns: i64, score: f64) -> bool {
+        self.observed_ns = Some(observed_ns);
+        if score > spec.exit_tolerance_multiplier && self.since_ns.is_some() {
+            self.since_ns = None;
+            self.restarts += 1;
+        }
+        if score <= 1.0 {
+            self.since_ns.get_or_insert(observed_ns);
+        }
+        score <= 1.0
+            && self
+                .since_ns
+                .is_some_and(|since| observed_ns - since >= spec.duration_ns)
+    }
 }
 
 impl PlaybackGoal {
@@ -43,7 +77,15 @@ impl PlaybackGoal {
             }
             _ => false,
         };
-        if !valid || policy.reference_only || policy.gripper.is_some() {
+        if !valid
+            || policy.reference_only
+            || policy.gripper.is_some()
+            || self.dwell.as_ref().is_some_and(|dwell| {
+                dwell.duration_ns <= 0
+                    || !dwell.exit_tolerance_multiplier.is_finite()
+                    || dwell.exit_tolerance_multiplier < 1.0
+            })
+        {
             return Err(PlaybackError::Invalid(
                 "measured completion requires exactly one valid joint or TCP goal",
             ));
@@ -51,18 +93,19 @@ impl PlaybackGoal {
         Ok(())
     }
 
-    pub(super) fn reached(
+    pub(super) fn score(
         &self,
         measured: &Feedback,
         policy: &PlaybackPolicy,
-    ) -> Result<bool, PlaybackError> {
+    ) -> Result<f64, PlaybackError> {
         if let Some(target) = &self.joint_positions {
             return Ok(policy
                 .indices
                 .iter()
                 .zip(target)
                 .zip(&policy.position_tolerance)
-                .all(|((i, q), tolerance)| (measured.positions[*i] - q).abs() <= *tolerance));
+                .map(|((i, q), tolerance)| (measured.positions[*i] - q).abs() / *tolerance)
+                .fold(0.0, f64::max));
         }
         let target = self.pose.as_ref().expect("validated goal");
         let actual = measured
@@ -79,7 +122,7 @@ impl PlaybackGoal {
             .map(|(a, b)| (a - b).powi(2))
             .sum::<f64>()
             .sqrt();
-        let orientation_ok = self.orientation_tolerance_rad.is_none_or(|limit| {
+        let orientation_score = self.orientation_tolerance_rad.map_or(0.0, |limit| {
             let norm = (actual.quaternion_wxyz.iter().map(|v| v * v).sum::<f64>()
                 * target.quaternion_wxyz.iter().map(|v| v * v).sum::<f64>())
             .sqrt();
@@ -91,8 +134,8 @@ impl PlaybackGoal {
                 .sum::<f64>()
                 / norm;
             let dot = dot.abs().min(1.0);
-            2.0 * dot.acos() <= limit
+            2.0 * dot.acos() / limit
         });
-        Ok(distance <= self.position_tolerance_m && orientation_ok)
+        Ok((distance / self.position_tolerance_m).max(orientation_score))
     }
 }

@@ -85,6 +85,7 @@ class SupportFact(str, enum.Enum):
     CARTESIAN_GOAL_PLAYBACK = "execution.cartesian_goal_playback"
     KINEMATIC_GOAL_PLAYBACK = "execution.kinematic_goal_playback"
     RESTING_GOAL_PLAYBACK = "execution.resting_goal_playback"
+    DWELL_GOAL_PLAYBACK = "execution.dwell_goal_playback"
     DEPENDENT_PLAYBACK = "execution.dependent_playback"
     DEFERRED_REFERENCE_COMPLETION = "execution.deferred_reference_completion"
     CHECKPOINTED_JOINT_PLAYBACK = "execution.checkpointed_joint_playback"
@@ -767,6 +768,19 @@ class PlaybackKinematics:
 
 
 @dataclass(frozen=True)
+class PlaybackGoalDwell:
+    """Pose/joint dwell independent of measured stationarity.
+
+    Entry requires nominal tolerance. Small crossings preserve elapsed dwell;
+    exceeding ``exit_tolerance_multiplier`` resets it. Completion still requires
+    current nominal tolerance and the playback's independent stationarity policy.
+    """
+
+    duration_ns: int
+    exit_tolerance_multiplier: float = 2.0
+
+
+@dataclass(frozen=True)
 class PlaybackGoal:
     """Original joint or TCP goal, evaluated locally.
 
@@ -775,6 +789,8 @@ class PlaybackGoal:
     tool. Both use the owner's declared base frame. No model or remote callback
     is installed, and owner safety gates retain their configured geometry.
     ``orientation_tolerance_rad=None`` explicitly selects position-only arrival.
+    Optional ``dwell`` uses the SDK observation clock and requires separately
+    declared goal-dwell support. It never changes the target or renews a deadline.
     """
 
     joint_positions: tuple[float, ...] | None = None
@@ -782,6 +798,7 @@ class PlaybackGoal:
     position_tolerance_m: float = 0.002
     orientation_tolerance_rad: float | None = 0.02
     kinematics: PlaybackKinematics | None = None
+    dwell: PlaybackGoalDwell | None = None
 
     def __post_init__(self) -> None:
         if self.joint_positions is not None:
@@ -797,6 +814,11 @@ class PlaybackPolicy:
     Velocity/goal loss resets the count. Position windows retain at least this
     many samples (and never fewer than three). Gripper policies keep their own
     outcome-specific sample rules and require the default value here.
+
+    Explicit ``goal.dwell`` separates goal dwell from stationarity. Its positive
+    duration permits ``settle_ns=0`` for immediate velocity-based stationarity;
+    sample-count and encoder-window requirements still apply. Other policies
+    require a positive settling span.
 
     ``reference_only`` uses separately advertised reference-playback support to
     report ``references_dispatched`` after all acknowledgements and fresh local

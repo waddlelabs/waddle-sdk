@@ -26,6 +26,7 @@ Griffe. Documentation builds do not import the native extension or any vendor SD
         - Observation
         - SubmitResult
         - PlaybackGoal
+        - PlaybackGoalDwell
         - PlaybackKinematics
         - PlaybackKinematicJoint
         - RunPort

@@ -8,6 +8,7 @@ fn goal_inputs() -> (ActionChunk, PlaybackPolicy) {
     policy.allow_curve_updates = true;
     policy.timeout_ns = Some(10_000_000_000);
     policy.goal = Some(PlaybackGoal {
+        dwell: None,
         joint_positions: Some(vec![1.0]),
         pose: None,
         position_tolerance_m: 0.001,
