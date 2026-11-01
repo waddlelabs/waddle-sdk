@@ -269,6 +269,15 @@ pub(crate) struct CurveCursor {
 }
 
 impl CurveCursor {
+    pub fn resting_tail_acknowledged(&self) -> bool {
+        self.update.is_none()
+            && self.moving_until_s < self.spec.duration_s()
+            && self
+                .progress
+                .acknowledged_curve_time_s
+                .is_some_and(|phase| phase >= self.origin_s + self.moving_until_s)
+    }
+
     pub fn check_tracking(
         &self,
         feedback: &Feedback,

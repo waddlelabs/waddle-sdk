@@ -84,6 +84,7 @@ class SupportFact(str, enum.Enum):
     PLAYBACK_TIMING = "execution.playback_timing"
     CARTESIAN_GOAL_PLAYBACK = "execution.cartesian_goal_playback"
     KINEMATIC_GOAL_PLAYBACK = "execution.kinematic_goal_playback"
+    RESTING_GOAL_PLAYBACK = "execution.resting_goal_playback"
     DEPENDENT_PLAYBACK = "execution.dependent_playback"
     DEFERRED_REFERENCE_COMPLETION = "execution.deferred_reference_completion"
     CHECKPOINTED_JOINT_PLAYBACK = "execution.checkpointed_joint_playback"
@@ -828,6 +829,13 @@ class PlaybackPolicy:
     all be observed before any update. Reference-only updates exclude checkpoints.
     Updates retain the original goal, local worker, identity and total timeout.
 
+    ``complete_in_resting_tail`` opts a revisable paced goal into local completion
+    once the acknowledged remainder is entirely constant and all requested
+    checkpoints are observed. It requires resting-goal playback support. Pending
+    accepted future motion must run or be withdrawn first. Local goal/settling
+    checks, the original timeout and cancellation still apply; default false
+    preserves an explicitly requested rest duration.
+
     ``credit_pacing_delay`` requires separately advertised paced-deadline support
     and reference-only polynomial playback. Only a complete acknowledged moving
     tick credits its excess local wall time to the original budget. Exact
@@ -874,6 +882,7 @@ class PlaybackPolicy:
     defer_reference_completion: bool = False
     goal: PlaybackGoal | None = None
     settle_timeout_ns: int | None = None
+    complete_in_resting_tail: bool = False
 
     def __post_init__(self) -> None:
         for name in (

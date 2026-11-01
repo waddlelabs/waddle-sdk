@@ -1,3 +1,12 @@
+API 36 adds opt-in `complete_in_resting_tail` for revisable paced goals. The
+existing worker may settle only after the constant tail is acknowledged, all
+checkpoints are observed and no accepted suffix remains pending. Preserve the
+original deadline, failures, cancellation and default full-duration behavior.
+An early terminal arrival does not claim the unused constant tail was dispatched.
+Validation passes 547 core, 24 gRPC, 14 LiveKit and 1,233 default Python tests
+(413 optional skips). Required native/shim lint and strict docs pass. Metal
+fixed-goal integration is tested separately; CI/beta promotion remains pending.
+
 Selected TCP goals can carry a numeric `PlaybackKinematics` chain under
 `execution.kinematic_goal_playback`. The existing worker's observation callback
 evaluates local measured joints; native completion and ABI 35 remain unchanged.

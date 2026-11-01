@@ -559,6 +559,18 @@ goal cannot discard accepted future work. Withdrawing that pending correction
 restores the incumbent's completion rules. Expired executions cannot be revived
 by a delayed update, including one queued during an observation callback.
 
+Binding API 36 adds opt-in `complete_in_resting_tail` under
+`execution.resting_goal_playback` for revisable paced goals. Once every remaining
+polynomial segment is constant, its resting reference has been acknowledged and
+all requested checkpoints have been observed, the local worker can settle the
+goal without dispatching the rest repeatedly or waiting for a remote finish
+decision. A pending accepted suffix must execute or be withdrawn first, even
+when the current measured pose already satisfies the goal. Goal loss, feedback
+failure, cancellation and the original deadline remain authoritative. Default
+false preserves the complete requested reference duration. A completed result
+can therefore report `arrived` while `curve_progress.endpoint_acknowledged` is
+false: the unused remainder contained only constant rest, not undispatched motion.
+
 With `execution.playback_timing` (binding API 35), `elapsed_ns` is the duration
 from native activation to the retained feedback sample. It is `None` while queued
 or when an execution ends before activation. Queue wait and cloud reply delay do

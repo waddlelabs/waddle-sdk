@@ -72,6 +72,11 @@ cadence without counting unrelated lock wait as driver execution.
 
 ## Finite joint playback
 
+Binding API 36 adds opt-in `complete_in_resting_tail` for revisable paced goals.
+It lets the worker settle during an acknowledged constant tail, after checkpoints
+and any accepted future motion are resolved. Default false preserves requested
+rest duration; see the normative finite-playback page for result semantics.
+
 Binding API 35 adds `execution.playback_timing`. Use snapshot `elapsed_ns` for
 local time since activation at the retained feedback sample; queued wait is
 excluded and an unstarted execution has no elapsed duration. The normative

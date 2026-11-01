@@ -167,6 +167,13 @@ def start(
         )
     if goal is not None and not isinstance(goal, PlaybackGoal):
         raise RuntimeFault(FaultCode.INVALID_REQUEST, "provide a PlaybackGoal")
+    if (
+        motion.policy.complete_in_resting_tail
+        and SupportFact.RESTING_GOAL_PLAYBACK not in facts
+    ):
+        raise RuntimeFault(
+            FaultCode.UNSUPPORTED, "part does not support resting-tail goal completion"
+        )
     kinematics = None
     if goal is not None and goal.kinematics is not None:
         if SupportFact.KINEMATIC_GOAL_PLAYBACK not in facts:

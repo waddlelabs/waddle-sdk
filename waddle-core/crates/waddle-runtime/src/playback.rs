@@ -65,6 +65,8 @@ pub struct PlaybackPolicy {
     pub goal: Option<PlaybackGoal>,
     /// Local allowance after the final reference acknowledgement.
     pub settle_timeout_ns: Option<i64>,
+    /// Permit local goal completion in an acknowledged constant resting tail.
+    pub complete_in_resting_tail: bool,
     /// Permit a separately reported stationary miss, never an arrival claim.
     pub allow_settled: bool,
     /// Finish after all references are acknowledged and fresh feedback arrives.
@@ -188,6 +190,15 @@ impl FiniteReferences {
         let invalid = PlaybackError::Invalid;
         if let Some(goal) = &policy.goal {
             goal.validate(&policy)?;
+        }
+        if policy.complete_in_resting_tail
+            && (policy.goal.is_none()
+                || !policy.allow_curve_updates
+                || policy.paced_curve.is_none())
+        {
+            return Err(invalid(
+                "resting-tail completion requires a revisable paced goal",
+            ));
         }
         if policy.settle_timeout_ns.is_some_and(|timeout| {
             timeout <= 0 || policy.reference_only || policy.timeout_ns.is_none()
@@ -703,13 +714,23 @@ impl Playback {
             })
     }
 
+    fn completion_ready(&self) -> bool {
+        self.references_finished()
+            || (self.references.policy.complete_in_resting_tail
+                && self.checkpoints.len() == self.references.policy.checkpoint_offsets_ns.len()
+                && self
+                    .curve
+                    .as_ref()
+                    .is_some_and(|curve| curve.resting_tail_acknowledged()))
+    }
+
     fn motion_deadline_reached(&self, now_ns: i64) -> bool {
         self.timeout_ns()
             .is_some_and(|timeout| now_ns.saturating_sub(self.started_ns) >= timeout)
     }
 
     fn settling_deadline_reached(&self, now_ns: i64) -> bool {
-        self.references_finished()
+        self.completion_ready()
             && self
                 .references
                 .policy
@@ -803,7 +824,7 @@ impl Playback {
         if fresh {
             self.record_checkpoints(measured);
         }
-        let finished = self.references_finished();
+        let finished = self.completion_ready();
         if !finished {
             self.settled_since = None;
             self.arrived_since = None;
@@ -871,7 +892,7 @@ impl Playback {
         if let Some(curve) = self
             .curve
             .as_mut()
-            .filter(|c| !c.progress.endpoint_acknowledged)
+            .filter(|c| !c.progress.endpoint_acknowledged && !finished)
         {
             let due = self.dispatched_ns.map_or(self.started_ns, |at| {
                 at.saturating_add(curve.spec.period_ns)

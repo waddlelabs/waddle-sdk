@@ -122,6 +122,11 @@ def _default(value):
             data.pop("part_hold")
         if type(value).__name__ == "PlaybackPolicy" and data.get("watchdog") is None:
             data.pop("watchdog", None)
+        if (
+            type(value).__name__ == "PlaybackPolicy"
+            and data.get("complete_in_resting_tail") is False
+        ):
+            data.pop("complete_in_resting_tail")
         if type(value).__name__ == "PlaybackPolicy":
             for optional in ("goal", "settle_timeout_ns"):
                 if data.get(optional) is None:
