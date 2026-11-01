@@ -632,6 +632,7 @@ pub(crate) struct ExecutionTask {
     control: Arc<Control>,
     next_poll_ns: i64,
     read_cost_ns: i64,
+    due_feedback: Option<(i64, Feedback)>,
     sample_period_ns: i64,
     dispatch_period_ns: i64,
     failure: Option<ExecutionResult>,
@@ -682,6 +683,7 @@ impl ExecutionTask {
             control: handle.control.clone(),
             next_poll_ns: 0,
             read_cost_ns: 0,
+            due_feedback: None,
             sample_period_ns,
             dispatch_period_ns,
             failure: None,
@@ -867,7 +869,13 @@ impl ExecutionTask {
         if poll_ns < self.next_poll_ns {
             return None;
         }
-        let measured = match self.io.observe() {
+        // Keep a just-acquired curve sample through its short remaining cadence
+        // wait. A delayed worker reacquires; cancellation and watchdog checks
+        // still run before dispatch, and the sample keeps its original stamp.
+        let due_feedback = self.due_feedback.take().filter(|(at, feedback)| {
+            poll_ns >= *at && poll_ns.saturating_sub(feedback.observed_ns) <= self.sample_period_ns
+        });
+        let measured = match due_feedback.map_or_else(|| self.io.observe(), |(_, f)| Ok(f)) {
             Ok(measured) => measured,
             Err(error) => return Some(Err(ExecutionFailure::Observation(error))),
         };
@@ -1030,7 +1038,15 @@ impl ExecutionTask {
                 // Start the next fresh read early enough to fit its measured
                 // cost inside the interval. Playback still enforces the due
                 // time; neither faster reads nor late callbacks permit bursts.
-                self.next_poll_ns = at.saturating_sub(read_cost_ns);
+                if player.references.policy.paced_curve.is_some()
+                    && at > now
+                    && at - now <= read_cost_ns.min(self.sample_period_ns)
+                {
+                    self.due_feedback = Some((at, measured));
+                    self.next_poll_ns = at;
+                } else {
+                    self.next_poll_ns = at.saturating_sub(read_cost_ns);
+                }
             }
             PlaybackPoll::Observe => self.next_poll_ns = now.saturating_add(self.sample_period_ns),
             PlaybackPoll::Complete(result) => return Some(Ok(result)),

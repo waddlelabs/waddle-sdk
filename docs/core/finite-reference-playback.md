@@ -962,3 +962,9 @@ real native gate and callback barriers to check execution, stop ordering,
 supersession, retained faults and shutdown. No hardware or remote planner is
 involved. These tests do not establish device timing, WAN performance or physical
 acceptance.
+
+When a paced-curve feedback read finishes just before its due write, the worker
+retains that sample only through the short remaining cadence wait (bounded by
+the observed read cost and sampling interval). It keeps the original observation
+stamp and rechecks cancellation, owner and watchdog state before dispatch. A late
+wakeup reacquires feedback; gripper and long cadence waits continue sampling.
