@@ -631,6 +631,7 @@ pub(crate) struct ExecutionTask {
     io: Arc<dyn PlaybackIo>,
     control: Arc<Control>,
     next_poll_ns: i64,
+    read_cost_ns: i64,
     sample_period_ns: i64,
     dispatch_period_ns: i64,
     failure: Option<ExecutionResult>,
@@ -680,6 +681,7 @@ impl ExecutionTask {
             io,
             control: handle.control.clone(),
             next_poll_ns: 0,
+            read_cost_ns: 0,
             sample_period_ns,
             dispatch_period_ns,
             failure: None,
@@ -879,7 +881,10 @@ impl ExecutionTask {
             return Some(result);
         }
         let now = clock.stamp_now().mono_ns().0;
-        let read_cost_ns = now.saturating_sub(poll_ns);
+        // Retain the observed cost across variable reads; one faster sample
+        // must not move the next expensive read outside the control interval.
+        self.read_cost_ns = self.read_cost_ns.max(now.saturating_sub(poll_ns));
+        let read_cost_ns = self.read_cost_ns;
         let player = self.player.get_or_insert_with(|| {
             Playback::new(
                 self.references.take().expect("one admitted buffer"),
