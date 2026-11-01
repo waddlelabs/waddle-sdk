@@ -131,6 +131,9 @@ def test_contact_requires_measured_closure_stall_and_continued_demand(jaw):
     assert result["failure"] is None
     assert result["gripper"]["progress_m"] == pytest.approx(0.04)
     assert result["gripper"]["window_ns"] >= 250_000_000
+    assert result["gripper"]["sample_count"] >= 3
+    assert result["gripper"]["stationary_samples"] == result["gripper"]["sample_count"]
+    assert result["gripper"]["contact_compatible"] is True
     assert result["gripper"]["commanded_shortfall_m"] > 0.0005
     assert result["feedback"]["positions"][1] == state["q"] == 0.3
     assert writes[-1][1] < 0.3
@@ -249,3 +252,17 @@ def test_unknown_force_write_is_not_retried_or_reported_as_contact(
     if hold_fails:
         assert "original Hold failure" in result["cleanup"]["error"]
     assert calls == [5] and state["force"] == 0
+
+
+def test_failed_contact_retains_local_sample_counts_and_compatibility(jaw):
+    _, run, _, state, _ = jaw
+    state["stop"] = state["q"]  # no physical progress after the initial reference
+    request = motion(contact=True)
+    result = run.start_playback(request).wait()
+    assert result["status"] == "failed", result
+    assert result["cleanup"]["outcome"] == "acknowledged"
+    evidence = result["gripper"]
+    assert evidence["progress_m"] == 0
+    assert evidence["sample_count"] > 0
+    assert evidence["stationary_samples"] == evidence["sample_count"]
+    assert evidence["contact_compatible"] is False

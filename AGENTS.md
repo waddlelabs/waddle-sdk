@@ -1,3 +1,11 @@
+Gripper receipts retain contact sample counts, velocity-stationary counts and
+the local compatibility decision on failures as well as success. This is additive
+diagnostic data on API 40; execution, thresholds and normal Hold are unchanged.
+Validation passes 1,267 default Python cases (413 optional skips), 560 core,
+24 gRPC, 14 LiveKit, required core/shim lint/format and strict docs. Matching
+media wheels pass all 13 public gripper cases; implementation CI run 41279950191
+passes. No publication or owner changes.
+
 Site-wide stop callbacks now retain structured failure evidence in native
 cleanup and completed-stop receipts, just like scoped playback Hold. Typed
 callback diagnostics remain opaque to the Rust core. All declared parts receive

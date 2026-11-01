@@ -732,6 +732,11 @@ does not apply in this mode.
   Hold/e-stop and teardown use the driver's existing lifecycle.
 
 Repeated or pre-acknowledgement feedback resets completion history. The snapshot's
+The contact sample count, velocity-stationary sample count and local
+contact-compatibility decision are retained on both success and failure. These
+are diagnostics from the existing observation window; they do not change
+completion or cleanup.
+
 `gripper` evidence retains target/measured/commanded opening, progress, shortfalls,
 window span/drift and arrival/force sample counts. Failure and uncertain writes
 retain their original outcome and normal native Hold/drain; no reference retries.
