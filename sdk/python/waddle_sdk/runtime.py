@@ -1021,6 +1021,8 @@ class PlaybackHistoryPort(PlaybackHandlePort, Protocol):
     the run. A pending call has no returned stamp. Acknowledged calls are not
     physical arrival; superseded calls did not dispatch the requested reference.
     Cleanup writes and camera exposure intervals are not included.
+    Each stamp also samples SDK host monotonic time for local content-clock
+    diagnostics; it must never be compared with another host's clock.
     """
 
     def history(self) -> Mapping[str, JSONValue]: ...

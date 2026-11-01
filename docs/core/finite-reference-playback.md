@@ -15,6 +15,11 @@ twins captured by the native clock. A pending call has no returned stamp; errors
 retain their original diagnostics. Superseded calls do not acknowledge the
 requested reference. Cancellation drains an admitted call before normal Hold.
 
+Each stamp also includes a separate `host_monotonic_ns` sample taken in the SDK
+process. This permits comparison with optional camera content intervals from that
+same SDK host and run. It does not convert session time, synchronize hosts, or
+establish an exposure interval for cameras that do not supply one.
+
 This records command calls, not physical arrival or camera exposure. Cleanup
 writes and another supervision stream are excluded. Journal truncation is explicit.
 Do not compare these session timestamps with another host clock or infer missing

@@ -3,13 +3,20 @@
 from collections import deque
 from copy import deepcopy
 from threading import Lock
+from time import monotonic_ns
 
 CAPACITY = 256
 
 
 def _stamp(value):
     # Both values were captured together by the existing native session clock.
-    return {"session_ns": value.session_ns, "unix_ns": value.unix_ns}
+    return {
+        "session_ns": value.session_ns,
+        "unix_ns": value.unix_ns,
+        # A separate local sample for optional camera-content diagnostics. This
+        # is neither the session origin nor another host's monotonic clock.
+        "host_monotonic_ns": monotonic_ns(),
+    }
 
 
 class History:

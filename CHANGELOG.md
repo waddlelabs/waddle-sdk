@@ -1,3 +1,5 @@
+Playback history now also samples SDK host-monotonic time at each call boundary, preserving the native paired session/epoch stamps unchanged. This supports existing local camera-content diagnostics without comparing cloud clocks. Both missing-field regressions fail on the prior wheel; focused and full validation pending. No execution-policy or native ABI change.
+
 # Changelog
 
 All notable changes to the waddle-sdk monorepo are documented here.
