@@ -28,7 +28,8 @@ pub use gripper::{
 pub(crate) mod execution;
 pub use execution::{
     CurveUpdateReceipt, ExecutionFailure, ExecutionHandle, ExecutionResult, ExecutionSnapshot,
-    PlaybackCleanup, PlaybackIo, PlaybackIoError, ReferenceReceipt, WatchdogReceipt,
+    PlaybackCleanup, PlaybackDependency, PlaybackIo, PlaybackIoError, PlaybackQueue,
+    ReferenceReceipt, WatchdogReceipt,
 };
 
 /// Caller liveness measured on the existing session clock. Renewal is anchored
@@ -142,6 +143,10 @@ pub enum PlaybackError {
     LateReference { index: usize, lateness_ns: i64 },
     #[error("finite reference deadline expired")]
     Deadline,
+    #[error("queued execution did not start before its admission deadline")]
+    StartExpired,
+    #[error("queued execution prerequisite did not succeed: {0}")]
+    DependencyFailed(String),
     #[error("finite playback watchdog expired")]
     WatchdogExpired,
     #[error("a reference has an unacknowledged dispatch; do not replay it")]
@@ -163,6 +168,7 @@ pub struct FiniteReferences {
     chunk: ActionChunk,
     policy: PlaybackPolicy,
     pub(crate) parts: Option<Vec<String>>,
+    pub(crate) queue: PlaybackQueue,
 }
 
 impl FiniteReferences {
@@ -412,6 +418,7 @@ impl FiniteReferences {
         }
         Ok(Self {
             parts: first.part.as_ref().map(|part| vec![part.to_string()]),
+            queue: PlaybackQueue::default(),
             chunk,
             policy,
         })

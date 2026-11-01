@@ -45,6 +45,7 @@ from .runtime import (
     JSONValue,
     Observation,
     PartObservation,
+    PlaybackDependency,
     PlaybackHandlePort,
     Pose,
     RuntimeEvent,
@@ -1529,6 +1530,7 @@ class SiteSession:
                     facts.add(SupportFact.REFERENCE_SETTLING)
                     facts.add(SupportFact.DEFERRED_REFERENCE_COMPLETION)
                     facts.add(SupportFact.GOAL_PLAYBACK)
+                    facts.add(SupportFact.DEPENDENT_PLAYBACK)
                     if arm.fk is not None and arm.base_frame:
                         facts.add(SupportFact.CARTESIAN_GOAL_PLAYBACK)
                     facts.add(SupportFact.CHECKPOINTED_JOINT_PLAYBACK)
@@ -2100,20 +2102,26 @@ class Run:
         install(self, bounds)
 
     def start_playback(
-        self, motion: FiniteJointMotion | CoordinatedJointMotion
+        self,
+        motion: FiniteJointMotion | CoordinatedJointMotion,
+        *,
+        after: Sequence[PlaybackDependency] = (),
+        start_before_ns: int | None = None,
     ) -> PlaybackHandlePort:
         """Admit finite references to the local native worker; never wait for motion."""
         from ._playback import start
 
-        self._require_idle_playback(
-            (motion.part,)
-            if isinstance(motion, FiniteJointMotion) and isinstance(motion.part, str)
-            else motion.parts
-            if isinstance(motion, CoordinatedJointMotion)
-            else None
-        )
+        if not after:
+            self._require_idle_playback(
+                (motion.part,)
+                if isinstance(motion, FiniteJointMotion)
+                and isinstance(motion.part, str)
+                else motion.parts
+                if isinstance(motion, CoordinatedJointMotion)
+                else None
+            )
         with self._session._dispatch_lock:
-            return start(self, motion)
+            return start(self, motion, after=after, start_before_ns=start_before_ns)
 
     def _step(self, action, observation=None, *, part=None, parts=None) -> SubmitResult:
         if self._episode is None:

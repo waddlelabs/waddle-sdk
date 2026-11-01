@@ -11,6 +11,9 @@ use waddle_ingest::FakeClock;
 use waddle_types::time::Stamp;
 use waddle_types::{MonoNs, ProvenanceTag, ReplanPolicy, SourceId, Step};
 
+#[path = "queue_tests.rs"]
+mod queue_tests;
+
 #[derive(Clone, Default)]
 struct TestClock(FakeClock);
 
@@ -949,6 +952,7 @@ fn delayed_cancelled_admission_cannot_override_completed_control_takeover() {
                 EpisodeId::new("episode"),
                 Some(vec!["left".into()]),
                 references.len(),
+                &Default::default(),
                 || false,
             )
             .unwrap();
@@ -991,6 +995,7 @@ fn caller_cancellation_before_worker_admission_still_gets_owner_cleanup() {
                 EpisodeId::new("episode"),
                 Some(vec!["left".into()]),
                 references.len(),
+                &Default::default(),
                 || false,
             )
             .unwrap();
@@ -1139,6 +1144,7 @@ fn watchdog_task(h: &Harness) -> (ExecutionTask, ExecutionHandle) {
             EpisodeId::new("episode"),
             Some(vec!["left".into()]),
             references.len(),
+            &Default::default(),
             || false,
         )
         .unwrap();

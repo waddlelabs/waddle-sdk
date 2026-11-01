@@ -5,6 +5,20 @@ acceptance separately in a configured simulator environment.
 
 # AGENTS.md — waddle-sdk monorepo
 
+Binding API 32 adds dependent playback on the existing serialized worker. Keep
+same-SDK/run retained handles, explicit successful outcomes, all selected-part
+reservations, and bounded waiting chains. Before activation, cancellation or
+dependency/start-deadline refusal issues no child I/O or extra Hold. After
+activation retain fresh-start checks and normal cleanup; site-wide Stop still
+drains active and queued work. Motion timing starts at activation, but watchdogs
+retain their original deadline. Public Run and relay add no scheduler or replay.
+Metal still owns planning, world validity and application outcome selection.
+Validation passes 533 core, 24 gRPC, 14 LiveKit and 1,211 default Python cases,
+all required native/shim lint and strict documentation. The matching remote
+consumer passes 43 WebSocket/transport/completion cases. Retain the original
+concurrent mock-site lock failures; the isolated rerun passes without changing
+ownership. Higher-level Metal adapters and deployment remain in progress.
+
 Binding API 31 adds optional measured goal completion on the existing native
 playback worker. `PlaybackGoal` selects the original joint target or declared
 SDK TCP pose independently of the commanded endpoint. The local clock evaluates

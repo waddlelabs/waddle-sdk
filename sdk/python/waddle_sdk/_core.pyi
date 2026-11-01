@@ -81,6 +81,8 @@ class Episode:
         dispatch: Callable[[dict[str, Any], dict[str, Any], float | None], dict[str, Any] | PlaybackIoError],
         hold_part: Callable[[str], PlaybackIoError | None] | None = None,
         *, parts: Sequence[str] | None = None,
+        after: Sequence[tuple[ExecutionHandle, Sequence[str]]] = (),
+        start_before_ns: int | None = None,
     ) -> ExecutionHandle: ...
     @property
     def id(self) -> str: ...

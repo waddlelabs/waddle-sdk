@@ -8,8 +8,9 @@ use pyo3::types::PyDict;
 use waddle_runtime::playback::{
     Completion, ContactCondition, CurveUpdate, ExecutionFailure, ExecutionHandle,
     ExecutionSnapshot, Feedback, FeedbackPolicy, ForceCondition, GripperPolicy, HeldJointGroup,
-    MeasuredForce, PacedCurve, PlaybackError, PlaybackGoal, PlaybackIo, PlaybackIoError,
-    PlaybackPolicy, PlaybackWatchdog, Pose, PositionWindow, ReferenceReceipt, VelocityHints,
+    MeasuredForce, PacedCurve, PlaybackDependency, PlaybackError, PlaybackGoal, PlaybackIo,
+    PlaybackIoError, PlaybackPolicy, PlaybackQueue, PlaybackWatchdog, Pose, PositionWindow,
+    ReferenceReceipt, VelocityHints,
 };
 use waddle_types::Step;
 
@@ -441,6 +442,7 @@ pub(crate) fn start(
     policy: Policy,
     io: PyIo,
     parts: Option<Vec<String>>,
+    queue: PlaybackQueue,
 ) -> PyResult<PyExecutionHandle> {
     let chunk = waddle_sidecar::json::message_from_json::<waddle_types::pb::v0::ActionChunk>(
         "waddle.v0.ActionChunk",
@@ -449,10 +451,7 @@ pub(crate) fn start(
     .map_err(|e| PyValueError::new_err(e.to_string()))?;
     let policy = policy.try_into()?;
     let io = Arc::new(io);
-    let result = match parts {
-        Some(parts) => session.start_playback_parts(id, &parts, &chunk, policy, io),
-        None => session.start_playback(id, &chunk, policy, io),
-    };
+    let result = session.start_queued_playback(id, &chunk, policy, io, parts.as_deref(), queue);
     result.map(PyExecutionHandle).map_err(|error| match error {
         PlaybackError::Busy => PlaybackBusyError::new_err(error.to_string()),
         _ => PyValueError::new_err(error.to_string()),
@@ -461,6 +460,36 @@ pub(crate) fn start(
 
 #[pyclass(name = "ExecutionHandle", frozen)]
 pub(crate) struct PyExecutionHandle(ExecutionHandle);
+
+pub(crate) fn queue(
+    after: Vec<(PyRef<'_, PyExecutionHandle>, Vec<String>)>,
+    start_before_ns: Option<i64>,
+) -> PyResult<PlaybackQueue> {
+    let after = after
+        .into_iter()
+        .map(|(handle, outcomes)| {
+            let outcomes = outcomes
+                .into_iter()
+                .map(|outcome| match outcome.as_str() {
+                    "arrived" => Ok(Completion::Arrived),
+                    "settled" => Ok(Completion::Settled),
+                    "references_dispatched" => Ok(Completion::ReferencesDispatched),
+                    "contact_stall" => Ok(Completion::ContactStall),
+                    "force_reached" => Ok(Completion::ForceReached),
+                    _ => Err(PyValueError::new_err("invalid accepted playback outcome")),
+                })
+                .collect::<PyResult<Vec<_>>>()?;
+            Ok(PlaybackDependency {
+                handle: handle.0.clone(),
+                outcomes,
+            })
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+    Ok(PlaybackQueue {
+        after,
+        start_before_ns,
+    })
+}
 
 #[pymethods]
 impl PyExecutionHandle {
@@ -512,6 +541,7 @@ fn snapshot(py: Python<'_>, value: ExecutionSnapshot) -> PyResult<Py<PyDict>> {
     let out = PyDict::new(py);
     out.set_item("id", value.id)?;
     out.set_item("episode_id", value.episode_id.to_string())?;
+    out.set_item("waiting_for", value.waiting_for)?;
     out.set_item("dispatched", value.dispatched)?;
     out.set_item("references", value.references)?;
     out.set_item("last_acknowledged_ns", value.last_acknowledged_ns)?;
@@ -722,6 +752,8 @@ fn failure(py: Python<'_>, error: ExecutionFailure) -> PyResult<Py<PyDict>> {
                 PlaybackError::Busy => "busy",
                 PlaybackError::Invalid(_) | PlaybackError::InvalidAction(_) => "invalid",
                 PlaybackError::StaleStart => "stale_start",
+                PlaybackError::StartExpired => "start_expired",
+                PlaybackError::DependencyFailed(_) => "dependency_failed",
                 PlaybackError::Tracking => "tracking",
                 PlaybackError::ForceUnavailable => "gripper_force_unavailable",
                 PlaybackError::EmptyGripper => "gripper_empty",
