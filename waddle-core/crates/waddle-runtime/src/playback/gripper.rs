@@ -220,7 +220,8 @@ impl GripperState {
         let mut drift = 0.0;
         if let Some(contact) = &spec.contact {
             if fresh && commanded.is_some() {
-                self.samples.push_back((measured.observed_ns, opening, stationary));
+                self.samples
+                    .push_back((measured.observed_ns, opening, stationary));
                 while self.samples.len() > 2
                     && self.samples[1].0 <= measured.observed_ns - contact.window_ns
                 {
