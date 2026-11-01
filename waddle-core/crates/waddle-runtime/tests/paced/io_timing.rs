@@ -48,7 +48,14 @@ fn bent_path(corner: f64, goal: f64, segment_s: f64, hints: bool) -> Playback {
         period_ns: PERIOD,
         position_error: vec![0.04; 2],
         tracking_tolerance: vec![0.05; 2],
-        sample_times_s: None,
+        // Ordinary rest-to-rest paths retain the planner's exact sample grid,
+        // including every corner; revisable analytic paths use their own proof.
+        sample_times_s: Some({
+            let ticks = (segment_s * 1e9 / PERIOD as f64).round() as usize;
+            (0..=2 * ticks)
+                .map(|i| i as f64 / ticks as f64 * segment_s)
+                .collect()
+        }),
     });
     Playback::new(FiniteReferences::new(chunk, policy).unwrap(), 0)
 }
@@ -137,7 +144,15 @@ fn lag_keeps_headroom_and_zero_velocity_at_the_checked_corner() {
                     now += PERIOD;
                 }
                 PlaybackPoll::WaitUntil(at) => now = at,
-                PlaybackPoll::Observe => now += PERIOD,
+                PlaybackPoll::Observe => {
+                    // The physical position loop continues toward the held
+                    // endpoint after playback finishes sending references.
+                    let target = &writes.last().unwrap().values;
+                    for j in 0..2 {
+                        q[j] += (target[j] - q[j]) * 0.04;
+                    }
+                    now += PERIOD;
+                }
                 PlaybackPoll::Complete(outcome) => {
                     assert_eq!(outcome, Completion::Arrived);
                     break;
