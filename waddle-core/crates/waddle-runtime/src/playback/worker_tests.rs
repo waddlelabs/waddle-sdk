@@ -631,6 +631,25 @@ fn sustained_feedback_cost_stays_inside_the_original_curve_budget() {
     }
 }
 
+fn jitter_curve() -> FiniteReferences {
+    let (mut chunk, mut policy) = reference_inputs(None, false, None);
+    chunk.horizon_ns = 200_000_000;
+    chunk.steps.truncate(2);
+    chunk.steps[1].offset_ns = chunk.horizon_ns;
+    chunk.steps[1].values[0] = 0.01;
+    policy.timeout_ns = Some(1_000_000_000);
+    policy.paced_curve = Some(crate::playback::PacedCurve {
+        times_s: vec![0.0, 0.2],
+        positions: vec![vec![0.0], vec![0.01]],
+        coefficients: vec![[0.0, 0.0, 0.0, 0.1, -0.15, 0.06].map(|q| vec![q]).into()],
+        period_ns: 20_000_000,
+        position_error: vec![0.04],
+        tracking_tolerance: vec![0.05],
+        sample_times_s: None,
+    });
+    FiniteReferences::new(chunk, policy).unwrap()
+}
+
 #[test]
 fn read_jitter_does_not_add_an_extra_read_to_each_curve_tick() {
     std::thread::Builder::new()
@@ -638,22 +657,7 @@ fn read_jitter_does_not_add_an_extra_read_to_each_curve_tick() {
         .spawn(|| {
             let h = Harness::new();
             *h.io.observation_costs.lock() = [8_000_000, 7_900_000].into();
-            let (mut chunk, mut policy) = reference_inputs(None, false, None);
-            chunk.horizon_ns = 200_000_000;
-            chunk.steps.truncate(2);
-            chunk.steps[1].offset_ns = chunk.horizon_ns;
-            chunk.steps[1].values[0] = 0.01;
-            policy.timeout_ns = Some(1_000_000_000);
-            policy.paced_curve = Some(crate::playback::PacedCurve {
-                times_s: vec![0.0, 0.2],
-                positions: vec![vec![0.0], vec![0.01]],
-                coefficients: vec![[0.0, 0.0, 0.0, 0.1, -0.15, 0.06].map(|q| vec![q]).into()],
-                period_ns: 20_000_000,
-                position_error: vec![0.04],
-                tracking_tolerance: vec![0.05],
-                sample_times_s: None,
-            });
-            let references = FiniteReferences::new(chunk, policy).unwrap();
+            let references = jitter_curve();
             let handle = h
                 .dispatch
                 .playback
@@ -695,6 +699,77 @@ fn read_jitter_does_not_add_an_extra_read_to_each_curve_tick() {
                     .all(|dt| (20_000_000..=22_000_000).contains(dt)),
                 "{intervals:?}"
             );
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
+fn short_curve_wait_keeps_stop_deadline_and_feedback_freshness() {
+    std::thread::Builder::new()
+        .name("waddle-verbs".into())
+        .spawn(|| {
+            for action in ["cancel", "deadline", "stale", "owner"] {
+                let h = Harness::new();
+                *h.io.observation_costs.lock() = [8_000_000, 7_900_000].into();
+                let references = jitter_curve();
+                let handle = h
+                    .dispatch
+                    .playback
+                    .register(
+                        EpisodeId::new("episode"),
+                        None,
+                        references.len(),
+                        &Default::default(),
+                        || false,
+                    )
+                    .unwrap();
+                let mut task = ExecutionTask::new(
+                    h.mirror.clone(),
+                    EpisodeId::new("episode"),
+                    references,
+                    h.io.clone(),
+                    &handle,
+                    20_000_000,
+                    0,
+                );
+                assert_eq!(task.tick(&h.io.clock.0), None);
+                let first = handle.snapshot().feedback.unwrap().observed_ns;
+                while handle.snapshot().feedback.unwrap().observed_ns == first {
+                    h.io.clock.0.advance(100_000);
+                    assert_eq!(task.tick(&h.io.clock.0), None);
+                }
+                // Fresh feedback arrived just before the second write's due
+                // time. No later control event may be bypassed by that sample.
+                assert_eq!(h.io.writes.lock().len(), 1);
+                let expected = match action {
+                    "cancel" => {
+                        handle.cancel("stop during cadence wait");
+                        ExecutionFailure::Playback(PlaybackError::Cancelled(
+                            "stop during cadence wait".into(),
+                        ))
+                    }
+                    "deadline" => {
+                        h.io.clock.0.advance(1_000_000_000);
+                        ExecutionFailure::Playback(PlaybackError::Deadline)
+                    }
+                    "stale" => {
+                        h.io.clock.0.advance(21_000_000);
+                        *h.io.q.lock() = 0.2;
+                        ExecutionFailure::Playback(PlaybackError::Tracking)
+                    }
+                    "owner" => {
+                        h.mirror.update(|s| s.shutdown = true);
+                        ExecutionFailure::Superseded("episode ended".into())
+                    }
+                    _ => unreachable!(),
+                };
+                let result = task.tick(&h.io.clock.0);
+                assert_eq!(result, Some(Err(expected)), "{action}");
+                assert_eq!(h.io.writes.lock().len(), 1);
+                task.finish(result.unwrap());
+            }
         })
         .unwrap()
         .join()
