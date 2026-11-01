@@ -32,6 +32,7 @@ fn inputs(targets: &[f64]) -> (ActionChunk, PlaybackPolicy) {
         PlaybackPolicy {
             indices: vec![0],
             start_tolerance: vec![0.01],
+            expected_start: None,
             position_tolerance: vec![0.001],
             stationary_velocity: vec![0.01],
             settle_ns: 50,

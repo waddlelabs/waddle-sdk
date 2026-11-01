@@ -1540,6 +1540,7 @@ class SiteSession:
                     facts.add(SupportFact.UPDATABLE_GOAL_PLAYBACK)
                     facts.add(SupportFact.DEPENDENT_PLAYBACK)
                     facts.add(SupportFact.TRANSIT_PLAYBACK)
+                    facts.add(SupportFact.EXPECTED_START_PLAYBACK)
                     if arm.fk is not None and arm.base_frame:
                         facts.add(SupportFact.CARTESIAN_GOAL_PLAYBACK)
                     facts.add(SupportFact.CHECKPOINTED_JOINT_PLAYBACK)

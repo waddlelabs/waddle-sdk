@@ -90,6 +90,7 @@ class SupportFact(str, enum.Enum):
     UPDATABLE_GOAL_PLAYBACK = "execution.updatable_goal_playback"
     DEPENDENT_PLAYBACK = "execution.dependent_playback"
     TRANSIT_PLAYBACK = "execution.transit_playback"
+    EXPECTED_START_PLAYBACK = "execution.expected_start_playback"
     DEFERRED_REFERENCE_COMPLETION = "execution.deferred_reference_completion"
     CHECKPOINTED_JOINT_PLAYBACK = "execution.checkpointed_joint_playback"
     REVISABLE_JOINT_PLAYBACK = "execution.revisable_joint_playback"
@@ -827,6 +828,12 @@ class PlaybackGoalUpdate:
 class PlaybackPolicy:
     """Explicit measured completion and local timing bounds; validated by core.
 
+    ``expected_start`` optionally supplies the full declared measured vector,
+    separately from the first reference. Requires expected-start playback support.
+    The existing ``indices`` and ``start_tolerance`` check fresh local feedback;
+    omission compares with the first reference. This vector is never dispatched
+    and cannot waive target limits, tracking, deadlines or normal cleanup.
+
     ``minimum_settle_samples`` requires fresh eligible observations in addition
     to the settling span, with separately declared sampled-playback support.
     Velocity/goal loss resets the count. Position windows retain at least this
@@ -928,8 +935,11 @@ class PlaybackPolicy:
     goal: PlaybackGoal | None = None
     settle_timeout_ns: int | None = None
     complete_in_resting_tail: bool = False
+    expected_start: tuple[float, ...] | None = None
 
     def __post_init__(self) -> None:
+        if self.expected_start is not None:
+            object.__setattr__(self, "expected_start", tuple(self.expected_start))
         for name in (
             "indices",
             "start_tolerance",
