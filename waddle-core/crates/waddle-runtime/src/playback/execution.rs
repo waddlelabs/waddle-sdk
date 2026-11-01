@@ -869,10 +869,9 @@ impl ExecutionTask {
         }
         // A read acquired during cadence waiting is used once at the due tick.
         // If the worker itself was delayed, reacquire instead of using old data.
-        let prepared = self
-            .prepared_feedback
-            .take()
-            .filter(|_| poll_ns.saturating_sub(self.next_poll_ns) <= self.sample_period_ns);
+        let prepared = self.prepared_feedback.take().filter(|feedback| {
+            poll_ns.saturating_sub(feedback.observed_ns) <= self.sample_period_ns
+        });
         let measured = match prepared.map_or_else(|| self.io.observe(), Ok) {
             Ok(measured) => measured,
             Err(error) => return Some(Err(ExecutionFailure::Observation(error))),
