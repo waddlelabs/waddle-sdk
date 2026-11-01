@@ -1763,14 +1763,20 @@ class SiteSession:
                 sample = grouped.get(name)
                 if isinstance(sample, Exception):
                     raise sample
-                has_force = (
-                    isinstance(arm.driver, base.GripperForceDriver)
-                    and arm.driver.gripper_force_supported
-                )
                 if sample is None:
                     position, velocity = arm.state()
-                    force = arm.driver.read_gripper_force() if has_force else None
+                    pose = arm.ee_pose(position)
+                    force = (
+                        arm.driver.read_gripper_force()
+                        if isinstance(arm.driver, base.GripperForceDriver)
+                        and arm.driver.gripper_force_supported
+                        else None
+                    )
                 else:
+                    has_force = (
+                        isinstance(arm.driver, base.GripperForceDriver)
+                        and arm.driver.gripper_force_supported
+                    )
                     position = np.asarray(
                         sample.joint_position, dtype=np.float64
                     ).copy()
@@ -1795,7 +1801,7 @@ class SiteSession:
                             "Grouped feedback omitted advertised measured force",
                             context={"part": name},
                         )
-                pose = arm.ee_pose(position)
+                    pose = arm.ee_pose(position)
             except Exception as exc:
                 faults[name] = _operation_fault(
                     "observe robot part",

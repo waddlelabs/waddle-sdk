@@ -1199,7 +1199,7 @@ requested backend key with fresh caller-owned `PartObservation` values or its
 original exception. Preserve subsets, per-part faults, measured force and normal
 FK/base frames. No stale/target substitution, source-failure serial retry, motion
 writer or supervision change is permitted. Drivers without the optional source
-retain their ordinary read path. Reference MuJoCo performs one state/force IPC
+retain their ordinary read path and state → FK → force fault ordering. Reference MuJoCo performs one state/force IPC
 transaction for either one or two named parts; fixed-protocol backends can
 withdraw `supports_grouped_feedback`. Software/native simulation is not physical
 shared-bus acceptance.

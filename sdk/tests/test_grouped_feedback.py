@@ -121,3 +121,30 @@ def test_reference_observation_acquires_joint_and_force_feedback_in_one_transact
                 assert part.gripper_force is not None
                 assert part.gripper_force.source == "mujoco.yam.actuator_force"
                 assert part.gripper_force.estimated is True
+
+
+def test_legacy_observation_preserves_original_fk_fault_before_force_read(
+    site_path, monkeypatch
+):
+    fk_fault = RuntimeFault(
+        FaultCode.INTERNAL, "original FK source failed", context={"source": "fk"}
+    )
+    force_fault = RuntimeFault(
+        FaultCode.MOTOR_FAILURE, "force encoder failed", context={"motor": 2}
+    )
+    with load_site(site_path).open() as sdk:
+        driver = DRIVERS["left"]
+        driver.gripper_force_supported = True
+        driver.gripper_force_limits_n = (1.0, 10.0)
+        driver.write_gripper_force = lambda *args: None
+
+        def fail_force():
+            raise force_fault
+
+        def fail_fk(position):
+            raise fk_fault
+
+        driver.read_gripper_force = fail_force
+        monkeypatch.setattr(sdk._managed.arms["left"], "ee_pose", fail_fk)
+        observed = sdk.observe_parts(["left"])
+        assert observed.faults["left"] is fk_fault
