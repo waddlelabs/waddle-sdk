@@ -11,6 +11,13 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+### Fixed
+
+- Preserve structured callback diagnostics in site-wide Hold/e-stop cleanup and
+  completed-stop receipts. Attempt every declared part and retain all failures.
+
+### Added
+
 - Permit explicit transit handoffs to admitted successors on the existing worker
   (binding API 40). Preserve required goal tolerance, completed references,
   cancellation/expiry gates, fresh-start checks and the distinction from arrival.

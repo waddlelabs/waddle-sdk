@@ -1422,10 +1422,32 @@ def chunk_sender(
     return send
 
 
+def _stop_all(arms: Mapping[str, Arm], verb: str) -> None:
+    failures = []
+    for part, arm in arms.items():
+        try:
+            getattr(arm, verb)()
+        except Exception as error:  # noqa: BLE001 -- every part must receive the stop
+            failures.append(
+                (part, RuntimeFault.from_exception(error, context={"part": part}))
+            )
+    if len(failures) == 1:
+        raise failures[0][1]
+    if failures:
+        raise RuntimeFault(
+            FaultCode.INTERNAL,
+            f"{verb} failed on multiple parts",
+            context={
+                "failures": [
+                    {"part": part, "fault": fault.as_dict()} for part, fault in failures
+                ]
+            },
+        )
+
+
 def hold_all(arms: Mapping[str, Arm]) -> None:
-    """Every part commands where it already is — the ``hold`` verb."""
-    for arm in arms.values():
-        arm.hold()
+    """Ask every part to hold; retain each failure after all callbacks finish."""
+    _stop_all(arms, "hold")
 
 
 # ---------------------------------------------------------------------------
@@ -1501,19 +1523,14 @@ def estop_all(
     the first one's bus write timed out — which is the exact shape of "the
     e-stop worked, mostly". Failures are collected and re-raised afterwards,
     so the session still records a failed verb."""
-    failures: list[str] = []
-    for part, arm in arms.items():
-        try:
-            arm.estop()
-        except Exception as e:  # noqa: BLE001 — a vendor call can throw anything
-            failures.append(f"{part}: {e!r}")
-    latched = latched_parts(arms)
-    report(
-        f"estop latched parts={','.join(latched) or 'none'} — nothing may command "
-        "these parts until a human clears it at the machine"
-    )
-    if failures:
-        raise RuntimeError("e-stop raised on " + "; ".join(failures))
+    try:
+        _stop_all(arms, "estop")
+    finally:
+        latched = latched_parts(arms)
+        report(
+            f"estop latched parts={','.join(latched) or 'none'} — nothing may command "
+            "these parts until a human clears it at the machine"
+        )
 
 
 def close_all(

@@ -822,6 +822,14 @@ the original error. Transport loss or a caller timeout does not establish cleanu
 retain ownership until a completed receipt or independently verified owner closure.
 The receipt proves callback completion, not measured physical stationarity.
 
+Site-wide cleanup and completed-stop receipts retain optional structured
+`evidence` supplied by the owner callback, matching scoped Hold diagnostics.
+Python `RuntimeFault` code, detail, retryability, context and causes survive this
+boundary. All declared parts receive Hold/e-stop despite an earlier failure;
+a single fault passes through unchanged, while multiple failures retain each
+part and complete fault. Unknown cleanup never becomes confirmed by recording
+these diagnostics.
+
 `Session.hold` and `Session.estop` still acknowledge only that a request was queued;
 posting another request cannot turn missing/failed cleanup into confirmed cleanup.
 

@@ -1,3 +1,16 @@
+Site-wide stop callbacks now retain structured failure evidence in native
+cleanup and completed-stop receipts, just like scoped playback Hold. Typed
+callback diagnostics remain opaque to the Rust core. All declared parts receive
+Hold/e-stop even if an earlier callback raises; a single original runtime fault
+passes through, while multiple failures retain every part and complete fault.
+The existing worker, ownership fences and API 40 stay unchanged. Validation passes
+1,266 default Python cases (413 optional skips), 560 core, 24 gRPC and 14 LiveKit
+cases, required native/shim checks, strict documentation and CI. Matching base
+and media wheels pass public callback-failure tests. The initial Python run
+forced base selection and failed eight package-selection cases; the normal
+environment passes unchanged source. This does not publish wheels or change
+installed owners.
+
 API 40 provides same-arm transit handoffs on the existing worker. An admitted
 successor that explicitly accepts reference crossing may waive intermediate
 settling; it cannot waive reference completion, tracking, required goal tolerance

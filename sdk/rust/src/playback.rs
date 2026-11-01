@@ -787,11 +787,11 @@ fn snapshot(py: Python<'_>, value: ExecutionSnapshot) -> PyResult<Py<PyDict>> {
             )?;
             if let Some(part) = receipt.part {
                 result.set_item("part", part)?;
-                result.set_item(
-                    "evidence",
-                    receipt.result.as_ref().err().map(|e| &e.evidence),
-                )?;
             }
+            result.set_item(
+                "evidence",
+                receipt.result.as_ref().err().map(|e| &e.evidence),
+            )?;
             result.set_item("error", receipt.result.err().map(|e| e.detail))?;
             result.set_item("completed_ns", receipt.at.0)?;
             result.set_item("measured_stationary", false)?;
