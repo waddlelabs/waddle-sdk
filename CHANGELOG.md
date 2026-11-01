@@ -11,6 +11,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Evaluate selected custom TCP goals from numeric `PlaybackKinematics` on the
+  existing worker (`execution.kinematic_goal_playback`). Support hinge/slide
+  chains and affine joint coordinates without a planner/model dependency, while
+  retaining the owner's safety geometry, local settling and original goal result.
+
 - Expose SDK-local execution elapsed time (`execution.playback_timing`, binding
   API 35), bound to retained feedback. Queued work starts its motion budget at
   activation; cloud planning can use the same elapsed duration without counting

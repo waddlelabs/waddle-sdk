@@ -515,12 +515,30 @@ Binding API 31 adds `PlaybackPolicy.goal` and `settle_timeout_ns`, gated by
 - `joint_positions`: the original target in selected-index order, evaluated with
   the existing per-joint `position_tolerance`. A corrected command endpoint can
   differ from this target.
-- `pose`: the SDK owner's declared TCP pose in its base frame. Position uses
+- `pose`: a TCP pose in the SDK owner's base frame. Position uses
   `position_tolerance_m`; rotation uses `orientation_tolerance_rad`, or explicit
   `None` for position-only completion. This additionally requires
-  `execution.cartesian_goal_playback`, derived from opened local FK and a frame.
-  A different tool or frame must be resolved before submission; missing/wrong-frame
-  pose feedback fails through ordinary local cleanup.
+  `execution.cartesian_goal_playback` for the owner's default TCP, derived from
+  opened local FK and a frame. Missing/wrong-frame feedback fails through normal
+  local cleanup.
+
+For a different selected tool, `execution.kinematic_goal_playback` accepts
+`PlaybackGoal.kinematics`: a `PlaybackKinematics` reference TCP pose plus at most
+128 `PlaybackKinematicJoint` entries, ordered from base to tool. Each identifies
+a local measured joint index, hinge/slide axis, hinge origin, scale and offset.
+The reference pose, axes and origins use the part's base frame at the same
+reference configuration. The scalar displacement is `scale * measured + offset`;
+the caller includes any reference-joint subtraction in that offset. FK composes
+these scalar transforms in order before the reference pose. A slide translates
+along its axis; a hinge rotates about its axis through its origin.
+
+The existing worker evaluates this immutable numeric chain from the same local
+joint sample used for settling and retains that TCP pose in feedback. It needs
+no optional model engine or remote callback. The selected goal geometry does not
+change owner workspace, collision, joint or dispatch gates. The caller remains
+responsible for binding the chain to its selected robot/tool model. Other parts'
+coordinates cannot be frozen into a local part's chain as if they were measured.
+Omitting `kinematics` preserves the original declared-TCP wire contract.
 
 The same worker evaluates arrival and settling for each fresh local sample.
 `arrived` means the requested goal satisfies the configured settling policy;

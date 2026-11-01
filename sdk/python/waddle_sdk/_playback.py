@@ -167,6 +167,28 @@ def start(
         )
     if goal is not None and not isinstance(goal, PlaybackGoal):
         raise RuntimeFault(FaultCode.INVALID_REQUEST, "provide a PlaybackGoal")
+    kinematics = None
+    if goal is not None and goal.kinematics is not None:
+        if SupportFact.KINEMATIC_GOAL_PLAYBACK not in facts:
+            raise RuntimeFault(
+                FaultCode.UNSUPPORTED, "part does not support selected TCP goals"
+            )
+        if group or goal.pose is None:
+            raise RuntimeFault(
+                FaultCode.INVALID_REQUEST, "kinematics requires a named TCP goal"
+            )
+        from ._playback_kinematics import Kinematics
+
+        try:
+            kinematics = Kinematics(
+                goal.kinematics,
+                width=len(arms[motion.part].joint_names),
+                frame=arms[motion.part].base_frame,
+            )
+        except (TypeError, ValueError, OverflowError) as error:
+            raise RuntimeFault.from_exception(
+                error, code=FaultCode.INVALID_REQUEST
+            ) from error
     if (
         goal is not None
         and motion.policy.allow_curve_updates
@@ -176,7 +198,11 @@ def start(
             FaultCode.UNSUPPORTED, "part does not support revisable goal playback"
         )
     if goal is not None and goal.pose is not None:
-        if group or SupportFact.CARTESIAN_GOAL_PLAYBACK not in facts:
+        if (
+            group
+            or kinematics is None
+            and SupportFact.CARTESIAN_GOAL_PLAYBACK not in facts
+        ):
             raise RuntimeFault(
                 FaultCode.UNSUPPORTED, "TCP goal requires a named part with local FK"
             )
@@ -389,7 +415,9 @@ def start(
                 pose = None
                 if goal is not None and goal.pose is not None:
                     sample = measured[0]
-                    if (
+                    if kinematics is not None:
+                        pose = kinematics(sample.joint_position)
+                    elif (
                         sample.ee_pose_wxyz is None
                         or sample.frame_id != goal.pose.frame_id
                     ):
@@ -397,11 +425,12 @@ def start(
                             FaultCode.INTERNAL,
                             "local TCP feedback is unavailable or has the wrong frame",
                         )
-                    pose = Pose(
-                        tuple(sample.ee_pose_wxyz[:3]),
-                        tuple(sample.ee_pose_wxyz[3:]),
-                        sample.frame_id,
-                    )
+                    else:
+                        pose = Pose(
+                            tuple(sample.ee_pose_wxyz[:3]),
+                            tuple(sample.ee_pose_wxyz[3:]),
+                            sample.frame_id,
+                        )
                 return {
                     "observed_ns": observation.session_ns,
                     "positions": [

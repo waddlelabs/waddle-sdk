@@ -83,6 +83,7 @@ class SupportFact(str, enum.Enum):
     GOAL_PROGRESS = "execution.goal_progress"
     PLAYBACK_TIMING = "execution.playback_timing"
     CARTESIAN_GOAL_PLAYBACK = "execution.cartesian_goal_playback"
+    KINEMATIC_GOAL_PLAYBACK = "execution.kinematic_goal_playback"
     DEPENDENT_PLAYBACK = "execution.dependent_playback"
     DEFERRED_REFERENCE_COMPLETION = "execution.deferred_reference_completion"
     CHECKPOINTED_JOINT_PLAYBACK = "execution.checkpointed_joint_playback"
@@ -726,12 +727,52 @@ class PlaybackWatchdog:
 
 
 @dataclass(frozen=True)
+class PlaybackKinematicJoint:
+    """One scalar joint in a base-frame product-of-exponentials FK chain.
+
+    ``index`` selects the named part's measured joint vector. ``scale * q +
+    offset`` is the displacement from the supplied reference pose, in radians
+    for a hinge or metres for a slide. Axis and hinge origin use that reference
+    configuration's base frame; the axis is a unit vector. This is geometry
+    for measuring a goal, never a replacement driver or an IK solver.
+    """
+
+    index: int
+    kind: str
+    axis: tuple[float, float, float]
+    origin_m: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    scale: float = 1.0
+    offset: float = 0.0
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "axis", tuple(self.axis))
+        object.__setattr__(self, "origin_m", tuple(self.origin_m))
+
+
+@dataclass(frozen=True)
+class PlaybackKinematics:
+    """Selected TCP reference pose and its ordered scalar FK chain.
+
+    Joints run from base to tool, at most 128. The immutable numeric description
+    is evaluated from local feedback by the existing worker. It installs no
+    executable code, model engine, planner or additional observation loop.
+    """
+
+    reference_pose: Pose
+    joints: tuple[PlaybackKinematicJoint, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "joints", tuple(self.joints))
+
+
+@dataclass(frozen=True)
 class PlaybackGoal:
-    """Original joint goal or the declared SDK TCP pose, evaluated locally.
+    """Original joint or TCP goal, evaluated locally.
 
     Joint positions follow ``PlaybackPolicy.indices`` and use its tolerances.
-    A pose uses the owner's TCP and base frame; a planner must resolve other
-    tools/frames before admission. No model or remote callback is installed.
+    A pose uses the owner's TCP unless explicit ``kinematics`` binds another
+    tool. Both use the owner's declared base frame. No model or remote callback
+    is installed, and owner safety gates retain their configured geometry.
     ``orientation_tolerance_rad=None`` explicitly selects position-only arrival.
     """
 
@@ -739,6 +780,7 @@ class PlaybackGoal:
     pose: Pose | None = None
     position_tolerance_m: float = 0.002
     orientation_tolerance_rad: float | None = 0.02
+    kinematics: PlaybackKinematics | None = None
 
     def __post_init__(self) -> None:
         if self.joint_positions is not None:
