@@ -1517,11 +1517,11 @@ class SiteSession:
                     facts.add(SupportFact.COMPLETED_STOP)
                     facts.add(SupportFact.FINITE_JOINT_PLAYBACK)
                     facts.add(SupportFact.JOINT_PLAYBACK_BOUNDS)
+                    facts.add(SupportFact.PART_HOLD_PLAYBACK)
                     if coordinated:
                         facts.add(SupportFact.COORDINATED_JOINT_PLAYBACK)
                         facts.add(SupportFact.COORDINATED_SUBSET_PLAYBACK)
                         facts.add(SupportFact.PARALLEL_JOINT_PLAYBACK)
-                        facts.add(SupportFact.PART_HOLD_PLAYBACK)
                     facts.add(SupportFact.WATCHDOG_PLAYBACK)
                     facts.add(SupportFact.INPUT_WATCHDOG_PLAYBACK)
                     facts.add(SupportFact.STREAMED_JOINT_PLAYBACK)

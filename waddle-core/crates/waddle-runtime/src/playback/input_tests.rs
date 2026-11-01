@@ -311,3 +311,57 @@ fn pending_stop_fences_new_input_until_callback_completes() {
     ));
     h.dispatch.shutdown();
 }
+
+#[test]
+fn scoped_buffer_cancel_keeps_live_input_only_after_confirmed_hold() {
+    for hold_fails in [false, true] {
+        let h = Harness::new();
+        if hold_fails {
+            *h.io.part_hold_error.lock() = Some(PlaybackIoError {
+                detail: "scoped Hold failed".into(),
+                evidence: "original Hold failure".into(),
+                outcome_unknown: true,
+            });
+        }
+        let input = input(&h);
+        let mut request =
+            references_with_watchdog(Some("left"), true, Some(input.snapshot().watchdog));
+        request.queue.input = Some(input.clone());
+        let (barrier, entered, resume) = pause();
+        *h.io.observation_pause.lock() = Some(barrier);
+        let handle = h
+            .dispatch
+            .start_playback(
+                h.mirror.clone(),
+                EpisodeId::new("episode"),
+                request,
+                h.io.clone(),
+                10_000_000,
+                0,
+            )
+            .unwrap();
+        entered.recv_timeout(Duration::from_secs(2)).unwrap();
+        handle.cancel("replace checked direction");
+        resume.send(()).unwrap();
+        let result = handle.wait();
+        assert!(matches!(
+            result.result,
+            Some(Err(ExecutionFailure::Playback(PlaybackError::Cancelled(_))))
+        ));
+        let cleanup = result.cleanup.unwrap();
+        assert_eq!(cleanup.part.as_deref(), Some("left"));
+        assert_eq!(cleanup.result.is_err(), hold_fails);
+        assert_eq!(result.dispatched, 0);
+        if hold_fails {
+            assert!(matches!(input.refresh(1), Err(PlaybackError::Cancelled(_))));
+        } else {
+            input.refresh(1).unwrap();
+            let successor = start_input(&h, &input).wait();
+            assert_eq!(successor.result, Some(Ok(Completion::Arrived)));
+            assert!(successor.dispatched > 0);
+            input.release("operator released");
+            assert!(matches!(input.refresh(2), Err(PlaybackError::Cancelled(_))));
+        }
+        h.dispatch.shutdown();
+    }
+}
