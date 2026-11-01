@@ -1,3 +1,5 @@
+A pending-write diagnostic journal regression ports Metal preview assertions to the existing SDK playback callback. It requires SDK session/epoch stamps, detached bounded history, original write errors and cancellation drain. This test-only candidate has no implementation yet; baseline failure is expected. No native policy, package publication, deployment or hardware change.
+
 A deterministic native regression now covers slow streamed curves with a shorter
 input watchdog: acquired feedback must advance between writes, accepted input
 may renew it, and sampling alone must still expire. The baseline reproduces
