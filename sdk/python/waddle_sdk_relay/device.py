@@ -274,6 +274,7 @@ class Device:
                 "playback_cancel",
                 "playback_finish",
                 "playback_update",
+                "playback_goal_update",
                 "playback_withdraw",
                 "playback_refresh",
             }:
@@ -301,12 +302,18 @@ class Device:
                             "SDK handle does not support playback watchdogs",
                         )
                     refresh(arguments["observed_ns"])
-                if method == "playback_update":
-                    update = getattr(handle, "update_curve", None)
+                if method in {"playback_update", "playback_goal_update"}:
+                    update = getattr(
+                        handle,
+                        "update_goal"
+                        if method == "playback_goal_update"
+                        else "update_curve",
+                        None,
+                    )
                     if not callable(update):
                         raise RuntimeFault(
                             FaultCode.UNSUPPORTED,
-                            "SDK handle does not support curve updates",
+                            "SDK handle does not support the requested playback update",
                         )
                     request_id = update(arguments["update"])
                     return {"request_id": request_id, "snapshot": handle.snapshot()}

@@ -11,6 +11,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Add opt-in same-frame pose updates for dwelled goals on the existing worker
+  (binding API 38). Retain accepted target/revision with feedback and terminal
+  results; reject stale updates without changing trajectories, policy or deadlines.
+  Explicit-goal polynomial playback may reuse native motion-pacing credit;
+  stationary tails, target messages and dwell do not increase the allowance.
+
 - Add optional `PlaybackGoalDwell` on the existing worker for independent goal
   dwell with a wider reset band. Current nominal tolerance and stationarity
   still gate completion; snapshots retain observation-clock dwell evidence.

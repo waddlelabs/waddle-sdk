@@ -360,6 +360,8 @@ force-grasp completion or coordinated parts.
 
 Binding API 21 adds `PlaybackPolicy.credit_pacing_delay`, requiring
 `execution.paced_playback_deadline` and reference-only polynomial playback.
+Binding API 38 also permits explicit-goal polynomial playback with the same
+accounting; target messages and goal dwell never earn additional credit.
 Default false preserves the absolute wall-time limit. Enable it only when the
 caller selects a curve-progress budget rather than an explicit wall deadline.
 The original `timeout_ns` remains the initial budget; the effective deadline
@@ -558,6 +560,27 @@ accepted correction must finish before goal completion; merely observing the
 goal cannot discard accepted future work. Withdrawing that pending correction
 restores the incumbent's completion rules. Expired executions cannot be revived
 by a delayed update, including one queued during an observation callback.
+
+Binding API 38 adds `execution.updatable_goal_playback`. Set `goal.allow_updates`
+explicitly on a pose goal with independent dwell, then call
+`handle.update_goal(PlaybackGoalUpdate(expected_revision, pose))`. Revision zero
+identifies the admitted target. The same local worker validates the current
+revision and the unchanged base frame before accepting a new pose. It changes no
+trajectory, FK, tolerance, stationarity policy, deadline or authority. Independent
+dwell history persists; the next fresh goal score resets it only outside the
+configured outer band. Target resolution and trajectory planning stay with the
+caller.
+
+Only one goal request may await processing. The returned request ID identifies
+`goal_update`, which records the requested pose, expected revision and pending,
+accepted or rejected result. Accepted receipts include the new revision.
+`goal_target` contains the accepted pose/revision used for retained feedback and
+is published with that feedback and dwell progress; it is absent before the first
+sample. A queued update may lose to cancellation, failure or completion and be
+rejected. Report the target retained in the terminal snapshot, never a newer
+unaccepted intent. Delayed updates cannot renew either deadline or change a
+terminal result. Reconcile a lost response from the same handle; do not replay.
+Default fixed goals keep their previous behavior and wire encoding.
 
 Binding API 37 adds optional `PlaybackGoalDwell(duration_ns,
 exit_tolerance_multiplier)` under `execution.dwell_goal_playback`. Goal dwell

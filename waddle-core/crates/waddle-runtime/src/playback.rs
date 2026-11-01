@@ -19,7 +19,7 @@ use feedback::FeedbackState;
 pub use feedback::{
     FeedbackPolicy, HeldJointGroup, PositionWindow, SettlingEvidence, VelocityHints,
 };
-pub use goal::{GoalDwell, GoalDwellProgress, PlaybackGoal, Pose};
+pub use goal::{GoalDwell, GoalDwellProgress, GoalTarget, GoalUpdate, PlaybackGoal, Pose};
 mod gripper;
 use gripper::GripperState;
 pub use gripper::{
@@ -28,8 +28,8 @@ pub use gripper::{
 pub(crate) mod execution;
 pub use execution::{
     CurveUpdateReceipt, ExecutionFailure, ExecutionHandle, ExecutionResult, ExecutionSnapshot,
-    PlaybackCleanup, PlaybackDependency, PlaybackIo, PlaybackIoError, PlaybackQueue,
-    ReferenceReceipt, WatchdogReceipt,
+    GoalUpdateReceipt, PlaybackCleanup, PlaybackDependency, PlaybackIo, PlaybackIoError,
+    PlaybackQueue, ReferenceReceipt, WatchdogReceipt,
 };
 
 /// Caller liveness measured on the existing session clock. Renewal is anchored
@@ -269,10 +269,12 @@ impl FiniteReferences {
             return Err(invalid("horizon must equal the final reference offset"));
         }
         if policy.credit_pacing_delay
-            && (!policy.reference_only || policy.paced_curve.is_none() || policy.gripper.is_some())
+            && ((!policy.reference_only && policy.goal.is_none())
+                || policy.paced_curve.is_none()
+                || policy.gripper.is_some())
         {
             return Err(invalid(
-                "paced deadlines require reference-only polynomial playback",
+                "paced deadlines require reference-only or explicit-goal polynomial playback",
             ));
         }
         if policy.allow_curve_updates
@@ -470,6 +472,7 @@ pub struct Playback {
     settled_since: Option<i64>,
     arrived_since: Option<i64>,
     goal_dwell: GoalDwellProgress,
+    goal_revision: u64,
     settled_samples: usize,
     settled_miss: bool,
     arrived_samples: usize,
@@ -585,6 +588,7 @@ impl Playback {
             settled_since: None,
             arrived_since: None,
             goal_dwell: GoalDwellProgress::default(),
+            goal_revision: 0,
             settled_samples: 0,
             settled_miss: false,
             arrived_samples: 0,

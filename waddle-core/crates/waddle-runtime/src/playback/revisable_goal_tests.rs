@@ -39,6 +39,7 @@ fn correction_waiting_on_observation_cannot_revive_either_deadline() {
         let (chunk, mut policy) = reference_inputs(Some("left"), false, None);
         policy.allow_curve_updates = true;
         policy.goal = Some(PlaybackGoal {
+            allow_updates: false,
             dwell: None,
             joint_positions: Some(vec![0.3]),
             pose: None,

@@ -7,10 +7,10 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use waddle_runtime::playback::{
     Completion, ContactCondition, CurveUpdate, ExecutionFailure, ExecutionHandle,
-    ExecutionSnapshot, Feedback, FeedbackPolicy, ForceCondition, GoalDwell, GripperPolicy,
-    HeldJointGroup, MeasuredForce, PacedCurve, PlaybackDependency, PlaybackError, PlaybackGoal,
-    PlaybackIo, PlaybackIoError, PlaybackPolicy, PlaybackQueue, PlaybackWatchdog, Pose,
-    PositionWindow, ReferenceReceipt, VelocityHints,
+    ExecutionSnapshot, Feedback, FeedbackPolicy, ForceCondition, GoalDwell, GoalUpdate,
+    GripperPolicy, HeldJointGroup, MeasuredForce, PacedCurve, PlaybackDependency, PlaybackError,
+    PlaybackGoal, PlaybackIo, PlaybackIoError, PlaybackPolicy, PlaybackQueue, PlaybackWatchdog,
+    Pose, PositionWindow, ReferenceReceipt, VelocityHints,
 };
 use waddle_types::Step;
 
@@ -50,6 +50,7 @@ struct Watchdog {
 
 #[derive(FromPyObject)]
 struct Goal {
+    allow_updates: bool,
     joint_positions: Option<Vec<f64>>,
     pose: Option<GoalPose>,
     position_tolerance_m: f64,
@@ -172,6 +173,12 @@ struct Update {
     curve: Curve,
 }
 
+#[derive(FromPyObject)]
+struct TargetUpdate {
+    expected_revision: u64,
+    pose: GoalPose,
+}
+
 impl TryFrom<Policy> for PlaybackPolicy {
     type Error = PyErr;
 
@@ -219,6 +226,7 @@ impl TryFrom<Policy> for PlaybackPolicy {
             reference_only: p.reference_only,
             defer_reference_completion: p.defer_reference_completion,
             goal: p.goal.map(|g| PlaybackGoal {
+                allow_updates: g.allow_updates,
                 dwell: g.dwell.map(|d| GoalDwell {
                     duration_ns: d.duration_ns,
                     exit_tolerance_multiplier: d.exit_tolerance_multiplier,
@@ -350,19 +358,17 @@ fn feedback(py: Python<'_>, value: &Feedback) -> PyResult<Py<PyDict>> {
         })
         .transpose()?;
     out.set_item("gripper_force", force)?;
-    let pose = value
-        .pose
-        .as_ref()
-        .map(|p| -> PyResult<Py<PyDict>> {
-            let result = PyDict::new(py);
-            result.set_item("position_m", p.position_m)?;
-            result.set_item("quaternion_wxyz", p.quaternion_wxyz)?;
-            result.set_item("frame_id", &p.frame_id)?;
-            Ok(result.unbind())
-        })
-        .transpose()?;
+    let pose = value.pose.as_ref().map(|p| pose_dict(py, p)).transpose()?;
     out.set_item("pose", pose)?;
     Ok(out.unbind())
+}
+
+fn pose_dict(py: Python<'_>, p: &Pose) -> PyResult<Py<PyDict>> {
+    let result = PyDict::new(py);
+    result.set_item("position_m", p.position_m)?;
+    result.set_item("quaternion_wxyz", p.quaternion_wxyz)?;
+    result.set_item("frame_id", &p.frame_id)?;
+    Ok(result.unbind())
 }
 
 fn reference(py: Python<'_>, value: &Step) -> PyResult<Py<PyDict>> {
@@ -548,6 +554,18 @@ impl PyExecutionHandle {
             _ => PyValueError::new_err(error.to_string()),
         })
     }
+
+    fn update_goal(&self, update: TargetUpdate) -> PyResult<u64> {
+        self.0
+            .update_goal(GoalUpdate {
+                expected_revision: update.expected_revision,
+                pose: update.pose.into(),
+            })
+            .map_err(|error| match error {
+                PlaybackError::Busy => PlaybackBusyError::new_err(error.to_string()),
+                _ => PyValueError::new_err(error.to_string()),
+            })
+    }
 }
 
 fn snapshot(py: Python<'_>, value: ExecutionSnapshot) -> PyResult<Py<PyDict>> {
@@ -619,6 +637,47 @@ fn snapshot(py: Python<'_>, value: ExecutionSnapshot) -> PyResult<Py<PyDict>> {
         })
         .transpose()?;
     out.set_item("curve_update", update)?;
+    let target = value
+        .goal_target
+        .map(|target| -> PyResult<Py<PyDict>> {
+            let result = PyDict::new(py);
+            result.set_item("revision", target.revision)?;
+            result.set_item("pose", pose_dict(py, &target.pose)?)?;
+            Ok(result.unbind())
+        })
+        .transpose()?;
+    out.set_item("goal_target", target)?;
+    let update = value
+        .goal_update
+        .map(|receipt| -> PyResult<Py<PyDict>> {
+            let result = PyDict::new(py);
+            result.set_item("request_id", receipt.request_id)?;
+            result.set_item("expected_revision", receipt.update.expected_revision)?;
+            result.set_item("pose", pose_dict(py, &receipt.update.pose)?)?;
+            result.set_item(
+                "status",
+                match &receipt.result {
+                    None => "pending",
+                    Some(Ok(_)) => "accepted",
+                    Some(Err(_)) => "rejected",
+                },
+            )?;
+            result.set_item(
+                "revision",
+                receipt
+                    .result
+                    .as_ref()
+                    .and_then(|r| r.as_ref().ok())
+                    .copied(),
+            )?;
+            result.set_item(
+                "error",
+                receipt.result.and_then(Result::err).map(|e| e.to_string()),
+            )?;
+            Ok(result.unbind())
+        })
+        .transpose()?;
+    out.set_item("goal_update", update)?;
     let checkpoints = value
         .checkpoints
         .iter()

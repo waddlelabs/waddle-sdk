@@ -21,6 +21,13 @@ Parsing a saved launcher never executes it or opens hardware.
 
 ## Hollow frontend
 
+Binding API 38 allows explicit `PlaybackGoal.allow_updates` with pose and dwell.
+`update_goal(PlaybackGoalUpdate(...))` queues a target on the same worker; inspect
+`goal_update` for acceptance and use `goal_target` paired with retained feedback.
+Unknown responses never authorize replay. Original policy/deadlines and terminal
+results remain binding. Explicit-goal curves may reuse the native motion-pacing
+allowance; target updates never earn credit. See the finite-reference-playback guide.
+
 The Python package describes hardware and composes lifecycle resources. It must not reproduce Rust decisions about claims, leases, handoffs, feature negotiation, or episode timelines. If Python grows an `if` about those concepts, move the behavior to the core and expose only the narrow result needed by the binding.
 
 The extension shim grows declarations and keyword arguments, not policy logic. Select optional native features through the package's declared feature set rather than probing imports.

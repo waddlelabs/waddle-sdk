@@ -86,6 +86,7 @@ class SupportFact(str, enum.Enum):
     KINEMATIC_GOAL_PLAYBACK = "execution.kinematic_goal_playback"
     RESTING_GOAL_PLAYBACK = "execution.resting_goal_playback"
     DWELL_GOAL_PLAYBACK = "execution.dwell_goal_playback"
+    UPDATABLE_GOAL_PLAYBACK = "execution.updatable_goal_playback"
     DEPENDENT_PLAYBACK = "execution.dependent_playback"
     DEFERRED_REFERENCE_COMPLETION = "execution.deferred_reference_completion"
     CHECKPOINTED_JOINT_PLAYBACK = "execution.checkpointed_joint_playback"
@@ -791,6 +792,8 @@ class PlaybackGoal:
     ``orientation_tolerance_rad=None`` explicitly selects position-only arrival.
     Optional ``dwell`` uses the SDK observation clock and requires separately
     declared goal-dwell support. It never changes the target or renews a deadline.
+    ``allow_updates`` explicitly admits same-frame pose updates with independent
+    dwell. Tolerances, kinematics, stationarity and all deadlines remain fixed.
     """
 
     joint_positions: tuple[float, ...] | None = None
@@ -799,10 +802,23 @@ class PlaybackGoal:
     orientation_tolerance_rad: float | None = 0.02
     kinematics: PlaybackKinematics | None = None
     dwell: PlaybackGoalDwell | None = None
+    allow_updates: bool = False
 
     def __post_init__(self) -> None:
         if self.joint_positions is not None:
             object.__setattr__(self, "joint_positions", tuple(self.joint_positions))
+
+
+@dataclass(frozen=True)
+class PlaybackGoalUpdate:
+    """Same-frame pose for an explicitly updatable goal's current revision.
+
+    This changes no reference, tolerance, kinematics or deadline. Only native
+    acceptance changes the goal. Revision zero denotes the admitted target.
+    """
+
+    expected_revision: int
+    pose: Pose
 
 
 @dataclass(frozen=True)
@@ -859,7 +875,7 @@ class PlaybackPolicy:
     preserves an explicitly requested rest duration.
 
     ``credit_pacing_delay`` requires separately advertised paced-deadline support
-    and reference-only polynomial playback. Only a complete acknowledged moving
+    and reference-only or explicit-goal polynomial playback. Only a complete acknowledged moving
     tick credits its excess local wall time to the original budget. Exact
     constant tails and stalled phase cannot renew it. Snapshots retain the
     accumulated ``curve_progress.pacing_extension_ns``; cloud receipt time never
@@ -1014,6 +1030,19 @@ class WatchdogPlaybackHandlePort(PlaybackHandlePort, Protocol):
     """
 
     def refresh_watchdog(self, observed_ns: int) -> None: ...
+
+
+@runtime_checkable
+class UpdatableGoalPlaybackHandlePort(PlaybackHandlePort, Protocol):
+    """Optional target updates processed by the existing execution worker.
+
+    Queue one request, then read ``goal_update`` for its accepted revision or
+    refusal. ``goal_target`` is the accepted pose/revision used for retained
+    feedback, including terminal results. A pending request may lose to terminal
+    completion and be rejected. Reconcile unknown replies; never replay them.
+    """
+
+    def update_goal(self, update: PlaybackGoalUpdate) -> int: ...
 
 
 @runtime_checkable

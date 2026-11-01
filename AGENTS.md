@@ -1,3 +1,13 @@
+API 38 adds explicitly updatable, same-frame pose goals.
+`PlaybackGoalUpdate` uses the existing worker; the accepted target/revision is
+paired with feedback, and queued request receipts survive failure or completion.
+Preserve policy, dwell history, local deadlines and immutable terminal results.
+Explicit-goal polynomial playback retains the existing motion-pacing credit;
+target messages and constant rest never earn extra allowance. Validation passes
+555 core, 24 gRPC, 14 LiveKit and 1,250 default Python tests (413 optional skips),
+required native/shim lint, strict docs and exact wheel/source checks. Metal
+integration is still under validation; CI/beta promotion remains pending.
+
 API 37 adds independent goal dwell. `PlaybackGoalDwell`
 retains a nominal-tolerance entry timer through small crossings, resetting only
 outside its configured outer band. Completion still needs current nominal
@@ -7,7 +17,7 @@ The native ports of Metal's tracked-arrival cases pass, including cancellation
 and deadline preservation. Validation passes 551 core, 24 gRPC, 14 LiveKit and
 1,239 default Python tests (413 optional skips), all required native/shim lint
 and strict docs. Moving-target updates and Metal consumption remain unfinished;
-CI/beta promotion is pending. No deployment.
+PR 57 passed CI and merged to beta. No deployment.
 
 API 36 adds opt-in `complete_in_resting_tail` for revisable paced goals. The
 existing worker may settle only after the constant tail is acknowledged, all

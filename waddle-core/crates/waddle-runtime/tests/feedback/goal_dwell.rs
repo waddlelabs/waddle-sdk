@@ -1,7 +1,7 @@
 //! Port of Metal's tracked-arrival regressions onto the existing SDK worker.
 
 use super::*;
-use waddle_runtime::playback::GoalDwell;
+use waddle_runtime::playback::{GoalDwell, GoalUpdate};
 
 fn sample(at: i64, position_error: f64, angle: f64, moving: bool) -> Feedback {
     let mut value = measured(at, 0.0);
@@ -15,10 +15,15 @@ fn sample(at: i64, position_error: f64, angle: f64, moving: bool) -> Feedback {
 }
 
 fn player(window: bool) -> Playback {
+    player_with_updates(window, false)
+}
+
+fn player_with_updates(window: bool, allow_updates: bool) -> Playback {
     let (chunk, mut policy) = inputs(&[0.0]);
     policy.timeout_ns = Some(5_000_000_000);
     policy.settle_ns = if window { 500_000_000 } else { 0 };
     policy.goal = Some(PlaybackGoal {
+        allow_updates,
         dwell: Some(GoalDwell {
             duration_ns: 300_000_000,
             exit_tolerance_multiplier: 2.0,
@@ -166,4 +171,74 @@ fn pose_dwell_cannot_replace_cancellation_or_renew_the_total_deadline() {
             Err(expected)
         );
     }
+}
+
+#[test]
+fn moving_goal_keeps_small_crossings_on_one_local_dwell_clock() {
+    let mut player = player_with_updates(false, true);
+    for tick in 0..9 {
+        let target = if tick % 2 == 0 { 0.0 } else { -0.0002 };
+        let update = GoalUpdate {
+            expected_revision: tick as u64,
+            pose: Pose {
+                position_m: [target, 0.0, 0.0],
+                quaternion_wxyz: [1.0, 0.0, 0.0, 0.0],
+                frame_id: "base".into(),
+            },
+        };
+        assert_eq!(player.update_goal(update), Ok(tick as u64 + 1));
+        let at = 1_000_000_000 + tick * 40_000_000;
+        assert_eq!(
+            player.poll(at, &sample(at, 0.0019, 0.0, false)).unwrap(),
+            if tick == 8 {
+                PlaybackPoll::Complete(Completion::Arrived)
+            } else {
+                PlaybackPoll::Observe
+            }
+        );
+        assert_eq!(player.goal_target().unwrap().revision, tick as u64 + 1);
+    }
+    assert_eq!(player.goal_dwell().unwrap().since_ns, Some(1_000_000_000));
+    assert_eq!(player.goal_dwell().unwrap().restarts, 0);
+}
+
+#[test]
+fn goal_update_refusal_preserves_the_last_accepted_target() {
+    let mut player = player_with_updates(false, true);
+    let update = GoalUpdate {
+        expected_revision: 0,
+        pose: Pose {
+            position_m: [0.01, 0.0, 0.0],
+            quaternion_wxyz: [1.0, 0.0, 0.0, 0.0],
+            frame_id: "base".into(),
+        },
+    };
+    assert_eq!(player.update_goal(update.clone()), Ok(1));
+    assert!(player.update_goal(update.clone()).is_err());
+    for frame in ["wrong", "base"] {
+        let mut invalid = update.clone();
+        invalid.expected_revision = 1;
+        invalid.pose.frame_id = frame.into();
+        if frame == "base" {
+            invalid.pose.position_m[0] = f64::NAN;
+        }
+        assert!(player.update_goal(invalid).is_err());
+        let target = player.goal_target().unwrap();
+        assert_eq!(target.revision, 1);
+        assert_eq!(target.pose.position_m, [0.01, 0.0, 0.0]);
+    }
+    player.cancel("cancel before new target");
+    assert!(
+        player
+            .update_goal(GoalUpdate {
+                expected_revision: 1,
+                ..update.clone()
+            })
+            .is_err()
+    );
+    assert!(
+        player_with_updates(false, false)
+            .update_goal(update)
+            .is_err()
+    );
 }
