@@ -18,6 +18,7 @@ from .runtime import (
     PlaybackDependency,
     PlaybackGoal,
     PlaybackGoalDwell,
+    PlaybackGoalUpdate,
     Pose,
     RuntimeFault,
     SupportFact,
@@ -103,6 +104,21 @@ class PlaybackHandle:
                 error, code=FaultCode.INVALID_REQUEST
             ) from error
 
+    def update_goal(self, update: PlaybackGoalUpdate) -> int:
+        """Queue one pose target; retain its native acceptance or refusal."""
+        if not isinstance(update, PlaybackGoalUpdate):
+            raise RuntimeFault(
+                FaultCode.INVALID_REQUEST, "provide a PlaybackGoalUpdate"
+            )
+        try:
+            return self._native.update_goal(update)
+        except core.PlaybackBusyError as error:
+            raise RuntimeFault(FaultCode.BUSY, str(error)) from error
+        except (TypeError, ValueError, OverflowError) as error:
+            raise RuntimeFault.from_exception(
+                error, code=FaultCode.INVALID_REQUEST
+            ) from error
+
 
 def start(
     run: Run,
@@ -168,6 +184,12 @@ def start(
         )
     if goal is not None and not isinstance(goal, PlaybackGoal):
         raise RuntimeFault(FaultCode.INVALID_REQUEST, "provide a PlaybackGoal")
+    if (
+        goal is not None
+        and goal.allow_updates
+        and SupportFact.UPDATABLE_GOAL_PLAYBACK not in facts
+    ):
+        raise RuntimeFault(FaultCode.UNSUPPORTED, "part does not support goal updates")
     if goal is not None and goal.dwell is not None:
         if not isinstance(goal.dwell, PlaybackGoalDwell):
             raise RuntimeFault(FaultCode.INVALID_REQUEST, "provide a PlaybackGoalDwell")

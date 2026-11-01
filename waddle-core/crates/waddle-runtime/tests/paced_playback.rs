@@ -780,11 +780,35 @@ fn reference_only_curve_retains_tracking_through_fresh_endpoint_feedback() {
 }
 
 fn rest_tail(credit: bool, stationary: bool) -> Playback {
+    rest_tail_goal(credit, stationary, false)
+}
+
+fn rest_tail_goal(credit: bool, stationary: bool, goal: bool) -> Playback {
     let (mut chunk, mut policy) = inputs();
     chunk.horizon_ns = 1_500_000_000;
     chunk.steps.last_mut().unwrap().offset_ns = chunk.horizon_ns;
     policy.reference_only = true;
     policy.credit_pacing_delay = credit;
+    if goal {
+        use waddle_runtime::playback::{GoalDwell, PlaybackGoal, Pose};
+        policy.reference_only = false;
+        policy.settle_ns = 0;
+        policy.goal = Some(PlaybackGoal {
+            allow_updates: true,
+            dwell: Some(GoalDwell {
+                duration_ns: 40_000_000,
+                exit_tolerance_multiplier: 2.0,
+            }),
+            joint_positions: None,
+            pose: Some(Pose {
+                position_m: [1.0, 0.0, 0.0],
+                quaternion_wxyz: [1.0, 0.0, 0.0, 0.0],
+                frame_id: "base".into(),
+            }),
+            position_tolerance_m: 0.001,
+            orientation_tolerance_rad: None,
+        });
+    }
     let curve = policy.paced_curve.as_mut().unwrap();
     curve.position_error = vec![0.3];
     curve.tracking_tolerance = vec![0.4];
@@ -807,6 +831,65 @@ fn rest_tail(credit: bool, stationary: bool) -> Playback {
         }
     }
     Playback::new(FiniteReferences::new(chunk, policy).unwrap(), 0)
+}
+
+#[test]
+fn moving_goal_updates_preserve_only_earned_motion_credit() {
+    use waddle_runtime::playback::{GoalUpdate, Pose};
+    for credit in [false, true] {
+        for stationary in [false, true] {
+            let mut p = rest_tail_goal(credit, stationary, true);
+            let mut q = 0.0;
+            let mut finished = false;
+            for tick in 0..30 {
+                let now = tick * 150_000_000;
+                let before = p.curve_progress().unwrap().pacing_extension_ns;
+                p.update_goal(GoalUpdate {
+                    expected_revision: tick as u64,
+                    pose: Pose {
+                        position_m: [1.0, 0.0, 0.0],
+                        quaternion_wxyz: [1.0, 0.0, 0.0, 0.0],
+                        frame_id: "base".into(),
+                    },
+                })
+                .unwrap();
+                assert_eq!(p.curve_progress().unwrap().pacing_extension_ns, before);
+                let mut feedback = measured(now, q);
+                feedback.pose = Some(Pose {
+                    position_m: [q, 0.0, 0.0],
+                    quaternion_wxyz: [1.0, 0.0, 0.0, 0.0],
+                    frame_id: "base".into(),
+                });
+                match p.poll(now, &feedback) {
+                    Ok(PlaybackPoll::Dispatch(index)) => {
+                        q = p.reference(index).unwrap().values[0];
+                        p.acknowledge(index, now).unwrap();
+                        let progress = p.curve_progress().unwrap();
+                        if !credit || stationary {
+                            assert_eq!(progress.pacing_extension_ns, 0);
+                        } else if progress.acknowledged_curve_time_s.unwrap() > 1.0 {
+                            assert_eq!(progress.pacing_extension_ns, 500_000_000);
+                        }
+                    }
+                    Ok(PlaybackPoll::Complete(Completion::Arrived)) => {
+                        assert!(credit && !stationary);
+                        assert_eq!(q, 1.0);
+                        finished = true;
+                        break;
+                    }
+                    Err(PlaybackError::Deadline) => {
+                        assert!(!credit || stationary);
+                        assert!(now >= 2_000_000_000);
+                        finished = true;
+                        break;
+                    }
+                    Ok(PlaybackPoll::Observe) => {}
+                    other => panic!("unexpected {other:?}"),
+                }
+            }
+            assert!(finished);
+        }
+    }
 }
 
 #[test]

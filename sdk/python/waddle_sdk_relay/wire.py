@@ -45,6 +45,7 @@ for _name in (
     "PlaybackPolicy",
     "PlaybackGoal",
     "PlaybackGoalDwell",
+    "PlaybackGoalUpdate",
     "PlaybackKinematics",
     "PlaybackKinematicJoint",
     "PlaybackWatchdog",
@@ -133,6 +134,8 @@ def _default(value):
                 if data.get(optional) is None:
                     data.pop(optional, None)
         if type(value).__name__ == "PlaybackGoal":
+            if data.get("allow_updates") is False:
+                data.pop("allow_updates")
             for optional in ("kinematics", "dwell"):
                 if data.get(optional) is None:
                     data.pop(optional, None)

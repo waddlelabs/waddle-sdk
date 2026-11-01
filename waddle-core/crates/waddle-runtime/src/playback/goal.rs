@@ -1,6 +1,6 @@
 //! Measured completion of a supplied goal, independent of the commanded endpoint.
 
-use super::{Feedback, PlaybackError, PlaybackPolicy};
+use super::{Feedback, Playback, PlaybackError, PlaybackPolicy};
 
 /// The SDK owner's TCP, in its declared base frame, from the same joint sample.
 #[derive(Clone, Debug)]
@@ -22,6 +22,8 @@ impl Pose {
 /// Exactly one original joint or Cartesian goal; this performs no planning.
 #[derive(Clone, Debug)]
 pub struct PlaybackGoal {
+    /// Explicitly permit same-frame pose updates; all other policy stays fixed.
+    pub allow_updates: bool,
     /// Optional pose dwell with a wider reset band, independent of stationarity.
     pub dwell: Option<GoalDwell>,
     pub joint_positions: Option<Vec<f64>>,
@@ -29,6 +31,81 @@ pub struct PlaybackGoal {
     pub position_tolerance_m: f64,
     /// None means position-only completion.
     pub orientation_tolerance_rad: Option<f64>,
+}
+
+/// A new same-frame pose for an explicitly updatable goal, not a new trajectory.
+#[derive(Clone, Debug)]
+pub struct GoalUpdate {
+    pub expected_revision: u64,
+    pub pose: Pose,
+}
+
+/// The last target accepted by the local worker, retained with terminal results.
+#[derive(Clone, Debug)]
+pub struct GoalTarget {
+    pub revision: u64,
+    pub pose: Pose,
+}
+
+impl Playback {
+    /// Update only the goal pose. Queue/worker users must inspect its receipt.
+    pub fn update_goal(&mut self, update: GoalUpdate) -> Result<u64, PlaybackError> {
+        self.update_goal_at(update, self.now_ns)
+    }
+
+    pub(crate) fn update_goal_at(
+        &mut self,
+        update: GoalUpdate,
+        now_ns: i64,
+    ) -> Result<u64, PlaybackError> {
+        if self.completion.is_some() || self.failure.is_some() {
+            return Err(PlaybackError::Invalid("execution is terminal"));
+        }
+        if self.pending {
+            return Err(PlaybackError::DispatchPending);
+        }
+        if self.motion_deadline_reached(now_ns) || self.settling_deadline_reached(now_ns) {
+            return Err(PlaybackError::Deadline);
+        }
+        let goal = self
+            .references
+            .policy
+            .goal
+            .as_mut()
+            .filter(|g| g.allow_updates)
+            .ok_or(PlaybackError::Invalid(
+                "execution does not admit goal updates",
+            ))?;
+        if update.expected_revision != self.goal_revision
+            || !update.pose.valid()
+            || goal
+                .pose
+                .as_ref()
+                .is_none_or(|p| p.frame_id != update.pose.frame_id)
+        {
+            return Err(PlaybackError::Invalid(
+                "goal update requires current revision and same-frame pose",
+            ));
+        }
+        let revision = self
+            .goal_revision
+            .checked_add(1)
+            .ok_or(PlaybackError::Invalid("goal revision exhausted"))?;
+        goal.pose = Some(update.pose);
+        self.goal_revision = revision;
+        self.settled_miss = false;
+        // Keep independent stationarity and dwell history. The next fresh score
+        // resets dwell only when this accepted target crosses its outer band.
+        Ok(revision)
+    }
+
+    pub fn goal_target(&self) -> Option<GoalTarget> {
+        let goal = self.references.policy.goal.as_ref()?;
+        goal.allow_updates.then(|| GoalTarget {
+            revision: self.goal_revision,
+            pose: goal.pose.clone().expect("validated mutable pose goal"),
+        })
+    }
 }
 
 /// Local goal dwell. Completion still requires current nominal tolerance.
@@ -78,6 +155,7 @@ impl PlaybackGoal {
             _ => false,
         };
         if !valid
+            || (self.allow_updates && (self.pose.is_none() || self.dwell.is_none()))
             || policy.reference_only
             || policy.gripper.is_some()
             || self.dwell.as_ref().is_some_and(|dwell| {

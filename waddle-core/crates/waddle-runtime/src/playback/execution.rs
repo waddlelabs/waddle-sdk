@@ -10,8 +10,8 @@ use waddle_types::{EpisodeId, MonoNs, Step, Verb};
 
 use super::{
     CheckpointEvidence, Completion, CurveProgress, CurveUpdate, Feedback, FiniteReferences,
-    GoalDwellProgress, GripperEvidence, Playback, PlaybackError, PlaybackPoll, PlaybackWatchdog,
-    SettlingEvidence,
+    GoalDwellProgress, GoalTarget, GoalUpdate, GripperEvidence, Playback, PlaybackError,
+    PlaybackPoll, PlaybackWatchdog, SettlingEvidence,
 };
 use crate::mirror::Mirror;
 use crate::verbs::VerbOutcome;
@@ -126,6 +126,14 @@ pub struct WatchdogReceipt {
     pub result: Option<Result<i64, PlaybackError>>,
 }
 
+/// One queued target and its worker-accepted revision, or refusal.
+#[derive(Clone, Debug)]
+pub struct GoalUpdateReceipt {
+    pub request_id: u64,
+    pub update: GoalUpdate,
+    pub result: Option<Result<u64, PlaybackError>>,
+}
+
 /// An execution snapshot. A terminal result means the reference loop has ended;
 /// it is not proof that a requested safety verb physically stopped the device.
 #[derive(Clone, Debug)]
@@ -150,6 +158,9 @@ pub struct ExecutionSnapshot {
     /// Local settling completed outside the original goal on this feedback sample.
     pub settled_miss: bool,
     pub goal_dwell: Option<GoalDwellProgress>,
+    /// Accepted pose paired with retained feedback; absent before first sample.
+    pub goal_target: Option<GoalTarget>,
+    pub goal_update: Option<GoalUpdateReceipt>,
     pub gripper: Option<GripperEvidence>,
     pub checkpoints: Vec<CheckpointEvidence>,
     pub last_reference: Option<Step>,
@@ -209,6 +220,16 @@ impl Control {
             state.snapshot.result = Some(result);
             state.predecessors.clear();
             state.curve_update = None;
+            if let Some(receipt) = state
+                .snapshot
+                .goal_update
+                .as_mut()
+                .filter(|r| r.result.is_none())
+            {
+                receipt.result = Some(Err(PlaybackError::Cancelled(
+                    "execution ended before goal update".into(),
+                )));
+            }
             if let Some(receipt) = state
                 .snapshot
                 .watchdog_refresh
@@ -329,6 +350,35 @@ impl ExecutionHandle {
     /// response never authorizes retry; reconcile the retained execution first.
     pub fn update_curve(&self, update: CurveUpdate) -> Result<u64, PlaybackError> {
         self.queue_curve(CurveRequest::Update(update))
+    }
+
+    /// Queue one pose update on this execution. Acceptance, not submission,
+    /// changes the target. Reconcile unknown replies instead of replaying them.
+    pub fn update_goal(&self, update: GoalUpdate) -> Result<u64, PlaybackError> {
+        let mut state = self.control.state.lock();
+        if state.snapshot.result.is_some() || state.cancelled.is_some() {
+            return Err(PlaybackError::Invalid("execution is closing or terminal"));
+        }
+        if state
+            .snapshot
+            .goal_update
+            .as_ref()
+            .is_some_and(|r| r.result.is_none())
+        {
+            return Err(PlaybackError::Busy);
+        }
+        let id = state
+            .snapshot
+            .goal_update
+            .as_ref()
+            .map_or(Some(1), |r| r.request_id.checked_add(1))
+            .ok_or(PlaybackError::Invalid("goal request sequence exhausted"))?;
+        state.snapshot.goal_update = Some(GoalUpdateReceipt {
+            request_id: id,
+            update,
+            result: None,
+        });
+        Ok(id)
     }
 
     /// Queue withdrawal of one accepted suffix. Only the serialized worker can
@@ -468,6 +518,8 @@ impl ExecutionSlot {
                     settling: None,
                     settled_miss: false,
                     goal_dwell: None,
+                    goal_target: None,
+                    goal_update: None,
                     gripper: None,
                     checkpoints: Vec::new(),
                     last_reference: None,
@@ -842,9 +894,17 @@ impl ExecutionTask {
         {
             return Some(Err(ExecutionFailure::Playback(error)));
         }
-        let polled = player.poll(now, &measured);
-        {
+        let polled = {
             let mut state = self.control.state.lock();
+            if let Some(receipt) = state
+                .snapshot
+                .goal_update
+                .as_mut()
+                .filter(|r| r.result.is_none())
+            {
+                receipt.result = Some(player.update_goal_at(receipt.update.clone(), now));
+            }
+            let polled = player.poll(now, &measured);
             state.snapshot.elapsed_ns =
                 Some(measured.observed_ns.saturating_sub(player.started_ns));
             state.snapshot.feedback = Some(measured.clone());
@@ -853,13 +913,15 @@ impl ExecutionTask {
             state.snapshot.settling = player.settling_evidence();
             state.snapshot.settled_miss = player.settled_miss();
             state.snapshot.goal_dwell = player.goal_dwell().cloned();
+            state.snapshot.goal_target = player.goal_target();
             state.snapshot.gripper = player.gripper_evidence();
             let recorded = state.snapshot.checkpoints.len();
             state
                 .snapshot
                 .checkpoints
                 .extend_from_slice(&player.checkpoints()[recorded..]);
-        }
+            polled
+        };
         let action = match polled {
             Ok(action) => action,
             Err(error) => return Some(Err(ExecutionFailure::Playback(error))),

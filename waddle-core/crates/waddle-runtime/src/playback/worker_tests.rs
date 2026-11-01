@@ -17,6 +17,9 @@ mod queue_tests;
 #[path = "revisable_goal_tests.rs"]
 mod revisable_goal_tests;
 
+#[path = "moving_goal_tests.rs"]
+mod moving_goal_tests;
+
 #[derive(Clone, Default)]
 struct TestClock(FakeClock);
 

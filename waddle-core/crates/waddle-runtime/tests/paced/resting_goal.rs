@@ -12,6 +12,7 @@ fn resting_inputs(enabled: bool, window: bool) -> (ActionChunk, PlaybackPolicy) 
     policy.complete_in_resting_tail = enabled;
     policy.minimum_settle_samples = 3;
     policy.goal = Some(PlaybackGoal {
+        allow_updates: false,
         dwell: None,
         joint_positions: Some(vec![1.0]),
         pose: None,
