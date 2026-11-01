@@ -91,6 +91,7 @@ fn cancelling_or_expiring_queued_work_leaves_its_predecessor_running() {
         )
         .unwrap();
         assert_eq!(next.snapshot().waiting_for, vec![first.snapshot().id]);
+        assert_eq!(next.snapshot().elapsed_ns, None);
         if !expire {
             next.cancel("cancel queued command only");
         }
@@ -103,6 +104,7 @@ fn cancelling_or_expiring_queued_work_leaves_its_predecessor_running() {
             )))
         ));
         assert_eq!(result.dispatched, 0);
+        assert_eq!(result.elapsed_ns, None);
         assert!(result.cleanup.is_none());
         assert_eq!(finished(&first).result, Some(Ok(Completion::Arrived)));
         assert_eq!(h.io.writes.lock().len(), 3);

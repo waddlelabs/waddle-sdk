@@ -135,6 +135,8 @@ pub struct ExecutionSnapshot {
     pub references: usize,
     /// Dependencies still awaiting an accepted outcome; empty after activation.
     pub waiting_for: Vec<String>,
+    /// Local time from activation to the retained feedback sample; absent before activation.
+    pub elapsed_ns: Option<i64>,
     pub feedback: Option<Feedback>,
     /// Last acknowledged reference before acquiring `feedback`. Later dispatches
     /// may advance `last_reference` without changing this causal pair.
@@ -454,6 +456,7 @@ impl ExecutionSlot {
                     dispatched: 0,
                     references,
                     waiting_for: queue.after.iter().map(|d| d.handle.snapshot().id).collect(),
+                    elapsed_ns: None,
                     feedback: None,
                     feedback_reference: None,
                     curve_progress: None,
@@ -839,6 +842,8 @@ impl ExecutionTask {
         let polled = player.poll(now, &measured);
         {
             let mut state = self.control.state.lock();
+            state.snapshot.elapsed_ns =
+                Some(measured.observed_ns.saturating_sub(player.started_ns));
             state.snapshot.feedback = Some(measured.clone());
             state.snapshot.feedback_reference = state.snapshot.last_reference.clone();
             state.snapshot.curve_progress = player.curve_progress();

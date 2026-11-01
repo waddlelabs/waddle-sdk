@@ -1,3 +1,9 @@
+SDK API 35 exposes local playback elapsed time at the retained feedback sample.
+It starts at native activation, excludes dependency wait, remains absent for work
+that never activates, and is retained after completion. Callers may use it to
+budget planning without synchronizing clocks; it never renews the native deadline
+or makes an old sample fresh. Preserve this timing through updates and the relay.
+
 SDK binding API 34 exposes `execution.goal_progress` on the existing worker.
 Snapshots bind `settled_miss` to their latest fresh local feedback. Explicit-goal
 playback with `allow_settled=False` stays running while either native settling

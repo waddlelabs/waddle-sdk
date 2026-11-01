@@ -11,6 +11,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Expose SDK-local execution elapsed time (`execution.playback_timing`, binding
+  API 35), bound to retained feedback. Queued work starts its motion budget at
+  activation; cloud planning can use the same elapsed duration without counting
+  dependency wait or synchronizing clocks. Existing deadlines remain enforced.
+
 - Expose nonterminal stationary-goal misses from the existing local settling
   checks (`execution.goal_progress`, binding API 34). Metal can plan a checked
   correction on the same execution without reconstructing a window from cloud
