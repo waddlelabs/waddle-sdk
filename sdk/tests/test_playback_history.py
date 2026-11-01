@@ -51,6 +51,11 @@ def test_history_retains_pending_write_and_original_error(
         assert first["measured"]["observed_ns"] <= first["started"]["session_ns"]
         assert first["started"]["session_ns"] <= frozen["sampled"]["session_ns"]
         assert first["started"]["unix_ns"] > 0
+        assert (
+            0 < first["started"]["host_monotonic_ns"]
+            <= frozen["sampled"]["host_monotonic_ns"]
+            <= time.monotonic_ns()
+        )
     finally:
         release.set()
         result = handle.wait()
@@ -63,6 +68,11 @@ def test_history_retains_pending_write_and_original_error(
         assert event["reference"]["positions"] == list(target)
         assert event["returned"]["session_ns"] >= event["started"]["session_ns"]
         assert event["returned"]["unix_ns"] > 0
+        assert (
+            event["started"]["host_monotonic_ns"]
+            <= event["returned"]["host_monotonic_ns"]
+            <= history["sampled"]["host_monotonic_ns"]
+        )
     first = history["submissions"][0]
     if fail_after_write:
         assert first["result"] == "error"
