@@ -1533,6 +1533,7 @@ class SiteSession:
                     facts.add(SupportFact.REVISABLE_GOAL_PLAYBACK)
                     facts.add(SupportFact.GOAL_PROGRESS)
                     facts.add(SupportFact.PLAYBACK_TIMING)
+                    facts.add(SupportFact.KINEMATIC_GOAL_PLAYBACK)
                     facts.add(SupportFact.DEPENDENT_PLAYBACK)
                     if arm.fk is not None and arm.base_frame:
                         facts.add(SupportFact.CARTESIAN_GOAL_PLAYBACK)

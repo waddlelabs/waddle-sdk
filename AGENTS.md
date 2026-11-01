@@ -1,3 +1,10 @@
+Selected TCP goals can carry a numeric `PlaybackKinematics` chain under
+`execution.kinematic_goal_playback`. The existing worker's observation callback
+evaluates local measured joints; native completion and ABI 35 remain unchanged.
+Keep base-frame/reference/affine bindings exact, bounded scalar joints and normal
+owner safety gates. This is FK for completion, not IK or a model loader. Default
+TCP goals retain their earlier wire shape. Source tests do not deploy the change.
+
 SDK API 35 exposes local playback elapsed time at the retained feedback sample.
 It starts at native activation, excludes dependency wait, remains absent for work
 that never activates, and is retained after completion. Callers may use it to
