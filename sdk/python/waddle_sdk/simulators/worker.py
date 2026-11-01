@@ -108,6 +108,7 @@ def serve(connection: Connection) -> None:
                     break
                 if operation not in {
                     "read",
+                    "read_feedback",
                     "write",
                     "hold",
                     "home",
@@ -137,7 +138,31 @@ def serve(connection: Connection) -> None:
                         "evaluation_replace_scene",
                     }:
                         generation += 1
-                    if operation == "step":
+                    if operation == "read_feedback":
+                        parts = tuple(arguments[0])
+                        if (
+                            not parts
+                            or len(parts) != len(set(parts))
+                            or not set(parts) <= set(config["parts"])
+                        ):
+                            raise ValueError(
+                                "feedback requires unique declared part names"
+                            )
+                        result = {}
+                        for part in parts:
+                            try:
+                                args = () if len(config["parts"]) == 1 else (part,)
+                                result[part] = {
+                                    "state": engine.read(*args),
+                                    "force_n": engine.gripper_force(*args)
+                                    if config["robot"] == "yam"
+                                    else None,
+                                }
+                            except Exception as error:  # noqa: BLE001 -- retain each native read fault beside healthy parts
+                                result[part] = {
+                                    "error": f"{type(error).__name__}: {error}"
+                                }
+                    elif operation == "step":
                         # Explicit stepping remains available for rollouts;
                         # interactive sites use elapsed time on the same worker.
                         if not real_time:

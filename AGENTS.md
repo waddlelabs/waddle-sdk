@@ -1191,3 +1191,15 @@ MuJoCo retains its physics/render processes for self-contained native scenes wit
 unchanged robot/camera contracts. Keep participant drain, episode invalidation,
 render-generation fencing, immutable source bytes and failed-admin fencing.
 Unsupported worlds retain close/open; this capability is never a participant tool.
+
+Optional `GroupedFeedbackDriver` routes named observations through one
+`FeedbackSource.read_parts` acquisition per shared source. Advertise
+`observation.grouped_parts` only when that source is available. Return every
+requested backend key with fresh caller-owned `PartObservation` values or its
+original exception. Preserve subsets, per-part faults, measured force and normal
+FK/base frames. No stale/target substitution, source-failure serial retry, motion
+writer or supervision change is permitted. Drivers without the optional source
+retain their ordinary read path. Reference MuJoCo performs one state/force IPC
+transaction for either one or two named parts; fixed-protocol backends can
+withdraw `supports_grouped_feedback`. Software/native simulation is not physical
+shared-bus acceptance.

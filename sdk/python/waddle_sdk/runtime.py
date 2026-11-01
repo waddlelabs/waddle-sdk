@@ -63,6 +63,7 @@ class SupportFact(str, enum.Enum):
     EE_POSE_OBSERVATION = "observation.ee_pose"
     JOINT_POSITION_ACTION = "action.joint_position"
     PART_OBSERVATION = "observation.named_parts"
+    GROUPED_PART_OBSERVATION = "observation.grouped_parts"
     PART_ACTION = "action.named_parts"
     VELOCITY_FEEDFORWARD = "actuation.velocity_feedforward"
     FORWARD_KINEMATICS = "kinematics.fk"

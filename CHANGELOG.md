@@ -11,6 +11,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Acquire named joint and measured-force feedback through an optional shared source. Reference MuJoCo observations use one transaction for the requested parts; subsets, independent faults and legacy driver reads remain intact.
+
 - Preserve individual linear-finger source collision pieces in reference planning exports instead of joining them into spatial hulls, retaining native finger gaps and source provenance. Existing exported bundles remain immutable.
 
 - Reuse immutable reference-simulation gripper force-limit metadata within one

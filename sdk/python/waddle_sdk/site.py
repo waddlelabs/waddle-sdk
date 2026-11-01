@@ -38,6 +38,7 @@ from .runtime import (
     SUPPORT_CONTRACT_VERSION,
     BodySphere,
     FaultCode,
+    GripperForce,
     JointPositionCommand,
     JSONValue,
     Observation,
@@ -1513,6 +1514,10 @@ class SiteSession:
                 facts.update(
                     (SupportFact.GRIPPER_FORCE, SupportFact.GRIPPER_FORCE_OBSERVATION)
                 )
+            if isinstance(arm.driver, base.GroupedFeedbackDriver) and isinstance(
+                arm.driver.feedback_group, base.FeedbackSource
+            ):
+                facts.add(SupportFact.GROUPED_PART_OBSERVATION)
             if isinstance(arm.driver, base.PositionVelocityDriver):
                 facts.add(SupportFact.VELOCITY_FEEDFORWARD)
             if arm.fk is not None:
@@ -1689,6 +1694,51 @@ class SiteSession:
             raise next(iter(observation.faults.values()))
         return observation
 
+    @staticmethod
+    def _grouped_feedback(arms, names):
+        groups, samples = {}, {}
+        for name in names:
+            driver = arms[name].driver
+            if not isinstance(driver, base.GroupedFeedbackDriver):
+                continue
+            source = driver.feedback_group
+            if not isinstance(source, base.FeedbackSource):
+                continue
+            group = groups.setdefault(id(source), (source, []))
+            group[1].append((name, driver.feedback_key))
+        for source, bindings in groups.values():
+            keys = tuple(key for _, key in bindings)
+            try:
+                if len(set(keys)) != len(keys) or any(
+                    not isinstance(k, str) or not k for k in keys
+                ):
+                    raise RuntimeFault(
+                        FaultCode.INTERNAL,
+                        "Grouped feedback requires unique nonempty part keys",
+                    )
+                rows = source.read_parts(keys)
+                if not isinstance(rows, Mapping) or set(rows) != set(keys):
+                    raise RuntimeFault(
+                        FaultCode.INTERNAL,
+                        "Grouped feedback source returned missing or undeclared parts",
+                        context={"parts": [name for name, _ in bindings]},
+                    )
+                for name, key in bindings:
+                    row = rows[key]
+                    samples[name] = (
+                        row
+                        if isinstance(row, (PartObservation, Exception))
+                        else RuntimeFault(
+                            FaultCode.INTERNAL,
+                            "Grouped feedback source returned an invalid sample",
+                            context={"part": name},
+                        )
+                    )
+            except Exception as error:  # noqa: BLE001 -- retain the original source fault for each requested part
+                for name, _ in bindings:
+                    samples[name] = error
+        return samples
+
     def observe_parts(self, parts: Sequence[str] | None = None) -> Observation:
         """Read named parts independently, retaining failures beside healthy data.
 
@@ -1706,17 +1756,46 @@ class SiteSession:
             )
         measured: dict[str, PartObservation] = {}
         faults: dict[str, RuntimeFault] = {}
+        grouped = self._grouped_feedback(managed.arms, names)
         for name in names:
             arm = managed.arms[name]
             try:
-                position, velocity = arm.state()
-                pose = arm.ee_pose(position)
-                force = (
-                    arm.driver.read_gripper_force()
-                    if isinstance(arm.driver, base.GripperForceDriver)
+                sample = grouped.get(name)
+                if isinstance(sample, Exception):
+                    raise sample
+                has_force = (
+                    isinstance(arm.driver, base.GripperForceDriver)
                     and arm.driver.gripper_force_supported
-                    else None
                 )
+                if sample is None:
+                    position, velocity = arm.state()
+                    force = arm.driver.read_gripper_force() if has_force else None
+                else:
+                    position = np.asarray(
+                        sample.joint_position, dtype=np.float64
+                    ).copy()
+                    velocity = np.asarray(
+                        sample.joint_velocity, dtype=np.float64
+                    ).copy()
+                    if (
+                        position.shape != (len(arm.joint_names),)
+                        or velocity.shape != position.shape
+                        or not np.all(np.isfinite(position))
+                        or not np.all(np.isfinite(velocity))
+                    ):
+                        raise RuntimeFault(
+                            FaultCode.INTERNAL,
+                            "Grouped feedback requires finite declared joint vectors",
+                            context={"part": name},
+                        )
+                    force = sample.gripper_force if has_force else None
+                    if has_force and not isinstance(force, GripperForce):
+                        raise RuntimeFault(
+                            FaultCode.INTERNAL,
+                            "Grouped feedback omitted advertised measured force",
+                            context={"part": name},
+                        )
+                pose = arm.ee_pose(position)
             except Exception as exc:
                 faults[name] = _operation_fault(
                     "observe robot part",

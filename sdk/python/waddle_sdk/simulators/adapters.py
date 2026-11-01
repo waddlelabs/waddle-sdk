@@ -59,6 +59,37 @@ class World:
         self.content_timing_kind = None
 
     @property
+    def supports_grouped_feedback(self) -> bool:
+        """The reference MuJoCo worker offers one fresh read for named parts.
+
+        Fixed-protocol external world implementations can override this to False.
+        """
+        return self.config["backend"] == "mujoco"
+
+    def read_parts(self, parts):
+        from ..runtime import GripperForce, PartObservation
+
+        rows = self.call("read_feedback", tuple(parts))
+        result = {}
+        for part, row in rows.items():
+            if "error" in row:
+                result[part] = RuntimeError(
+                    f"{self.config['backend']} simulation failed: {row['error']}"
+                )
+                continue
+            q, dq = (np.asarray(v, dtype=float) for v in row["state"])
+            q[-1] = np.clip(q[-1], 0.0, 1.0)
+            force = row["force_n"]
+            result[part] = PartObservation(
+                q,
+                dq,
+                gripper_force=None
+                if force is None
+                else GripperForce(float(force), "mujoco.yam.actuator_force", True),
+            )
+        return result
+
+    @property
     def supports_gripper_force(self) -> bool:
         """Whether this world serves the measured gripper force operations.
 
@@ -427,6 +458,18 @@ class Driver:
     @property
     def estopped(self):
         return self._estopped
+
+    @property
+    def feedback_group(self):
+        return (
+            self.world
+            if getattr(self.world, "supports_grouped_feedback", False)
+            else None
+        )
+
+    @property
+    def feedback_key(self):
+        return self.part
 
     def read(self):
         q, dq = (

@@ -60,7 +60,7 @@ from ..cameras import CameraCalibrationDriver, CameraDriver, CameraFrame, Camera
 from ..cameras.base import _depth_preview_rgb
 from ..descriptors import Camera as CameraDescription
 from ..descriptors import FrameTransform, Intrinsics, Robot
-from ..runtime import FaultCode, GripperForce, RuntimeFault
+from ..runtime import FaultCode, GripperForce, PartObservation, RuntimeFault
 
 __all__ = [
     "CONSOLE_THREAD_NAME",
@@ -79,6 +79,8 @@ __all__ = [
     "ConsoleRecovery",
     "CrossArm",
     "Driver",
+    "FeedbackSource",
+    "GroupedFeedbackDriver",
     "ParkGate",
     "PositionVelocityDriver",
     "RejectLog",
@@ -340,6 +342,36 @@ class PositionVelocityDriver(Protocol):
     def write_position_velocity(
         self, target: np.ndarray, velocity_feedforward_rad_s: np.ndarray
     ) -> bool: ...
+
+
+@runtime_checkable
+class FeedbackSource(Protocol):
+    """Optional shared acquisition, without writes or retained-state fallback.
+
+    Return exactly the requested backend keys with fresh, caller-owned joint
+    vectors and measured force when supported. A per-part exception preserves
+    healthy siblings; a raised exception fails the requested group. Never
+    substitute command targets or a prior sample for a failed read.
+    """
+
+    def read_parts(
+        self, parts: Sequence[str]
+    ) -> Mapping[str, PartObservation | Exception]: ...
+
+
+@runtime_checkable
+class GroupedFeedbackDriver(Protocol):
+    """Opt in through one stable source identity and its unique part key.
+
+    None withdraws this optional path; the ordinary Driver.read path remains.
+    These properties describe routing and must not acquire device state.
+    """
+
+    @property
+    def feedback_group(self) -> FeedbackSource | None: ...
+
+    @property
+    def feedback_key(self) -> str: ...
 
 
 @runtime_checkable

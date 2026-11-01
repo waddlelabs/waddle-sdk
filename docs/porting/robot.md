@@ -239,3 +239,24 @@ The vendor quantizes gains to 12 bits. Benchmark evidence records requested
 `kp`/`kd` and predicted `encoded_kp`/`encoded_kd` separately; the latter are codec
 calculations, not motor gain readback. Simulation and monitor/zero-gravity modes
 validate the options but do not apply PD gains.
+
+
+### Shared feedback acquisition
+
+A driver can implement the optional `GroupedFeedbackDriver` protocol from
+`waddle_sdk.robots.base`. Its `feedback_group` property returns a stable
+`FeedbackSource` (or `None` to use ordinary reads), and `feedback_key` identifies
+its part within that source. These routing properties must not read hardware.
+
+`FeedbackSource.read_parts(keys)` acquires fresh joint position, joint velocity
+and supported measured gripper force in one request. Return a mapping with
+exactly those keys, each containing a caller-owned `PartObservation` or the
+original part exception. A raised source exception applies to the requested
+group. Never substitute an old sample or commanded target, or retry a failed
+group through separate reads. The SDK retains named faults and healthy siblings,
+computes ordinary declared FK/base frames, and stamps the assembled observation.
+
+Available sources advertise `observation.grouped_parts` in their support rows.
+Other drivers keep their existing contract. The reference MuJoCo world batches
+state and force reads over its single control connection. This adds no writer,
+convergence behavior or physical shared-bus qualification.
