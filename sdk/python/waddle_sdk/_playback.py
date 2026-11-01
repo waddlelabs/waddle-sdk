@@ -40,10 +40,11 @@ class PlaybackHandle:
     def __init__(self, native, history):
         self._native = native
         self._history = history
+        self._id = native.snapshot()["id"]
 
     def history(self):
         """Copy bounded SDK command-call diagnostics without waiting for I/O."""
-        return self._history.snapshot()
+        return {**self._history.snapshot(), "execution_id": self._id}
 
     @staticmethod
     def _snapshot(value):

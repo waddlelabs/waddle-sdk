@@ -8,7 +8,7 @@ status polling does not resend the journal. The optional device relay exposes
 the same data through `playback_history`, bound to the retained run and handle.
 Older handles may not provide this optional method.
 
-The `waddle.playback-history/v1` document identifies the run, joint ordering, total
+The `waddle.playback-history/v1` document identifies the run, native execution ID, joint ordering, total
 and dropped counts, and each requested reference with its measured input. Start,
 return and read stamps carry SDK session-monotonic nanoseconds and their epoch
 twins captured by the native clock. A pending call has no returned stamp; errors

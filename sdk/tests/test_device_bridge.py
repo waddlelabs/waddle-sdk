@@ -31,6 +31,7 @@ def test_playback_history_keeps_exact_native_records_and_run_binding(opened, tmp
     )
     assert received["submissions"] == expected["submissions"]
     assert received["run_id"] == expected["run_id"]
+    assert received["execution_id"] == key[1]
     assert received["sampled"]["session_ns"] >= expected["sampled"]["session_ns"]
     with pytest.raises(RelayError) as caught:
         device.dispatch("playback_history", {"run_id": "another-run", "id": key[1]})

@@ -42,6 +42,7 @@ def test_history_retains_pending_write_and_original_error(
         assert frozen["api"] == "waddle.playback-history/v1"
         assert frozen["clock"] == "sdk_session_monotonic"
         assert frozen["run_id"] == run.id
+        assert frozen["execution_id"] == handle.snapshot()["id"]
         first = frozen["submissions"][0]
         assert first["result"] == "pending"
         assert first["returned"] is None
