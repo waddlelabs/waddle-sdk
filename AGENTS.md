@@ -1,3 +1,11 @@
+API 41 passes all 24 native finite cases and 40 installed public cases. One new wire assertion incorrectly compared text to encoded bytes; it now uses a bytes literal. Runtime and built wheel bytes are unchanged; capability follow-up and full CI remain pending.
+
+The first API 41 native compile exposed a test assertion comparing SmallVec with Vec; compare its actual slice. No runtime change. Matching-wheel and full validation pending.
+
+SDK API 41 adds a distinct expected measured-start vector on the existing worker. The original three native-public baselines fail on the old DTO; new tests retain both-direction stale refusal, complete finite layout and owner target limits. The start vector is never dispatched; default relay shape is unchanged. Focused, matching-wheel and full CI validation remain pending. No package publication or deployment.
+
+SDK history PR 64 is merged to beta 6a3dd33 after exact-head CI 41287075225: 1,273 Python cases, 413 optional skips, two warnings; core/transports/shim and strict docs pass. Matching installed history/relay and Metal/Twin checks pass. A new measured-start regression ports near-limit recovery: expected feedback may differ from the first in-range target, with the original tolerance and every owner command limit unchanged. Baseline pending; no deployment or hardware change.
+
 Playback history now also samples SDK host-monotonic time at each call boundary, preserving the native paired session/epoch stamps unchanged. This supports existing local camera-content diagnostics without comparing cloud clocks. Both missing-field regressions fail on the prior wheel; focused and full validation pending. No execution-policy or native ABI change.
 
 History source `c7a9d1f` passes 74 focused native/public/relay tests and the full 1,273 Python cases (413 optional skips, two existing reset warnings). Base/media wheels retain the previously qualified native hashes; native API 40 is unchanged. The history response now also names its retained native execution ID so remote consumers can verify both run and handle. Identity follow-up and full CI pending. The relay still deliberately omits host-clock camera exposure metadata; SDK history does not establish cross-host exposure alignment. No deployment or publication.

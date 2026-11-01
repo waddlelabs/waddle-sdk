@@ -1,5 +1,3 @@
-Playback history now also samples SDK host-monotonic time at each call boundary, preserving the native paired session/epoch stamps unchanged. This supports existing local camera-content diagnostics without comparing cloud clocks. Both missing-field regressions fail on the prior wheel; focused and full validation pending. No execution-policy or native ABI change.
-
 # Changelog
 
 All notable changes to the waddle-sdk monorepo are documented here.
@@ -15,7 +13,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 - Add optional bounded playback call history with native session/epoch stamps,
   pending calls, original faults and explicit supersession; keep history reads
-  separate from execution status and preserve the existing native worker.
+  separate from execution status and preserve the existing native worker. Actual
+  SDK host-monotonic samples additionally support same-host camera diagnostics;
+  native paired timestamps remain unchanged.
 
 
 ### Fixed
@@ -30,6 +30,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   completed-stop receipts. Attempt every declared part and retain all failures.
 
 ### Added
+
+- Separate the expected measured start from the first playback command with
+  optional `PlaybackPolicy.expected_start` (binding API 41). Preserve the original
+  start tolerance and all owner command limits; reject stale local feedback.
 
 - Permit explicit transit handoffs to admitted successors on the existing worker
   (binding API 40). Preserve required goal tolerance, completed references,

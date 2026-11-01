@@ -26,6 +26,22 @@ Do not compare these session timestamps with another host clock or infer missing
 commands from cloud polling; camera alignment requires the same clock identity.
 The recorder makes no execution decisions and introduces no additional worker.
 
+## Measured starting position
+
+Binding API 41 adds `execution.expected_start_playback` and optional
+`PlaybackPolicy.expected_start`. Supply a finite vector in the complete declared
+joint order when the expected measured starting position differs from the first
+command. The worker compares fresh feedback against that vector using the
+original `indices` and `start_tolerance`; omission retains the first-command
+comparison. Admission still occurs locally when a queued motion activates.
+
+This vector is never commanded. It does not waive target limits, tracking bounds,
+step limits, deadlines, or normal Hold on refusal. A caller planning bounded
+recovery from an out-of-limit measurement must still provide legal commands and
+establish the recovery path. Planning and collision proofs remain outside the SDK.
+Check the separate support fact before supplying this option. Default policies
+omit the field on the device relay, preserving their existing wire shape.
+
 ## SDK-owned queue handoff
 
 Binding API 32 adds `execution.dependent_playback`. A caller can submit a checked

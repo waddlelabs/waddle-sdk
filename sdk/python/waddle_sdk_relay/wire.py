@@ -130,7 +130,7 @@ def _default(value):
         ):
             data.pop("complete_in_resting_tail")
         if type(value).__name__ == "PlaybackPolicy":
-            for optional in ("goal", "settle_timeout_ns"):
+            for optional in ("goal", "settle_timeout_ns", "expected_start"):
                 if data.get(optional) is None:
                     data.pop(optional, None)
         if type(value).__name__ == "PlaybackGoal":

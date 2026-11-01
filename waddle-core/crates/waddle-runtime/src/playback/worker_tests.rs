@@ -287,6 +287,7 @@ fn reference_inputs(
         PlaybackPolicy {
             indices: vec![0],
             start_tolerance: vec![0.01],
+            expected_start: None,
             position_tolerance: vec![0.005],
             stationary_velocity: vec![0.01],
             settle_ns: 20_000_000,

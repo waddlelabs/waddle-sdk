@@ -53,6 +53,9 @@ impl PlaybackWatchdog {
 pub struct PlaybackPolicy {
     pub indices: Vec<usize>,
     pub start_tolerance: Vec<f64>,
+    /// Optional measured starting vector, separate from the first command.
+    /// Uses the complete declared layout; `indices` selects checked coordinates.
+    pub expected_start: Option<Vec<f64>>,
     pub position_tolerance: Vec<f64>,
     pub stationary_velocity: Vec<f64>,
     pub settle_ns: i64,
@@ -265,6 +268,13 @@ impl FiniteReferences {
         let width = first.values.len();
         if !(1..=128).contains(&width) || first.offset_ns != 0 {
             return Err(invalid("requires 1..=128 joints and a zero-offset start"));
+        }
+        if policy.expected_start.as_ref().is_some_and(|start| {
+            start.len() != width || start.iter().any(|value| !value.is_finite())
+        }) {
+            return Err(invalid(
+                "expected start requires the finite declared joint vector",
+            ));
         }
         let mut previous = -1;
         for step in &chunk.steps {
@@ -836,7 +846,11 @@ impl Playback {
         if self.next == 0
             && !within(
                 &measured.positions,
-                &self.references.chunk.steps[0].values,
+                self.references
+                    .policy
+                    .expected_start
+                    .as_deref()
+                    .unwrap_or(&self.references.chunk.steps[0].values),
                 &self.references.policy.start_tolerance,
                 &self.references.policy.indices,
             )

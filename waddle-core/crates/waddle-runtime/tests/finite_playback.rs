@@ -353,6 +353,7 @@ fn policy() -> PlaybackPolicy {
     PlaybackPolicy {
         indices: vec![0, 1],
         start_tolerance: vec![0.01, 0.01],
+        expected_start: None,
         position_tolerance: vec![0.005, 0.005],
         stationary_velocity: vec![0.01, 0.01],
         settle_ns: 20_000_000,
@@ -768,4 +769,34 @@ fn whole_site_references_cannot_select_part_hold() {
         FiniteReferences::new(whole_site, policy),
         Err(PlaybackError::Invalid(_))
     ));
+}
+
+#[test]
+fn distinct_measured_start_preserves_tolerance_and_first_command() {
+    for measured in [-0.02, -0.005, -0.035] {
+        let mut selected = policy();
+        selected.expected_start = Some(vec![-0.02, 0.5]);
+        let references = FiniteReferences::new(chunk(), selected).unwrap();
+        let mut player = Playback::new(references, 0);
+        if measured == -0.02 {
+            // Admission uses the measured anchor; dispatch still uses the exact
+            // first command from the original checked buffer.
+            dispatch(&mut player, 0, measured, 0);
+            assert_eq!(player.reference(0).unwrap().values.as_slice(), &[0.0, 0.5]);
+        } else {
+            assert_eq!(
+                player.poll(0, &feedback(0, measured)),
+                Err(PlaybackError::StaleStart)
+            );
+        }
+    }
+}
+
+#[test]
+fn distinct_measured_start_requires_finite_complete_layout() {
+    for anchor in [vec![], vec![0.0], vec![0.0; 3], vec![f64::NAN, 0.0]] {
+        let mut selected = policy();
+        selected.expected_start = Some(anchor);
+        assert!(FiniteReferences::new(chunk(), selected).is_err());
+    }
 }

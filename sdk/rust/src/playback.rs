@@ -20,6 +20,7 @@ pyo3::create_exception!(_core, PlaybackBusyError, PyRuntimeError);
 pub(crate) struct Policy {
     indices: Vec<usize>,
     start_tolerance: Vec<f64>,
+    expected_start: Option<Vec<f64>>,
     position_tolerance: Vec<f64>,
     stationary_velocity: Vec<f64>,
     settle_ns: i64,
@@ -216,6 +217,7 @@ impl TryFrom<Policy> for PlaybackPolicy {
         Ok(Self {
             indices: p.indices,
             start_tolerance: p.start_tolerance,
+            expected_start: p.expected_start,
             position_tolerance: p.position_tolerance,
             stationary_velocity: p.stationary_velocity,
             settle_ns: p.settle_ns,

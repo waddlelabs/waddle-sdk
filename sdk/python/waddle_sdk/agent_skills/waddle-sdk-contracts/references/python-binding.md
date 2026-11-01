@@ -91,6 +91,11 @@ cadence without counting unrelated lock wait as driver execution.
 
 ## Finite joint playback
 
+Binding API 41 adds optional `PlaybackPolicy.expected_start` under
+`execution.expected_start_playback`. It separates measured start admission from
+the first command without changing tolerances or owner limits. See
+`docs/core/finite-reference-playback.md#measured-starting-position`.
+
 Binding API 37 adds optional `PlaybackGoalDwell` under
 `execution.dwell_goal_playback`. Use SDK observation-clock evidence, preserve the
 nominal/outer tolerance bands and independent stationarity, and never renew a

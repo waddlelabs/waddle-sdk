@@ -285,6 +285,13 @@ def start(
     ):
         raise RuntimeFault(FaultCode.BUSY, "finite playback is still active")
     if (
+        motion.policy.expected_start is not None
+        and SupportFact.EXPECTED_START_PLAYBACK not in facts
+    ):
+        raise RuntimeFault(
+            FaultCode.UNSUPPORTED, "part does not support a separate measured start"
+        )
+    if (
         motion.policy.watchdog is not None
         and SupportFact.WATCHDOG_PLAYBACK not in facts
     ):
