@@ -388,9 +388,13 @@ bound; callers needing a strict total time must leave this option false.
 ## Optional future curve updates
 
 `PlaybackPolicy.allow_curve_updates=True` requires the separate
-`execution.revisable_joint_playback` fact and reference-only paced execution.
-Gripper outcome policies, checkpoints, exact sample grids and `toward_goal`
-velocity hints cannot be combined with updates. Coordinate order, held targets,
+`execution.revisable_joint_playback` fact and paced execution. Reference-only
+buffers retain their existing contract. A buffer with an explicit measured goal
+additionally requires `execution.revisable_goal_playback` (binding API 33).
+Gripper outcome policies, exact sample grids and `toward_goal` velocity hints
+cannot be combined with updates. Checkpointed goal buffers accept updates only
+after all original markers have been observed; reference-only buffers still
+exclude checkpoints. Coordinate order, held targets,
 feedback policy, pacing/tracking limits and the original timeout policy stay
 fixed for the execution.
 
@@ -525,7 +529,26 @@ Failure/cancellation retains the original error and cleanup receipt. No caller
 polling, remote arrival decision or `finish_references` request is needed.
 Delayed status reads return the immutable outcome rather than rerunning checks
 against the caller's clock. Planning a correction is a caller decision and
-requires a new, separately admitted trajectory.
+requires a checked trajectory.
+
+With `execution.revisable_goal_playback`, the caller may opt into curve updates
+on this same execution. The original goal, result identity and total deadline
+remain fixed. A checked correction can continue from the acknowledged resting
+endpoint, preserving position, velocity and acceleration there. Initial and
+replacement curves must end with zero velocity and acceleration. A pending
+accepted correction must finish before goal completion; merely observing the
+goal cannot discard accepted future work. Withdrawing that pending correction
+restores the incumbent's completion rules. Expired executions cannot be revived
+by a delayed update, including one queued during an observation callback.
+
+Set `allow_settled=False` to keep a stationary miss open for correction within
+the original deadline. The SDK continues local supervision and measured goal
+completion while the caller plans. A dependent buffer waits for this execution's
+final accepted outcome across all corrections; no remote finish or handoff is
+required. Original checkpoint evidence is retained and never repeated. A caller
+must reconcile accepted revisions and keep its geometry proof valid; the SDK
+adds no planner. Without this support, a correction is a separately admitted
+execution, so dependents must not mistake an intermediate result for final arrival.
 
 `settle_timeout_ns`, when supplied, bounds observation after the last reference
 acknowledgement. It cannot extend the original finite motion timeout. Omitting

@@ -157,6 +157,13 @@ limits and deadline; reconcile request receipts and acknowledged revisions
 without replaying uncertain updates. See the normative finite-playback page for
 admission restrictions, clock semantics and the separate application checks.
 
+Binding API 33 additionally advertises `execution.revisable_goal_playback`.
+Checked corrections can use that same update API while retaining one measured
+goal, execution identity and original deadline. The SDK finishes locally and
+advances admitted dependents without caller handoff. Original checkpoints must
+be observed before replacement and are never repeated. See the finite-playback
+page for resting continuations, pending suffixes and completion policies.
+
 Binding API 17 optionally records bounded `PlaybackPolicy.checkpoint_offsets_ns`
 under `execution.checkpointed_joint_playback`. Retained snapshots bind fresh local
 feedback to acknowledged reference phase; markers do not imply arrival or motor

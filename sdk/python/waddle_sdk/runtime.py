@@ -79,6 +79,7 @@ class SupportFact(str, enum.Enum):
     REFERENCE_JOINT_PLAYBACK = "execution.reference_joint_playback"
     REFERENCE_SETTLING = "execution.reference_settling"
     GOAL_PLAYBACK = "execution.goal_playback"
+    REVISABLE_GOAL_PLAYBACK = "execution.revisable_goal_playback"
     CARTESIAN_GOAL_PLAYBACK = "execution.cartesian_goal_playback"
     DEPENDENT_PLAYBACK = "execution.dependent_playback"
     DEFERRED_REFERENCE_COMPLETION = "execution.deferred_reference_completion"
@@ -694,7 +695,7 @@ class GripperPlaybackPolicy:
 
 @dataclass(frozen=True)
 class PlaybackCurveUpdate:
-    """A checked future suffix for a revisable, reference-only paced execution.
+    """A checked future suffix for a revisable paced execution.
 
     ``switch_ns`` uses the original execution's reference phase, not wall time.
     ``curve`` starts at zero and must preserve position/velocity/acceleration at
@@ -777,9 +778,11 @@ class PlaybackPolicy:
     its offset. These are not intermediate arrival gates or interpolated
     measurements. Gripper outcome policies cannot request checkpoints.
 
-    ``allow_curve_updates`` requires revisable-playback support and reference-only
-    paced execution without checkpoints, exact sample grids or goal-latched hints.
-    Updates use the same local worker; they do not extend the original timeout.
+    ``allow_curve_updates`` requires revisable-playback support and paced
+    execution without exact sample grids or goal-latched hints. Explicit goals
+    additionally require revisable-goal support; their original checkpoints must
+    all be observed before any update. Reference-only updates exclude checkpoints.
+    Updates retain the original goal, local worker, identity and total timeout.
 
     ``credit_pacing_delay`` requires separately advertised paced-deadline support
     and reference-only polynomial playback. Only a complete acknowledged moving

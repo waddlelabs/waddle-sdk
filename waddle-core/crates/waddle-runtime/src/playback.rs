@@ -76,7 +76,7 @@ pub struct PlaybackPolicy {
     /// Retain the first fresh post-acknowledgement feedback at these offsets.
     /// These are evidence markers, not arrival conditions or authority changes.
     pub checkpoint_offsets_ns: Vec<i64>,
-    /// Permit revision-checked future suffixes on a reference-only paced curve.
+    /// Permit revision-checked future suffixes on a paced reference or goal curve.
     pub allow_curve_updates: bool,
     /// Credit only completed moving reference ticks; false keeps a wall deadline.
     pub credit_pacing_delay: bool,
@@ -216,7 +216,8 @@ impl FiniteReferences {
             return Err(invalid("watchdog requires bounded session-clock feedback"));
         }
         if policy.timeout_ns.is_none()
-            && (policy.watchdog.is_none()
+            && (!policy.reference_only
+                || policy.watchdog.is_none()
                 || !policy.allow_curve_updates
                 || policy.credit_pacing_delay)
         {
@@ -264,9 +265,9 @@ impl FiniteReferences {
             ));
         }
         if policy.allow_curve_updates
-            && (!policy.reference_only
+            && ((!policy.reference_only && policy.goal.is_none())
                 || policy.gripper.is_some()
-                || !policy.checkpoint_offsets_ns.is_empty()
+                || (!policy.checkpoint_offsets_ns.is_empty() && policy.goal.is_none())
                 || policy
                     .paced_curve
                     .as_ref()
@@ -277,7 +278,7 @@ impl FiniteReferences {
                     .is_some_and(|f| f.velocity_hints == VelocityHints::TowardGoal))
         {
             return Err(invalid(
-                "curve updates require reference-only paced playback without checkpoint or goal-hint policies",
+                "curve updates require paced references or a measured goal, without goal-hint policies",
             ));
         }
         if policy.checkpoint_offsets_ns.len() > 256
@@ -338,7 +339,8 @@ impl FiniteReferences {
         }
         if let Some(curve) = &policy.paced_curve {
             curve.validate(policy.indices.len())?;
-            if policy.timeout_ns.is_none() {
+            if policy.timeout_ns.is_none() || (policy.allow_curve_updates && policy.goal.is_some())
+            {
                 curve.validate_stream_tail()?;
             }
             if (curve.duration_s() * 1e9 - chunk.horizon_ns as f64).abs() > 1.0 {
@@ -507,6 +509,14 @@ impl Playback {
 
     /// Refusal leaves the incumbent intact; it is not a motion failure.
     pub fn update_curve(&mut self, update: CurveUpdate) -> Result<(), PlaybackError> {
+        self.update_curve_at(update, self.now_ns)
+    }
+
+    pub(crate) fn update_curve_at(
+        &mut self,
+        update: CurveUpdate,
+        now_ns: i64,
+    ) -> Result<(), PlaybackError> {
         if !self.references.policy.allow_curve_updates
             || self.completion.is_some()
             || self.failure.is_some()
@@ -518,6 +528,14 @@ impl Playback {
         if self.pending {
             return Err(PlaybackError::DispatchPending);
         }
+        if self.motion_deadline_reached(now_ns) || self.settling_deadline_reached(now_ns) {
+            return Err(PlaybackError::Deadline);
+        }
+        if self.checkpoints.len() != self.references.policy.checkpoint_offsets_ns.len() {
+            return Err(PlaybackError::Invalid(
+                "original checkpoints must be observed before replacing their curve",
+            ));
+        }
         self.curve
             .as_mut()
             .expect("validated revisable curve")
@@ -526,10 +544,14 @@ impl Playback {
 
     #[must_use]
     pub fn new(references: FiniteReferences, started_ns: i64) -> Self {
-        let curve =
-            references.policy.paced_curve.clone().map(|spec| {
-                CurveCursor::new(spec, started_ns, references.policy.timeout_ns.is_none())
-            });
+        let curve = references.policy.paced_curve.clone().map(|spec| {
+            CurveCursor::new(
+                spec,
+                started_ns,
+                references.policy.timeout_ns.is_none(),
+                references.policy.allow_curve_updates && references.policy.goal.is_some(),
+            )
+        });
         let feedback = FeedbackState::new(references.chunk.steps[0].values.len());
         Self {
             references,
@@ -664,6 +686,31 @@ impl Playback {
         })
     }
 
+    fn references_finished(&self) -> bool {
+        self.curve
+            .as_ref()
+            .map_or(self.next == self.references.chunk.steps.len(), |curve| {
+                curve.progress.endpoint_acknowledged
+            })
+    }
+
+    fn motion_deadline_reached(&self, now_ns: i64) -> bool {
+        self.timeout_ns()
+            .is_some_and(|timeout| now_ns.saturating_sub(self.started_ns) >= timeout)
+    }
+
+    fn settling_deadline_reached(&self, now_ns: i64) -> bool {
+        self.references_finished()
+            && self
+                .references
+                .policy
+                .settle_timeout_ns
+                .is_some_and(|timeout| {
+                    self.acknowledged_ns
+                        .is_some_and(|at| now_ns.saturating_sub(at) >= timeout)
+                })
+    }
+
     pub fn cancel(&mut self, reason: &str) {
         if self.completion.is_none() && self.failure.is_none() {
             self.failure = Some(PlaybackError::Cancelled(reason.to_owned()));
@@ -711,10 +758,7 @@ impl Playback {
             return self.fail(PlaybackError::InvalidFeedback);
         }
         self.now_ns = now_ns;
-        if self
-            .timeout_ns()
-            .is_some_and(|timeout| now_ns.saturating_sub(self.started_ns) >= timeout)
-        {
+        if self.motion_deadline_reached(now_ns) {
             return self.fail(PlaybackError::Deadline);
         }
         let fresh = self.observed_ns != Some(measured.observed_ns);
@@ -749,12 +793,7 @@ impl Playback {
         if fresh {
             self.record_checkpoints(measured);
         }
-        let finished = self
-            .curve
-            .as_ref()
-            .map_or(self.next == self.references.chunk.steps.len(), |curve| {
-                curve.progress.endpoint_acknowledged
-            });
+        let finished = self.references_finished();
         let goal = &self
             .references
             .chunk
@@ -776,16 +815,7 @@ impl Playback {
         } else {
             arrived
         };
-        if finished
-            && self
-                .references
-                .policy
-                .settle_timeout_ns
-                .is_some_and(|timeout| {
-                    self.acknowledged_ns
-                        .is_some_and(|at| now_ns.saturating_sub(at) >= timeout)
-                })
-        {
+        if self.settling_deadline_reached(now_ns) {
             return self.fail(PlaybackError::Deadline);
         }
         let after_ack = self
