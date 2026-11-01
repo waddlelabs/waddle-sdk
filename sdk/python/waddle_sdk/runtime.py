@@ -80,6 +80,7 @@ class SupportFact(str, enum.Enum):
     REFERENCE_SETTLING = "execution.reference_settling"
     GOAL_PLAYBACK = "execution.goal_playback"
     REVISABLE_GOAL_PLAYBACK = "execution.revisable_goal_playback"
+    REVISABLE_SETTLED_PLAYBACK = "execution.revisable_settled_playback"
     GOAL_PROGRESS = "execution.goal_progress"
     PLAYBACK_TIMING = "execution.playback_timing"
     CARTESIAN_GOAL_PLAYBACK = "execution.cartesian_goal_playback"
@@ -866,6 +867,11 @@ class PlaybackPolicy:
     additionally require revisable-goal support; their original checkpoints must
     all be observed before any update. Reference-only updates exclude checkpoints.
     Updates retain the original goal, local worker, identity and total timeout.
+    With ``execution.revisable_settled_playback``, a curve without an explicit
+    goal may instead set ``allow_settled=True``. Its accepted endpoint supplies
+    the joint goal, and local stationarity ends it even on a measured miss.
+    Zero ``settle_ns`` permits a single fresh stationary sample in this mode;
+    position windows retain their configured span and sample count.
 
     ``complete_in_resting_tail`` opts a revisable paced goal into local completion
     once the acknowledged remainder is entirely constant and all requested
@@ -875,7 +881,7 @@ class PlaybackPolicy:
     preserves an explicitly requested rest duration.
 
     ``credit_pacing_delay`` requires separately advertised paced-deadline support
-    and reference-only or explicit-goal polynomial playback. Only a complete acknowledged moving
+    and reference-only, explicit-goal or settled polynomial playback. Only a complete acknowledged moving
     tick credits its excess local wall time to the original budget. Exact
     constant tails and stalled phase cannot renew it. Snapshots retain the
     accumulated ``curve_progress.pacing_extension_ns``; cloud receipt time never

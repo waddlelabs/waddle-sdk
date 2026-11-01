@@ -11,6 +11,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Allow revised finite curves to complete with SDK-local settling even without
+  an explicit goal (binding API 39). Score the accepted endpoint and preserve
+  stationary misses, original deadlines and cancellation on the existing worker.
+
 - Add opt-in same-frame pose updates for dwelled goals on the existing worker
   (binding API 38). Retain accepted target/revision with feedback and terminal
   results; reject stale updates without changing trajectories, policy or deadlines.

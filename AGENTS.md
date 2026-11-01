@@ -1,3 +1,13 @@
+API 39 extends existing revisable curves to local settled completion without an
+explicit goal. Require its separate support fact and `allow_settled=True`, score
+the accepted endpoint, and wait for full reference acknowledgement. Zero velocity
+settling duration permits one fresh stationary sample; windows retain their span
+and count. Preserve resting tails, original deadlines, cancellation, pacing credit
+and the existing worker. Validation passes 557 core, 24 gRPC, 14 LiveKit and 1,255
+default Python tests (413 optional skips), required lint, strict docs and exact
+wheel/source checks. Metal's report-only integration and CI/beta promotion remain
+under validation. No deployment.
+
 API 38 adds explicitly updatable, same-frame pose goals.
 `PlaybackGoalUpdate` uses the existing worker; the accepted target/revision is
 paired with feedback, and queued request receipts survive failure or completion.
@@ -6,7 +16,7 @@ Explicit-goal polynomial playback retains the existing motion-pacing credit;
 target messages and constant rest never earn extra allowance. Validation passes
 555 core, 24 gRPC, 14 LiveKit and 1,250 default Python tests (413 optional skips),
 required native/shim lint, strict docs and exact wheel/source checks. Metal
-integration is still under validation; CI/beta promotion remains pending.
+integration passes its measured-goal cases; PR 58 passed CI and merged to beta.
 
 API 37 adds independent goal dwell. `PlaybackGoalDwell`
 retains a nominal-tolerance entry timer through small crossings, resetting only

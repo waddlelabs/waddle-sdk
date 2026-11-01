@@ -10,6 +10,8 @@ use waddle_types::{ActionChunk, ProvenanceTag, SourceId, Step};
 mod resting_goal;
 #[path = "paced/revisable_goal.rs"]
 mod revisable_goal;
+#[path = "paced/revisable_settling.rs"]
+mod revisable_settling;
 
 fn curve() -> PacedCurve {
     PacedCurve {

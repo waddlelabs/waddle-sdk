@@ -269,16 +269,16 @@ impl FiniteReferences {
             return Err(invalid("horizon must equal the final reference offset"));
         }
         if policy.credit_pacing_delay
-            && ((!policy.reference_only && policy.goal.is_none())
+            && ((!policy.reference_only && policy.goal.is_none() && !policy.allow_settled)
                 || policy.paced_curve.is_none()
                 || policy.gripper.is_some())
         {
             return Err(invalid(
-                "paced deadlines require reference-only or explicit-goal polynomial playback",
+                "paced deadlines require reference, goal or settled polynomial playback",
             ));
         }
         if policy.allow_curve_updates
-            && ((!policy.reference_only && policy.goal.is_none())
+            && ((!policy.reference_only && policy.goal.is_none() && !policy.allow_settled)
                 || policy.gripper.is_some()
                 || (!policy.checkpoint_offsets_ns.is_empty() && policy.goal.is_none())
                 || policy
@@ -291,7 +291,7 @@ impl FiniteReferences {
                     .is_some_and(|f| f.velocity_hints == VelocityHints::TowardGoal))
         {
             return Err(invalid(
-                "curve updates require paced references or a measured goal, without goal-hint policies",
+                "curve updates require paced reference, goal or settled playback without goal hints",
             ));
         }
         if policy.checkpoint_offsets_ns.len() > 256
@@ -339,6 +339,7 @@ impl FiniteReferences {
         }
         if policy.settle_ns < 0
             || (policy.settle_ns == 0
+                && !policy.allow_settled
                 && policy.goal.as_ref().is_none_or(|goal| goal.dwell.is_none()))
             || !(1..=16_385).contains(&policy.minimum_settle_samples)
             || (policy.gripper.is_some() && policy.minimum_settle_samples != 1)
@@ -354,7 +355,7 @@ impl FiniteReferences {
         }
         if let Some(curve) = &policy.paced_curve {
             curve.validate(policy.indices.len())?;
-            if policy.timeout_ns.is_none() || (policy.allow_curve_updates && policy.goal.is_some())
+            if policy.timeout_ns.is_none() || (policy.allow_curve_updates && !policy.reference_only)
             {
                 curve.validate_stream_tail()?;
             }
@@ -573,7 +574,7 @@ impl Playback {
                 spec,
                 started_ns,
                 references.policy.timeout_ns.is_none(),
-                references.policy.allow_curve_updates && references.policy.goal.is_some(),
+                references.policy.allow_curve_updates && !references.policy.reference_only,
             )
         });
         let feedback = FeedbackState::new(references.chunk.steps[0].values.len());
@@ -852,11 +853,24 @@ impl Playback {
             .last()
             .expect("validated buffer")
             .values;
-        let arrived = within(
-            &measured.positions,
-            goal,
-            &self.references.policy.position_tolerance,
-            &self.references.policy.indices,
+        let arrived = self.curve.as_ref().map_or_else(
+            || {
+                within(
+                    &measured.positions,
+                    goal,
+                    &self.references.policy.position_tolerance,
+                    &self.references.policy.indices,
+                )
+            },
+            |curve| {
+                self.references
+                    .policy
+                    .indices
+                    .iter()
+                    .zip(curve.endpoint())
+                    .zip(&self.references.policy.position_tolerance)
+                    .all(|((i, q), tolerance)| (measured.positions[*i] - q).abs() <= *tolerance)
+            },
         );
         let mut nominal_goal = arrived;
         let arrived = if let Some(goal) = &self.references.policy.goal {
