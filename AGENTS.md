@@ -1,3 +1,16 @@
+A deterministic native regression now covers slow streamed curves with a shorter
+input watchdog: acquired feedback must advance between writes, accepted input
+may renew it, and sampling alone must still expire. The baseline reproduces
+WatchdogExpired while accepted input keeps arriving. Paced curves now sample
+between slow writes on the same worker, at most half a watchdog interval apart.
+The curve still enforces its write cadence; expiry and renewal authority remain
+unchanged. Fixed-reference dispatch spacing is unchanged. Source `26586dc` passes 561 core,
+24 gRPC, 14 LiveKit, 1,267 Python cases (413 optional skips, two existing reset
+warnings), required core/shim lint/format and strict docs. Matching base/media
+wheels pass five public watchdog/stream cases and all 17 original Metal
+Cartesian-jog cases, including two-Hz input. GitHub CI 41281314780 and the PR 63
+documentation preview pass. Source promotion does not deploy or publish packages.
+
 Gripper receipts retain contact sample counts, velocity-stationary counts and
 the local compatibility decision on failures as well as success. This is additive
 diagnostic data on API 40; execution, thresholds and normal Hold are unchanged.

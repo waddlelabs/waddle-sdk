@@ -1010,6 +1010,15 @@ impl ExecutionTask {
             PlaybackPoll::Complete(result) => return Some(Ok(result)),
         }
         self.next_poll_ns = self.next_poll_ns.min(player.check_by_ns());
+        if player.references.policy.paced_curve.is_some()
+            && let Some(watchdog) = player.references.policy.watchdog
+        {
+            // Paced curves enforce their own write interval. Read between
+            // slow ticks so accepted input can bind fresh local feedback.
+            self.next_poll_ns = self
+                .next_poll_ns
+                .min(now.saturating_add((watchdog.timeout_ns / 2).max(1)));
+        }
         None
     }
 }

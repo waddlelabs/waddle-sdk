@@ -97,6 +97,10 @@ ordinary selected Hold/cleanup. `WatchdogPlaybackHandlePort.refresh_watchdog`
 queues an acquired SDK feedback stamp, with pending/accepted/rejected evidence.
 Only the native worker accepts renewal. Stale/future stamps refuse, duplicates
 cannot extend time, and delayed requests cannot revive an expired buffer.
+For paced curves, the worker also samples between command ticks when their
+interval exceeds half the watchdog timeout. This supplies fresh feedback for
+accepted input without increasing the curve's write rate. Sampling and status
+reads alone never renew the watchdog.
 No motion timeout extension, authority, clock or writer is added. Blocked callbacks still drain
 before Hold; this is neither physical-stop proof nor a complete teleoperation
 input policy. See the finite-playback contract and watchdog tests.
