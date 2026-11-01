@@ -183,3 +183,44 @@ def test_relay_input_binds_real_native_motion_and_retains_terminal_input(
         "playback_input_status", {"run_id": run.id, "id": initial["id"]}
     )
     assert retained["failure"]["code"] == "cancelled"
+
+
+def test_single_part_scoped_cancel_preserves_live_input_and_deadline(
+    opened, monkeypatch
+):
+    session, run = opened
+    control = run.start_playback_input(30_000_000_000)
+    deadline = control.snapshot()["watchdog"]["deadline_ns"]
+    driver = session._managed.arms["arm"].driver
+    read = driver.read
+    entered, resume = threading.Event(), threading.Event()
+
+    def blocked():
+        entered.set()
+        assert resume.wait(5)
+        return read()
+
+    monkeypatch.setattr(driver, "read", blocked)
+    value = motion((0, 0), (0.02, -0.01))
+    value = replace(
+        value, policy=replace(value.policy, part_hold=True, timeout_ns=30_000_000_000)
+    )
+    try:
+        handle = run.start_playback(value, input=control)
+        assert entered.wait(5)
+        handle.cancel("replace checked direction")
+    finally:
+        resume.set()
+    result = handle.wait()
+    assert result["failure"]["code"] == "cancelled"
+    assert result["dispatched"] == 0
+    assert result["cleanup"]["outcome"] == "acknowledged"
+    assert result["cleanup"]["part"] == "arm"
+    assert control.snapshot()["failure"] is None
+    assert control.snapshot()["watchdog"]["deadline_ns"] == deadline
+    monkeypatch.setattr(driver, "read", read)
+    replacement = run.start_playback(value, input=control).wait()
+    assert replacement["status"] == "arrived", replacement
+    assert replacement["dispatched"] == len(value.references)
+    control.release("operator released")
+    assert control.snapshot()["failure"]["code"] == "cancelled"

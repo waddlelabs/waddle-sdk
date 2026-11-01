@@ -1,3 +1,11 @@
+Scoped-cancel native validation passes the full workspace, including the new
+confirmed/failed scoped Hold regression. The matching base extension and strict
+docs build pass. Public/Metal integration exposes a single-arm capability gap:
+`PART_HOLD_PLAYBACK` was advertised only on composite sites despite the existing
+named owner callback. A public regression fails at that refusal; advertise the
+same scoped Hold for every supported named part. Validation is pending. API 42
+and all grants/owner callbacks remain unchanged; no physical owner or deployment.
+
 SDK API 42 PR 68 is merged into beta as `6dc47b4` after exact-head CI
 `41340720258` passes native, transports, shim, 1,288 Python cases and strict docs.
 The tree matches `280f118`; Vincent <neutrinovs@gmail.com> is the merge author.

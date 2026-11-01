@@ -134,6 +134,8 @@ require their own qualification.
 
 ### Input arrival watchdog
 
+Named single-arm and composite sites advertise `execution.part_hold_playback`
+when their ordinary action/Hold grants permit the existing local callback.
 An individual buffer cancellation may retain its live input only after a
 successful **scoped** Hold. This supports replacing checked trajectories during
 one still-active press. It does not renew the input or change its deadline.
