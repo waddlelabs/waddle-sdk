@@ -1531,6 +1531,7 @@ class SiteSession:
                     facts.add(SupportFact.DEFERRED_REFERENCE_COMPLETION)
                     facts.add(SupportFact.GOAL_PLAYBACK)
                     facts.add(SupportFact.REVISABLE_GOAL_PLAYBACK)
+                    facts.add(SupportFact.REVISABLE_SETTLED_PLAYBACK)
                     facts.add(SupportFact.GOAL_PROGRESS)
                     facts.add(SupportFact.PLAYBACK_TIMING)
                     facts.add(SupportFact.KINEMATIC_GOAL_PLAYBACK)

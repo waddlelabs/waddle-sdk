@@ -362,6 +362,7 @@ Binding API 21 adds `PlaybackPolicy.credit_pacing_delay`, requiring
 `execution.paced_playback_deadline` and reference-only polynomial playback.
 Binding API 38 also permits explicit-goal polynomial playback with the same
 accounting; target messages and goal dwell never earn additional credit.
+Binding API 39 also permits revisable settled playback, with the same accounting.
 Default false preserves the absolute wall-time limit. Enable it only when the
 caller selects a curve-progress budget rather than an explicit wall deadline.
 The original `timeout_ns` remains the initial budget; the effective deadline
@@ -393,6 +394,15 @@ bound; callers needing a strict total time must leave this option false.
 `execution.revisable_joint_playback` fact and paced execution. Reference-only
 buffers retain their existing contract. A buffer with an explicit measured goal
 additionally requires `execution.revisable_goal_playback` (binding API 33).
+Binding API 39 permits `allow_settled=True` without an explicit goal under
+`execution.revisable_settled_playback`. Native completion scores the accepted
+curve's final joint positions, then reports arrival or a stationary miss after
+the full endpoint is acknowledged. It never completes in an intermediate rest.
+The caller may use either settling method; `settle_ns=0` allows one fresh
+post-acknowledgement stationary velocity sample, while position windows preserve
+their span and sample count. A checked replacement retains the same worker,
+execution identity, deadline, tracking limits and cancellation behavior.
+This mode excludes checkpoints and requires a resting endpoint on each curve.
 Gripper outcome policies, exact sample grids and `toward_goal` velocity hints
 cannot be combined with updates. Checkpointed goal buffers accept updates only
 after all original markers have been observed; reference-only buffers still

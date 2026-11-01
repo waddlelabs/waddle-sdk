@@ -185,6 +185,15 @@ def start(
     if goal is not None and not isinstance(goal, PlaybackGoal):
         raise RuntimeFault(FaultCode.INVALID_REQUEST, "provide a PlaybackGoal")
     if (
+        motion.policy.allow_curve_updates
+        and not motion.policy.reference_only
+        and goal is None
+        and SupportFact.REVISABLE_SETTLED_PLAYBACK not in facts
+    ):
+        raise RuntimeFault(
+            FaultCode.UNSUPPORTED, "part does not support revisable settled playback"
+        )
+    if (
         goal is not None
         and goal.allow_updates
         and SupportFact.UPDATABLE_GOAL_PLAYBACK not in facts

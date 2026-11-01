@@ -269,6 +269,10 @@ pub(crate) struct CurveCursor {
 }
 
 impl CurveCursor {
+    pub fn endpoint(&self) -> &[f64] {
+        self.spec.positions.last().expect("validated curve")
+    }
+
     pub fn resting_tail_acknowledged(&self) -> bool {
         self.update.is_none()
             && self.moving_until_s < self.spec.duration_s()

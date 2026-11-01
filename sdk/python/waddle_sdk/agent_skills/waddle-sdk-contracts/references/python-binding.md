@@ -21,6 +21,12 @@ Parsing a saved launcher never executes it or opens hardware.
 
 ## Hollow frontend
 
+Binding API 39 permits revisable local settling without a separate measured goal:
+require `execution.revisable_settled_playback`, set `allow_settled=True`, and
+submit checked finite curves. Completion uses the accepted curve endpoint and
+local stationarity; `settled` remains distinct from `arrived`. Preserve original
+deadlines, cancellation and unknown-reply handling. No new worker is introduced.
+
 Binding API 38 allows explicit `PlaybackGoal.allow_updates` with pose and dwell.
 `update_goal(PlaybackGoalUpdate(...))` queues a target on the same worker; inspect
 `goal_update` for acceptance and use `goal_target` paired with retained feedback.
