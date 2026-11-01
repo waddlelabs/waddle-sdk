@@ -81,6 +81,7 @@ impl PlaybackIo for MemoryIo {
             positions: vec![*self.q.lock()],
             velocities: vec![0.0],
             gripper_force: None,
+            pose: None,
         })
     }
 
@@ -286,6 +287,8 @@ fn reference_inputs(
             allow_settled: false,
             reference_only: false,
             defer_reference_completion: false,
+            goal: None,
+            settle_timeout_ns: None,
             checkpoint_offsets_ns: vec![],
             allow_curve_updates: false,
             credit_pacing_delay: false,

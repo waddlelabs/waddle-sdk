@@ -65,6 +65,7 @@ mod session_execution {
                 positions: self.positions.clone(),
                 velocities: vec![0.0; self.positions.len()],
                 gripper_force: None,
+                pose: None,
             })
         }
         fn dispatch(
@@ -361,6 +362,8 @@ fn policy() -> PlaybackPolicy {
         allow_settled: false,
         reference_only: false,
         defer_reference_completion: false,
+        goal: None,
+        settle_timeout_ns: None,
         checkpoint_offsets_ns: vec![],
         allow_curve_updates: false,
         credit_pacing_delay: false,
@@ -382,6 +385,7 @@ fn feedback(at: i64, q: f64) -> Feedback {
         positions: vec![q, 0.5],
         velocities: vec![0.0, 0.0],
         gripper_force: None,
+        pose: None,
     }
 }
 

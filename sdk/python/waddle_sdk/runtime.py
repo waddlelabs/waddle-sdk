@@ -78,6 +78,8 @@ class SupportFact(str, enum.Enum):
     SAMPLED_JOINT_PLAYBACK = "execution.sampled_joint_playback"
     REFERENCE_JOINT_PLAYBACK = "execution.reference_joint_playback"
     REFERENCE_SETTLING = "execution.reference_settling"
+    GOAL_PLAYBACK = "execution.goal_playback"
+    CARTESIAN_GOAL_PLAYBACK = "execution.cartesian_goal_playback"
     DEFERRED_REFERENCE_COMPLETION = "execution.deferred_reference_completion"
     CHECKPOINTED_JOINT_PLAYBACK = "execution.checkpointed_joint_playback"
     REVISABLE_JOINT_PLAYBACK = "execution.revisable_joint_playback"
@@ -720,6 +722,26 @@ class PlaybackWatchdog:
 
 
 @dataclass(frozen=True)
+class PlaybackGoal:
+    """Original joint goal or the declared SDK TCP pose, evaluated locally.
+
+    Joint positions follow ``PlaybackPolicy.indices`` and use its tolerances.
+    A pose uses the owner's TCP and base frame; a planner must resolve other
+    tools/frames before admission. No model or remote callback is installed.
+    ``orientation_tolerance_rad=None`` explicitly selects position-only arrival.
+    """
+
+    joint_positions: tuple[float, ...] | None = None
+    pose: Pose | None = None
+    position_tolerance_m: float = 0.002
+    orientation_tolerance_rad: float | None = 0.02
+
+    def __post_init__(self) -> None:
+        if self.joint_positions is not None:
+            object.__setattr__(self, "joint_positions", tuple(self.joint_positions))
+
+
+@dataclass(frozen=True)
 class PlaybackPolicy:
     """Explicit measured completion and local timing bounds; validated by core.
 
@@ -802,6 +824,8 @@ class PlaybackPolicy:
     part_hold: bool = False
     watchdog: PlaybackWatchdog | None = None
     defer_reference_completion: bool = False
+    goal: PlaybackGoal | None = None
+    settle_timeout_ns: int | None = None
 
     def __post_init__(self) -> None:
         for name in (

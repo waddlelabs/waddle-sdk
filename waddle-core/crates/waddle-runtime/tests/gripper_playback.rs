@@ -43,6 +43,8 @@ fn inputs() -> (ActionChunk, PlaybackPolicy) {
             allow_settled: false,
             reference_only: false,
             defer_reference_completion: false,
+            goal: None,
+            settle_timeout_ns: None,
             checkpoint_offsets_ns: vec![],
             allow_curve_updates: false,
             credit_pacing_delay: false,
@@ -93,6 +95,7 @@ fn measured(at: i64, q: f64, force_n: Option<f64>) -> Feedback {
         observed_ns: at,
         positions: vec![0.2, q],
         velocities: vec![0.0; 2],
+        pose: None,
         gripper_force: force_n.map(|force_n| MeasuredForce {
             force_n,
             source: "motor.estimate".into(),

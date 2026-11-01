@@ -456,6 +456,36 @@ and `allow_settled` retain their normal eligibility meanings. The result remains
 the required sample count/span, drift bounds and its actual goal. Window diagnostics
 never turn a reference receipt into an arrival or physical-stop guarantee.
 
+### SDK-owned goal completion
+
+Binding API 31 adds `PlaybackPolicy.goal` and `settle_timeout_ns`, gated by
+`execution.goal_playback`. A `PlaybackGoal` carries exactly one of:
+
+- `joint_positions`: the original target in selected-index order, evaluated with
+  the existing per-joint `position_tolerance`. A corrected command endpoint can
+  differ from this target.
+- `pose`: the SDK owner's declared TCP pose in its base frame. Position uses
+  `position_tolerance_m`; rotation uses `orientation_tolerance_rad`, or explicit
+  `None` for position-only completion. This additionally requires
+  `execution.cartesian_goal_playback`, derived from opened local FK and a frame.
+  A different tool or frame must be resolved before submission; missing/wrong-frame
+  pose feedback fails through ordinary local cleanup.
+
+The same worker evaluates arrival and settling for each fresh local sample.
+`arrived` means the requested goal satisfies the configured settling policy;
+`settled` is a separately allowed stationary miss, not successful arrival.
+Failure/cancellation retains the original error and cleanup receipt. No caller
+polling, remote arrival decision or `finish_references` request is needed.
+Delayed status reads return the immutable outcome rather than rerunning checks
+against the caller's clock. Planning a correction is a caller decision and
+requires a new, separately admitted trajectory.
+
+`settle_timeout_ns`, when supplied, bounds observation after the last reference
+acknowledgement. It cannot extend the original finite motion timeout. Omitting
+these fields preserves the existing joint-endpoint completion and wire format.
+Explicit goals cannot be combined with reference-only or scalar gripper policies;
+gripper completion retains its existing local policy.
+
 ### Deferred reference completion
 
 Binding API 30 adds `PlaybackPolicy.defer_reference_completion`, gated by

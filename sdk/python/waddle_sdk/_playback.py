@@ -14,6 +14,8 @@ from .runtime import (
     FiniteJointMotion,
     JointPositionCommand,
     PlaybackCurveUpdate,
+    PlaybackGoal,
+    Pose,
     RuntimeFault,
     SupportFact,
 )
@@ -136,6 +138,28 @@ def start(
             FaultCode.UNSUPPORTED, "part does not support finite playback"
         )
     facts = set.intersection(*(set(row.facts) for row in rows))
+    goal = motion.policy.goal
+    if (goal is not None or motion.policy.settle_timeout_ns is not None) and (
+        SupportFact.GOAL_PLAYBACK not in facts
+    ):
+        raise RuntimeFault(
+            FaultCode.UNSUPPORTED, "part does not support local goal completion"
+        )
+    if goal is not None and not isinstance(goal, PlaybackGoal):
+        raise RuntimeFault(FaultCode.INVALID_REQUEST, "provide a PlaybackGoal")
+    if goal is not None and goal.pose is not None:
+        if group or SupportFact.CARTESIAN_GOAL_PLAYBACK not in facts:
+            raise RuntimeFault(
+                FaultCode.UNSUPPORTED, "TCP goal requires a named part with local FK"
+            )
+        if (
+            not isinstance(goal.pose, Pose)
+            or goal.pose.frame_id != arms[motion.part].base_frame
+        ):
+            raise RuntimeFault(
+                FaultCode.INVALID_REQUEST,
+                "TCP goal must use the SDK part's declared base frame",
+            )
     if (
         motion.policy.timeout_ns is None
         and SupportFact.STREAMED_JOINT_PLAYBACK not in facts
@@ -332,6 +356,22 @@ def start(
                     if name in observation.faults:
                         raise observation.faults[name]
                 measured = [observation.parts[name] for name in parts]
+                pose = None
+                if goal is not None and goal.pose is not None:
+                    sample = measured[0]
+                    if (
+                        sample.ee_pose_wxyz is None
+                        or sample.frame_id != goal.pose.frame_id
+                    ):
+                        raise RuntimeFault(
+                            FaultCode.INTERNAL,
+                            "local TCP feedback is unavailable or has the wrong frame",
+                        )
+                    pose = Pose(
+                        tuple(sample.ee_pose_wxyz[:3]),
+                        tuple(sample.ee_pose_wxyz[3:]),
+                        sample.frame_id,
+                    )
                 return {
                     "observed_ns": observation.session_ns,
                     "positions": [
@@ -341,6 +381,7 @@ def start(
                         v for row in measured for v in row.joint_velocity.tolist()
                     ],
                     "gripper_force": None if group else measured[0].gripper_force,
+                    "pose": pose,
                 }
         except Exception as error:  # noqa: BLE001 -- retain any vendor fault across the native callback
             return _error(error, unknown=False)

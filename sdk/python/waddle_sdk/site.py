@@ -1528,6 +1528,9 @@ class SiteSession:
                     facts.add(SupportFact.REFERENCE_JOINT_PLAYBACK)
                     facts.add(SupportFact.REFERENCE_SETTLING)
                     facts.add(SupportFact.DEFERRED_REFERENCE_COMPLETION)
+                    facts.add(SupportFact.GOAL_PLAYBACK)
+                    if arm.fk is not None and arm.base_frame:
+                        facts.add(SupportFact.CARTESIAN_GOAL_PLAYBACK)
                     facts.add(SupportFact.CHECKPOINTED_JOINT_PLAYBACK)
                     facts.add(SupportFact.REVISABLE_JOINT_PLAYBACK)
                     facts.add(SupportFact.PLAYBACK_FEEDBACK_REFERENCE)

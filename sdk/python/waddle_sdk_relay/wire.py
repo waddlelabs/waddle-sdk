@@ -43,6 +43,7 @@ for _name in (
     "JointReference",
     "JointPositionBounds",
     "PlaybackPolicy",
+    "PlaybackGoal",
     "PlaybackWatchdog",
     "PacedJointCurve",
     "PlaybackCurveUpdate",
@@ -119,6 +120,10 @@ def _default(value):
             data.pop("part_hold")
         if type(value).__name__ == "PlaybackPolicy" and data.get("watchdog") is None:
             data.pop("watchdog", None)
+        if type(value).__name__ == "PlaybackPolicy":
+            for optional in ("goal", "settle_timeout_ns"):
+                if data.get(optional) is None:
+                    data.pop(optional, None)
         if isinstance(value, runtime.SubmitResult):
             # These optional clocks belong to the SDK host, not this executor.
             data["dispatch_started_monotonic_s"] = None

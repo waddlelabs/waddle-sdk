@@ -14,10 +14,12 @@ mod curve;
 use curve::CurveCursor;
 pub use curve::{CurveProgress, CurveUpdate, PacedCurve};
 mod feedback;
+mod goal;
 use feedback::FeedbackState;
 pub use feedback::{
     FeedbackPolicy, HeldJointGroup, PositionWindow, SettlingEvidence, VelocityHints,
 };
+pub use goal::{PlaybackGoal, Pose};
 mod gripper;
 use gripper::GripperState;
 pub use gripper::{
@@ -58,6 +60,10 @@ pub struct PlaybackPolicy {
     pub max_lateness_ns: i64,
     /// None selects a watchdog-limited stream of finite, resting curves.
     pub timeout_ns: Option<i64>,
+    /// Optional original goal, independent of a corrected reference endpoint.
+    pub goal: Option<PlaybackGoal>,
+    /// Local allowance after the final reference acknowledgement.
+    pub settle_timeout_ns: Option<i64>,
     /// Permit a separately reported stationary miss, never an arrival claim.
     pub allow_settled: bool,
     /// Finish after all references are acknowledged and fresh feedback arrives.
@@ -93,6 +99,7 @@ pub struct Feedback {
     pub positions: Vec<f64>,
     pub velocities: Vec<f64>,
     pub gripper_force: Option<MeasuredForce>,
+    pub pose: Option<Pose>,
 }
 
 /// Measured evidence after an acknowledged reference crosses a requested offset.
@@ -173,6 +180,16 @@ impl FiniteReferences {
 
     pub fn new(chunk: ActionChunk, policy: PlaybackPolicy) -> Result<Self, PlaybackError> {
         let invalid = PlaybackError::Invalid;
+        if let Some(goal) = &policy.goal {
+            goal.validate(&policy)?;
+        }
+        if policy.settle_timeout_ns.is_some_and(|timeout| {
+            timeout <= 0 || policy.reference_only || policy.timeout_ns.is_none()
+        }) {
+            return Err(invalid(
+                "settling timeout requires finite measured completion",
+            ));
+        }
         if policy.defer_reference_completion
             && (!policy.reference_only
                 || policy.timeout_ns.is_none()
@@ -744,6 +761,26 @@ impl Playback {
             &self.references.policy.position_tolerance,
             &self.references.policy.indices,
         );
+        let arrived = if let Some(goal) = &self.references.policy.goal {
+            match goal.reached(measured, &self.references.policy) {
+                Ok(reached) => reached,
+                Err(error) => return self.fail(error),
+            }
+        } else {
+            arrived
+        };
+        if finished
+            && self
+                .references
+                .policy
+                .settle_timeout_ns
+                .is_some_and(|timeout| {
+                    self.acknowledged_ns
+                        .is_some_and(|at| now_ns.saturating_sub(at) >= timeout)
+                })
+        {
+            return self.fail(PlaybackError::Deadline);
+        }
         let after_ack = self
             .acknowledged_ns
             .is_some_and(|at| measured.observed_ns > at);
@@ -872,18 +909,6 @@ impl Playback {
             .iter()
             .zip(&self.references.policy.stationary_velocity)
             .all(|(i, limit)| measured.velocities[*i].abs() <= *limit);
-        let arrived = within(
-            &measured.positions,
-            &self
-                .references
-                .chunk
-                .steps
-                .last()
-                .expect("validated nonempty buffer")
-                .values,
-            &self.references.policy.position_tolerance,
-            &self.references.policy.indices,
-        );
         if !stationary || (!arrived && !self.references.policy.allow_settled) {
             self.settled_since = None;
             self.arrived_since = None;
@@ -905,11 +930,14 @@ impl Playback {
         {
             return Ok(PlaybackPoll::Observe);
         }
-        let outcome = if self
+        let arrived_stable = self
             .arrived_since
             .is_some_and(|since| measured.observed_ns - since >= self.references.policy.settle_ns)
-            && self.arrived_samples >= self.references.policy.minimum_settle_samples
-        {
+            && self.arrived_samples >= self.references.policy.minimum_settle_samples;
+        if self.references.policy.goal.is_some() && arrived && !arrived_stable {
+            return Ok(PlaybackPoll::Observe);
+        }
+        let outcome = if arrived_stable {
             Completion::Arrived
         } else {
             Completion::Settled

@@ -11,11 +11,12 @@ playback local without providing a listener or login. See the
 [device relay contract](../docs/python/device-relay.md) for integration,
 confined file operations and current platform limits.
 
-Optional finite reference playback can retain local sampling after a fixed curve
-ends, using `execution.deferred_reference_completion` and binding API 30. Explicit
-finish preserves the original deadline and returns fresh final diagnostics;
-applications still decide goal arrival. See the
-[finite playback contract](../docs/core/finite-reference-playback.md#deferred-reference-completion).
+Finite playback can decide measured completion locally against an original joint
+goal or the SDK owner's TCP pose (`execution.goal_playback`, binding API 31).
+Tolerance and settling use local measurements and time; the caller receives a
+retained terminal result even if it does not poll during execution. Pose goals
+require `execution.cartesian_goal_playback` and the declared base frame.
+See the [finite playback contract](../docs/core/finite-reference-playback.md).
 
 ## Site lifecycle
 

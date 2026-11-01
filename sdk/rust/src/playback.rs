@@ -8,8 +8,8 @@ use pyo3::types::PyDict;
 use waddle_runtime::playback::{
     Completion, ContactCondition, CurveUpdate, ExecutionFailure, ExecutionHandle,
     ExecutionSnapshot, Feedback, FeedbackPolicy, ForceCondition, GripperPolicy, HeldJointGroup,
-    MeasuredForce, PacedCurve, PlaybackError, PlaybackIo, PlaybackIoError, PlaybackPolicy,
-    PlaybackWatchdog, PositionWindow, ReferenceReceipt, VelocityHints,
+    MeasuredForce, PacedCurve, PlaybackError, PlaybackGoal, PlaybackIo, PlaybackIoError,
+    PlaybackPolicy, PlaybackWatchdog, Pose, PositionWindow, ReferenceReceipt, VelocityHints,
 };
 use waddle_types::Step;
 
@@ -28,6 +28,8 @@ pub(crate) struct Policy {
     allow_settled: bool,
     reference_only: bool,
     defer_reference_completion: bool,
+    goal: Option<Goal>,
+    settle_timeout_ns: Option<i64>,
     checkpoint_offsets_ns: Vec<i64>,
     allow_curve_updates: bool,
     credit_pacing_delay: bool,
@@ -42,6 +44,31 @@ pub(crate) struct Policy {
 struct Watchdog {
     observed_ns: i64,
     timeout_ns: i64,
+}
+
+#[derive(FromPyObject)]
+struct Goal {
+    joint_positions: Option<Vec<f64>>,
+    pose: Option<GoalPose>,
+    position_tolerance_m: f64,
+    orientation_tolerance_rad: Option<f64>,
+}
+
+#[derive(FromPyObject)]
+struct GoalPose {
+    position_m: [f64; 3],
+    quaternion_wxyz: [f64; 4],
+    frame_id: String,
+}
+
+impl From<GoalPose> for Pose {
+    fn from(p: GoalPose) -> Self {
+        Self {
+            position_m: p.position_m,
+            quaternion_wxyz: p.quaternion_wxyz,
+            frame_id: p.frame_id,
+        }
+    }
 }
 
 #[derive(FromPyObject)]
@@ -182,6 +209,13 @@ impl TryFrom<Policy> for PlaybackPolicy {
             allow_settled: p.allow_settled,
             reference_only: p.reference_only,
             defer_reference_completion: p.defer_reference_completion,
+            goal: p.goal.map(|g| PlaybackGoal {
+                joint_positions: g.joint_positions,
+                pose: g.pose.map(Into::into),
+                position_tolerance_m: g.position_tolerance_m,
+                orientation_tolerance_rad: g.orientation_tolerance_rad,
+            }),
+            settle_timeout_ns: p.settle_timeout_ns,
             checkpoint_offsets_ns: p.checkpoint_offsets_ns,
             allow_curve_updates: p.allow_curve_updates,
             credit_pacing_delay: p.credit_pacing_delay,
@@ -241,6 +275,8 @@ struct Measured {
     positions: Vec<f64>,
     velocities: Vec<f64>,
     gripper_force: Option<ForceFeedback>,
+    #[pyo3(default)]
+    pose: Option<GoalPose>,
 }
 
 #[derive(FromPyObject)]
@@ -300,6 +336,18 @@ fn feedback(py: Python<'_>, value: &Feedback) -> PyResult<Py<PyDict>> {
         })
         .transpose()?;
     out.set_item("gripper_force", force)?;
+    let pose = value
+        .pose
+        .as_ref()
+        .map(|p| -> PyResult<Py<PyDict>> {
+            let result = PyDict::new(py);
+            result.set_item("position_m", p.position_m)?;
+            result.set_item("quaternion_wxyz", p.quaternion_wxyz)?;
+            result.set_item("frame_id", &p.frame_id)?;
+            Ok(result.unbind())
+        })
+        .transpose()?;
+    out.set_item("pose", pose)?;
     Ok(out.unbind())
 }
 
@@ -351,6 +399,7 @@ impl PlaybackIo for PyIo {
                 observed_ns: measured.observed_ns,
                 positions: measured.positions,
                 velocities: measured.velocities,
+                pose: measured.pose.map(Into::into),
                 gripper_force: measured.gripper_force.map(|f| MeasuredForce {
                     force_n: f.force_n,
                     source: f.source,
