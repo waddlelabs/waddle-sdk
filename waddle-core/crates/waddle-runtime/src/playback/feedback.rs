@@ -223,7 +223,8 @@ impl FeedbackState {
         else {
             return Ok(None);
         };
-        let eligible = (finished || window.during_motion) && (arrived || policy.allow_settled);
+        let eligible = (finished || window.during_motion)
+            && (arrived || policy.allow_settled || policy.goal.is_some());
         if !fresh
             || !eligible
             || self.rows.back().is_some_and(|last| {

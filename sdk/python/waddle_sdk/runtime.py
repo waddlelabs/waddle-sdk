@@ -80,6 +80,7 @@ class SupportFact(str, enum.Enum):
     REFERENCE_SETTLING = "execution.reference_settling"
     GOAL_PLAYBACK = "execution.goal_playback"
     REVISABLE_GOAL_PLAYBACK = "execution.revisable_goal_playback"
+    GOAL_PROGRESS = "execution.goal_progress"
     CARTESIAN_GOAL_PLAYBACK = "execution.cartesian_goal_playback"
     DEPENDENT_PLAYBACK = "execution.dependent_playback"
     DEFERRED_REFERENCE_COMPLETION = "execution.deferred_reference_completion"
@@ -896,7 +897,14 @@ class PlaybackHandlePort(Protocol):
     callback alone does not prove that a safety verb stopped hardware.
     """
 
-    def snapshot(self) -> Mapping[str, JSONValue]: ...
+    def snapshot(self) -> Mapping[str, JSONValue]:
+        """Read retained execution state; polling never advances its references.
+
+        With ``execution.goal_progress``, ``settled_miss`` reports a fresh local
+        settling result outside the original goal. It is nonterminal progress,
+        not a correction authorization; the original goal/deadline stay fixed.
+        """
+        ...
 
     def wait(self) -> Mapping[str, JSONValue]: ...
 

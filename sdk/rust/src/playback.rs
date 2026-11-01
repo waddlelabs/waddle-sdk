@@ -669,6 +669,7 @@ fn snapshot(py: Python<'_>, value: ExecutionSnapshot) -> PyResult<Py<PyDict>> {
         })
         .transpose()?;
     out.set_item("settling", settling)?;
+    out.set_item("settled_miss", value.settled_miss)?;
     let gripper = value
         .gripper
         .map(|e| -> PyResult<Py<PyDict>> {

@@ -1,3 +1,12 @@
+SDK binding API 34 exposes `execution.goal_progress` on the existing worker.
+Snapshots bind `settled_miss` to their latest fresh local feedback. Explicit-goal
+playback with `allow_settled=False` stays running while either native settling
+method reports a stationary miss; only checked caller corrections change the
+curve. Motion, stale samples and changed references reset miss evidence. Keep
+original tolerances, sample counts, deadline, immutable results and ordinary
+cleanup. This signal adds no planner, scheduler or RPC. See the normative
+finite-reference-playback contract. Deployment qualification remains separate.
+
 Native MuJoCo scene lifecycle tests require the optional `mujoco` extra and must
 skip before importing/opening a simulator when it is unavailable. Keep normal
 package installation independent of simulation dependencies. Run native lifecycle

@@ -457,6 +457,7 @@ pub struct Playback {
     settled_since: Option<i64>,
     arrived_since: Option<i64>,
     settled_samples: usize,
+    settled_miss: bool,
     arrived_samples: usize,
     completion: Option<Completion>,
     finish_requested: bool,
@@ -564,6 +565,7 @@ impl Playback {
             settled_since: None,
             arrived_since: None,
             settled_samples: 0,
+            settled_miss: false,
             arrived_samples: 0,
             completion: None,
             finish_requested: false,
@@ -597,6 +599,13 @@ impl Playback {
     #[must_use]
     pub fn settling_evidence(&self) -> Option<SettlingEvidence> {
         self.feedback.evidence.clone()
+    }
+
+    /// Latest local sample completes settling outside the original goal.
+    /// This is progress for a planner, never a terminal result or permission.
+    #[must_use]
+    pub fn settled_miss(&self) -> bool {
+        self.settled_miss
     }
 
     #[must_use]
@@ -733,6 +742,7 @@ impl Playback {
         if let Some(outcome) = self.completion {
             return Ok(PlaybackPoll::Complete(outcome));
         }
+        self.settled_miss = false;
         if self.pending {
             return self.fail(PlaybackError::DispatchPending);
         }
@@ -794,6 +804,12 @@ impl Playback {
             self.record_checkpoints(measured);
         }
         let finished = self.references_finished();
+        if !finished {
+            self.settled_since = None;
+            self.arrived_since = None;
+            self.settled_samples = 0;
+            self.arrived_samples = 0;
+        }
         let goal = &self
             .references
             .chunk
@@ -845,8 +861,12 @@ impl Playback {
                 return Ok(PlaybackPoll::Observe);
             }
         } else if let Some(outcome) = window_completion {
-            self.completion = Some(outcome);
-            return Ok(PlaybackPoll::Complete(outcome));
+            self.settled_miss =
+                outcome == Completion::Settled && self.references.policy.goal.is_some();
+            if outcome != Completion::Settled || self.references.policy.allow_settled {
+                self.completion = Some(outcome);
+                return Ok(PlaybackPoll::Complete(outcome));
+            }
         }
         if let Some(curve) = self
             .curve
@@ -946,7 +966,11 @@ impl Playback {
             .iter()
             .zip(&self.references.policy.stationary_velocity)
             .all(|(i, limit)| measured.velocities[*i].abs() <= *limit);
-        if !stationary || (!arrived && !self.references.policy.allow_settled) {
+        if !stationary
+            || (!arrived
+                && !self.references.policy.allow_settled
+                && self.references.policy.goal.is_none())
+        {
             self.settled_since = None;
             self.arrived_since = None;
             self.settled_samples = 0;
@@ -979,6 +1003,10 @@ impl Playback {
         } else {
             Completion::Settled
         };
+        self.settled_miss = outcome == Completion::Settled && self.references.policy.goal.is_some();
+        if outcome == Completion::Settled && !self.references.policy.allow_settled {
+            return Ok(PlaybackPoll::Observe);
+        }
         self.completion = Some(outcome);
         Ok(PlaybackPoll::Complete(outcome))
     }
