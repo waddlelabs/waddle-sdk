@@ -31,6 +31,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Preserve execution deadline-during-feedback regression coverage on the native
+  worker using explicit callback barriers; no runtime or policy change.
+
 - Separate the expected measured start from the first playback command with
   optional `PlaybackPolicy.expected_start` (binding API 41). Preserve the original
   start tolerance and all owner command limits; reject stale local feedback.

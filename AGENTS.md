@@ -1,3 +1,5 @@
+SDK API 41 is merged into beta 0b0a606 after exact-head CI 41288288064: 1,282 Python cases (413 optional skips, two warnings), native/transports/shim, packaged skills and strict docs pass. The next test-only transfer retains the old execution-deadline-during-feedback assertion on the native worker using callback barriers and its fake clock. Runtime and installed wheels are unchanged; new timing test validation pending.
+
 API 41 passes all 24 native finite cases and 40 installed public cases. One new wire assertion incorrectly compared text to encoded bytes; it now uses a bytes literal. Runtime and built wheel bytes are unchanged; capability follow-up and full CI remain pending.
 
 The first API 41 native compile exposed a test assertion comparing SmallVec with Vec; compare its actual slice. No runtime change. Matching-wheel and full validation pending.

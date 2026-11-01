@@ -571,6 +571,31 @@ fn slow_declared_feedback_rate_cannot_postpone_the_buffer_deadline() {
 }
 
 #[test]
+fn deadline_expiring_during_feedback_prevents_the_next_write() {
+    let h = Harness::new();
+    let (write_pause, writing, written) = pause();
+    *h.io.dispatch_pause.lock() = Some(write_pause);
+    let handle = h.start().unwrap();
+    writing.recv_timeout(Duration::from_secs(5)).unwrap();
+    let (read_pause, reading, read) = pause();
+    *h.io.observation_pause.lock() = Some(read_pause);
+    written.send(()).unwrap();
+    reading.recv_timeout(Duration::from_secs(5)).unwrap();
+    // The first acknowledged command has activated the original 500 ms budget.
+    // A later completed read cannot admit a command past that deadline.
+    h.io.clock.0.advance(1_000_000_000);
+    read.send(()).unwrap();
+    let result = finished(&handle);
+    assert_eq!(
+        result.result,
+        Some(Err(ExecutionFailure::Playback(PlaybackError::Deadline)))
+    );
+    assert_eq!(h.io.writes.lock().len(), 1);
+    assert_eq!(result.cleanup.unwrap().result, Ok(()));
+    assert_eq!(h.outcome().verb, Verb::Hold);
+}
+
+#[test]
 fn cancellation_between_observation_and_dispatch_writes_nothing_and_drains_hold() {
     let h = Harness::new();
     let (p, entered, release) = pause();
