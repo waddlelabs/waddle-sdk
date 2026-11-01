@@ -26,6 +26,19 @@ Dispatching references alone does not establish arrival. Failed or unaccepted
 predecessors produce `dependency_failed` without issuing child commands.
 Original predecessor failure and cleanup evidence remain on that handle.
 
+Binding API 40 adds `execution.transit_playback`. An admitted finite successor
+that explicitly accepts `references_dispatched` can waive its predecessor's
+intermediate settling. It must have exactly that predecessor as its dependency,
+address the same named arm, remain uncancelled and meet its start deadline.
+Gripper policies, other-arm and coordinated boundaries do not qualify. Both
+references must end at rest. The predecessor must finish all references, retain
+fresh feedback/tracking checks and satisfy its required goal tolerance; a report
+allowing stationary misses can cross without measured arrival. Its result stays
+`references_dispatched`, with the chosen successor ID in `transit_successor`.
+The successor still performs ordinary measured-start checks and final settling.
+Cancellation before this local decision removes the waiver. No cloud finish call,
+second queue, additional worker or replay is introduced.
+
 `waiting_for` contains predecessor IDs until activation. Status stays `running`
 while queued; `dispatched` remains zero. The queue reserves all selected parts,
 so overlapping work must depend on the complete preceding reservation chain.

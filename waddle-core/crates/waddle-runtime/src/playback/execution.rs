@@ -1,7 +1,7 @@
 //! Finite local execution on the existing serialized control thread.
 
 use std::panic::AssertUnwindSafe;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use parking_lot::{Condvar, Mutex};
@@ -144,6 +144,8 @@ pub struct ExecutionSnapshot {
     pub references: usize,
     /// Dependencies still awaiting an accepted outcome; empty after activation.
     pub waiting_for: Vec<String>,
+    /// Admitted successor that permitted reference crossing without intermediate settling.
+    pub transit_successor: Option<String>,
     /// Local time from activation to the retained feedback sample; absent before activation.
     pub elapsed_ns: Option<i64>,
     pub feedback: Option<Feedback>,
@@ -182,6 +184,7 @@ struct State {
     deferred_completion: bool,
     finish_requested: bool,
     predecessors: Vec<Arc<Control>>,
+    transit_successor: Option<Weak<Control>>,
 }
 
 #[derive(Debug)]
@@ -196,6 +199,8 @@ enum CurveRequest {
 #[derive(Debug)]
 struct Control {
     registry: Arc<()>,
+    scope: Option<Vec<String>>,
+    start_before_ns: Option<i64>,
     state: Mutex<State>,
     changed: Condvar,
 }
@@ -216,6 +221,9 @@ impl Control {
             // before publishing a terminal result. A racing arrival is not it.
             if state.cancelled.is_some() && result.is_ok() {
                 return false;
+            }
+            if !matches!(result, Ok(Completion::ReferencesDispatched)) {
+                state.snapshot.transit_successor = None;
             }
             state.snapshot.result = Some(result);
             state.predecessors.clear();
@@ -501,6 +509,8 @@ impl ExecutionSlot {
         }
         let control = Arc::new(Control {
             registry: self.registry.clone(),
+            scope: scope.clone(),
+            start_before_ns: queue.start_before_ns,
             state: Mutex::new(State {
                 snapshot: ExecutionSnapshot {
                     id: uuid::Uuid::new_v4().to_string(),
@@ -508,6 +518,7 @@ impl ExecutionSlot {
                     dispatched: 0,
                     references,
                     waiting_for: queue.after.iter().map(|d| d.handle.snapshot().id).collect(),
+                    transit_successor: None,
                     elapsed_ns: None,
                     feedback: None,
                     feedback_reference: None,
@@ -532,6 +543,7 @@ impl ExecutionSlot {
                 curve_update: None,
                 deferred_completion: false,
                 finish_requested: false,
+                transit_successor: None,
                 predecessors: queue
                     .after
                     .iter()
@@ -644,6 +656,18 @@ impl ExecutionTask {
             state.deferred_completion = references.policy.defer_reference_completion;
         }
         let queue = std::mem::take(&mut references.queue);
+        if references.can_transit()
+            && let [dependency] = queue.after.as_slice()
+            && dependency
+                .outcomes
+                .contains(&Completion::ReferencesDispatched)
+            && dependency.handle.control.scope == handle.control.scope
+        {
+            let mut parent = dependency.handle.control.state.lock();
+            if parent.snapshot.result.is_none() {
+                parent.transit_successor = Some(Arc::downgrade(&handle.control));
+            }
+        }
         Self {
             mirror,
             episode,
@@ -896,6 +920,14 @@ impl ExecutionTask {
         }
         let polled = {
             let mut state = self.control.state.lock();
+            let successor = state.transit_successor.as_ref().and_then(Weak::upgrade);
+            let successor_state = successor.as_ref().map(|control| control.state.lock());
+            player.transit_permitted = successor_state
+                .as_ref()
+                .is_some_and(|s| s.cancelled.is_none() && s.snapshot.result.is_none())
+                && successor
+                    .as_ref()
+                    .is_some_and(|c| c.start_before_ns.is_none_or(|at| now < at));
             if let Some(receipt) = state
                 .snapshot
                 .goal_update
@@ -905,6 +937,13 @@ impl ExecutionTask {
                 receipt.result = Some(player.update_goal_at(receipt.update.clone(), now));
             }
             let polled = player.poll(now, &measured);
+            if polled == Ok(PlaybackPoll::Complete(Completion::ReferencesDispatched))
+                && player.transit_permitted
+                && !player.references.policy.reference_only
+            {
+                state.snapshot.transit_successor =
+                    successor_state.as_ref().map(|s| s.snapshot.id.clone());
+            }
             state.snapshot.elapsed_ns =
                 Some(measured.observed_ns.saturating_sub(player.started_ns));
             state.snapshot.feedback = Some(measured.clone());

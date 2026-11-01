@@ -89,6 +89,7 @@ class SupportFact(str, enum.Enum):
     DWELL_GOAL_PLAYBACK = "execution.dwell_goal_playback"
     UPDATABLE_GOAL_PLAYBACK = "execution.updatable_goal_playback"
     DEPENDENT_PLAYBACK = "execution.dependent_playback"
+    TRANSIT_PLAYBACK = "execution.transit_playback"
     DEFERRED_REFERENCE_COMPLETION = "execution.deferred_reference_completion"
     CHECKPOINTED_JOINT_PLAYBACK = "execution.checkpointed_joint_playback"
     REVISABLE_JOINT_PLAYBACK = "execution.revisable_joint_playback"
@@ -1100,6 +1101,16 @@ class PlaybackDependency:
     Failure never starts the dependent motion. Accepted outcomes are explicit:
     arrived, settled, contact_stall, force_reached or references_dispatched.
     A reference receipt alone does not establish measured arrival.
+
+    With ``execution.transit_playback``, accepting ``references_dispatched``
+    also permits a completed finite predecessor to skip intermediate settling
+    when that predecessor is this buffer's sole dependency and both address the
+    same named arm. Both buffers must
+    end at rest and exclude gripper policies. The successor must remain admitted,
+    uncancelled and within its start deadline. A required measured goal must be
+    in tolerance; a report allowing stationary misses may cross without it.
+    The parent retains the successor's SDK ID in ``transit_successor``. This
+    grants no replay, bypass of tracking or waiver of the child's fresh-start check.
     """
 
     handle: PlaybackHandlePort

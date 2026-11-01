@@ -21,6 +21,12 @@ Parsing a saved launcher never executes it or opens hardware.
 
 ## Hollow frontend
 
+Binding API 40 exposes `execution.transit_playback`: an admitted same-arm
+successor accepting `references_dispatched` may waive intermediate settling.
+Require the native terminal result and retain its `transit_successor` ID. Cancelled,
+expired, gripper or other-arm successors grant no waiver; required goal tolerance
+and the child's fresh-start check still apply. Reference crossing is not arrival.
+
 Binding API 39 permits revisable local settling without a separate measured goal:
 require `execution.revisable_settled_playback`, set `allow_settled=True`, and
 submit checked finite curves. Completion uses the accepted curve endpoint and

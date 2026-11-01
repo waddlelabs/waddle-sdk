@@ -182,6 +182,25 @@ impl FiniteReferences {
         self.policy.part_hold
     }
 
+    fn can_transit(&self) -> bool {
+        self.parts.as_ref().is_some_and(|parts| parts.len() == 1)
+            && self.policy.gripper.is_none()
+            && self.policy.timeout_ns.is_some()
+            && self
+                .policy
+                .paced_curve
+                .as_ref()
+                .is_none_or(|curve| curve.validate_stream_tail().is_ok())
+            && self
+                .chunk
+                .steps
+                .last()
+                .expect("validated references")
+                .velocity_feedforward
+                .as_ref()
+                .is_none_or(|velocity| self.policy.indices.iter().all(|i| velocity[*i] == 0.0))
+    }
+
     pub(crate) fn len(&self) -> usize {
         self.chunk.steps.len()
     }
@@ -479,6 +498,7 @@ pub struct Playback {
     arrived_samples: usize,
     completion: Option<Completion>,
     finish_requested: bool,
+    transit_permitted: bool,
     failure: Option<PlaybackError>,
     curve: Option<CurveCursor>,
     proposed: Option<Step>,
@@ -595,6 +615,7 @@ impl Playback {
             arrived_samples: 0,
             completion: None,
             finish_requested: false,
+            transit_permitted: false,
             failure: None,
             curve,
             proposed: None,
@@ -902,6 +923,18 @@ impl Playback {
             Ok(outcome) => outcome,
             Err(error) => return self.fail(error),
         };
+        if self.transit_permitted
+            && !self.references.policy.reference_only
+            && self.references.can_transit()
+            && self.references_finished()
+            && fresh
+            && after_ack
+            && (nominal_goal
+                || (self.references.policy.goal.is_none() && self.references.policy.allow_settled))
+        {
+            self.completion = Some(Completion::ReferencesDispatched);
+            return Ok(PlaybackPoll::Complete(Completion::ReferencesDispatched));
+        }
         if self.references.policy.reference_only {
             if finished
                 && after_ack

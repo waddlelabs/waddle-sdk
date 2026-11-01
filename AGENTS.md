@@ -1,3 +1,13 @@
+API 40 provides same-arm transit handoffs on the existing worker. An admitted
+successor that explicitly accepts reference crossing may waive intermediate
+settling; it cannot waive reference completion, tracking, required goal tolerance
+or its own fresh-start check. Cancelled/expired successors and gripper/other-arm
+boundaries grant no waiver. Retain the native successor ID and outcome; no second
+queue or executor is added. Validation passes 560 core, 24 gRPC, 14 LiveKit and 1,258 default Python
+tests (413 optional skips), required native/shim lint, strict docs and exact
+wheel/source checks. Metal integration and CI/beta promotion remain under
+validation. No deployment or hardware operation.
+
 API 39 extends existing revisable curves to local settled completion without an
 explicit goal. Require its separate support fact and `allow_settled=True`, score
 the accepted endpoint, and wait for full reference acknowledgement. Zero velocity

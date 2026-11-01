@@ -11,6 +11,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Permit explicit transit handoffs to admitted successors on the existing worker
+  (binding API 40). Preserve required goal tolerance, completed references,
+  cancellation/expiry gates, fresh-start checks and the distinction from arrival.
+
 - Allow revised finite curves to complete with SDK-local settling even without
   an explicit goal (binding API 39). Score the accepted endpoint and preserve
   stationary misses, original deadlines and cancellation on the existing worker.
