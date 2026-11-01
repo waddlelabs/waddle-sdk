@@ -1,3 +1,5 @@
+API 41 passes all 24 native finite cases and 40 installed public cases. One new wire assertion incorrectly compared text to encoded bytes; it now uses a bytes literal. Runtime and built wheel bytes are unchanged; capability follow-up and full CI remain pending.
+
 The first API 41 native compile exposed a test assertion comparing SmallVec with Vec; compare its actual slice. No runtime change. Matching-wheel and full validation pending.
 
 SDK API 41 adds a distinct expected measured-start vector on the existing worker. The original three native-public baselines fail on the old DTO; new tests retain both-direction stale refusal, complete finite layout and owner target limits. The start vector is never dispatched; default relay shape is unchanged. Focused, matching-wheel and full CI validation remain pending. No package publication or deployment.

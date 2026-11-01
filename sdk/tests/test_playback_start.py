@@ -63,7 +63,7 @@ def test_expected_start_preserves_wire_shape_and_requires_its_own_capability(
 
     session, run = opened
     request = motion()
-    assert "expected_start" not in encode(request)
+    assert b"expected_start" not in encode(request)
     request = replace(request, policy=replace(request.policy, expected_start=(0, 0)))
     assert decode(encode(request)).policy.expected_start == (0, 0)
     support = session.support()
