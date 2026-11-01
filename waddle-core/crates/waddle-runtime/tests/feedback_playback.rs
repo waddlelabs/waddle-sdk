@@ -378,6 +378,57 @@ fn a_single_goal_crossing_cannot_relabel_a_stationary_miss_as_arrival() {
 }
 
 #[test]
+fn explicit_goal_waits_for_in_tolerance_settling_without_extending_deadline() {
+    for position_window in [false, true] {
+        for deadline in [90, 1_000] {
+            let (chunk, mut policy) = inputs(&[0.0]);
+            policy.allow_settled = true;
+            policy.timeout_ns = Some(deadline);
+            policy.goal = Some(PlaybackGoal {
+                joint_positions: Some(vec![0.0]),
+                pose: None,
+                position_tolerance_m: 0.001,
+                orientation_tolerance_rad: None,
+            });
+            if position_window {
+                window_policy(&mut policy);
+            }
+            let mut p = start(chunk, policy.clone());
+            dispatch(&mut p, &measured(0, 0.0));
+            for (at, q) in [(1, 0.0011), (26, 0.0011), (51, 0.0009), (76, 0.0009)] {
+                assert_eq!(p.poll(at, &measured(at, q)).unwrap(), PlaybackPoll::Observe);
+            }
+            if deadline == 90 {
+                assert_eq!(
+                    p.poll(90, &measured(90, 0.0009)),
+                    Err(PlaybackError::Deadline)
+                );
+            } else {
+                assert_eq!(
+                    p.poll(101, &measured(101, 0.0009)).unwrap(),
+                    PlaybackPoll::Complete(Completion::Arrived)
+                );
+            }
+
+            // A stationary miss still completes so Metal can plan a correction.
+            let (chunk, _) = inputs(&[0.0]);
+            let mut miss = start(chunk, policy);
+            dispatch(&mut miss, &measured(0, 0.0));
+            for at in [1, 26] {
+                assert_eq!(
+                    miss.poll(at, &measured(at, 0.0011)).unwrap(),
+                    PlaybackPoll::Observe
+                );
+            }
+            assert_eq!(
+                miss.poll(51, &measured(51, 0.0011)).unwrap(),
+                PlaybackPoll::Complete(Completion::Settled)
+            );
+        }
+    }
+}
+
+#[test]
 fn repeated_feedback_and_declared_gaps_restart_the_full_encoder_window() {
     for repeat in [false, true] {
         let (chunk, mut policy) = inputs(&[0.0]);

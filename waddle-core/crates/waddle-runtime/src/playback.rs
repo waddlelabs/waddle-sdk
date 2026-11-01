@@ -930,11 +930,14 @@ impl Playback {
         {
             return Ok(PlaybackPoll::Observe);
         }
-        let outcome = if self
+        let arrived_stable = self
             .arrived_since
             .is_some_and(|since| measured.observed_ns - since >= self.references.policy.settle_ns)
-            && self.arrived_samples >= self.references.policy.minimum_settle_samples
-        {
+            && self.arrived_samples >= self.references.policy.minimum_settle_samples;
+        if self.references.policy.goal.is_some() && arrived && !arrived_stable {
+            return Ok(PlaybackPoll::Observe);
+        }
+        let outcome = if arrived_stable {
             Completion::Arrived
         } else {
             Completion::Settled

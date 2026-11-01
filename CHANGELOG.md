@@ -14,6 +14,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 - Add SDK-local completion against an original joint or declared TCP goal,
   with local tolerance, settling and endpoint-timeout evaluation (binding API 31).
   Terminal outcomes require no caller polling or explicit finish request.
+  Entering goal tolerance starts the full local settling interval; earlier
+  stationary samples outside tolerance cannot end that attempt as a miss.
 
 - Add opt-in deferred reference completion (binding API 30): retain the local
   sampler and owner reservation after a fixed curve ends, without repeating

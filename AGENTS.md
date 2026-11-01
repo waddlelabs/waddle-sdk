@@ -14,6 +14,9 @@ delayed status reads without a remote finish request. Pose completion requires
 local FK and the exact declared base frame; callers resolve other tool frames
 before admission. No planner or additional worker is introduced. Source and
 Metal integration are under validation; this is not deployed acceptance.
+An explicit goal newly entering tolerance must finish its full local settling
+interval within the original deadline. Earlier stationary samples outside that
+goal cannot terminate this attempt as a miss.
 
 Binding API 30 adds optional deferred reference completion for finite, fixed
 paced curves. The existing worker retains ownership and samples after endpoint
