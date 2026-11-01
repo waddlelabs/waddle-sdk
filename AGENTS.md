@@ -1,3 +1,5 @@
+Authored reference scenes allocate a bounded 256 MiB MuJoCo constraint arena when the source has no explicit size declaration. Complete compound contacts remain active; materials, force limits and dynamics are unchanged. Generated scene bytes/digests change only for fresh compilations.
+
 Reference simulation capability reads retain immutable gripper force limits per
 
 ## October 30 peer-collision follow-up

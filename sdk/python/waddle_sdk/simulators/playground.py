@@ -219,6 +219,13 @@ def compile_scene(config, scene, output: Path, *, revision=1, easy_grasp=True):
     config.pop("pose_profile", None)
     config["environment"] = FIXTURES[fixture] if fixture else "two_cubes"
     root = ET.fromstring(mjcf(profile(config["robot"]), config))
+    # Compound props and two articulated hands can exceed MuJoCo's inferred
+    # constraint arena during ordinary contact. Allocate bounded scratch up
+    # front instead of dropping constraints under load. Explicit reference
+    # size declarations remain authoritative; dynamics/contact settings do not
+    # change and the new bytes enter the ordinary immutable scene identity.
+    if root.find("size") is None:
+        ET.SubElement(root, "size", memory="256M")
     world = root.find("worldbody")
     single = len(config["parts"]) == 1
     bases = {"base"} if single else {f"{p}__base" for p in config["parts"]}

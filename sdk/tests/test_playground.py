@@ -264,3 +264,48 @@ def test_scene_replacement_keeps_ports_and_native_processes_and_fences_old_image
             )
         with pytest.raises(SimulationAdministrationError, match="failed; reopen"):
             admin.snapshot()
+
+
+def test_dense_compound_bowl_contacts_keep_native_constraints(tmp_path):
+    """Contact-rich authoring must retain constraints rather than shed them."""
+    mj = pytest.importorskip("mujoco")
+    from waddle_sdk.simulators.mujoco import Engine
+
+    _, config = make_site(
+        "contact-scratch",
+        backend="mujoco",
+        robot="yam",
+        arms=2,
+        environment="two_cubes",
+        width=32,
+        height=32,
+    )
+    authored = {
+        "id": "contact_scratch",
+        "name": "Contact scratch",
+        "objects": [
+            {
+                "id": f"bowl_{i}",
+                "kind": "bowl",
+                "position": [0.3, 0, 0.031 + 0.001 * i],
+                "rotation": [0, 0, 0],
+                "size": [0.14, 0.14, 0.06],
+                "color": [0.2, 0.4, 0.8],
+            }
+            for i in range(3)
+        ],
+    }
+    output = tmp_path / "contact-world"
+    compile_scene(config, authored, output)
+    _, compiled = load_scene(output, "simulation.json")
+    engine = Engine(compiled, output)
+    try:
+        peak = 0
+        for _ in range(30):
+            engine.step()
+            peak = max(peak, engine.data.ncon)
+            assert np.isfinite(engine.data.qpos).all()
+            assert engine.data.warning[mj.mjtWarning.mjWARN_CNSTRFULL].number == 0
+        assert peak > 100, peak
+    finally:
+        engine.close()
