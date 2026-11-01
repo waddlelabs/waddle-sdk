@@ -631,7 +631,6 @@ pub(crate) struct ExecutionTask {
     io: Arc<dyn PlaybackIo>,
     control: Arc<Control>,
     next_poll_ns: i64,
-    prepared_feedback: Option<Feedback>,
     sample_period_ns: i64,
     dispatch_period_ns: i64,
     failure: Option<ExecutionResult>,
@@ -681,7 +680,6 @@ impl ExecutionTask {
             io,
             control: handle.control.clone(),
             next_poll_ns: 0,
-            prepared_feedback: None,
             sample_period_ns,
             dispatch_period_ns,
             failure: None,
@@ -867,12 +865,7 @@ impl ExecutionTask {
         if poll_ns < self.next_poll_ns {
             return None;
         }
-        // A read acquired during cadence waiting is used once at the due tick.
-        // If the worker itself was delayed, reacquire instead of using old data.
-        let prepared = self.prepared_feedback.take().filter(|feedback| {
-            poll_ns.saturating_sub(feedback.observed_ns) <= self.sample_period_ns
-        });
-        let measured = match prepared.map_or_else(|| self.io.observe(), Ok) {
+        let measured = match self.io.observe() {
             Ok(measured) => measured,
             Err(error) => return Some(Err(ExecutionFailure::Observation(error))),
         };
@@ -886,6 +879,7 @@ impl ExecutionTask {
             return Some(result);
         }
         let now = clock.stamp_now().mono_ns().0;
+        let read_cost_ns = now.saturating_sub(poll_ns);
         let player = self.player.get_or_insert_with(|| {
             Playback::new(
                 self.references.take().expect("one admitted buffer"),
@@ -1004,13 +998,22 @@ impl ExecutionTask {
                         state.snapshot.last_acknowledged_ns = Some(completed);
                         // The next poll establishes its exact due time; it never
                         // skips an entry or catches up by dispatching a batch.
-                        self.next_poll_ns = if player.references.policy.paced_curve.is_some()
-                            || player.references.policy.gripper.is_some()
-                        {
-                            now
-                        } else {
-                            now.max(started.saturating_add(self.dispatch_period_ns))
-                        };
+                        self.next_poll_ns =
+                            if let Some(curve) = &player.references.policy.paced_curve {
+                                completed.max(
+                                    started
+                                        .saturating_add(curve.period_ns)
+                                        .saturating_sub(read_cost_ns),
+                                )
+                            } else if let Some(gripper) = &player.references.policy.gripper {
+                                completed.max(
+                                    completed
+                                        .saturating_add(gripper.period_ns)
+                                        .saturating_sub(read_cost_ns),
+                                )
+                            } else {
+                                now.max(started.saturating_add(self.dispatch_period_ns))
+                            };
                     }
                     Ok(ReferenceReceipt::Superseded(gate)) => {
                         return Some(Err(ExecutionFailure::Superseded(gate)));
@@ -1019,8 +1022,10 @@ impl ExecutionTask {
                 }
             }
             PlaybackPoll::WaitUntil(at) => {
-                self.prepared_feedback = Some(measured);
-                self.next_poll_ns = at;
+                // Start the next fresh read early enough to fit its measured
+                // cost inside the interval. Playback still enforces the due
+                // time; neither faster reads nor late callbacks permit bursts.
+                self.next_poll_ns = at.saturating_sub(read_cost_ns);
             }
             PlaybackPoll::Observe => self.next_poll_ns = now.saturating_add(self.sample_period_ns),
             PlaybackPoll::Complete(result) => return Some(Ok(result)),
