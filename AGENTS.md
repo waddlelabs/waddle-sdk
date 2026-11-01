@@ -1,3 +1,5 @@
+SDK PR 66 first CI/docs preview pass documentation; Rust lint flags one indexed loop in the new lag test. The fixture now uses zipped iterators with identical assertions and arithmetic. All 184 native cases passed before this test-only style change; runtime and installed cadence-wheel bytes are unchanged. Exact-head full CI remains required.
+
 Native fresh-read scheduling at aaba593 passes all 184 selected cases: 78 worker, 25 feedback, 24 finite, 13 gripper and 44 paced-curve checks. This includes variable read costs, slow-jog watchdog freshness, gripper queue outcomes, cancellation and cleanup. The original deadlines remain unchanged. Full CI, matching installed wheels and application integration remain pending; no service or owner changes.
 
 Fresh-read scheduling passes all 77 pre-existing worker cases and both fixed read costs. The variable 1/15/2 ms sequence still exhausts the original budget; the next candidate retains the observed maximum read cost within this execution so a faster read cannot defer the next expensive one. All observations remain fresh; no deadline extension or cached feedback. Validation pending.

@@ -132,10 +132,10 @@ fn lag_keeps_headroom_and_zero_velocity_at_the_checked_corner() {
             match p.poll(now, &feedback(now, q)).unwrap() {
                 PlaybackPoll::Dispatch(index) => {
                     let step = p.reference(index).unwrap().clone();
-                    for j in 0..2 {
-                        let delta = step.values[j] - q[j];
+                    for (measured, target) in q.iter_mut().zip(&step.values) {
+                        let delta = target - *measured;
                         assert!(delta.abs() <= 0.036 + 1e-10);
-                        q[j] += delta * 0.04;
+                        *measured += delta * 0.04;
                     }
                     assert_eq!(step.values[2], 0.5);
                     writes.push(step);
@@ -148,8 +148,8 @@ fn lag_keeps_headroom_and_zero_velocity_at_the_checked_corner() {
                     // The physical position loop continues toward the held
                     // endpoint after playback finishes sending references.
                     let target = &writes.last().unwrap().values;
-                    for j in 0..2 {
-                        q[j] += (target[j] - q[j]) * 0.04;
+                    for (measured, target) in q.iter_mut().zip(target) {
+                        *measured += (target - *measured) * 0.04;
                     }
                     now += PERIOD;
                 }
