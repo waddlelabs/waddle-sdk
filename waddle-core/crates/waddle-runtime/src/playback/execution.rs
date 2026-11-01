@@ -1,6 +1,5 @@
 //! Finite local execution on the existing serialized control thread.
 
-use std::collections::HashMap;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::time::Duration;
@@ -134,6 +133,8 @@ pub struct ExecutionSnapshot {
     pub episode_id: EpisodeId,
     pub dispatched: usize,
     pub references: usize,
+    /// Dependencies still awaiting an accepted outcome; empty after activation.
+    pub waiting_for: Vec<String>,
     pub feedback: Option<Feedback>,
     /// Last acknowledged reference before acquiring `feedback`. Later dispatches
     /// may advance `last_reference` without changing this causal pair.
@@ -163,6 +164,7 @@ struct State {
     curve_update: Option<CurveRequest>,
     deferred_completion: bool,
     finish_requested: bool,
+    predecessors: Vec<Arc<Control>>,
 }
 
 #[derive(Debug)]
@@ -176,6 +178,7 @@ enum CurveRequest {
 
 #[derive(Debug)]
 struct Control {
+    registry: Arc<()>,
     state: Mutex<State>,
     changed: Condvar,
 }
@@ -198,6 +201,7 @@ impl Control {
                 return false;
             }
             state.snapshot.result = Some(result);
+            state.predecessors.clear();
             state.curve_update = None;
             if let Some(receipt) = state
                 .snapshot
@@ -229,6 +233,21 @@ impl Control {
 #[derive(Clone, Debug)]
 pub struct ExecutionHandle {
     control: Arc<Control>,
+}
+
+/// A retained execution in this same SDK run and its explicitly accepted outcomes.
+#[derive(Clone, Debug)]
+pub struct PlaybackDependency {
+    pub handle: ExecutionHandle,
+    pub outcomes: Vec<Completion>,
+}
+
+/// Queued admission on the existing worker. Motion timing begins at activation;
+/// an optional session-clock deadline bounds how long the plan may wait to start.
+#[derive(Clone, Debug, Default)]
+pub struct PlaybackQueue {
+    pub after: Vec<PlaybackDependency>,
+    pub start_before_ns: Option<i64>,
 }
 
 impl ExecutionHandle {
@@ -363,9 +382,12 @@ impl ExecutionHandle {
     }
 }
 
+type Reservation = (Option<Vec<String>>, Arc<Control>);
+
 #[derive(Debug, Default)]
 pub(crate) struct ExecutionSlot {
-    current: Mutex<HashMap<Option<Vec<String>>, Arc<Control>>>,
+    current: Mutex<Vec<Reservation>>,
+    registry: Arc<()>,
 }
 
 impl ExecutionSlot {
@@ -374,24 +396,62 @@ impl ExecutionSlot {
         episode_id: EpisodeId,
         scope: Option<Vec<String>>,
         references: usize,
+        queue: &PlaybackQueue,
         unavailable: impl FnOnce() -> bool,
     ) -> Result<ExecutionHandle, PlaybackError> {
         let mut current = self.current.lock();
-        current.retain(|_, c| c.state.lock().snapshot.result.is_none());
+        current.retain(|(_, c)| c.state.lock().snapshot.result.is_none());
+        if queue.after.len() > 16 || queue.start_before_ns.is_some_and(|at| at <= 0) {
+            return Err(PlaybackError::Invalid("invalid playback dependency bounds"));
+        }
+        let mut ancestors = Vec::new();
+        for dependency in &queue.after {
+            let parent = &dependency.handle.control;
+            if !Arc::ptr_eq(&parent.registry, &self.registry)
+                || parent.state.lock().snapshot.episode_id != episode_id
+                || dependency.outcomes.is_empty()
+            {
+                return Err(PlaybackError::Invalid(
+                    "dependencies require this SDK run and explicit successful outcomes",
+                ));
+            }
+            ancestors.push(parent.clone());
+        }
+        let mut i = 0;
+        while i < ancestors.len() {
+            let parents = ancestors[i].state.lock().predecessors.clone();
+            for parent in parents {
+                if !ancestors.iter().any(|known| Arc::ptr_eq(known, &parent)) {
+                    ancestors.push(parent);
+                }
+            }
+            i += 1;
+        }
         if unavailable()
-            || current
-                .keys()
-                .any(|part| overlaps(part.as_deref(), scope.as_deref()))
+            || current.iter().any(|(part, control)| {
+                overlaps(part.as_deref(), scope.as_deref())
+                    && !ancestors
+                        .iter()
+                        .any(|ancestor| Arc::ptr_eq(ancestor, control))
+            })
+            || (!queue.after.is_empty()
+                && current
+                    .iter()
+                    .filter(|(_, c)| !c.state.lock().predecessors.is_empty())
+                    .count()
+                    >= 16)
         {
             return Err(PlaybackError::Busy);
         }
         let control = Arc::new(Control {
+            registry: self.registry.clone(),
             state: Mutex::new(State {
                 snapshot: ExecutionSnapshot {
                     id: uuid::Uuid::new_v4().to_string(),
                     episode_id,
                     dispatched: 0,
                     references,
+                    waiting_for: queue.after.iter().map(|d| d.handle.snapshot().id).collect(),
                     feedback: None,
                     feedback_reference: None,
                     curve_progress: None,
@@ -411,10 +471,15 @@ impl ExecutionSlot {
                 curve_update: None,
                 deferred_completion: false,
                 finish_requested: false,
+                predecessors: queue
+                    .after
+                    .iter()
+                    .map(|d| d.handle.control.clone())
+                    .collect(),
             }),
             changed: Condvar::new(),
         });
-        current.insert(scope, control.clone());
+        current.push((scope, control.clone()));
         Ok(ExecutionHandle { control })
     }
 
@@ -423,7 +488,7 @@ impl ExecutionSlot {
         // Make the pending-control fence visible before marking cancellations.
         // Completed callbacks acquire this same registry lock for their receipts.
         request();
-        for control in current.values() {
+        for (_, control) in current.iter() {
             control.mark_cancelled(reason, true);
         }
     }
@@ -433,7 +498,7 @@ impl ExecutionSlot {
             outcome.verb,
             waddle_types::Verb::Hold | waddle_types::Verb::Estop
         ) {
-            for control in self.current.lock().values() {
+            for (_, control) in self.current.lock().iter() {
                 let mut state = control.state.lock();
                 if state.snapshot.result.is_none() {
                     state.snapshot.cleanup = Some(outcome.into());
@@ -445,8 +510,8 @@ impl ExecutionSlot {
     pub(crate) fn any_active(&self) -> bool {
         self.current
             .lock()
-            .values()
-            .any(|c| c.state.lock().snapshot.result.is_none())
+            .iter()
+            .any(|(_, c)| c.state.lock().snapshot.result.is_none())
     }
 
     pub(crate) fn active(&self, episode: &EpisodeId, scope: Option<&str>) -> bool {
@@ -462,8 +527,8 @@ impl ExecutionSlot {
     pub(crate) fn cancel_episode(&self, episode: &EpisodeId) -> Vec<ExecutionHandle> {
         self.current
             .lock()
-            .values()
-            .filter_map(|control| {
+            .iter()
+            .filter_map(|(_, control)| {
                 if &control.state.lock().snapshot.episode_id != episode {
                     return None;
                 }
@@ -498,13 +563,15 @@ pub(crate) struct ExecutionTask {
     failure: Option<ExecutionResult>,
     pending_update_id: Option<u64>,
     hold_part: Option<String>,
+    queue: PlaybackQueue,
+    waiting_to_start: bool,
 }
 
 impl ExecutionTask {
     pub(crate) fn new(
         mirror: Arc<Mirror>,
         episode: EpisodeId,
-        references: FiniteReferences,
+        mut references: FiniteReferences,
         io: Arc<dyn PlaybackIo>,
         handle: &ExecutionHandle,
         sample_period_ns: i64,
@@ -515,6 +582,7 @@ impl ExecutionTask {
             state.snapshot.watchdog = references.policy.watchdog;
             state.deferred_completion = references.policy.defer_reference_completion;
         }
+        let queue = std::mem::take(&mut references.queue);
         Self {
             mirror,
             episode,
@@ -531,7 +599,13 @@ impl ExecutionTask {
             dispatch_period_ns,
             failure: None,
             pending_update_id: None,
+            waiting_to_start: !queue.after.is_empty() || queue.start_before_ns.is_some(),
+            queue,
         }
+    }
+
+    pub(crate) fn waiting_to_start(&self) -> bool {
+        self.waiting_to_start
     }
 
     pub(crate) fn wait_duration(&self, now_ns: i64) -> Duration {
@@ -672,6 +746,35 @@ impl ExecutionTask {
         }
         if let Some(result) = self.check_watchdog(clock) {
             return Some(result);
+        }
+        if self.waiting_to_start {
+            let now = clock.stamp_now().mono_ns().0;
+            if self.queue.start_before_ns.is_some_and(|at| now >= at) {
+                return Some(Err(ExecutionFailure::Playback(PlaybackError::StartExpired)));
+            }
+            let mut waiting = false;
+            for dependency in &self.queue.after {
+                let snapshot = dependency.handle.snapshot();
+                let Some(result) = snapshot.result else {
+                    waiting = true;
+                    continue;
+                };
+                if !matches!(&result, Ok(outcome) if dependency.outcomes.contains(outcome)) {
+                    return Some(Err(ExecutionFailure::Playback(
+                        PlaybackError::DependencyFailed(format!("{}: {result:?}", snapshot.id)),
+                    )));
+                }
+            }
+            if waiting {
+                self.next_poll_ns = now.saturating_add(5_000_000);
+                return None;
+            }
+            self.waiting_to_start = false;
+            self.next_poll_ns = now;
+            self.queue.after.clear();
+            let mut state = self.control.state.lock();
+            state.snapshot.waiting_for.clear();
+            state.predecessors.clear();
         }
         if clock.stamp_now().mono_ns().0 < self.next_poll_ns {
             return None;
@@ -822,21 +925,39 @@ mod tests {
         let episode = EpisodeId::new("group");
         let selected = Some(vec!["left".into(), "right".into()]);
         let group = slot
-            .register(episode.clone(), selected.clone(), 2, || false)
+            .register(
+                episode.clone(),
+                selected.clone(),
+                2,
+                &Default::default(),
+                || false,
+            )
             .unwrap();
         for part in ["left", "right"] {
             assert!(slot.active(&episode, Some(part)));
             assert!(matches!(
-                slot.register(episode.clone(), Some(vec![part.into()]), 2, || false),
+                slot.register(
+                    episode.clone(),
+                    Some(vec![part.into()]),
+                    2,
+                    &Default::default(),
+                    || false
+                ),
                 Err(PlaybackError::Busy)
             ));
         }
         assert!(!slot.active(&episode, Some("unused")));
         let third = slot
-            .register(episode.clone(), Some(vec!["unused".into()]), 2, || false)
+            .register(
+                episode.clone(),
+                Some(vec!["unused".into()]),
+                2,
+                &Default::default(),
+                || false,
+            )
             .unwrap();
         assert!(matches!(
-            slot.register(episode.clone(), None, 2, || false),
+            slot.register(episode.clone(), None, 2, &Default::default(), || false),
             Err(PlaybackError::Busy)
         ));
         assert!(matches!(
@@ -844,13 +965,20 @@ mod tests {
                 episode.clone(),
                 Some(vec!["right".into(), "unused".into()]),
                 2,
+                &Default::default(),
                 || false
             ),
             Err(PlaybackError::Busy)
         ));
         group.cancel("selected group stopped");
         assert!(matches!(
-            slot.register(episode.clone(), selected.clone(), 2, || false),
+            slot.register(
+                episode.clone(),
+                selected.clone(),
+                2,
+                &Default::default(),
+                || false
+            ),
             Err(PlaybackError::Busy)
         ));
         assert!(
@@ -862,14 +990,23 @@ mod tests {
         );
         assert!(!slot.active(&episode, Some("left")));
         assert!(third.snapshot().result.is_none());
-        assert!(slot.register(episode, selected, 2, || false).is_ok());
+        assert!(
+            slot.register(episode, selected, 2, &Default::default(), || false)
+                .is_ok()
+        );
     }
 
     #[test]
     fn cancellation_winning_completion_waits_for_worker_cleanup() {
         let slot = ExecutionSlot::default();
         let handle = slot
-            .register(EpisodeId::new("episode"), None, 1, || false)
+            .register(
+                EpisodeId::new("episode"),
+                None,
+                1,
+                &Default::default(),
+                || false,
+            )
             .unwrap();
         handle.cancel("stop before completion");
         assert!(!handle.control.finish(Ok(Completion::Arrived)));

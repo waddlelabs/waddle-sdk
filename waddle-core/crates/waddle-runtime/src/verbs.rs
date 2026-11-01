@@ -315,6 +315,7 @@ impl VerbDispatch {
             episode.clone(),
             references.scope().map(<[String]>::to_vec),
             references.len(),
+            &references.queue,
             || {
                 self.shutdown.load(Ordering::SeqCst)
                     || self.pending_verbs.load(Ordering::SeqCst) != 0
@@ -479,6 +480,7 @@ fn dispatch_loop<C: Clock>(
                     .as_ref()
                     .is_err_and(|e| !matches!(e, ExecutionFailure::Superseded(_)))
                     && !task.scope_ended()
+                    && !task.waiting_to_start()
                 {
                     if task.hold_part(clock) {
                         // A site-wide request may arrive during the owner callback.

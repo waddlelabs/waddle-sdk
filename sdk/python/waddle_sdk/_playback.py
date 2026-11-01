@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from ._native import core
@@ -14,6 +15,7 @@ from .runtime import (
     FiniteJointMotion,
     JointPositionCommand,
     PlaybackCurveUpdate,
+    PlaybackDependency,
     PlaybackGoal,
     Pose,
     RuntimeFault,
@@ -102,7 +104,11 @@ class PlaybackHandle:
 
 
 def start(
-    run: Run, motion: FiniteJointMotion | CoordinatedJointMotion
+    run: Run,
+    motion: FiniteJointMotion | CoordinatedJointMotion,
+    *,
+    after: Sequence[PlaybackDependency] = (),
+    start_before_ns: int | None = None,
 ) -> PlaybackHandle:
     """Called under the ordinary dispatch lock; admission does not wait for I/O."""
     session = run._session
@@ -138,6 +144,20 @@ def start(
             FaultCode.UNSUPPORTED, "part does not support finite playback"
         )
     facts = set.intersection(*(set(row.facts) for row in rows))
+    if (
+        after or start_before_ns is not None
+    ) and SupportFact.DEPENDENT_PLAYBACK not in facts:
+        raise RuntimeFault(
+            FaultCode.UNSUPPORTED, "part does not support dependent playback"
+        )
+    if any(
+        not isinstance(dependency, PlaybackDependency)
+        or not isinstance(dependency.handle, PlaybackHandle)
+        for dependency in after
+    ):
+        raise RuntimeFault(
+            FaultCode.INVALID_REQUEST, "dependencies require local playback handles"
+        )
     goal = motion.policy.goal
     if (goal is not None or motion.policy.settle_timeout_ns is not None) and (
         SupportFact.GOAL_PLAYBACK not in facts
@@ -171,8 +191,10 @@ def start(
         raise RuntimeFault(
             FaultCode.UNSUPPORTED, "parts do not support coordinated subsets"
         )
-    if run._episode.playback_active and (
-        group and not subset or SupportFact.PARALLEL_JOINT_PLAYBACK not in facts
+    if (
+        not after
+        and run._episode.playback_active
+        and (group and not subset or SupportFact.PARALLEL_JOINT_PLAYBACK not in facts)
     ):
         raise RuntimeFault(FaultCode.BUSY, "finite playback is still active")
     if (
@@ -431,11 +453,15 @@ def start(
             observe,
             dispatch,
             hold_part if motion.policy.part_hold else None,
+            after=[
+                (dependency.handle._native, dependency.outcomes) for dependency in after
+            ],
+            start_before_ns=start_before_ns,
             **({"parts": parts} if subset else {}),
         )
     except core.PlaybackBusyError as error:
         raise RuntimeFault(FaultCode.BUSY, str(error)) from error
-    except (TypeError, ValueError) as error:
+    except (TypeError, ValueError, OverflowError) as error:
         raise RuntimeFault.from_exception(
             error, code=FaultCode.INVALID_REQUEST
         ) from error

@@ -13,7 +13,7 @@ from pathlib import Path, PurePosixPath
 from uuid import uuid4
 
 from waddle_sdk import LiveKit
-from waddle_sdk.runtime import FaultCode, RuntimeFault
+from waddle_sdk.runtime import FaultCode, PlaybackDependency, RuntimeFault
 from waddle_sdk.workspace.files import Workspace, WorkspaceError
 
 from .errors import RelayError, error_payload
@@ -238,6 +238,17 @@ class Device:
                         FaultCode.UNSUPPORTED,
                         "SDK run does not support finite playback",
                     )
+                dependencies = []
+                for dependency in arguments.get("after", ()):
+                    handle = self._playbacks.get((self.run.id, dependency["id"]))
+                    if handle is None:
+                        raise RelayError(
+                            "sdk_playback_expired",
+                            "Dependency does not belong to this retained run",
+                        )
+                    dependencies.append(
+                        PlaybackDependency(handle, dependency["outcomes"])
+                    )
                 # Bound retained handles, never evict running/unconfirmed work.
                 for key, handle in list(self._playbacks.items()):
                     if len(self._playbacks) < 128:
@@ -248,7 +259,13 @@ class Device:
                     raise RelayError(
                         "sdk_playback_busy", "Playback handles are occupied"
                     )
-                handle = start(arguments["motion"])
+                queue = {}
+                if dependencies or arguments.get("start_before_ns") is not None:
+                    queue = {
+                        "after": dependencies,
+                        "start_before_ns": arguments.get("start_before_ns"),
+                    }
+                handle = start(arguments["motion"], **queue)
                 snapshot = handle.snapshot()
                 self._playbacks[(snapshot["episode_id"], snapshot["id"])] = handle
                 return snapshot

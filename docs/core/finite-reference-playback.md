@@ -1,5 +1,52 @@
 # Finite reference playback
 
+## SDK-owned queue handoff
+
+Binding API 32 adds `execution.dependent_playback`. A caller can submit a checked
+motion before its predecessor completes. The existing local worker waits for
+the explicitly accepted result, checks the new motion's measured start, then
+executes and completes it without another cloud request:
+
+```python
+from waddle_sdk.runtime import PlaybackDependency
+
+first = run.start_playback(first_motion)
+second = run.start_playback(
+    second_motion,
+    after=[PlaybackDependency(first, ("arrived",))],
+    start_before_ns=latest_start_in_sdk_session_clock,
+)
+result = second.wait()
+```
+
+Dependencies must belong to this SDK instance and run. Accepted outcomes are
+`arrived`, `settled`, `contact_stall`, `force_reached`, or
+`references_dispatched`; choose only outcomes that justify the next motion.
+Dispatching references alone does not establish arrival. Failed or unaccepted
+predecessors produce `dependency_failed` without issuing child commands.
+Original predecessor failure and cleanup evidence remain on that handle.
+
+`waiting_for` contains predecessor IDs until activation. Status stays `running`
+while queued; `dispatched` remains zero. The queue reserves all selected parts,
+so overlapping work must depend on the complete preceding reservation chain.
+Unrelated named parts may continue independently. There may be at most 16 waiting
+dependent motions and 16 predecessors per motion. No planner, extra worker, or
+automatic retry is added.
+
+`start_before_ns` is optional and uses acquired SDK session time, never the
+cloud clock. If it expires before activation, the result is `start_expired`.
+Motion duration and completion allowances begin with activation. An existing
+watchdog keeps its original absolute deadline even while queued. Cancelling or
+rejecting a motion before activation does not Hold its running predecessor;
+after activation, ordinary measured-start checks and cleanup apply. Site-wide
+Hold/e-stop and owner closure still drain active and queued work together.
+
+Metal remains responsible for IK, collision proofs, accepted predecessor outcomes
+and plan validity. Queue admission does not validate stale world geometry or
+authorize a motion after an unknown response; reconcile the retained handle and
+never replay an uncertain submission. Existing calls without queue arguments
+retain their behavior. Check the separate support fact before using this option.
+
 ## Input-limited reference streams
 
 Binding API 26 adds `execution.streamed_joint_playback`. Set

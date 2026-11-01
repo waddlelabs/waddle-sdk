@@ -80,6 +80,7 @@ class SupportFact(str, enum.Enum):
     REFERENCE_SETTLING = "execution.reference_settling"
     GOAL_PLAYBACK = "execution.goal_playback"
     CARTESIAN_GOAL_PLAYBACK = "execution.cartesian_goal_playback"
+    DEPENDENT_PLAYBACK = "execution.dependent_playback"
     DEFERRED_REFERENCE_COMPLETION = "execution.deferred_reference_completion"
     CHECKPOINTED_JOINT_PLAYBACK = "execution.checkpointed_joint_playback"
     REVISABLE_JOINT_PLAYBACK = "execution.revisable_joint_playback"
@@ -959,8 +960,28 @@ class FinitePlaybackRunPort(Protocol):
     """Optional finite execution, declared by a per-part support fact."""
 
     def start_playback(
-        self, motion: FiniteJointMotion | CoordinatedJointMotion
+        self,
+        motion: FiniteJointMotion | CoordinatedJointMotion,
+        *,
+        after: Sequence[PlaybackDependency] = (),
+        start_before_ns: int | None = None,
     ) -> PlaybackHandlePort: ...
+
+
+@dataclass(frozen=True)
+class PlaybackDependency:
+    """Wait locally for this run's handle to finish with an accepted outcome.
+
+    Failure never starts the dependent motion. Accepted outcomes are explicit:
+    arrived, settled, contact_stall, force_reached or references_dispatched.
+    A reference receipt alone does not establish measured arrival.
+    """
+
+    handle: PlaybackHandlePort
+    outcomes: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "outcomes", tuple(self.outcomes))
 
 
 @dataclass(frozen=True)
@@ -1135,6 +1156,7 @@ __all__ = [
     "Observation",
     "PacedJointCurve",
     "PartObservation",
+    "PlaybackDependency",
     "PlaybackFeedbackPolicy",
     "PlaybackHandlePort",
     "PlaybackPolicy",

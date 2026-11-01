@@ -11,6 +11,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Add dependent playback on the existing SDK worker (binding API 32). Reserve
+  queued parts, start only after explicitly accepted predecessor results, and
+  optionally expire a waiting plan on the SDK clock. Queued cancellation leaves
+  a running predecessor alone; site-wide Stop still drains the whole queue.
+  Public Run and device relay preserve retained identities without cloud handoff.
+
 - Add SDK-local completion against an original joint or declared TCP goal,
   with local tolerance, settling and endpoint-timeout evaluation (binding API 31).
   Terminal outcomes require no caller polling or explicit finish request.

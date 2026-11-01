@@ -1713,7 +1713,7 @@ impl Session {
         policy: crate::playback::PlaybackPolicy,
         io: Arc<dyn crate::playback::PlaybackIo>,
     ) -> Result<crate::playback::ExecutionHandle, crate::playback::PlaybackError> {
-        self.start_playback_scoped(id, chunk, policy, io, None)
+        self.start_playback_scoped(id, chunk, policy, io, None, Default::default())
     }
 
     /// Admit an ordered subset of declared joint parts as one local curve.
@@ -1727,7 +1727,21 @@ impl Session {
         policy: crate::playback::PlaybackPolicy,
         io: Arc<dyn crate::playback::PlaybackIo>,
     ) -> Result<crate::playback::ExecutionHandle, crate::playback::PlaybackError> {
-        self.start_playback_scoped(id, chunk, policy, io, Some(parts))
+        self.start_playback_scoped(id, chunk, policy, io, Some(parts), Default::default())
+    }
+
+    /// Queue already checked work behind retained outcomes from this same run.
+    /// The existing worker owns activation, fresh-start checks and completion.
+    pub fn start_queued_playback(
+        &self,
+        id: &EpisodeId,
+        chunk: &pb::ActionChunk,
+        policy: crate::playback::PlaybackPolicy,
+        io: Arc<dyn crate::playback::PlaybackIo>,
+        parts: Option<&[String]>,
+        queue: crate::playback::PlaybackQueue,
+    ) -> Result<crate::playback::ExecutionHandle, crate::playback::PlaybackError> {
+        self.start_playback_scoped(id, chunk, policy, io, parts, queue)
     }
 
     fn selected_joint_space(&self, selected: &[String]) -> Result<ActionSpace, RuntimeError> {
@@ -1768,6 +1782,7 @@ impl Session {
         policy: crate::playback::PlaybackPolicy,
         io: Arc<dyn crate::playback::PlaybackIo>,
         selected: Option<&[String]>,
+        queue: crate::playback::PlaybackQueue,
     ) -> Result<crate::playback::ExecutionHandle, crate::playback::PlaybackError> {
         use crate::playback::{FiniteReferences, PlaybackError};
         use waddle_types::{ActionChunk, PartPolicy, SpaceSpec, VelocityFeedforwardPolicy};
@@ -1861,6 +1876,7 @@ impl Session {
                 0 // Named-part timing is unchanged; paced curves enforce their own spacing.
             };
         let mut references = FiniteReferences::new(flattened.chunk, policy)?;
+        references.queue = queue;
         if let Some(parts) = selected {
             references.parts = Some(parts.to_vec());
         }
