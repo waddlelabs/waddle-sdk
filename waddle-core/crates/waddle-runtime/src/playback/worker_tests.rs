@@ -587,7 +587,7 @@ fn sustained_feedback_cost_stays_inside_the_original_curve_budget() {
         vec![1_000_000, 15_000_000, 2_000_000],
     ] {
         let h = Harness::new();
-        *h.io.observation_costs.lock() = costs.into();
+        *h.io.observation_costs.lock() = costs.clone().into();
         let (mut chunk, mut policy) = reference_inputs(None, false, None);
         chunk.horizon_ns = 2_000_000_000;
         chunk.steps.truncate(2);
@@ -615,7 +615,11 @@ fn sustained_feedback_cost_stays_inside_the_original_curve_budget() {
             )
             .unwrap();
         let result = finished(&handle);
-        assert_eq!(result.result, Some(Ok(Completion::Arrived)));
+        assert_eq!(
+            result.result,
+            Some(Ok(Completion::Arrived)),
+            "costs={costs:?}, snapshot={result:#?}"
+        );
         assert!(result.elapsed_ns.unwrap() <= 4_000_000_000);
         assert!(result.curve_progress.unwrap().endpoint_acknowledged);
         let writes = h.io.writes.lock();
