@@ -3,6 +3,7 @@
 from dataclasses import replace
 from math import cos, sin
 from threading import Event
+from time import monotonic
 
 import numpy as np
 import pytest
@@ -65,8 +66,9 @@ def correction(value):
 
 
 @pytest.mark.parametrize("cartesian", [False, True])
+@pytest.mark.parametrize("window", [False, True])
 def test_correction_keeps_original_goal_then_sdk_starts_queued_successor(
-    opened, monkeypatch, cartesian
+    opened, monkeypatch, cartesian, window
 ):
     session, run = opened
     install_fk(session, monkeypatch)
@@ -92,9 +94,21 @@ def test_correction_keeps_original_goal_then_sdk_starts_queued_successor(
     monkeypatch.setattr(driver, "write_position_velocity", biased_feedforward)
     monkeypatch.setattr(driver, "read", observed_read)
     value = goal_request(cartesian)
+    if not window:
+        value = replace(
+            value, policy=replace(value.policy, feedback=PlaybackFeedbackPolicy())
+        )
+    assert SupportFact.GOAL_PROGRESS in session.support().rows[0].facts
     first = run.start_playback(decode(encode(value)))
     # Fixed command bias keeps the goal unsatisfied until a checked correction.
     assert endpoint.wait(5), (first.snapshot(), writes, driver._target)
+    deadline = monotonic() + 5
+    while not (progress := first.snapshot())["settled_miss"]:
+        assert monotonic() < deadline, progress
+        Event().wait(0.005)
+    assert progress["status"] == "running"
+    assert progress["feedback"]["positions"] == pytest.approx((0.08, -0.05))
+    assert decode(encode(progress))["settled_miss"] is True
     child = motion((0.12, -0.05), (0.14, -0.05))
     child = replace(
         child,
@@ -116,7 +130,9 @@ def test_correction_keeps_original_goal_then_sdk_starts_queued_successor(
     assert parent["curve_update"]["status"] == "accepted"
     assert parent["feedback"]["positions"] == pytest.approx((0.1, -0.05))
     assert parent["last_reference"]["positions"] == pytest.approx((0.12, -0.05))
-    assert parent["settling"]["span_ns"] >= value.policy.settle_ns
+    assert parent["settled_miss"] is False
+    if window:
+        assert parent["settling"]["span_ns"] >= value.policy.settle_ns
     assert parent["cleanup"] is None
     assert writes[-2:] == [(0.12, -0.05), (0.14, -0.05)]
     assert first.snapshot() == parent

@@ -541,6 +541,13 @@ goal cannot discard accepted future work. Withdrawing that pending correction
 restores the incumbent's completion rules. Expired executions cannot be revived
 by a delayed update, including one queued during an observation callback.
 
+With `execution.goal_progress` (binding API 34), snapshots expose `settled_miss`:
+the latest fresh local sample completes the configured settling test outside the
+original goal. It is progress, not a terminal result or permission to move. Both
+velocity dwell and position-window checks use the original local sample count,
+drift and gap limits. Motion, stale feedback or loss of that settling evidence
+clears the signal; reading status never renews it.
+
 Set `allow_settled=False` to keep a stationary miss open for correction within
 the original deadline. The SDK continues local supervision and measured goal
 completion while the caller plans. A dependent buffer waits for this execution's

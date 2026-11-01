@@ -65,6 +65,97 @@ fn measured(at: i64, q: f64) -> Feedback {
     }
 }
 
+#[test]
+fn stationary_miss_is_local_progress_until_original_goal_settles() {
+    for window in [false, true] {
+        let (chunk, mut policy) = inputs(&[0.0]);
+        policy.minimum_settle_samples = 3;
+        policy.goal = Some(PlaybackGoal {
+            joint_positions: Some(vec![0.1]),
+            pose: None,
+            position_tolerance_m: 0.001,
+            orientation_tolerance_rad: None,
+        });
+        if window {
+            policy.feedback.as_mut().unwrap().position_window = Some(PositionWindow {
+                max_drift: vec![0.001],
+                max_gap_ns: Some(50),
+                consecutive_samples: 1,
+                during_motion: true,
+            });
+        }
+        let mut p = start(chunk, policy);
+        dispatch(&mut p, &measured(0, 0.0));
+        for at in [10, 40, 70] {
+            assert_eq!(
+                p.poll(at, &measured(at, 0.0)).unwrap(),
+                PlaybackPoll::Observe
+            );
+            assert_eq!(p.settled_miss(), at == 70);
+        }
+        assert_eq!(p.completion(), None);
+        // Duplicate feedback cannot renew the planner's local settling evidence.
+        assert_eq!(
+            p.poll(70, &measured(70, 0.0)).unwrap(),
+            PlaybackPoll::Observe
+        );
+        assert!(!p.settled_miss());
+        for at in [80, 110] {
+            assert_eq!(
+                p.poll(at, &measured(at, 0.1)).unwrap(),
+                PlaybackPoll::Observe
+            );
+            assert!(!p.settled_miss());
+        }
+        assert_eq!(
+            p.poll(140, &measured(140, 0.1)).unwrap(),
+            PlaybackPoll::Complete(Completion::Arrived)
+        );
+        assert!(!p.settled_miss());
+    }
+}
+
+#[test]
+fn miss_progress_resets_on_local_motion_and_never_renews_the_deadline() {
+    for window in [false, true] {
+        let (chunk, mut policy) = inputs(&[0.0]);
+        policy.minimum_settle_samples = 3;
+        policy.goal = Some(PlaybackGoal {
+            joint_positions: Some(vec![0.1]),
+            pose: None,
+            position_tolerance_m: 0.001,
+            orientation_tolerance_rad: None,
+        });
+        if window {
+            policy.feedback.as_mut().unwrap().position_window = Some(PositionWindow {
+                max_drift: vec![0.001],
+                max_gap_ns: Some(50),
+                consecutive_samples: 1,
+                during_motion: true,
+            });
+        }
+        let mut p = start(chunk, policy);
+        dispatch(&mut p, &measured(0, 0.0));
+        for at in [10, 40, 70] {
+            p.poll(at, &measured(at, 0.0)).unwrap();
+        }
+        assert!(p.settled_miss());
+        let mut moving = measured(80, 0.005);
+        moving.velocities[0] = 0.1;
+        p.poll(80, &moving).unwrap();
+        assert!(!p.settled_miss());
+        for at in [90, 120, 150] {
+            p.poll(at, &measured(at, 0.005)).unwrap();
+        }
+        assert!(p.settled_miss());
+        assert_eq!(
+            p.poll(1_000, &measured(1_000, 0.005)),
+            Err(PlaybackError::Deadline)
+        );
+        assert!(!p.settled_miss());
+    }
+}
+
 fn start(chunk: ActionChunk, policy: PlaybackPolicy) -> Playback {
     Playback::new(FiniteReferences::new(chunk, policy).unwrap(), 0)
 }

@@ -11,6 +11,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Expose nonterminal stationary-goal misses from the existing local settling
+  checks (`execution.goal_progress`, binding API 34). Metal can plan a checked
+  correction on the same execution without reconstructing a window from cloud
+  samples; original goal completion, deadlines and cleanup remain SDK-owned.
+
 - Keep one measured-goal execution across checked curve corrections (binding
   API 33). Reuse the existing worker and revision/withdrawal API, preserve the
   original goal, total deadline and checkpoint evidence, and let queued work
