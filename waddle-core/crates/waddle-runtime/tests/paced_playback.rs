@@ -6,6 +6,8 @@ use waddle_runtime::playback::{
 };
 use waddle_types::{ActionChunk, ProvenanceTag, SourceId, Step};
 
+#[path = "paced/io_timing.rs"]
+mod io_timing;
 #[path = "paced/resting_goal.rs"]
 mod resting_goal;
 #[path = "paced/revisable_goal.rs"]

@@ -142,6 +142,47 @@ fn jaw_spacing_uses_completed_acknowledgement_and_never_catches_up() {
 }
 
 #[test]
+fn sustained_read_cost_keeps_the_original_gripper_budget() {
+    for read_cost in [4_000_000, 200_000_000] {
+        let (chunk, mut policy) = inputs();
+        let budget = chunk.horizon_ns + 2_000_000_000;
+        policy.timeout_ns = Some(budget);
+        // A longer fixed jaw path needs multiple actual acknowledged writes.
+        policy.gripper.as_mut().unwrap().position_error = 0.04;
+        let mut p = player(chunk, policy);
+        let mut now = 0;
+        let mut q = 1.0;
+        let mut writes = Vec::new();
+        loop {
+            now += read_cost;
+            match p.poll(now, &measured(now, q, None)) {
+                Ok(PlaybackPoll::Dispatch(index)) => {
+                    assert!(now <= budget);
+                    q = p.reference(index).unwrap().values[1];
+                    writes.push(now);
+                    p.acknowledge(index, now).unwrap();
+                }
+                Ok(PlaybackPoll::WaitUntil(at)) => now = at - read_cost.min(at - now),
+                Ok(PlaybackPoll::Observe) => now += PERIOD,
+                Ok(PlaybackPoll::Complete(completion)) => {
+                    assert_eq!(read_cost, 4_000_000);
+                    assert_eq!(completion, Completion::Arrived);
+                    assert_eq!(q, 0.0);
+                    break;
+                }
+                Err(error) => {
+                    assert_eq!(read_cost, 200_000_000);
+                    assert_eq!(error, PlaybackError::Deadline);
+                    break;
+                }
+            }
+        }
+        assert!(now <= budget + read_cost + PERIOD);
+        assert!(writes.windows(2).all(|pair| pair[1] - pair[0] >= PERIOD));
+    }
+}
+
+#[test]
 fn position_arrival_needs_three_fresh_stationary_samples_after_nominal_end() {
     let (chunk, mut policy) = inputs();
     policy.gripper.as_mut().unwrap().position_error = 2.0;

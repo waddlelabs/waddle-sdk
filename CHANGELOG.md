@@ -11,6 +11,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Preserve bent-path, IO cadence, headroom and gripper budget regressions at native playback boundaries.
+
 - Add optional bounded playback call history with native session/epoch stamps,
   pending calls, original faults and explicit supersession; keep history reads
   separate from execution status and preserve the existing native worker. Actual
