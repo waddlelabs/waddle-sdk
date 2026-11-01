@@ -11,6 +11,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Include local feedback acquisition inside paced motion intervals instead of adding its cost after every cadence wait.
+
+- Preserve bent-path, IO cadence, headroom and gripper budget regressions at native playback boundaries.
+
 - Add optional bounded playback call history with native session/epoch stamps,
   pending calls, original faults and explicit supersession; keep history reads
   separate from execution status and preserve the existing native worker. Actual
@@ -30,6 +34,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   completed-stop receipts. Attempt every declared part and retain all failures.
 
 ### Added
+
+- Preserve execution deadline-during-feedback regression coverage on the native
+  worker using explicit callback barriers; no runtime or policy change.
 
 - Separate the expected measured start from the first playback command with
   optional `PlaybackPolicy.expected_start` (binding API 41). Preserve the original

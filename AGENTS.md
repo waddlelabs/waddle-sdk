@@ -1,3 +1,15 @@
+SDK PR 66 first CI/docs preview pass documentation; Rust lint flags one indexed loop in the new lag test. The fixture now uses zipped iterators with identical assertions and arithmetic. All 184 native cases passed before this test-only style change; runtime and installed cadence-wheel bytes are unchanged. Exact-head full CI remains required.
+
+Native fresh-read scheduling at aaba593 passes all 184 selected cases: 78 worker, 25 feedback, 24 finite, 13 gripper and 44 paced-curve checks. This includes variable read costs, slow-jog watchdog freshness, gripper queue outcomes, cancellation and cleanup. The original deadlines remain unchanged. Full CI, matching installed wheels and application integration remain pending; no service or owner changes.
+
+Fresh-read scheduling passes all 77 pre-existing worker cases and both fixed read costs. The variable 1/15/2 ms sequence still exhausts the original budget; the next candidate retains the observed maximum read cost within this execution so a faster read cannot defer the next expensive one. All observations remain fresh; no deadline extension or cached feedback. Validation pending.
+
+Native cadence candidate b3213d4 passes 76 worker cases but fails queued gripper arrival and slow-curve watchdog freshness: replaying a previously scored observation is incorrect. The follow-up keeps every read fresh and schedules it before the due tick using its measured cost. Existing playback still enforces spacing, while cancellation/watchdog/deadline checks and sample identities remain unchanged. No prepared-observation cache remains. Validation pending; installed wheels and services are unchanged.
+
+First timing ports pass all 13 gripper and 42 existing curve cases, failing two new bent-path fixtures. The ordinary path fixture now includes the exact corner sample grid, as its real producer does; the lagging actuator keeps moving toward the held endpoint during observation. Original deadline and headroom assertions remain. Native worker cost validation has not run yet.
+
+SDK API 41 is merged into beta 0b0a606 after exact-head CI 41288288064: 1,282 Python cases (413 optional skips, two warnings), native/transports/shim, packaged skills and strict docs pass. The next test-only transfer retains the old execution-deadline-during-feedback assertion on the native worker using callback barriers and its fake clock. Runtime and installed wheels are unchanged; the deadline/read barrier passes. Additional native ports cover bent-path delayed IO, lag/headroom and hints, repeated feedback costs, and the original gripper budget; validation pending.
+
 API 41 passes all 24 native finite cases and 40 installed public cases. One new wire assertion incorrectly compared text to encoded bytes; it now uses a bytes literal. Runtime and built wheel bytes are unchanged; capability follow-up and full CI remain pending.
 
 The first API 41 native compile exposed a test assertion comparing SmallVec with Vec; compare its actual slice. No runtime change. Matching-wheel and full validation pending.

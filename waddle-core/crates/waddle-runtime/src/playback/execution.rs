@@ -631,6 +631,7 @@ pub(crate) struct ExecutionTask {
     io: Arc<dyn PlaybackIo>,
     control: Arc<Control>,
     next_poll_ns: i64,
+    read_cost_ns: i64,
     sample_period_ns: i64,
     dispatch_period_ns: i64,
     failure: Option<ExecutionResult>,
@@ -680,6 +681,7 @@ impl ExecutionTask {
             io,
             control: handle.control.clone(),
             next_poll_ns: 0,
+            read_cost_ns: 0,
             sample_period_ns,
             dispatch_period_ns,
             failure: None,
@@ -861,7 +863,8 @@ impl ExecutionTask {
             state.snapshot.waiting_for.clear();
             state.predecessors.clear();
         }
-        if clock.stamp_now().mono_ns().0 < self.next_poll_ns {
+        let poll_ns = clock.stamp_now().mono_ns().0;
+        if poll_ns < self.next_poll_ns {
             return None;
         }
         let measured = match self.io.observe() {
@@ -878,6 +881,10 @@ impl ExecutionTask {
             return Some(result);
         }
         let now = clock.stamp_now().mono_ns().0;
+        // Retain the observed cost across variable reads; one faster sample
+        // must not move the next expensive read outside the control interval.
+        self.read_cost_ns = self.read_cost_ns.max(now.saturating_sub(poll_ns));
+        let read_cost_ns = self.read_cost_ns;
         let player = self.player.get_or_insert_with(|| {
             Playback::new(
                 self.references.take().expect("one admitted buffer"),
@@ -997,7 +1004,21 @@ impl ExecutionTask {
                         // The next poll establishes its exact due time; it never
                         // skips an entry or catches up by dispatching a batch.
                         self.next_poll_ns =
-                            now.max(started.saturating_add(self.dispatch_period_ns));
+                            if let Some(curve) = &player.references.policy.paced_curve {
+                                completed.max(
+                                    started
+                                        .saturating_add(curve.period_ns)
+                                        .saturating_sub(read_cost_ns),
+                                )
+                            } else if let Some(gripper) = &player.references.policy.gripper {
+                                completed.max(
+                                    completed
+                                        .saturating_add(gripper.period_ns)
+                                        .saturating_sub(read_cost_ns),
+                                )
+                            } else {
+                                now.max(started.saturating_add(self.dispatch_period_ns))
+                            };
                     }
                     Ok(ReferenceReceipt::Superseded(gate)) => {
                         return Some(Err(ExecutionFailure::Superseded(gate)));
@@ -1005,7 +1026,12 @@ impl ExecutionTask {
                     Err(error) => return Some(Err(ExecutionFailure::Dispatch(error))),
                 }
             }
-            PlaybackPoll::WaitUntil(at) => self.next_poll_ns = at,
+            PlaybackPoll::WaitUntil(at) => {
+                // Start the next fresh read early enough to fit its measured
+                // cost inside the interval. Playback still enforces the due
+                // time; neither faster reads nor late callbacks permit bursts.
+                self.next_poll_ns = at.saturating_sub(read_cost_ns);
+            }
             PlaybackPoll::Observe => self.next_poll_ns = now.saturating_add(self.sample_period_ns),
             PlaybackPoll::Complete(result) => return Some(Ok(result)),
         }

@@ -55,6 +55,7 @@ struct MemoryIo {
     events: Arc<Mutex<Vec<&'static str>>>,
     writes: Mutex<Vec<(i64, i64, f64)>>,
     observation_pause: Mutex<Option<Pause>>,
+    observation_costs: Mutex<std::collections::VecDeque<i64>>,
     dispatch_pause: Mutex<Option<Pause>>,
     error: Mutex<Option<PlaybackIoError>>,
     panic: AtomicBool,
@@ -85,6 +86,12 @@ impl PlaybackIo for MemoryIo {
         if let Some(pause) = self.observation_pause.lock().take() {
             pause.wait();
         }
+        let mut costs = self.observation_costs.lock();
+        if let Some(cost) = costs.pop_front() {
+            self.clock.0.advance(cost);
+            costs.push_back(cost);
+        }
+        drop(costs);
         Ok(Feedback {
             observed_ns: self.clock.stamp_now().mono_ns().0,
             positions: vec![*self.q.lock()],
@@ -159,6 +166,7 @@ impl Harness {
             events: events.clone(),
             writes: Mutex::new(Vec::new()),
             observation_pause: Mutex::new(None),
+            observation_costs: Mutex::default(),
             dispatch_pause: Mutex::new(None),
             error: Mutex::new(None),
             panic: AtomicBool::new(false),
@@ -327,6 +335,7 @@ fn sibling_io(h: &Harness) -> Arc<MemoryIo> {
         events: h.io.events.clone(),
         writes: Mutex::new(Vec::new()),
         observation_pause: Mutex::new(None),
+        observation_costs: Mutex::default(),
         dispatch_pause: Mutex::new(None),
         error: Mutex::new(None),
         panic: AtomicBool::new(false),
@@ -567,6 +576,83 @@ fn slow_declared_feedback_rate_cannot_postpone_the_buffer_deadline() {
         Some(Err(ExecutionFailure::Playback(PlaybackError::Deadline)))
     );
     assert_eq!(h.io.writes.lock().len(), 3);
+    assert_eq!(h.outcome().verb, Verb::Hold);
+}
+
+#[test]
+fn sustained_feedback_cost_stays_inside_the_original_curve_budget() {
+    for costs in [
+        vec![4_000_000],
+        vec![15_000_000],
+        vec![1_000_000, 15_000_000, 2_000_000],
+    ] {
+        let h = Harness::new();
+        *h.io.observation_costs.lock() = costs.clone().into();
+        let (mut chunk, mut policy) = reference_inputs(None, false, None);
+        chunk.horizon_ns = 2_000_000_000;
+        chunk.steps.truncate(2);
+        chunk.steps[1].offset_ns = chunk.horizon_ns;
+        chunk.steps[1].values[0] = 0.01;
+        policy.timeout_ns = Some(4_000_000_000);
+        policy.paced_curve = Some(crate::playback::PacedCurve {
+            times_s: vec![0.0, 2.0],
+            positions: vec![vec![0.0], vec![0.01]],
+            coefficients: vec![[0.0, 0.0, 0.0, 0.1, -0.15, 0.06].map(|q| vec![q]).into()],
+            period_ns: 20_000_000,
+            position_error: vec![0.04],
+            tracking_tolerance: vec![0.05],
+            sample_times_s: None,
+        });
+        let handle = h
+            .dispatch
+            .start_playback(
+                h.mirror.clone(),
+                EpisodeId::new("episode"),
+                FiniteReferences::new(chunk, policy).unwrap(),
+                h.io.clone(),
+                20_000_000,
+                0,
+            )
+            .unwrap();
+        let result = finished(&handle);
+        assert_eq!(
+            result.result,
+            Some(Ok(Completion::Arrived)),
+            "costs={costs:?}, snapshot={result:#?}"
+        );
+        assert!(result.elapsed_ns.unwrap() <= 4_000_000_000);
+        assert!(result.curve_progress.unwrap().endpoint_acknowledged);
+        let writes = h.io.writes.lock();
+        assert_eq!(writes.last().unwrap().2, 0.01);
+        for pair in writes.windows(2) {
+            assert!(pair[1].0 - pair[0].0 >= 20_000_000);
+            assert!(pair[1].2 - pair[0].2 <= 0.01 * (pair[1].0 - pair[0].0) as f64 / 1e9 + 1e-12);
+        }
+    }
+}
+
+#[test]
+fn deadline_expiring_during_feedback_prevents_the_next_write() {
+    let h = Harness::new();
+    let (write_pause, writing, written) = pause();
+    *h.io.dispatch_pause.lock() = Some(write_pause);
+    let handle = h.start().unwrap();
+    writing.recv_timeout(Duration::from_secs(5)).unwrap();
+    let (read_pause, reading, read) = pause();
+    *h.io.observation_pause.lock() = Some(read_pause);
+    written.send(()).unwrap();
+    reading.recv_timeout(Duration::from_secs(5)).unwrap();
+    // The first acknowledged command has activated the original 500 ms budget.
+    // A later completed read cannot admit a command past that deadline.
+    h.io.clock.0.advance(1_000_000_000);
+    read.send(()).unwrap();
+    let result = finished(&handle);
+    assert_eq!(
+        result.result,
+        Some(Err(ExecutionFailure::Playback(PlaybackError::Deadline)))
+    );
+    assert_eq!(h.io.writes.lock().len(), 1);
+    assert_eq!(result.cleanup.unwrap().result, Ok(()));
     assert_eq!(h.outcome().verb, Verb::Hold);
 }
 
