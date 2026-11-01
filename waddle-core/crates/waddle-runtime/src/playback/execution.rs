@@ -99,7 +99,7 @@ impl From<&VerbOutcome> for PlaybackCleanup {
                 .copied()
                 .map_err(|error| PlaybackIoError {
                     detail: error.to_string(),
-                    evidence: String::new(),
+                    evidence: error.evidence().unwrap_or_default().to_owned(),
                     outcome_unknown: true,
                 }),
             latency_ns: outcome.latency_ns,

@@ -24,6 +24,19 @@ fn py_err_repr(py: Python<'_>, err: &PyErr) -> String {
     }
 }
 
+fn py_verb_error(py: Python<'_>, err: &PyErr) -> VerbError {
+    let detail = py_err_repr(py, err);
+    let evidence = err.value(py).call_method0("as_dict").and_then(|value| {
+        py.import("json")?
+            .call_method1("dumps", (value,))?
+            .extract::<String>()
+    });
+    match evidence {
+        Ok(evidence) => VerbError::FailedWithEvidence { detail, evidence },
+        Err(_) => VerbError::Failed(detail),
+    }
+}
+
 fn unavailable() -> Result<(), VerbError> {
     Err(VerbError::Failed("Python interpreter unavailable".into()))
 }
@@ -99,7 +112,7 @@ impl UnitVerb for PyUnit {
                 .bind(py)
                 .call0()
                 .map(|_| ())
-                .map_err(|e| VerbError::Failed(py_err_repr(py, &e)))
+                .map_err(|e| py_verb_error(py, &e))
         })
         .unwrap_or_else(unavailable)
     }

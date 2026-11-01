@@ -689,3 +689,9 @@ and a conversion source. These are actuator-effort estimates: friction,
 transmission loss and transient inertia require separate physical calibration
 before claiming accurate object contact force. No load-cell calibration or
 physical force acceptance is established by software or native simulation tests.
+
+Stop receipts retain structured callback failures in `evidence` when supplied.
+A queued `hold()` or `estop()` is distinct from a completed `stop()` receipt.
+Failed cleanup remains unknown; callback completion does not prove measured
+stationarity. Every declared part receives the stop even when a peer callback
+fails.

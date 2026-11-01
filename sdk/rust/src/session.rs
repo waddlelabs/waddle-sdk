@@ -427,6 +427,9 @@ impl PySession {
                 "unknown"
             },
         )?;
+        if let Some(evidence) = receipt.result.as_ref().err().and_then(|e| e.evidence()) {
+            out.set_item("evidence", evidence)?;
+        }
         out.set_item("error", receipt.result.err().map(|error| error.to_string()))?;
         out.set_item("completed_ns", receipt.at.0)?;
         out.set_item("measured_stationary", false)?;

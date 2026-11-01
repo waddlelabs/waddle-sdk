@@ -34,8 +34,21 @@ pub enum VerbError {
     NotRegistered(Verb),
     #[error("verb callable failed: {0}")]
     Failed(String),
+    #[error("verb callable failed: {detail}")]
+    FailedWithEvidence { detail: String, evidence: String },
     #[error("verb callable panicked")]
     Panicked,
+}
+
+impl VerbError {
+    /// Opaque caller diagnostics, retained without interpreting their schema.
+    #[must_use]
+    pub fn evidence(&self) -> Option<&str> {
+        match self {
+            Self::FailedWithEvidence { evidence, .. } => Some(evidence),
+            _ => None,
+        }
+    }
 }
 
 /// The integrator's `send` callable for one canonical space.

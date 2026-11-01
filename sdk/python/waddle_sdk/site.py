@@ -1826,6 +1826,8 @@ class SiteSession:
             receipt = managed.core.completed_stop(estop)
         except Exception as exc:
             raise _operation_fault("complete stop", exc) from exc
+        if receipt.get("evidence"):
+            receipt["evidence"] = json.loads(receipt["evidence"])
         self._event("control.stop", {"reason": reason, **receipt})
         return receipt
 
