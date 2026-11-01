@@ -1,3 +1,8 @@
+Gripper receipts retain contact sample counts, velocity-stationary counts and
+the local compatibility decision on failures as well as success. This is additive
+diagnostic data on API 40; execution, thresholds and normal Hold are unchanged.
+Native/public validation is pending. No publication or owner changes.
+
 Site-wide stop callbacks now retain structured failure evidence in native
 cleanup and completed-stop receipts, just like scoped playback Hold. Typed
 callback diagnostics remain opaque to the Rust core. All declared parts receive

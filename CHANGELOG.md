@@ -13,6 +13,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Retain local gripper contact sample counts and compatibility evidence on failed
+  attempts, without changing execution or cleanup.
+
 - Preserve structured callback diagnostics in site-wide Hold/e-stop cleanup and
   completed-stop receipts. Attempt every declared part and retain all failures.
 

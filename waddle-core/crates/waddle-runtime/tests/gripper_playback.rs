@@ -181,6 +181,9 @@ fn closing_progress_and_sustained_demand_qualify_contact_despite_noisy_velocity(
     let evidence = p.gripper_evidence().unwrap();
     assert_eq!(evidence.window_ns, 250_000_000);
     assert_eq!(evidence.drift_m, 0.0);
+    assert_eq!(evidence.sample_count, 6);
+    assert_eq!(evidence.stationary_samples, 0);
+    assert!(evidence.contact_compatible);
     assert!(evidence.progress_m > 0.002 && evidence.commanded_shortfall_m.unwrap() > 0.0005);
 }
 
@@ -195,6 +198,10 @@ fn unexplained_initial_stall_retains_tracking_failure_even_with_contact_requeste
         p.poll(2 * PERIOD, &measured(2 * PERIOD, 1.0, None)),
         Err(PlaybackError::Tracking)
     );
+    let evidence = p.gripper_evidence().unwrap();
+    assert_eq!(evidence.sample_count, 2);
+    assert_eq!(evidence.stationary_samples, 2);
+    assert!(!evidence.contact_compatible);
 }
 
 #[test]

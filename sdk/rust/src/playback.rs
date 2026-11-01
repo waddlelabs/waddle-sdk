@@ -765,6 +765,9 @@ fn snapshot(py: Python<'_>, value: ExecutionSnapshot) -> PyResult<Py<PyDict>> {
             result.set_item("commanded_shortfall_m", e.commanded_shortfall_m)?;
             result.set_item("window_ns", e.window_ns)?;
             result.set_item("drift_m", e.drift_m)?;
+            result.set_item("sample_count", e.sample_count)?;
+            result.set_item("stationary_samples", e.stationary_samples)?;
+            result.set_item("contact_compatible", e.contact_compatible)?;
             result.set_item("force_target_n", e.force_target_n)?;
             result.set_item("force_samples", e.force_samples)?;
             result.set_item("arrival_samples", e.arrival_samples)?;
