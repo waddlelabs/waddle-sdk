@@ -11,6 +11,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Add opt-in local goal completion within a constant resting tail (binding API
+  36, `execution.resting_goal_playback`). Preserve pending future motion,
+  checkpoint observations, local settling, original deadlines and cancellation;
+  callers no longer need to shorten a resting curve just to report arrival.
+
 - Evaluate selected custom TCP goals from numeric `PlaybackKinematics` on the
   existing worker (`execution.kinematic_goal_playback`). Support hinge/slide
   chains and affine joint coordinates without a planner/model dependency, while

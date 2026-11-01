@@ -45,6 +45,7 @@ fn inputs() -> (ActionChunk, PlaybackPolicy) {
             defer_reference_completion: false,
             goal: None,
             settle_timeout_ns: None,
+            complete_in_resting_tail: false,
             checkpoint_offsets_ns: vec![],
             allow_curve_updates: false,
             credit_pacing_delay: false,
