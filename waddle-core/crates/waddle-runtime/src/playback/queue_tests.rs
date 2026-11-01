@@ -19,7 +19,22 @@ fn queued(
             .collect::<Vec<_>>()
             .into();
     }
-    let mut references = FiniteReferences::new(chunk, policy).unwrap();
+    start_after(
+        h,
+        parent,
+        FiniteReferences::new(chunk, policy).unwrap(),
+        outcomes,
+        start_before_ns,
+    )
+}
+
+fn start_after(
+    h: &Harness,
+    parent: &ExecutionHandle,
+    mut references: FiniteReferences,
+    outcomes: Vec<Completion>,
+    start_before_ns: Option<i64>,
+) -> Result<ExecutionHandle, PlaybackError> {
     references.queue = PlaybackQueue {
         after: vec![PlaybackDependency {
             handle: parent.clone(),
@@ -72,6 +87,146 @@ fn queued_curves_finish_in_order_without_caller_round_trips() {
             .iter()
             .any(|event| matches!(*event, "hold" | "part_hold"))
     );
+}
+
+#[test]
+fn only_a_live_same_part_successor_can_waive_intermediate_settling() {
+    for mode in ["transit", "cancelled", "expired", "arrival_only"] {
+        let h = Harness::new();
+        let (p, entered, release) = pause();
+        *h.io.observation_pause.lock() = Some(p);
+        let first = start_named_policy(&h, "left", h.io.clone(), true).unwrap();
+        entered.recv_timeout(Duration::from_secs(5)).unwrap();
+        let outcomes = if mode == "arrival_only" {
+            vec![Completion::Arrived]
+        } else {
+            vec![Completion::Arrived, Completion::ReferencesDispatched]
+        };
+        let second = queued(&h, &first, 0.2, outcomes, (mode == "expired").then_some(1)).unwrap();
+        if mode == "cancelled" {
+            second.cancel("cancel prepared successor");
+        }
+        release.send(()).unwrap();
+        let parent = finished(&first);
+        let child = finished(&second);
+        assert_eq!(
+            parent.result,
+            Some(Ok(if mode == "transit" {
+                Completion::ReferencesDispatched
+            } else {
+                Completion::Arrived
+            }))
+        );
+        assert_eq!(parent.dispatched, 3);
+        assert!(parent.cleanup.is_none());
+        if mode == "transit" || mode == "arrival_only" {
+            assert_eq!(child.result, Some(Ok(Completion::Arrived)));
+            assert_eq!(h.io.writes.lock().len(), 6);
+        } else {
+            assert!(child.result.unwrap().is_err());
+            assert_eq!(child.dispatched, 0);
+            assert!(child.cleanup.is_none());
+        }
+        assert_eq!(
+            parent.transit_successor,
+            (mode == "transit").then_some(child.id)
+        );
+    }
+}
+
+#[test]
+fn gripper_or_other_part_successors_never_waive_parent_settling() {
+    for gripper in [false, true] {
+        let h = Harness::new();
+        let (p, entered, release) = pause();
+        *h.io.observation_pause.lock() = Some(p);
+        let parent = start_named_policy(&h, "left", h.io.clone(), true).unwrap();
+        entered.recv_timeout(Duration::from_secs(5)).unwrap();
+        let (mut chunk, mut policy) =
+            reference_inputs(Some(if gripper { "left" } else { "right" }), false, None);
+        for step in &mut chunk.steps {
+            step.values = vec![step.values[0] + 0.2].into();
+        }
+        if gripper {
+            policy.gripper = Some(crate::playback::GripperPolicy {
+                period_ns: 10_000_000,
+                position_error: 0.2,
+                tracking_tolerance: 0.2,
+                closed_position: 0.0,
+                open_position: 1.0,
+                closed_m: 0.0,
+                open_m: 0.08,
+                contact: None,
+                force: None,
+            });
+        }
+        let child = start_after(
+            &h,
+            &parent,
+            FiniteReferences::new(chunk, policy).unwrap(),
+            vec![Completion::Arrived, Completion::ReferencesDispatched],
+            None,
+        )
+        .unwrap();
+        release.send(()).unwrap();
+        let result = finished(&parent);
+        assert_eq!(result.result, Some(Ok(Completion::Arrived)));
+        assert!(result.transit_successor.is_none());
+        assert_eq!(finished(&child).result, Some(Ok(Completion::Arrived)));
+    }
+}
+
+#[test]
+fn transit_permission_cannot_skip_an_unmet_required_goal() {
+    let h = Harness::new();
+    let (p, entered, release) = pause();
+    *h.io.observation_pause.lock() = Some(p);
+    let (chunk, mut policy) = reference_inputs(Some("left"), true, None);
+    policy.goal = Some(crate::playback::PlaybackGoal {
+        joint_positions: Some(vec![0.5]),
+        pose: None,
+        position_tolerance_m: 0.001,
+        orientation_tolerance_rad: None,
+        dwell: None,
+        allow_updates: false,
+    });
+    let parent = h
+        .dispatch
+        .start_playback(
+            h.mirror.clone(),
+            EpisodeId::new("episode"),
+            FiniteReferences::new(chunk, policy).unwrap(),
+            h.io.clone(),
+            10_000_000,
+            0,
+        )
+        .unwrap();
+    entered.recv_timeout(Duration::from_secs(5)).unwrap();
+    let child = queued(
+        &h,
+        &parent,
+        0.2,
+        vec![Completion::Arrived, Completion::ReferencesDispatched],
+        None,
+    )
+    .unwrap();
+    release.send(()).unwrap();
+    let result = finished(&parent);
+    assert_eq!(
+        result.result,
+        Some(Err(ExecutionFailure::Playback(PlaybackError::Deadline)))
+    );
+    assert!(result.transit_successor.is_none());
+    assert_eq!(result.dispatched, 3);
+    assert_eq!(result.cleanup.unwrap().result, Ok(()));
+    let child = finished(&child);
+    assert!(matches!(
+        child.result,
+        Some(Err(ExecutionFailure::Playback(
+            PlaybackError::DependencyFailed(_)
+        )))
+    ));
+    assert_eq!(child.dispatched, 0);
 }
 
 #[test]
