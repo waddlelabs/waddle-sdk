@@ -148,6 +148,16 @@ class SimulationAdministrationError(RuntimeError):
 
 
 @runtime_checkable
+class SimulationPresentationBackend(Protocol):
+    """Optional trusted pose-only state, separate from complete evaluator data."""
+
+    @property
+    def supports_presentation(self) -> bool: ...
+
+    def presentation_snapshot(self) -> Mapping[str, Any]: ...
+
+
+@runtime_checkable
 class SimulationSceneReplacementBackend(Protocol):
     """Optional trusted facet for replacing a scene without reopening its site.
 
@@ -163,7 +173,7 @@ class SimulationSceneReplacementBackend(Protocol):
 
 @dataclass(frozen=True)
 class SimulationSnapshot:
-    """Immutable evaluator-owned state from one complete simulated site."""
+    """Immutable evaluator or operator presentation state from one complete simulated site."""
 
     episode_revision: int
     digest: str
@@ -267,12 +277,42 @@ class SimulationAdministration:
     def snapshot(self) -> SimulationSnapshot:
         """Read privileged state without exposing it through the SDK runtime."""
 
+        return self._read_snapshot(presentation=False)
+
+    @property
+    def can_present(self) -> bool:
+        """Whether every bound world explicitly offers trusted pose-only reads."""
+        with self._lock:
+            return all(
+                isinstance(backend, SimulationPresentationBackend)
+                and backend.supports_presentation
+                for backend in self._require().worlds.values()
+            )
+
+    def presentation_snapshot(self) -> SimulationSnapshot:
+        """Read operator poses without requesting evaluator contacts or dynamics.
+
+        Availability is explicit through :attr:`can_present`. This remains
+        privileged state under the same owner/lifecycle/dispatch binding.
+        """
+        return self._read_snapshot(presentation=True)
+
+    def _read_snapshot(self, *, presentation: bool) -> SimulationSnapshot:
+
         with self._lock:
             binding = self._require()
+            if presentation and not self.can_present:
+                raise SimulationAdministrationError(
+                    "simulation worlds do not provide trusted presentation"
+                )
             try:
                 with binding.dispatch_lock, binding.lifecycle_lock:
                     worlds = {
-                        name: _evaluation_document(backend.evaluation_snapshot())
+                        name: _evaluation_document(
+                            backend.presentation_snapshot()
+                            if presentation
+                            else backend.evaluation_snapshot()
+                        )
                         for name, backend in binding.worlds.items()
                     }
             except Exception as error:

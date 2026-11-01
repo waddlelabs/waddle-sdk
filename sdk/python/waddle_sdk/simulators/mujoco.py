@@ -341,13 +341,6 @@ class Engine:
 
     def _apply_force_modes(self):
         for part, (force, holding) in tuple(self._force_modes.items()):
-            q, dq = self.read(part)
-            holding = holding or (
-                self.gripper_force(part) >= force * 0.9
-                and abs(dq[-1]) < 0.01
-                and q[-1] > 0.0005 / self.profile.opening
-            )
-            self._force_modes[part] = (force, holding)
             if holding:
                 name = self._controls[part][-1]
                 # Once contact is acquired, use native motor effort. A moving
@@ -363,6 +356,22 @@ class Engine:
                     damping, index, original = retained
                     damping[index] = original - self._force_servos[part][1][2]
                 self.data.actuator(name).ctrl[0] = -2 * force
+
+    def _latch_force_contacts(self):
+        # Only a completed integration step pairs effort with the resulting
+        # velocity. A read-only mj_forward after a new position reference can
+        # report saturated effort alongside the OLD zero velocity; that is not
+        # contact and must not install passive hold damping during free travel.
+        for part, (force, holding) in tuple(self._force_modes.items()):
+            if holding:
+                continue
+            q, dq = self.read(part)
+            if (
+                self.gripper_force(part) >= force * 0.9
+                and abs(dq[-1]) < 0.01
+                and q[-1] > 0.0005 / self.profile.opening
+            ):
+                self._force_modes[part] = (force, True)
 
     def hold(self, part=None):
         parts = self.parts if part is None else (self._part(part),)
@@ -385,6 +394,7 @@ class Engine:
     def step(self):
         self._apply_force_modes()
         self.mj.mj_step(self.model, self.data)
+        self._latch_force_contacts()
         self._latch_contact_events()
 
     def _clear_contact_events(self):
@@ -393,34 +403,71 @@ class Engine:
 
     def _latch_contact_events(self):
         now = float(self.data.time)
-        for index in range(self.data.ncon):
-            contact = self.data.contact[index]
-            self.mj.mj_contactForce(
-                self.model, self.data, index, self._contact_force_buffer
-            )
-            force = max(0.0, float(self._contact_force_buffer[0]))
-            if force == 0.0:
-                continue
-            key = tuple(sorted((int(contact.geom1), int(contact.geom2))))
+        for first, second, distance, force, samples in self._contact_summaries():
+            key = (int(first), int(second))
             event = self._contact_events.get(key)
             if event is None:
                 event = {
                     "first_time_s": now,
                     "last_time_s": now,
-                    "minimum_distance_m": float(contact.dist),
-                    "maximum_normal_force_n": force,
+                    "minimum_distance_m": float(distance),
+                    "maximum_normal_force_n": float(force),
                     "contact_samples": 0,
                 }
                 self._contact_events[key] = event
             event["last_time_s"] = now
             event["minimum_distance_m"] = min(
-                event["minimum_distance_m"], float(contact.dist)
+                event["minimum_distance_m"], float(distance)
             )
             event["maximum_normal_force_n"] = max(
-                event["maximum_normal_force_n"], force
+                event["maximum_normal_force_n"], float(force)
             )
-            event["contact_samples"] += 1
+            event["contact_samples"] += int(samples)
         self._contact_events_through_s = now
+
+    def _contact_summaries(self):
+        if self.model.opt.cone != self.mj.mjtCone.mjCONE_ELLIPTIC:
+            # Other native representations retain MuJoCo's conversion, including
+            # the sum of pyramid-edge forces. Never treat one edge as normal force.
+            for index in range(self.data.ncon):
+                contact = self.data.contact[index]
+                self.mj.mj_contactForce(
+                    self.model, self.data, index, self._contact_force_buffer
+                )
+                force = max(0.0, float(self._contact_force_buffer[0]))
+                if force > 0:
+                    first, second = sorted((int(contact.geom1), int(contact.geom2)))
+                    yield first, second, float(contact.dist), force, 1
+            return
+        # An elliptic contact's first constraint row is its normal force. Read
+        # the public arrays once, then reduce each manifold to the SAME positive
+        # sample count, minimum distance and maximum force as mj_contactForce.
+        # This retains every integration step without a Python/C call per point.
+        addresses = self.data.contact.efc_address
+        selected = np.flatnonzero((addresses >= 0) & (addresses < self.data.nefc))
+        forces = self.data.efc_force[addresses[selected]]
+        positive = forces > 0
+        selected, forces = selected[positive], forces[positive]
+        if not len(selected):
+            return
+        geoms = np.sort(self.data.contact.geom[selected], axis=1)
+        keys, inverse, counts = np.unique(
+            geoms[:, 0].astype(np.int64) * self.model.ngeom + geoms[:, 1],
+            return_inverse=True,
+            return_counts=True,
+        )
+        distances = np.full(len(keys), np.inf)
+        peaks = np.zeros(len(keys))
+        np.minimum.at(distances, inverse, self.data.contact.dist[selected])
+        np.maximum.at(peaks, inverse, forces)
+        yield from zip(
+            keys // self.model.ngeom,
+            keys % self.model.ngeom,
+            distances,
+            peaks,
+            counts,
+            strict=True,
+        )
 
     def reset(self):
         for part in self.parts:
@@ -892,6 +939,39 @@ class Engine:
             ],
         }
         return snapshot
+
+    def presentation_snapshot(self):
+        """Exact current poses without a force solve or contact enumeration."""
+        # mj_step integrates qpos after computing derived positions. Refresh only
+        # kinematics for current poses; mj_forward would also solve forces and
+        # overwrite effort feedback between two actual integration steps.
+        self.mj.mj_kinematics(self.model, self.data)
+        joints = {}
+        for index in range(self.model.njnt):
+            kind = self.model.jnt_type[index]
+            if kind not in (
+                self.mj.mjtJoint.mjJNT_HINGE,
+                self.mj.mjtJoint.mjJNT_SLIDE,
+            ):
+                continue
+            name = self.model.joint(index).name or f"joint:{index}"
+            joints[name] = {
+                "type": "hinge" if kind == self.mj.mjtJoint.mjJNT_HINGE else "slide",
+                "qpos": [float(self.data.qpos[self.model.jnt_qposadr[index]])],
+            }
+        return {
+            "schema": "waddle.simulation-presentation/mujoco-v1",
+            "backend": "mujoco",
+            "time_s": float(self.data.time),
+            "joints": joints,
+            "bodies": {
+                self.model.body(index).name or f"body:{index}": {
+                    "position_m": self.data.xpos[index].tolist(),
+                    "orientation_wxyz": self.data.xquat[index].tolist(),
+                }
+                for index in range(self.model.nbody)
+            },
+        }
 
     def capture(self, name):
         return self.capture_timed(name)[:2]

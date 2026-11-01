@@ -206,6 +206,27 @@ def test_trusted_administration_validates_and_forwards_reset_variation(tmp_path)
             SimulationVariation(geometry="unknown")
 
 
+def test_trusted_pose_reads_require_an_explicit_backend_facet(tmp_path):
+    administration = SimulationAdministration()
+    with waddle_sdk.load_site(_write_site(tmp_path)).open(
+        console=False, _testing=True, simulation_administration=administration
+    ) as session:
+        assert not administration.can_present
+        with pytest.raises(SimulationAdministrationError, match="trusted presentation"):
+            administration.presentation_snapshot()
+        world = simulation_fixtures.worlds[0]
+        world.supports_presentation = True
+        world.presentation_snapshot = lambda: {"bodies": {"pose": [1, 2, 3]}}
+        assert administration.can_present
+        frame = administration.presentation_snapshot()
+        assert frame.episode_revision == 0
+        assert frame.worlds["cell"] == {"bodies": {"pose": [1, 2, 3]}}
+        assert not hasattr(session, "presentation_snapshot")
+        assert "pose" not in administration.snapshot().worlds["cell"]
+    with pytest.raises(SimulationAdministrationError, match="not bound"):
+        administration.presentation_snapshot()
+
+
 def test_trusted_administration_fences_a_refused_reset(tmp_path):
     administration = SimulationAdministration()
     with waddle_sdk.load_site(_write_site(tmp_path)).open(

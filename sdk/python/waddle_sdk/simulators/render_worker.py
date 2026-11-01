@@ -34,7 +34,19 @@ class SnapshotRenderer:
             snapshot["state"],
             self.mj.mjtState.mjSTATE_INTEGRATION,
         )
-        self.mj.mj_forward(self.model, self.data)
+        if self.model.nplugin:
+            # Custom plugins may derive visualization state during dynamics.
+            # Preserve their full native computation contract.
+            self.mj.mj_forward(self.model, self.data)
+        else:
+            # RGB/depth use position-derived geometry, cameras, lights, tendons
+            # and flexes. Avoid repeated collision and force solves in this
+            # read-only copy; native physics stays in the owning worker.
+            self.mj.mj_kinematics(self.model, self.data)
+            self.mj.mj_comPos(self.model, self.data)
+            self.mj.mj_camlight(self.model, self.data)
+            self.mj.mj_flex(self.model, self.data)
+            self.mj.mj_tendon(self.model, self.data)
 
     def capture(self, name):
         row = self.config["cameras"][name]

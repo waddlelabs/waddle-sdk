@@ -13,6 +13,16 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Qualify simulated force hold only after a completed physics step, preventing
+  read-only pose inspection from falsely damping a still-open moving gripper.
+- Restore read-only camera geometry without repeating dynamics per captured frame,
+  retaining exact RGB/depth and generation binding.
+- Add explicitly capability-gated trusted pose-only simulation snapshots under
+  the existing administration binding. Keep full evaluator state unchanged.
+- Batch elliptic contact-history aggregation without dropping integration steps,
+  positive contact samples or native force/distance extrema; retain native
+  conversion for other contact cones.
+
 - Allocate bounded constraint scratch for newly compiled authored scenes with compound props and multiple hands, preventing MuJoCo from dropping constraints under dense contact. Explicit source size declarations and physical parameters remain unchanged.
 
 - Acquire named joint and measured-force feedback through an optional shared source. Reference MuJoCo observations use one transaction for the requested parts; subsets, independent faults and legacy state/FK/force read ordering remain intact.

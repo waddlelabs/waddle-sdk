@@ -1,3 +1,14 @@
+Reference MuJoCo acquires force-hold only from completed integration feedback.
+Pose reads cannot qualify the old zero velocity against newly computed effort.
+Independent camera rendering restores position-derived geometry without repeating
+the dynamics solver; exact RGB/depth and generation binding remain required.
+Optional trusted `SimulationPresentationBackend` supplies exact body/scalar-joint
+poses without a force solve or evaluator contacts; `SimulationAdministration.can_present`
+gates it under the existing owner/lifecycle/dispatch binding. It never enters
+participant runtime data. Elliptic contact history batches exact per-manifold
+counts/extrema; other cones retain native point-force conversion. Keep full
+evaluator snapshots, all physics steps and existing solver/material parameters.
+
 Authored reference scenes allocate a bounded 256 MiB MuJoCo constraint arena when the source has no explicit size declaration. Complete compound contacts remain active; materials, force limits and dynamics are unchanged. Generated scene bytes/digests change only for fresh compilations.
 
 Reference simulation capability reads retain immutable gripper force limits per

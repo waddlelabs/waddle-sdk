@@ -875,3 +875,29 @@ the reference source has no explicit size declaration. This keeps dense compound
 contacts within the allocated arena without changing materials, forces or solver
 parameters. Explicit source declarations remain authoritative; existing compiled
 scene files and their identities are unchanged.
+
+### Trusted presentation and contact feedback
+
+An operator can check `SimulationAdministration.can_present` before using
+`presentation_snapshot()`. This optional `SimulationPresentationBackend` facet
+returns current body poses and scalar joint positions under the same open-site,
+owner, dispatch and lifecycle binding as full snapshots. It does not return
+evaluator contacts, velocities or task state, and remains outside participant
+observations. Backends without the facet keep the ordinary full `snapshot()`
+path; a failed advertised presentation read remains an error.
+
+Reference MuJoCo refreshes only kinematics for these pose reads, without solving
+forces or advancing time. Force-hold acquisition uses effort and velocity from a
+completed integration step, so inspection cannot falsely qualify an open jaw as
+contact. Empty closure still does not establish an object grasp.
+
+Contact history retains every integration step. Elliptic manifolds batch the
+native positive sample counts, minimum distance and maximum normal force; other
+cone representations use MuJoCo's per-point force conversion. Full evaluator
+snapshots and physics/contact parameters remain unchanged.
+
+The independent read-only camera renderer restores position-derived geometry,
+cameras, lights, tendons and flexes without repeating the dynamics solver for each
+captured frame. Normal RGB/depth, exact snapshot timing and generation fences are
+unchanged; the owning worker retains all native integration and force solving.
+Models with custom native plugins retain full computation in the render copy.

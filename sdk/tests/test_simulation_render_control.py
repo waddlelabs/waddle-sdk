@@ -291,7 +291,8 @@ def test_owner_holds_physics_before_draining_a_blocked_renderer():
         world.call("capture", "scene")
 
 
-def test_snapshot_renderer_preserves_native_rgb_and_metric_depth(tmp_path):
+@pytest.mark.parametrize("arms", [1, 2])
+def test_snapshot_renderer_preserves_native_rgb_and_metric_depth(tmp_path, arms):
     pytest.importorskip("mujoco")
     from waddle_sdk.simulators.mujoco import Engine
     from waddle_sdk.simulators.render_worker import SnapshotRenderer
@@ -304,17 +305,27 @@ def test_snapshot_renderer_preserves_native_rgb_and_metric_depth(tmp_path):
         environment="two_cubes",
         width=64,
         height=48,
+        arms=arms,
     )
     engine = Engine(config, tmp_path)
     renderer = SnapshotRenderer(config)
     try:
-        snapshot = engine.render_snapshot(0, None)
-        renderer.restore(snapshot)
-        for camera in config["cameras"]:
-            expected_rgb, expected_depth = engine.capture(camera)
-            actual_rgb, actual_depth = renderer.capture(camera)
-            np.testing.assert_array_equal(actual_rgb, expected_rgb)
-            np.testing.assert_array_equal(actual_depth, expected_depth)
+        for generation in (0, 0, 1):
+            part = next(iter(config["parts"]))
+            target = engine.read(part)[0]
+            target[0] += 0.04
+            engine.write(part, target)
+            for _ in range(40):
+                engine.step()
+            # The oracle computes complete dynamics at the same exact state.
+            engine.mj.mj_forward(engine.model, engine.data)
+            snapshot = engine.render_snapshot(generation, renderer.generation)
+            renderer.restore(snapshot)
+            for camera in config["cameras"]:
+                expected_rgb, expected_depth = engine.capture(camera)
+                actual_rgb, actual_depth = renderer.capture(camera)
+                np.testing.assert_array_equal(actual_rgb, expected_rgb)
+                np.testing.assert_array_equal(actual_depth, expected_depth)
     finally:
         renderer.close()
         engine.close()

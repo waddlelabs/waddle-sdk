@@ -9,6 +9,63 @@ from waddle_sdk.simulators.scene import make_site
 
 
 @pytest.mark.parametrize("empty", [False, True])
+@pytest.mark.parametrize("sample", ["native_tcp", "evaluation_snapshot"])
+def test_native_force_closure_is_independent_of_interleaved_reads(
+    tmp_path, empty, sample
+):
+    pytest.importorskip("mujoco")
+    from waddle_sdk.simulators.mujoco import Engine
+
+    fixture = next(
+        row
+        for row in json.loads(
+            (Path(__file__).parent / "fixtures/tube_transport.json").read_text()
+        )
+        if row["robot"] == "yam"
+    )
+    _, config = make_site(
+        "force-read",
+        backend="mujoco",
+        robot="yam",
+        environment="load-clear-test-tubes",
+        width=32,
+        height=32,
+    )
+    engine = Engine(config, tmp_path)
+    try:
+        target = np.array(fixture["approach" if empty else "grasp"])
+        target[-1] = 1.0
+        engine.home(target)
+        for _ in range(500):
+            engine.step()
+        force = engine.gripper_force_limits()[1]
+        for _ in range(50):
+            target[-1] = max(0, engine.read()[0][-1] - 0.05)
+            engine.write_force(target, force)
+            # Both ordinary pose and trusted state inspection refresh native
+            # derived quantities without advancing physics. Neither may change
+            # whether the same force-limited close travels or holds contact.
+            getattr(engine, sample)()
+            for _ in range(round(0.04 / engine.model.opt.timestep)):
+                engine.step()
+        q, dq = engine.read()
+        opening = q[-1] * engine.profile.opening
+        assert abs(dq[-1]) * engine.profile.opening < 0.001
+        if empty:
+            assert opening < 0.0005
+        else:
+            assert opening > 0.001
+            assert engine.gripper_force() == pytest.approx(force, abs=1)
+        target[-1] = 1.0
+        engine.write_force(target, 0)
+        for _ in range(1000):
+            engine.step()
+        assert engine.read()[0][-1] * engine.profile.opening > 0.09
+    finally:
+        engine.close()
+
+
+@pytest.mark.parametrize("empty", [False, True])
 @pytest.mark.parametrize("release", ["zero", "hold"])
 def test_native_force_closure_reports_actual_effort_and_retains_force(
     tmp_path, empty, release

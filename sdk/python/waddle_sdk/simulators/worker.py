@@ -127,6 +127,7 @@ def serve(connection: Connection) -> None:
                     "hold_part",
                     "home_part",
                     "evaluation_snapshot",
+                    "presentation_snapshot",
                     "evaluation_reset",
                     "evaluation_replace_scene",
                 }:

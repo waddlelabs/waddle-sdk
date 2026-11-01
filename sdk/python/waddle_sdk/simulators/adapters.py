@@ -269,7 +269,13 @@ class World:
         # Preserve FIFO within each priority and one transaction on the pipe.
         with self._requests:
             ticket = (
-                operation in {"capture", "render_snapshot", "evaluation_snapshot"},
+                operation
+                in {
+                    "capture",
+                    "render_snapshot",
+                    "evaluation_snapshot",
+                    "presentation_snapshot",
+                },
                 self._request_sequence,
             )
             self._request_sequence += 1
@@ -392,6 +398,13 @@ class AdministrativeWorld(World):
 
     def evaluation_snapshot(self):
         return self.call("evaluation_snapshot")
+
+    @property
+    def supports_presentation(self):
+        return self.config["backend"] == "mujoco"
+
+    def presentation_snapshot(self):
+        return self.call("presentation_snapshot")
 
     def evaluation_replace_scene(self, config: WorldConfig) -> bool:
         _, definition = load_scene(
