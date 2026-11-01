@@ -541,6 +541,13 @@ goal cannot discard accepted future work. Withdrawing that pending correction
 restores the incumbent's completion rules. Expired executions cannot be revived
 by a delayed update, including one queued during an observation callback.
 
+With `execution.playback_timing` (binding API 35), `elapsed_ns` is the duration
+from native activation to the retained feedback sample. It is `None` while queued
+or when an execution ends before activation. Queue wait and cloud reply delay do
+not enter this duration; a terminal snapshot retains its final value. Planners
+can subtract it from their supplied execution budget without comparing clocks.
+It does not renew the local deadline or establish freshness of a delayed sample.
+
 With `execution.goal_progress` (binding API 34), snapshots expose `settled_miss`:
 the latest fresh local sample completes the configured settling test outside the
 original goal. It is progress, not a terminal result or permission to move. Both

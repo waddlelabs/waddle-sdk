@@ -81,6 +81,7 @@ class SupportFact(str, enum.Enum):
     GOAL_PLAYBACK = "execution.goal_playback"
     REVISABLE_GOAL_PLAYBACK = "execution.revisable_goal_playback"
     GOAL_PROGRESS = "execution.goal_progress"
+    PLAYBACK_TIMING = "execution.playback_timing"
     CARTESIAN_GOAL_PLAYBACK = "execution.cartesian_goal_playback"
     DEPENDENT_PLAYBACK = "execution.dependent_playback"
     DEFERRED_REFERENCE_COMPLETION = "execution.deferred_reference_completion"
@@ -899,6 +900,11 @@ class PlaybackHandlePort(Protocol):
 
     def snapshot(self) -> Mapping[str, JSONValue]:
         """Read retained execution state; polling never advances its references.
+
+        With ``execution.playback_timing``, ``elapsed_ns`` is local time from
+        activation to the retained feedback sample, or ``None`` before activation.
+        Queue wait and cloud delivery time do not consume this elapsed duration.
+        Reading it cannot renew a deadline or imply that the feedback is current.
 
         With ``execution.goal_progress``, ``settled_miss`` reports a fresh local
         settling result outside the original goal. It is nonterminal progress,

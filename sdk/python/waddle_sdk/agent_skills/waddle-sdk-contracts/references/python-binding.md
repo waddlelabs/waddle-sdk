@@ -72,6 +72,11 @@ cadence without counting unrelated lock wait as driver execution.
 
 ## Finite joint playback
 
+Binding API 35 adds `execution.playback_timing`. Use snapshot `elapsed_ns` for
+local time since activation at the retained feedback sample; queued wait is
+excluded and an unstarted execution has no elapsed duration. The normative
+finite-playback page defines deadline and delayed-sample semantics.
+
 Binding API 31 supports `PlaybackGoal` and local endpoint settling allowances.
 Use SDK-owned measured outcomes for finite trajectories; original joint or
 declared-TCP goals are independent of corrected reference endpoints. Pose goals

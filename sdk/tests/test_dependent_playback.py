@@ -225,3 +225,32 @@ def test_coordinated_queue_waits_for_every_selected_predecessor(site_path, monke
         result = joined.wait()
         assert result["status"] == "arrived", result
         assert result["feedback"]["positions"] == pytest.approx((0.02, 0, -0.01, 0))
+
+
+def test_elapsed_time_begins_on_activation_and_survives_wire_roundtrip(
+    opened, monkeypatch
+):
+    session, run = opened
+    moving, wrote, _ = moving_owner(session, monkeypatch)
+    first = run.start_playback(request((0, 0), (0.02, 0)))
+    try:
+        assert wrote.wait(5)
+        second = run.start_playback(
+            request((0.02, 0), (0.04, 0)),
+            after=[PlaybackDependency(first, ("arrived",))],
+        )
+        assert second.snapshot()["elapsed_ns"] is None
+    finally:
+        moving.clear()
+    child = decode(encode(second.wait()))
+    parent = first.wait()
+    assert SupportFact.PLAYBACK_TIMING in session.support().rows[0].facts
+    assert child["status"] == "arrived"
+    assert child["elapsed_ns"] >= 0
+    # Activation follows the predecessor's final acquired feedback, even if the
+    # caller receives both results only afterward. No clock synchronization.
+    assert (
+        child["feedback"]["observed_ns"] - child["elapsed_ns"]
+        >= parent["feedback"]["observed_ns"]
+    )
+    assert second.snapshot()["elapsed_ns"] == child["elapsed_ns"]

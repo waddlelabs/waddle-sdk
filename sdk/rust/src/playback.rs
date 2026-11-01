@@ -542,6 +542,7 @@ fn snapshot(py: Python<'_>, value: ExecutionSnapshot) -> PyResult<Py<PyDict>> {
     out.set_item("id", value.id)?;
     out.set_item("episode_id", value.episode_id.to_string())?;
     out.set_item("waiting_for", value.waiting_for)?;
+    out.set_item("elapsed_ns", value.elapsed_ns)?;
     out.set_item("dispatched", value.dispatched)?;
     out.set_item("references", value.references)?;
     out.set_item("last_acknowledged_ns", value.last_acknowledged_ns)?;
