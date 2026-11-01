@@ -226,8 +226,22 @@ impl Control {
             if !matches!(result, Ok(Completion::ReferencesDispatched)) {
                 state.snapshot.transit_successor = None;
             }
+            // Replacing one checked buffer does not release its live press.
+            // Only an individual cancellation with completed scoped Hold may
+            // retain input; faults, failed cleanup and global Stop still fence it.
+            let scoped_cancel = matches!(
+                result,
+                Err(ExecutionFailure::Playback(PlaybackError::Cancelled(_)))
+            ) && state.cancelled.is_some()
+                && !state.cancelled_by_control
+                && state
+                    .snapshot
+                    .cleanup
+                    .as_ref()
+                    .is_some_and(|cleanup| cleanup.part.is_some() && cleanup.result.is_ok());
             state.snapshot.result = Some(result);
             if state.snapshot.result.as_ref().is_some_and(Result::is_err)
+                && !scoped_cancel
                 && let Some(input) = &self.input
             {
                 input.release("input execution failed");

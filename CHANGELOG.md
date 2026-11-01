@@ -24,6 +24,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Keep live playback input across an individual buffer cancellation only after
+  successful scoped Hold; faults and global controls still fence input.
+
 - Sample fresh local feedback between slow paced-curve commands so accepted input
   can renew its watchdog. Preserve write cadence and expiry without input.
 

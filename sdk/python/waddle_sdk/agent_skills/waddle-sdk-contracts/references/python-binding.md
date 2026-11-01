@@ -301,3 +301,8 @@ reviewed rows or an explicit source manifest, preserving site identity and bound
 source/calibration snapshots. Its trusted configure callback runs before atomic
 publication and must not open hardware. Linux absent-destination rename is the
 qualified filesystem boundary. Normal SDK imports do not require the terminal UI.
+
+A live input may survive individual buffer cancellation only after confirmed
+scoped Hold; this never renews its deadline or revives released/expired input.
+Other failures and global Stop still fence it. See the finite-reference-playback
+contract for the input lifetime and cleanup boundary.

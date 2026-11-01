@@ -76,3 +76,8 @@ When behavior changes:
 4. Run the complete conformance suite and relevant feature-gated builds.
 
 Do not modify an existing golden to make a new implementation pass. Add a superseding fixture and mark the old case deprecated when a contradiction is proven.
+
+A live input may survive individual buffer cancellation only after confirmed
+scoped Hold; this never renews its deadline or revives released/expired input.
+Other failures and global Stop still fence it. See the finite-reference-playback
+contract for the input lifetime and cleanup boundary.

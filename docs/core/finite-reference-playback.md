@@ -134,6 +134,13 @@ require their own qualification.
 
 ### Input arrival watchdog
 
+An individual buffer cancellation may retain its live input only after a
+successful **scoped** Hold. This supports replacing checked trajectories during
+one still-active press. It does not renew the input or change its deadline.
+Failed cleanup, other execution failures and global Stop fence the input;
+release, expiry and run closure remain permanent even if scoped cancellation
+finishes later. A completed Hold receipt is not measured physical stationarity.
+
 The Rust `Session.start_playback_input(episode_id, timeout_ns)` creates a
 run-bound `PlaybackInput` before planning starts. Attach it as
 `PlaybackQueue.input` when submitting the checked references, leaving
