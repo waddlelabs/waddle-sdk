@@ -63,6 +63,9 @@ pub struct PlaybackPolicy {
     /// Finish after all references are acknowledged and fresh feedback arrives.
     /// This reports dispatch completion, never measured arrival or stationarity.
     pub reference_only: bool,
+    /// Keep sampling the acknowledged endpoint until explicitly finished.
+    /// The finite deadline, owner reservation and failure cleanup still apply.
+    pub defer_reference_completion: bool,
     /// Retain the first fresh post-acknowledgement feedback at these offsets.
     /// These are evidence markers, not arrival conditions or authority changes.
     pub checkpoint_offsets_ns: Vec<i64>,
@@ -170,6 +173,17 @@ impl FiniteReferences {
 
     pub fn new(chunk: ActionChunk, policy: PlaybackPolicy) -> Result<Self, PlaybackError> {
         let invalid = PlaybackError::Invalid;
+        if policy.defer_reference_completion
+            && (!policy.reference_only
+                || policy.timeout_ns.is_none()
+                || policy.paced_curve.is_none()
+                || policy.allow_curve_updates
+                || policy.gripper.is_some())
+        {
+            return Err(invalid(
+                "deferred completion requires a finite, fixed reference-only curve",
+            ));
+        }
         if policy.watchdog.is_some_and(|w| {
             w.observed_ns < 0
                 || w.timeout_ns <= 0
@@ -419,6 +433,7 @@ pub struct Playback {
     settled_samples: usize,
     arrived_samples: usize,
     completion: Option<Completion>,
+    finish_requested: bool,
     failure: Option<PlaybackError>,
     curve: Option<CurveCursor>,
     proposed: Option<Step>,
@@ -429,6 +444,23 @@ pub struct Playback {
 }
 
 impl Playback {
+    /// End deferred observation only after the unchanged curve was acknowledged.
+    /// The next poll still validates fresh feedback, tracking and the deadline.
+    pub fn finish_references(&mut self) -> Result<(), PlaybackError> {
+        if !self.references.policy.defer_reference_completion
+            || self.failure.is_some()
+            || self
+                .curve
+                .as_ref()
+                .is_none_or(|c| !c.progress.endpoint_acknowledged)
+        {
+            return Err(PlaybackError::Invalid(
+                "reference endpoint is not ready to finish",
+            ));
+        }
+        self.finish_requested = true;
+        Ok(())
+    }
     /// Withdraw a future suffix without changing the incumbent or its deadline.
     /// An already dispatched handoff must be acknowledged, never retracted.
     pub fn withdraw_curve(&mut self, expected_revision: u64) -> Result<(), PlaybackError> {
@@ -488,6 +520,7 @@ impl Playback {
             settled_samples: 0,
             arrived_samples: 0,
             completion: None,
+            finish_requested: false,
             failure: None,
             curve,
             proposed: None,
@@ -725,7 +758,12 @@ impl Playback {
             Err(error) => return self.fail(error),
         };
         if self.references.policy.reference_only {
-            if finished && after_ack && fresh && self.references.policy.timeout_ns.is_some() {
+            if finished
+                && after_ack
+                && fresh
+                && self.references.policy.timeout_ns.is_some()
+                && (!self.references.policy.defer_reference_completion || self.finish_requested)
+            {
                 self.completion = Some(Completion::ReferencesDispatched);
                 return Ok(PlaybackPoll::Complete(Completion::ReferencesDispatched));
             }

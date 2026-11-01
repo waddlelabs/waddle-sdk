@@ -11,6 +11,12 @@ playback local without providing a listener or login. See the
 [device relay contract](../docs/python/device-relay.md) for integration,
 confined file operations and current platform limits.
 
+Optional finite reference playback can retain local sampling after a fixed curve
+ends, using `execution.deferred_reference_completion` and binding API 30. Explicit
+finish preserves the original deadline and returns fresh final diagnostics;
+applications still decide goal arrival. See the
+[finite playback contract](../docs/core/finite-reference-playback.md#deferred-reference-completion).
+
 ## Site lifecycle
 
 ```python

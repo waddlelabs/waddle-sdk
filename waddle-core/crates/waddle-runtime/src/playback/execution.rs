@@ -161,6 +161,8 @@ struct State {
     cancelled: Option<String>,
     cancelled_by_control: bool,
     curve_update: Option<CurveRequest>,
+    deferred_completion: bool,
+    finish_requested: bool,
 }
 
 #[derive(Debug)]
@@ -239,6 +241,36 @@ impl ExecutionHandle {
     /// terminal handle cannot stop a later execution or rewrite its own result.
     pub fn cancel(&self, reason: &str) {
         self.control.mark_cancelled(reason, false);
+    }
+
+    /// Queue normal completion of an acknowledged, fixed reference curve.
+    /// Queueing is not completion: wait for the retained terminal snapshot.
+    pub fn finish_references(&self) -> Result<(), PlaybackError> {
+        let mut state = self.control.state.lock();
+        if !state.deferred_completion || state.cancelled.is_some() {
+            return Err(PlaybackError::Invalid(
+                "execution does not admit deferred completion",
+            ));
+        }
+        if let Some(result) = &state.snapshot.result {
+            return if matches!(result, Ok(super::Completion::ReferencesDispatched)) {
+                Ok(())
+            } else {
+                Err(PlaybackError::Invalid("execution has already failed"))
+            };
+        }
+        if state
+            .snapshot
+            .curve_progress
+            .as_ref()
+            .is_none_or(|p| !p.endpoint_acknowledged)
+        {
+            return Err(PlaybackError::Invalid(
+                "reference endpoint is not acknowledged",
+            ));
+        }
+        state.finish_requested = true;
+        Ok(())
     }
 
     /// Queue a fresh session-clock feedback stamp. Repeating the same stamp is
@@ -377,6 +409,8 @@ impl ExecutionSlot {
                 cancelled: None,
                 cancelled_by_control: false,
                 curve_update: None,
+                deferred_completion: false,
+                finish_requested: false,
             }),
             changed: Condvar::new(),
         });
@@ -476,7 +510,11 @@ impl ExecutionTask {
         sample_period_ns: i64,
         dispatch_period_ns: i64,
     ) -> Self {
-        handle.control.state.lock().snapshot.watchdog = references.policy.watchdog;
+        {
+            let mut state = handle.control.state.lock();
+            state.snapshot.watchdog = references.policy.watchdog;
+            state.deferred_completion = references.policy.defer_reference_completion;
+        }
         Self {
             mirror,
             episode,
@@ -686,6 +724,11 @@ impl ExecutionTask {
                 }
             };
             receipt.result = Some(result);
+        }
+        if self.control.state.lock().finish_requested
+            && let Err(error) = player.finish_references()
+        {
+            return Some(Err(ExecutionFailure::Playback(error)));
         }
         let polled = player.poll(now, &measured);
         {

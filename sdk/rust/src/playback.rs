@@ -27,6 +27,7 @@ pub(crate) struct Policy {
     timeout_ns: Option<i64>,
     allow_settled: bool,
     reference_only: bool,
+    defer_reference_completion: bool,
     checkpoint_offsets_ns: Vec<i64>,
     allow_curve_updates: bool,
     credit_pacing_delay: bool,
@@ -180,6 +181,7 @@ impl TryFrom<Policy> for PlaybackPolicy {
             timeout_ns: p.timeout_ns,
             allow_settled: p.allow_settled,
             reference_only: p.reference_only,
+            defer_reference_completion: p.defer_reference_completion,
             checkpoint_offsets_ns: p.checkpoint_offsets_ns,
             allow_curve_updates: p.allow_curve_updates,
             credit_pacing_delay: p.credit_pacing_delay,
@@ -421,6 +423,11 @@ impl PyExecutionHandle {
     }
     fn cancel(&self, reason: &str) {
         self.0.cancel(reason);
+    }
+    fn finish_references(&self) -> PyResult<()> {
+        self.0
+            .finish_references()
+            .map_err(|error| PyValueError::new_err(error.to_string()))
     }
     fn refresh_watchdog(&self, observed_ns: i64) -> PyResult<()> {
         self.0

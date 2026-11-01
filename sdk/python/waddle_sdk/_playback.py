@@ -52,6 +52,15 @@ class PlaybackHandle:
     def cancel(self, reason: str) -> None:
         self._native.cancel(reason)
 
+    def finish_references(self) -> None:
+        """Queue normal completion; wait for a terminal native snapshot."""
+        try:
+            self._native.finish_references()
+        except (TypeError, ValueError, OverflowError) as error:
+            raise RuntimeFault.from_exception(
+                error, code=FaultCode.INVALID_REQUEST
+            ) from error
+
     def refresh_watchdog(self, observed_ns: int) -> None:
         """Queue feedback time; acceptance is retained in the native snapshot."""
         try:
@@ -196,6 +205,13 @@ def start(
             FaultCode.UNSUPPORTED, "part does not support playback checkpoint evidence"
         )
     if (
+        motion.policy.defer_reference_completion
+        and SupportFact.DEFERRED_REFERENCE_COMPLETION not in facts
+    ):
+        raise RuntimeFault(
+            FaultCode.UNSUPPORTED, "part does not support deferred reference completion"
+        )
+    if (
         motion.policy.reference_only
         and SupportFact.REFERENCE_JOINT_PLAYBACK not in facts
     ):
@@ -209,7 +225,8 @@ def start(
         and SupportFact.REFERENCE_SETTLING not in facts
     ):
         raise RuntimeFault(
-            FaultCode.UNSUPPORTED, "part does not support reference-only window evidence"
+            FaultCode.UNSUPPORTED,
+            "part does not support reference-only window evidence",
         )
     if (
         motion.policy.minimum_settle_samples != 1

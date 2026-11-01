@@ -94,6 +94,11 @@ def _default(value):
             # An older receiver must reject an enabled completion mode, but can
             # continue decoding ordinary measured-completion policies.
             data.pop("reference_only")
+        if (
+            type(value).__name__ == "PlaybackPolicy"
+            and data.get("defer_reference_completion") is False
+        ):
+            data.pop("defer_reference_completion")
         if type(value).__name__ == "PlaybackPolicy" and not data.get(
             "checkpoint_offsets_ns"
         ):

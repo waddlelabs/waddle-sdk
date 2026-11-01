@@ -456,6 +456,31 @@ and `allow_settled` retain their normal eligibility meanings. The result remains
 the required sample count/span, drift bounds and its actual goal. Window diagnostics
 never turn a reference receipt into an arrival or physical-stop guarantee.
 
+### Deferred reference completion
+
+Binding API 30 adds `PlaybackPolicy.defer_reference_completion`, gated by
+`execution.deferred_reference_completion`. It requires reference-only paced
+execution with a finite timeout, no curve updates and no gripper outcome policy.
+After the fixed curve's endpoint is acknowledged, the same worker retains the
+reservation and continues local observation and optional window diagnostics.
+It sends no further references. This lets a remote planner score its goal using
+locally collected evidence without treating WAN polling intervals as sensor gaps.
+
+Call `DeferredPlaybackHandlePort.finish_references()` on that retained handle
+after endpoint acknowledgement, then wait for the terminal snapshot. Request
+acceptance alone is not completion. The worker checks fresh feedback, tracking,
+window diagnostics and the unchanged deadline before returning
+`references_dispatched`. Final drift or a sample gap remains in the returned
+window; finishing does not certify arrival or stationarity. Early finish refuses;
+repeating a successfully completed finish is idempotent and cannot replay motion.
+Failed or cancelled buffers cannot be revived.
+
+Cancellation, global controls, run closure and failures retain normal local
+Hold/drain. The original timeout bounds deferred observation; a missing finish
+does not create an indefinite reservation. A correction requires confirmed
+completion of the previous buffer before admitting another. The default is
+false and is omitted on the relay wire for older receivers.
+
 ## Optional gripper execution
 
 `PlaybackPolicy.gripper` selects `GripperPolicy` (Python:
