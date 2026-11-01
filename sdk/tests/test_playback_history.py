@@ -44,6 +44,7 @@ def test_history_retains_pending_write_and_original_error(
         assert frozen["run_id"] == run.id
         assert frozen["execution_id"] == handle.snapshot()["id"]
         first = frozen["submissions"][0]
+        assert frozen["started"] == first["started"]
         assert first["result"] == "pending"
         assert first["returned"] is None
         assert first["reference"]["offset_ns"] == 0
@@ -52,7 +53,8 @@ def test_history_retains_pending_write_and_original_error(
         assert first["started"]["session_ns"] <= frozen["sampled"]["session_ns"]
         assert first["started"]["unix_ns"] > 0
         assert (
-            0 < first["started"]["host_monotonic_ns"]
+            0
+            < first["started"]["host_monotonic_ns"]
             <= frozen["sampled"]["host_monotonic_ns"]
             <= time.monotonic_ns()
         )
@@ -130,6 +132,10 @@ def test_history_is_bounded_detached_and_retains_the_pending_tail(opened):
     assert frozen["dropped_submissions"] == 17
     assert len(frozen["submissions"]) == CAPACITY
     assert frozen["submissions"][0]["sequence"] == 18
+    assert (
+        frozen["started"]["session_ns"]
+        < frozen["submissions"][0]["started"]["session_ns"]
+    )
     assert frozen["submissions"][-1]["result"] == "pending"
     assert frozen["submissions"][-1]["reference"]["positions"] == [0.0, 0.0]
     frozen["submissions"].clear()

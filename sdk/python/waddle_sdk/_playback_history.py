@@ -27,14 +27,18 @@ class History:
         self._lock = Lock()
         self._events = deque(maxlen=CAPACITY)
         self._count = 0
+        self._started = None
 
     def begin(self, started, reference, measured, force_n=None):
         with self._lock:
             self._count += 1
+            began = _stamp(started)
+            if self._started is None:
+                self._started = began
             self._events.append(
                 {
                     "sequence": self._count,
-                    "started": _stamp(started),
+                    "started": began,
                     "returned": None,
                     "result": "pending",
                     "reference": deepcopy(reference),
@@ -67,6 +71,7 @@ class History:
                 "clock": "sdk_session_monotonic",
                 "run_id": self.run_id,
                 "joint_names": deepcopy(self.joint_names),
+                "started": deepcopy(self._started),
                 "submissions": deepcopy(list(self._events)),
                 "submission_count": self._count,
                 "dropped_submissions": self._count - len(self._events),
