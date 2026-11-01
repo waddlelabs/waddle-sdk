@@ -1,3 +1,5 @@
+The first API 41 native compile exposed a test assertion comparing SmallVec with Vec; compare its actual slice. No runtime change. Matching-wheel and full validation pending.
+
 SDK API 41 adds a distinct expected measured-start vector on the existing worker. The original three native-public baselines fail on the old DTO; new tests retain both-direction stale refusal, complete finite layout and owner target limits. The start vector is never dispatched; default relay shape is unchanged. Focused, matching-wheel and full CI validation remain pending. No package publication or deployment.
 
 SDK history PR 64 is merged to beta 6a3dd33 after exact-head CI 41287075225: 1,273 Python cases, 413 optional skips, two warnings; core/transports/shim and strict docs pass. Matching installed history/relay and Metal/Twin checks pass. A new measured-start regression ports near-limit recovery: expected feedback may differ from the first in-range target, with the original tolerance and every owner command limit unchanged. Baseline pending; no deployment or hardware change.

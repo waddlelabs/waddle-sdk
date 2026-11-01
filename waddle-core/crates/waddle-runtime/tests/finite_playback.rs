@@ -782,7 +782,7 @@ fn distinct_measured_start_preserves_tolerance_and_first_command() {
             // Admission uses the measured anchor; dispatch still uses the exact
             // first command from the original checked buffer.
             dispatch(&mut player, 0, measured, 0);
-            assert_eq!(player.reference(0).unwrap().values, vec![0.0, 0.5]);
+            assert_eq!(player.reference(0).unwrap().values.as_slice(), &[0.0, 0.5]);
         } else {
             assert_eq!(
                 player.poll(0, &feedback(0, measured)),
