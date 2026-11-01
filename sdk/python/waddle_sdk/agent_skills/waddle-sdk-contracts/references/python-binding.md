@@ -72,6 +72,13 @@ cadence without counting unrelated lock wait as driver execution.
 
 ## Finite joint playback
 
+Binding API 30 adds `DeferredPlaybackHandlePort.finish_references` with
+`execution.deferred_reference_completion`. Opt-in finite, fixed reference-only
+curves keep their local sampler and owner reservation after endpoint acknowledgement,
+without more writes. Require a terminal snapshot after finish; acceptance alone
+does not confirm completion. Preserve deadlines, final drift/gap diagnostics,
+cancellation and ordinary Hold/drain. See the normative finite-playback page.
+
 Binding API 26 supports explicit reference streams with `timeout_ns=None` and
 `execution.streamed_joint_playback`. Require a watchdog and revisable reference
 curves ending at zero velocity/acceleration. The local worker retains supervised

@@ -11,6 +11,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Add opt-in deferred reference completion (binding API 30): retain the local
+  sampler and owner reservation after a fixed curve ends, without repeating
+  references. Explicit finish returns fresh final diagnostics under the original
+  deadline and stop rules. Keep reference dispatch distinct from goal arrival.
+
 - Add sample-bound encoder-window diagnostics for reference-only playback
   (binding API 29). Include the final fresh sample and its drift/gap resets,
   while preserving reference completion semantics and existing local execution.

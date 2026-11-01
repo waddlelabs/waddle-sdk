@@ -78,6 +78,7 @@ class SupportFact(str, enum.Enum):
     SAMPLED_JOINT_PLAYBACK = "execution.sampled_joint_playback"
     REFERENCE_JOINT_PLAYBACK = "execution.reference_joint_playback"
     REFERENCE_SETTLING = "execution.reference_settling"
+    DEFERRED_REFERENCE_COMPLETION = "execution.deferred_reference_completion"
     CHECKPOINTED_JOINT_PLAYBACK = "execution.checkpointed_joint_playback"
     REVISABLE_JOINT_PLAYBACK = "execution.revisable_joint_playback"
     PLAYBACK_FEEDBACK_REFERENCE = "execution.playback_feedback_reference"
@@ -739,6 +740,14 @@ class PlaybackPolicy:
     ``settling.observed_ns`` identifies that sample; completion still reports
     only ``references_dispatched``, never arrival or stationarity.
 
+    ``defer_reference_completion`` keeps a fixed reference-only paced curve's
+    owner reservation and local observation loop after endpoint acknowledgement.
+    It requires ``execution.deferred_reference_completion`` and a finite timeout.
+    No more references are sent. Call ``finish_references`` on the retained
+    handle, then wait for its terminal snapshot with fresh feedback/window
+    evidence. The original deadline, tracking checks and stop cleanup remain
+    active; finishing does not itself establish goal arrival or stationarity.
+
     ``checkpoint_offsets_ns`` requests up to 256 strictly increasing diagnostic
     markers within the buffer, with checkpointed-playback support. Each retains
     the first fresh local feedback after acknowledged reference phase crosses
@@ -792,6 +801,7 @@ class PlaybackPolicy:
     credit_pacing_delay: bool = False
     part_hold: bool = False
     watchdog: PlaybackWatchdog | None = None
+    defer_reference_completion: bool = False
 
     def __post_init__(self) -> None:
         for name in (
@@ -863,6 +873,18 @@ class PlaybackHandlePort(Protocol):
     def wait(self) -> Mapping[str, JSONValue]: ...
 
     def cancel(self, reason: str) -> None: ...
+
+
+@runtime_checkable
+class DeferredPlaybackHandlePort(PlaybackHandlePort, Protocol):
+    """Finish an acknowledged fixed reference curve after local observation.
+
+    Queueing does not establish completion. Require the terminal snapshot; its
+    feedback/window is refreshed by the existing worker before completion.
+    The original deadline and cancellation/owner cleanup remain binding.
+    """
+
+    def finish_references(self) -> None: ...
 
 
 @runtime_checkable
@@ -1071,6 +1093,7 @@ __all__ = [
     "SUPPORT_CONTRACT_VERSION",
     "Action",
     "BodySphere",
+    "DeferredPlaybackHandlePort",
     "FaultCode",
     "FiniteJointMotion",
     "FinitePlaybackRunPort",

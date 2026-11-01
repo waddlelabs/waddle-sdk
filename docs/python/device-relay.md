@@ -32,6 +32,12 @@ with async iteration over binary messages, `send(bytes)` and
 peer and use TLS before calling `serve`; the relay itself supplies no identity
 or access-control service. Do not expose it as an unauthenticated listener.
 
+Optional `playback_finish` forwards deferred reference completion to the retained
+run/execution handle. It grants no new ownership and is not a stop operation.
+Require the terminal snapshot after acceptance; the existing reserved stop calls
+and uncertain-drain fences remain unchanged. See
+[deferred completion](../core/finite-reference-playback.md#deferred-reference-completion).
+
 The wheel ships `waddle_sdk_relay` as a separate Python namespace so a server
 can import its protocol constants, publisher schema and structured errors without
 loading `waddle_sdk`, native bindings or hardware modules. Device and wire imports

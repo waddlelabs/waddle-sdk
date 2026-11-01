@@ -5,6 +5,23 @@ acceptance separately in a configured simulator environment.
 
 # AGENTS.md — waddle-sdk monorepo
 
+Binding API 30 adds optional deferred reference completion for finite, fixed
+paced curves. The existing worker retains ownership and samples after endpoint
+acknowledgement without sending more references. `finish_references()` queues
+completion; only its terminal snapshot confirms it, after fresh feedback/window
+checks. Preserve the original deadline, tracking, cancellation and Hold/drain.
+Default false preserves older policies and wire encoding. This primitive does
+not decide application goals or establish physical stationarity. See the finite
+reference playback guide and `sdk/tests/test_deferred_playback.py`.
+Validation passes 521 core, 24 gRPC, 14 LiveKit and eight focused installed
+deferred-playback cases, all required native/shim lint and strict documentation.
+The locked default Python profile passes 1,199 cases with 413 optional skips.
+Separate MuJoCo 3.13 coverage retains unchanged baseline failures in xArm contact
+width and SO-101/YAM two-arm peg drift; do not relax those assertions or call the
+optional physics suite fully passing. Match the source checkout's compiled binding
+when tests explicitly select its Python path; an old ignored extension is not a
+valid wheel regression. No physical stationarity or deployment result is implied.
+
 Binding API 29 adds `execution.reference_settling`: optional native encoder-window
 diagnostics remain current through the final reference-only sample. Window
 `observed_ns` binds the evidence to SDK feedback; publish both in one snapshot

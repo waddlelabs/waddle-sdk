@@ -42,6 +42,7 @@ fn inputs() -> (ActionChunk, PlaybackPolicy) {
             timeout_ns: Some(2_000_000_000),
             allow_settled: false,
             reference_only: false,
+            defer_reference_completion: false,
             checkpoint_offsets_ns: vec![],
             allow_curve_updates: false,
             credit_pacing_delay: false,

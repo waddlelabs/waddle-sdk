@@ -255,6 +255,7 @@ class Device:
             if method in {
                 "playback_status",
                 "playback_cancel",
+                "playback_finish",
                 "playback_update",
                 "playback_withdraw",
                 "playback_refresh",
@@ -265,6 +266,14 @@ class Device:
                         "sdk_playback_expired",
                         "Playback does not belong to a retained run",
                     )
+                if method == "playback_finish":
+                    finish = getattr(handle, "finish_references", None)
+                    if not callable(finish):
+                        raise RuntimeFault(
+                            FaultCode.UNSUPPORTED,
+                            "SDK handle does not support deferred completion",
+                        )
+                    finish()
                 if method == "playback_cancel":
                     handle.cancel(arguments["reason"])
                 if method == "playback_refresh":

@@ -52,6 +52,7 @@ fn inputs() -> (ActionChunk, PlaybackPolicy) {
             timeout_ns: Some(2_000_000_000),
             allow_settled: false,
             reference_only: false,
+            defer_reference_completion: false,
             checkpoint_offsets_ns: vec![],
             allow_curve_updates: false,
             credit_pacing_delay: false,
@@ -917,5 +918,120 @@ fn pacing_credit_requires_reference_only_polynomial_execution() {
             policy.paced_curve = None;
         }
         assert!(FiniteReferences::new(chunk, policy).is_err());
+    }
+}
+
+fn deferred_endpoint() -> (Playback, i64, f64) {
+    let (chunk, mut policy) = inputs();
+    policy.reference_only = true;
+    policy.allow_settled = true;
+    policy.defer_reference_completion = true;
+    policy.timeout_ns = Some(5_000_000_000);
+    policy.feedback = Some(waddle_runtime::playback::FeedbackPolicy {
+        held_groups: vec![],
+        measured_indices: vec![],
+        velocity_hints: waddle_runtime::playback::VelocityHints::TowardReference,
+        position_window: Some(waddle_runtime::playback::PositionWindow {
+            max_drift: vec![0.001],
+            max_gap_ns: Some(150_000_000),
+            during_motion: true,
+            consecutive_samples: 3,
+        }),
+    });
+    let mut p = Playback::new(FiniteReferences::new(chunk, policy).unwrap(), 0);
+    assert!(p.finish_references().is_err());
+    let mut q = 0.0;
+    for at in (0..4_000_000_000).step_by(100_000_000) {
+        if let PlaybackPoll::Dispatch(index) = p.poll(at, &measured(at, q)).unwrap() {
+            q = p.reference(index).unwrap().values[0];
+            p.acknowledge(index, at).unwrap();
+        }
+        if p.curve_progress().unwrap().endpoint_acknowledged {
+            return (p, at, q);
+        }
+    }
+    panic!("reference endpoint was never acknowledged");
+}
+
+#[test]
+fn deferred_completion_keeps_local_windows_without_replaying_references() {
+    let (mut p, at, q) = deferred_endpoint();
+    let dispatched = p.dispatched();
+    for i in 1..=4 {
+        let now = at + i * 100_000_000;
+        assert_eq!(
+            p.poll(now, &measured(now, q)).unwrap(),
+            PlaybackPoll::Observe
+        );
+    }
+    assert_eq!(p.dispatched(), dispatched);
+    assert!(p.settling_evidence().unwrap().samples >= 3);
+    p.finish_references().unwrap();
+    // A final changed reading must be included, even after finish was requested.
+    let now = at + 500_000_000;
+    assert_eq!(
+        p.poll(now, &measured(now, q + 0.003)).unwrap(),
+        PlaybackPoll::Complete(Completion::ReferencesDispatched)
+    );
+    let window = p.settling_evidence().unwrap();
+    assert_eq!(window.observed_ns, now);
+    assert!(window.joint_spans[0] > 0.001);
+    assert_eq!(p.dispatched(), dispatched);
+}
+
+#[test]
+fn deferred_completion_never_extends_deadline_or_revives_cancelled_playback() {
+    let (mut p, _, q) = deferred_endpoint();
+    p.finish_references().unwrap();
+    assert!(matches!(
+        p.poll(5_000_000_000, &measured(5_000_000_000, q)),
+        Err(PlaybackError::Deadline)
+    ));
+    assert!(p.finish_references().is_err());
+    let (mut p, at, q) = deferred_endpoint();
+    p.cancel("stop wins");
+    assert!(p.finish_references().is_err());
+    assert!(matches!(
+        p.poll(at + 100_000_000, &measured(at + 100_000_000, q)),
+        Err(PlaybackError::Cancelled(_))
+    ));
+}
+
+#[test]
+fn deferred_finish_requires_fresh_feedback_and_keeps_final_gap_reset() {
+    let (mut p, at, q) = deferred_endpoint();
+    let observed = at + 100_000_000;
+    let sample = measured(observed, q);
+    assert_eq!(p.poll(observed, &sample).unwrap(), PlaybackPoll::Observe);
+    p.finish_references().unwrap();
+    assert_eq!(
+        p.poll(observed + 1, &sample).unwrap(),
+        PlaybackPoll::Observe
+    );
+    let after_gap = at + 400_000_000;
+    assert_eq!(
+        p.poll(after_gap, &measured(after_gap, q)).unwrap(),
+        PlaybackPoll::Complete(Completion::ReferencesDispatched)
+    );
+    let window = p.settling_evidence().unwrap();
+    assert_eq!(window.observed_ns, after_gap);
+    assert_eq!(window.samples, 1);
+    assert_eq!(window.span_ns, 0);
+}
+
+#[test]
+fn deferred_completion_requires_fixed_finite_reference_playback() {
+    for invalid in ["measured", "streamed", "updates", "no_curve"] {
+        let (chunk, mut policy) = inputs();
+        policy.reference_only = true;
+        policy.defer_reference_completion = true;
+        match invalid {
+            "measured" => policy.reference_only = false,
+            "streamed" => policy.timeout_ns = None,
+            "updates" => policy.allow_curve_updates = true,
+            "no_curve" => policy.paced_curve = None,
+            _ => unreachable!(),
+        }
+        assert!(FiniteReferences::new(chunk, policy).is_err(), "{invalid}");
     }
 }
