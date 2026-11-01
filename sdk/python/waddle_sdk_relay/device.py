@@ -66,6 +66,8 @@ class Device:
         self._publisher = None
         self._media = None
         self._playbacks = OrderedDict()
+        self._playback_inputs = OrderedDict()
+        self._input_lock = threading.Lock()
 
     def inventory(self):
         result, total = [], 0
@@ -112,6 +114,27 @@ class Device:
             raise RelayError("sdk_transport_lost", "The SDK connection has ended")
         if method == "ping":
             return None
+        if method in {
+            "playback_input_status",
+            "playback_input_refresh",
+            "playback_input_release",
+        }:
+            # Native input acceptance does not wait behind ordinary hardware I/O
+            # or planning/status admission. Release uses reserved Stop capacity.
+            with self._input_lock:
+                control = self._playback_inputs.get(
+                    (arguments["run_id"], arguments["id"])
+                )
+            if control is None:
+                raise RelayError(
+                    "sdk_playback_input_expired",
+                    "Input does not belong to a retained run",
+                )
+            if method == "playback_input_refresh":
+                return control.refresh(arguments["sequence"])
+            if method == "playback_input_release":
+                control.release(arguments["reason"])
+            return control.snapshot()
         if method in SAFETY_METHODS:
             # These public SDK methods enqueue native control requests. Do not
             # wait for a slow observation/write holding ordinary admission.
@@ -227,6 +250,24 @@ class Device:
                         FaultCode.UNSUPPORTED, "SDK run has no playback bounds"
                     )
                 return setter(arguments["bounds"])
+            if method == "playback_input_start":
+                if self.run is None or arguments["run_id"] != self.run.id:
+                    raise RelayError("sdk_run_binding", "Input requires the active run")
+                with self._input_lock:
+                    for key, control in list(self._playback_inputs.items()):
+                        if len(self._playback_inputs) < 128:
+                            break
+                        if control.snapshot()["failure"] is not None:
+                            del self._playback_inputs[key]
+                    if len(self._playback_inputs) >= 128:
+                        raise RelayError(
+                            "sdk_playback_busy", "Input handles are occupied"
+                        )
+                control = self.run.start_playback_input(arguments["timeout_ns"])
+                snapshot = control.snapshot()
+                with self._input_lock:
+                    self._playback_inputs[(self.run.id, snapshot["id"])] = control
+                return snapshot
             if method == "playback_start":
                 if self.run is None or arguments["run_id"] != self.run.id:
                     raise RelayError(
@@ -260,11 +301,24 @@ class Device:
                         "sdk_playback_busy", "Playback handles are occupied"
                     )
                 queue = {}
+                if arguments.get("input_id") is not None:
+                    with self._input_lock:
+                        control = self._playback_inputs.get(
+                            (self.run.id, arguments["input_id"])
+                        )
+                    if control is None:
+                        raise RelayError(
+                            "sdk_playback_input_expired",
+                            "Input does not belong to this retained run",
+                        )
+                    queue["input"] = control
                 if dependencies or arguments.get("start_before_ns") is not None:
-                    queue = {
-                        "after": dependencies,
-                        "start_before_ns": arguments.get("start_before_ns"),
-                    }
+                    queue.update(
+                        {
+                            "after": dependencies,
+                            "start_before_ns": arguments.get("start_before_ns"),
+                        }
+                    )
                 handle = start(arguments["motion"], **queue)
                 snapshot = handle.snapshot()
                 self._playbacks[(snapshot["episode_id"], snapshot["id"])] = handle

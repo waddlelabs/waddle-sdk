@@ -132,14 +132,35 @@ require their own qualification.
 
 ## Optional playback watchdog
 
-### Native input arrival watchdog
+### Input arrival watchdog
 
 The Rust `Session.start_playback_input(episode_id, timeout_ns)` creates a
 run-bound `PlaybackInput` before planning starts. Attach it as
 `PlaybackQueue.input` when submitting the checked references, leaving
 `PlaybackPolicy.watchdog` unset. Creating or renewing an input commands no
-hardware and adds no execution thread. Python and remote adapters for this
-native primitive are not yet available.
+hardware and adds no execution thread.
+
+Binding API 42 exposes the same handle through public
+`InputPlaybackRunPort.start_playback_input(timeout_ns)` and
+`PlaybackInputPort`, under `execution.input_watchdog_playback`. Pass that handle
+as `Run.start_playback(motion, input=control)`; it must belong to that exact run.
+The device relay retains input handles by run and ID. Input renewal bypasses
+ordinary I/O admission; release additionally uses the existing reserved Stop
+capacity. Neither method waits for feedback, planning or execution-status reads.
+
+```python
+control = run.start_playback_input(250_000_000)
+# Each newly received human input may call control.refresh(next_sequence).
+# Do not renew from an automatic timer or from status/planning activity.
+handle = run.start_playback(checked_motion, input=control)
+control.release("operator released")
+result = handle.wait()  # inspect normal cleanup before claiming completed Hold
+```
+
+The caller remains responsible for forwarding input while planning and admission
+are pending, and for releasing a late creation reply after the press has ended.
+Creating this SDK primitive alone does not establish that a cloud application
+has implemented those paths or passed actual WAN qualification.
 
 `refresh(sequence)` records acceptance on the SDK's session clock. Supply a
 strictly increasing sequence for each newly accepted input message. Repeating

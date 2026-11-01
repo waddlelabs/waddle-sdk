@@ -38,7 +38,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 - Add a native run-bound playback input watchdog, renewed on SDK input arrival
   independently of planning and status polling. Preserve ordered renewal,
   irreversible release/expiry, same-run binding and ordinary worker cleanup.
-  Python, relay and application integration remain pending.
+  Binding API 42 exposes public Python input handles and device-relay operations;
+  renewals bypass ordinary I/O admission and release uses reserved Stop capacity.
+  Cloud application integration and actual WAN qualification remain separate.
 
 - Preserve execution deadline-during-feedback regression coverage on the native
   worker using explicit callback barriers; no runtime or policy change.

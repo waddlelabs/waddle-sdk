@@ -22,7 +22,7 @@ mod verbs;
 /// Python starts requiring a newly exposed native attribute or method, so
 /// `_native.py` refuses a stale extension at import instead of discovering
 /// the mismatch during robot motion.
-const BINDING_API_VERSION: u32 = 41;
+const BINDING_API_VERSION: u32 = 42;
 
 /// Which connected transports this extension was compiled with — the ONLY
 /// feature-detection surface the Python layer may branch on (it decides
@@ -75,6 +75,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<episode::PyEpisode>()?;
     m.add_class::<episode::GateInfo>()?;
     m.add_class::<playback::PyExecutionHandle>()?;
+    m.add_class::<playback::PyPlaybackInput>()?;
     m.add_class::<playback::PyIoError>()?;
     m.add(
         "PlaybackBusyError",

@@ -91,6 +91,15 @@ cadence without counting unrelated lock wait as driver execution.
 
 ## Finite joint playback
 
+Binding API 42 exposes `InputPlaybackRunPort.start_playback_input(timeout_ns)`
+and `PlaybackInputPort` under `execution.input_watchdog_playback`. Bind the input
+to checked work with `Run.start_playback(..., input=control)`. Forward newly
+accepted human input with increasing sequences independently of planning/status;
+never renew automatically. Release and expiry cannot be revived. The device
+relay accepts renewals outside ordinary I/O admission and releases through the
+reserved Stop lane. Release alone is not completed Hold or physical stopping.
+See `docs/core/finite-reference-playback.md#input-arrival-watchdog`.
+
 Binding API 41 adds optional `PlaybackPolicy.expected_start` under
 `execution.expected_start_playback`. It separates measured start admission from
 the first command without changing tolerances or owner limits. See

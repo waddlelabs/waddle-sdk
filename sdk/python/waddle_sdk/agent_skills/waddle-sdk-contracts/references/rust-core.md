@@ -50,8 +50,9 @@ watchdog before planning. Attach it through `PlaybackQueue.input`. Ordered
 renewals use SDK input-arrival time; planning/status reads cannot renew it, and
 release or expiry cannot be revived. The same worker retains normal Hold and
 cleanup. This does not bound internet transit or prove physical stopping. Its
-Python and remote adapters remain pending; consult the finite-playback contract
-before using the native surface.
+Python and device-relay adapters are exposed by binding API 42; consult the
+finite-playback contract before using this surface. Cloud callers must forward
+human input independently of planning and reconcile release/cleanup explicitly.
 
 Optional `PacedCurve` evaluation uses that same worker: exact supplied polynomial,
 acknowledged progress, bounded measured headroom and minimum local submission

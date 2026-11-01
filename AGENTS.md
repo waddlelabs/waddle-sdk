@@ -1,3 +1,15 @@
+Binding API 42 now exposes run-bound playback input through public Python and
+the device relay. Renewals bypass ordinary I/O admission; release uses the
+existing reserved Stop capacity. All six new public/relay cases and all 41
+focused input/watchdog/dependency/bridge checks pass against the matching rebuilt
+extension. All 1,288 API 42 Python cases pass (413 optional skips, two existing
+warnings), as do all three shim lint feature sets and strict docs. Native milestone `e522f03` is committed/pushed on
+`fix/sdk-input-watchdog-20261101`. Metal's remote handle adapter at `3141749`
+passes 54 actual bridge/playback/priority cases, including
+release under full ordinary admission and executor starvation. Operator jog
+integration, beta promotion and actual WAN/physical qualification remain open.
+No deployed services or physical owners changed.
+
 The native input-watchdog candidate creates a run-bound input before planning,
 with SDK-clock acceptance, ordered renewal and permanent release/expiry. It uses
 the existing playback worker and its Hold/cleanup path; global stops also fence
