@@ -154,5 +154,14 @@ credential-free TLS URL and bounded fields. Explicit loopback development URLs
 are the only plaintext exception. The matching media extra is still required for
 actual LiveKit publication.
 
+The relay selects a demand-driven RGB-only preview with a 640-pixel width
+ceiling. Its 20 fps presentation ceiling leaves rate-gate slack for discrete
+camera clocks; actual delivery remains limited by source acquisition and
+transport. Each track is capped at the smaller of 1,024 kbps and an equal share
+of a 4,096 kbps aggregate budget. An impossible camera count refuses before
+replacing the publisher selection. Native video work remains separate from
+stills and control; exact acquired RGB-D samples retain their original grid.
+These are presentation ceilings, not a guaranteed browser frame rate.
+
 The software tests exercise native mock hardware, lifecycle and transport limits.
 They do not establish physical stopping distances, WAN timing or task success.

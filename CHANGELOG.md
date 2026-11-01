@@ -11,6 +11,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Raise the device relay's bounded RGB preview from its occasional-monitor
+  profile to a 640-pixel ceiling, with clock slack for 10 Hz sources and a
+  finite aggregate encoder budget. Preserve native video isolation, demand
+  gating and original camera/control samples.
+
 - Expose optional local confirmation of an already held shutdown, preserving
   fresh operator support consent and the original close/drain outcome.
 

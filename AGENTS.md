@@ -5,6 +5,13 @@ acceptance separately in a configured simulator environment.
 
 # AGENTS.md — waddle-sdk monorepo
 
+The device relay uses a bounded demand-driven RGB preview: 640-pixel width,
+20 fps transport ceiling with discrete-clock slack, and at most 1,024 kbps
+per track within a 4,096 kbps aggregate encoder budget. Impossible camera
+counts refuse before changing selection. Native video/still/control work and
+original acquired samples stay independent. Actual browser cadence requires
+live qualification; see docs/python/device-relay.md.
+
 The optional local ShutdownConfirmationPort delivers fresh operator support consent
 only to an already held Site shutdown. False never arms future closure or asserts
 Home. Keep the original close/drain outcome and ownership authoritative; no motion,

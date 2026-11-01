@@ -157,25 +157,30 @@ class Device:
                         "A different media binding requires normal SDK drain",
                     )
                 if self.sdk is None:
-                    self._publisher = binding
-                    self._media = (
-                        None
-                        if publisher is None
-                        else LiveKit(
+                    media = None
+                    if publisher is not None:
+                        camera_count = max(
+                            1, len(self.site.manifest.get("cameras", {}))
+                        )
+                        track_kbps = min(1024, 4096 // camera_count)
+                        if not track_kbps:
+                            raise RelayError(
+                                "media_configuration",
+                                "Camera count exceeds preview budget",
+                            )
+                        media = LiveKit(
                             publisher["url"],
                             publisher["token"],
-                            preview_width=320,
-                            preview_fps=2,
-                            preview_max_kbps=max(
-                                16,
-                                256
-                                // max(1, len(self.site.manifest.get("cameras", {}))),
-                            ),
+                            preview_width=640,
+                            # Discrete acquisition clocks need rate-gate slack
+                            # to preserve a 10 Hz camera's existing samples.
+                            preview_fps=20,
+                            preview_max_kbps=track_kbps,
                             depth_preview=False,
                             demand_driven=True,
                             video_only=True,
                         )
-                    )
+                    self._publisher, self._media = binding, media
                 return None
             if method == "open":
                 if self.opened_once:
