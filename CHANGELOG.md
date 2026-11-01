@@ -15,6 +15,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 - Qualify simulated force hold only after a completed physics step, preventing
   read-only pose inspection from falsely damping a still-open moving gripper.
+  Require positive native jaw contact too, preventing low-force startup saturation
+  from installing contact damping during empty closure.
 - Restore read-only camera geometry without repeating dynamics per captured frame,
   retaining exact RGB/depth and generation binding.
 - Add explicitly capability-gated trusted pose-only simulation snapshots under

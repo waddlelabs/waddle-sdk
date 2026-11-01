@@ -1,4 +1,6 @@
-Reference MuJoCo acquires force-hold only from completed integration feedback.
+Reference MuJoCo acquires force-hold only from completed integration feedback
+and positive native external jaw contact. Unloaded limited motor effort cannot
+qualify contact, including at the advertised minimum force.
 Pose reads cannot qualify the old zero velocity against newly computed effort.
 Independent camera rendering restores position-derived geometry without repeating
 the dynamics solver; exact RGB/depth and generation binding remain required.

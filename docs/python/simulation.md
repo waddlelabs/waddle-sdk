@@ -888,8 +888,10 @@ path; a failed advertised presentation read remains an error.
 
 Reference MuJoCo refreshes only kinematics for these pose reads, without solving
 forces or advancing time. Force-hold acquisition uses effort and velocity from a
-completed integration step, so inspection cannot falsely qualify an open jaw as
-contact. Empty closure still does not establish an object grasp.
+completed integration step plus positive native external jaw contact. Inspection
+and unloaded motor saturation cannot falsely qualify an open jaw as contact,
+including at the advertised minimum force. Empty closure still does not establish
+an object grasp.
 
 Contact history retains every integration step. Elliptic manifolds batch the
 native positive sample counts, minimum distance and maximum normal force; other

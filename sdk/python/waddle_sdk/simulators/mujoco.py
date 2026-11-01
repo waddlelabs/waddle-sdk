@@ -69,12 +69,22 @@ class Engine:
         self._force_ranges = {}
         self._force_servos = {}
         self._force_damping = {}
+        self._gripper_geoms = {}
         for part in self.parts:
             prefix = self._prefix(part)
             joints = [
                 self.model.joint(f"{prefix}{name}")
                 for name in p.names[:-1] + robot.hand_names
             ]
+            finger_bodies = {int(self.model.jnt_bodyid[j.id]) for j in joints[p.dof :]}
+            finger_geoms = set()
+            for geom, body in enumerate(self.model.geom_bodyid):
+                body = int(body)
+                while body and body not in finger_bodies:
+                    body = int(self.model.body_parentid[body])
+                if body in finger_bodies:
+                    finger_geoms.add(geom)
+            self._gripper_geoms[part] = frozenset(finger_geoms)
             self._qpos[part] = [int(j.qposadr[0]) for j in joints]
             self._dofs[part] = [int(j.dofadr[0]) for j in joints]
             self._controls[part] = tuple(
@@ -370,8 +380,24 @@ class Engine:
                 self.gripper_force(part) >= force * 0.9
                 and abs(dq[-1]) < 0.01
                 and q[-1] > 0.0005 / self.profile.opening
+                and self._gripper_contact(part)
             ):
                 self._force_modes[part] = (force, True)
+
+    def _gripper_contact(self, part):
+        # Low limited effort can also look stationary during unloaded startup.
+        # Only a positive native contact on one jaw can qualify contact hold.
+        # Include jaw descendants; internal jaw/jaw contacts do not qualify.
+        geoms = self._gripper_geoms[part]
+        for index, contact in enumerate(self.data.contact):
+            if (int(contact.geom1) in geoms) == (int(contact.geom2) in geoms):
+                continue
+            self.mj.mj_contactForce(
+                self.model, self.data, index, self._contact_force_buffer
+            )
+            if self._contact_force_buffer[0] > 0:
+                return True
+        return False
 
     def hold(self, part=None):
         parts = self.parts if part is None else (self._part(part),)

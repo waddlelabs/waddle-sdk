@@ -8,10 +8,12 @@ import pytest
 from waddle_sdk.simulators.scene import make_site
 
 
-@pytest.mark.parametrize("empty", [False, True])
+# Minimum effort must still close an empty jaw. Holding this loaded fixture at
+# 1 N is not an advertised capacity; retain its separate high-force load check.
+@pytest.mark.parametrize(("empty", "force_bound"), [(False, 1), (True, 1), (True, 0)])
 @pytest.mark.parametrize("sample", ["native_tcp", "evaluation_snapshot"])
 def test_native_force_closure_is_independent_of_interleaved_reads(
-    tmp_path, empty, sample
+    tmp_path, empty, sample, force_bound
 ):
     pytest.importorskip("mujoco")
     from waddle_sdk.simulators.mujoco import Engine
@@ -38,7 +40,7 @@ def test_native_force_closure_is_independent_of_interleaved_reads(
         engine.home(target)
         for _ in range(500):
             engine.step()
-        force = engine.gripper_force_limits()[1]
+        force = engine.gripper_force_limits()[force_bound]
         for _ in range(50):
             target[-1] = max(0, engine.read()[0][-1] - 0.05)
             engine.write_force(target, force)
