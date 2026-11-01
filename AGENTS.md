@@ -1,3 +1,8 @@
+A deterministic native regression now covers slow streamed curves with a shorter
+input watchdog: acquired feedback must advance between writes, accepted input
+may renew it, and sampling alone must still expire. Baseline validation is pending;
+command cadence and expiry authority must remain unchanged.
+
 Gripper receipts retain contact sample counts, velocity-stationary counts and
 the local compatibility decision on failures as well as success. This is additive
 diagnostic data on API 40; execution, thresholds and normal Hold are unchanged.

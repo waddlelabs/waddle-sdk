@@ -13,6 +13,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Add a regression for feedback starvation during slow watchdog-limited streams.
+
 - Retain local gripper contact sample counts and compatibility evidence on failed
   attempts, without changing execution or cleanup.
 

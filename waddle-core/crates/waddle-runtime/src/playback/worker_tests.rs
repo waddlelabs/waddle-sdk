@@ -1168,6 +1168,98 @@ fn watchdog_task(h: &Harness) -> (ExecutionTask, ExecutionHandle) {
 }
 
 #[test]
+fn slow_curve_samples_feedback_without_accelerating_writes_or_renewing_input() {
+    std::thread::Builder::new()
+        .name("waddle-verbs".into())
+        .spawn(|| {
+            let h = Harness::new();
+            let (mut chunk, mut policy) = reference_inputs(
+                Some("left"),
+                false,
+                Some(crate::playback::PlaybackWatchdog {
+                    observed_ns: 0,
+                    timeout_ns: 100_000_000,
+                }),
+            );
+            for (index, step) in chunk.steps.iter_mut().enumerate() {
+                step.offset_ns = index as i64 * 500_000_000;
+            }
+            chunk.horizon_ns = 1_000_000_000;
+            policy.timeout_ns = None;
+            policy.reference_only = true;
+            policy.allow_curve_updates = true;
+            policy.paced_curve = Some(crate::playback::PacedCurve {
+                times_s: vec![0.0, 0.5, 1.0],
+                positions: vec![vec![0.0], vec![0.1], vec![0.2]],
+                coefficients: vec![
+                    [0.0, 0.0, 0.0, 1.0, -1.5, 0.6].map(|x| vec![x]).into(),
+                    [0.1, 0.0, 0.0, 1.0, -1.5, 0.6].map(|x| vec![x]).into(),
+                ],
+                period_ns: 500_000_000,
+                position_error: vec![0.2],
+                tracking_tolerance: vec![0.2],
+                sample_times_s: None,
+            });
+            let references = FiniteReferences::new(chunk, policy).unwrap();
+            let handle = h
+                .dispatch
+                .playback
+                .register(
+                    EpisodeId::new("episode"),
+                    Some(vec!["left".into()]),
+                    references.len(),
+                    &Default::default(),
+                    || false,
+                )
+                .unwrap();
+            let mut task = ExecutionTask::new(
+                h.mirror.clone(),
+                EpisodeId::new("episode"),
+                references,
+                h.io.clone(),
+                &handle,
+                500_000_000,
+                500_000_000,
+            );
+            assert_eq!(task.tick(&h.io.clock), None);
+            let first = handle.snapshot().feedback.unwrap().observed_ns;
+            while h.io.clock.0.now().0 < 600_000_000 {
+                // Only accepted input renews, using feedback already acquired
+                // by this worker. No caller timestamp or wall-clock race.
+                handle
+                    .refresh_watchdog(handle.snapshot().feedback.unwrap().observed_ns)
+                    .unwrap();
+                h.io.clock.0.advance(20_000_000);
+                assert_eq!(task.tick(&h.io.clock), None);
+            }
+            let snapshot = handle.snapshot();
+            assert!(snapshot.feedback.unwrap().observed_ns > first);
+            let writes = h.io.writes.lock();
+            assert_eq!(writes.len(), 2);
+            assert!(writes[1].0 - writes[0].0 >= 500_000_000);
+            drop(writes);
+            // Continuing local sampling/status reads cannot renew input.
+            let deadline = snapshot.watchdog.unwrap().deadline_ns();
+            let result = loop {
+                h.io.clock.0.advance(10_000_000);
+                if let Some(result) = task.tick(&h.io.clock) {
+                    break result;
+                }
+                assert!(h.io.clock.0.now().0 <= deadline);
+            };
+            assert_eq!(
+                result,
+                Err(ExecutionFailure::Playback(PlaybackError::WatchdogExpired))
+            );
+            assert_eq!(h.io.writes.lock().len(), 2);
+            task.finish(result);
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
 fn resting_stream_retains_worker_until_watchdog_expiry_and_hold() {
     for part_hold in [false, true] {
         let h = Harness::new();
