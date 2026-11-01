@@ -41,6 +41,7 @@ fn start_after(
             outcomes,
         }],
         start_before_ns,
+        input: None,
     };
     h.dispatch.start_playback(
         h.mirror.clone(),

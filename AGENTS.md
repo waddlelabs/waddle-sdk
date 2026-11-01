@@ -1,3 +1,19 @@
+The native input-watchdog candidate creates a run-bound input before planning,
+with SDK-clock acceptance, ordered renewal and permanent release/expiry. It uses
+the existing playback worker and its Hold/cleanup path; global stops also fence
+inputs whose checked buffers have not arrived. The original feedback-stamped
+watchdog remains unchanged. All ten new native cases pass, including measured
+mock movement, failed Hold evidence, delayed admission and pending-stop fencing.
+The 580-case workspace gate passes; the subsequent Session adapter case passes
+with all 25 finite-playback cases. Both transport suites, all required native/shim
+lint and strict docs pass, including final lint of the added Session test.
+The matching rebuilt extension passes all 1,282 Python tests (413 optional skips,
+two existing reset-hook warnings) on Python 3.12. Original environment/disk failures
+and an interrupted run are retained. Native logs have verified private R2 readback.
+Python/relay APIs, Metal integration, immutable releases and WAN/physical
+qualification remain open.
+No installed owner or service changed. See the finite-reference-playback contract.
+
 The bounded short-wait candidate passes all 53 selected native worker cases, including deterministic jitter, queued gripper completion, slow-curve watchdog freshness and original cancellation/deadline failures. A further deterministic regression now injects cancellation, owner shutdown, deadline expiry and displaced feedback during the short wait; it must never dispatch another write. Full native/public integration and matching wheels remain pending.
 
 The deterministic read-jitter baseline fails: every nominal 20 ms interval takes 30 ms because a near-due fresh sample is immediately reread. The candidate retains that single curve sample only for the short remaining cadence wait, bounded by observed read cost and the original sample period. Late wakeups reacquire; gripper/long waits keep fresh reads; cancellation/watchdog/owner checks still precede dispatch and the observation stamp is unchanged. Native validation pending.

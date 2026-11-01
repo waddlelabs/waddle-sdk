@@ -35,6 +35,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Add a native run-bound playback input watchdog, renewed on SDK input arrival
+  independently of planning and status polling. Preserve ordered renewal,
+  irreversible release/expiry, same-run binding and ordinary worker cleanup.
+  Python, relay and application integration remain pending.
+
 - Preserve execution deadline-during-feedback regression coverage on the native
   worker using explicit callback barriers; no runtime or policy change.
 

@@ -509,6 +509,7 @@ pub(crate) fn queue(
     Ok(PlaybackQueue {
         after,
         start_before_ns,
+        input: None,
     })
 }
 

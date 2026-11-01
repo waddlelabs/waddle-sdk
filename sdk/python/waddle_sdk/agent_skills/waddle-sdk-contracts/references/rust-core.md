@@ -42,8 +42,16 @@ control thread. Distinct named scopes may have independent loops; whole-site
 scopes exclude them. Hold/e-stop, episode closure and shutdown drain every loop;
 original faults and stop outcomes stay separate. It creates no authority or device
 owner. Python `Run.start_playback` uses these callbacks through the ordinary local
-owner; connector integration is still pending. See
+owner; the device relay transports those retained execution handles. See
 `docs/core/finite-reference-playback.md` in a source checkout for the contract.
+
+Native `Session.start_playback_input` supplies an optional run-bound input
+watchdog before planning. Attach it through `PlaybackQueue.input`. Ordered
+renewals use SDK input-arrival time; planning/status reads cannot renew it, and
+release or expiry cannot be revived. The same worker retains normal Hold and
+cleanup. This does not bound internet transit or prove physical stopping. Its
+Python and remote adapters remain pending; consult the finite-playback contract
+before using the native surface.
 
 Optional `PacedCurve` evaluation uses that same worker: exact supplied polynomial,
 acknowledged progress, bounded measured headroom and minimum local submission

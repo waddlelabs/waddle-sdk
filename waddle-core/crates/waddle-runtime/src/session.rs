@@ -1775,17 +1775,49 @@ impl Session {
         })
     }
 
+    /// Create a run-bound input watchdog without commanding any hardware.
+    /// Its renewals use this SDK's clock; planning and status reads cannot renew it.
+    pub fn start_playback_input(
+        &self,
+        id: &EpisodeId,
+        timeout_ns: i64,
+    ) -> Result<crate::playback::PlaybackInput, crate::playback::PlaybackError> {
+        if self.episode_done(id) {
+            return Err(crate::playback::PlaybackError::Cancelled(
+                "episode ended".into(),
+            ));
+        }
+        self.inner._verbs.start_playback_input(
+            id.clone(),
+            Arc::new(self.inner.clock.clone()),
+            timeout_ns,
+        )
+    }
+
     fn start_playback_scoped(
         &self,
         id: &EpisodeId,
         chunk: &pb::ActionChunk,
-        policy: crate::playback::PlaybackPolicy,
+        mut policy: crate::playback::PlaybackPolicy,
         io: Arc<dyn crate::playback::PlaybackIo>,
         selected: Option<&[String]>,
         queue: crate::playback::PlaybackQueue,
     ) -> Result<crate::playback::ExecutionHandle, crate::playback::PlaybackError> {
         use crate::playback::{FiniteReferences, PlaybackError};
         use waddle_types::{ActionChunk, PartPolicy, SpaceSpec, VelocityFeedforwardPolicy};
+
+        if let Some(input) = &queue.input {
+            if policy.watchdog.is_some() {
+                return Err(PlaybackError::Invalid(
+                    "choose input or feedback watchdog, not both",
+                ));
+            }
+            let snapshot = input.snapshot();
+            if let Some(error) = snapshot.failure {
+                return Err(error);
+            }
+            policy.watchdog = Some(snapshot.watchdog);
+        }
 
         if !(1..=16_385).contains(&chunk.actions.len()) {
             return Err(PlaybackError::Invalid("requires 1..=16385 references"));
