@@ -1,5 +1,31 @@
 # Finite reference playback
 
+## Optional command history
+
+`PlaybackHistoryPort.history()` returns a detached diagnostic copy of the latest
+256 playback callback attempts. Read it separately from `snapshot()` so ordinary
+status polling does not resend the journal. The optional device relay exposes
+the same data through `playback_history`, bound to the retained run and handle.
+Older handles may not provide this optional method.
+
+The `waddle.playback-history/v1` document identifies the run, native execution ID, joint ordering, total
+and dropped counts, and each requested reference with its measured input. Start,
+return and read stamps carry SDK session-monotonic nanoseconds and their epoch
+twins captured by the native clock. A pending call has no returned stamp; errors
+retain their original diagnostics. Superseded calls do not acknowledge the
+requested reference. Cancellation drains an admitted call before normal Hold.
+
+Each stamp also includes a separate `host_monotonic_ns` sample taken in the SDK
+process. This permits comparison with optional camera content intervals from that
+same SDK host and run. It does not convert session time, synchronize hosts, or
+establish an exposure interval for cameras that do not supply one.
+
+This records command calls, not physical arrival or camera exposure. Cleanup
+writes and another supervision stream are excluded. Journal truncation is explicit.
+Do not compare these session timestamps with another host clock or infer missing
+commands from cloud polling; camera alignment requires the same clock identity.
+The recorder makes no execution decisions and introduces no additional worker.
+
 ## SDK-owned queue handoff
 
 Binding API 32 adds `execution.dependent_playback`. A caller can submit a checked

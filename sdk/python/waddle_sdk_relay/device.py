@@ -271,6 +271,7 @@ class Device:
                 return snapshot
             if method in {
                 "playback_status",
+                "playback_history",
                 "playback_cancel",
                 "playback_finish",
                 "playback_update",
@@ -284,6 +285,14 @@ class Device:
                         "sdk_playback_expired",
                         "Playback does not belong to a retained run",
                     )
+                if method == "playback_history":
+                    history = getattr(handle, "history", None)
+                    if not callable(history):
+                        raise RuntimeFault(
+                            FaultCode.UNSUPPORTED,
+                            "SDK handle does not provide command history",
+                        )
+                    return history()
                 if method == "playback_finish":
                     finish = getattr(handle, "finish_references", None)
                     if not callable(finish):

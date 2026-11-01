@@ -1014,6 +1014,21 @@ class PlaybackHandlePort(Protocol):
 
 
 @runtime_checkable
+class PlaybackHistoryPort(PlaybackHandlePort, Protocol):
+    """Optional bounded call diagnostics, separate from frequent status reads.
+
+    History uses the SDK session clock and its stamp-time epoch twin, scoped to
+    the run. A pending call has no returned stamp. Acknowledged calls are not
+    physical arrival; superseded calls did not dispatch the requested reference.
+    Cleanup writes and camera exposure intervals are not included.
+    Each stamp also samples SDK host monotonic time for local content-clock
+    diagnostics; it must never be compared with another host's clock.
+    """
+
+    def history(self) -> Mapping[str, JSONValue]: ...
+
+
+@runtime_checkable
 class DeferredPlaybackHandlePort(PlaybackHandlePort, Protocol):
     """Finish an acknowledged fixed reference curve after local observation.
 
