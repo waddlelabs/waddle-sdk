@@ -631,6 +631,7 @@ pub(crate) struct ExecutionTask {
     io: Arc<dyn PlaybackIo>,
     control: Arc<Control>,
     next_poll_ns: i64,
+    prepared_feedback: Option<Feedback>,
     sample_period_ns: i64,
     dispatch_period_ns: i64,
     failure: Option<ExecutionResult>,
@@ -680,6 +681,7 @@ impl ExecutionTask {
             io,
             control: handle.control.clone(),
             next_poll_ns: 0,
+            prepared_feedback: None,
             sample_period_ns,
             dispatch_period_ns,
             failure: None,
@@ -861,10 +863,17 @@ impl ExecutionTask {
             state.snapshot.waiting_for.clear();
             state.predecessors.clear();
         }
-        if clock.stamp_now().mono_ns().0 < self.next_poll_ns {
+        let poll_ns = clock.stamp_now().mono_ns().0;
+        if poll_ns < self.next_poll_ns {
             return None;
         }
-        let measured = match self.io.observe() {
+        // A read acquired during cadence waiting is used once at the due tick.
+        // If the worker itself was delayed, reacquire instead of using old data.
+        let prepared = self
+            .prepared_feedback
+            .take()
+            .filter(|_| poll_ns.saturating_sub(self.next_poll_ns) <= self.sample_period_ns);
+        let measured = match prepared.map_or_else(|| self.io.observe(), Ok) {
             Ok(measured) => measured,
             Err(error) => return Some(Err(ExecutionFailure::Observation(error))),
         };
@@ -996,8 +1005,13 @@ impl ExecutionTask {
                         state.snapshot.last_acknowledged_ns = Some(completed);
                         // The next poll establishes its exact due time; it never
                         // skips an entry or catches up by dispatching a batch.
-                        self.next_poll_ns =
-                            now.max(started.saturating_add(self.dispatch_period_ns));
+                        self.next_poll_ns = if player.references.policy.paced_curve.is_some()
+                            || player.references.policy.gripper.is_some()
+                        {
+                            now
+                        } else {
+                            now.max(started.saturating_add(self.dispatch_period_ns))
+                        };
                     }
                     Ok(ReferenceReceipt::Superseded(gate)) => {
                         return Some(Err(ExecutionFailure::Superseded(gate)));
@@ -1005,7 +1019,10 @@ impl ExecutionTask {
                     Err(error) => return Some(Err(ExecutionFailure::Dispatch(error))),
                 }
             }
-            PlaybackPoll::WaitUntil(at) => self.next_poll_ns = at,
+            PlaybackPoll::WaitUntil(at) => {
+                self.prepared_feedback = Some(measured);
+                self.next_poll_ns = at;
+            }
             PlaybackPoll::Observe => self.next_poll_ns = now.saturating_add(self.sample_period_ns),
             PlaybackPoll::Complete(result) => return Some(Ok(result)),
         }

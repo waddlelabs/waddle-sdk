@@ -11,6 +11,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Include local feedback acquisition inside paced motion intervals instead of adding its cost after every cadence wait.
+
 - Preserve bent-path, IO cadence, headroom and gripper budget regressions at native playback boundaries.
 
 - Add optional bounded playback call history with native session/epoch stamps,
