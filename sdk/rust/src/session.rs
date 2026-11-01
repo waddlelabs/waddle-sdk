@@ -411,6 +411,28 @@ impl PySession {
         Ok("requested")
     }
 
+    /// Complete a registered priority stop on the ordinary dispatch worker.
+    fn completed_stop<'py>(&self, py: Python<'py>, estop: bool) -> PyResult<Bound<'py, PyDict>> {
+        let session = self.inner.clone();
+        let receipt = py
+            .detach(move || session.completed_stop(estop))
+            .map_err(runtime_err)?;
+        let out = PyDict::new(py);
+        out.set_item("request", if estop { "estop" } else { "hold" })?;
+        out.set_item(
+            "outcome",
+            if receipt.result.is_ok() {
+                "acknowledged"
+            } else {
+                "unknown"
+            },
+        )?;
+        out.set_item("error", receipt.result.err().map(|error| error.to_string()))?;
+        out.set_item("completed_ns", receipt.at.0)?;
+        out.set_item("measured_stationary", false)?;
+        Ok(out)
+    }
+
     /// Release an engaged remote claim through the core FSM and wait for
     /// authoritative lease handback before any local command is admitted.
     fn handoff_remote_to_local(&self, py: Python<'_>) -> (bool, String, String) {

@@ -14,6 +14,14 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 - Expose optional local confirmation of an already held shutdown, preserving
   fresh operator support consent and the original close/drain outcome.
 
+- Add sample-bound encoder-window diagnostics for reference-only playback
+  (binding API 29). Include the final fresh sample and its drift/gap resets,
+  while preserving reference completion semantics and existing local execution.
+
+- Expose optional completed priority-stop callback receipts through
+  `SiteSession.stop` (binding API 28), fencing admission until the existing
+  serialized callback finishes without claiming physical stationarity.
+
 - Confirm failed Site startup cleanup before clearing the device relay's session,
   so ordinary disconnect does not hang on a session already closed by entry.
   Uncertain teardown retains ownership and the original error chain.
@@ -122,6 +130,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   restamp or render a rejected snapshot.
 
 ### Added
+
+- Add optional completed Hold/e-stop receipts through `SiteSession.stop` and the remote safety lane (binding API 28), including stopping after terminal playback without changing its result.
 
 - Optional native gripper playback, with binding API 13 and an independent support
   fact. Preserve the declared jaw mapping, local acknowledgement spacing and

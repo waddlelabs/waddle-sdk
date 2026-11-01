@@ -100,6 +100,8 @@ impl FeedbackPolicy {
 
 #[derive(Clone, Debug)]
 pub struct SettlingEvidence {
+    /// Session-clock sample used to update this window, including empty resets.
+    pub observed_ns: i64,
     pub samples: usize,
     pub span_ns: i64,
     pub joint_spans: Vec<f64>,
@@ -283,6 +285,7 @@ impl FeedbackState {
             0
         };
         self.evidence = Some(SettlingEvidence {
+            observed_ns: measured.observed_ns,
             samples: self.rows.len(),
             span_ns,
             joint_spans: spans,

@@ -442,9 +442,19 @@ interval must remain in tolerance. Raw velocity is diagnostic and still must be
 finite. The selected deadline policy remains binding.
 
 Snapshots expose `settling` with sample count, span, per-row position spans, raw
-velocity peak and consecutive qualifying count. Its time source is the SDK
+velocity peak and consecutive qualifying count. Binding API 29 adds `observed_ns`,
+identifying the SDK sample used to update the window, including empty resets.
+Feedback and its window diagnostics publish together. Its time source is the SDK
 observation timestamp, not a claim about motor acquisition timing. Contact/force
 classification, geometry/world validation and dynamic updates remain separate.
+
+`execution.reference_settling` permits these optional diagnostics during
+reference-only playback, including its final fresh sample. Select the ordinary
+feedback position-window policy and its explicit drift/gap bounds. `during_motion`
+and `allow_settled` retain their normal eligibility meanings. The result remains
+`references_dispatched`; a consumer must separately establish a fresh window,
+the required sample count/span, drift bounds and its actual goal. Window diagnostics
+never turn a reference receipt into an arrival or physical-stop guarantee.
 
 ## Optional gripper execution
 
@@ -570,6 +580,17 @@ the original callback error text, `completed_ns` on the session clock, and
 callback returns. An uncertain write stays uncertain even when the stop succeeds.
 Missing cleanup is not confirmation: successful motion, a superseding stream,
 an ended scope or cancellation before execution can have no stop receipt.
+Binding API 28 adds the optional `control.completed_stop` support fact and
+`CompletedStopPort.stop(reason, estop=False)`, implemented by `SiteSession.stop`.
+It waits for a fresh registered Hold/e-stop callback on the existing serialized
+worker and returns `request`, `outcome`, `error`, `completed_ns` and
+`measured_stationary: false`. It also works after a buffer is terminal; the old
+buffer's result and cleanup remain immutable. A request made during an existing
+callback waits for the next callback. A callback failure returns `unknown` with
+the original error. Transport loss or a caller timeout does not establish cleanup;
+retain ownership until a completed receipt or independently verified owner closure.
+The receipt proves callback completion, not measured physical stationarity.
+
 `Session.hold` and `Session.estop` still acknowledge only that a request was queued;
 posting another request cannot turn missing/failed cleanup into confirmed cleanup.
 

@@ -10,6 +10,25 @@ only to an already held Site shutdown. False never arms future closure or assert
 Home. Keep the original close/drain outcome and ownership authoritative; no motion,
 new owner, native ABI, driver behavior or remote control authority is added.
 
+Binding API 29 adds `execution.reference_settling`: optional native encoder-window
+diagnostics remain current through the final reference-only sample. Window
+`observed_ns` binds the evidence to SDK feedback; publish both in one snapshot
+update. Preserve drift/gap resets, original deadlines and reference-only outcomes.
+Window statistics do not themselves declare goal arrival or physical stationarity.
+The original terminal drift/gap regression is retained. All 555 Rust test
+executions across workspace/transport gates, the required Clippy/format passes
+and strict documentation pass. The public Python run passes 1,247 cases before
+an optional MuJoCo xArm contact-width stability failure, reproduced unchanged
+with the prior API-27 source and binary. Remaining public cases are still being
+checked. This does not establish physical timing or optional scene qualification.
+
+Binding API 28 adds optional `control.completed_stop` and `SiteSession.stop`.
+The existing priority worker returns a fresh callback receipt even after finite
+playback terminates. Requests arriving during a callback wait for the next callback;
+retain failures and keep admission fenced through completion. Queue-only Hold/e-stop
+and immutable terminal playback receipts remain unchanged. Callback completion is
+not physical stationarity. See the finite-reference-playback guide.
+
 Binding API 27 prepares coordinated subsets under a separate support fact. Keep
 selected parts in declaration order, validate the complete selected action space,
 and reserve every member on the existing native worker until terminal cleanup.

@@ -658,11 +658,6 @@ impl ExecutionTask {
                 measured.observed_ns,
             )
         });
-        {
-            let mut state = self.control.state.lock();
-            state.snapshot.feedback = Some(measured.clone());
-            state.snapshot.feedback_reference = state.snapshot.last_reference.clone();
-        }
         let update = self.control.state.lock().curve_update.take();
         if let Some(update) = update {
             let mut state = self.control.state.lock();
@@ -693,11 +688,13 @@ impl ExecutionTask {
             receipt.result = Some(result);
         }
         let polled = player.poll(now, &measured);
-        self.control.state.lock().snapshot.curve_progress = player.curve_progress();
-        self.control.state.lock().snapshot.settling = player.settling_evidence();
-        self.control.state.lock().snapshot.gripper = player.gripper_evidence();
         {
             let mut state = self.control.state.lock();
+            state.snapshot.feedback = Some(measured.clone());
+            state.snapshot.feedback_reference = state.snapshot.last_reference.clone();
+            state.snapshot.curve_progress = player.curve_progress();
+            state.snapshot.settling = player.settling_evidence();
+            state.snapshot.gripper = player.gripper_evidence();
             let recorded = state.snapshot.checkpoints.len();
             state
                 .snapshot

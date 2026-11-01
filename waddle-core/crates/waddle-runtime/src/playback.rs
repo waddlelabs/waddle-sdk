@@ -714,6 +714,16 @@ impl Playback {
         let after_ack = self
             .acknowledged_ns
             .is_some_and(|at| measured.observed_ns > at);
+        let window_completion = match self.feedback.observe(
+            measured,
+            &self.references.policy,
+            arrived,
+            finished && after_ack,
+            fresh,
+        ) {
+            Ok(outcome) => outcome,
+            Err(error) => return self.fail(error),
+        };
         if self.references.policy.reference_only {
             if finished && after_ack && fresh && self.references.policy.timeout_ns.is_some() {
                 self.completion = Some(Completion::ReferencesDispatched);
@@ -722,20 +732,9 @@ impl Playback {
             if finished {
                 return Ok(PlaybackPoll::Observe);
             }
-        }
-        match self.feedback.observe(
-            measured,
-            &self.references.policy,
-            arrived,
-            finished && after_ack,
-            fresh,
-        ) {
-            Ok(Some(outcome)) => {
-                self.completion = Some(outcome);
-                return Ok(PlaybackPoll::Complete(outcome));
-            }
-            Err(error) => return self.fail(error),
-            Ok(None) => {}
+        } else if let Some(outcome) = window_completion {
+            self.completion = Some(outcome);
+            return Ok(PlaybackPoll::Complete(outcome));
         }
         if let Some(curve) = self
             .curve

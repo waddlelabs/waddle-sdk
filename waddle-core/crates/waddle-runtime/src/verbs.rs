@@ -132,12 +132,69 @@ impl DispatchStats {
     }
 }
 
+/// A priority stop keeps admission fenced until its callback completes.
+/// Requests arriving during a callback belong to the next callback, so a
+/// completion can never acknowledge a request made after that callback began.
+#[derive(Debug, Default)]
+struct PriorityStop {
+    pending: Mutex<StopBatch>,
+}
+
+#[derive(Debug, Default)]
+struct StopBatch {
+    count: usize,
+    receipts: Vec<Sender<VerbOutcome>>,
+    closed: bool,
+}
+
+impl PriorityStop {
+    fn request(&self, receipt: Option<Sender<VerbOutcome>>) {
+        let mut pending = self.pending.lock();
+        if !pending.closed {
+            pending.count += 1;
+            pending.receipts.extend(receipt);
+        }
+    }
+
+    fn pending(&self) -> bool {
+        self.pending.lock().count != 0
+    }
+
+    fn begin(&self) -> Option<StopBatch> {
+        let mut pending = self.pending.lock();
+        (pending.count != 0).then(|| StopBatch {
+            count: pending.count,
+            receipts: std::mem::take(&mut pending.receipts),
+            closed: false,
+        })
+    }
+
+    fn finish(
+        &self,
+        batch: StopBatch,
+        outcome: &VerbOutcome,
+        active: &mut VecDeque<Box<ExecutionTask>>,
+    ) {
+        self.pending.lock().count -= batch.count;
+        finish_cancelled(active, outcome);
+        for receipt in batch.receipts {
+            let _ = receipt.send(outcome.clone());
+        }
+    }
+
+    fn close(&self) {
+        let mut pending = self.pending.lock();
+        pending.closed = true;
+        pending.receipts.clear();
+    }
+}
+
 /// Handle to the dispatch thread.
 #[derive(Debug)]
 pub struct VerbDispatch {
     tx: Sender<Work>,
-    estop_flag: Arc<AtomicUsize>,
-    priority_hold_flag: Arc<AtomicUsize>,
+    estop_flag: Arc<PriorityStop>,
+    priority_hold_flag: Arc<PriorityStop>,
     pending_verbs: Arc<AtomicUsize>,
     playback: Arc<ExecutionSlot>,
     playback_available: bool,
@@ -153,8 +210,8 @@ impl VerbDispatch {
         outcomes: Sender<VerbOutcome>,
     ) -> Self {
         let (tx, rx) = std::sync::mpsc::channel::<Work>();
-        let estop_flag = Arc::new(AtomicUsize::new(0));
-        let priority_hold_flag = Arc::new(AtomicUsize::new(0));
+        let estop_flag = Arc::new(PriorityStop::default());
+        let priority_hold_flag = Arc::new(PriorityStop::default());
         let pending_verbs = Arc::new(AtomicUsize::new(0));
         let playback_available = registry.hold.is_some();
         let stats = Arc::new(DispatchStats::default());
@@ -203,7 +260,7 @@ impl VerbDispatch {
     pub fn request(&self, req: VerbRequest) {
         self.playback.interrupt("control verb requested", || {
             if matches!(req, VerbRequest::Estop) {
-                self.estop_flag.fetch_add(1, Ordering::SeqCst);
+                self.estop_flag.request(None);
             } else {
                 self.pending_verbs.fetch_add(1, Ordering::SeqCst);
                 if self.tx.send(Work::Verb(req)).is_err() {
@@ -217,8 +274,22 @@ impl VerbDispatch {
     /// does not revoke authority; it is the core-owned energized hold path.
     pub fn request_priority_hold(&self) {
         self.playback.interrupt("priority Hold requested", || {
-            self.priority_hold_flag.fetch_add(1, Ordering::SeqCst);
+            self.priority_hold_flag.request(None);
         });
+    }
+
+    /// Request a priority stop with a receipt from this callback or a later one.
+    pub fn request_completed_stop(&self, estop: bool) -> Receiver<VerbOutcome> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.playback.interrupt("completed stop requested", || {
+            let lane = if estop {
+                &self.estop_flag
+            } else {
+                &self.priority_hold_flag
+            };
+            lane.request(Some(tx));
+        });
+        rx
     }
 
     pub(crate) fn start_playback(
@@ -247,8 +318,8 @@ impl VerbDispatch {
             || {
                 self.shutdown.load(Ordering::SeqCst)
                     || self.pending_verbs.load(Ordering::SeqCst) != 0
-                    || self.estop_flag.load(Ordering::SeqCst) != 0
-                    || self.priority_hold_flag.load(Ordering::SeqCst) != 0
+                    || self.estop_flag.pending()
+                    || self.priority_hold_flag.pending()
             },
         )?;
         let task = ExecutionTask::new(
@@ -308,8 +379,8 @@ fn dispatch_loop<C: Clock>(
     clock: &C,
     rx: &Receiver<Work>,
     outcomes: &Sender<VerbOutcome>,
-    estop_flag: &AtomicUsize,
-    priority_hold_flag: &AtomicUsize,
+    estop_flag: &PriorityStop,
+    priority_hold_flag: &PriorityStop,
     stats: &DispatchStats,
     shutdown: &AtomicBool,
     pending_verbs: &AtomicUsize,
@@ -318,33 +389,45 @@ fn dispatch_loop<C: Clock>(
     let mut active: VecDeque<Box<ExecutionTask>> = VecDeque::new();
     loop {
         if shutdown.load(Ordering::SeqCst) {
-            if playback.any_active() {
-                let stop = if estop_flag.load(Ordering::SeqCst) != 0 {
+            let estops = estop_flag.begin();
+            let holds = if estops.is_none() {
+                priority_hold_flag.begin()
+            } else {
+                None
+            };
+            if playback.any_active() || estops.is_some() || holds.is_some() {
+                let stop = if estops.is_some() {
                     VerbRequest::Estop
                 } else {
                     VerbRequest::Hold
                 };
                 let outcome = execute(registry, clock, &stop, outcomes, stats);
                 playback.record_cleanup(&outcome);
-                finish_cancelled(&mut active, &outcome);
+                if estops.is_none() && holds.is_none() {
+                    finish_cancelled(&mut active, &outcome);
+                }
+                if let Some(batch) = estops {
+                    estop_flag.finish(batch, &outcome, &mut active);
+                }
+                if let Some(batch) = holds {
+                    priority_hold_flag.finish(batch, &outcome, &mut active);
+                }
             }
+            estop_flag.close();
+            priority_hold_flag.close();
             return;
         }
         // Site-wide safety requests preempt every active and queued buffer.
-        let estops = estop_flag.load(Ordering::SeqCst);
-        if estops != 0 {
+        if let Some(batch) = estop_flag.begin() {
             let outcome = execute(registry, clock, &VerbRequest::Estop, outcomes, stats);
             playback.record_cleanup(&outcome);
-            estop_flag.fetch_sub(estops, Ordering::SeqCst);
-            finish_cancelled(&mut active, &outcome);
+            estop_flag.finish(batch, &outcome, &mut active);
             continue;
         }
-        let holds = priority_hold_flag.load(Ordering::SeqCst);
-        if holds != 0 {
+        if let Some(batch) = priority_hold_flag.begin() {
             let outcome = execute(registry, clock, &VerbRequest::Hold, outcomes, stats);
             playback.record_cleanup(&outcome);
-            priority_hold_flag.fetch_sub(holds, Ordering::SeqCst);
-            finish_cancelled(&mut active, &outcome);
+            priority_hold_flag.finish(batch, &outcome, &mut active);
             continue;
         }
         let now = clock.stamp_now().mono_ns().0;
@@ -364,8 +447,8 @@ fn dispatch_loop<C: Clock>(
                 if let Some(result) = task.cancelled_result()
                     && task.cancelled_by_control()
                     && pending_verbs.load(Ordering::SeqCst) == 0
-                    && estop_flag.load(Ordering::SeqCst) == 0
-                    && priority_hold_flag.load(Ordering::SeqCst) == 0
+                    && !estop_flag.pending()
+                    && !priority_hold_flag.pending()
                 {
                     // The completed control owns the device now. A global stop
                     // retains its receipt in the slot; Home and other takeovers
@@ -386,8 +469,8 @@ fn dispatch_loop<C: Clock>(
                 };
                 if task.cancelled_result().is_some()
                     && (pending_verbs.load(Ordering::SeqCst) != 0
-                        || estop_flag.load(Ordering::SeqCst) != 0
-                        || priority_hold_flag.load(Ordering::SeqCst) != 0)
+                        || estop_flag.pending()
+                        || priority_hold_flag.pending())
                 {
                     active.push_back(task);
                     continue;
@@ -402,8 +485,8 @@ fn dispatch_loop<C: Clock>(
                         // Keep its original failure until that control verb drains.
                         if shutdown.load(Ordering::SeqCst)
                             || pending_verbs.load(Ordering::SeqCst) != 0
-                            || estop_flag.load(Ordering::SeqCst) != 0
-                            || priority_hold_flag.load(Ordering::SeqCst) != 0
+                            || estop_flag.pending()
+                            || priority_hold_flag.pending()
                         {
                             active.push_back(task);
                         } else {
@@ -418,18 +501,18 @@ fn dispatch_loop<C: Clock>(
                         pending_verbs.fetch_add(1, Ordering::SeqCst);
                     });
                     active.push_back(task);
-                    let estops = estop_flag.load(Ordering::SeqCst);
-                    let stop = if estops != 0 {
+                    let estops = estop_flag.begin();
+                    let stop = if estops.is_some() {
                         VerbRequest::Estop
                     } else {
                         VerbRequest::Hold
                     };
                     let outcome = execute(registry, clock, &stop, outcomes, stats);
                     playback.record_cleanup(&outcome);
-                    if estops != 0 {
-                        estop_flag.fetch_sub(estops, Ordering::SeqCst);
-                    }
                     pending_verbs.fetch_sub(1, Ordering::SeqCst);
+                    if let Some(batch) = estops {
+                        estop_flag.finish(batch, &outcome, &mut active);
+                    }
                     // Cleanup is complete. Clear its admission fence before
                     // publishing terminal handles: dropping their I/O adapters
                     // may wait for the caller's interpreter lock. Cancelled old
