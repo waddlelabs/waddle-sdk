@@ -9,8 +9,9 @@ use waddle_runtime::playback::{
     Completion, ContactCondition, CurveUpdate, ExecutionFailure, ExecutionHandle,
     ExecutionSnapshot, Feedback, FeedbackPolicy, ForceCondition, GoalDwell, GoalUpdate,
     GripperPolicy, HeldJointGroup, MeasuredForce, PacedCurve, PlaybackDependency, PlaybackError,
-    PlaybackGoal, PlaybackIo, PlaybackIoError, PlaybackPolicy, PlaybackQueue, PlaybackWatchdog,
-    Pose, PositionWindow, ReferenceReceipt, VelocityHints,
+    PlaybackGoal, PlaybackInput, PlaybackInputSnapshot, PlaybackIo, PlaybackIoError,
+    PlaybackPolicy, PlaybackQueue, PlaybackWatchdog, Pose, PositionWindow, ReferenceReceipt,
+    VelocityHints,
 };
 use waddle_types::Step;
 
@@ -482,9 +483,52 @@ pub(crate) fn start(
 #[pyclass(name = "ExecutionHandle", frozen)]
 pub(crate) struct PyExecutionHandle(ExecutionHandle);
 
+#[pyclass(name = "PlaybackInput", frozen)]
+pub(crate) struct PyPlaybackInput(pub(crate) PlaybackInput);
+
+#[pymethods]
+impl PyPlaybackInput {
+    fn snapshot(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
+        input_snapshot(py, self.0.snapshot())
+    }
+
+    fn refresh(&self, py: Python<'_>, sequence: u64) -> PyResult<Py<PyDict>> {
+        let value = self
+            .0
+            .refresh(sequence)
+            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        input_snapshot(py, value)
+    }
+
+    fn release(&self, reason: &str) {
+        self.0.release(reason);
+    }
+}
+
+fn input_snapshot(py: Python<'_>, value: PlaybackInputSnapshot) -> PyResult<Py<PyDict>> {
+    let out = PyDict::new(py);
+    out.set_item("id", value.id)?;
+    out.set_item("episode_id", value.episode_id.to_string())?;
+    out.set_item("sequence", value.sequence)?;
+    let watchdog = PyDict::new(py);
+    watchdog.set_item("observed_ns", value.watchdog.observed_ns)?;
+    watchdog.set_item("timeout_ns", value.watchdog.timeout_ns)?;
+    watchdog.set_item("deadline_ns", value.watchdog.deadline_ns())?;
+    out.set_item("watchdog", watchdog)?;
+    out.set_item(
+        "failure",
+        value
+            .failure
+            .map(|error| failure(py, ExecutionFailure::Playback(error)))
+            .transpose()?,
+    )?;
+    Ok(out.unbind())
+}
+
 pub(crate) fn queue(
     after: Vec<(PyRef<'_, PyExecutionHandle>, Vec<String>)>,
     start_before_ns: Option<i64>,
+    input: Option<PyRef<'_, PyPlaybackInput>>,
 ) -> PyResult<PlaybackQueue> {
     let after = after
         .into_iter()
@@ -509,6 +553,7 @@ pub(crate) fn queue(
     Ok(PlaybackQueue {
         after,
         start_before_ns,
+        input: input.map(|input| input.0.clone()),
     })
 }
 

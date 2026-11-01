@@ -134,6 +134,81 @@ mod session_execution {
     }
 
     #[test]
+    fn session_binds_input_without_a_second_watchdog_and_fences_it_on_close() {
+        use waddle_runtime::playback::PlaybackQueue;
+
+        let dir = tempfile::tempdir().unwrap();
+        let session = Session::builder("playback-input")
+            .robot(robot())
+            .control(ControlRegistry {
+                send: Some(Arc::new(|_: &ActionChunk| Ok(()))),
+                hold: Some(Arc::new(|| Ok(()))),
+                ..Default::default()
+            })
+            .recording_dir(dir.path())
+            .build()
+            .unwrap();
+        let ep = session.start_episode("input binding").unwrap();
+        // Timing/expiry is covered with FakeClock in input_tests. This test
+        // checks the real Session adapter and synchronizes owner I/O explicitly.
+        let input_watchdog = session
+            .start_playback_input(ep.id(), 30_000_000_000)
+            .unwrap();
+        let unused_input = session
+            .start_playback_input(ep.id(), 30_000_000_000)
+            .unwrap();
+        let mut policy = policy();
+        policy.timeout_ns = Some(30_000_000_000);
+        policy.watchdog = Some(input_watchdog.snapshot().watchdog);
+        let (observe_tx, observe_rx) = mpsc::channel();
+        let (release_observe, wait_observe) = mpsc::channel();
+        let io = Arc::new(NoDispatch {
+            session: session.clone(),
+            observe: Mutex::new(Some((observe_tx, wait_observe))),
+            positions: vec![0.0, 0.5],
+        });
+        let queue = PlaybackQueue {
+            input: Some(input_watchdog.clone()),
+            ..Default::default()
+        };
+        assert!(matches!(
+            session.start_queued_playback(
+                ep.id(),
+                &input(),
+                policy.clone(),
+                io.clone(),
+                None,
+                queue.clone(),
+            ),
+            Err(PlaybackError::Invalid(_))
+        ));
+        policy.watchdog = None;
+        let handle = session
+            .start_queued_playback(ep.id(), &input(), policy, io, None, queue)
+            .unwrap();
+        observe_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        input_watchdog.release("released");
+        release_observe.send(()).unwrap();
+        let outcome = handle.wait();
+        assert_eq!(outcome.dispatched, 0);
+        assert!(matches!(
+            outcome.result,
+            Some(Err(ExecutionFailure::Playback(PlaybackError::Cancelled(_))))
+        ));
+        assert!(outcome.cleanup.unwrap().result.is_ok());
+        session.terminate_episode(ep.id(), TerminalOutcome::Abort, "test done");
+        assert!(matches!(
+            unused_input.refresh(1),
+            Err(PlaybackError::Cancelled(_))
+        ));
+        assert!(matches!(
+            session.start_playback_input(ep.id(), 250_000_000),
+            Err(PlaybackError::Cancelled(_))
+        ));
+        session.shutdown();
+    }
+
+    #[test]
     fn episode_termination_drains_reference_io_and_hold_before_terminal() {
         let dir = tempfile::tempdir().unwrap();
         let (hold_tx, hold_rx) = mpsc::channel();

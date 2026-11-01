@@ -21,10 +21,12 @@ pub use feedback::{
 };
 pub use goal::{GoalDwell, GoalDwellProgress, GoalTarget, GoalUpdate, PlaybackGoal, Pose};
 mod gripper;
+mod input;
 use gripper::GripperState;
 pub use gripper::{
     ContactCondition, ForceCondition, GripperEvidence, GripperPolicy, MeasuredForce,
 };
+pub use input::{PlaybackInput, PlaybackInputSnapshot};
 pub(crate) mod execution;
 pub use execution::{
     CurveUpdateReceipt, ExecutionFailure, ExecutionHandle, ExecutionResult, ExecutionSnapshot,

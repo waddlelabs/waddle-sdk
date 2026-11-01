@@ -11,7 +11,7 @@ use waddle_types::{EpisodeId, MonoNs, Step, Verb};
 use super::{
     CheckpointEvidence, Completion, CurveProgress, CurveUpdate, Feedback, FiniteReferences,
     GoalDwellProgress, GoalTarget, GoalUpdate, GripperEvidence, Playback, PlaybackError,
-    PlaybackPoll, PlaybackWatchdog, SettlingEvidence,
+    PlaybackInput, PlaybackPoll, PlaybackWatchdog, SettlingEvidence,
 };
 use crate::mirror::Mirror;
 use crate::verbs::VerbOutcome;
@@ -201,6 +201,7 @@ struct Control {
     registry: Arc<()>,
     scope: Option<Vec<String>>,
     start_before_ns: Option<i64>,
+    input: Option<PlaybackInput>,
     state: Mutex<State>,
     changed: Condvar,
 }
@@ -226,6 +227,11 @@ impl Control {
                 state.snapshot.transit_successor = None;
             }
             state.snapshot.result = Some(result);
+            if state.snapshot.result.as_ref().is_some_and(Result::is_err)
+                && let Some(input) = &self.input
+            {
+                input.release("input execution failed");
+            }
             state.predecessors.clear();
             state.curve_update = None;
             if let Some(receipt) = state
@@ -283,6 +289,9 @@ pub struct PlaybackDependency {
 pub struct PlaybackQueue {
     pub after: Vec<PlaybackDependency>,
     pub start_before_ns: Option<i64>,
+    /// Optional SDK-local input, created before planning and bound to this run.
+    /// Do not also supply a feedback-stamped policy watchdog.
+    pub input: Option<PlaybackInput>,
 }
 
 impl ExecutionHandle {
@@ -331,6 +340,9 @@ impl ExecutionHandle {
     /// idempotent and cannot extend the deadline. No timeout or authority changes.
     pub fn refresh_watchdog(&self, observed_ns: i64) -> Result<(), PlaybackError> {
         let mut state = self.control.state.lock();
+        if self.control.input.is_some() {
+            return Err(PlaybackError::Invalid("renew the bound playback input"));
+        }
         if state.snapshot.result.is_some() || state.cancelled.is_some() {
             return Err(PlaybackError::Invalid("execution is closing or terminal"));
         }
@@ -452,9 +464,41 @@ type Reservation = (Option<Vec<String>>, Arc<Control>);
 pub(crate) struct ExecutionSlot {
     current: Mutex<Vec<Reservation>>,
     registry: Arc<()>,
+    inputs: Mutex<Vec<Weak<super::input::InputControl>>>,
 }
 
 impl ExecutionSlot {
+    pub(crate) fn start_input(
+        &self,
+        episode: EpisodeId,
+        clock: Arc<dyn Clock>,
+        timeout_ns: i64,
+        unavailable: impl FnOnce() -> bool,
+    ) -> Result<PlaybackInput, PlaybackError> {
+        // Share the admission/stop boundary: a concurrent Hold must fence both
+        // existing buffers and inputs whose plans have not arrived yet.
+        let _current = self.current.lock();
+        let mut inputs = self.inputs.lock();
+        inputs.retain(|weak| {
+            weak.upgrade()
+                .is_some_and(|control| PlaybackInput(control).snapshot().failure.is_none())
+        });
+        if unavailable() || inputs.len() >= 128 {
+            return Err(PlaybackError::Busy);
+        }
+        let input = PlaybackInput::new(self.registry.clone(), episode, clock, timeout_ns)?;
+        inputs.push(Arc::downgrade(&input.0));
+        Ok(input)
+    }
+
+    fn release_inputs(&self, episode: Option<&EpisodeId>, reason: &str) {
+        for control in self.inputs.lock().iter().filter_map(Weak::upgrade) {
+            if episode.is_none_or(|id| id == &control.episode) {
+                PlaybackInput(control).release(reason);
+            }
+        }
+    }
+
     pub(crate) fn register(
         &self,
         episode_id: EpisodeId,
@@ -465,6 +509,14 @@ impl ExecutionSlot {
     ) -> Result<ExecutionHandle, PlaybackError> {
         let mut current = self.current.lock();
         current.retain(|(_, c)| c.state.lock().snapshot.result.is_none());
+        if let Some(input) = &queue.input {
+            if !Arc::ptr_eq(&input.0.registry, &self.registry) || input.0.episode != episode_id {
+                return Err(PlaybackError::Invalid("input requires this SDK run"));
+            }
+            if let Some(error) = input.snapshot().failure {
+                return Err(error);
+            }
+        }
         if queue.after.len() > 16 || queue.start_before_ns.is_some_and(|at| at <= 0) {
             return Err(PlaybackError::Invalid("invalid playback dependency bounds"));
         }
@@ -511,6 +563,7 @@ impl ExecutionSlot {
             registry: self.registry.clone(),
             scope: scope.clone(),
             start_before_ns: queue.start_before_ns,
+            input: queue.input.clone(),
             state: Mutex::new(State {
                 snapshot: ExecutionSnapshot {
                     id: uuid::Uuid::new_v4().to_string(),
@@ -561,6 +614,7 @@ impl ExecutionSlot {
         // Make the pending-control fence visible before marking cancellations.
         // Completed callbacks acquire this same registry lock for their receipts.
         request();
+        self.release_inputs(None, reason);
         for (_, control) in current.iter() {
             control.mark_cancelled(reason, true);
         }
@@ -598,8 +652,9 @@ impl ExecutionSlot {
     }
 
     pub(crate) fn cancel_episode(&self, episode: &EpisodeId) -> Vec<ExecutionHandle> {
-        self.current
-            .lock()
+        let current = self.current.lock();
+        self.release_inputs(Some(episode), "episode ended");
+        current
             .iter()
             .filter_map(|(_, control)| {
                 if &control.state.lock().snapshot.episode_id != episode {
@@ -781,6 +836,13 @@ impl ExecutionTask {
 
     pub(crate) fn check_watchdog<C: Clock>(&self, clock: &C) -> Option<ExecutionResult> {
         let mut state = self.control.state.lock();
+        if let Some(input) = &self.control.input {
+            let snapshot = input.snapshot();
+            state.snapshot.watchdog = Some(snapshot.watchdog);
+            return snapshot
+                .failure
+                .map(|error| Err(ExecutionFailure::Playback(error)));
+        }
         let watchdog = state.snapshot.watchdog?;
         let now = clock.stamp_now().mono_ns().0;
         // Check the incumbent first: a queued or delayed renewal cannot revive

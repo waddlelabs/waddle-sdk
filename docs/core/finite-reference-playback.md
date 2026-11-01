@@ -132,6 +132,60 @@ require their own qualification.
 
 ## Optional playback watchdog
 
+### Input arrival watchdog
+
+The Rust `Session.start_playback_input(episode_id, timeout_ns)` creates a
+run-bound `PlaybackInput` before planning starts. Attach it as
+`PlaybackQueue.input` when submitting the checked references, leaving
+`PlaybackPolicy.watchdog` unset. Creating or renewing an input commands no
+hardware and adds no execution thread.
+
+Binding API 42 exposes the same handle through public
+`InputPlaybackRunPort.start_playback_input(timeout_ns)` and
+`PlaybackInputPort`, under `execution.input_watchdog_playback`. Pass that handle
+as `Run.start_playback(motion, input=control)`; it must belong to that exact run.
+The device relay retains input handles by run and ID. Input renewal bypasses
+ordinary I/O admission; release additionally uses the existing reserved Stop
+capacity. Neither method waits for feedback, planning or execution-status reads.
+
+```python
+control = run.start_playback_input(250_000_000)
+# Each newly received human input may call control.refresh(next_sequence).
+# Do not renew from an automatic timer or from status/planning activity.
+handle = run.start_playback(checked_motion, input=control)
+control.release("operator released")
+result = handle.wait()  # inspect normal cleanup before claiming completed Hold
+```
+
+The caller remains responsible for forwarding input while planning and admission
+are pending, and for releasing a late creation reply after the press has ended.
+Creating this SDK primitive alone does not establish that a cloud application
+has implemented those paths or passed actual WAN qualification.
+
+`refresh(sequence)` records acceptance on the SDK's session clock. Supply a
+strictly increasing sequence for each newly accepted input message. Repeating
+or reordering a sequence returns the retained state without extending its
+deadline. Planning, feedback and status polling never renew it. This allows
+input to arrive while a planner or execution-status response is delayed.
+
+The timeout applies from **SDK input acceptance**, not physical button time or
+cloud feedback time. It therefore cannot bound internet transit delay. Expiry
+is checked before every renewal; a late message cannot revive an expired input.
+`release(reason)` permanently fences that identity, including plans that have
+not arrived. Site-wide Hold/e-stop, run closure and session shutdown also fence
+retained inputs. A new press requires a new input. The native registry retains
+at most 128 live inputs and reclaims expired, released or dropped entries.
+
+The existing execution worker checks the bound input before I/O and after
+observation and performs its ordinary Hold/cleanup on release or expiry.
+In-flight callbacks still drain; input release is not completed stop or proof of
+physical stationarity. Original motion deadlines, measured-feedback checks,
+owner limits, cancellation and fault evidence still apply. Admission requires
+the same SDK and run; a bound input cannot also be renewed through
+`ExecutionHandle.refresh_watchdog`.
+
+### Feedback-stamped watchdog
+
 Binding API 25 adds optional `PlaybackWatchdog(observed_ns, timeout_ns)` under
 `execution.watchdog_playback`. The existing serialized native worker checks
 expiry before I/O and after observation; expiry retains `watchdog_expired` and

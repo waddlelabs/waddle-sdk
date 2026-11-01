@@ -20,7 +20,7 @@ use waddle_types::{ActionChunk, EpisodeId, Verb, VerbRequest};
 use crate::mirror::Mirror;
 use crate::playback::execution::{ExecutionSlot, ExecutionTask};
 use crate::playback::{
-    ExecutionFailure, ExecutionHandle, FiniteReferences, PlaybackError, PlaybackIo,
+    ExecutionFailure, ExecutionHandle, FiniteReferences, PlaybackError, PlaybackInput, PlaybackIo,
 };
 
 enum Work {
@@ -305,6 +305,28 @@ impl VerbDispatch {
         rx
     }
 
+    fn playback_unavailable(&self) -> bool {
+        self.shutdown.load(Ordering::SeqCst)
+            || self.pending_verbs.load(Ordering::SeqCst) != 0
+            || self.estop_flag.pending()
+            || self.priority_hold_flag.pending()
+    }
+
+    pub(crate) fn start_playback_input(
+        &self,
+        episode: EpisodeId,
+        clock: Arc<dyn Clock>,
+        timeout_ns: i64,
+    ) -> Result<PlaybackInput, PlaybackError> {
+        if !self.playback_available {
+            return Err(PlaybackError::Invalid(
+                "requires a registered Hold callback",
+            ));
+        }
+        self.playback
+            .start_input(episode, clock, timeout_ns, || self.playback_unavailable())
+    }
+
     pub(crate) fn start_playback(
         &self,
         mirror: Arc<Mirror>,
@@ -329,12 +351,7 @@ impl VerbDispatch {
             references.scope().map(<[String]>::to_vec),
             references.len(),
             &references.queue,
-            || {
-                self.shutdown.load(Ordering::SeqCst)
-                    || self.pending_verbs.load(Ordering::SeqCst) != 0
-                    || self.estop_flag.pending()
-                    || self.priority_hold_flag.pending()
-            },
+            || self.playback_unavailable(),
         )?;
         let task = ExecutionTask::new(
             mirror,

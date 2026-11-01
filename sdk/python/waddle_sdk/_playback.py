@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from ._native import core
 from ._playback_bounds import observe as observe_bounded
 from ._playback_history import History
+from ._playback_input import PlaybackInput
 from .robots import base
 from .runtime import (
     CoordinatedJointMotion,
@@ -133,6 +134,7 @@ def start(
     *,
     after: Sequence[PlaybackDependency] = (),
     start_before_ns: int | None = None,
+    input: PlaybackInput | None = None,
 ) -> PlaybackHandle:
     """Called under the ordinary dispatch lock; admission does not wait for I/O."""
     session = run._session
@@ -168,6 +170,15 @@ def start(
             FaultCode.UNSUPPORTED, "part does not support finite playback"
         )
     facts = set.intersection(*(set(row.facts) for row in rows))
+    if input is not None:
+        if not isinstance(input, PlaybackInput) or input._run is not run:
+            raise RuntimeFault(
+                FaultCode.INVALID_REQUEST, "input requires this local SDK run"
+            )
+        if SupportFact.INPUT_WATCHDOG_PLAYBACK not in facts:
+            raise RuntimeFault(
+                FaultCode.UNSUPPORTED, "part does not support input watchdogs"
+            )
     if (
         after or start_before_ns is not None
     ) and SupportFact.DEPENDENT_PLAYBACK not in facts:
@@ -582,6 +593,7 @@ def start(
                 (dependency.handle._native, dependency.outcomes) for dependency in after
             ],
             start_before_ns=start_before_ns,
+            input=None if input is None else input._native,
             **({"parts": parts} if subset else {}),
         )
     except core.PlaybackBusyError as error:

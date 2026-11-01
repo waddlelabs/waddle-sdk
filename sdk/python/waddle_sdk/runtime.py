@@ -70,6 +70,7 @@ class SupportFact(str, enum.Enum):
     COORDINATED_SUBSET_PLAYBACK = "execution.coordinated_subset_playback"
     PARALLEL_JOINT_PLAYBACK = "execution.parallel_joint_playback"
     WATCHDOG_PLAYBACK = "execution.watchdog_playback"
+    INPUT_WATCHDOG_PLAYBACK = "execution.input_watchdog_playback"
     STREAMED_JOINT_PLAYBACK = "execution.streamed_joint_playback"
     PART_HOLD_PLAYBACK = "execution.part_hold_playback"
     JOINT_PLAYBACK_BOUNDS = "execution.joint_playback_bounds"
@@ -1107,6 +1108,29 @@ class WithdrawablePlaybackHandlePort(RevisablePlaybackHandlePort, Protocol):
 
 
 @runtime_checkable
+class PlaybackInputPort(Protocol):
+    """Run-bound human input, stamped on the SDK clock independently of I/O.
+
+    Renew only for newly accepted input using an increasing sequence. Expiry and
+    release are permanent. Release fences admission; inspect playback cleanup or
+    completed Stop separately before claiming the owner has held.
+    """
+
+    def snapshot(self) -> Mapping[str, object]: ...
+
+    def refresh(self, sequence: int) -> Mapping[str, object]: ...
+
+    def release(self, reason: str) -> None: ...
+
+
+@runtime_checkable
+class InputPlaybackRunPort(Protocol):
+    """Optional input liveness under ``execution.input_watchdog_playback``."""
+
+    def start_playback_input(self, timeout_ns: int) -> PlaybackInputPort: ...
+
+
+@runtime_checkable
 class FinitePlaybackRunPort(Protocol):
     """Optional finite execution, declared by a per-part support fact."""
 
@@ -1116,6 +1140,7 @@ class FinitePlaybackRunPort(Protocol):
         *,
         after: Sequence[PlaybackDependency] = (),
         start_before_ns: int | None = None,
+        input: PlaybackInputPort | None = None,
     ) -> PlaybackHandlePort: ...
 
 
@@ -1308,6 +1333,7 @@ __all__ = [
     "GripperForcePolicy",
     "GripperPlaybackPolicy",
     "HeldJointGroup",
+    "InputPlaybackRunPort",
     "JSONValue",
     "JointPositionCommand",
     "JointReference",
@@ -1320,6 +1346,7 @@ __all__ = [
     "PlaybackDependency",
     "PlaybackFeedbackPolicy",
     "PlaybackHandlePort",
+    "PlaybackInputPort",
     "PlaybackPolicy",
     "PlaybackWatchdog",
     "Pose",

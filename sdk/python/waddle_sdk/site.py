@@ -47,6 +47,7 @@ from .runtime import (
     PartObservation,
     PlaybackDependency,
     PlaybackHandlePort,
+    PlaybackInputPort,
     Pose,
     RuntimeEvent,
     RuntimeFault,
@@ -1522,6 +1523,7 @@ class SiteSession:
                         facts.add(SupportFact.PARALLEL_JOINT_PLAYBACK)
                         facts.add(SupportFact.PART_HOLD_PLAYBACK)
                     facts.add(SupportFact.WATCHDOG_PLAYBACK)
+                    facts.add(SupportFact.INPUT_WATCHDOG_PLAYBACK)
                     facts.add(SupportFact.STREAMED_JOINT_PLAYBACK)
                     facts.add(SupportFact.PACED_JOINT_PLAYBACK)
                     facts.add(SupportFact.FEEDBACK_JOINT_PLAYBACK)
@@ -2113,12 +2115,23 @@ class Run:
 
         install(self, bounds)
 
+    def start_playback_input(self, timeout_ns: int) -> PlaybackInputPort:
+        """Create input before planning; renew only on newly accepted human input.
+
+        The deadline starts on the SDK clock. Release fences delayed admission;
+        completed Stop or playback cleanup remains separate evidence.
+        """
+        from ._playback_input import start
+
+        return start(self, timeout_ns)
+
     def start_playback(
         self,
         motion: FiniteJointMotion | CoordinatedJointMotion,
         *,
         after: Sequence[PlaybackDependency] = (),
         start_before_ns: int | None = None,
+        input: PlaybackInputPort | None = None,
     ) -> PlaybackHandlePort:
         """Admit finite references to the local native worker; never wait for motion."""
         from ._playback import start
@@ -2133,7 +2146,9 @@ class Run:
                 else None
             )
         with self._session._dispatch_lock:
-            return start(self, motion, after=after, start_before_ns=start_before_ns)
+            return start(
+                self, motion, after=after, start_before_ns=start_before_ns, input=input
+            )
 
     def _step(self, action, observation=None, *, part=None, parts=None) -> SubmitResult:
         if self._episode is None:
