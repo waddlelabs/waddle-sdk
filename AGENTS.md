@@ -1,3 +1,5 @@
+The three pending-write/error/cancellation history baselines fail because playback handles have no history method (0.92 s). The candidate records at most 256 callback attempts using native paired session/epoch stamps; history reads are separate from frequent status polling and do not hold the actuator lock. Original errors, superseded calls and pending tails stay explicit. The existing worker, execution policies and native API 40 are unchanged. Native/public/relay and complete SDK validation remain pending; Metal/Twin clock-aware consumption remains open.
+
 A pending-write diagnostic journal regression ports Metal preview assertions to the existing SDK playback callback. It requires SDK session/epoch stamps, detached bounded history, original write errors and cancellation drain. This test-only candidate has no implementation yet; baseline failure is expected. No native policy, package publication, deployment or hardware change.
 
 A deterministic native regression now covers slow streamed curves with a shorter

@@ -11,6 +11,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Add optional bounded playback call history with native session/epoch stamps,
+  pending calls, original faults and explicit supersession; keep history reads
+  separate from execution status and preserve the existing native worker.
+
+
 ### Fixed
 
 - Sample fresh local feedback between slow paced-curve commands so accepted input

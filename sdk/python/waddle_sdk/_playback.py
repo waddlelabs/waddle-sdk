@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from ._native import core
 from ._playback_bounds import observe as observe_bounded
+from ._playback_history import History
 from .robots import base
 from .runtime import (
     CoordinatedJointMotion,
@@ -36,8 +37,13 @@ def _error(error: Exception, *, unknown: bool):
 class PlaybackHandle:
     """A retained native handle. Waiting releases the interpreter lock."""
 
-    def __init__(self, native):
+    def __init__(self, native, history):
         self._native = native
+        self._history = history
+
+    def history(self):
+        """Copy bounded SDK command-call diagnostics without waiting for I/O."""
+        return self._history.snapshot()
 
     @staticmethod
     def _snapshot(value):
@@ -491,10 +497,18 @@ def start(
         except Exception as error:  # noqa: BLE001 -- retain any vendor fault across the native callback
             return _error(error, unknown=False)
 
+    history = History(
+        run.id,
+        {name: list(arms[name].joint_names) for name in parts},
+        session._require().core.stamp,
+    )
+
     def dispatch(reference, measured, force_n):
+        sequence = None
         try:
             with session._dispatch_lock:
-                started_ns = session._require().core.stamp().session_ns
+                started = session._require().core.stamp()
+                sequence = history.begin(started, reference, measured, force_n)
                 result = run._step(
                     JointPositionCommand(
                         reference["positions"],
@@ -506,19 +520,39 @@ def start(
                     **({"parts": parts} if subset else {}),
                 )
             if result.fault is not None or result.gate == "owner_refusal":
+                fault = result.fault or RuntimeFault(
+                    FaultCode.SAFETY_REFUSAL, result.detail
+                )
+                history.end(
+                    sequence, result="error", gate=result.gate, error=fault.as_dict()
+                )
                 return _error(
-                    result.fault
-                    or RuntimeFault(FaultCode.SAFETY_REFUSAL, result.detail),
+                    fault,
                     unknown=False,
                 )
+            history.end(
+                sequence,
+                result="acknowledged"
+                if result.dispatched and result.gate == "pass"
+                else "superseded"
+                if result.gate != "pass"
+                else "refused",
+                gate=result.gate,
+            )
             return {
                 "dispatched": result.dispatched and result.gate == "pass",
                 "detail": result.gate,
-                "started_ns": started_ns,
+                "started_ns": started.session_ns,
             }
         except Exception as error:  # noqa: BLE001 -- an unexpected write failure must retain uncertainty
             # A raising write may have reached the device. Preserve its evidence,
             # never retry, and do not confuse local loop drain with physical stop.
+            if sequence is not None:
+                history.end(
+                    sequence,
+                    result="error",
+                    error=RuntimeFault.from_exception(error).as_dict(),
+                )
             return _error(error, unknown=True)
 
     def hold_part(name):
@@ -548,4 +582,4 @@ def start(
         raise RuntimeFault.from_exception(
             error, code=FaultCode.INVALID_REQUEST
         ) from error
-    return PlaybackHandle(native)
+    return PlaybackHandle(native, history)

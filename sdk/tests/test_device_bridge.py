@@ -8,11 +8,33 @@ import pytest
 pytest.importorskip("fcntl")
 pytest.importorskip("msgpack")
 
+from test_finite_playback import motion
+from test_finite_playback import opened as opened  # noqa: PLC0414
 from waddle_sdk.runtime import Observation, PartObservation
 from waddle_sdk_relay.device import Device, checked_path
 from waddle_sdk_relay.errors import RelayError
 from waddle_sdk_relay.publisher import publisher_binding
 from waddle_sdk_relay.wire import decode, encode
+
+
+def test_playback_history_keeps_exact_native_records_and_run_binding(opened, tmp_path):
+    session, run = opened
+    device = Device(session.site, tmp_path)
+    device.sdk, device.run = session, run
+    handle = run.start_playback(motion())
+    result = handle.wait()
+    key = (run.id, result["id"])
+    device._playbacks[key] = handle
+    expected = handle.history()
+    received = decode(
+        encode(device.dispatch("playback_history", {"run_id": key[0], "id": key[1]}))
+    )
+    assert received["submissions"] == expected["submissions"]
+    assert received["run_id"] == expected["run_id"]
+    assert received["sampled"]["session_ns"] >= expected["sampled"]["session_ns"]
+    with pytest.raises(RelayError) as caught:
+        device.dispatch("playback_history", {"run_id": "another-run", "id": key[1]})
+    assert caught.value.code == "sdk_playback_expired"
 
 
 def test_protocol_and_publisher_imports_do_not_load_the_sdk_runtime():

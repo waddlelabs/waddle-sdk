@@ -2,6 +2,7 @@
 
 import json
 import threading
+import time
 
 import pytest
 from test_finite_playback import motion
@@ -99,3 +100,42 @@ def test_history_cancellation_finishes_pending_write_before_hold(opened, monkeyp
         history["submissions"][0]["returned"]["session_ns"]
         <= result["cleanup"]["completed_ns"]
     )
+
+
+def test_history_is_bounded_detached_and_retains_the_pending_tail(opened):
+    from waddle_sdk._playback_history import CAPACITY, History
+
+    session, run = opened
+    stamp = session._managed.core.stamp
+    history = History(run.id, {"arm": ["j0", "j1"]}, stamp)
+    reference = {"part": "arm", "offset_ns": 0, "positions": [0.0, 0.0]}
+    measured = {"observed_ns": 0, "positions": [0.0, 0.0], "velocities": [0.0, 0.0]}
+    for index in range(CAPACITY + 17):
+        sequence = history.begin(stamp(), reference, measured)
+        if index < CAPACITY + 16:
+            history.end(sequence, result="acknowledged", gate="pass")
+    reference["positions"][0] = 99
+    frozen = history.snapshot()
+    assert frozen["dropped_submissions"] == 17
+    assert len(frozen["submissions"]) == CAPACITY
+    assert frozen["submissions"][0]["sequence"] == 18
+    assert frozen["submissions"][-1]["result"] == "pending"
+    assert frozen["submissions"][-1]["reference"]["positions"] == [0.0, 0.0]
+    frozen["submissions"].clear()
+    assert len(history.snapshot()["submissions"]) == CAPACITY
+
+
+def test_history_does_not_acknowledge_a_superseded_reference(opened):
+    session, run = opened
+    run.step([0, 0])
+    native = session._managed.core
+    native._testing_engage("history-takeover", "agent")
+    deadline = time.monotonic() + 3
+    while native.status()["gate_mode"] != "Intervention":
+        assert time.monotonic() < deadline
+        threading.Event().wait(0.005)
+    handle = run.start_playback(motion())
+    assert handle.wait()["failure"]["code"] == "superseded"
+    event = handle.history()["submissions"][0]
+    assert event["result"] == "superseded"
+    assert event["gate"] != "pass"
