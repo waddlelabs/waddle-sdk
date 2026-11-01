@@ -72,6 +72,12 @@ cadence without counting unrelated lock wait as driver execution.
 
 ## Finite joint playback
 
+Binding API 37 adds optional `PlaybackGoalDwell` under
+`execution.dwell_goal_playback`. Use SDK observation-clock evidence, preserve the
+nominal/outer tolerance bands and independent stationarity, and never renew a
+deadline or infer a moving-goal update from dwell alone. See the normative
+finite-reference playback guide.
+
 Binding API 36 adds opt-in `complete_in_resting_tail` for revisable paced goals.
 It lets the worker settle during an acknowledged constant tail, after checkpoints
 and any accepted future motion are resolved. Default false preserves requested

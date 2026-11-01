@@ -11,6 +11,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Add optional `PlaybackGoalDwell` on the existing worker for independent goal
+  dwell with a wider reset band. Current nominal tolerance and stationarity
+  still gate completion; snapshots retain observation-clock dwell evidence.
+  Original deadlines, cancellation and default settling behavior are unchanged.
+
 - Add opt-in local goal completion within a constant resting tail (binding API
   36, `execution.resting_goal_playback`). Preserve pending future motion,
   checkpoint observations, local settling, original deadlines and cancellation;

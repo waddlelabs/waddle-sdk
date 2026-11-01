@@ -19,7 +19,7 @@ use feedback::FeedbackState;
 pub use feedback::{
     FeedbackPolicy, HeldJointGroup, PositionWindow, SettlingEvidence, VelocityHints,
 };
-pub use goal::{PlaybackGoal, Pose};
+pub use goal::{GoalDwell, GoalDwellProgress, PlaybackGoal, Pose};
 mod gripper;
 use gripper::GripperState;
 pub use gripper::{
@@ -335,7 +335,9 @@ impl FiniteReferences {
                 return Err(invalid("requires positive per-joint tolerances"));
             }
         }
-        if policy.settle_ns <= 0
+        if policy.settle_ns < 0
+            || (policy.settle_ns == 0
+                && policy.goal.as_ref().is_none_or(|goal| goal.dwell.is_none()))
             || !(1..=16_385).contains(&policy.minimum_settle_samples)
             || (policy.gripper.is_some() && policy.minimum_settle_samples != 1)
             || (policy.gripper.is_some() && policy.reference_only)
@@ -467,6 +469,7 @@ pub struct Playback {
     observed_ns: Option<i64>,
     settled_since: Option<i64>,
     arrived_since: Option<i64>,
+    goal_dwell: GoalDwellProgress,
     settled_samples: usize,
     settled_miss: bool,
     arrived_samples: usize,
@@ -482,6 +485,12 @@ pub struct Playback {
 }
 
 impl Playback {
+    /// SDK observation-clock dwell evidence, independent of reference phase.
+    pub fn goal_dwell(&self) -> Option<&GoalDwellProgress> {
+        self.references.policy.goal.as_ref()?.dwell.as_ref()?;
+        Some(&self.goal_dwell)
+    }
+
     /// End deferred observation only after the unchanged curve was acknowledged.
     /// The next poll still validates fresh feedback, tracking and the deadline.
     pub fn finish_references(&mut self) -> Result<(), PlaybackError> {
@@ -575,6 +584,7 @@ impl Playback {
             observed_ns: None,
             settled_since: None,
             arrived_since: None,
+            goal_dwell: GoalDwellProgress::default(),
             settled_samples: 0,
             settled_miss: false,
             arrived_samples: 0,
@@ -844,9 +854,15 @@ impl Playback {
             &self.references.policy.position_tolerance,
             &self.references.policy.indices,
         );
+        let mut nominal_goal = arrived;
         let arrived = if let Some(goal) = &self.references.policy.goal {
-            match goal.reached(measured, &self.references.policy) {
-                Ok(reached) => reached,
+            match goal.score(measured, &self.references.policy) {
+                Ok(score) => {
+                    nominal_goal = score <= 1.0;
+                    goal.dwell.as_ref().map_or(nominal_goal, |spec| {
+                        self.goal_dwell.observe(spec, measured.observed_ns, score)
+                    })
+                }
                 Err(error) => return self.fail(error),
             }
         } else {
@@ -881,9 +897,10 @@ impl Playback {
             if finished {
                 return Ok(PlaybackPoll::Observe);
             }
-        } else if let Some(outcome) = window_completion {
-            self.settled_miss =
-                outcome == Completion::Settled && self.references.policy.goal.is_some();
+        } else if let Some(outcome) = window_completion.filter(|_| !nominal_goal || arrived) {
+            self.settled_miss = outcome == Completion::Settled
+                && self.references.policy.goal.is_some()
+                && !nominal_goal;
             if outcome != Completion::Settled || self.references.policy.allow_settled {
                 self.completion = Some(outcome);
                 return Ok(PlaybackPoll::Complete(outcome));
@@ -1012,11 +1029,18 @@ impl Playback {
         {
             return Ok(PlaybackPoll::Observe);
         }
-        let arrived_stable = self
-            .arrived_since
-            .is_some_and(|since| measured.observed_ns - since >= self.references.policy.settle_ns)
-            && self.arrived_samples >= self.references.policy.minimum_settle_samples;
-        if self.references.policy.goal.is_some() && arrived && !arrived_stable {
+        let independent_dwell = self
+            .references
+            .policy
+            .goal
+            .as_ref()
+            .is_some_and(|goal| goal.dwell.is_some());
+        let arrived_stable = arrived
+            && (independent_dwell
+                || (self.arrived_since.is_some_and(|since| {
+                    measured.observed_ns - since >= self.references.policy.settle_ns
+                }) && self.arrived_samples >= self.references.policy.minimum_settle_samples));
+        if self.references.policy.goal.is_some() && nominal_goal && !arrived_stable {
             return Ok(PlaybackPoll::Observe);
         }
         let outcome = if arrived_stable {
@@ -1024,7 +1048,9 @@ impl Playback {
         } else {
             Completion::Settled
         };
-        self.settled_miss = outcome == Completion::Settled && self.references.policy.goal.is_some();
+        self.settled_miss = outcome == Completion::Settled
+            && self.references.policy.goal.is_some()
+            && !nominal_goal;
         if outcome == Completion::Settled && !self.references.policy.allow_settled {
             return Ok(PlaybackPoll::Observe);
         }
