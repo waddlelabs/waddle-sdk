@@ -1,3 +1,7 @@
+Source exports retain declared mechanical body contact exclusions, remapping a
+merged YAM hand root to its actual arm body. This changes new source identities;
+existing published bundles and native contact physics remain unchanged.
+
 New authored bowls place their sixteen wall segments on top of the solid base,
 keeping the rim, hollow interior, side contacts and total mass. This removes
 redundant coplanar table contacts. Wall-bottom geometry and inferred inertia change

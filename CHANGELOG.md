@@ -33,6 +33,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 - Advertise existing scoped playback Hold on single-arm named sites as well as
   composite sites, without widening action or Hold grants.
 
+- Preserve declared mechanical body contact exclusions in reference planner
+  exports and assembled physical YAM sources, including opposing slide fingers.
+  Existing published bundles and simulation contact physics remain unchanged.
+
 - Keep live playback input across an individual buffer cancellation only after
   successful scoped Hold; faults and global controls still fence input.
 

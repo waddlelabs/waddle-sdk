@@ -37,6 +37,9 @@ to execute. One selected compiler/planner remains an application decision.
 The initial reference source format is MJCF. The bundle does not hard-code a
 joint count, arm/hand layout, mesh topology or finger mechanism. A complete source
 retains its physical coordinates and relationships, including passive joints.
+Declared mechanical body contact exclusions also remain in the source MJCF,
+with body names resolved after assembly. They describe internal source relationships,
+not permission to ignore scene objects or unrelated robot parts.
 Applications own collision approximations and must declare their supported scope.
 The existing [portable scene API](simulation.md) remains available for URDF scene
 assembly and backend compilation; source loading does not open a simulation world.

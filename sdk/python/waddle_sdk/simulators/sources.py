@@ -228,6 +228,9 @@ def reference_model_sources(robot: str, *, part_name: str) -> ModelSources:
             spec = mujoco.MjSpec.from_string(ET.tostring(source, encoding="unicode"))
         root = ET.fromstring(spec.to_xml())
         bodies = {body.get("name"): body for body in root.iter("body")}
+        contact = ET.SubElement(root, "contact")
+        for first, second in description(robot).exclusions:
+            ET.SubElement(contact, "exclude", body1=first, body2=second)
         ET.SubElement(bodies["tcp"], "site", name="tcp_site", size=".001")
         for body in root.iter("body"):
             body_name = body.get("name")
