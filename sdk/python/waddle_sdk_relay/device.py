@@ -219,7 +219,7 @@ class Device:
                     self.sdk = None
                     raise
                 self._safety_sdk = opened
-                return {"safety_slots": MAX_SAFETY_CALLS}
+                return {"safety_slots": MAX_SAFETY_CALLS, "observation_bundle": 1}
             if method == "close":
                 if self.sdk is not None:
                     if self.torque_release_authorized:
@@ -230,6 +230,40 @@ class Device:
                 return None
             if self.sdk is None:
                 raise RelayError("sdk_not_open", "SDK owner is not open")
+            if method == "observation_bundle":
+                requests = arguments.get("workspace", [])
+                if not isinstance(requests, list) or len(requests) > 8:
+                    raise RelayError(
+                        "sdk_bridge_protocol",
+                        "At most eight workspace reads are allowed",
+                    )
+                for request in requests:
+                    if not isinstance(request, dict) or request.get(
+                        "operation"
+                    ) not in {"read", "list", "stat"}:
+                        raise RelayError(
+                            "sdk_bridge_protocol", "Bundle operations are read-only"
+                        )
+                    path = request.get("path")
+                    if path != "." or request["operation"] == "read":
+                        checked_path(path)
+                files = []
+                for request in requests:
+                    try:
+                        reply = {"result": self.dispatch("workspace", dict(request))}
+                    except WorkspaceError as error:
+                        reply = {"error": error.as_dict()}
+                    files.append({"request": request, **reply})
+                # Capture once, after file reads. Retention, point resolvers, faults
+                # and clock provenance are exactly the ordinary observation path.
+                description = self.sdk.describe()
+                support = self.sdk.support()
+                return {
+                    **self.dispatch("observe_parts", {"parts": None}),
+                    "description": description,
+                    "support": support,
+                    "workspace": files,
+                }
             if method == "run_enter":
                 if self.run is not None:
                     raise RelayError("sdk_run_busy", "An SDK run is already active")

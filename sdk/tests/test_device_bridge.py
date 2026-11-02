@@ -286,7 +286,10 @@ def test_native_playback_uses_the_site_run_and_retains_its_receipt(tmp_path):
     local = SimpleNamespace(open=lambda **kw: site.open(_testing=True, **kw))
     device = Device(local, tmp_path, torque_release_authorized=True)
     try:
-        assert device.dispatch("open", {}) == {"safety_slots": 2}
+        assert device.dispatch("open", {}) == {
+            "safety_slots": 2,
+            "observation_bundle": 1,
+        }
         run_id = device.dispatch(
             "run_enter", {"task": "local references", "actor": "test"}
         )

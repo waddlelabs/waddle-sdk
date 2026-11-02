@@ -1,3 +1,14 @@
+Relay observation bundling (2026-11-02) passes all 1,294 default Python tests
+(413 optional skips), strict docs and selected Metal/real-GPU relay integration.
+The Python-only addition advertises observation_bundle: 1 and reuses retained
+observations and confined read-only workspace calls. Native API 42 is unchanged.
+Four optional MuJoCo failures reproduce on unchanged SDK 58bab68; their evidence
+is retained in the parent observation-optimization report. Deploy compatible Metal
+before the updated relay: older consumers require an exact open-reply dictionary.
+All 582 native workspace cases, transport tests, core/three-feature shim lint,
+format and Rust documentation checks pass. No physical owner or published client
+has changed. Matching release packaging remains separate.
+
 Scoped-cancel native validation passes the full workspace, including the new
 confirmed/failed scoped Hold regression. The matching base extension and strict
 docs build pass. Public/Metal integration exposes a single-arm capability gap:

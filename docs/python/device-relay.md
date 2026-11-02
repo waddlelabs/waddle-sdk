@@ -73,6 +73,22 @@ not extend it. See [finite playback](../core/finite-reference-playback.md).
 
 ## Relay contract
 
+An open reply may advertise `observation_bundle: 1`. Supporting peers can request
+`observation_bundle` to obtain one retained observation, description, support and
+up to eight read-only workspace operations in one roundtrip. Pass optional
+`workspace` entries containing `operation` (`read`, `list` or `stat`) and the usual
+file arguments. Replies retain each request and its `result` or structured workspace
+`error`; missing optional files do not discard the observation. Existing path,
+file, wire-size and camera-retention limits apply. Files are read before capture;
+this is not an atomic filesystem snapshot. SDK clocks and faults are unchanged.
+Consumers should inspect individual advertised fields rather than require an exact
+open-reply object, and keep separate calls for older peers. No native API change
+or planning functionality is introduced.
+
+Deploy the compatible Metal consumer before distributing this relay update:
+older Metal builds that require an exact open-reply object reject the additional
+capability field. The updated consumer accepts both old and bundled SDK replies.
+
 `waddle_sdk_relay.protocol.PROTOCOL` is the existing binary device protocol. Encode/decode
 binary envelopes with `waddle_sdk_relay.wire`; it accepts an explicit SDK DTO
 allowlist, immutable bounded array copies and structured faults, never pickle or

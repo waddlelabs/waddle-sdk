@@ -11,6 +11,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Add an advertised read-only relay observation bundle with one retained frame,
+  description, support and bounded workspace reads; preserve per-file errors.
+
 - Include local feedback acquisition inside paced motion intervals instead of adding its cost after every cadence wait.
 
 - Preserve bent-path, IO cadence, headroom and gripper budget regressions at native playback boundaries.
