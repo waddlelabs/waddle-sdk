@@ -39,6 +39,12 @@ freshness limit is relaxed.
 
 ## Editable tabletop scenes
 
+Newly compiled bowls place their wall segments on the solid base. The open rim,
+hollow interior, side collisions, total mass and contact materials are preserved;
+wall-bottom geometry and the inferred mass distribution change. This avoids
+multiplying the table support patch across the base and every wall. Existing
+compiled scenes keep their original bytes and behavior.
+
 `waddle_sdk.simulators.playground.compile_scene(config, scene, output)` composes
 an immutable native scene from a reference MuJoCo robot configuration. The scene
 contains `id`, `name` and `objects`; each object declares a stable `id`, catalogue

@@ -11,6 +11,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Start authored bowl walls above their solid floor, removing coplanar wall
+  soles that multiply table contact constraints. Preserve the open rim, wall
+  pieces, total mass, materials and solver settings; newly compiled scene geometry
+  and inertia change, while existing immutable scenes remain unchanged.
+
+
 - Include local feedback acquisition inside paced motion intervals instead of adding its cost after every cadence wait.
 
 - Preserve bent-path, IO cadence, headroom and gripper budget regressions at native playback boundaries.

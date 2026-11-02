@@ -1,3 +1,9 @@
+New authored bowls place their sixteen wall segments on top of the solid base,
+keeping the rim, hollow interior, side contacts and total mass. This removes
+redundant coplanar table contacts. Wall-bottom geometry and inferred inertia change
+in fresh compiled scenes; existing manifests are immutable. Support, side contact,
+interior-floor and stack checks must remain separate from grasp/task acceptance.
+
 Scoped-cancel native validation passes the full workspace, including the new
 confirmed/failed scoped Hold regression. The matching base extension and strict
 docs build pass. Public/Metal integration exposes a single-arm capability gap:

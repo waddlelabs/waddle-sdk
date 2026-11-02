@@ -155,17 +155,19 @@ def _object(world, obj, easy_grasp):
             )
         else:
             shapes.append(("cylinder", (x, wall / 2), (0, 0, -z + wall / 2)))
-            # A convex segment ring gives a genuinely open container.
+            # Walls stand on the base instead of sharing its bottom plane.
+            # Coplanar soles create dozens of redundant table constraints per
+            # bowl; keep the open rim and side contacts above the solid floor.
             for i in range(16):
                 angle = 2 * math.pi * i / 16
                 shapes.append(
                     (
                         "box",
-                        (wall / 2, x * math.tan(math.pi / 16), z),
+                        (wall / 2, x * math.tan(math.pi / 16), z - wall / 2),
                         (
                             (x - wall / 2) * math.cos(angle),
                             (x - wall / 2) * math.sin(angle),
-                            0,
+                            wall / 2,
                         ),
                         angle,
                     )
