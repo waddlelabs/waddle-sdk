@@ -750,6 +750,10 @@ joint limits, base, TCP, and source collision links as the runtime assembly. Eve
 reference family uses deterministic spatial hulls of complete source collision
 pieces. The model records the method, source-piece count,
 planner-geometry count, and spatial bucket width in `collision_proxy` provenance.
+Source MJCF retains the native assembly's declared body contact exclusions,
+including the YAM's mechanically connected opposing slide fingers. These are
+source relationships for consumers to interpret within their supported scope;
+they do not declare obstacle space free. Existing source bundles remain immutable.
 All variants freeze the complete hand at maximum opening and omit task props and
 another arm; those limits remain explicit in provenance and require separate
 fixture/inter-arm checks for safety qualification.

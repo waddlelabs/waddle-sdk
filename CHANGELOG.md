@@ -13,6 +13,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Fixed
 
+- Preserve declared mechanical body contact exclusions in reference planner
+  exports and assembled physical YAM sources, including opposing slide fingers.
+  Existing published bundles and simulation contact physics remain unchanged.
+
 - Qualify simulated force hold only after a completed physics step, preventing
   read-only pose inspection from falsely damping a still-open moving gripper.
   Require positive native jaw contact too, preventing low-force startup saturation
