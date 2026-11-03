@@ -25,7 +25,7 @@ def _hash(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def load_model(model_name, contents, *, cache=None, timings=None):
+def load_model(model_name, contents, *, cache=None, timings=None, _prepared=None):
     """Compile complete verified VFS inputs or load a verified private binary.
 
     ``cache`` is an absolute private directory, or defaults to
@@ -33,6 +33,9 @@ def load_model(model_name, contents, *, cache=None, timings=None):
     optional timings dict reports actual compilation and cache load separately.
     The directory must stay outside untrusted code/input mounts. Cache failure
     degrades to real compilation; source/model failures are never suppressed.
+    The private authoring handoff may retain its matching compiled model after
+    setting reset-key arrays. It must describe exactly these verified source
+    bytes; ordinary callers supply no native model.
     """
     import mujoco as mj
 
@@ -80,6 +83,9 @@ def load_model(model_name, contents, *, cache=None, timings=None):
     key = _hash(json.dumps(identity, sort_keys=True).encode())
 
     def compile():
+        if _prepared is not None:
+            timings.update(cache_hit=False, native_compile_s=0.0, prepared=True)
+            return _prepared
         began = time.monotonic()
         result = mj.MjModel.from_xml_path(f"{namespace}/{model_name}", assets=assets)
         timings.update(cache_hit=False, native_compile_s=time.monotonic() - began)
@@ -114,12 +120,18 @@ def load_model(model_name, contents, *, cache=None, timings=None):
             ):
                 raise ValueError("simulation.model_cache: compiled bytes changed")
             began = time.monotonic()
-            model = mj.MjModel.from_binary_path(str(binary))
+            model = (
+                _prepared
+                if _prepared is not None
+                else mj.MjModel.from_binary_path(str(binary))
+            )
             timings.update(
                 cache_hit=True,
                 native_compile_s=0.0,
                 cache_load_s=time.monotonic() - began,
             )
+            if _prepared is not None:
+                timings["prepared"] = True
             binary.touch()
             return model
         except Exception:  # noqa: BLE001 -- disposable cache cannot replace source validation
@@ -171,13 +183,7 @@ def load_native(root, config, *, cache=None, timings=None):
     from .native_scene import resolve
 
     root = Path(root)
-    resolve(root, config)
+    contents = {}
+    resolve(root, config, contents=contents)
     native = config["native_scene"]
-    contents = {name: (root / name).read_bytes() for name in native["files"]}
-    if any(
-        _hash(contents[name]) != expected for name, expected in native["files"].items()
-    ):
-        raise ValueError(
-            "simulation.native_source_changed: files changed after resolution"
-        )
     return load_model(native["model"], contents, cache=cache, timings=timings)

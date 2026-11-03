@@ -497,6 +497,14 @@ evidence recompiles the original source. Keep this directory outside untrusted
 code/input mounts; no samples, authority or outcomes are cached. See
 [simulation caching](docs/python/simulation.md#compiled-model-cache).
 
+Native owner preparation retains the exact source bytes verified by `resolve`;
+replacement contract comparison and compilation consume that same snapshot.
+Compiled-cache reads retain their normal checksum and lock. Tabletop
+`prepare_scene` retains its compiled model and captured assets for trusted
+authoring handoffs, with the same
+portable XML/reset state as `compile_scene`. Only the final reset-key model is
+cached. Keep ordinary source validation and independent model/data ownership.
+
 Generated YAM source poses serialize at twelve decimal places with canonical zero
 to remove insignificant cross-host BLAS differences from model hashes. Preserve
 vendor asset verification and existing saved model bytes; consumers must explicitly

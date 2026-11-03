@@ -11,10 +11,11 @@ import json
 import math
 import os
 import re
-import shutil
 import xml.etree.ElementTree as ET
 from copy import deepcopy
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from .model import mjcf, numbers
 from .playground_fixtures import FIXTURES, place_fixture
@@ -197,12 +198,37 @@ def _object(world, obj, easy_grasp):
     return names
 
 
+@dataclass(frozen=True)
+class ScenePreparation:
+    """Fresh authoring model and the exact portable bytes it describes.
+
+    The caller owns the mutable native model. This carries no running state or
+    authority; independent runtime owners must instantiate their own model/data.
+    """
+
+    config: dict
+    model: Any
+    contents: dict[str, bytes]
+
+
 def compile_scene(config, scene, output: Path, *, revision=1, easy_grasp=True):
     """Compose a fresh immutable native scene from a reference robot configuration.
 
     Dimensions are full extents in metres; object rotation is XYZ degrees.
     Robot force limits and actuators are preserved. Easy grasp changes only
     contact material/solver parameters, never object attachment or outcomes.
+    """
+    return prepare_scene(
+        config, scene, output, revision=revision, easy_grasp=easy_grasp
+    ).config
+
+
+def prepare_scene(config, scene, output: Path, *, revision=1, easy_grasp=True):
+    """Compile once and retain the exact model for trusted authoring consumers.
+
+    The written scene has the same reset, geometry and reference robot contracts
+    as :func:`compile_scene`. Every asset is captured once into immutable bytes;
+    the final reset key is written into both the native model and portable XML.
     """
     scene = validate_scene(scene)
     fixture = scene.get("fixture")
@@ -254,14 +280,20 @@ def compile_scene(config, scene, output: Path, *, revision=1, easy_grasp=True):
             for key, value in list(node.attrib.items()):
                 if value in names:
                     node.set(key, part + "__" + value)
+    contents, hashes, sources = {}, {}, {}
     for node in root.iter():
         if node.get("file"):
             source = Path(node.get("file"))
-            digest = hashlib.sha256(source.read_bytes()).hexdigest()
-            target = output / "assets" / (digest + source.suffix)
-            target.parent.mkdir(exist_ok=True)
-            shutil.copyfile(source, target)
-            node.set("file", target.relative_to(output).as_posix())
+            if source not in sources:
+                data = source.read_bytes()
+                digest = hashlib.sha256(data).hexdigest()
+                relative = "assets/" + digest + source.suffix
+                target = output / relative
+                target.parent.mkdir(exist_ok=True)
+                target.write_bytes(data)
+                contents[relative], hashes[relative] = data, digest
+                sources[source] = relative
+            node.set("file", sources[source])
     props = [
         name for obj in scene["objects"] for name in _object(world, obj, easy_grasp)
     ]
@@ -322,22 +354,17 @@ def compile_scene(config, scene, output: Path, *, revision=1, easy_grasp=True):
         root.remove(keys)
     # Reference generators put their initial robot coordinates in joint refs.
     # Save the exact compiled default state as the canonical reset keyframe.
+    # Reserve the key before compilation so setting its arrays below does not
+    # require rebuilding topology or loading all robot assets a second time.
+    initial = ET.SubElement(ET.SubElement(root, "keyframe"), "key", name="initial")
     model_path = output / "world.xml"
-    model_path.write_text(ET.tostring(root, encoding="unicode"))
+    contents["world.xml"] = ET.tostring(root, encoding="unicode").encode()
     import mujoco as mj
 
-    if os.environ.get("WADDLE_SIMULATION_MODEL_CACHE"):
-        from .compiled_model import load_model
+    from .compiled_model import load_model
 
-        model = load_model(
-            "world.xml",
-            {
-                p.relative_to(output).as_posix(): p.read_bytes()
-                for p in [model_path, *sorted((output / "assets").glob("*"))]
-            },
-        )
-    else:
-        model = mj.MjModel.from_xml_path(str(model_path))
+    # Only the final scene belongs in the shared private binary cache.
+    model = load_model("world.xml", contents, cache="")
     data = mj.MjData(model)
     from .description import description
 
@@ -354,26 +381,25 @@ def compile_scene(config, scene, output: Path, *, revision=1, easy_grasp=True):
             data.ctrl[actuator.id] = data.qpos[model.joint(part + "__" + name).qposadr][
                 0
             ]
-    ET.SubElement(
-        ET.SubElement(root, "keyframe"),
-        "key",
-        name="initial",
-        qpos=numbers(data.qpos),
-        ctrl=numbers(data.ctrl),
-    )
-    model_path.write_text(ET.tostring(root, encoding="unicode"))
+    initial.set("qpos", numbers(data.qpos))
+    initial.set("ctrl", numbers(data.ctrl))
+    key = model.key("initial").id
+    model.key_qpos[key] = data.qpos
+    model.key_ctrl[key] = data.ctrl
+    contents["world.xml"] = ET.tostring(root, encoding="unicode").encode()
+    hashes["world.xml"] = hashlib.sha256(contents["world.xml"]).hexdigest()
+    model_path.write_bytes(contents["world.xml"])
+    if os.environ.get("WADDLE_SIMULATION_MODEL_CACHE"):
+        model = load_model("world.xml", contents, _prepared=model)
     config.update(environment="playground", scene_revision=f"1.0.{revision}")
     config["native_scene"] = {
         "model": "world.xml",
         "initial_keyframe": "initial",
-        "files": {
-            p.relative_to(output).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
-            for p in [model_path, *sorted((output / "assets").glob("*"))]
-        },
+        "files": hashes,
         "prefixes": {part: part + "__" for part in config["parts"]},
         "camera_names": {name: name for name in config["cameras"]},
         "pose_groups": [],
     }
     (output / "simulation.json").write_text(json.dumps(config, indent=2) + "\n")
     (output / "scene.json").write_text(json.dumps(scene, indent=2) + "\n")
-    return config
+    return ScenePreparation(config, model, contents)

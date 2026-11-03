@@ -54,6 +54,14 @@ prefix the native model and file-manifest paths from the **site root**; native
 manifest paths are not relative to the simulation JSON. Existing output directories
 are refused, so callers retain prior revisions instead of overwriting live worlds.
 
+Authoring hosts that also need the compiled model can call `prepare_scene` with
+the same arguments. Its `ScenePreparation` contains `config`, the fresh native
+`model`, and the exact `contents` used to create it. Preparation compiles once,
+sets the canonical reset key in both XML and native arrays, and publishes that
+final model to the optional private cache. The caller owns the model; independent
+running consumers still require separate models and fresh data. A publisher must
+validate the final on-disk runtime configuration before exposing a revision.
+
 The default easy-grasp profile uses a sliding friction coefficient of 0.8, a
 1 mm effective torsional patch and three NoSlip solver iterations. This stabilizes
 centered grasps while allowing weak and marginal edge grasps to fall. Actual native contact,
@@ -859,6 +867,11 @@ source bytes, the MuJoCo version and platform; compiled binaries carry their own
 checksum. Missing or invalid cache evidence compiles the original sources, keeping
 original model failures. Unavailable cache storage also falls back to compilation.
 The cache retains at most sixteen models and 256 MiB.
+
+Native owners compare and compile one captured, verified source snapshot instead
+of reopening its files at each preparation stage. Trusted authoring can retain
+its already compiled model while filling the cache; consumers still load their
+own independent model through the ordinary checksum-verified cache path.
 
 Each hit loads an independent model; callers create fresh `MjData`. Changes to
 model arrays or runtime state cannot affect another instance. The cache contains

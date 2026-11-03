@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 
 
-def replacement_signature(config):
+def replacement_signature(config, *, _contents=None):
     """Bind a reference native scene's robot assembly and shared model assets.
 
     Replacement is optional and intentionally limited to self-contained native
@@ -25,7 +25,11 @@ def replacement_signature(config):
         raise ValueError(
             "simulation.scene_contract: replacement requires native scenes"
         )
-    root = ET.parse(resolve(config["_native_root"], config)).getroot()
+    root = (
+        ET.parse(resolve(config["_native_root"], config)).getroot()
+        if _contents is None
+        else ET.fromstring(_contents[config["native_scene"]["model"]])
+    )
     if root.find(".//include") is not None:
         raise ValueError(
             "simulation.scene_contract: included native scenes require reopen"
@@ -69,8 +73,12 @@ def replacement_signature(config):
     return values
 
 
-def resolve(root, config):
-    """Validate confined, hash-bound files without importing a physics engine."""
+def resolve(root, config, *, contents=None):
+    """Validate confined files and optionally retain the exact verified bytes.
+
+    A trusted consumer can compare and compile this snapshot without reopening
+    mutable paths. Ordinary path-only callers retain full hash validation.
+    """
     root = Path(root).resolve(strict=True)
     selected = config["native_scene"]
     if not isinstance(selected, dict) or set(selected) != {
@@ -95,10 +103,16 @@ def resolve(root, config):
         resolved.relative_to(root)
         if (root / path).is_symlink() or not resolved.is_file():
             raise ValueError("native scene assets must be ordinary files")
-        with resolved.open("rb") as stream:
-            actual = hashlib.file_digest(stream, "sha256").hexdigest()
+        if contents is None:
+            with resolved.open("rb") as stream:
+                actual = hashlib.file_digest(stream, "sha256").hexdigest()
+        else:
+            data = resolved.read_bytes()
+            actual = hashlib.sha256(data).hexdigest()
         if actual != digest:
             raise ValueError(f"native scene asset digest differs: {name}")
+        if contents is not None:
+            contents[name] = data
     if (
         selected["model"] not in files
         or not isinstance(selected["initial_keyframe"], str)
@@ -112,7 +126,11 @@ def resolve(root, config):
     for name in files:
         if not name.endswith(".xml"):
             continue
-        xml = ET.parse(root / name).getroot()
+        xml = (
+            ET.parse(root / name).getroot()
+            if contents is None
+            else ET.fromstring(contents[name])
+        )
         compiler = xml.find("compiler")
         directories = {} if compiler is None else compiler.attrib
         for node in xml.iter():

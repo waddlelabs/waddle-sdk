@@ -13,6 +13,34 @@ from waddle_sdk.simulators.native_scene import camera_parameters
 from waddle_sdk.simulators.scene import load_scene, make_site
 
 
+@pytest.mark.parametrize("cache", [False, True])
+def test_native_owner_uses_the_bytes_it_verified(tmp_path, monkeypatch, cache):
+    from waddle_sdk.simulators import native_scene
+
+    native_bundle(tmp_path)
+    _, config = load_scene(tmp_path, "simulation.json")
+    if cache:
+        monkeypatch.setenv("WADDLE_SIMULATION_MODEL_CACHE", str(tmp_path / "cache"))
+    else:
+        monkeypatch.delenv("WADDLE_SIMULATION_MODEL_CACHE", raising=False)
+    resolve = native_scene.resolve
+
+    def changed_after_verification(root, selected, **kwargs):
+        result = resolve(root, selected, **kwargs)
+        result.write_bytes(b"changed after verification")
+        return result
+
+    monkeypatch.setattr(native_scene, "resolve", changed_after_verification)
+    engine = Engine(config, tmp_path)
+    try:
+        assert np.isfinite(engine.read("left")[0]).all()
+        assert engine.model.nbody > 10
+    finally:
+        engine.close()
+    with pytest.raises(ValueError, match="digest differs"):
+        Engine(config, tmp_path)
+
+
 def native_bundle(tmp_path):
     mj = pytest.importorskip("mujoco")
     _, config = make_site(

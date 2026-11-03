@@ -35,7 +35,7 @@ from .scene import depth_z16, profile
 class Engine:
     content_timing_kind = "simulated_state"
 
-    def __init__(self, config: dict, scratch: Path):
+    def __init__(self, config: dict, scratch: Path, *, _native_contents=None):
         # Selection precedes the first MuJoCo import and is local to this worker.
         if sys.platform == "linux" and not os.environ.get("DISPLAY"):
             os.environ.setdefault("MUJOCO_GL", "egl")
@@ -47,17 +47,18 @@ class Engine:
         self.description = robot = description(p.name)
         self._native_key = None
         if "native_scene" in config:
+            from .compiled_model import load_model
             from .native_scene import resolve
 
-            path = resolve(config["_native_root"], config)
+            if _native_contents is None:
+                _native_contents = {}
+                resolve(config["_native_root"], config, contents=_native_contents)
+            # A replacement passes the same immutable snapshot used to compare
+            # robot/camera contracts. No mutable file is reopened for compilation.
+            self.model = load_model(config["native_scene"]["model"], _native_contents)
         else:
             path = scratch / "scene.xml"
             path.write_text(mjcf(p, config))
-        if "native_scene" in config and os.environ.get("WADDLE_SIMULATION_MODEL_CACHE"):
-            from .compiled_model import load_native
-
-            self.model = load_native(config["_native_root"], config)
-        else:
             self.model = mujoco.MjModel.from_xml_path(str(path))
         self.data = mujoco.MjData(self.model)
         self.parts = tuple(config["parts"])
@@ -226,16 +227,23 @@ class Engine:
 
     def replacement(self, config, scratch, *, preserve_state=False):
         """Prepare a new environment while preserving the opened port contracts."""
-        from .native_scene import replacement_signature
+        from .native_scene import replacement_signature, resolve
 
         ignored = {"native_scene", "_native_root", "scene_revision", "_real_time"}
-        if {k: v for k, v in config.items() if k not in ignored} != {
+        contract_changed = {k: v for k, v in config.items() if k not in ignored} != {
             k: v for k, v in self.config.items() if k not in ignored
-        } or replacement_signature(config) != replacement_signature(self.config):
+        }
+        contents = None
+        if not contract_changed and "native_scene" in config:
+            contents = {}
+            resolve(config["_native_root"], config, contents=contents)
+        if contract_changed or replacement_signature(
+            config, _contents=contents
+        ) != replacement_signature(self.config):
             raise ValueError(
                 "simulation.scene_contract: replacement changed robot or camera contracts"
             )
-        candidate = type(self)(config, scratch)
+        candidate = type(self)(config, scratch, _native_contents=contents)
         try:
             candidate.evaluation_reset(seed=0)
             # Initial robot commands are part of the preserved execution contract.

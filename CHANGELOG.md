@@ -11,6 +11,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Retain a single tabletop scene preparation for authoring/model handoffs, with
+  identical portable geometry and canonical reset arrays. Compare and compile
+  native replacements from one verified byte snapshot, preserving source
+  validation, cache corruption fallback and independent runtime state.
+
 - Advertise prepared-playback relay support. Return state and configuration with
   observations/completion; check a submitted configuration revision and numerical
   joint preconditions locally before native admission. No planner or native API
