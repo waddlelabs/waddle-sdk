@@ -55,6 +55,7 @@ class World:
         self._part_frames: dict[str, str | None] = {}
         self._renderer = None
         self._independent_render = False
+        self._sealed_render_model = False
         self._generation = 0
         self.content_timing_kind = None
 
@@ -129,6 +130,10 @@ class World:
 
                         send_handle(parent, prepared.descriptor(), self._process.pid)
                     ready = self._receive(180.0)
+                    self._sealed_render_model = (
+                        isinstance(ready, dict)
+                        and ready.get("sealed_render_model") is True
+                    )
                     self.content_timing_kind = (
                         ready.get("camera_content_timing_kind")
                         if isinstance(ready, dict)
@@ -175,7 +180,9 @@ class World:
             )
             child.close()
             snapshot = self.call("render_snapshot", None)
-            parent.send((self.config, snapshot))
+            from .render_snapshot import send
+
+            send(parent, self.config, snapshot, process.pid)
             if not parent.poll(180):
                 raise TimeoutError("simulation renderer startup timed out")
             ok, result = parent.recv()
@@ -202,30 +209,35 @@ class World:
             raise RuntimeError("simulation renderer is unavailable")
 
         def acquire(known_generation):
-            model = None
-            for _ in range(3):
-                if cancelled():
-                    raise RuntimeError("simulation camera is closed")
-                snapshot = self.call("render_snapshot", known_generation)
-                while snapshot.get("model") is not None:
-                    # Model replacement can be large. Acquire fresh feedback
-                    # after transfer; its cost cannot restamp old state.
-                    model = snapshot["model"]
-                    snapshot = self.call("render_snapshot", snapshot["generation"])
-                captured_stamp = None if stamp is None else stamp()
-                if (
-                    stamp is None
-                    or time.monotonic_ns() - snapshot["interval"][1] <= 50_000_000
-                ):
-                    snapshot["model"] = model
-                    return snapshot, captured_stamp
-                # Discard a late acquisition completely. A fresh snapshot can
-                # recover a scheduling interruption without relaxing pairing
-                # or relabeling old feedback with a new clock stamp.
-                known_generation = snapshot["generation"]
-            raise RuntimeError(
-                "simulation camera snapshot transport exceeded 50 ms pairing bound"
-            )
+            from .render_snapshot import release
+
+            retained = {"model": None}
+            try:
+                for _ in range(3):
+                    if cancelled():
+                        raise RuntimeError("simulation camera is closed")
+                    snapshot = self.call("render_snapshot", known_generation)
+                    while snapshot.get("model") is not None:
+                        # Acquire fresh feedback after model transfer; its cost
+                        # cannot restamp old state. Drop any superseded handle.
+                        release(retained)
+                        retained["model"] = snapshot["model"]
+                        snapshot = self.call("render_snapshot", snapshot["generation"])
+                    captured_stamp = None if stamp is None else stamp()
+                    if (
+                        stamp is None
+                        or time.monotonic_ns() - snapshot["interval"][1] <= 50_000_000
+                    ):
+                        snapshot["model"] = retained["model"]
+                        retained["model"] = None
+                        return snapshot, captured_stamp
+                    # Discard late state, preserving the original pairing bound.
+                    known_generation = snapshot["generation"]
+                raise RuntimeError(
+                    "simulation camera snapshot transport exceeded 50 ms pairing bound"
+                )
+            finally:
+                release(retained)
 
         while not cancelled():
             rgb, depth, snapshot, captured_stamp = renderer.capture(
@@ -298,6 +310,8 @@ class World:
                 )
                 if prepared is not None:
                     arguments = arguments[0], prepared.metadata()
+                if operation == "render_snapshot" and self._sealed_render_model:
+                    arguments = arguments[0], True
                 self._connection.send((operation, arguments))
                 if prepared is not None:
                     from multiprocessing.reduction import send_handle
@@ -315,7 +329,12 @@ class World:
                     if operation == "capture"
                     else 5.0
                 )
-                return self._receive(timeout)
+                result = self._receive(timeout)
+                if operation == "render_snapshot":
+                    from .render_snapshot import receive
+
+                    result = receive(self._connection, result)
+                return result
             except (OSError, EOFError, TimeoutError):
                 with self._lock:
                     self._failed = True

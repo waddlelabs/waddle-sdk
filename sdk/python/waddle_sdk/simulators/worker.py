@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import logging
 import math
+import os
 import sys
 import tempfile
 import time
@@ -54,6 +55,9 @@ def serve(connection: Connection) -> None:
                     {
                         "camera_content_timing_kind": timing_kind,
                         "independent_render": independent_render,
+                        "sealed_render_model": bool(
+                            getattr(engine, "supports_sealed_render_model", False)
+                        ),
                     },
                 )
             )
@@ -161,7 +165,19 @@ def serve(connection: Connection) -> None:
                             advance(arguments[0])
                         result = None
                     elif operation == "render_snapshot":
-                        result = engine.render_snapshot(generation, arguments[0])
+                        result = engine.render_snapshot(
+                            generation,
+                            arguments[0],
+                            **(
+                                {"_sealed": True}
+                                if len(arguments) > 1
+                                and arguments[1] is True
+                                and getattr(
+                                    engine, "supports_sealed_render_model", False
+                                )
+                                else {}
+                            ),
+                        )
                     elif (
                         operation == "capture"
                         and len(arguments) == 2
@@ -225,7 +241,12 @@ def serve(connection: Connection) -> None:
                         if operation == "reset":
                             pending_time = 0.0
                             last_time = time.monotonic()
-                    connection.send((True, result))
+                    if operation == "render_snapshot":
+                        from .render_snapshot import send
+
+                        send(connection, True, result, os.getppid())
+                    else:
+                        connection.send((True, result))
                 except Exception as error:  # noqa: BLE001 -- preserve native faults across the private pipe
                     engine.hold()
                     traceback.print_exc(file=sys.stderr)

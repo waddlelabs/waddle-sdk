@@ -34,6 +34,7 @@ from .scene import depth_z16, profile
 
 class Engine:
     content_timing_kind = "simulated_state"
+    supports_sealed_render_model = True
 
     def __init__(
         self,
@@ -968,9 +969,13 @@ class Engine:
     def capture(self, name):
         return self.capture_timed(name)[:2]
 
-    def render_snapshot(self, generation, known_generation):
+    def render_snapshot(self, generation, known_generation, *, _sealed=False):
         """Copy native state and ordinary feedback for a read-only renderer."""
-        model = None if generation == known_generation else pickle.dumps(self.model)
+        from .render_snapshot import capture_model
+
+        model = None
+        if generation != known_generation:
+            model = capture_model(self.model) if _sealed else pickle.dumps(self.model)
         began = time.monotonic_ns()
         specification = self.mj.mjtState.mjSTATE_INTEGRATION
         state = np.empty(self.mj.mj_stateSize(self.model, specification))

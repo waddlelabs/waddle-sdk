@@ -1743,3 +1743,14 @@ models on their owning thread and acquire fresh pixels; never reuse old image
 content or relax generation/freshness checks. Changed assets, planes or settings
 rebuild contexts. Native pixel/depth equality and fallback regressions are in
 `sdk/tests/test_render_revisions.py`.
+
+Matching reference workers can transfer the current physics model to the
+independent renderer through sealed descriptors on their existing private pipes.
+Advertise and request this capability explicitly; old peers, unsupported storage
+and models over 256 MiB keep copied buffers. This snapshots the actual current
+model, not its authored seed. Consumers load independent native models and still
+acquire fresh state after transfer. Release every sender/receiver handle, including
+superseded snapshots and failures; close a partially sent descriptor response.
+Keep generation and 50 ms pairing fences. See
+`sdk/tests/test_render_snapshot_transfer.py` and both transport modes in the
+stalled-renderer regression.

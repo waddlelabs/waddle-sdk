@@ -69,8 +69,10 @@ def test_control_finishes_while_a_camera_render_is_blocked(operation):
 
 
 @pytest.mark.parametrize("reset", [False, True])
+@pytest.mark.parametrize("sealed", [False, True])
 def test_native_stalled_renderer_retains_acquisition_and_refuses_pre_reset_frames(
     reset,
+    sealed,
 ):
     pytest.importorskip("mujoco")
     from waddle_sdk.simulators.scene import make_site
@@ -85,7 +87,18 @@ def test_native_stalled_renderer_retains_acquisition_and_refuses_pre_reset_frame
     )
     world = World(config, real_time=False)
     world._part_frames["arm"] = "arm_base"
+    receive = world._receive
+
+    def advertised(timeout):
+        value = receive(timeout)
+        if not sealed and isinstance(value, dict) and "independent_render" in value:
+            value = dict(value)
+            value.pop("sealed_render_model", None)
+        return value
+
+    world._receive = advertised
     world.open()
+    assert world._sealed_render_model is sealed
     camera = Camera(
         world,
         SimpleNamespace(

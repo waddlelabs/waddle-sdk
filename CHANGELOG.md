@@ -20,6 +20,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Changed
 
+- Transfer current simulation models to independent renderers through negotiated
+  sealed descriptors, preserving fresh state/pixels and independent native models.
+  Retain copied-buffer compatibility and close handles on partial-transfer faults.
+
 - Retain the loaded robot/camera contract for live scene comparisons and bundle
   reference-worker post-edit state with its acknowledgement. New publications
   remain validated; legacy backends and multi-world sites retain final readback.

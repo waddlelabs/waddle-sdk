@@ -89,6 +89,32 @@ def _runtime():
     return mujoco.__version__, platform.system(), platform.machine()
 
 
+def seal(model, *, identity, xml=b""):
+    """Capture the supplied current model, without retaining live state or a cache."""
+    import mujoco as mj
+
+    fd = None
+    try:
+        import fcntl
+
+        fd = os.memfd_create(
+            "waddle-prepared-model", os.MFD_CLOEXEC | os.MFD_ALLOW_SEALING
+        )
+        mj.mj_saveModel(model, f"/proc/self/fd/{fd}")
+        if os.fstat(fd).st_size != mj.mj_sizeModel(model):
+            raise OSError("compiled model export was incomplete")
+        fcntl.fcntl(fd, fcntl.F_ADD_SEALS, _seals())
+        size = os.fstat(fd).st_size + len(xml) + len(repr(identity).encode())
+        payload = PreparedModel(identity, _runtime(), xml, fd, size)
+        fd = None
+        return payload
+    except (OSError, AttributeError, ImportError, mj.FatalError):
+        return None
+    finally:
+        if fd is not None:
+            os.close(fd)
+
+
 class PreparedModelCache:
     def __init__(self, *, max_bytes=256 * 1024 * 1024):
         self.max_bytes = max_bytes
@@ -96,28 +122,10 @@ class PreparedModelCache:
         self.lock = threading.Lock()
 
     def remember(self, model_name, files, xml, model):
-        import mujoco as mj
-
-        identity = _identity(model_name, files)
-        fd = None
-        try:
-            import fcntl
-
-            fd = os.memfd_create(
-                "waddle-prepared-model", os.MFD_CLOEXEC | os.MFD_ALLOW_SEALING
-            )
-            mj.mj_saveModel(model, f"/proc/self/fd/{fd}")
-            if os.fstat(fd).st_size != mj.mj_sizeModel(model):
-                raise OSError("compiled model export was incomplete")
-            fcntl.fcntl(fd, fcntl.F_ADD_SEALS, _seals())
-            size = os.fstat(fd).st_size + len(xml) + len(repr(identity).encode())
-            payload = PreparedModel(identity, _runtime(), xml, fd, size)
-            fd = None
-        except (OSError, AttributeError, ImportError, mj.FatalError):
+        payload = seal(model, identity=_identity(model_name, files), xml=xml)
+        if payload is None:
             return False
-        finally:
-            if fd is not None:
-                os.close(fd)
+        identity = payload.identity
         with self.lock:
             previous = self.entries.pop(identity, None)
             if previous is not None:
@@ -155,6 +163,11 @@ def restore(model_name, files, prepared):
         raise ValueError(
             "simulation.prepared_source: preparation describes different sources"
         )
+    return load_sealed(prepared)
+
+
+def load_sealed(prepared):
+    """Load after the private consumer has checked its source or snapshot identity."""
     if prepared.runtime != _runtime():
         return None
     import fcntl

@@ -514,6 +514,14 @@ capture cannot be interrupted. Real-time pump ticks need no extra clock request:
 reads, writes and captures already advance elapsed time. Explicit-step rollouts
 still dispatch their requested durations.
 
+On Linux, matching reference workers can send the current physics model to the
+independent renderer through sealed descriptors instead of copying a large
+serialized model through both private pipes. Each receiver still loads its own
+native model. The capability is negotiated; older workers, unavailable sealed
+storage and models over 256 MiB retain copied buffers. Handles close after transfer
+or failure. Current robot state is acquired after model transfer, and camera
+generation, pairing and content-age checks remain unchanged.
+
 For explicitly stepped rollouts, set `worlds.cell.options.real_time: false`; only
 SDK world-step durations then advance physics. This is independent of scene reset:
 runs preserve the scene by default, while `worlds.cell.options.reset_on_episode:

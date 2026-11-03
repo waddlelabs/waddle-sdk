@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import os
-import pickle
 import sys
 import traceback
 from multiprocessing.connection import Connection
 
 from ..cameras._mujoco_render import RGBDRenderer, same_render_resources
+from .render_snapshot import load_model, receive, release
 from .scene import depth_z16
 
 
@@ -24,7 +24,7 @@ class SnapshotRenderer:
     def restore(self, snapshot):
         if snapshot["generation"] != self.generation:
             # Only the owning physics process supplies this private pipe.
-            model = pickle.loads(snapshot["model"])
+            model = load_model(snapshot["model"])
             if self.generation is None or not same_render_resources(self.model, model):
                 self.close()
             else:
@@ -87,8 +87,12 @@ def serve(connection):
             count = 1
         os.environ["LP_NUM_THREADS"] = str(count)
         config, initial = connection.recv()
-        renderer = SnapshotRenderer(config)
-        renderer.restore(initial)
+        initial = receive(connection, initial)
+        try:
+            renderer = SnapshotRenderer(config)
+            renderer.restore(initial)
+        finally:
+            release(initial)
         # Readiness still includes real RGB/depth capture for every camera.
         for name in config["cameras"]:
             renderer.capture(name)
@@ -98,7 +102,11 @@ def serve(connection):
             if request is None:
                 break
             name, snapshot = request
-            renderer.restore(snapshot)
+            snapshot = receive(connection, snapshot)
+            try:
+                renderer.restore(snapshot)
+            finally:
+                release(snapshot)
             connection.send((True, renderer.capture(name)))
     except (EOFError, BrokenPipeError):
         pass
