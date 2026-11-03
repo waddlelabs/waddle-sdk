@@ -870,8 +870,15 @@ The cache retains at most sixteen models and 256 MiB.
 
 Native owners compare and compile one captured, verified source snapshot instead
 of reopening its files at each preparation stage. Trusted authoring can retain
-its already compiled model while filling the cache; consumers still load their
-own independent model through the ordinary checksum-verified cache path.
+its already compiled model while filling the cache. On Linux with sealed-memory
+file support, the authoring process also retains at most two immutable compiled
+models within 256 MiB. SDK owners can receive a matching model through their
+existing private pipe after ordinary source validation. Each consumer loads its
+own native model and creates fresh state. File seals prevent writes or truncation,
+and the handoff checks source hashes, native version and platform. Unsupported
+systems retain the ordinary checksum-verified cache/source path. This private
+descriptor is never accepted through scene JSON, workspace files or participant
+tools, and its cache retains no running simulation state.
 
 Each hit loads an independent model; callers create fresh `MjData`. Changes to
 model arrays or runtime state cannot affect another instance. The cache contains

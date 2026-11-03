@@ -11,6 +11,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Transfer matching authoring preparations to resident MuJoCo owners through
+  immutable Linux file descriptors, retaining ordinary source checks and separate
+  model/state ownership. Bound the private handoff cache to two models and
+  256 MiB; retain the existing loader on unsupported systems.
+
 - Retain a single tabletop scene preparation for authoring/model handoffs, with
   identical portable geometry and canonical reset arrays. Compare and compile
   native replacements from one verified byte snapshot, preserving source

@@ -402,4 +402,8 @@ def prepare_scene(config, scene, output: Path, *, revision=1, easy_grasp=True):
     }
     (output / "simulation.json").write_text(json.dumps(config, indent=2) + "\n")
     (output / "scene.json").write_text(json.dumps(scene, indent=2) + "\n")
+    if os.environ.get("WADDLE_SIMULATION_MODEL_CACHE"):
+        from .prepared_model import cache
+
+        cache.remember("world.xml", hashes, contents["world.xml"], model)
     return ScenePreparation(config, model, contents)

@@ -504,6 +504,11 @@ Compiled-cache reads retain their normal checksum and lock. Tabletop
 authoring handoffs, with the same
 portable XML/reset state as `compile_scene`. Only the final reset-key model is
 cached. Keep ordinary source validation and independent model/data ownership.
+On Linux, the same optional cache retains up to two sealed native model files
+within 256 MiB for trusted process-private handoffs. Source manifests and runtime
+identity must match before loading a fresh native instance. No live state or
+descriptor enters scene JSON or participant APIs; unsupported sealing retains
+ordinary loading. Close borrowed descriptors on successful and failed handoffs.
 
 Generated YAM source poses serialize at twelve decimal places with canonical zero
 to remove insignificant cross-host BLAS differences from model hashes. Preserve

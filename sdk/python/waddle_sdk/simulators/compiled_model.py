@@ -25,6 +25,21 @@ def _hash(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def _canonical_inputs(model_name, inputs):
+    """Normalize portable root aliases without changing relative asset names."""
+    inputs = dict(inputs)
+    parent = str(PurePosixPath(model_name).parent)
+    if parent != "." and all(name.startswith(parent + "/") for name in inputs):
+        prefix = len(parent) + 1
+        inputs = {name[prefix:]: data for name, data in inputs.items()}
+        model_name = model_name[prefix:]
+    canonical = "__waddle_root__.xml"
+    if canonical not in inputs:
+        inputs[canonical] = inputs.pop(model_name)
+        model_name = canonical
+    return model_name, inputs
+
+
 def load_model(model_name, contents, *, cache=None, timings=None, _prepared=None):
     """Compile complete verified VFS inputs or load a verified private binary.
 
@@ -57,15 +72,7 @@ def load_model(model_name, contents, *, cache=None, timings=None, _prepared=None
         )
     # Portable copies may add a directory prefix or rename just the root XML.
     # Normalize both while keeping every relative asset reference intact.
-    parent = str(PurePosixPath(model_name).parent)
-    if parent != "." and all(name.startswith(parent + "/") for name in inputs):
-        prefix = len(parent) + 1
-        inputs = {name[prefix:]: data for name, data in inputs.items()}
-        model_name = model_name[prefix:]
-    canonical = "__waddle_root__.xml"
-    if canonical not in inputs:
-        inputs[canonical] = inputs.pop(model_name)
-        model_name = canonical
+    model_name, inputs = _canonical_inputs(model_name, inputs)
     hashes = {name: _hash(data) for name, data in inputs.items()}
     # Namespace VFS assets by bytes, independent of the separately parsed XML.
     namespace = _hash(

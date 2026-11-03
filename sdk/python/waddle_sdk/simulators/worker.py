@@ -17,11 +17,26 @@ def serve(connection: Connection) -> None:
     engine = None
     with tempfile.TemporaryDirectory(prefix="waddle-simulation-") as scratch:
         try:
-            config = connection.recv()
+            initial = connection.recv()
+            config, prepared = (
+                initial if isinstance(initial, tuple) else (initial, None)
+            )
             engine_type = importlib.import_module(
                 f"waddle_sdk.simulators.{config['backend']}"
             ).Engine
-            engine = engine_type(config, Path(scratch))
+            if prepared is not None:
+                from .prepared_model import receive
+
+                prepared = receive(connection, prepared)
+            try:
+                engine = engine_type(
+                    config,
+                    Path(scratch),
+                    **({"_prepared": prepared} if prepared is not None else {}),
+                )
+            finally:
+                if prepared is not None:
+                    prepared.close()
             # Readiness means both sensor streams render, not merely that an
             # engine module imports. Startup failure never degrades to a mock.
             independent_render = callable(getattr(engine, "render_snapshot", None))
@@ -159,11 +174,24 @@ def serve(connection: Connection) -> None:
                         "evaluation_replace_scene",
                         "evaluation_edit_scene",
                     }:
-                        replacement = engine.replacement(
-                            arguments[0],
-                            Path(scratch),
-                            preserve_state=operation == "evaluation_edit_scene",
-                        )
+                        if len(arguments) > 1:
+                            from .prepared_model import receive
+
+                            arguments = arguments[0], receive(connection, arguments[1])
+                        try:
+                            replacement = engine.replacement(
+                                arguments[0],
+                                Path(scratch),
+                                preserve_state=operation == "evaluation_edit_scene",
+                                **(
+                                    {"_prepared": arguments[1]}
+                                    if len(arguments) > 1
+                                    else {}
+                                ),
+                            )
+                        finally:
+                            if len(arguments) > 1:
+                                arguments[1].close()
                         engine.hold()
                         engine.close()
                         engine = replacement
