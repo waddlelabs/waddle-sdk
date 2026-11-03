@@ -305,7 +305,17 @@ class World:
                     send_handle(
                         self._connection, prepared.descriptor(), self._process.pid
                     )
-                return self._receive(15.0 if operation == "capture" else 5.0)
+                # Scene loading constructs native models while participant work is
+                # drained; it is not a small control/feedback transaction.
+                timeout = (
+                    60.0
+                    if operation
+                    in {"evaluation_replace_scene", "evaluation_edit_scene"}
+                    else 15.0
+                    if operation == "capture"
+                    else 5.0
+                )
+                return self._receive(timeout)
             except (OSError, EOFError, TimeoutError):
                 with self._lock:
                     self._failed = True

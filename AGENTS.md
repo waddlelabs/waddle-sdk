@@ -9,6 +9,19 @@ All 582 native workspace cases, transport tests, core/three-feature shim lint,
 format and Rust documentation checks pass. No physical owner or published client
 has changed. Matching release packaging remains separate.
 
+Source exports retain declared mechanical body contact exclusions, remapping a
+merged YAM hand root to its actual arm body. This changes new source identities;
+existing published bundles and native contact physics remain unchanged.
+
+New authored bowls use a smooth deep curved shell, an open cavity and a small
+flat foot. Separate convex wall bands retain native concavity, interior support
+and nesting; do not use the visual mesh's filled convex hull for contacts. Only
+the floor contacts the table when upright. Keep finite mass and finger-contact
+materials, exact reset and immutable existing compiled scenes. Contact-pair
+deduplication uses a set instead of rescanning the growing XML list. Support,
+side contact, interior-floor and nesting checks remain separate from grasp/task
+acceptance. See `sdk/tests/test_playground_bowl_contacts.py`.
+
 Scoped-cancel native validation passes the full workspace, including the new
 confirmed/failed scoped Hold regression. The matching base extension and strict
 docs build pass. Public/Metal integration exposes a single-arm capability gap:
@@ -1659,7 +1672,14 @@ generation, participant drain and failure fences. Unsupported edits refuse;
 `replace_scene` and explicit reset retain their prior initial-state semantics.
 See `sdk/tests/test_scene_edits.py` and the real-socket replacement/edit regression.
 
-Authored two-YAM scenes may select a finite native `fixture` and bounded `seed`.
+Authored scenes may select a finite native `fixture` and bounded `seed`.
+`drawer_cabinet` and `cleanup_station` support one/two YAMs; the existing
+handover/container/peg/tray assemblies require two YAMs. Drawer cabinet reuses
+the passive retrieval drawer; cleanup supplies a rigid sweeping-pad brush,
+six free pieces and a fixed ramped dustpan. Preserve real contacts and reset;
+there is no flexible-bristle model or grasp/attachment shortcut. Workstation
+mechanics, view/reset and unsupported-embodiment checks live in
+`sdk/tests/test_playground_workstations.py`.
 Reuse reference assemblies and preserve compound geometry/contact identity;
 never accept executable scene imports through authoring data. Seed zero remains
 canonical and reset repeats the compiled variation. Added props remain separate.
@@ -1692,3 +1712,10 @@ Prepared-playback relay work is under qualification on perf/motion-roundtrips-20
 It adds Python-only state/configuration bundles and local submission preconditions;
 native API 42 is unchanged. Matching Metal consumes these within preparation only.
 No package publication, deployment or hardware startup has occurred for this change.
+
+Native scene replacement binds the protected robot assembly and its transitive
+asset/file dependencies, not unrelated tabletop assets. Full scene manifests
+remain verified. Administrative model loading has a bounded 60-second IPC wait;
+ordinary feedback/control and capture deadlines stay separate. Verify actual
+same-owner addition/removal of mesh props for one and two arms, old-image fencing
+and genuine robot/camera refusal; fresh-owner loading alone misses reload bugs.

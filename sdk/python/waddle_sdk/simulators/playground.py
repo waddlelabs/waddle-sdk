@@ -18,7 +18,8 @@ from pathlib import Path
 from typing import Any
 
 from .model import mjcf, numbers
-from .playground_fixtures import FIXTURES, place_fixture
+from .playground_bowls import bowl_geometry
+from .playground_fixtures import FIXTURES, place_fixture, validate_fixture
 from .scene import profile, quaternion, rotation
 
 CATALOG = {
@@ -122,7 +123,7 @@ def validate_scene(scene):
     return deepcopy(scene)
 
 
-def _object(world, obj, easy_grasp):
+def _object(world, asset, obj, easy_grasp):
     name = "prop_" + obj["id"]
     kind = obj["kind"]
     body = ET.SubElement(
@@ -142,6 +143,20 @@ def _object(world, obj, easy_grasp):
         shapes.append(("cylinder", (x, z), (0, 0, 0)))
     elif kind == "ball":
         shapes.append(("sphere", (x,), (0, 0, 0)))
+    elif kind == "bowl":
+        visual, shapes = bowl_geometry(asset, x, 2 * z, name)
+        ET.SubElement(
+            body,
+            "geom",
+            name=name + "_visual",
+            type="mesh",
+            mesh=visual,
+            rgba=numbers([*obj["color"], 1]),
+            group="2",
+            contype="0",
+            conaffinity="0",
+            mass="0",
+        )
     else:
         wall = min(0.004, x / 4, y / 4, z / 2)
         if kind == "tray":
@@ -154,23 +169,6 @@ def _object(world, obj, easy_grasp):
                     ("box", (wall / 2, y, z), (-x + wall / 2, 0, 0)),
                 ]
             )
-        else:
-            shapes.append(("cylinder", (x, wall / 2), (0, 0, -z + wall / 2)))
-            # A convex segment ring gives a genuinely open container.
-            for i in range(16):
-                angle = 2 * math.pi * i / 16
-                shapes.append(
-                    (
-                        "box",
-                        (wall / 2, x * math.tan(math.pi / 16), z),
-                        (
-                            (x - wall / 2) * math.cos(angle),
-                            (x - wall / 2) * math.sin(angle),
-                            0,
-                        ),
-                        angle,
-                    )
-                )
     names = []
     mass = CATALOG[kind]["mass"]
     for i, shape in enumerate(shapes):
@@ -178,7 +176,11 @@ def _object(world, obj, easy_grasp):
         attrs = {
             "name": geom_name,
             "type": shape[0],
-            "size": numbers(shape[1]),
+            **(
+                {"mesh": shape[1]}
+                if shape[0] == "mesh"
+                else {"size": numbers(shape[1])}
+            ),
             "pos": numbers(shape[2]),
             "rgba": numbers([*obj["color"], 1]),
             "friction": "0.8 0.001 0.0001" if easy_grasp else "1 0.005 0.0001",
@@ -187,13 +189,15 @@ def _object(world, obj, easy_grasp):
             "solref": "0.004 1",
             "solimp": "0.95 0.99 0.001",
         }
+        if kind == "bowl":
+            attrs["group"] = "3"
         if mass:
             attrs["mass"] = str(mass / len(shapes))
             names.append(geom_name)
         else:
             attrs.update(contype="0", conaffinity="0", group="2")
         if len(shape) == 4:
-            attrs["quat"] = numbers(quaternion(rotation([0, 0, shape[3]])))
+            attrs["quat"] = numbers(shape[3])
         ET.SubElement(body, "geom", **attrs)
     return names
 
@@ -232,10 +236,8 @@ def prepare_scene(config, scene, output: Path, *, revision=1, easy_grasp=True):
     """
     scene = validate_scene(scene)
     fixture = scene.get("fixture")
-    if fixture and (len(config["parts"]) != 2 or config["robot"] != "yam"):
-        raise ValueError(
-            "playground.fixture: these reference assemblies require two YAMs"
-        )
+    if fixture:
+        validate_fixture(fixture, config["robot"], len(config["parts"]))
     if output.exists():
         raise ValueError("playground.output: scene revision already exists")
     output.mkdir(parents=True)
@@ -243,14 +245,22 @@ def prepare_scene(config, scene, output: Path, *, revision=1, easy_grasp=True):
     config.pop("native_scene", None)
     config.pop("_native_root", None)
     config.pop("pose_profile", None)
-    config["environment"] = FIXTURES[fixture] if fixture else "two_cubes"
+    environment = FIXTURES[fixture] if fixture else None
+    config["environment"] = environment or "two_cubes"
     root = ET.fromstring(mjcf(profile(config["robot"]), config))
+    # Compound props and two articulated hands can exceed MuJoCo's inferred
+    # constraint arena during ordinary contact. Allocate bounded scratch up
+    # front instead of dropping constraints under load. Explicit reference
+    # size declarations remain authoritative; dynamics/contact settings do not
+    # change and the new bytes enter the ordinary immutable scene identity.
+    if root.find("size") is None:
+        ET.SubElement(root, "size", memory="256M")
     world = root.find("worldbody")
     single = len(config["parts"]) == 1
     bases = {"base"} if single else {f"{p}__base" for p in config["parts"]}
     removed = set()
     for body in list(world.findall("body")):
-        if not fixture and body.get("name") not in bases | {"table"}:
+        if not environment and body.get("name") not in bases | {"table"}:
             removed.update(n.get("name") for n in body.iter() if n.get("name"))
             world.remove(body)
     contact = root.find("contact")
@@ -280,6 +290,7 @@ def prepare_scene(config, scene, output: Path, *, revision=1, easy_grasp=True):
             for key, value in list(node.attrib.items()):
                 if value in names:
                     node.set(key, part + "__" + value)
+        bases = {part + "__base"}
     contents, hashes, sources = {}, {}, {}
     for node in root.iter():
         if node.get("file"):
@@ -294,8 +305,13 @@ def prepare_scene(config, scene, output: Path, *, revision=1, easy_grasp=True):
                 contents[relative], hashes[relative] = data, digest
                 sources[source] = relative
             node.set("file", sources[source])
+    asset = root.find("asset")
+    if asset is None:
+        asset = ET.SubElement(root, "asset")
     props = [
-        name for obj in scene["objects"] for name in _object(world, obj, easy_grasp)
+        name
+        for obj in scene["objects"]
+        for name in _object(world, asset, obj, easy_grasp)
     ]
     if fixture:
         for body in world.findall("body"):
@@ -329,13 +345,16 @@ def prepare_scene(config, scene, output: Path, *, revision=1, easy_grasp=True):
                         name = body.get("name") + f"__playground_contact_{i}"
                         geom.set("name", name)
                         fingers.append(name)
+        existing_pairs = {
+            frozenset((pair.get("geom1"), pair.get("geom2")))
+            for pair in contact.findall("pair")
+        }
         for finger in fingers:
             for prop in props:
-                if any(
-                    {pair.get("geom1"), pair.get("geom2")} == {finger, prop}
-                    for pair in contact.findall("pair")
-                ):
+                pair_key = frozenset((finger, prop))
+                if pair_key in existing_pairs:
                     continue
+                existing_pairs.add(pair_key)
                 ET.SubElement(
                     contact,
                     "pair",

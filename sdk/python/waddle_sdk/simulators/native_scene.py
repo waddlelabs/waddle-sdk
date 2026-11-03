@@ -15,7 +15,7 @@ import numpy as np
 
 
 def replacement_signature(config, *, _contents=None):
-    """Bind a reference native scene's robot assembly and shared model assets.
+    """Bind a native scene's robot assembly and its referenced model assets.
 
     Replacement is optional and intentionally limited to self-contained native
     XML. Included models must reopen normally. Environment bodies and their
@@ -42,18 +42,11 @@ def replacement_signature(config, *, _contents=None):
             mesh.attrib.pop("content_type")
     selected = config["native_scene"]
     values = [selected["prefixes"], selected["camera_names"]]
-    for name in (
-        "compiler",
-        "default",
-        "asset",
-        "actuator",
-        "tendon",
-        "equality",
-        "extension",
-    ):
-        values.append(
-            [ET.tostring(node, encoding="unicode") for node in root.findall(name)]
-        )
+    protected = []
+    for name in ("compiler", "default", "actuator", "tendon", "equality", "extension"):
+        nodes = root.findall(name)
+        protected.extend(nodes)
+        values.append([ET.tostring(node, encoding="unicode") for node in nodes])
     world = root.find("worldbody")
     for prefix in selected["prefixes"].values():
         body = world.find(f"body[@name='{prefix}base']")
@@ -61,15 +54,49 @@ def replacement_signature(config, *, _contents=None):
             raise ValueError(
                 "simulation.scene_contract: missing reference robot assembly"
             )
+        protected.append(body)
         values.append(ET.tostring(body, encoding="unicode"))
-    # Referenced assets are digest-bound, even when their filenames are unchanged.
+
+    # Tabletop props may add/remove meshes or textures. Only assets reached by
+    # the preserved robot/default/drive definitions belong to its contract.
+    # Follow material -> texture references as well as direct geometry assets.
+    references = {"mesh", "material", "texture", "hfield", "skin"}
+    assets = {(node.tag, node.get("name")): node for node in root.findall("asset/*")}
+    pending = list(protected)
+    required = {}
+    while pending:
+        node = pending.pop()
+        for child in node.iter():
+            for attribute, name in child.attrib.items():
+                key = (attribute, name)
+                if attribute in references and key in assets and key not in required:
+                    required[key] = assets[key]
+                    pending.append(assets[key])
     values.append(
-        {
-            name: digest
-            for name, digest in selected["files"].items()
-            if not name.endswith(".xml")
-        }
+        [ET.tostring(required[key], encoding="unicode") for key in sorted(required)]
     )
+    compiler = root.find("compiler")
+    directories = {} if compiler is None else compiler.attrib
+    bound_files = {}
+    for parent in [*protected, *required.values()]:
+        for node in parent.iter():
+            if file := node.get("file"):
+                directory = directories.get(
+                    {"mesh": "meshdir", "texture": "texturedir"}.get(
+                        node.tag, "assetdir"
+                    ),
+                    directories.get("assetdir", ""),
+                )
+                relative = (Path(directory) / file).as_posix()
+                manifested = (Path(selected["model"]).parent / relative).as_posix()
+                if manifested not in selected["files"]:
+                    raise ValueError(
+                        "simulation.scene_contract: robot asset missing from digest manifest: "
+                        + relative
+                    )
+                bound_files[relative] = selected["files"][manifested]
+    # Byte changes to a referenced robot asset still require a fresh owner.
+    values.append(bound_files)
     return values
 
 
@@ -262,7 +289,7 @@ def initialize(engine):
         initial = 0.0
         if int(body.jntnum[0]):
             joint_id = int(body.jntadr[0])
-            joint_type = model.jnt_type[joint_id]
+            joint_type = int(model.jnt_type[joint_id])
             if joint_type == mj.mjtJoint.mjJNT_FREE:
                 kind = "free"
             elif joint_type in (mj.mjtJoint.mjJNT_SLIDE, mj.mjtJoint.mjJNT_HINGE):

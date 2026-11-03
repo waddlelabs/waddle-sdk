@@ -400,6 +400,14 @@ def _assemble(urdf, hand, arm_assets, hand_assets, terminal, transform):
         bodies[terminal].append(element)
     # Preserve physical slide coordinates and their coupling in the source.
     root.append(copy.deepcopy(hand.find("equality")))
+    contact = hand.find("contact")
+    if contact is not None:
+        contact = copy.deepcopy(contact)
+        for exclusion in contact.findall("exclude"):
+            for key in ("body1", "body2"):
+                if exclusion.get(key) == hand.find("worldbody/body").get("name"):
+                    exclusion.set(key, terminal)
+        root.append(contact)
     for geom in root.iter("geom"):
         if geom.get("name") is None:
             geom.set("name", geom.get("mesh") + "_collision")

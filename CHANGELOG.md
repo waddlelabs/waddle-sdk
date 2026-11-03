@@ -1,3 +1,10 @@
+## 2026-11-02 — Curved hollow tabletop bowls
+
+- Give newly authored bowls smooth curved sides, a deep open interior and a
+  small flat foot, with separate convex wall contacts that support nesting.
+- Preserve finite mass, native contact/release and canonical reset. Replace
+  quadratic contact-pair bookkeeping without changing pair materials.
+
 # Changelog
 
 All notable changes to the waddle-sdk monorepo are documented here.
@@ -29,6 +36,24 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 - Add an advertised read-only relay observation bundle with one retained frame,
   description, support and bounded workspace reads; preserve per-file errors.
 
+- Bind native scene replacement to robot-referenced assets rather than tabletop
+  prop meshes. Preserve genuine robot/camera refusal and image fencing. Give
+  administrative scene loading its own 60-second wait; control deadlines remain
+  unchanged. One-/two-arm block and bowl replacement/removal regressions pass.
+
+- Add native `drawer_cabinet` and `cleanup_station` authored fixtures for one/two
+  YAMs, with a passive retrieval drawer and a rigid brush/loose-piece/dustpan scene.
+  Preserve bounded variation, exact reset, contact dynamics and robot contracts.
+- Keep qualified single-arm robot bases out of fixture-contact renaming, and
+  classify native passive joint types using Python integers for MuJoCo enum
+  compatibility. Existing scenes and supported joint kinds remain unchanged.
+
+- Start authored bowl walls above their solid floor, removing coplanar wall
+  soles that multiply table contact constraints. Preserve the open rim, wall
+  pieces, total mass, materials and solver settings; newly compiled scene geometry
+  and inertia change, while existing immutable scenes remain unchanged.
+
+
 - Include local feedback acquisition inside paced motion intervals instead of adding its cost after every cadence wait.
 
 - Preserve bent-path, IO cadence, headroom and gripper budget regressions at native playback boundaries.
@@ -44,6 +69,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 - Advertise existing scoped playback Hold on single-arm named sites as well as
   composite sites, without widening action or Hold grants.
+
+- Preserve declared mechanical body contact exclusions in reference planner
+  exports and assembled physical YAM sources, including opposing slide fingers.
+  Existing published bundles and simulation contact physics remain unchanged.
 
 - Keep live playback input across an individual buffer cancellation only after
   successful scoped Hold; faults and global controls still fence input.

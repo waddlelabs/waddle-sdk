@@ -1,4 +1,4 @@
-"""Finite reference assemblies for authored two-arm scenes.
+"""Finite reference assemblies for authored scenes.
 
 Only geometry and initial placement live here. Task instructions and scoring
 belong to consumers of the normal simulation observation contracts.
@@ -15,7 +15,21 @@ FIXTURES = {
     "hold_container": "hold-container-place",
     "peg_socket": "two-arm-peg-insertion",
     "loaded_tray": "loaded-tray-transport",
+    "drawer_cabinet": "retrieve-from-drawer",
+    "cleanup_station": None,
 }
+
+
+def validate_fixture(kind, robot, arms):
+    if kind in {"drawer_cabinet", "cleanup_station"}:
+        if robot != "yam" or arms not in (1, 2):
+            raise ValueError(
+                "playground.fixture: this assembly requires one or two YAMs"
+            )
+    elif robot != "yam" or arms != 2:
+        raise ValueError(
+            "playground.fixture: these reference assemblies require two YAMs"
+        )
 
 
 def place_fixture(world, kind, seed=0):
@@ -25,6 +39,10 @@ def place_fixture(world, kind, seed=0):
     move together, retaining their original geometry, mass and native contacts.
     Seed zero is canonical. Robot placement and camera optics are untouched.
     """
+    if kind == "cleanup_station":
+        from .playground_cleanup import add_cleanup_station
+
+        add_cleanup_station(world)
     placements = {
         "handover": {
             "handover_block": (0.28, -0.20),
@@ -43,6 +61,17 @@ def place_fixture(world, kind, seed=0):
             "tray_content_1": (0.215, -0.06),
             "tray_content_2": (0.325, 0.06),
             "goal_region": (0.43, 0.0),
+        },
+        "drawer_cabinet": {
+            "cabinet": (0.48, 0.0),
+            "target_object": (0.39, 0.07),
+            "goal_region": (0.28, -0.20),
+        },
+        "cleanup_station": {
+            body.get("name"): tuple(float(v) for v in body.get("pos").split()[:2])
+            for body in world.findall("body")
+            if body.get("name") in {"brush", "dustpan"}
+            or body.get("name", "").startswith("debris_")
         },
     }[kind]
     rng = np.random.default_rng(seed)

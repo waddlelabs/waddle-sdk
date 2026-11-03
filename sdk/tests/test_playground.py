@@ -184,8 +184,12 @@ def test_scene_rejects_invalid_geometry_before_compiling(mutation):
 
 
 @pytest.mark.parametrize("preserve", [False, True])
+@pytest.mark.parametrize("arms", [1, 2])
+@pytest.mark.parametrize("kind", ["block", "bowl"])
 def test_scene_replacement_keeps_ports_and_native_processes_and_fences_old_images(
     tmp_path,
+    kind,
+    arms,
     preserve,
 ):
     pytest.importorskip("mujoco")
@@ -203,6 +207,7 @@ def test_scene_replacement_keeps_ports_and_native_processes_and_fences_old_image
         "editable",
         backend="mujoco",
         robot="yam",
+        arms=arms,
         environment="two_cubes",
         width=96,
         height=72,
@@ -214,21 +219,42 @@ def test_scene_replacement_keeps_ports_and_native_processes_and_fences_old_image
     changed["objects"] = [
         {
             "id": "block",
-            "kind": "block",
-            "position": [0.3, -0.1, 0.021],
+            "kind": kind,
+            "position": [0.3, -0.1, 0.031 if kind == "bowl" else 0.021],
             "rotation": [0, 0, 0],
-            "size": [0.04, 0.04, 0.04],
+            "size": [0.14, 0.14, 0.06] if kind == "bowl" else [0.04, 0.04, 0.04],
             "color": [1, 0, 0],
         }
     ]
-    compile_scene(config, empty, first)
-    compile_scene(config, changed, second, revision=2)
+    if kind == "bowl":
+        first_bowl = changed["objects"][0]
+        changed["objects"] = [
+            {**first_bowl, "id": name, "position": position}
+            for name, position in [
+                ("block", [0.31, -0.16, 0.031]),
+                ("second_bowl", [0.46, 0, 0.031]),
+                ("third_bowl", [0.31, 0.16, 0.031]),
+            ]
+        ]
+    # Hosted sites put authored XML/assets below the SDK site root. Its manifest
+    # uses site-relative paths, while XML asset references stay model-relative.
+    for folder, description, revision in [(first, empty, 1), (second, changed, 2)]:
+        compiled = compile_scene(
+            config, description, folder / "playground-world", revision=revision
+        )
+        native = compiled["native_scene"]
+        native["model"] = "playground-world/" + native["model"]
+        native["files"] = {
+            "playground-world/" + k: v for k, v in native["files"].items()
+        }
+        (folder / "simulation.json").write_text(json.dumps(compiled))
     (first / "site.yaml").write_text(yaml.safe_dump(site))
     admin = SimulationAdministration()
     with load_site(first / "site.yaml").open(
         console=False, _testing=True, simulation_administration=admin
     ) as session:
-        world = session._managed.arms["arm"].driver.world
+        part = next(iter(config["parts"]))
+        world = session._managed.arms[part].driver.world
         pids = world._process.pid, world._renderer.process.pid
         assert admin.can_replace_scene
 
@@ -246,9 +272,9 @@ def test_scene_replacement_keeps_ports_and_native_processes_and_fences_old_image
 
         before = camera_frame()
         # Replacement must also restore robot state, not replay a previous target.
-        pose = np.array(world.call("read_part", "arm")[0])
+        pose = np.array(world.call("read_part", part)[0])
         pose[0] += 0.1
-        world.call("home_part", "arm", pose)
+        world.call("home_part", part, pose)
         result = (admin.edit_scene if preserve else admin.replace_scene)(
             {
                 "cell": WorldConfig(
@@ -260,7 +286,7 @@ def test_scene_replacement_keeps_ports_and_native_processes_and_fences_old_image
         assert "prop_block" in result.worlds["cell"]["bodies"]
         assert (world._process.pid, world._renderer.process.pid) == pids
         np.testing.assert_allclose(
-            world.call("read_part", "arm")[0],
+            world.call("read_part", part)[0],
             pose if preserve else profile("yam").home,
             atol=1e-8,
         )
@@ -268,6 +294,16 @@ def test_scene_replacement_keeps_ports_and_native_processes_and_fences_old_image
         assert world._generation == 1
         assert np.abs(after.astype(float) - before).max() > 20
         assert "prop_block" in admin.reset(seed=0).worlds["cell"]["bodies"]
+        # Prop assets can also disappear without changing the robot/cameras.
+        result = admin.replace_scene(
+            {
+                "cell": WorldConfig(
+                    "cell", {"simulation": "simulation.json"}, site_root=first
+                )
+            }
+        )
+        assert "prop_block" not in result.worlds["cell"]["bodies"]
+        assert (world._process.pid, world._renderer.process.pid) == pids
         # An admitted contract violation cannot leave plans or admin state usable.
         invalid = json.loads((second / "simulation.json").read_text())
         invalid["cameras"]["scene"]["stream"]["width"] += 1
