@@ -227,12 +227,16 @@ def compile_scene(config, scene, output: Path, *, revision=1, easy_grasp=True):
     ).config
 
 
-def prepare_scene(config, scene, output: Path, *, revision=1, easy_grasp=True):
+def prepare_scene(
+    config, scene, output: Path, *, revision=1, easy_grasp=True, _prefer_handoff=False
+):
     """Compile once and retain the exact model for trusted authoring consumers.
 
     The written scene has the same reset, geometry and reference robot contracts
     as :func:`compile_scene`. Every asset is captured once into immutable bytes;
     the final reset key is written into both the native model and portable XML.
+    A resident consumer can prefer a sealed handoff over exporting a second disk
+    binary; unavailable handoff storage retains the ordinary disk-cache fallback.
     """
     scene = validate_scene(scene)
     fixture = scene.get("fixture")
@@ -408,8 +412,6 @@ def prepare_scene(config, scene, output: Path, *, revision=1, easy_grasp=True):
     contents["world.xml"] = ET.tostring(root, encoding="unicode").encode()
     hashes["world.xml"] = hashlib.sha256(contents["world.xml"]).hexdigest()
     model_path.write_bytes(contents["world.xml"])
-    if os.environ.get("WADDLE_SIMULATION_MODEL_CACHE"):
-        model = load_model("world.xml", contents, _prepared=model)
     config.update(environment="playground", scene_revision=f"1.0.{revision}")
     config["native_scene"] = {
         "model": "world.xml",
@@ -421,8 +423,14 @@ def prepare_scene(config, scene, output: Path, *, revision=1, easy_grasp=True):
     }
     (output / "simulation.json").write_text(json.dumps(config, indent=2) + "\n")
     (output / "scene.json").write_text(json.dumps(scene, indent=2) + "\n")
-    if os.environ.get("WADDLE_SIMULATION_MODEL_CACHE"):
+    if selected_cache := os.environ.get("WADDLE_SIMULATION_MODEL_CACHE"):
+        if not Path(selected_cache).is_absolute():
+            raise ValueError(
+                "simulation.model_cache: select an absolute private directory"
+            )
         from .prepared_model import cache
 
-        cache.remember("world.xml", hashes, contents["world.xml"], model)
+        retained = cache.remember("world.xml", hashes, contents["world.xml"], model)
+        if not (_prefer_handoff and retained):
+            model = load_model("world.xml", contents, _prepared=model)
     return ScenePreparation(config, model, contents)

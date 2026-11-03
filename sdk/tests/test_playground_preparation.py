@@ -65,3 +65,68 @@ def test_prepared_scene_matches_source_and_caches_no_runtime_state(
             mj.mj_step(model, data)
     np.testing.assert_array_equal(a.qpos, b.qpos)
     np.testing.assert_array_equal(a.qvel, b.qvel)
+
+
+@pytest.mark.parametrize("handoff", ["sealed", "unavailable", "too_large"])
+def test_resident_preparation_exports_one_binary_and_keeps_disk_fallback(
+    tmp_path, monkeypatch, handoff
+):
+    import os
+
+    mj = pytest.importorskip("mujoco")
+    from waddle_sdk.simulators import prepared_model
+    from waddle_sdk.simulators.compiled_model import load_model
+    from waddle_sdk.simulators.playground import prepare_scene
+    from waddle_sdk.simulators.scene import make_site
+
+    cache = prepared_model.PreparedModelCache(
+        max_bytes=1 if handoff == "too_large" else 256 * 1024 * 1024
+    )
+    monkeypatch.setattr(prepared_model, "cache", cache)
+    monkeypatch.setenv("WADDLE_SIMULATION_MODEL_CACHE", str(tmp_path / "cache"))
+    if handoff == "unavailable":
+
+        def unavailable(*args, **kwargs):
+            raise OSError("sealing unavailable")
+
+        monkeypatch.setattr(os, "memfd_create", unavailable, raising=False)
+    _, config = make_site(
+        "resident", backend="mujoco", robot="so101", arms=1, environment="two_cubes"
+    )
+    saved = []
+    save = mj.mj_saveModel
+
+    def export(model, filename, *args, **kwargs):
+        saved.append(filename)
+        return save(model, filename, *args, **kwargs)
+
+    monkeypatch.setattr(mj, "mj_saveModel", export)
+    try:
+        prepared = prepare_scene(
+            config, scene(), tmp_path / "scene", _prefer_handoff=True
+        )
+        native = prepared.config["native_scene"]
+        payload = cache.get(native["model"], native["files"])
+        disk_exports = [name for name in saved if not name.startswith("/proc/self/fd/")]
+        if handoff == "sealed" and payload is not None:
+            assert not disk_exports and len(saved) == 1
+            assert not (tmp_path / "cache").exists()
+            try:
+                model = prepared_model.restore(
+                    native["model"], native["files"], payload
+                )
+            finally:
+                payload.close()
+        else:
+            assert payload is None and len(disk_exports) == 1
+            timing = {}
+            model = load_model(native["model"], prepared.contents, timings=timing)
+            assert timing["cache_hit"]
+        assert model is not prepared.model
+        np.testing.assert_array_equal(model.key_qpos, prepared.model.key_qpos)
+        np.testing.assert_array_equal(model.key_ctrl, prepared.model.key_ctrl)
+        sizes = model.geom_size.copy()
+        prepared.model.geom_size[:] *= 2
+        np.testing.assert_array_equal(model.geom_size, sizes)
+    finally:
+        cache.close()

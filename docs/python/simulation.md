@@ -922,3 +922,9 @@ nesting. Existing compiled scene manifests retain their original geometry.
 Native source validation resolves each distinct asset directory once per pass,
 while still hashing every file on every pass. Directory reuse is local to that
 check; a later edit, symlink change or same-size rewrite is validated again.
+
+Resident Playground preparation can prefer the existing sealed handoff and omit
+the duplicate disk binary. Source XML/assets are still written and validated.
+General authoring continues to populate the disk cache; unavailable sealing or
+oversized preparations use that same fallback. Each owner still loads independent
+native state from the sealed model.

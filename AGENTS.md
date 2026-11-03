@@ -1724,3 +1724,8 @@ Native source validation may reuse confined parent-directory resolution within
 one call only. Hash every file on every call, including same-size/restored-mtime
 rewrites. Preserve leaf-symlink refusal and confined directory alias support;
 `test_native_source_inventory.py` covers capture and path-only validation.
+
+Private resident authoring may request `_prefer_handoff=True` after configuring
+the optional model cache. Omit the extra disk binary only after successful bounded
+sealed retention. Keep normal `compile_scene`/`prepare_scene` disk caching and
+unavailable/oversized handoff fallback, independent native models and source checks.

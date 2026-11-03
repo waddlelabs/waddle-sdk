@@ -114,7 +114,7 @@ class PreparedModelCache:
             payload = PreparedModel(identity, _runtime(), xml, fd, size)
             fd = None
         except (OSError, AttributeError, ImportError, mj.FatalError):
-            return
+            return False
         finally:
             if fd is not None:
                 os.close(fd)
@@ -128,6 +128,7 @@ class PreparedModelCache:
                 or sum(v.size for v in self.entries.values()) > self.max_bytes
             ):
                 self.entries.popitem(last=False)[1].close()
+            return identity in self.entries
 
     def get(self, model_name, files):
         identity = _identity(model_name, files)

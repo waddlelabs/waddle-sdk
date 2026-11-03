@@ -18,6 +18,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Let resident Playground authoring prefer a retained sealed model over a second
+  disk-cache export. Keep ordinary source files and disk caching when sealing or
+  bounded handoff retention is unavailable; general authoring still fills disk cache.
+
+
 - Reuse resolved asset directories within each native source validation pass.
   Every asset still receives a fresh byte hash; no path or digest result survives
   between checks. Preserve portable-path, symlink and manifest rejection.
