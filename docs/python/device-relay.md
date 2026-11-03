@@ -89,6 +89,21 @@ Deploy the compatible Metal consumer before distributing this relay update:
 older Metal builds that require an exact open-reply object reject the additional
 capability field. The updated consumer accepts both old and bundled SDK replies.
 
+`prepared_playback: 1` additionally advertises `state_bundle`: robot state,
+description, support and a configuration `revision`, without camera pixels.
+Observation bundles also carry this revision. A `playback_start` may supply
+`expected_revision` and `joint_guards` (part, index, position, tolerance). The relay
+checks these locally before native admission; mismatches refuse the request without
+dispatching it. Planning remains remote. Native measured-start checks, reference
+bounds, completion and cancellation are unchanged.
+
+Request `include_state: true` on `playback_status` to attach a fresh `preparation`
+bundle to a terminal receipt. If that extra read fails, `preparation_error` retains
+the error while the original completion remains authoritative. Consumers must then
+read fresh state. A supporting planner can reuse observation/completion data and
+submit a trajectory in one roundtrip; cold preparation and active handoffs may need
+a state read. Feedback polling and cancellation remain independent requests.
+
 `waddle_sdk_relay.protocol.PROTOCOL` is the existing binary device protocol. Encode/decode
 binary envelopes with `waddle_sdk_relay.wire`; it accepts an explicit SDK DTO
 allowlist, immutable bounded array copies and structured faults, never pickle or

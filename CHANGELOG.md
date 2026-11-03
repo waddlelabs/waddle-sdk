@@ -11,6 +11,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Advertise prepared-playback relay support. Return state and configuration with
+  observations/completion; check a submitted configuration revision and numerical
+  joint preconditions locally before native admission. No planner or native API
+  change; existing start, cancellation and completion policies remain authoritative.
+
 - Add an advertised read-only relay observation bundle with one retained frame,
   description, support and bounded workspace reads; preserve per-file errors.
 
