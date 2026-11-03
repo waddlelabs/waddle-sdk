@@ -112,10 +112,15 @@ class Device:
 
     def _metadata(self):
         description, support = self.sdk.describe(), self.sdk.support()
+        # Runtime ownership/status changes while predecessors execute. They are
+        # checked by native admission, not part of the planning configuration.
+        configuration = {
+            key: value for key, value in description.items() if key != "runtime"
+        }
         return {
             "description": description,
             "support": support,
-            "revision": hashlib.sha256(encode((description, support))).hexdigest(),
+            "revision": hashlib.sha256(encode(configuration)).hexdigest(),
         }
 
     def _state_bundle(self):
