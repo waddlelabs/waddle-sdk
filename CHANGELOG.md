@@ -20,6 +20,13 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Changed
 
+- Reuse private authored MuJoCo specifications for supported object additions,
+  removals, pose changes and primitive geometry/material edits. Compare full XML
+  and freshly hashed assets, copy the preparation and parse only appended
+  bodies/assets/contact pairs before compiling an independent model. Bound
+  reuse lineages; keep full parsing for unsupported differences and failed reuse.
+  Preserve canonical reset and ordinary live-state transfer.
+
 - Parse site/scene YAML with the optional safe C parser, retaining safe Python
   fallback, fresh reads and ordinary manifest validation.
 

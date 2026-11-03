@@ -40,7 +40,9 @@ def _canonical_inputs(model_name, inputs):
     return model_name, inputs
 
 
-def load_model(model_name, contents, *, cache=None, timings=None, _prepared=None):
+def load_model(
+    model_name, contents, *, cache=None, timings=None, _prepared=None, _authored=False
+):
     """Compile complete verified VFS inputs or load a verified private binary.
 
     ``cache`` is an absolute private directory, or defaults to
@@ -98,11 +100,15 @@ def load_model(model_name, contents, *, cache=None, timings=None, _prepared=None
             from .source_buffers import cache as buffers
 
             # Keep unchanged virtual assets across authored revisions. The key
-            # includes every non-root byte above; each new XML root still parses
-            # and compiles normally. Older bindings keep the original loader.
+            # includes every non-root byte above. Trusted authoring may reuse
+            # parsed components after comparing the full current XML; every
+            # revision compiles independently. Older bindings keep their loader.
             reuse = selected or os.environ.get(CACHE_ENV)
             result = buffers.compile(
-                f"{namespace}/{model_name}", assets, key=namespace if reuse else None
+                f"{namespace}/{model_name}",
+                assets,
+                key=namespace if reuse else None,
+                authored=_authored,
             )
         else:
             result = mj.MjModel.from_xml_path(

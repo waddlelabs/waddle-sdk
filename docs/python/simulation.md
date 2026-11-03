@@ -909,11 +909,25 @@ The cache retains at most sixteen models and 256 MiB.
 With newer MuJoCo bindings, compilation uses an explicit virtual file system.
 When the optional cache is enabled, the process can retain two sets of unchanged
 virtual assets within another 256 MiB. Every lookup still hashes all source bytes;
-changed assets select different buffers. Each root XML is parsed and compiled
-afresh, and the root is removed afterward. Concurrent compilations serialize
+changed assets select different buffers. Ordinary calls parse and compile the
+root XML afresh and remove it afterward. Concurrent compilations serialize
 access to these private buffers. Eviction and failed compilation release them;
-older bindings retain their original loader. No parsed model specification or
-running state is retained by this asset cache.
+older bindings retain their original loader. Ordinary callers retain no parsed
+specification or running state.
+
+Trusted Playground authoring can retain a private parsed specification alongside
+each of those two asset sets. It compares the entire old/new XML and freshly
+hashed assets, copies the specification, then applies supported object additions,
+removals, poses and primitive geometry/material values before compiling an
+independent model. Newly appended bodies/assets/contact pairs alone need parsing.
+Changed existing mesh assets or topology, defaults, includes, unfamiliar reset
+keys and other unsupported differences use the complete parser. At most 32 edits
+reuse one native preparation before full parsing refreshes its internal attachment
+bookkeeping. The 256 MiB limit bounds source bytes, not native specification RSS.
+Failed reuse also retries the authoritative source parser, whose
+errors remain visible. Specifications are discarded with their buffers on
+eviction, failure or fork. No mutable model or live coordinates are cached; normal
+state transfer, source validation and reset-key initialization remain unchanged.
 
 Native owners compare and compile one captured, verified source snapshot instead
 of reopening its files at each preparation stage. Trusted authoring can retain

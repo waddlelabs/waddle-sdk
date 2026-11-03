@@ -387,7 +387,7 @@ def prepare_scene(
     from .compiled_model import load_model
 
     # Only the final scene belongs in the shared private binary cache.
-    model = load_model("world.xml", contents, cache="")
+    model = load_model("world.xml", contents, cache="", _authored=True)
     data = mj.MjData(model)
     from .description import description
 

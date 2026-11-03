@@ -1,9 +1,24 @@
+Parsed authored-scene reuse passes 40 native preparation/handoff checks and
+1,305 default Python cases (477 optional skips), strict docs and changed-source
+lint/format checks. Local editor comparisons improve complex-scene edits but
+leave startup and sub-second acceptance open; simple-scene resize is slower.
+Only the trusted Playground authoring path opts in. Supported additions, removals,
+poses and primitive geometry/material edits compare full XML plus freshly hashed
+asset bytes, clone the private specification and change only authored components.
+New bodies/assets/contact pairs use delta parsing. Unsupported edits and failed
+reuse keep full parsing; native attachment lineages refresh after 32 edits.
+No live model/state is retained; specifications share buffer eviction/fork/failure
+cleanup. The 256 MiB source bound does not measure native specification RSS.
+Preserve source validation, canonical reset keys and ordinary live-state
+transfer. See sdk/tests/test_authored_preparation.py and simulation cache docs.
+
 Site/scene YAML selects optional CSafeLoader with SafeLoader fallback, retaining
 fresh parsing, ordinary validation and refusal of Python constructors. See
 [manifest parsing](docs/python/site.md). Complete reference XML caching was
 tested and rejected: final paired add/image and startup were slower overall.
-The parent retains its source, tests, failed fixtures and measurements; model.py
-and playground.py remain exactly the prior qualified c776d5e implementation.
+The parent retains its source, tests, failed fixtures and measurements; that
+experiment restored model.py and playground.py to c776d5e before the separate
+parsed-specification work above.
 
 Relay observation bundling (2026-11-02) passes all 1,294 default Python tests
 (413 optional skips), strict docs and selected Metal/real-GPU relay integration.
@@ -521,9 +536,11 @@ Native owner preparation retains the exact source bytes verified by `resolve`;
 replacement contract comparison and compilation consume that same snapshot.
 Newer MuJoCo bindings compile through explicit virtual files. The optional cache
 retains at most two asset sets within 256 MiB, keyed by freshly hashed bytes.
-Serialize their use, parse each new root, compile an independent model and remove
-the root afterward. Eviction/failure/fork must release old buffers; no parsed spec
-or runtime state is retained. Older bindings keep their original loader.
+Serialize their use, compile an independent model and remove the root afterward.
+Trusted authoring may retain a private parsed specification for supported edits;
+other callers parse each new root. Eviction/failure/fork release buffers and their
+specifications; a lineage refreshes after 32 edits. No runtime state is retained.
+Older bindings keep their original loader.
 Compiled-cache reads retain their normal checksum and lock. Tabletop
 `prepare_scene` retains its compiled model and captured assets for trusted
 authoring handoffs, with the same
