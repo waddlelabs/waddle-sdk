@@ -202,55 +202,9 @@ def _object(world, asset, obj, easy_grasp):
     return names
 
 
-@dataclass(frozen=True)
-class ScenePreparation:
-    """Fresh authoring model and the exact portable bytes it describes.
-
-    The caller owns the mutable native model. This carries no running state or
-    authority; independent runtime owners must instantiate their own model/data.
-    """
-
-    config: dict
-    model: Any
-    contents: dict[str, bytes]
-
-
-def compile_scene(config, scene, output: Path, *, revision=1, easy_grasp=True):
-    """Compose a fresh immutable native scene from a reference robot configuration.
-
-    Dimensions are full extents in metres; object rotation is XYZ degrees.
-    Robot force limits and actuators are preserved. Easy grasp changes only
-    contact material/solver parameters, never object attachment or outcomes.
-    """
-    return prepare_scene(
-        config, scene, output, revision=revision, easy_grasp=easy_grasp
-    ).config
-
-
-def prepare_scene(
-    config, scene, output: Path, *, revision=1, easy_grasp=True, _prefer_handoff=False
-):
-    """Compile once and retain the exact model for trusted authoring consumers.
-
-    The written scene has the same reset, geometry and reference robot contracts
-    as :func:`compile_scene`. Every asset is captured once into immutable bytes;
-    the final reset key is written into both the native model and portable XML.
-    A resident consumer can prefer a sealed handoff over exporting a second disk
-    binary; unavailable handoff storage retains the ordinary disk-cache fallback.
-    """
-    scene = validate_scene(scene)
+def _reference(config, scene, easy_grasp):
     fixture = scene.get("fixture")
-    if fixture:
-        validate_fixture(fixture, config["robot"], len(config["parts"]))
-    if output.exists():
-        raise ValueError("playground.output: scene revision already exists")
-    output.mkdir(parents=True)
-    config = deepcopy(config)
-    config.pop("native_scene", None)
-    config.pop("_native_root", None)
-    config.pop("pose_profile", None)
     environment = FIXTURES[fixture] if fixture else None
-    config["environment"] = environment or "two_cubes"
     root = ET.fromstring(mjcf(profile(config["robot"]), config))
     # Compound props and two articulated hands can exceed MuJoCo's inferred
     # constraint arena during ordinary contact. Allocate bounded scratch up
@@ -295,28 +249,9 @@ def prepare_scene(
                 if value in names:
                     node.set(key, part + "__" + value)
         bases = {part + "__base"}
-    contents, hashes, sources = {}, {}, {}
-    for node in root.iter():
-        if node.get("file"):
-            source = Path(node.get("file"))
-            if source not in sources:
-                data = source.read_bytes()
-                digest = hashlib.sha256(data).hexdigest()
-                relative = "assets/" + digest + source.suffix
-                target = output / relative
-                target.parent.mkdir(exist_ok=True)
-                target.write_bytes(data)
-                contents[relative], hashes[relative] = data, digest
-                sources[source] = relative
-            node.set("file", sources[source])
-    asset = root.find("asset")
-    if asset is None:
-        asset = ET.SubElement(root, "asset")
-    props = [
-        name
-        for obj in scene["objects"]
-        for name in _object(world, asset, obj, easy_grasp)
-    ]
+    if root.find("asset") is None:
+        ET.SubElement(root, "asset")
+    props, fingers = [], []
     if fixture:
         for body in world.findall("body"):
             if body.get("name") in bases | {"table"} or body.get("name", "").startswith(
@@ -349,29 +284,146 @@ def prepare_scene(
                         name = body.get("name") + f"__playground_contact_{i}"
                         geom.set("name", name)
                         fingers.append(name)
-        existing_pairs = {
-            frozenset((pair.get("geom1"), pair.get("geom2")))
-            for pair in contact.findall("pair")
-        }
-        for finger in fingers:
-            for prop in props:
-                pair_key = frozenset((finger, prop))
-                if pair_key in existing_pairs:
-                    continue
-                existing_pairs.add(pair_key)
-                ET.SubElement(
-                    contact,
-                    "pair",
-                    geom1=finger,
-                    geom2=prop,
-                    condim="4",
-                    # A small finite patch stabilizes ordinary grasps without
-                    # making marginal edge contacts resist arbitrary torque.
-                    friction="0.8 0.8 0.001 0.0001 0.0001",
-                    margin="0.000001",
-                    solref="0.004 1",
-                    solimp="0.95 0.99 0.001",
-                )
+    return root, fingers, props
+
+
+def _pairs(root, fingers, props):
+    contact = root.find("contact")
+    existing_pairs = {
+        frozenset((pair.get("geom1"), pair.get("geom2")))
+        for pair in contact.findall("pair")
+    }
+    for finger in fingers:
+        for prop in props:
+            pair_key = frozenset((finger, prop))
+            if pair_key in existing_pairs:
+                continue
+            existing_pairs.add(pair_key)
+            ET.SubElement(
+                contact,
+                "pair",
+                geom1=finger,
+                geom2=prop,
+                condim="4",
+                # A small finite patch stabilizes ordinary grasps without
+                # making marginal edge contacts resist arbitrary torque.
+                friction="0.8 0.8 0.001 0.0001 0.0001",
+                margin="0.000001",
+                solref="0.004 1",
+                solimp="0.95 0.99 0.001",
+            )
+
+
+@dataclass(frozen=True)
+class ScenePreparation:
+    """Fresh authoring model and the exact portable bytes it describes.
+
+    The caller owns the mutable native model. This carries no running state or
+    authority; independent runtime owners must instantiate their own model/data.
+    """
+
+    config: dict
+    model: Any
+    contents: dict[str, bytes]
+
+
+def compile_scene(config, scene, output: Path, *, revision=1, easy_grasp=True):
+    """Compose a fresh immutable native scene from a reference robot configuration.
+
+    Dimensions are full extents in metres; object rotation is XYZ degrees.
+    Robot force limits and actuators are preserved. Easy grasp changes only
+    contact material/solver parameters, never object attachment or outcomes.
+    """
+    return prepare_scene(
+        config, scene, output, revision=revision, easy_grasp=easy_grasp
+    ).config
+
+
+def prepare_scene(
+    config, scene, output: Path, *, revision=1, easy_grasp=True, _prefer_handoff=False
+):
+    """Compile once and retain the exact model for trusted authoring consumers.
+
+    The written scene has the same reset, geometry and reference robot contracts
+    as :func:`compile_scene`. Source assets are captured into immutable bytes;
+    the final reset key is written into both the native model and portable XML.
+    A resident consumer can prefer a sealed handoff over exporting a second disk
+    binary; unavailable handoff storage retains the ordinary disk-cache fallback.
+    """
+    scene = validate_scene(scene)
+    fixture = scene.get("fixture")
+    if fixture:
+        validate_fixture(fixture, config["robot"], len(config["parts"]))
+    if output.exists():
+        raise ValueError("playground.output: scene revision already exists")
+    output.mkdir(parents=True)
+    config = deepcopy(config)
+    config.pop("native_scene", None)
+    config.pop("_native_root", None)
+    config.pop("pose_profile", None)
+    config["environment"] = (FIXTURES[fixture] if fixture else None) or "two_cubes"
+    from . import playground_source
+
+    if os.environ.get("WADDLE_SIMULATION_MODEL_CACHE"):
+        from dataclasses import asdict
+
+        from . import model
+        from .description import description
+
+        key = (
+            mjcf,
+            model.objects,
+            _reference,
+            _object,
+            bowl_geometry,
+            place_fixture,
+            hashlib.sha256(
+                json.dumps(
+                    (
+                        config,
+                        asdict(profile(config["robot"])),
+                        asdict(description(config["robot"])),
+                        CATALOG,
+                        fixture,
+                        scene.get("seed", 0),
+                        easy_grasp,
+                    ),
+                    sort_keys=True,
+                    allow_nan=False,
+                ).encode()
+            ).digest(),
+        )
+        root, captured, fingers, props = playground_source.cache.prepare(
+            key,
+            lambda: _reference(config, scene, easy_grasp),
+            _object,
+            scene["objects"],
+            easy_grasp,
+        )
+    else:
+        root, fingers, fixture_props = _reference(config, scene, easy_grasp)
+        captured = playground_source.capture(root)
+        props = [
+            name
+            for obj in scene["objects"]
+            for name in _object(
+                root.find("worldbody"), root.find("asset"), obj, easy_grasp
+            )
+        ] + fixture_props
+    if easy_grasp:
+        _pairs(root, fingers, props)
+    contents, hashes = {}, {}
+    sources = {}
+    for source, (data, digest) in captured.items():
+        relative = "assets/" + digest + source.suffix
+        target = output / relative
+        target.parent.mkdir(exist_ok=True)
+        target.write_bytes(data)
+        contents[relative], hashes[relative] = data, digest
+        sources[source] = relative
+    for node in root.iter():
+        if name := node.get("file"):
+            node.set("file", sources[Path(name)])
     keys = root.find("keyframe")
     if keys is not None:
         root.remove(keys)

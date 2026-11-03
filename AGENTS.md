@@ -1,3 +1,15 @@
+Playground can also reuse reference XML and unchanged authored object fragments
+with the existing optional model-cache setting. Bound retained serialized XML to
+4 MiB across two reference configurations; this excludes Python object overhead.
+Fresh asset-byte reads/hashes and full configuration/description/fixture keys
+guard reuse. Return detached trees, remove retired objects and reset after fork.
+Native compilation, source validation, canonical reset and live transfer remain.
+All 49 native preparation/cache checks, 1,305 default Python cases (478 optional
+skips), changed-source lint and strict docs pass. Seven frozen-before comparisons
+match every native array and stepped state across robots and fixtures. Preserve
+the initially failed cleanup-fixture case and its corrected reference fallback.
+See sdk/tests/test_playground_source.py and the simulation cache documentation.
+
 Parsed authored-scene reuse passes 40 native preparation/handoff checks and
 1,305 default Python cases (477 optional skips), strict docs and changed-source
 lint/format checks. Local editor comparisons improve complex-scene edits but

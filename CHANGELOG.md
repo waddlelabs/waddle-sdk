@@ -20,6 +20,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Changed
 
+- Reuse bounded reference XML and unchanged authored object fragments during
+  Playground edits. Reread and hash every source asset; invalidate on reference,
+  configuration or fixture-placement changes. Keep independent compilation,
+  final source validation, canonical reset and ordinary live-state transfer.
+
 - Reuse private authored MuJoCo specifications for supported object additions,
   removals, pose changes and primitive geometry/material edits. Compare full XML
   and freshly hashed assets, copy the preparation and parse only appended

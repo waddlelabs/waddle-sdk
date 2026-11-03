@@ -915,6 +915,17 @@ access to these private buffers. Eviction and failed compilation release them;
 older bindings retain their original loader. Ordinary callers retain no parsed
 specification or running state.
 
+The same optional setting lets Playground retain reference XML and the most
+recent authored object fragments for two reference configurations, within 4 MiB
+of serialized XML. This limit excludes Python object overhead. Configuration,
+robot description, fixture placement and contact settings identify the reference;
+every request rereads and hashes its asset files. Changed assets regenerate the
+reference. Each object is regenerated only when its authored data changes, and
+removed objects leave the retained set. Returned trees are detached copies.
+Entries are discarded after a fork or on eviction. This saves source generation;
+it neither skips the subsequent native compilation/validation nor retains live
+coordinates. The final reset key and running-world edit semantics are unchanged.
+
 Trusted Playground authoring can retain a private parsed specification alongside
 each of those two asset sets. It compares the entire old/new XML and freshly
 hashed assets, copies the specification, then applies supported object additions,
