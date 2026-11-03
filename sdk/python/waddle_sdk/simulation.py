@@ -153,19 +153,26 @@ class SimulationSceneReplacementBackend(Protocol):
 
     Implementations must preserve the opened robot and camera contracts, reset
     the new scene, and fence camera samples from the previous model.
+    A successful operation may return its privileged post-commit snapshot instead
+    of True, avoiding a second request on a single-world site. False still refuses;
+    backends returning True retain the ordinary separate readback.
     """
 
     @property
     def supports_scene_replacement(self) -> bool: ...
 
-    def evaluation_replace_scene(self, config: WorldConfig) -> bool: ...
+    def evaluation_replace_scene(
+        self, config: WorldConfig
+    ) -> bool | Mapping[str, Any]: ...
 
 
 @runtime_checkable
 class SimulationSceneEditBackend(SimulationSceneReplacementBackend, Protocol):
     """Optional trusted facet retaining live state while applying authored edits."""
 
-    def evaluation_edit_scene(self, config: WorldConfig) -> bool: ...
+    def evaluation_edit_scene(
+        self, config: WorldConfig
+    ) -> bool | Mapping[str, Any]: ...
 
 
 @dataclass(frozen=True)
@@ -406,19 +413,27 @@ class SimulationAdministration:
                 )
             try:
                 with binding.dispatch_lock, binding.lifecycle_lock:
+                    committed = {}
                     for name, backend in binding.worlds.items():
                         operation = (
                             backend.evaluation_edit_scene
                             if preserve_state
                             else backend.evaluation_replace_scene
                         )
-                        if not operation(worlds[name]):
+                        result = operation(worlds[name])
+                        if not result:
                             raise SimulationAdministrationError(
                                 "a simulation world refused scene replacement"
                             )
+                        if isinstance(result, Mapping):
+                            committed[name] = _evaluation_document(result)
                     self._episode_revision += 1
                     state = {
-                        name: _evaluation_document(backend.evaluation_snapshot())
+                        name: (
+                            committed[name]
+                            if len(binding.worlds) == 1 and name in committed
+                            else _evaluation_document(backend.evaluation_snapshot())
+                        )
                         for name, backend in binding.worlds.items()
                     }
             except Exception as error:

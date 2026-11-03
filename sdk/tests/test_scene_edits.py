@@ -9,6 +9,52 @@ from waddle_sdk.simulators.playground import compile_scene
 from waddle_sdk.simulators.scene import load_scene, make_site
 
 
+def test_live_contract_remains_bound_to_the_loaded_source_snapshot(tmp_path):
+    """Retiring old authoring files cannot change an already opened robot."""
+    pytest.importorskip("mujoco")
+    _, config = make_site(
+        "snapshot", backend="mujoco", robot="yam", environment="two_cubes"
+    )
+    scene = {"id": "task", "name": "Task", "objects": []}
+    first, second = tmp_path / "first", tmp_path / "second"
+    for folder in (first, second):
+        compile_scene(config, scene, folder)
+    old = load_scene(first, "simulation.json")[1]
+    new = load_scene(second, "simulation.json")[1]
+    engine = Engine(old, first)
+    replacement = None
+    try:
+        engine.data.time = 42
+        # The open world owns the original validated bytes, independently of
+        # later changes to the old source. New target bytes are still validated.
+        (first / "world.xml").unlink()
+        replacement = engine.replacement(new, second, preserve_state=True)
+        assert replacement.data.time == 42
+        # A real robot-contract change in a newly validated publication refuses.
+        import hashlib
+
+        path = second / "world.xml"
+        # Change a drive rather than relying on a particular XML attribute order.
+        import xml.etree.ElementTree as ET
+
+        tree = ET.fromstring(path.read_bytes())
+        motor = tree.find("actuator")[0]
+        motor.set("forcerange", "-1 1")
+        data = ET.tostring(tree)
+        path.write_bytes(data)
+        changed = deepcopy(new)
+        changed["native_scene"]["files"]["world.xml"] = hashlib.sha256(data).hexdigest()
+        with pytest.raises(ValueError, match="scene_contract"):
+            replacement.replacement(changed, second, preserve_state=True)
+        # A digest mismatch must still fail before a new scene is accepted.
+        with pytest.raises(ValueError, match="digest differs"):
+            replacement.replacement(new, second, preserve_state=True)
+    finally:
+        if replacement is not None:
+            replacement.close()
+        engine.close()
+
+
 def test_add_resize_move_rotate_delete_preserve_unedited_live_state(tmp_path):
     pytest.importorskip("mujoco")
     _, config = make_site(

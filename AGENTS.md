@@ -1664,6 +1664,13 @@ or vendor interpolation is introduced. See
 
 ## Editable reference scenes
 
+The native owner retains its loaded XML and robot/camera contract for later
+comparisons. Validate every new publication; retiring old source files cannot
+redefine an opened world. Reference replacement/edit replies include privileged
+post-commit state. A single-world administrator consumes this snapshot directly;
+boolean-returning backends and multi-world sites retain separate final readback.
+Malformed state still fences administration; image generation remains separate.
+
 `SimulationAdministration.can_edit_scene/edit_scene` is a separate optional live
 edit facet. Preserve running time, robot/joint state, targets and forces by stable
 native identity; only authored free-body pose deltas teleport/reset that body's

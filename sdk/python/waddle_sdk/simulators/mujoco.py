@@ -54,6 +54,8 @@ class Engine:
         self.profile = p = profile(config["robot"])
         self.description = robot = description(p.name)
         self._native_key = None
+        self._native_contract = None
+        self._source_xml = None
         if "native_scene" in config:
             from .compiled_model import load_model
             from .native_scene import resolve
@@ -74,6 +76,14 @@ class Engine:
                 self.model = load_model(
                     config["native_scene"]["model"], _native_contents
                 )
+            # Bind future comparisons to the bytes used to open this world.
+            # Source directories may be retired; neither rereading them nor a
+            # later edit to them can redefine the running robot's contract.
+            self._source_xml = (
+                _native_contents[config["native_scene"]["model"]]
+                if _native_contents is not None
+                else _prepared.xml
+            )
         else:
             path = scratch / "scene.xml"
             path.write_text(mjcf(p, config))
@@ -247,6 +257,10 @@ class Engine:
         """Prepare a new environment while preserving the opened port contracts."""
         from .native_scene import replacement_signature, resolve
 
+        if "native_scene" not in config or "native_scene" not in self.config:
+            raise ValueError(
+                "simulation.scene_contract: replacement requires native scenes"
+            )
         ignored = {"native_scene", "_native_root", "scene_revision", "_real_time"}
         contract_changed = {k: v for k, v in config.items() if k not in ignored} != {
             k: v for k, v in self.config.items() if k not in ignored
@@ -263,15 +277,24 @@ class Engine:
             if contents is None:
                 contents = {}
                 resolve(config["_native_root"], config, contents=contents)
-        if contract_changed or replacement_signature(
-            config, _contents=contents
-        ) != replacement_signature(self.config):
+        if not contract_changed and self._native_contract is None:
+            self._native_contract = replacement_signature(
+                self.config,
+                _contents={self.config["native_scene"]["model"]: self._source_xml},
+            )
+        contract = (
+            None
+            if contract_changed
+            else replacement_signature(config, _contents=contents)
+        )
+        if contract_changed or contract != self._native_contract:
             raise ValueError(
                 "simulation.scene_contract: replacement changed robot or camera contracts"
             )
         candidate = type(self)(
             config, scratch, _native_contents=contents, _native_model=model
         )
+        candidate._native_contract = contract
         try:
             candidate.evaluation_reset(seed=0)
             # Initial robot commands are part of the preserved execution contract.

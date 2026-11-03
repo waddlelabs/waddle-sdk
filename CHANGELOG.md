@@ -18,6 +18,13 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+### Changed
+
+- Retain the loaded robot/camera contract for live scene comparisons and bundle
+  reference-worker post-edit state with its acknowledgement. New publications
+  remain validated; legacy backends and multi-world sites retain final readback.
+
+
 - Reuse compatible RGB/depth rendering contexts across native scene revisions.
   Rebuild for changed uploaded assets, planes or visual settings; continue to
   acquire fresh pixels from the current model/state with generation fencing.

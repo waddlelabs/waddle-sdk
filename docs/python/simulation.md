@@ -614,6 +614,15 @@ Existing drain, episode invalidation, camera-generation and failure fences apply
 Unsupported edits refuse and never silently reset. Explicit `reset` still returns
 to the latest authored initial scene. This is simulation administration only.
 
+A backend's replacement/edit method may return its privileged post-commit state
+mapping instead of `True`. On a single-world site, administration validates and
+returns that state without requesting another snapshot. Boolean-returning backends
+and multi-world sites retain their separate readback after all edits. Malformed
+state fences administration just like an unconfirmed edit; this snapshot does
+not indicate camera readiness. The native owner compares new robot/camera
+contracts against the exact XML it loaded, independently of retired old files;
+every new publication still receives source validation.
+
 For a MuJoCo-only continuation reset, the trusted evaluator may also pass
 `preserve_free_bodies=(...)` and `retire_free_bodies=(...)`. The former retains
 each named free prop's measured pose and velocity across the reset; the latter

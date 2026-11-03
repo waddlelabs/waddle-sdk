@@ -409,10 +409,10 @@ class AdministrativeWorld(World):
     def evaluation_snapshot(self):
         return self.call("evaluation_snapshot")
 
-    def evaluation_replace_scene(self, config: WorldConfig) -> bool:
+    def evaluation_replace_scene(self, config: WorldConfig):
         return self._replace_scene(config, "evaluation_replace_scene")
 
-    def evaluation_edit_scene(self, config: WorldConfig) -> bool:
+    def evaluation_edit_scene(self, config: WorldConfig):
         return self._replace_scene(config, "evaluation_edit_scene")
 
     def _replace_scene(self, config, operation):

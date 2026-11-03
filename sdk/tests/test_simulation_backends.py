@@ -351,3 +351,85 @@ def test_optional_scene_replacement_refuses_before_mutation_when_unavailable(tmp
         with pytest.raises(SimulationAdministrationError, match="do not support"):
             administration.replace_scene({"cell": simulation.WorldConfig("cell", {})})
         assert administration.reset(seed=0).episode_revision == 1
+
+
+@pytest.mark.parametrize("preserve", [False, True])
+@pytest.mark.parametrize("bundled", [False, True])
+@pytest.mark.parametrize("world_count", [1, 2])
+def test_scene_commit_can_supply_its_privileged_readback(
+    preserve, bundled, world_count
+):
+    import threading
+
+    class World:
+        supports_scene_replacement = True
+        edits = 0
+        reads = 0
+
+        def evaluation_replace_scene(self, config):
+            self.edits += 1
+            return {"time_s": 1, "bodies": {}} if bundled else True
+
+        evaluation_edit_scene = evaluation_replace_scene
+
+        def evaluation_reset(self, **_):
+            return True
+
+        def evaluation_snapshot(self):
+            assert not (bundled and world_count == 1), "redundant post-commit request"
+            assert all(world.edits == 1 for world in worlds.values())
+            self.reads += 1
+            return {"time_s": 2, "bodies": {}}
+
+    worlds = {str(i): World() for i in range(world_count)}
+    administration = SimulationAdministration()
+    administration._bind(
+        worlds,
+        lifecycle_lock=threading.RLock(),
+        dispatch_lock=threading.RLock(),
+        owner=object(),
+        fully_simulated=True,
+    )
+    result = (administration.edit_scene if preserve else administration.replace_scene)(
+        {name: simulation.WorldConfig(name, {}) for name in worlds}
+    )
+    assert result.episode_revision == 1
+    for name, world in worlds.items():
+        assert world.edits == 1
+        assert world.reads == int(not bundled or world_count > 1)
+        assert result.worlds[name]["time_s"] == (
+            1 if bundled and world_count == 1 else 2
+        )
+
+
+@pytest.mark.parametrize("preserve", [False, True])
+def test_invalid_bundled_commit_state_fences_administration(preserve):
+    import threading
+
+    class World:
+        supports_scene_replacement = True
+
+        def evaluation_replace_scene(self, config):
+            return {"time_s": float("nan")}
+
+        evaluation_edit_scene = evaluation_replace_scene
+
+        def evaluation_reset(self, **_):
+            raise AssertionError("failed edit cannot become a reset")
+
+        def evaluation_snapshot(self):
+            raise AssertionError("invalid committed state cannot be retried")
+
+    administration = SimulationAdministration()
+    administration._bind(
+        {"cell": World()},
+        lifecycle_lock=threading.RLock(),
+        dispatch_lock=threading.RLock(),
+        owner=object(),
+        fully_simulated=True,
+    )
+    operation = administration.edit_scene if preserve else administration.replace_scene
+    with pytest.raises(SimulationAdministrationError, match="must be finite"):
+        operation({"cell": simulation.WorldConfig("cell", {})})
+    with pytest.raises(SimulationAdministrationError, match="reopen"):
+        administration.snapshot()

@@ -197,7 +197,11 @@ def serve(connection: Connection) -> None:
                         engine = replacement
                         pending_time = 0.0
                         last_time = time.monotonic()
-                        result = True
+                        # Return the confirmed edited state before another
+                        # camera can begin a large model transfer on this pipe.
+                        # This is privileged administration evidence, not a
+                        # camera acquisition or a participant observation.
+                        result = engine.evaluation_snapshot()
                     elif operation == "evaluation_reset":
                         variation = arguments[1] if len(arguments) > 1 else None
                         result = engine.evaluation_reset(
