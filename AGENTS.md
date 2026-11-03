@@ -1,3 +1,10 @@
+Site/scene YAML selects optional CSafeLoader with SafeLoader fallback, retaining
+fresh parsing, ordinary validation and refusal of Python constructors. See
+[manifest parsing](docs/python/site.md). Complete reference XML caching was
+tested and rejected: final paired add/image and startup were slower overall.
+The parent retains its source, tests, failed fixtures and measurements; model.py
+and playground.py remain exactly the prior qualified c776d5e implementation.
+
 Relay observation bundling (2026-11-02) passes all 1,294 default Python tests
 (413 optional skips), strict docs and selected Metal/real-GPU relay integration.
 The Python-only addition advertises observation_bundle: 1 and reuses retained

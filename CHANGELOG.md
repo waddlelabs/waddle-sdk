@@ -20,6 +20,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Changed
 
+- Parse site/scene YAML with the optional safe C parser, retaining safe Python
+  fallback, fresh reads and ordinary manifest validation.
+
 - Compile verified scenes through explicit virtual files on newer MuJoCo bindings.
   With the optional cache enabled, reuse bounded unchanged asset buffers across
   edits while freshly hashing source bytes and compiling independent models.
