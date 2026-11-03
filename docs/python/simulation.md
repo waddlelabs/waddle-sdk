@@ -906,6 +906,15 @@ checksum. Missing or invalid cache evidence compiles the original sources, keepi
 original model failures. Unavailable cache storage also falls back to compilation.
 The cache retains at most sixteen models and 256 MiB.
 
+With newer MuJoCo bindings, compilation uses an explicit virtual file system.
+When the optional cache is enabled, the process can retain two sets of unchanged
+virtual assets within another 256 MiB. Every lookup still hashes all source bytes;
+changed assets select different buffers. Each root XML is parsed and compiled
+afresh, and the root is removed afterward. Concurrent compilations serialize
+access to these private buffers. Eviction and failed compilation release them;
+older bindings retain their original loader. No parsed model specification or
+running state is retained by this asset cache.
+
 Native owners compare and compile one captured, verified source snapshot instead
 of reopening its files at each preparation stage. Trusted authoring can retain
 its already compiled model while filling the cache. On Linux with sealed-memory

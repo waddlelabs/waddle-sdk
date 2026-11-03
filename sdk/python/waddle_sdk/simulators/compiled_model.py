@@ -94,7 +94,20 @@ def load_model(model_name, contents, *, cache=None, timings=None, _prepared=None
             timings.update(cache_hit=False, native_compile_s=0.0, prepared=True)
             return _prepared
         began = time.monotonic()
-        result = mj.MjModel.from_xml_path(f"{namespace}/{model_name}", assets=assets)
+        if hasattr(mj, "MjVfs"):
+            from .source_buffers import cache as buffers
+
+            # Keep unchanged virtual assets across authored revisions. The key
+            # includes every non-root byte above; each new XML root still parses
+            # and compiles normally. Older bindings keep the original loader.
+            reuse = selected or os.environ.get(CACHE_ENV)
+            result = buffers.compile(
+                f"{namespace}/{model_name}", assets, key=namespace if reuse else None
+            )
+        else:
+            result = mj.MjModel.from_xml_path(
+                f"{namespace}/{model_name}", assets=assets
+            )
         timings.update(cache_hit=False, native_compile_s=time.monotonic() - began)
         return result
 

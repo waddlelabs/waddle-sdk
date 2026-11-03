@@ -20,6 +20,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Changed
 
+- Compile verified scenes through explicit virtual files on newer MuJoCo bindings.
+  With the optional cache enabled, reuse bounded unchanged asset buffers across
+  edits while freshly hashing source bytes and compiling independent models.
+  Keep the original loader for older bindings and release buffers on failures.
+
 - Transfer current simulation models to independent renderers through negotiated
   sealed descriptors, preserving fresh state/pixels and independent native models.
   Retain copied-buffer compatibility and close handles on partial-transfer faults.

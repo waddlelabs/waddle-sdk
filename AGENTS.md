@@ -512,6 +512,11 @@ code/input mounts; no samples, authority or outcomes are cached. See
 
 Native owner preparation retains the exact source bytes verified by `resolve`;
 replacement contract comparison and compilation consume that same snapshot.
+Newer MuJoCo bindings compile through explicit virtual files. The optional cache
+retains at most two asset sets within 256 MiB, keyed by freshly hashed bytes.
+Serialize their use, parse each new root, compile an independent model and remove
+the root afterward. Eviction/failure/fork must release old buffers; no parsed spec
+or runtime state is retained. Older bindings keep their original loader.
 Compiled-cache reads retain their normal checksum and lock. Tabletop
 `prepare_scene` retains its compiled model and captured assets for trusted
 authoring handoffs, with the same
