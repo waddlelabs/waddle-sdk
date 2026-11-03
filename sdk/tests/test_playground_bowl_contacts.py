@@ -32,7 +32,12 @@ def test_bowl_support_and_wall_contacts(tmp_path, mode):
         first.update(position=[0.35, -0.15, 0.08], rotation=[90, 0, 0])
     objects = [first]
     if mode == "stacked":
-        objects.append({**first, "id": "upper", "position": [0.35, -0.15, 0.091]})
+        objects.extend(
+            [
+                {**first, "id": "upper", "position": [0.35, -0.15, 0.091]},
+                {**first, "id": "top", "position": [0.35, -0.15, 0.152]},
+            ]
+        )
     if mode == "filled":
         objects.append(
             {
@@ -48,7 +53,7 @@ def test_bowl_support_and_wall_contacts(tmp_path, mode):
     _, compiled = load_scene(out, "simulation.json")
     engine = Engine(compiled, out)
     try:
-        for _ in range(500):
+        for _ in range(1000 if mode == "stacked" else 500):
             engine.step()
         state = engine.evaluation_snapshot()
         lower = state["bodies"]["prop_lower"]
@@ -67,15 +72,29 @@ def test_bowl_support_and_wall_contacts(tmp_path, mode):
             assert lower["position_m"][2] == pytest.approx(0.03, abs=0.002)
         elif mode == "stacked":
             upper = state["bodies"]["prop_upper"]
-            assert upper["position_m"][2] - lower["position_m"][2] == pytest.approx(
-                0.06, abs=0.002
+            # Equal curved bowls nest through their hollow interiors; the rim
+            # supports the upper bowl above the lower floor, without a weld.
+            assert 0.012 < upper["position_m"][2] - lower["position_m"][2] < 0.045
+            np.testing.assert_allclose(
+                upper["position_m"][:2], lower["position_m"][:2], atol=0.004
             )
+            assert np.linalg.norm(upper["linear_velocity_m_s"]) < 0.02
+            top = state["bodies"]["prop_top"]
+            assert 0.012 < top["position_m"][2] - upper["position_m"][2] < 0.045
+            np.testing.assert_allclose(
+                top["position_m"][:2], lower["position_m"][:2], atol=0.004
+            )
+            assert np.linalg.norm(top["linear_velocity_m_s"]) < 0.02
         elif mode == "filled":
             inside = state["bodies"]["prop_inside"]
             assert inside["position_m"][2] == pytest.approx(0.014, abs=0.002)
         else:
             wall_ids = {
-                engine.model.geom(f"prop_lower_geom_{i}").id for i in range(1, 17)
+                i
+                for i in range(engine.model.ngeom)
+                if engine.model.geom_bodyid[i] == engine.model.body("prop_lower").id
+                and engine.model.geom_group[i] == 3
+                and engine.model.geom_type[i] == engine.mj.mjtGeom.mjGEOM_MESH
             }
             table = engine.model.body("table").id
             assert any(

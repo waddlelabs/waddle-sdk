@@ -84,6 +84,17 @@ are selected, including shapes on compound child bodies. Existing shape names
 and explicitly declared pairs are retained. This applies to newly compiled
 scenes; previously published scene bytes are unchanged.
 
+One- and two-YAM authored scenes additionally support `drawer_cabinet` and
+`cleanup_station`. The drawer reuses the native cabinet/slide assembly, with a
+loose retrieval object inside and a marked placement region. Its passive slide
+is physically blocked by obstacles, including a parked arm; a manipulating hand
+must remain clear of the drawer's swept volume. Cleanup has a free 80 g brush
+with a raised handle and rigid sweeping pad, six free 18 mm pieces, and a fixed
+open dustpan with a shallow 3 mm entrance ramp. Flexible bristles are not modeled.
+Both accept the same bounded seed, extra props and canonical reset contract.
+Other embodiments refuse before output creation. Native mechanism/tool-contact
+checks do not establish autonomous task completion or physical parity.
+
 ## Reference engines and scenes
 
 | Selector | Role | Installation |
@@ -870,3 +881,9 @@ The cache path also reaches the private physics/render child processes. Other
 Offline tabletop authoring uses the same optional byte-keyed compilation path,
 so changed scenes can reuse unchanged robot mesh assets while preserving each
 scene's own XML, contacts and canonical reset state.
+
+
+Authored `bowl` objects have a deep rounded hollow shell and a small flat foot.
+Their smooth visual surface is separate from the convex wall bands and floor
+used for native collision. This leaves the interior open for containment and
+nesting. Existing compiled scene manifests retain their original geometry.
