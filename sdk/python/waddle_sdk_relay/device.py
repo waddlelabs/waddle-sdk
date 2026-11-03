@@ -2,7 +2,9 @@
 
 import asyncio
 import concurrent.futures
+import hashlib
 import json
+import math
 import os
 import sys
 import threading
@@ -13,6 +15,7 @@ from pathlib import Path, PurePosixPath
 from uuid import uuid4
 
 from waddle_sdk import LiveKit
+from waddle_sdk.robots.metadata import part_action_spaces
 from waddle_sdk.runtime import FaultCode, PlaybackDependency, RuntimeFault
 from waddle_sdk.workspace.files import Workspace, WorkspaceError
 
@@ -106,6 +109,68 @@ class Device:
                 "sdk_observation_expired", "The acquired SDK observation has expired"
             )
         return observation[0]
+
+    def _metadata(self):
+        description, support = self.sdk.describe(), self.sdk.support()
+        return {
+            "description": description,
+            "support": support,
+            "revision": hashlib.sha256(encode((description, support))).hexdigest(),
+        }
+
+    def _state_bundle(self):
+        metadata = self._metadata()
+        return {
+            **metadata,
+            **self.dispatch(
+                "observe_parts",
+                {"parts": list(part_action_spaces(metadata["description"]))},
+            ),
+        }
+
+    def _check_preparation(self, arguments):
+        """Check supplied configuration/state preconditions locally before admission.
+
+        These are ordinary numerical comparisons, not planning. The native worker
+        still checks measured start, capabilities and every dispatched reference.
+        """
+        if arguments.get("expected_revision") != self._metadata()["revision"]:
+            raise RelayError("stale_plan", "SDK configuration changed during planning")
+        guards = arguments.get("joint_guards", [])
+        if not isinstance(guards, list) or len(guards) > 256:
+            raise RelayError("sdk_bridge_protocol", "Invalid joint preconditions")
+        if not guards:
+            return
+        observation = self.sdk.observe_parts(sorted({row["part"] for row in guards}))
+        for row in guards:
+            part, index = row["part"], row["index"]
+            expected, tolerance = row["position"], row["tolerance"]
+            if (
+                type(index) is not int
+                or index < 0
+                or not math.isfinite(expected)
+                or not math.isfinite(tolerance)
+                or tolerance < 0
+            ):
+                raise RelayError("sdk_bridge_protocol", "Invalid joint precondition")
+            if fault := observation.faults.get(part):
+                raise fault
+            state = observation.parts.get(part)
+            if state is None or index >= len(state.joint_position):
+                raise RelayError("stale_model_state", "Prepared joint is unavailable")
+            if abs(float(state.joint_position[index]) - expected) > tolerance:
+                raise RelayError("stale_model_state", "A planning-bound joint changed")
+
+    def _playback_snapshot(self, handle, arguments):
+        snapshot = handle.snapshot()
+        if arguments.get("include_state") and snapshot["status"] != "running":
+            try:
+                snapshot = {**snapshot, "preparation": self._state_bundle()}
+            except Exception as error:  # noqa: BLE001 -- retain authoritative completion
+                # Completion is authoritative even if an optional following read
+                # fails. The peer must fetch fresh state before preparing more work.
+                snapshot = {**snapshot, "preparation_error": error_payload(error)}
+        return snapshot
 
     def dispatch(self, method, arguments):
         if not isinstance(arguments, dict):
@@ -219,7 +284,11 @@ class Device:
                     self.sdk = None
                     raise
                 self._safety_sdk = opened
-                return {"safety_slots": MAX_SAFETY_CALLS, "observation_bundle": 1}
+                return {
+                    "safety_slots": MAX_SAFETY_CALLS,
+                    "observation_bundle": 1,
+                    "prepared_playback": 1,
+                }
             if method == "close":
                 if self.sdk is not None:
                     if self.torque_release_authorized:
@@ -230,6 +299,8 @@ class Device:
                 return None
             if self.sdk is None:
                 raise RelayError("sdk_not_open", "SDK owner is not open")
+            if method == "state_bundle":
+                return self._state_bundle()
             if method == "observation_bundle":
                 requests = arguments.get("workspace", [])
                 if not isinstance(requests, list) or len(requests) > 8:
@@ -256,12 +327,10 @@ class Device:
                     files.append({"request": request, **reply})
                 # Capture once, after file reads. Retention, point resolvers, faults
                 # and clock provenance are exactly the ordinary observation path.
-                description = self.sdk.describe()
-                support = self.sdk.support()
+                metadata = self._metadata()
                 return {
                     **self.dispatch("observe_parts", {"parts": None}),
-                    "description": description,
-                    "support": support,
+                    **metadata,
                     "workspace": files,
                 }
             if method == "run_enter":
@@ -353,6 +422,8 @@ class Device:
                             "start_before_ns": arguments.get("start_before_ns"),
                         }
                     )
+                if "expected_revision" in arguments:
+                    self._check_preparation(arguments)
                 handle = start(arguments["motion"], **queue)
                 snapshot = handle.snapshot()
                 self._playbacks[(snapshot["episode_id"], snapshot["id"])] = handle
@@ -427,7 +498,7 @@ class Device:
                     return {"request_id": request_id, "snapshot": handle.snapshot()}
                 # Never wait here: the admission lock must remain available to
                 # Hold, disconnect and teardown while local playback advances.
-                return handle.snapshot()
+                return self._playback_snapshot(handle, arguments)
             if method in {"step", "step_parts"}:
                 if self.run is None:
                     raise RelayError("sdk_not_open", "No active SDK run")

@@ -1667,3 +1667,7 @@ MuJoCo retains its physics/render processes for self-contained native scenes wit
 unchanged robot/camera contracts. Keep participant drain, episode invalidation,
 render-generation fencing, immutable source bytes and failed-admin fencing.
 Unsupported worlds retain close/open; this capability is never a participant tool.
+Prepared-playback relay work is under qualification on perf/motion-roundtrips-20261102.
+It adds Python-only state/configuration bundles and local submission preconditions;
+native API 42 is unchanged. Matching Metal consumes these within preparation only.
+No package publication, deployment or hardware startup has occurred for this change.
