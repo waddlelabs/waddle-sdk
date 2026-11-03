@@ -1719,3 +1719,8 @@ remain verified. Administrative model loading has a bounded 60-second IPC wait;
 ordinary feedback/control and capture deadlines stay separate. Verify actual
 same-owner addition/removal of mesh props for one and two arms, old-image fencing
 and genuine robot/camera refusal; fresh-owner loading alone misses reload bugs.
+
+Native source validation may reuse confined parent-directory resolution within
+one call only. Hash every file on every call, including same-size/restored-mtime
+rewrites. Preserve leaf-symlink refusal and confined directory alias support;
+`test_native_source_inventory.py` covers capture and path-only validation.

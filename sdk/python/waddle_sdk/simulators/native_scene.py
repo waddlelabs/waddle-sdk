@@ -122,13 +122,21 @@ def resolve(root, config, *, contents=None):
     files = selected["files"]
     if not isinstance(files, dict) or not files or len(files) > 10000:
         raise ValueError("native scene requires a bounded file digest manifest")
+    directories = {Path("."): root}
     for name, digest in files.items():
         path = Path(name)
         if path.is_absolute() or ".." in path.parts or "\\" in name or not name:
             raise ValueError("native scene asset paths must be portable")
-        resolved = (root / path).resolve(strict=True)
-        resolved.relative_to(root)
-        if (root / path).is_symlink() or not resolved.is_file():
+        # Many meshes share one directory. Resolve its confinement once during
+        # this pass, while checking the current leaf type and bytes every time.
+        # Never retain these path resolutions across validation calls.
+        directory = directories.get(path.parent)
+        if directory is None:
+            directory = (root / path.parent).resolve(strict=True)
+            directory.relative_to(root)
+            directories[path.parent] = directory
+        resolved = directory / path.name
+        if resolved.is_symlink() or not resolved.is_file():
             raise ValueError("native scene assets must be ordinary files")
         if contents is None:
             with resolved.open("rb") as stream:

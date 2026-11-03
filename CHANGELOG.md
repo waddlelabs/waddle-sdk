@@ -18,6 +18,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Reuse resolved asset directories within each native source validation pass.
+  Every asset still receives a fresh byte hash; no path or digest result survives
+  between checks. Preserve portable-path, symlink and manifest rejection.
+
+
 - Transfer matching authoring preparations to resident MuJoCo owners through
   immutable Linux file descriptors, retaining ordinary source checks and separate
   model/state ownership. Bound the private handoff cache to two models and

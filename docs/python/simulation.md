@@ -918,3 +918,7 @@ Authored `bowl` objects have a deep rounded hollow shell and a small flat foot.
 Their smooth visual surface is separate from the convex wall bands and floor
 used for native collision. This leaves the interior open for containment and
 nesting. Existing compiled scene manifests retain their original geometry.
+
+Native source validation resolves each distinct asset directory once per pass,
+while still hashing every file on every pass. Directory reuse is local to that
+check; a later edit, symlink change or same-size rewrite is validated again.
