@@ -1729,3 +1729,10 @@ Private resident authoring may request `_prefer_handoff=True` after configuring
 the optional model cache. Omit the extra disk binary only after successful bounded
 sealed retention. Keep normal `compile_scene`/`prepare_scene` disk caching and
 unavailable/oversized handoff fallback, independent native models and source checks.
+
+The independent snapshot renderer can retain RGB/depth contexts when uploaded
+resources and visual settings match exactly. Rebind both RGB and metric-depth
+models on their owning thread and acquire fresh pixels; never reuse old image
+content or relax generation/freshness checks. Changed assets, planes or settings
+rebuild contexts. Native pixel/depth equality and fallback regressions are in
+`sdk/tests/test_render_revisions.py`.

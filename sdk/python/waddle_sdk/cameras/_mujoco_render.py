@@ -63,6 +63,18 @@ class RGBDRenderer:
             ),
         )
 
+    def rebind_model(self, model):
+        """Rebind on the owning thread after verifying identical GL resources.
+
+        The next capture rebuilds each visual scene from the new model/data;
+        only uploaded assets and framebuffers survive the revision.
+        """
+        if self.closed:
+            raise RuntimeError("MuJoCo RGB-D renderer is closed")
+        self.rgb._model = model
+        if self.depth is not None:
+            self.depth._model = model
+
     def close(self):
         if self.closed:
             return
@@ -72,3 +84,45 @@ class RGBDRenderer:
                 self.depth.close()
         finally:
             self.rgb.close()
+
+
+def same_render_resources(first, second):
+    """Conservatively compare native resources baked into a rendering context."""
+    sizes = ("nmesh", "ntex", "nhfield", "nskin", "nflex")
+    if any(getattr(first, name) != getattr(second, name) for name in sizes):
+        return False
+    if (
+        _settings(first.vis) != _settings(second.vis)
+        or first.stat.extent != second.stat.extent
+    ):
+        return False
+    # Planes use display lists tied to their order, size and material. Other
+    # primitive geometry is rebuilt by update_scene on every capture.
+    planes = [np.flatnonzero(model.geom_type == 0) for model in (first, second)]
+    if not np.array_equal(*planes):
+        return False
+    for name in ("geom_size", "geom_matid"):
+        if not np.array_equal(
+            getattr(first, name)[planes[0]], getattr(second, name)[planes[1]]
+        ):
+            return False
+    for name in dir(first):
+        if name.startswith(("mesh_", "tex_", "hfield_", "skin_", "flex_", "mat_")):
+            if name in {"mesh_bvhadr", "mesh_bvhnum"}:
+                continue  # Collision BVH offsets are not uploaded render assets.
+            a, b = getattr(first, name), getattr(second, name)
+            if isinstance(a, np.ndarray) and not np.array_equal(a, b):
+                return False
+    return True
+
+
+def _settings(value):
+    if isinstance(value, np.ndarray):
+        return value.dtype.str, value.shape, value.tobytes()
+    if isinstance(value, (int, float, str, np.integer, np.floating)):
+        return value
+    return tuple(
+        (name, _settings(getattr(value, name)))
+        for name in dir(value)
+        if not name.startswith("_") and not callable(getattr(value, name))
+    )

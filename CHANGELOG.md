@@ -18,6 +18,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Reuse compatible RGB/depth rendering contexts across native scene revisions.
+  Rebuild for changed uploaded assets, planes or visual settings; continue to
+  acquire fresh pixels from the current model/state with generation fencing.
+
 - Let resident Playground authoring prefer a retained sealed model over a second
   disk-cache export. Keep ordinary source files and disk caching when sealing or
   bounded handoff retention is unavailable; general authoring still fills disk cache.

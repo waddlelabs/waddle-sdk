@@ -928,3 +928,10 @@ the duplicate disk binary. Source XML/assets are still written and validated.
 General authoring continues to populate the disk cache; unavailable sealing or
 oversized preparations use that same fallback. Each owner still loads independent
 native state from the sealed model.
+
+The independent native camera worker retains its RGB/depth contexts across scene
+revisions when uploaded meshes, textures, height fields, skins, flexes, materials,
+plane resources and visual settings match. Changed resources rebuild the contexts.
+Every revision still receives its own model/state, and every capture rebuilds the
+visual scene from that current state. Image generation and acquisition freshness
+checks remain unchanged; this reuse never caches an acquired image.

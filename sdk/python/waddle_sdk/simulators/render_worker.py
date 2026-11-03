@@ -8,7 +8,7 @@ import sys
 import traceback
 from multiprocessing.connection import Connection
 
-from ..cameras._mujoco_render import RGBDRenderer
+from ..cameras._mujoco_render import RGBDRenderer, same_render_resources
 from .scene import depth_z16
 
 
@@ -23,9 +23,14 @@ class SnapshotRenderer:
 
     def restore(self, snapshot):
         if snapshot["generation"] != self.generation:
-            self.close()
             # Only the owning physics process supplies this private pipe.
-            self.model = pickle.loads(snapshot["model"])
+            model = pickle.loads(snapshot["model"])
+            if self.generation is None or not same_render_resources(self.model, model):
+                self.close()
+            else:
+                for renderer in self.renderers.values():
+                    renderer.rebind_model(model)
+            self.model = model
             self.data = self.mj.MjData(self.model)
             self.generation = snapshot["generation"]
         self.mj.mj_setState(
