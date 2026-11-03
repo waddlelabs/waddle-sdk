@@ -49,6 +49,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Add optional trusted live scene edits preserving the running simulator state
+  and native processes. Existing replacement/reset semantics remain unchanged.
+
 - Add a native run-bound playback input watchdog, renewed on SDK input arrival
   independently of planning and status polling. Preserve ordered renewal,
   irreversible release/expiry, same-run binding and ordinary worker cleanup.

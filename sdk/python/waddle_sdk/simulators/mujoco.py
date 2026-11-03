@@ -224,7 +224,7 @@ class Engine:
             else f"{part}__"
         )
 
-    def replacement(self, config, scratch):
+    def replacement(self, config, scratch, *, preserve_state=False):
         """Prepare a new environment while preserving the opened port contracts."""
         from .native_scene import replacement_signature
 
@@ -244,6 +244,19 @@ class Engine:
                     candidate.data.qpos[candidate._qpos[part]],
                     self.model.key_qpos[self._native_key, self._qpos[part]],
                 )
+            if preserve_state:
+                from .scene_state import pose_edits, transfer_state
+
+                transfer_state(
+                    self.model,
+                    self.data,
+                    candidate.model,
+                    candidate.data,
+                    edits=pose_edits(self.model, candidate.model),
+                )
+                candidate._force_modes = self._force_modes.copy()
+                candidate._apply_force_modes()
+                candidate.mj.mj_forward(candidate.model, candidate.data)
         except BaseException:
             candidate.close()
             raise

@@ -1638,6 +1638,14 @@ or vendor interpolation is introduced. See
 
 ## Editable reference scenes
 
+`SimulationAdministration.can_edit_scene/edit_scene` is a separate optional live
+edit facet. Preserve running time, robot/joint state, targets and forces by stable
+native identity; only authored free-body pose deltas teleport/reset that body's
+velocity. Resize/color changes preserve its pose. Keep native processes, image
+generation, participant drain and failure fences. Unsupported edits refuse;
+`replace_scene` and explicit reset retain their prior initial-state semantics.
+See `sdk/tests/test_scene_edits.py` and the real-socket replacement/edit regression.
+
 Authored two-YAM scenes may select a finite native `fixture` and bounded `seed`.
 Reuse reference assemblies and preserve compound geometry/contact identity;
 never accept executable scene imports through authoring data. Seed zero remains

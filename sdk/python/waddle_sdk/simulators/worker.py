@@ -128,6 +128,7 @@ def serve(connection: Connection) -> None:
                     "evaluation_snapshot",
                     "evaluation_reset",
                     "evaluation_replace_scene",
+                    "evaluation_edit_scene",
                 }:
                     raise ValueError("unsupported simulation operation")
                 try:
@@ -135,6 +136,7 @@ def serve(connection: Connection) -> None:
                         "reset",
                         "evaluation_reset",
                         "evaluation_replace_scene",
+                        "evaluation_edit_scene",
                     }:
                         generation += 1
                     if operation == "step":
@@ -153,8 +155,15 @@ def serve(connection: Connection) -> None:
                         result = engine.capture_timed(arguments[0])
                     elif operation == "evaluation_snapshot":
                         result = engine.evaluation_snapshot()
-                    elif operation == "evaluation_replace_scene":
-                        replacement = engine.replacement(arguments[0], Path(scratch))
+                    elif operation in {
+                        "evaluation_replace_scene",
+                        "evaluation_edit_scene",
+                    }:
+                        replacement = engine.replacement(
+                            arguments[0],
+                            Path(scratch),
+                            preserve_state=operation == "evaluation_edit_scene",
+                        )
                         engine.hold()
                         engine.close()
                         engine = replacement

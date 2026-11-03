@@ -578,6 +578,17 @@ is never supplied through the participant runtime or tools. Each prepared scene
 remains immutable; replacement selects new bytes rather than rewriting the old
 world.
 
+For live editing, check `administration.can_edit_scene` and call
+`edit_scene({world_name: WorldConfig(...)})`. The optional
+`SimulationSceneEditBackend` retains time, named joint positions/velocities,
+actuator targets and external forces while changing topology. Compare authored
+free-body translations and rotations to apply only explicit pose edits; those
+teleports clear that object's velocity. Added bodies use their authored state,
+deleted bodies disappear, and resizing/recoloring retains the object's live pose.
+Existing drain, episode invalidation, camera-generation and failure fences apply.
+Unsupported edits refuse and never silently reset. Explicit `reset` still returns
+to the latest authored initial scene. This is simulation administration only.
+
 For a MuJoCo-only continuation reset, the trusted evaluator may also pass
 `preserve_free_bodies=(...)` and `retire_free_bodies=(...)`. The former retains
 each named free prop's measured pose and velocity across the reset; the latter

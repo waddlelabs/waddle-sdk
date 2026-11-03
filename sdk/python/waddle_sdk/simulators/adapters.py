@@ -265,6 +265,7 @@ class World:
                     "reset",
                     "evaluation_reset",
                     "evaluation_replace_scene",
+                    "evaluation_edit_scene",
                 }:
                     self._generation += 1
                 self._connection.send((operation, arguments))
@@ -363,10 +364,16 @@ class AdministrativeWorld(World):
         return self.call("evaluation_snapshot")
 
     def evaluation_replace_scene(self, config: WorldConfig) -> bool:
+        return self._replace_scene(config, "evaluation_replace_scene")
+
+    def evaluation_edit_scene(self, config: WorldConfig) -> bool:
+        return self._replace_scene(config, "evaluation_edit_scene")
+
+    def _replace_scene(self, config, operation):
         _, definition = load_scene(
             config.site_root, config.connection.get("simulation")
         )
-        accepted = self.call("evaluation_replace_scene", definition)
+        accepted = self.call(operation, definition)
         if accepted:
             self.config = definition
         return accepted

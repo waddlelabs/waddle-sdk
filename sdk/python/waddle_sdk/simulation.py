@@ -161,6 +161,13 @@ class SimulationSceneReplacementBackend(Protocol):
     def evaluation_replace_scene(self, config: WorldConfig) -> bool: ...
 
 
+@runtime_checkable
+class SimulationSceneEditBackend(SimulationSceneReplacementBackend, Protocol):
+    """Optional trusted facet retaining live state while applying authored edits."""
+
+    def evaluation_edit_scene(self, config: WorldConfig) -> bool: ...
+
+
 @dataclass(frozen=True)
 class SimulationSnapshot:
     """Immutable evaluator-owned state from one complete simulated site."""
@@ -354,6 +361,22 @@ class SimulationAdministration:
                 for backend in self._require().worlds.values()
             )
 
+    @property
+    def can_edit_scene(self) -> bool:
+        with self._lock:
+            return self.can_replace_scene and all(
+                isinstance(backend, SimulationSceneEditBackend)
+                for backend in self._require().worlds.values()
+            )
+
+    def edit_scene(self, worlds: Mapping[str, WorldConfig]) -> SimulationSnapshot:
+        """Apply authored changes while preserving all other live simulator state.
+
+        As with replacement, callers drain participant work and invalidate old
+        plans/images. Unsupported backends refuse; an edit must never reset.
+        """
+        return self._replace_scene(worlds, preserve_state=True)
+
     def replace_scene(self, worlds: Mapping[str, WorldConfig]) -> SimulationSnapshot:
         """Replace prepared scenes after the caller drains participant operations.
 
@@ -361,6 +384,9 @@ class SimulationAdministration:
         callers must invalidate plans and observations using the new episode.
         An admitted failure fences administration until the site is reopened.
         """
+        return self._replace_scene(worlds, preserve_state=False)
+
+    def _replace_scene(self, worlds, *, preserve_state):
         with self._lock:
             binding = self._require()
             if set(worlds) != set(binding.worlds) or any(
@@ -374,10 +400,19 @@ class SimulationAdministration:
                 raise SimulationAdministrationError(
                     "simulation worlds do not support scene replacement"
                 )
+            if preserve_state and not self.can_edit_scene:
+                raise SimulationAdministrationError(
+                    "simulation worlds do not support live scene edits"
+                )
             try:
                 with binding.dispatch_lock, binding.lifecycle_lock:
                     for name, backend in binding.worlds.items():
-                        if not backend.evaluation_replace_scene(worlds[name]):
+                        operation = (
+                            backend.evaluation_edit_scene
+                            if preserve_state
+                            else backend.evaluation_replace_scene
+                        )
+                        if not operation(worlds[name]):
                             raise SimulationAdministrationError(
                                 "a simulation world refused scene replacement"
                             )
