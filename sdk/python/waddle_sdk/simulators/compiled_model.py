@@ -111,8 +111,8 @@ def load_model(
 
             # Keep unchanged virtual assets across authored revisions. The key
             # includes every non-root byte above. Trusted authoring may reuse
-            # parsed components after comparing the full current XML; every
-            # revision compiles independently. Older bindings keep their loader.
+            # parsed components or isolated placement templates after comparing
+            # the full current XML. Older bindings keep their ordinary loader.
             reuse = selected or os.environ.get(CACHE_ENV)
             result = buffers.compile(
                 f"{namespace}/{model_name}",
@@ -121,12 +121,17 @@ def load_model(
                 authored=_authored,
                 _authored_tree=_authored_tree if _authored else None,
                 _authored_contacts=_authored_contacts if _authored else None,
+                timings=timings,
             )
         else:
             result = mj.MjModel.from_xml_path(
                 f"{namespace}/{model_name}", assets=assets
             )
-        timings.update(cache_hit=False, native_compile_s=time.monotonic() - began)
+        elapsed = time.monotonic() - began
+        reused = timings.get("placement_reused", False)
+        timings.update(cache_hit=False, native_compile_s=0.0 if reused else elapsed)
+        if reused:
+            timings["placement_prepare_s"] = elapsed
         return result
 
     selected = cache if cache is not None else os.environ.get(CACHE_ENV)

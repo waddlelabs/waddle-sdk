@@ -7,6 +7,7 @@ specification for supported authored edits. Models and running state stay indepe
 import os
 import threading
 from collections import OrderedDict
+from copy import copy
 
 
 class SourceBuffers:
@@ -33,8 +34,12 @@ class SourceBuffers:
         authored=False,
         _authored_tree=None,
         _authored_contacts=None,
+        timings=None,
     ):
         import mujoco as mj
+
+        timings = {} if timings is None else timings
+        timings["placement_reused"] = False
 
         if self.pid != os.getpid():
             self.lock = threading.RLock()
@@ -73,8 +78,14 @@ class SourceBuffers:
 
                     try:
                         spec = revise(prepared[0], prepared[1], source)
-                        model = None if spec is None else spec.compile(vfs=vfs)
+                        model = None
                         if spec is not None:
+                            from .prepared_placement import translate
+
+                            model = translate(prepared[3], prepared[1], source)
+                            timings["placement_reused"] = model is not None
+                            if model is None:
+                                model = spec.compile(vfs=vfs)
                             edits = prepared[2] + 1
                     except Exception:  # noqa: BLE001 -- disposable preparation falls back to the source parser
                         spec = None
@@ -83,9 +94,15 @@ class SourceBuffers:
                     model = spec.compile(vfs=vfs)
                 del vfs[root]
                 if key is not None:
+                    template = None
+                    if authored and source is not None:
+                        model_size = mj.mj_sizeModel(model)
+                        if size + model_size <= self.max_bytes:
+                            template = copy(model)
+                            size += model_size
                     self.entries[key] = size, vfs
                     if authored:
-                        self.prepared[key] = spec, source, edits
+                        self.prepared[key] = spec, source, edits, template
                     vfs = None
                     while (
                         len(self.entries) > self.max_entries

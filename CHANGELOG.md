@@ -20,10 +20,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Changed
 
-- Add whole-scene placement reuse qualification: require native-equivalent
-  free-object translations, private model ownership and bounded retention, with
-  full native preparation for unsupported dependencies. Implementation and
-  complete edit latency remain under qualification.
+- Reuse a bounded private whole-scene template for isolated free-object
+  translations, recomputing native constants and preserving source validation,
+  independent models and full compilation for other changes/dependencies.
+  Native equivalence and complete edit latency remain under qualification;
+  speculative addition preparation is not yet connected to the editor.
 
 - Verify exact retired contact references and remove authored bodies through native
   cascading deletion. Reject retained invalid references through the full parser.

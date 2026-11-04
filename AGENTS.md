@@ -1,10 +1,12 @@
-Whole-scene placement preparation is under qualification. An offline native
-probe preserves all model arrays and ten simulation steps for three translations
-in empty/two-arm bowl scenes. New regressions require a private bounded model
-copy and full fallback for linked, fixed, articulated or otherwise unsupported
-objects. Run the unchanged baseline before implementation. This is not yet a
-runtime optimization, speculative editor preparation or sub-second acceptance.
-Evidence: parent .local/edit-pose-preparation-20261104.
+Whole-scene placement candidate retains a private compiled template within the
+existing source-buffer byte bound. Exact isolated free-body translations copy
+it and recompute native constants/statistics; other changes and dependencies
+retain compilation. Source freshness, independent native models and the 32-edit
+refresh remain. The original no-recompile regression fails on unchanged SDK
+37f9f0c; keep that evidence. Candidate native/catalog/default/docs checks remain
+pending. This is a prerequisite for speculative addition preparation, which is
+not yet wired into the editor. Sub-second acceptance remains open. See the
+parent .local/edit-pose-preparation-20261104.
 
 SDK c42e584 verifies the exact retired pair multiset and lets native body removal
 remove its contact references, preserving full-parser rejection of retained invalid

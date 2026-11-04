@@ -961,7 +961,7 @@ unchanged or immediately extended contacts need no repeated full pair comparison
 Ordinary
 byte callers still parse their current document. It copies the
 specification, then applies supported object additions,
-removals, poses and primitive geometry/material values before compiling an
+removals, poses and primitive geometry/material values before preparing an
 independent model. Newly appended bodies/assets/contact pairs alone need parsing.
 Authored finger contacts share a named pair default in the portable XML; the
 compiled model still contains every individual pair with its original parameters.
@@ -977,12 +977,23 @@ file-backed or classed mesh suffixes, changed mesh faces/counts, general topolog
 includes, unfamiliar reset
 keys and other unsupported differences use the complete parser. At most 32 edits
 reuse one native preparation before full parsing refreshes its internal attachment
-bookkeeping. The 256 MiB limit bounds source bytes, not native specification RSS
-or Python comparison-record overhead.
+bookkeeping. The 256 MiB limit bounds source bytes plus retained native-model
+payloads, not native specification RSS or Python comparison-record overhead.
 Failed reuse also retries the authoritative source parser, whose
 errors remain visible. Specifications and comparison records are discarded with their buffers on
-eviction, failure or fork. No mutable model or live coordinates are cached; normal
-state transfer, source validation and reset-key initialization remain unchanged.
+eviction, failure or fork. Normal state transfer, source validation and reset-key
+initialization remain unchanged.
+
+Within that same bound, authoring can retain a private copy of the complete
+compiled template before the caller edits its reset key or other model arrays.
+An exact source change containing only translations of isolated top-level free
+props can copy this template and recompute native constants/statistics instead
+of compiling again. Geometry, contact material, orientation and other source
+changes retain native compilation. Fixed/articulated objects, external references,
+explicit statistics, plugins, skins and flexes also retain compilation. Returned
+models never alias the private template, and no running coordinates or images
+are retained. Optional timing reports distinguish `placement_prepare_s` from
+`native_compile_s`; this does not make a UI addition speculative or prewarmed.
 
 Native owners compare and compile one captured, verified source snapshot instead
 of reopening its files at each preparation stage. Trusted authoring can retain
