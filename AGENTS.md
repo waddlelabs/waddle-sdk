@@ -10,8 +10,8 @@ delete remain 5.616/6.105 s. Paired samples do not establish an overall speedup.
 Sub-second and long-session acceptance remain open; startup stays deferred.
 Retain all diagnostic failures and samples. All 51 recorded PIDs are absent,
 final process audit is empty and eight closed archives have full per-file hash
-readback. See logs/playground-body-handoff-20261104.md/.json and
-.local/edit-body-handoff-20261104. No deployment/external/physical change.
+readback. See the parent logs/playground-body-handoff-20261104.md/.json and
+the parent .local/edit-body-handoff-20261104. No deployment/external/physical change.
 
 Trusted authored native handoffs carry the robot replacement comparison from
 the exact same-call XML tree. Immutable comparison bytes share the source identity
