@@ -927,8 +927,10 @@ it neither skips the subsequent native compilation/validation nor retains live
 coordinates. The final reset key and running-world edit semantics are unchanged.
 
 Trusted Playground authoring can retain a private parsed specification alongside
-each of those two asset sets. It compares the entire old/new XML and freshly
-hashed assets, copies the specification, then applies supported object additions,
+each of those two asset sets. Read-only comparison records retain the parsed old
+XML and contact keys with that specification; every new XML document is parsed
+and compared in full against them, with freshly hashed assets. It copies the
+specification, then applies supported object additions,
 removals, poses and primitive geometry/material values before compiling an
 independent model. Newly appended bodies/assets/contact pairs alone need parsing.
 Authored finger contacts share a named pair default in the portable XML; the
@@ -945,9 +947,10 @@ file-backed or classed mesh suffixes, changed mesh faces/counts, general topolog
 includes, unfamiliar reset
 keys and other unsupported differences use the complete parser. At most 32 edits
 reuse one native preparation before full parsing refreshes its internal attachment
-bookkeeping. The 256 MiB limit bounds source bytes, not native specification RSS.
+bookkeeping. The 256 MiB limit bounds source bytes, not native specification RSS
+or Python comparison-record overhead.
 Failed reuse also retries the authoritative source parser, whose
-errors remain visible. Specifications are discarded with their buffers on
+errors remain visible. Specifications and comparison records are discarded with their buffers on
 eviction, failure or fork. No mutable model or live coordinates are cached; normal
 state transfer, source validation and reset-key initialization remain unchanged.
 

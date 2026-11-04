@@ -4,6 +4,7 @@ import math
 import xml.etree.ElementTree as ET
 from collections import Counter
 from copy import deepcopy
+from dataclasses import dataclass
 
 
 def _read(data):
@@ -121,45 +122,60 @@ def _asset_changes(before, after, updates):
     return True
 
 
-def revise(spec, previous, current):
+@dataclass(frozen=True)
+class Source:
+    """Read-only comparison data owned by one private native preparation."""
+
+    static: tuple
+    defaults: dict
+    parts: dict
+    contacts: tuple
+
+
+def parse(data):
+    """Index the exact current bytes; no mutable file path is cached."""
+    root = _read(data)
+    compiler = root.find("compiler")
+    defaults = _pair_defaults(root)
+    if (
+        root.find(".//include") is not None
+        or defaults is None
+        or compiler is None
+        or compiler.attrib != {"angle": "radian"}
+        or any(
+            len(root.findall(tag)) != 1
+            for tag in ("asset", "worldbody", "contact", "keyframe")
+        )
+    ):
+        return None
+    keys = root.find("keyframe")
+    if len(keys) != 1 or keys[0].tag != "key" or keys[0].attrib != {"name": "initial"}:
+        return None
+    parts = {}
+    for tag in ("asset", "worldbody", "contact"):
+        node = root.find(tag)
+        parts[tag] = node
+        root.remove(node)
+    return Source(
+        _key(root),
+        defaults,
+        parts,
+        tuple((_key(node), node) for node in parts["contact"]),
+    )
+
+
+def revise(spec, old, new):
     """Copy preparation for supported authored edits; return None otherwise.
 
-    The caller has freshly hashed every non-root asset and holds the matching
-    virtual files. Only its trusted authoring path uses this optimization.
-    Current XML remains authoritative; general defaults, includes, changed
-    topology in existing bodies and unfamiliar reset keys take the full parser.
+    The caller freshly hashes every asset and indexes the exact current XML.
+    These private comparison records are never changed or reused for different
+    bytes. Unsupported differences retain the full native parser.
     """
     import mujoco as mj
 
-    old, new = _read(previous), _read(current)
-    for root in (old, new):
-        compiler = root.find("compiler")
-        if (
-            root.find(".//include") is not None
-            or _pair_defaults(root) is None
-            or compiler is None
-            or compiler.attrib != {"angle": "radian"}
-            or any(
-                len(root.findall(tag)) != 1
-                for tag in ("asset", "worldbody", "contact", "keyframe")
-            )
-        ):
-            return None
-        keys = root.find("keyframe")
-        if (
-            len(keys) != 1
-            or keys[0].tag != "key"
-            or keys[0].attrib != {"name": "initial"}
-        ):
-            return None
-    old_parts, new_parts = {}, {}
-    for root, parts in ((old, old_parts), (new, new_parts)):
-        for tag in ("asset", "worldbody", "contact"):
-            node = root.find(tag)
-            parts[tag] = node
-            root.remove(node)
-    if _key(old) != _key(new):
+    if old is None or new is None or old.static != new.static:
         return None
+    old_parts, new_parts = old.parts, new.parts
     for tag, node in old_parts.items():
         if node.attrib != new_parts[tag].attrib:
             return None
@@ -233,10 +249,9 @@ def revise(spec, previous, current):
     retired = {node.get("name") for body in removed for node in body.iter("geom")}
     if None in geoms | retired:
         return None
-    remaining = Counter(_encoded(old_parts["contact"]))
+    remaining = Counter(key for key, _ in old.contacts)
     pairs = []
-    for node in new_parts["contact"]:
-        key = _key(node)
+    for key, node in new.contacts:
         if remaining[key]:
             remaining[key] -= 1
         elif node.tag == "pair" and {node.get("geom1"), node.get("geom2")} & geoms:
@@ -244,8 +259,7 @@ def revise(spec, previous, current):
         else:
             return None
     remove_pairs = []
-    for node in old_parts["contact"]:
-        key = _key(node)
+    for key, node in old.contacts:
         if remaining[key]:
             if (
                 node.tag != "pair"
@@ -302,7 +316,7 @@ def revise(spec, previous, current):
             ET.SubElement(delta, tag).extend(deepcopy(nodes))
         # Attachment parses an independent child. Resolve the admitted pair-only
         # defaults explicitly so it needs no duplicate class definitions.
-        defaults = _pair_defaults(new)
+        defaults = new.defaults
         for pair in delta.find("contact"):
             if name := pair.attrib.pop("class", None):
                 if name not in defaults:

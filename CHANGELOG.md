@@ -20,6 +20,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Changed
 
+- Retain private authored XML comparison records with prepared native scenes,
+  avoiding repeated parsing and contact-key construction for the old revision.
+  Continue to compare every new source and freshly hashed asset, compile an
+  independent model and discard records with their specification on failure,
+  eviction or fork.
+
 - Store repeated Playground finger-contact parameters in one named XML default,
   retaining every native pair and its original contact settings. Reuse parsed
   preparations with unchanged pair-only defaults; expand those settings for

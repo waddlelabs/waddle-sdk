@@ -44,14 +44,22 @@ class SourceBuffers:
                             vfs[name] = data
                 vfs[root] = assets[root]
                 spec = None
+                source = None
                 edits = 0
+                if authored and key is not None:
+                    from .authored_preparation import parse
+
+                    try:
+                        source = parse(assets[root])
+                    except Exception:  # noqa: BLE001 -- native parsing reports source errors
+                        source = None
                 # Native attachment can retain empty frames after body removal.
                 # Bound each lineage as well as the number/bytes of source sets.
                 if authored and prepared is not None and prepared[2] < 32:
                     from .authored_preparation import revise
 
                     try:
-                        spec = revise(prepared[0], prepared[1], assets[root])
+                        spec = revise(prepared[0], prepared[1], source)
                         model = None if spec is None else spec.compile(vfs=vfs)
                         if spec is not None:
                             edits = prepared[2] + 1
@@ -64,7 +72,7 @@ class SourceBuffers:
                 if key is not None:
                     self.entries[key] = size, vfs
                     if authored:
-                        self.prepared[key] = spec, assets[root], edits
+                        self.prepared[key] = spec, source, edits
                     vfs = None
                     while (
                         len(self.entries) > self.max_entries

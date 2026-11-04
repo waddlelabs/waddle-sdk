@@ -1,3 +1,16 @@
+Prepared authored specifications now retain read-only old-XML comparison records
+and contact keys. Parse and compare the exact new XML on every revision and keep
+fresh asset hashes, independent native models, full-parser fallback and the
+32-edit refresh. Records share specification eviction/failure/fork cleanup; the
+source-byte budget excludes their Python overhead and native RSS. All 55 native
+preparation/cache/collision cases and 1,305 default Python cases (478 optional
+skips) pass, with strict docs and changed-source lint/format. All 44 edits across
+the 11 exact published presets reuse preparation. Alternating local trials lower
+mean add/image time from 6.555 to 5.443 s for Stack bowls and 1.542 to 1.377 s for
+Empty table; these are small shared-host samples and the sub-second goal remains
+open. The earlier rejected comparison-index experiment remains historical evidence.
+See the parent's logs/playground-comparison-preparation-20261104.md/.json.
+
 Playground finger contacts share a named pair-only default in portable XML.
 Keep every native pair and its original material/solver parameters. Parsed
 preparations can expand unchanged flat pair defaults for attached additions;
