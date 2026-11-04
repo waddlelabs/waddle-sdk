@@ -185,3 +185,20 @@ def test_reference_analysis_is_content_bound_and_bounded(monkeypatch):
     with pytest.raises(ValueError, match="must remain portable"):
         read(xml("../escape.xml"))
     assert not cache.entries
+
+
+def test_streaming_source_digest_supports_python_310(tmp_path, monkeypatch):
+    monkeypatch.delattr(hashlib, "file_digest", raising=False)
+    config = source(tmp_path, count=1)
+    path = tmp_path / "assets/0.stl"
+    data = b"a" * (1024 * 1024 + 1)
+    path.write_bytes(data)
+    config["native_scene"]["files"]["assets/0.stl"] = hashlib.sha256(data).hexdigest()
+    resolve(tmp_path, config)
+    stamp = path.stat()
+    with path.open("r+b") as stream:
+        stream.seek(-1, 2)
+        stream.write(b"z")
+    os.utime(path, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+    with pytest.raises(ValueError, match="digest differs"):
+        resolve(tmp_path, config)
