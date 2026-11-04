@@ -1,14 +1,21 @@
-The next candidate retains exact generated contact trees and serialized sections
+SDK 4e7e9e6 retains exact generated contact trees and serialized sections
 by base contact bytes, ordered geometry names and builder identity. Only trusted
 same-call authoring may substitute that fragment while serializing current assets
 and reset keys. Return detached trees; bound retention to two entries/32 MiB of
 source bytes, excluding Python overhead, and discard on fork or builder failure.
 Do not remove or reorder pairs or change their material parameters. Source hashes,
-native compilation and live-state transfer remain. Qualification is pending in
-the parent's .local/edit-contact-preparation-20261104. The first run passes 85
-cases and fails three new XML fixtures because their oracle used ASCII entities
-instead of the author's existing UTF-8 serialization. Correct only that oracle;
-retain the original failure. Focused XML and complete latency checks are pending.
+native compilation and live-state transfer remain. All 44 edits across 11 exact
+published scenes pass with preserved running state/history and no freshness
+retry. All 55 XML documents match the previous compiler byte for byte; 33 contact
+cache hits and 110 supplied serialization fragments are recorded. Native/source
+coverage passes 85 cases plus three corrected UTF-8 XML oracle cases; retain the
+initial ASCII-oracle failures. Full default SDK passes 1,322 cases (478 optional
+skips), with strict docs and changed-source lint/format. Paired bowl add/image
+means improve 4.338 to 4.113 s; empty additions are slower at 1.272/1.485 s.
+Final catalog add/image is 1.006–1.673 s for ten scenes and 4.197 s for Stack bowls.
+Sub-second and long-session refresh latency remain open; startup is deferred.
+See the parent's .local/edit-contact-preparation-20261104 and contact-preparation
+report for complete samples, semantics, retained diagnostics and limits.
 
 SDK 690410a authoring passes its exact same-call XML tree to native comparison
 preparation, which takes a detached copy before normalizing or retaining it.
