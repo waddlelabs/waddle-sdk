@@ -49,6 +49,7 @@ def load_model(
     _prepared=None,
     _authored=False,
     _authored_tree=None,
+    _authored_contacts=None,
 ):
     """Compile complete verified VFS inputs or load a verified private binary.
 
@@ -119,6 +120,7 @@ def load_model(
                 key=namespace if reuse else None,
                 authored=_authored,
                 _authored_tree=_authored_tree if _authored else None,
+                _authored_contacts=_authored_contacts if _authored else None,
             )
         else:
             result = mj.MjModel.from_xml_path(

@@ -24,7 +24,16 @@ class SourceBuffers:
                 vfs.close()
             self.entries.clear()
 
-    def compile(self, root, assets, *, key=None, authored=False, _authored_tree=None):
+    def compile(
+        self,
+        root,
+        assets,
+        *,
+        key=None,
+        authored=False,
+        _authored_tree=None,
+        _authored_contacts=None,
+    ):
         import mujoco as mj
 
         if self.pid != os.getpid():
@@ -50,7 +59,11 @@ class SourceBuffers:
                     from .authored_preparation import parse
 
                     try:
-                        source = parse(assets[root], _tree=_authored_tree)
+                        source = parse(
+                            assets[root],
+                            _tree=_authored_tree,
+                            _contacts=_authored_contacts,
+                        )
                     except Exception:  # noqa: BLE001 -- native parsing reports source errors
                         source = None
                 # Native attachment can retain empty frames after body removal.

@@ -3,7 +3,7 @@
 import math
 import xml.etree.ElementTree as ET
 from collections import Counter
-from copy import deepcopy
+from copy import copy, deepcopy
 from dataclasses import dataclass
 
 
@@ -123,6 +123,24 @@ def _asset_changes(before, after, updates):
 
 
 @dataclass(frozen=True)
+class ContactIndex:
+    """Private immutable-by-contract contact comparison and immediate delta."""
+
+    node: ET.Element
+    entries: tuple
+    token: object
+    previous: object = None
+    added: tuple = ()
+
+
+def contact_index(node):
+    normalized = _read(b"", tree=node)
+    return ContactIndex(
+        normalized, tuple((_key(child), child) for child in normalized), object()
+    )
+
+
+@dataclass(frozen=True)
 class Source:
     """Read-only comparison data owned by one private native preparation."""
 
@@ -130,9 +148,10 @@ class Source:
     defaults: dict
     parts: dict
     contacts: tuple
+    contact_index: ContactIndex | None = None
 
 
-def parse(data, *, _tree=None):
+def parse(data, *, _tree=None, _contacts=None):
     """Index current source, optionally using its trusted author's exact tree.
 
     A private same-call tree avoids reparsing bytes the author just serialized.
@@ -140,7 +159,22 @@ def parse(data, *, _tree=None):
     caller, which later fills the canonical reset key. Ordinary byte callers
     retain full parsing; no mutable file path is cached.
     """
-    root = _read(data, tree=_tree)
+    index = None
+    tree = _tree
+    if (
+        tree is not None
+        and _contacts is not None
+        and _contacts.comparison is not None
+        and tree.findall("contact") == [_contacts.node]
+    ):
+        index = _contacts.comparison
+        tree = copy(tree)
+        position = list(tree).index(_contacts.node)
+        tree.remove(_contacts.node)
+        root = _read(data, tree=tree)
+        root.insert(position, index.node)
+    else:
+        root = _read(data, tree=tree)
     compiler = root.find("compiler")
     defaults = _pair_defaults(root)
     if (
@@ -166,8 +200,34 @@ def parse(data, *, _tree=None):
         _key(root),
         defaults,
         parts,
-        tuple((_key(node), node) for node in parts["contact"]),
+        index.entries
+        if index is not None
+        else tuple((_key(node), node) for node in parts["contact"]),
+        index,
     )
+
+
+def _contact_delta(old, new):
+    before, after = old.contact_index, new.contact_index
+    if before is not None and after is not None:
+        if before.token is after.token:
+            return (), ()
+        if after.previous is before.token:
+            return after.added, ()
+        if before.previous is after.token:
+            return (), before.added
+    remaining = Counter(key for key, _ in old.contacts)
+    added, removed = [], []
+    for key, node in new.contacts:
+        if remaining[key]:
+            remaining[key] -= 1
+        else:
+            added.append(node)
+    for key, node in old.contacts:
+        if remaining[key]:
+            removed.append(node)
+            remaining[key] -= 1
+    return added, removed
 
 
 def revise(spec, old, new):
@@ -255,25 +315,15 @@ def revise(spec, old, new):
     retired = {node.get("name") for body in removed for node in body.iter("geom")}
     if None in geoms | retired:
         return None
-    remaining = Counter(key for key, _ in old.contacts)
-    pairs = []
-    for key, node in new.contacts:
-        if remaining[key]:
-            remaining[key] -= 1
-        elif node.tag == "pair" and {node.get("geom1"), node.get("geom2")} & geoms:
-            pairs.append(node)
-        else:
+    pairs, obsolete_pairs = _contact_delta(old, new)
+    for node in pairs:
+        if node.tag != "pair" or not {node.get("geom1"), node.get("geom2")} & geoms:
             return None
     remove_pairs = []
-    for key, node in old.contacts:
-        if remaining[key]:
-            if (
-                node.tag != "pair"
-                or not {node.get("geom1"), node.get("geom2")} & retired
-            ):
-                return None
-            remove_pairs.append((node.get("geom1"), node.get("geom2")))
-            remaining[key] -= 1
+    for node in obsolete_pairs:
+        if node.tag != "pair" or not {node.get("geom1"), node.get("geom2")} & retired:
+            return None
+        remove_pairs.append((node.get("geom1"), node.get("geom2")))
     # Authored mesh additions are inline. File-backed new assets would need
     # directory rebinding before attachment; let the full parser handle them.
     if any(node.get("file") for parent in [*bodies, *assets] for node in parent.iter()):

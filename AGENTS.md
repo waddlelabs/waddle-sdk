@@ -1,4 +1,13 @@
-SDK 4e7e9e6 retains exact generated contact trees and serialized sections
+Trusted Playground authoring can extend an admitted ordered contact layout from
+its exact base XML, finger names and existing prop-name prefix. Generate only new
+pairs and retain unchanged serialized rows and normalized comparison records.
+Other layouts keep the full builder. Same-call comparison may borrow these private
+records; caller trees remain detached. Immediate-delta tokens retain no ancestor
+preparations, and the existing byte limit charges both complete XML and serialized
+rows. Fresh source/asset validation, native compilation, fallback and state transfer
+remain. Qualification is pending; no sub-second or deployment result is claimed.
+
+Earlier qualification: SDK 4e7e9e6 retains exact generated contact trees and serialized sections
 by base contact bytes, ordered geometry names and builder identity. Only trusted
 same-call authoring may substitute that fragment while serializing current assets
 and reset keys. Return detached trees; bound retention to two entries/32 MiB of

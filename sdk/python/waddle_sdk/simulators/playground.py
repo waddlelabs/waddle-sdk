@@ -307,7 +307,9 @@ def _pairs(root, fingers, props):
     if os.environ.get("WADDLE_SIMULATION_MODEL_CACHE"):
         from .playground_contacts import cache
 
-        fragment = cache.prepare(contact, fingers, props, _contact_pairs)
+        fragment = cache.prepare(
+            contact, fingers, props, _contact_pairs, _incremental=True
+        )
         root[list(root).index(contact)] = fragment.node
         return fragment
     _contact_pairs(contact, fingers, props)
@@ -461,7 +463,12 @@ def prepare_scene(
 
     # Only the final scene belongs in the shared private binary cache.
     model = load_model(
-        "world.xml", contents, cache="", _authored=True, _authored_tree=root
+        "world.xml",
+        contents,
+        cache="",
+        _authored=True,
+        _authored_tree=root,
+        _authored_contacts=contacts,
     )
     data = mj.MjData(model)
     from .description import description

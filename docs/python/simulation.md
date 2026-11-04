@@ -939,6 +939,12 @@ coordinates. The final reset key and running-world edit semantics are unchanged.
 Prepared contact sections use a separate two-entry, 32 MiB source-byte budget
 (excluding Python object overhead). Exact base-contact XML, ordered finger/prop
 names and builder identity guard reuse; every pair and its order are retained.
+The byte budget includes both the complete fragment and reusable serialized rows.
+Recognized ordered contact layouts can extend an unchanged prop-name prefix by
+building only new pairs, retaining the original row and native pair order.
+Changed base contacts, finger order, duplicates, overlap or unrecognized layout
+keeps the full builder. Private normalized comparison records retain an opaque
+immediate-delta token without retaining a chain of ancestor preparations.
 Authoring receives a detached tree and may reuse its serialized contact fragment
 while writing the same call's current assets and reset key. Namespace-bearing or
 unrecognized XML falls back to ordinary serialization. Fork, eviction or builder
@@ -949,7 +955,10 @@ each of those two asset sets. Read-only comparison records retain the parsed old
 XML and contact keys with that specification. Every new source is compared in
 full, with freshly hashed assets. Same-call authoring supplies the exact tree
 behind its serialized bytes; comparison preparation detaches that tree before
-normalization so later reset-key edits cannot change retained records. Ordinary
+normalization so later reset-key edits cannot change retained records. An exact
+same-call contact fragment may supply its already normalized private records;
+unchanged or immediately extended contacts need no repeated full pair comparison.
+Ordinary
 byte callers still parse their current document. It copies the
 specification, then applies supported object additions,
 removals, poses and primitive geometry/material values before compiling an

@@ -20,6 +20,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Changed
 
+- Extend recognized Playground contact preparations using only new geometry
+  pairs, retaining exact serialized rows and normalized comparison records.
+  Preserve complete source validation, native compilation and live-state transfer;
+  unrecognized layouts keep the full builder. Local qualification is pending.
+
 - Reuse prepared Playground contact sections and serialized fragments, keyed by
   exact base contacts and ordered geometry names. Keep every contact pair and
   parameter, detached trees, fresh asset serialization and canonical reset keys.
