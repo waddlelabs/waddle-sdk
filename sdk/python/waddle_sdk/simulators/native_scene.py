@@ -152,7 +152,13 @@ def resolve(root, config, *, contents=None):
             raise ValueError("native scene assets must be ordinary files")
         if contents is None and not name.endswith(".xml"):
             with resolved.open("rb") as stream:
-                actual = hashlib.file_digest(stream, "sha256").hexdigest()
+                if hasattr(hashlib, "file_digest"):
+                    actual = hashlib.file_digest(stream, "sha256").hexdigest()
+                else:  # Python 3.10 retains complete bounded-memory validation.
+                    checked = hashlib.sha256()
+                    for chunk in iter(lambda: stream.read(256 * 1024), b""):
+                        checked.update(chunk)
+                    actual = checked.hexdigest()
         else:
             data = resolved.read_bytes()
             actual = hashlib.sha256(data).hexdigest()

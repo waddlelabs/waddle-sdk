@@ -20,6 +20,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Changed
 
+- Preserve complete native source validation on Python 3.10 with bounded-memory
+  streaming SHA-256 when hashlib.file_digest is unavailable.
+
 - Reject the resident native preparation experiment after whole-addition timing
   fails to improve. Restore the qualified SDK runtime/API and retain all evidence.
   All 62 restoration checks and changed-source lint pass with exact baseline parity.

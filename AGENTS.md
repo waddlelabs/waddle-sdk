@@ -1,3 +1,10 @@
+Beta promotion CI exposed Python 3.10 lacking hashlib.file_digest. Preserve run
+41899775332 (ten failures) and the local f206d12 failing regression. Source
+validation now streams SHA-256 in bounded chunks on Python 3.10; Python 3.11+
+retains its qualified file_digest path. It still reads every current byte and
+rejects a changed final chunk even with unchanged size/timestamps. Qualification
+is pending before SDK beta promotion; no native ABI or world semantics change.
+
 Resident SDK model preparation is rejected after four alternating native profiles.
 Candidate b557b8a passes 74 selected checks, but complete addition/image means
 worsen from 0.768/1.111 to 0.796/1.237 s for empty two-arm/bowls. Runtime, tests
