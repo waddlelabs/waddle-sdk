@@ -5,7 +5,10 @@ and reset keys. Return detached trees; bound retention to two entries/32 MiB of
 source bytes, excluding Python overhead, and discard on fork or builder failure.
 Do not remove or reorder pairs or change their material parameters. Source hashes,
 native compilation and live-state transfer remain. Qualification is pending in
-the parent's .local/edit-contact-preparation-20261104.
+the parent's .local/edit-contact-preparation-20261104. The first run passes 85
+cases and fails three new XML fixtures because their oracle used ASCII entities
+instead of the author's existing UTF-8 serialization. Correct only that oracle;
+retain the original failure. Focused XML and complete latency checks are pending.
 
 SDK 690410a authoring passes its exact same-call XML tree to native comparison
 preparation, which takes a detached copy before normalizing or retaining it.

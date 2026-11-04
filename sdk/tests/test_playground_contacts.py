@@ -87,13 +87,19 @@ def test_fragment_serialization_preserves_current_keys_assets_text_and_namespace
         root.find("contact"), ["finger"], ["prop"], _contact_pairs
     )
     root[list(root).index(root.find("contact"))] = fragment.node
-    before = ET.tostring(root)
+
+    def ordinary():
+        # Compare with the author's existing UTF-8 path, not ElementTree's
+        # default ASCII serializer, which rewrites non-ASCII text as entities.
+        return ET.tostring(root, encoding="unicode").encode()
+
+    before = ordinary()
     assert scene_xml(root, fragment) == before
-    assert ET.tostring(root) == before
+    assert ordinary() == before
     root.find("keyframe/key").set("qpos", "1 2 3")
     root.find("asset/mesh").set("file", "assets/new.stl")
-    assert scene_xml(root, fragment) == ET.tostring(root)
+    assert scene_xml(root, fragment) == ordinary()
     # A different contact element has no authority to reuse this fragment.
     root.remove(fragment.node)
     ET.SubElement(root, "contact")
-    assert scene_xml(root, fragment) == ET.tostring(root)
+    assert scene_xml(root, fragment) == ordinary()
