@@ -1,3 +1,11 @@
+Whole-scene placement preparation is under qualification. An offline native
+probe preserves all model arrays and ten simulation steps for three translations
+in empty/two-arm bowl scenes. New regressions require a private bounded model
+copy and full fallback for linked, fixed, articulated or otherwise unsupported
+objects. Run the unchanged baseline before implementation. This is not yet a
+runtime optimization, speculative editor preparation or sub-second acceptance.
+Evidence: parent .local/edit-pose-preparation-20261104.
+
 SDK c42e584 verifies the exact retired pair multiset and lets native body removal
 remove its contact references, preserving full-parser rejection of retained invalid
 references. All 86 focused native cases, 1,349 default SDK cases (484 skips), strict
