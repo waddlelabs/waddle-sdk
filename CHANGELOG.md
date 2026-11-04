@@ -23,10 +23,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 - Reuse a bounded private whole-scene template for isolated free-object
   translations, recomputing native constants and preserving source validation,
   independent models and full compilation for other changes/dependencies.
-  Native equivalence and complete edit latency remain under qualification;
-  speculative addition preparation is not yet connected to the editor. Preserve
-  native contact layout by fully parsing reordered unchanged contact sets;
-  matching failures on the prior implementation and candidate are retained.
+  All 104 native checks and 44 edits across 11 exact published presets pass,
+  preserving live state/history, source XML and affected-object comparisons.
+  All tested translations reuse the model; additions remain above one second
+  and speculative addition preparation is not connected to the editor. Preserve
+  native contact layout by fully parsing reordered unchanged contact sets.
+  Retain both failing regressions, the disk-full attempt and verified retry.
 
 - Verify exact retired contact references and remove authored bodies through native
   cascading deletion. Reject retained invalid references through the full parser.

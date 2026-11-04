@@ -1,13 +1,18 @@
-Whole-scene placement candidate passes 103 focused native checks and all 44
-catalog edits at SDK c2557ac / parent 5554ee72. Default SDK passes 1,349 cases
-(485 skips), strict docs/lint pass. Paired bowl moves improve, but additions
-remain above one second. Contact-order follow-up reproduces a native-layout
-mismatch on both candidate and unchanged 37f9f0c; preserve both failures. The
-candidate now requires ordered contact equality for whole-model reuse and uses
-the full parser when an otherwise unchanged contact set is reordered. Final
-native/catalog checks remain pending. Speculative addition preparation is not
-yet wired into the editor; sub-second acceptance remains open. Evidence is in
-parent .local/edit-pose-preparation-20261104.
+Whole-scene preparation is qualified at SDK 2750b86 / parent 5fb65aae:
+104 native checks and all 44 edits across 11 exact published presets pass,
+with 55 unchanged XML documents, 44 matching affected-object sets and no
+freshness retries. All eleven object translations reuse independent native
+models; additions still compile. Final add/image is 1.209–1.729 s for ten
+presets and 2.799 s for bowls; bowl resize/delete remain about 5.5 s. Paired
+bowl moves improve, but addition means do not. Strict docs/lint pass; the
+preceding candidate passes 1,349 default SDK cases (485 skips). Retain both
+contact-order regressions, the disk-full final attempt and corrected analysis.
+The unchanged-source retry passes. All 117 recorded PIDs are absent; the audit
+is empty and 14 closed archives have full per-file hash readback.
+Speculative addition preparation is not
+connected to the editor; sub-second and long-session acceptance remain open.
+See parent logs/playground-catalog-edits-20261103.md and the whole-scene
+preparation JSON, with raw evidence in .local/edit-pose-preparation-20261104.
 
 SDK c42e584 verifies the exact retired pair multiset and lets native body removal
 remove its contact references, preserving full-parser rejection of retained invalid
