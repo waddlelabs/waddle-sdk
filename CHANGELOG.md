@@ -22,6 +22,7 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 - Reject the resident native preparation experiment after whole-addition timing
   fails to improve. Restore the qualified SDK runtime/API and retain all evidence.
+  All 62 restoration checks and changed-source lint pass with exact baseline parity.
 
 - Add bounded trusted authoring templates for final prop translations, preserving
   exact native/reset bytes, independent models and consumer source validation.

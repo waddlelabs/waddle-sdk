@@ -1,7 +1,9 @@
 Resident SDK model preparation is rejected after four alternating native profiles.
 Candidate b557b8a passes 74 selected checks, but complete addition/image means
 worsen from 0.768/1.111 to 0.796/1.237 s for empty two-arm/bowls. Runtime, tests
-and public API/docs are restored exactly to a9b911f; restoration checks pending.
+and public API/docs are restored exactly to a9b911f. All 62 restored SDK cases
+and changed-source lint pass; source equality is checked independently. Eight
+closed parent archives have full per-file hash readback and no test owner remains.
 Keep the eight original failures, candidate patches and every sample in parent
 .local/edit-sdk-resident-20261104. No resident-preparation API remains active.
 
