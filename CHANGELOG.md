@@ -20,6 +20,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Changed
 
+- Carry immutable authored body comparisons through the existing private native
+  model handoff, retaining source/binding checks, byte bounds and parsing fallback.
+  Local correctness and catalog latency qualification is pending.
+
 - Carry exact authored robot-contract comparisons with bounded private model
   handoffs, avoiding repeated XML parsing after fresh source validation. Preserve
   ordinary comparison fallback, selection checks and live-state transfer.

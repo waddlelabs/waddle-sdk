@@ -1,3 +1,11 @@
+Trusted Playground conversion can complete the private native-model handoff with
+immutable joint-indexed body fingerprints from the exact author tree. Consumers
+still validate source inventories and candidate bindings before mapping those
+records; missing/older preparations retain normal parsing. Metadata shares existing
+byte bounds, carries no live state, and requires matching peers when annotated.
+Qualification is pending in .local/edit-body-handoff-20261104; no new latency
+result, deployment or external/physical change is claimed.
+
 Trusted authored native handoffs carry the robot replacement comparison from
 the exact same-call XML tree. Immutable comparison bytes share the source identity
 and existing byte budget; missing records or changed robot/camera selections keep

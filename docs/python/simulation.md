@@ -1001,6 +1001,14 @@ tree. Immutable comparison bytes travel with the same source-bound model and cou
 toward its existing byte limit. Owners reuse them only for matching source and
 robot/camera selections; missing records or changed selections retain ordinary
 comparison. Fresh file validation and current-state transfer still run on each edit.
+Trusted same-call seed conversion may also complete the retained handoff with
+immutable joint-indexed body fingerprints from the transient author tree. These
+records share the byte bound and source identity; consumers map them to freshly
+validated object bindings. Missing joints or records keep ordinary comparison.
+Oversized optional analysis preserves the native preparation. Existing handed-out
+descriptors retain their metadata and lifetime; annotated handoffs require matching
+peers. Older unannotated metadata remains readable. No tree or running state is
+retained in the cache.
 
 Each hit loads an independent model; callers create fresh `MjData`. Changes to
 model arrays or runtime state cannot affect another instance. The cache contains
