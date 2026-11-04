@@ -1,3 +1,10 @@
+Default tabletop object geometry is built offline and shipped as
+sdk/python/waddle_sdk/simulators/data/playground-catalog.json.gz. Regenerate with
+python -m waddle_sdk.simulators.playground_catalog after changing its recorded
+compiler sources. Verify byte-exact source geometry, independent placement copies,
+custom-size fallback and package inclusion. The bundle contains no running state;
+combined-scene compilation and ordinary native validation remain required.
+
 Beta promotion CI exposed Python 3.10 lacking hashlib.file_digest. Preserve run
 41899775332 (ten failures) and the local f206d12 failing regression. Source
 validation now streams SHA-256 in bounded chunks on Python 3.10; Python 3.11+

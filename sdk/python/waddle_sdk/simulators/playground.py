@@ -124,6 +124,15 @@ def validate_scene(scene):
 
 
 def _object(world, asset, obj, easy_grasp):
+    from .playground_catalog import instantiate
+
+    prepared = instantiate(world, asset, obj, easy_grasp)
+    if prepared is not None:
+        return prepared
+    return _object_source(world, asset, obj, easy_grasp)
+
+
+def _object_source(world, asset, obj, easy_grasp):
     name = "prop_" + obj["id"]
     kind = obj["kind"]
     body = ET.SubElement(

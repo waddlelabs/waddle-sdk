@@ -891,6 +891,15 @@ calibrate dynamics or establish physical controller parity. See the
 
 ### Compiled model cache
 
+Default tabletop object geometry ships in `simulators/data/playground-catalog.json.gz`.
+The bundle contains the seven catalog shapes for both contact policies, generated
+offline with `python -m waddle_sdk.simulators.playground_catalog`. Source hashes
+invalidate an outdated bundle; regenerate it after changing its compiler sources.
+Placement only binds object names, poses and colors to private copies. Custom sizes
+retain ordinary geometry generation. This removes default mesh generation from
+placement, but the resulting combined scene still requires native model assembly
+and current-state transfer; no running state is stored in the bundle.
+
 Reference MuJoCo native scenes may set `WADDLE_SIMULATION_MODEL_CACHE` to an
 absolute private directory. This avoids parsing the same verified XML/mesh inputs
 again for separately owned physics and render instances. Default behavior stays

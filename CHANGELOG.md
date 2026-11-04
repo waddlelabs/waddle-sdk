@@ -18,6 +18,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+### Added
+
+- Ship reproducible default object geometry for all seven tabletop object kinds
+  and both contact policies. Bind names, poses and colors from private copies;
+  custom dimensions and stale or absent bundles retain ordinary compilation.
+
 ### Changed
 
 - Preserve complete native source validation on Python 3.10 with bounded-memory
