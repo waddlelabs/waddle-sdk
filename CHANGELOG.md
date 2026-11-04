@@ -26,7 +26,7 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   All 104 native checks and 44 edits across 11 exact published presets pass,
   preserving live state/history, source XML and affected-object comparisons.
   All tested translations reuse the model; additions remain above one second
-  and speculative addition preparation is not connected to the editor. Preserve
+  when prepared after placement; parent editor prewarming is separate. Preserve
   native contact layout by fully parsing reordered unchanged contact sets.
   Retain both failing regressions, the disk-full attempt and verified retry.
 

@@ -996,7 +996,7 @@ changes retain native compilation. Fixed/articulated objects, external reference
 explicit statistics, plugins, skins and flexes also retain compilation. Returned
 models never alias the private template, and no running coordinates or images
 are retained. Optional timing reports distinguish `placement_prepare_s` from
-`native_compile_s`; this does not make a UI addition speculative or prewarmed.
+`native_compile_s`; this model cache alone does not prewarm a UI addition.
 
 Native owners compare and compile one captured, verified source snapshot instead
 of reopening its files at each preparation stage. Trusted authoring can retain

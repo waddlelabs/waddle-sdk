@@ -9,8 +9,8 @@ preceding candidate passes 1,349 default SDK cases (485 skips). Retain both
 contact-order regressions, the disk-full final attempt and corrected analysis.
 The unchanged-source retry passes. All 117 recorded PIDs are absent; the audit
 is empty and 14 closed archives have full per-file hash readback.
-Speculative addition preparation is not
-connected to the editor; sub-second and long-session acceptance remain open.
+The parent Waddle editor now wires bounded prospective whole-scene preparation;
+see its current qualification. Sub-second and long-session acceptance remain open.
 See parent logs/playground-catalog-edits-20261103.md and the whole-scene
 preparation JSON, with raw evidence in .local/edit-pose-preparation-20261104.
 
