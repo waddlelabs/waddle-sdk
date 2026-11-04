@@ -996,6 +996,12 @@ systems retain the ordinary checksum-verified cache/source path. This private
 descriptor is never accepted through scene JSON, workspace files or participant
 tools, and its cache retains no running simulation state.
 
+Trusted authoring also prepares the robot assembly comparison from its exact XML
+tree. Immutable comparison bytes travel with the same source-bound model and count
+toward its existing byte limit. Owners reuse them only for matching source and
+robot/camera selections; missing records or changed selections retain ordinary
+comparison. Fresh file validation and current-state transfer still run on each edit.
+
 Each hit loads an independent model; callers create fresh `MjData`. Changes to
 model arrays or runtime state cannot affect another instance. The cache contains
 no acquired images, current joints, authorization or outcomes, and does not change

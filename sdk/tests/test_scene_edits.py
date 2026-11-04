@@ -9,9 +9,22 @@ from waddle_sdk.simulators.playground import compile_scene
 from waddle_sdk.simulators.scene import load_scene, make_site
 
 
-def test_live_contract_remains_bound_to_the_loaded_source_snapshot(tmp_path):
+@pytest.mark.parametrize("prepared", [False, True])
+def test_live_contract_remains_bound_to_the_loaded_source_snapshot(
+    tmp_path, monkeypatch, prepared
+):
     """Retiring old authoring files cannot change an already opened robot."""
-    pytest.importorskip("mujoco")
+    mj = pytest.importorskip("mujoco")
+    from waddle_sdk.simulators.native_scene import replacement_signature
+    from waddle_sdk.simulators.prepared_model import cache
+
+    if prepared:
+        monkeypatch.setenv("WADDLE_SIMULATION_MODEL_CACHE", str(tmp_path / "cache"))
+
+    def handoff(definition):
+        native = definition["native_scene"]
+        return cache.get(native["model"], native["files"]) if prepared else None
+
     _, config = make_site(
         "snapshot", backend="mujoco", robot="yam", environment="two_cubes"
     )
@@ -21,14 +34,26 @@ def test_live_contract_remains_bound_to_the_loaded_source_snapshot(tmp_path):
         compile_scene(config, scene, folder)
     old = load_scene(first, "simulation.json")[1]
     new = load_scene(second, "simulation.json")[1]
-    engine = Engine(old, first)
+    payload = handoff(old)
+    try:
+        engine = Engine(old, first, _prepared=payload)
+    finally:
+        if payload is not None:
+            payload.close()
     replacement = None
     try:
         engine.data.time = 42
         # The open world owns the original validated bytes, independently of
         # later changes to the old source. New target bytes are still validated.
         (first / "world.xml").unlink()
-        replacement = engine.replacement(new, second, preserve_state=True)
+        payload = handoff(new)
+        try:
+            replacement = engine.replacement(
+                new, second, preserve_state=True, _prepared=payload
+            )
+        finally:
+            if payload is not None:
+                payload.close()
         assert replacement.data.time == 42
         # A real robot-contract change in a newly validated publication refuses.
         import hashlib
@@ -44,8 +69,24 @@ def test_live_contract_remains_bound_to_the_loaded_source_snapshot(tmp_path):
         path.write_bytes(data)
         changed = deepcopy(new)
         changed["native_scene"]["files"]["world.xml"] = hashlib.sha256(data).hexdigest()
-        with pytest.raises(ValueError, match="scene_contract"):
-            replacement.replacement(changed, second, preserve_state=True)
+        native = changed["native_scene"]
+        if prepared:
+            cache.remember(
+                native["model"],
+                native["files"],
+                data,
+                mj.MjModel.from_xml_path(str(path)),
+                _contract=replacement_signature(changed, _contents={"world.xml": data}),
+            )
+        payload = handoff(changed)
+        try:
+            with pytest.raises(ValueError, match="scene_contract"):
+                replacement.replacement(
+                    changed, second, preserve_state=True, _prepared=payload
+                )
+        finally:
+            if payload is not None:
+                payload.close()
         # A digest mismatch must still fail before a new scene is accepted.
         with pytest.raises(ValueError, match="digest differs"):
             replacement.replacement(new, second, preserve_state=True)
@@ -55,8 +96,16 @@ def test_live_contract_remains_bound_to_the_loaded_source_snapshot(tmp_path):
         engine.close()
 
 
-def test_add_resize_move_rotate_delete_preserve_unedited_live_state(tmp_path):
+@pytest.mark.parametrize("prepared", [False, True])
+def test_add_resize_move_rotate_delete_preserve_unedited_live_state(
+    tmp_path, monkeypatch, prepared
+):
     pytest.importorskip("mujoco")
+    from waddle_sdk.simulators import native_scene
+    from waddle_sdk.simulators.prepared_model import cache
+
+    if prepared:
+        monkeypatch.setenv("WADDLE_SIMULATION_MODEL_CACHE", str(tmp_path / "cache"))
     _, config = make_site(
         "editing", backend="mujoco", robot="yam", environment="two_cubes"
     )
@@ -77,7 +126,20 @@ def test_add_resize_move_rotate_delete_preserve_unedited_live_state(tmp_path):
         return load_scene(root, "simulation.json")[1], root
 
     definition, root = engine_for(1)
-    engine = Engine(definition, root)
+
+    def handoff(definition):
+        native = definition["native_scene"]
+        return cache.get(native["model"], native["files"]) if prepared else None
+
+    def no_reparse(*args, **kwargs):
+        pytest.fail("owner discarded its prepared robot comparison")
+
+    payload = handoff(definition)
+    try:
+        engine = Engine(definition, root, _prepared=payload)
+    finally:
+        if payload is not None:
+            payload.close()
     try:
         robot = engine.read("arm")[0].copy()
         robot[0] += 0.2
@@ -112,7 +174,17 @@ def test_add_resize_move_rotate_delete_preserve_unedited_live_state(tmp_path):
             elif edit == "delete":
                 scene["objects"].remove(b)
             definition, root = engine_for(index)
-            replacement = engine.replacement(definition, root, preserve_state=True)
+            payload = handoff(definition)
+            try:
+                with monkeypatch.context() as owner:
+                    if prepared:
+                        owner.setattr(native_scene, "replacement_signature", no_reparse)
+                    replacement = engine.replacement(
+                        definition, root, preserve_state=True, _prepared=payload
+                    )
+            finally:
+                if payload is not None:
+                    payload.close()
             engine.close()
             engine = replacement
             np.testing.assert_allclose(engine.read("arm")[0], robot, atol=1e-12)

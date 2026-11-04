@@ -46,6 +46,16 @@ def test_prepared_scene_matches_source_and_caches_no_runtime_state(
     assert prepared.contents == {
         name: (tmp_path / "scene" / name).read_bytes() for name in native["files"]
     }
+    from waddle_sdk.simulators.native_scene import replacement_signature
+    from waddle_sdk.simulators.prepared_model import cache as handoffs
+
+    handoff = handoffs.get(native["model"], native["files"])
+    try:
+        assert handoff.replacement_contract(prepared.config) == replacement_signature(
+            prepared.config, _contents=prepared.contents
+        )
+    finally:
+        handoff.close()
     from waddle_sdk.simulators import source_references
     from waddle_sdk.simulators.native_scene import resolve
 

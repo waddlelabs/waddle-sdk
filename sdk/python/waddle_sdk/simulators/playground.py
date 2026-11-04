@@ -510,6 +510,7 @@ def prepare_scene(
             raise ValueError(
                 "simulation.model_cache: select an absolute private directory"
             )
+        from .native_scene import replacement_signature
         from .prepared_model import cache
         from .source_references import cache as references
 
@@ -517,7 +518,13 @@ def prepare_scene(
         # reference list; final publication still hashes every written file and
         # checks current confinement and manifest membership normally.
         references.read(contents["world.xml"], hashes["world.xml"], _tree=root)
-        retained = cache.remember("world.xml", hashes, contents["world.xml"], model)
+        retained = cache.remember(
+            "world.xml",
+            hashes,
+            contents["world.xml"],
+            model,
+            _contract=replacement_signature(config, _tree=root),
+        )
         if not (_prefer_handoff and retained):
             model = load_model("world.xml", contents, _prepared=model)
     return ScenePreparation(config, model, contents)

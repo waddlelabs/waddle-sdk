@@ -66,6 +66,8 @@ class Engine:
 
                 native = config["native_scene"]
                 _native_model = restore(native["model"], native["files"], _prepared)
+                if _native_model is not None:
+                    self._native_contract = _prepared.replacement_contract(config)
             if _native_model is not None:
                 self.model = _native_model
             elif _native_contents is None:
@@ -266,7 +268,7 @@ class Engine:
         contract_changed = {k: v for k, v in config.items() if k not in ignored} != {
             k: v for k, v in self.config.items() if k not in ignored
         }
-        contents, model = None, None
+        contents, model, contract = None, None, None
         if not contract_changed and "native_scene" in config:
             if _prepared is not None:
                 from .prepared_model import restore
@@ -275,6 +277,7 @@ class Engine:
                 model = restore(native["model"], native["files"], _prepared)
                 if model is not None:
                     contents = {native["model"]: _prepared.xml}
+                    contract = _prepared.replacement_contract(config)
             if contents is None:
                 contents = {}
                 resolve(config["_native_root"], config, contents=contents)
@@ -283,11 +286,8 @@ class Engine:
                 self.config,
                 _contents={self.config["native_scene"]["model"]: self._source_xml},
             )
-        contract = (
-            None
-            if contract_changed
-            else replacement_signature(config, _contents=contents)
-        )
+        if not contract_changed and contract is None:
+            contract = replacement_signature(config, _contents=contents)
         if contract_changed or contract != self._native_contract:
             raise ValueError(
                 "simulation.scene_contract: replacement changed robot or camera contracts"

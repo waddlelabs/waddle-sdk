@@ -20,8 +20,16 @@ def test_sealed_handoff_survives_sender_release_and_cannot_be_changed():
     xml = b'<mujoco><worldbody><geom type="sphere" size=".1"/></worldbody></mujoco>'
     files = {"model.xml": hashlib.sha256(xml).hexdigest()}
     cache = PreparedModelCache()
-    cache.remember("model.xml", files, xml, mj.MjModel.from_xml_string(xml.decode()))
+    contract = [{"arm": "arm__"}, {"scene": "scene"}, "original comparison"]
+    cache.remember(
+        "model.xml",
+        files,
+        xml,
+        mj.MjModel.from_xml_string(xml.decode()),
+        _contract=contract,
+    )
     payload = cache.get("model.xml", files)
+    contract[-1] = "caller mutation"
     a, b = multiprocessing.Pipe()
     try:
         a.send(payload)
@@ -32,6 +40,26 @@ def test_sealed_handoff_survives_sender_release_and_cannot_be_changed():
             with pytest.raises(PermissionError):
                 os.pwrite(received.descriptor(), b"changed", 0)
             assert restore("model.xml", files, received).geom_size[0, 0] == 0.1
+            config = {
+                "native_scene": {
+                    "model": "model.xml",
+                    "files": files,
+                    "prefixes": {"arm": "arm__"},
+                    "camera_names": {"scene": "scene"},
+                }
+            }
+            value = received.replacement_contract(config)
+            assert value[-1] == "original comparison"
+            value[-1] = "consumer mutation"
+            assert received.replacement_contract(config)[-1] == "original comparison"
+            config["native_scene"]["prefixes"] = {"arm": "different__"}
+            assert received.replacement_contract(config) is None
+            config["native_scene"]["prefixes"] = {"arm": "arm__"}
+            config["native_scene"]["camera_names"] = {"scene": "different"}
+            assert received.replacement_contract(config) is None
+            config["native_scene"]["camera_names"] = {"scene": "scene"}
+            config["native_scene"]["files"] = {"model.xml": "changed"}
+            assert received.replacement_contract(config) is None
         finally:
             received.close()
         with pytest.raises(ValueError, match="prepared_closed"):
@@ -161,6 +189,54 @@ def test_prepared_handoff_cache_has_entry_and_byte_bounds():
         )
     assert cache.get("world.xml", versions[0]) is None
     assert cache.get("world.xml", versions[-1]) is not None
+
+
+def test_prepared_contract_counts_toward_handoff_byte_limit():
+    mj = pytest.importorskip("mujoco")
+    from waddle_sdk.simulators.prepared_model import PreparedModelCache
+
+    xml = b'<mujoco><worldbody><geom type="sphere" size=".1"/></worldbody></mujoco>'
+    files = {"world.xml": hashlib.sha256(xml).hexdigest()}
+    model = mj.MjModel.from_xml_string(xml.decode())
+    cache = PreparedModelCache()
+    try:
+        assert cache.remember("world.xml", files, xml, model)
+        cache.max_bytes = next(iter(cache.entries.values())).size
+        assert not cache.remember("world.xml", files, xml, model, _contract=["extra"])
+        assert cache.get("world.xml", files) is None
+    finally:
+        cache.close()
+
+
+def test_same_call_robot_signature_matches_bytes_without_mutating_tree():
+    import xml.etree.ElementTree as ET
+
+    from waddle_sdk.simulators.native_scene import replacement_signature
+
+    xml = b"""<mujoco><asset>
+      <mesh name="robot" file="robot.stl" content_type="model/stl"/>
+      <material name="paint" texture="color"/><texture name="color" file="color.png"/>
+      </asset><worldbody><body name="arm__base">
+      <geom mesh="robot" material="paint"/></body></worldbody></mujoco>"""
+    config = {
+        "native_scene": {
+            "model": "world.xml",
+            "prefixes": {"arm": "arm__"},
+            "camera_names": {},
+            "files": {
+                "world.xml": hashlib.sha256(xml).hexdigest(),
+                "robot.stl": "mesh bytes",
+                "color.png": "texture bytes",
+            },
+        }
+    }
+    tree = ET.fromstring(xml)
+    original = ET.tostring(tree)
+    signature = replacement_signature(config, _tree=tree)
+    assert signature == replacement_signature(config, _contents={"world.xml": xml})
+    assert ET.tostring(tree) == original
+    assert signature[-1] == {"robot.stl": "mesh bytes", "color.png": "texture bytes"}
+    assert "content_type" not in "".join(signature[-2])
 
 
 def test_cached_authored_model_still_checks_sources_at_owner_open(

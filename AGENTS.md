@@ -1,3 +1,11 @@
+Trusted authored native handoffs now carry the robot replacement comparison
+computed from the exact same-call XML tree. Comparison bytes share the existing
+source identity and byte budget; changed robot/camera selection or absent records
+retain ordinary comparison. Always freshly validate files before owner dispatch,
+keep independent native models and transfer current state at commit. Do not mutate
+the author tree or expose preparations through scene JSON. Qualification pending
+in the parent .local/edit-robot-contract-20261104; no new latency claim yet.
+
 Trusted Playground authoring can extend an admitted ordered contact layout from
 its exact base XML, finger names and existing prop-name prefix. Generate only new
 pairs and retain unchanged serialized rows and normalized comparison records.

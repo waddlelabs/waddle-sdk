@@ -7,6 +7,7 @@ no live data is retained. Unsupported systems keep ordinary source/cache loading
 No descriptor or native payload is accepted through authoring JSON or files.
 """
 
+import json
 import os
 import platform
 import threading
@@ -37,6 +38,7 @@ class PreparedModel:
     xml: bytes
     fd: int
     size: int
+    contract: bytes = b""
 
     def __post_init__(self):
         object.__setattr__(
@@ -52,11 +54,30 @@ class PreparedModel:
         self._finalizer()
 
     def metadata(self):
-        return self.identity, self.runtime, self.xml, self.size
+        return self.identity, self.runtime, self.xml, self.size, self.contract
+
+    def replacement_contract(self, config):
+        """Read a same-source robot comparison after fresh source validation."""
+        native = config["native_scene"]
+        if not self.contract or self.identity != _identity(
+            native["model"], native["files"]
+        ):
+            return None
+        result = json.loads(self.contract)
+        # The inventory alone does not bind the selected robot/camera mapping.
+        # Changed selection must run the ordinary comparison against that XML.
+        if result[:2] != [native["prefixes"], native["camera_names"]]:
+            return None
+        return result
 
     def duplicate(self):
         return PreparedModel(
-            self.identity, self.runtime, self.xml, os.dup(self.descriptor()), self.size
+            self.identity,
+            self.runtime,
+            self.xml,
+            os.dup(self.descriptor()),
+            self.size,
+            self.contract,
         )
 
     def __reduce__(self):
@@ -68,19 +89,22 @@ class PreparedModel:
             self.runtime,
             self.xml,
             self.size,
+            self.contract,
         )
 
 
-def _receive(descriptor, identity, runtime, xml, size):
-    return PreparedModel(identity, runtime, xml, descriptor.detach(), size)
+def _receive(descriptor, identity, runtime, xml, size, contract):
+    return PreparedModel(identity, runtime, xml, descriptor.detach(), size, contract)
 
 
 def receive(connection, metadata):
     """Receive a descriptor on an existing private pipe to a subprocess owner."""
     from multiprocessing.reduction import recv_handle
 
-    identity, runtime, xml, size = metadata
-    return PreparedModel(identity, runtime, xml, recv_handle(connection), size)
+    identity, runtime, xml, size, contract = metadata
+    return PreparedModel(
+        identity, runtime, xml, recv_handle(connection), size, contract
+    )
 
 
 def _runtime():
@@ -89,7 +113,7 @@ def _runtime():
     return mujoco.__version__, platform.system(), platform.machine()
 
 
-def seal(model, *, identity, xml=b""):
+def seal(model, *, identity, xml=b"", _contract=None):
     """Capture the supplied current model, without retaining live state or a cache."""
     import mujoco as mj
 
@@ -104,8 +128,14 @@ def seal(model, *, identity, xml=b""):
         if os.fstat(fd).st_size != mj.mj_sizeModel(model):
             raise OSError("compiled model export was incomplete")
         fcntl.fcntl(fd, fcntl.F_ADD_SEALS, _seals())
-        size = os.fstat(fd).st_size + len(xml) + len(repr(identity).encode())
-        payload = PreparedModel(identity, _runtime(), xml, fd, size)
+        contract = b"" if _contract is None else json.dumps(_contract).encode()
+        size = (
+            os.fstat(fd).st_size
+            + len(xml)
+            + len(repr(identity).encode())
+            + len(contract)
+        )
+        payload = PreparedModel(identity, _runtime(), xml, fd, size, contract)
         fd = None
         return payload
     except (OSError, AttributeError, ImportError, mj.FatalError):
@@ -121,8 +151,10 @@ class PreparedModelCache:
         self.entries = OrderedDict()
         self.lock = threading.Lock()
 
-    def remember(self, model_name, files, xml, model):
-        payload = seal(model, identity=_identity(model_name, files), xml=xml)
+    def remember(self, model_name, files, xml, model, *, _contract=None):
+        payload = seal(
+            model, identity=_identity(model_name, files), xml=xml, _contract=_contract
+        )
         if payload is None:
             return False
         identity = payload.identity

@@ -10,12 +10,13 @@ import hashlib
 import math
 import os
 import xml.etree.ElementTree as ET
+from copy import copy
 from pathlib import Path
 
 import numpy as np
 
 
-def replacement_signature(config, *, _contents=None):
+def replacement_signature(config, *, _contents=None, _tree=None):
     """Bind a native scene's robot assembly and its referenced model assets.
 
     Replacement is optional and intentionally limited to self-contained native
@@ -27,7 +28,9 @@ def replacement_signature(config, *, _contents=None):
             "simulation.scene_contract: replacement requires native scenes"
         )
     root = (
-        ET.parse(resolve(config["_native_root"], config)).getroot()
+        _tree
+        if _tree is not None
+        else ET.parse(resolve(config["_native_root"], config)).getroot()
         if _contents is None
         else ET.fromstring(_contents[config["native_scene"]["model"]])
     )
@@ -35,12 +38,6 @@ def replacement_signature(config, *, _contents=None):
         raise ValueError(
             "simulation.scene_contract: included native scenes require reopen"
         )
-    for mesh in root.findall("asset/mesh"):
-        # MuJoCo's cached source export may omit this filename-inferred default.
-        if mesh.get("content_type") == "model/stl" and mesh.get("file", "").endswith(
-            ".stl"
-        ):
-            mesh.attrib.pop("content_type")
     selected = config["native_scene"]
     values = [selected["prefixes"], selected["camera_names"]]
     protected = []
@@ -63,6 +60,18 @@ def replacement_signature(config, *, _contents=None):
     # Follow material -> texture references as well as direct geometry assets.
     references = {"mesh", "material", "texture", "hfield", "skin"}
     assets = {(node.tag, node.get("name")): node for node in root.findall("asset/*")}
+    for key, node in list(assets.items()):
+        # Normalize only the comparison copy. Trusted same-call authoring may
+        # supply the exact tree it serialized; never mutate that caller's tree.
+        if (
+            node.tag == "mesh"
+            and node.get("content_type") == "model/stl"
+            and node.get("file", "").endswith(".stl")
+        ):
+            node = copy(node)
+            node.attrib = dict(node.attrib)
+            node.attrib.pop("content_type")
+            assets[key] = node
     pending = list(protected)
     required = {}
     while pending:
