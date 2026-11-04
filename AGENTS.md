@@ -1,3 +1,11 @@
+Resident native scene preparation is implemented but pending qualification and
+Playground wiring. The optional trusted administration hint loads one sealed
+model asynchronously; no MjData or live state is retained, no episode changes,
+and ordinary source/robot-contract checks still precede state-preserving commit.
+Keep the 256 MiB payload/model bound, exact descriptor/metadata match, single
+loader and joined owner cleanup. Eight original missing-feature regressions are
+retained in parent .local/edit-sdk-resident-20261104. No latency result claimed.
+
 Trusted authored placement templates retain an independent native model, exact
 source and detached tree within 128 MiB. Only guarded top-level prop translations
 may recompute constants/reset coordinates; other inputs retain full authoring.

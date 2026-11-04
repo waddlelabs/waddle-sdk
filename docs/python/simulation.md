@@ -622,6 +622,17 @@ Existing drain, episode invalidation, camera-generation and failure fences apply
 Unsupported edits refuse and never silently reset. Explicit `reset` still returns
 to the latest authored initial scene. This is simulation administration only.
 
+Trusted authors may call `administration.prepare_scene(worlds)` during a preview.
+This optional hint returns `False` for unsupported backends or unavailable
+preparation. It does not edit, reset, advance the episode or admit participant
+work. The MuJoCo worker loads one exact sealed authoring model on a background
+thread, retaining at most 256 MiB including the model and its sealed payload.
+It allocates no idle `MjData`. Controls and observations remain on their existing
+path while preparation is pending. Optional load failure preserves ordinary
+loading at commit. Source bytes and robot/camera contracts are still checked
+when `edit_scene` runs, which transfers the latest live state. Preparation is
+session-local and does not constitute a persistent published scene bundle.
+
 A backend's replacement/edit method may return its privileged post-commit state
 mapping instead of `True`. On a single-world site, administration validates and
 returns that state without requesting another snapshot. Boolean-returning backends

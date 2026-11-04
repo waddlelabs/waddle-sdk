@@ -96,7 +96,7 @@ def test_live_contract_remains_bound_to_the_loaded_source_snapshot(
         engine.close()
 
 
-@pytest.mark.parametrize("prepared", [False, True])
+@pytest.mark.parametrize("prepared", [False, True, "resident"])
 def test_add_resize_move_rotate_delete_preserve_unedited_live_state(
     tmp_path, monkeypatch, prepared
 ):
@@ -175,14 +175,34 @@ def test_add_resize_move_rotate_delete_preserve_unedited_live_state(
                 scene["objects"].remove(b)
             definition, root = engine_for(index)
             payload = handoff(definition)
+            resident = None
             try:
+                if prepared == "resident":
+                    from waddle_sdk.simulators.resident_preparation import (
+                        ResidentPreparation,
+                    )
+
+                    resident = ResidentPreparation()
+                    assert resident.offer(payload) is not None
+                    resident.join()
+                    engine.data.time = 12.5 + index
                 with monkeypatch.context() as owner:
                     if prepared:
                         owner.setattr(native_scene, "replacement_signature", no_reparse)
+                    if resident is not None:
+                        from waddle_sdk.simulators import prepared_model
+
+                        owner.setattr(prepared_model, "load_sealed", no_reparse)
                     replacement = engine.replacement(
-                        definition, root, preserve_state=True, _prepared=payload
+                        definition,
+                        root,
+                        preserve_state=True,
+                        _prepared=payload,
+                        _preparation=resident,
                     )
             finally:
+                if resident is not None:
+                    resident.close()
                 if payload is not None:
                     payload.close()
             engine.close()
@@ -195,7 +215,7 @@ def test_add_resize_move_rotate_delete_preserve_unedited_live_state(
             np.testing.assert_allclose(
                 engine.data.joint("prop_a_free").qvel, expected_velocity
             )
-            assert engine.data.time == 12.5
+            assert engine.data.time == (12.5 + index if resident is not None else 12.5)
             assert ("prop_b" in engine.evaluation_snapshot()["bodies"]) == (
                 edit != "delete"
             )

@@ -244,6 +244,13 @@ and drain work before replacement; unsupported worlds remain usable through the
 normal lifecycle. See [trusted administration](../python/simulation.md) for
 revision, stale-image and failure obligations.
 
+A backend may also implement `evaluation_prepare_scene(WorldConfig) -> bool` as
+an optional trusted hint. It must not change the active world, episode, control
+targets or admission, and may return `False` when no preparation is retained.
+`SimulationAdministration.prepare_scene` holds no dispatch/lifecycle lock while
+calling it. Ordinary replacement remains responsible for fresh validation and
+live-state transfer; no backend may treat the hint as an edit receipt.
+
 An authored scene may add a complete non-secret runtime identity when a trusted
 controller must admit only an exact scene/embodiment combination:
 

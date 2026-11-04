@@ -20,6 +20,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Changed
 
+- Add optional trusted scene preparation with one bounded resident native model.
+  Load it independently of physics/control, bind consumption to the exact sealed
+  payload and retain ordinary commit validation and current-state transfer.
+  Qualification and Playground wiring are pending.
+
 - Add bounded trusted authoring templates for final prop translations, preserving
   exact native/reset bytes, independent models and consumer source validation.
   Unsupported dependencies and other scene changes retain ordinary authoring.
