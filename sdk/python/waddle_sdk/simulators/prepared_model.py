@@ -13,7 +13,7 @@ import platform
 import threading
 import weakref
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from .compiled_model import _canonical_inputs
 
@@ -39,6 +39,7 @@ class PreparedModel:
     fd: int
     size: int
     contract: bytes = b""
+    bodies: bytes = b""
 
     def __post_init__(self):
         object.__setattr__(
@@ -54,7 +55,17 @@ class PreparedModel:
         self._finalizer()
 
     def metadata(self):
-        return self.identity, self.runtime, self.xml, self.size, self.contract
+        values = self.identity, self.runtime, self.xml, self.size, self.contract
+        return (*values, self.bodies) if self.bodies else values
+
+    def body_comparison(self, model_name, files, objects):
+        """Map private same-source body analysis to the verified object bindings."""
+        if not self.bodies or self.identity != _identity(model_name, files):
+            return None
+        by_joint = json.loads(self.bodies)
+        if any(joint not in by_joint for joint in objects.values()):
+            return None
+        return {name: by_joint[joint] for name, joint in objects.items()}
 
     def replacement_contract(self, config):
         """Read a same-source robot comparison after fresh source validation."""
@@ -78,12 +89,13 @@ class PreparedModel:
             os.dup(self.descriptor()),
             self.size,
             self.contract,
+            self.bodies,
         )
 
     def __reduce__(self):
         from multiprocessing.reduction import DupFd
 
-        return _receive, (
+        values = (
             DupFd(self.descriptor()),
             self.identity,
             self.runtime,
@@ -91,19 +103,24 @@ class PreparedModel:
             self.size,
             self.contract,
         )
+        return _receive, (*values, self.bodies) if self.bodies else values
 
 
-def _receive(descriptor, identity, runtime, xml, size, contract):
-    return PreparedModel(identity, runtime, xml, descriptor.detach(), size, contract)
+def _receive(descriptor, identity, runtime, xml, size, contract, bodies=b""):
+    return PreparedModel(
+        identity, runtime, xml, descriptor.detach(), size, contract, bodies
+    )
 
 
 def receive(connection, metadata):
     """Receive a descriptor on an existing private pipe to a subprocess owner."""
     from multiprocessing.reduction import recv_handle
 
-    identity, runtime, xml, size, contract = metadata
+    if len(metadata) == 5:
+        metadata = (*metadata, b"")
+    identity, runtime, xml, size, contract, bodies = metadata
     return PreparedModel(
-        identity, runtime, xml, recv_handle(connection), size, contract
+        identity, runtime, xml, recv_handle(connection), size, contract, bodies
     )
 
 
@@ -180,6 +197,34 @@ class PreparedModelCache:
             # A handoff outlives cache eviction. Its private descriptor closes
             # explicitly or when this short-lived handle is released.
             return entry.duplicate()
+
+    def annotate_bodies(self, model_name, files, bodies):
+        """Complete a private preparation from its trusted same-call author tree.
+
+        Do not accept this analysis from scene files or authoring JSON. Existing
+        handed-out descriptors retain their own immutable metadata and lifetime.
+        Oversized optional analysis leaves the compiled preparation available.
+        """
+        identity = _identity(model_name, files)
+        encoded = json.dumps(bodies).encode()
+        with self.lock:
+            previous = self.entries.get(identity)
+            if previous is None:
+                return False
+            size = previous.size - len(previous.bodies) + len(encoded)
+            if size > self.max_bytes:
+                return False
+            try:
+                descriptor = os.dup(previous.descriptor())
+            except OSError:
+                return False
+            entry = replace(previous, fd=descriptor, size=size, bodies=encoded)
+            self.entries[identity] = entry
+            self.entries.move_to_end(identity)
+            previous.close()
+            while sum(value.size for value in self.entries.values()) > self.max_bytes:
+                self.entries.popitem(last=False)[1].close()
+            return True
 
     def close(self):
         with self.lock:

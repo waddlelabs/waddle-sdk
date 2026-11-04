@@ -1,6 +1,7 @@
 """Private whole-scene handoffs retain source identity and independent models."""
 
 import hashlib
+import json
 import os
 
 import numpy as np
@@ -9,6 +10,105 @@ import pytest
 pytestmark = pytest.mark.skipif(
     not hasattr(os, "memfd_create"), reason="sealed model handoff requires Linux"
 )
+
+
+@pytest.mark.parametrize("annotated", [False, True])
+def test_body_analysis_survives_both_private_transports(annotated):
+    import multiprocessing
+    from multiprocessing.reduction import send_handle
+
+    mj = pytest.importorskip("mujoco")
+    from waddle_sdk.simulators.prepared_model import (
+        PreparedModelCache,
+        receive,
+        restore,
+    )
+
+    xml = b'<mujoco><worldbody><body><freejoint name="j"/><geom size=".1"/></body></worldbody></mujoco>'
+    files = {"world.xml": hashlib.sha256(xml).hexdigest()}
+    cache = PreparedModelCache()
+    assert cache.remember("world.xml", files, xml, mj.MjModel.from_xml_string(xml))
+    original = cache.get("world.xml", files)
+    records = {"j": "fingerprint"}
+    if annotated:
+        assert cache.annotate_bodies("world.xml", files, records)
+    records["j"] = "caller mutation"
+    payload = cache.get("world.xml", files)
+    expected = {"renamed": "fingerprint"} if annotated else None
+    a, b = multiprocessing.Pipe()
+    try:
+        assert original.body_comparison("world.xml", files, {"old": "j"}) is None
+        assert restore("world.xml", files, original) is not None
+        a.send(payload)
+        send_handle(a, payload.descriptor(), os.getpid())
+        metadata = payload.metadata()
+        assert len(metadata) == (6 if annotated else 5)
+        payload.close()
+        original.close()
+        cache.close()
+        for received in (b.recv(), receive(b, metadata)):
+            try:
+                portable = {"nested/model.xml": files["world.xml"]}
+                assert (
+                    received.body_comparison(
+                        "nested/model.xml", portable, {"renamed": "j"}
+                    )
+                    == expected
+                )
+                value = received.body_comparison("world.xml", files, {"renamed": "j"})
+                if value is not None:
+                    value["renamed"] = "consumer mutation"
+                assert (
+                    received.body_comparison("world.xml", files, {"renamed": "j"})
+                    == expected
+                )
+                assert (
+                    received.body_comparison("world.xml", files, {"new": "absent"})
+                    is None
+                )
+                assert (
+                    received.body_comparison(
+                        "world.xml", {"world.xml": "changed"}, {"a": "j"}
+                    )
+                    is None
+                )
+                assert restore("world.xml", files, received) is not None
+            finally:
+                received.close()
+    finally:
+        original.close()
+        payload.close()
+        cache.close()
+        a.close()
+        b.close()
+
+
+def test_body_analysis_budget_keeps_model_when_optional_analysis_does_not_fit():
+    mj = pytest.importorskip("mujoco")
+    from waddle_sdk.simulators.prepared_model import PreparedModelCache
+
+    xml = b'<mujoco><worldbody><geom size=".1"/></worldbody></mujoco>'
+    files = {"world.xml": hashlib.sha256(xml).hexdigest()}
+    cache = PreparedModelCache()
+    try:
+        assert not cache.annotate_bodies("world.xml", files, {"j": "value"})
+        assert cache.remember("world.xml", files, xml, mj.MjModel.from_xml_string(xml))
+        entry = next(iter(cache.entries.values()))
+        records = {"j": "value"}
+        cache.max_bytes = entry.size + len(json.dumps(records).encode()) - 1
+        assert not cache.annotate_bodies("world.xml", files, records)
+        assert entry.descriptor() >= 0 and not entry.bodies
+        cache.max_bytes += 1
+        assert cache.annotate_bodies("world.xml", files, records)
+        assert next(iter(cache.entries.values())).size == cache.max_bytes
+        with pytest.raises(ValueError, match="prepared_closed"):
+            entry.descriptor()
+        # Replacing optional metadata does not count the prior bytes twice.
+        assert cache.annotate_bodies("world.xml", files, records)
+        assert not cache.annotate_bodies("world.xml", {"world.xml": "changed"}, records)
+        assert len(cache.entries) == 1
+    finally:
+        cache.close()
 
 
 def test_sealed_handoff_survives_sender_release_and_cannot_be_changed():

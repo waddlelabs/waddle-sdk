@@ -347,6 +347,9 @@ class ScenePreparation:
     config: dict
     model: Any
     contents: dict[str, bytes]
+    # Trusted same-call conversion can derive more immutable analysis from this
+    # exact serialized tree. It is transient, never retained in the model cache.
+    _tree: Any = None
 
 
 def compile_scene(config, scene, output: Path, *, revision=1, easy_grasp=True):
@@ -527,4 +530,6 @@ def prepare_scene(
         )
         if not (_prefer_handoff and retained):
             model = load_model("world.xml", contents, _prepared=model)
-    return ScenePreparation(config, model, contents)
+    return ScenePreparation(
+        config, model, contents, _tree=root if selected_cache and retained else None
+    )
