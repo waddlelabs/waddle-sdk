@@ -20,6 +20,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Changed
 
+- Verify the exact retired contact references and remove authored bodies through
+  native cascading deletion, avoiding repeated individual pair deletion. Preserve
+  full-parser fallback for retained references; qualification is pending.
+
 - Carry immutable authored body comparisons through the existing private native
   model handoff, retaining source/binding checks, byte bounds and parsing fallback.
   All 44 edits across 11 published presets preserve live state/history and exact

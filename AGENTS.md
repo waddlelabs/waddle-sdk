@@ -1,3 +1,10 @@
+Candidate: native authored body removal verifies the exact retired contact-pair
+multiset, then lets MuJoCo remove those references with the body. Fresh source
+validation, independent models and the 32-edit refresh remain. The offline bowl
+probe preserves all native arrays and ten physics steps; full regression/catalog
+qualification is pending. See the parent/local edit-spec-profile-20261104 evidence.
+Addition latency and long-session acceptance remain open; no deployment change.
+
 SDK da73b31 and Twin 73f4353e carry immutable authored body fingerprints through
 the private native-model handoff, after fresh source/binding checks. Retain byte
 bounds, older/missing-record parsing fallback and actual live-world transfer.

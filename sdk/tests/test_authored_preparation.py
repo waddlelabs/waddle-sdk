@@ -345,3 +345,70 @@ def test_repeated_add_remove_bounds_native_preparation_and_matches_full_parser(
     # attachment bookkeeping instead of accumulating it for the session lifetime.
     assert 1 < len(parses) < 70
     buffers.close()
+
+
+@pytest.mark.parametrize("invalid_reference", [False, True])
+def test_body_removal_cascades_exact_pairs_and_rejects_retained_references(
+    tmp_path, monkeypatch, invalid_reference
+):
+    buffers = source_buffers.SourceBuffers()
+    monkeypatch.setattr(source_buffers, "cache", buffers)
+    monkeypatch.setenv("WADDLE_SIMULATION_MODEL_CACHE", str(tmp_path / "cache"))
+    source = b"""<mujoco><compiler angle="radian"/><asset/>
+      <worldbody><geom name="floor" type="plane" size="1 1 .1"/>
+        <body name="prop_a" pos="0 0 1"><freejoint/>
+          <geom name="a" size=".1"/></body>
+        <body name="prop_b" pos="1 0 1"><freejoint/>
+          <geom name="b" size=".1"/><geom name="b2" pos=".2 0 0" size=".1"/></body>
+        <body name="prop_c" pos="2 0 1"><freejoint/>
+          <geom name="c" size=".1"/></body></worldbody>
+      <contact><pair geom1="floor" geom2="a" condim="3"/>
+        <pair geom1="a" geom2="b" condim="4" friction=".7 .7 .01 .001 .001"/>
+        <pair geom1="b2" geom2="a" condim="6"/>
+        <pair geom1="b" geom2="c" condim="3"/>
+        <pair geom1="floor" geom2="c" condim="4"/></contact>
+      <keyframe><key name="initial"/></keyframe></mujoco>"""
+    first = load_model("world.xml", {"world.xml": source}, cache="", _authored=True)
+    original_pairs = first.pair_geom1.copy(), first.pair_geom2.copy()
+    tree = ET.fromstring(source)
+    world, contacts = tree.find("worldbody"), tree.find("contact")
+    world.remove(world.find("body[@name='prop_b']"))
+    for pair in list(contacts):
+        if {pair.get("geom1"), pair.get("geom2")} & {"b", "b2"}:
+            contacts.remove(pair)
+    if invalid_reference:
+        ET.SubElement(
+            contacts,
+            "pair",
+            geom1="a",
+            geom2="b",
+            condim="4",
+            friction=".7 .7 .01 .001 .001",
+        )
+    edited = {"world.xml": ET.tostring(tree)}
+    delete, parse = mj.MjSpec.delete, mj.MjSpec.from_file
+    deleted, parsed = [], []
+
+    def record_delete(spec, element):
+        deleted.append(type(element).__name__)
+        return delete(spec, element)
+
+    def record_parse(*args, **kwargs):
+        parsed.append(True)
+        return parse(*args, **kwargs)
+
+    with monkeypatch.context() as tracked:
+        tracked.setattr(mj.MjSpec, "delete", record_delete)
+        tracked.setattr(mj.MjSpec, "from_file", record_parse)
+        if invalid_reference:
+            with pytest.raises(ValueError, match="b"):
+                load_model("world.xml", edited, cache="", _authored=True)
+            assert parsed and not buffers.prepared
+        else:
+            actual = load_model("world.xml", edited, cache="", _authored=True)
+            assert not parsed and "MjsPair" not in deleted
+            expected = load_model("world.xml", edited, cache="")
+            same_model(actual, expected)
+    np.testing.assert_array_equal(first.pair_geom1, original_pairs[0])
+    np.testing.assert_array_equal(first.pair_geom2, original_pairs[1])
+    buffers.close()

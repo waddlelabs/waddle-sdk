@@ -328,21 +328,23 @@ def revise(spec, old, new):
     # directory rebinding before attachment; let the full parser handle them.
     if any(node.get("file") for parent in [*bodies, *assets] for node in parent.iter()):
         return None
+    if removed:
+        # Native body deletion also removes pairs that reference its geoms. Check
+        # that this is exactly the source delta before relying on that cascade;
+        # retained references to a retired geom must reach the full parser.
+        affected_pairs = Counter(
+            (pair.geomname1, pair.geomname2)
+            for pair in spec.pairs
+            if {pair.geomname1, pair.geomname2} & retired
+        )
+        if affected_pairs != Counter(remove_pairs):
+            return None
     result = spec.copy()
     # Body deletion remaps the native keyframe arrays. Clear the old reset key
     # first; deleting/recreating it afterwards resurrects a duplicate native key.
     for key in list(result.keys):
         result.delete(key)
     result.add_key(name="initial")
-    if remove_pairs:
-        counts = Counter(remove_pairs)
-        for pair in result.pairs:
-            key = (pair.geomname1, pair.geomname2)
-            if counts[key]:
-                result.delete(pair)
-                counts[key] -= 1
-        if any(counts.values()):
-            return None
     for node in removed:
         result.delete(result.body(node.get("name")))
     for tag, name, attribute, numbers in updates:
