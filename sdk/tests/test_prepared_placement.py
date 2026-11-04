@@ -1,5 +1,6 @@
 """Reposition private scene preparations without recompiling unchanged geometry."""
 
+import xml.etree.ElementTree as ET
 from copy import deepcopy
 
 import numpy as np
@@ -96,6 +97,23 @@ def test_identical_linked_scene_reuses_private_template(buffers, monkeypatch):
         pytest.fail("identical complete scene preparation was compiled again")
 
     monkeypatch.setattr(mj.MjSpec, "compile", unexpected_compile)
+    same_model(compile_source(contents), expected)
+
+
+def test_contact_row_order_keeps_the_authoritative_native_layout(buffers):
+    tree = ET.fromstring(source()["world.xml"])
+    robot = tree.find("worldbody/body[@name='robot']")
+    robot.find("geom").set("name", "first")
+    ET.SubElement(robot, "geom", name="second", size=".04", pos=".15 0 0")
+    contacts = tree.find("contact")
+    for name in ("first", "second"):
+        ET.SubElement(
+            contacts, "pair", name="pair_" + name, geom1=name, geom2="object_geom"
+        )
+    compile_source({"world.xml": ET.tostring(tree)})
+    contacts[:] = list(reversed(contacts))
+    contents = {"world.xml": ET.tostring(tree)}
+    expected = mj.MjModel.from_xml_string(contents["world.xml"].decode())
     same_model(compile_source(contents), expected)
 
 
