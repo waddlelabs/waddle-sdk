@@ -23,7 +23,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 - Extend recognized Playground contact preparations using only new geometry
   pairs, retaining exact serialized rows and normalized comparison records.
   Preserve complete source validation, native compilation and live-state transfer;
-  unrecognized layouts keep the full builder. Local qualification is pending.
+  unrecognized layouts keep the full builder. All 44 edits across 11 published
+  presets pass with byte-identical XML, preserved state/history and no freshness
+  retries. Paired bowl add/image means fall from 3.148 to 2.673 s; simple-scene
+  timings are mixed and the sub-second target remains unmet.
 
 - Reuse prepared Playground contact sections and serialized fragments, keyed by
   exact base contacts and ordered geometry names. Keep every contact pair and

@@ -5,7 +5,16 @@ Other layouts keep the full builder. Same-call comparison may borrow these priva
 records; caller trees remain detached. Immediate-delta tokens retain no ancestor
 preparations, and the existing byte limit charges both complete XML and serialized
 rows. Fresh source/asset validation, native compilation, fallback and state transfer
-remain. Qualification is pending; no sub-second or deployment result is claimed.
+remain. Only the trusted Cartesian-product builder contract may enable this
+incremental path. All 44 edits across the 11 published presets pass, and all 55
+XML documents are byte-identical to the preceding compiler. Eight additions use
+the incremental builder; all 44 reuse contact comparison and native preparation.
+Selected native/source coverage passes 112 cases plus five corrected fixtures;
+retain the original budget-oracle and parser-spy failures. The complete SDK suite
+passes 1,348 cases (478 optional skips), with strict docs and changed-source lint.
+Paired bowl add/image means improve 3.148 to 2.673 s; simple timings are mixed.
+The sub-second target remains open and startup stays deferred. See the parent's
+logs/playground-contact-index-20261104.md/.json for complete evidence and limits.
 
 Earlier qualification: SDK 4e7e9e6 retains exact generated contact trees and serialized sections
 by base contact bytes, ordered geometry names and builder identity. Only trusted
@@ -60,7 +69,8 @@ The sub-second goal remains open. Keep the unprimed experiment and full samples
 in the parent's .local/edit-critical-path-20261104 and reference-preparation report.
 
 Prepared authored specifications now retain read-only old-XML comparison records
-and contact keys. Parse and compare the exact new XML on every revision and keep
+and contact keys. Compare the exact new XML on every revision, borrowing only
+the trusted same-call author's verified comparison records, and keep
 fresh asset hashes, independent native models, full-parser fallback and the
 32-edit refresh. Records share specification eviction/failure/fork cleanup; the
 source-byte budget excludes their Python overhead and native RSS. All 55 native
