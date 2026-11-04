@@ -384,32 +384,6 @@ class SimulationAdministration:
         """
         return self._replace_scene(worlds, preserve_state=True)
 
-    def prepare_scene(self, worlds: Mapping[str, WorldConfig]) -> bool:
-        """Optionally prepare an authored edit without changing the running world.
-
-        This is a trusted simulation-only hint, not admission or an edit receipt.
-        Backends without ``evaluation_prepare_scene`` return False. Preparation
-        retains no live state or source-validity decision; ``edit_scene`` still
-        performs ordinary validation and transfers boundary-time state. Dispatch
-        and lifecycle locks are not held during this optional background work.
-        """
-        with self._lock:
-            binding = self._require()
-            if set(worlds) != set(binding.worlds) or any(
-                not isinstance(config, WorldConfig) or config.name != name
-                for name, config in worlds.items()
-            ):
-                raise ValueError(
-                    "scene preparation requires every bound world's WorldConfig"
-                )
-            operations = [
-                (getattr(backend, "evaluation_prepare_scene", None), worlds[name])
-                for name, backend in binding.worlds.items()
-            ]
-        if any(not callable(operation) for operation, _ in operations):
-            return False
-        return all(operation(config) is True for operation, config in operations)
-
     def replace_scene(self, worlds: Mapping[str, WorldConfig]) -> SimulationSnapshot:
         """Replace prepared scenes after the caller drains participant operations.
 

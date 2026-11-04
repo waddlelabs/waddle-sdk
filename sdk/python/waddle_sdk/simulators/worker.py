@@ -16,7 +16,6 @@ from pathlib import Path
 
 def serve(connection: Connection) -> None:
     engine = None
-    preparation = None
     with tempfile.TemporaryDirectory(prefix="waddle-simulation-") as scratch:
         try:
             initial = connection.recv()
@@ -39,10 +38,6 @@ def serve(connection: Connection) -> None:
             finally:
                 if prepared is not None:
                     prepared.close()
-            if getattr(engine, "supports_resident_preparation", False):
-                from .resident_preparation import ResidentPreparation
-
-                preparation = ResidentPreparation()
             # Readiness means both sensor streams render, not merely that an
             # engine module imports. Startup failure never degrades to a mock.
             independent_render = callable(getattr(engine, "render_snapshot", None))
@@ -63,7 +58,6 @@ def serve(connection: Connection) -> None:
                         "sealed_render_model": bool(
                             getattr(engine, "supports_sealed_render_model", False)
                         ),
-                        "scene_preparation": preparation is not None,
                     },
                 )
             )
@@ -154,8 +148,6 @@ def serve(connection: Connection) -> None:
                     "evaluation_reset",
                     "evaluation_replace_scene",
                     "evaluation_edit_scene",
-                    "evaluation_prepare_scene",
-                    "evaluation_preparation_status",
                 }:
                     raise ValueError("unsupported simulation operation")
                 try:
@@ -172,24 +164,6 @@ def serve(connection: Connection) -> None:
                         if not real_time:
                             advance(arguments[0])
                         result = None
-                    elif operation == "evaluation_prepare_scene":
-                        from .prepared_model import receive
-
-                        payload = receive(connection, arguments[1])
-                        try:
-                            result = (
-                                None
-                                if preparation is None
-                                else preparation.offer(payload)
-                            )
-                        finally:
-                            payload.close()
-                    elif operation == "evaluation_preparation_status":
-                        result = (
-                            False
-                            if preparation is None
-                            else preparation.status(arguments[0])
-                        )
                     elif operation == "render_snapshot":
                         result = engine.render_snapshot(
                             generation,
@@ -228,11 +202,6 @@ def serve(connection: Connection) -> None:
                                 **(
                                     {"_prepared": arguments[1]}
                                     if len(arguments) > 1
-                                    else {}
-                                ),
-                                **(
-                                    {"_preparation": preparation}
-                                    if preparation is not None
                                     else {}
                                 ),
                             )
@@ -291,8 +260,6 @@ def serve(connection: Connection) -> None:
             except (OSError, EOFError):
                 pass
         finally:
-            if preparation is not None:
-                preparation.close()
             if engine is not None:
                 engine.close()
             connection.close()

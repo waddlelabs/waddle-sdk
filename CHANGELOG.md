@@ -20,10 +20,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Changed
 
-- Add optional trusted scene preparation with one bounded resident native model.
-  Load it independently of physics/control, bind consumption to the exact sealed
-  payload and retain ordinary commit validation and current-state transfer.
-  Qualification and Playground wiring are pending.
+- Reject the resident native preparation experiment after whole-addition timing
+  fails to improve. Restore the qualified SDK runtime/API and retain all evidence.
 
 - Add bounded trusted authoring templates for final prop translations, preserving
   exact native/reset bytes, independent models and consumer source validation.

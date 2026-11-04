@@ -56,7 +56,6 @@ class World:
         self._renderer = None
         self._independent_render = False
         self._sealed_render_model = False
-        self._scene_preparation = False
         self._generation = 0
         self.content_timing_kind = None
 
@@ -139,10 +138,6 @@ class World:
                         ready.get("camera_content_timing_kind")
                         if isinstance(ready, dict)
                         else None
-                    )
-                    self._scene_preparation = (
-                        isinstance(ready, dict)
-                        and ready.get("scene_preparation") is True
                     )
                     if self.content_timing_kind not in (
                         None,
@@ -276,14 +271,7 @@ class World:
         # Preserve FIFO within each priority and one transaction on the pipe.
         with self._requests:
             ticket = (
-                operation
-                in {
-                    "capture",
-                    "render_snapshot",
-                    "evaluation_snapshot",
-                    "evaluation_prepare_scene",
-                    "evaluation_preparation_status",
-                },
+                operation in {"capture", "render_snapshot", "evaluation_snapshot"},
                 self._request_sequence,
             )
             self._request_sequence += 1
@@ -316,11 +304,7 @@ class World:
                 prepared = (
                     arguments[1]
                     if operation
-                    in {
-                        "evaluation_replace_scene",
-                        "evaluation_edit_scene",
-                        "evaluation_prepare_scene",
-                    }
+                    in {"evaluation_replace_scene", "evaluation_edit_scene"}
                     and len(arguments) > 1
                     else None
                 )
@@ -449,35 +433,6 @@ class AdministrativeWorld(World):
 
     def evaluation_edit_scene(self, config: WorldConfig):
         return self._replace_scene(config, "evaluation_edit_scene")
-
-    def evaluation_prepare_scene(self, config: WorldConfig):
-        """Load one private candidate while the current simulation keeps running."""
-        if not self._scene_preparation:
-            return False
-        _, definition = load_scene(
-            config.site_root, config.connection.get("simulation")
-        )
-        from .prepared_model import cache
-
-        native = definition.get("native_scene")
-        prepared = (
-            None if native is None else cache.get(native["model"], native["files"])
-        )
-        if prepared is None:
-            return False
-        try:
-            token = self.call("evaluation_prepare_scene", definition, prepared)
-        finally:
-            prepared.close()
-        if token is None:
-            return False
-        deadline = time.monotonic() + 5
-        while time.monotonic() < deadline:
-            ready = self.call("evaluation_preparation_status", token)
-            if ready is not None:
-                return ready
-            time.sleep(0.01)
-        return False  # An unfinished optional load never changes the active world.
 
     def _replace_scene(self, config, operation):
         _, definition = load_scene(

@@ -232,7 +232,7 @@ class PreparedModelCache:
                 self.entries.popitem()[1].close()
 
 
-def restore(model_name, files, prepared, *, _preparation=None):
+def restore(model_name, files, prepared):
     """Load a matching sealed native model after ordinary source validation."""
     if not isinstance(prepared, PreparedModel) or prepared.identity != _identity(
         model_name, files
@@ -240,10 +240,6 @@ def restore(model_name, files, prepared, *, _preparation=None):
         raise ValueError(
             "simulation.prepared_source: preparation describes different sources"
         )
-    if _preparation is not None:
-        model = _preparation.take(prepared)
-        if model is not None:
-            return model
     return load_sealed(prepared)
 
 

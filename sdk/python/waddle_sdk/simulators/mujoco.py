@@ -35,7 +35,6 @@ from .scene import depth_z16, profile
 class Engine:
     content_timing_kind = "simulated_state"
     supports_sealed_render_model = True
-    supports_resident_preparation = True
 
     def __init__(
         self,
@@ -257,15 +256,7 @@ class Engine:
             else f"{part}__"
         )
 
-    def replacement(
-        self,
-        config,
-        scratch,
-        *,
-        preserve_state=False,
-        _prepared=None,
-        _preparation=None,
-    ):
+    def replacement(self, config, scratch, *, preserve_state=False, _prepared=None):
         """Prepare a new environment while preserving the opened port contracts."""
         from .native_scene import replacement_signature, resolve
 
@@ -283,12 +274,7 @@ class Engine:
                 from .prepared_model import restore
 
                 native = config["native_scene"]
-                model = restore(
-                    native["model"],
-                    native["files"],
-                    _prepared,
-                    _preparation=_preparation,
-                )
+                model = restore(native["model"], native["files"], _prepared)
                 if model is not None:
                     contents = {native["model"]: _prepared.xml}
                     contract = _prepared.replacement_contract(config)
