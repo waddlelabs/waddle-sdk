@@ -1,3 +1,12 @@
+The next candidate retains exact generated contact trees and serialized sections
+by base contact bytes, ordered geometry names and builder identity. Only trusted
+same-call authoring may substitute that fragment while serializing current assets
+and reset keys. Return detached trees; bound retention to two entries/32 MiB of
+source bytes, excluding Python overhead, and discard on fork or builder failure.
+Do not remove or reorder pairs or change their material parameters. Source hashes,
+native compilation and live-state transfer remain. Qualification is pending in
+the parent's .local/edit-contact-preparation-20261104.
+
 SDK 690410a authoring passes its exact same-call XML tree to native comparison
 preparation, which takes a detached copy before normalizing or retaining it.
 Portable bytes, fresh asset hashes, independent compilation, fallback and reset

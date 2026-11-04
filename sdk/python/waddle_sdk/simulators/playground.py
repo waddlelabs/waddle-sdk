@@ -304,6 +304,17 @@ def _pairs(root, fingers, props):
         solimp="0.95 0.99 0.001",
     )
     contact = root.find("contact")
+    if os.environ.get("WADDLE_SIMULATION_MODEL_CACHE"):
+        from .playground_contacts import cache
+
+        fragment = cache.prepare(contact, fingers, props, _contact_pairs)
+        root[list(root).index(contact)] = fragment.node
+        return fragment
+    _contact_pairs(contact, fingers, props)
+    return None
+
+
+def _contact_pairs(contact, fingers, props):
     existing_pairs = {
         frozenset((pair.get("geom1"), pair.get("geom2")))
         for pair in contact.findall("pair")
@@ -419,8 +430,9 @@ def prepare_scene(
                 root.find("worldbody"), root.find("asset"), obj, easy_grasp
             )
         ] + fixture_props
-    if easy_grasp:
-        _pairs(root, fingers, props)
+    contacts = _pairs(root, fingers, props) if easy_grasp else None
+    from .playground_contacts import scene_xml
+
     contents, hashes = {}, {}
     sources = {}
     for source, (data, digest) in captured.items():
@@ -442,7 +454,7 @@ def prepare_scene(
     # require rebuilding topology or loading all robot assets a second time.
     initial = ET.SubElement(ET.SubElement(root, "keyframe"), "key", name="initial")
     model_path = output / "world.xml"
-    contents["world.xml"] = ET.tostring(root, encoding="unicode").encode()
+    contents["world.xml"] = scene_xml(root, contacts)
     import mujoco as mj
 
     from .compiled_model import load_model
@@ -472,7 +484,7 @@ def prepare_scene(
     key = model.key("initial").id
     model.key_qpos[key] = data.qpos
     model.key_ctrl[key] = data.ctrl
-    contents["world.xml"] = ET.tostring(root, encoding="unicode").encode()
+    contents["world.xml"] = scene_xml(root, contacts)
     hashes["world.xml"] = hashlib.sha256(contents["world.xml"]).hexdigest()
     model_path.write_bytes(contents["world.xml"])
     config.update(environment="playground", scene_revision=f"1.0.{revision}")

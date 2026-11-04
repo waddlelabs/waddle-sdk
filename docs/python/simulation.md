@@ -936,6 +936,14 @@ Entries are discarded after a fork or on eviction. This saves source generation;
 it neither skips the subsequent native compilation/validation nor retains live
 coordinates. The final reset key and running-world edit semantics are unchanged.
 
+Prepared contact sections use a separate two-entry, 32 MiB source-byte budget
+(excluding Python object overhead). Exact base-contact XML, ordered finger/prop
+names and builder identity guard reuse; every pair and its order are retained.
+Authoring receives a detached tree and may reuse its serialized contact fragment
+while writing the same call's current assets and reset key. Namespace-bearing or
+unrecognized XML falls back to ordinary serialization. Fork, eviction or builder
+failure discards contact preparations. This cache retains no native model/state.
+
 Trusted Playground authoring can retain a private parsed specification alongside
 each of those two asset sets. Read-only comparison records retain the parsed old
 XML and contact keys with that specification. Every new source is compared in

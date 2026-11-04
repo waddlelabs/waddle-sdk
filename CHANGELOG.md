@@ -20,6 +20,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Changed
 
+- Reuse prepared Playground contact sections and serialized fragments, keyed by
+  exact base contacts and ordered geometry names. Keep every contact pair and
+  parameter, detached trees, fresh asset serialization and canonical reset keys.
+
 - Prepare native authored-source comparisons from a detached copy of the exact
   tree just serialized, avoiding a redundant XML parse. Preserve byte-based
   callers, fresh asset hashes, native fallback and independent runtime models.
