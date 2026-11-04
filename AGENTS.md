@@ -1,9 +1,16 @@
-Candidate: native authored body removal verifies the exact retired contact-pair
-multiset, then lets MuJoCo remove those references with the body. Fresh source
-validation, independent models and the 32-edit refresh remain. The offline bowl
-probe preserves all native arrays and ten physics steps; full regression/catalog
-qualification is pending. See the parent/local edit-spec-profile-20261104 evidence.
-Addition latency and long-session acceptance remain open; no deployment change.
+SDK c42e584 verifies the exact retired pair multiset and lets native body removal
+remove its contact references, preserving full-parser rejection of retained invalid
+references. All 86 focused native cases, 1,349 default SDK cases (484 skips), strict
+docs and lint/format pass. All 44 edits across 11 exact published presets preserve
+state/history/processes; all 55 XML files and 44 affected-object sets match.
+Paired bowl deletion/image means improve 6.000 to 5.488 s. Addition remains above
+one second (1.028–1.646 s for ten presets, 2.565 s for bowls); resize stays slow.
+Keep the failing baseline, server push error and all samples, including two stale
+image retries on each candidate bowl resize. No freshness limit is relaxed.
+All 42 recorded PIDs are absent, process audit is empty, and eight closed archives
+have full per-file hash readback. See logs/playground-native-body-removal-20261104.md/.json
+and .local/edit-spec-profile-20261104 in the parent isolated worktree. Sub-second
+and long-session goals remain open; startup deferred. No external/physical change.
 
 SDK da73b31 and Twin 73f4353e carry immutable authored body fingerprints through
 the private native-model handoff, after fresh source/binding checks. Retain byte

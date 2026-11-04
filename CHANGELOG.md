@@ -20,9 +20,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Changed
 
-- Verify the exact retired contact references and remove authored bodies through
-  native cascading deletion, avoiding repeated individual pair deletion. Preserve
-  full-parser fallback for retained references; qualification is pending.
+- Verify exact retired contact references and remove authored bodies through native
+  cascading deletion. Reject retained invalid references through the full parser.
+  All 86 focused native and 1,349 default SDK checks, strict docs and all 44 edits
+  across 11 published presets pass, preserving source, live state and history.
+  Paired bowl deletion/image means fall from 6.000 to 5.488 s; addition remains
+  above one second. Retain all samples, the failing baseline and verified archives.
 
 - Carry immutable authored body comparisons through the existing private native
   model handoff, retaining source/binding checks, byte bounds and parsing fallback.
