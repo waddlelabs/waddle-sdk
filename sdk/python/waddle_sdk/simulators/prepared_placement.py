@@ -84,12 +84,24 @@ def translate(model, before, after):
         or any(_references(node, names) for node in unchanged)
     ):
         return None
+    return translated_model(model, updates)
+
+
+def translated_model(model, updates):
+    """Copy a privately verified authoring model and recompute placement constants.
+
+    Callers verify the complete source/dependencies first. A missing coordinate
+    address denotes a fixed, visual-only authored target, not a live-state edit.
+    """
+    import mujoco as mj
+
     result = copy(model)
     for body, qpos, position in updates:
         result.body_pos[body] = position
-        result.qpos0[qpos : qpos + 3] = position
-        result.qpos_spring[qpos : qpos + 3] = position
-        result.key_qpos[:, qpos : qpos + 3] = position
+        if qpos is not None:
+            result.qpos0[qpos : qpos + 3] = position
+            result.qpos_spring[qpos : qpos + 3] = position
+            result.key_qpos[:, qpos : qpos + 3] = position
     # Recompute all constants and statistics from the revised default pose.
     # This is disposable preparation data, never the running world's MjData.
     mj.mj_setConst(result, mj.MjData(result))

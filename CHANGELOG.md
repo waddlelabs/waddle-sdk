@@ -20,6 +20,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Changed
 
+- Add bounded trusted authoring templates for final prop translations, preserving
+  exact native/reset bytes, independent models and consumer source validation.
+  Unsupported dependencies and other scene changes retain ordinary authoring.
+
 - Reuse a bounded private whole-scene template for isolated free-object
   translations, recomputing native constants and preserving source validation,
   independent models and full compilation for other changes/dependencies.

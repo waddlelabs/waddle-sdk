@@ -998,6 +998,15 @@ models never alias the private template, and no running coordinates or images
 are retained. Optional timing reports distinguish `placement_prepare_s` from
 `native_compile_s`; this model cache alone does not prewarm a UI addition.
 
+Trusted authoring can retain a private `PlacementTemplate` from a completed
+`ScenePreparation`, bounded to 128 MiB of native/source/tree payload. It accepts
+only position changes in the same full authored scene, including fixed visual
+targets without external dependencies. It updates body and initial/reset
+coordinates, native constants, exact XML and manifest digests. Other changes and
+unsupported dependencies retain fresh authoring. Returned models do not alias
+the original or retained model; consumers still freshly verify the complete
+published source. Templates carry no live state and close with their owner.
+
 Native owners compare and compile one captured, verified source snapshot instead
 of reopening its files at each preparation stage. Trusted authoring can retain
 its already compiled model while filling the cache. On Linux with sealed-memory

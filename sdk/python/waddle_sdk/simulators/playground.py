@@ -347,8 +347,8 @@ class ScenePreparation:
     config: dict
     model: Any
     contents: dict[str, bytes]
-    # Trusted same-call conversion can derive more immutable analysis from this
-    # exact serialized tree. It is transient, never retained in the model cache.
+    # Trusted conversion can derive immutable analysis from this exact tree.
+    # A bounded private placement template may retain its own detached copy.
     _tree: Any = None
 
 

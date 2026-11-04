@@ -1,3 +1,9 @@
+Trusted authored placement templates retain an independent native model, exact
+source and detached tree within 128 MiB. Only guarded top-level prop translations
+may recompute constants/reset coordinates; other inputs retain full authoring.
+Consumers still verify all published source bytes. Qualification is pending; see
+docs/python/simulation.md and CHANGELOG.md. Templates carry no runtime authority.
+
 Whole-scene preparation is qualified at SDK 2750b86 / parent 5fb65aae:
 104 native checks and all 44 edits across 11 exact published presets pass,
 with 55 unchanged XML documents, 44 matching affected-object sets and no
