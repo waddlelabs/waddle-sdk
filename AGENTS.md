@@ -1,9 +1,17 @@
-Candidate authoring passes its exact same-call XML tree to native comparison
+SDK 690410a authoring passes its exact same-call XML tree to native comparison
 preparation, which takes a detached copy before normalizing or retaining it.
 Portable bytes, fresh asset hashes, independent compilation, fallback and reset
-semantics remain unchanged. Qualification and complete edit latency are pending;
-do not infer a full-path speedup from the removed byte-parsing step. See the
-parent's .local/edit-authored-tree-20261104 for baseline and candidate evidence.
+semantics remain unchanged. All 83 selected native/source and 1,317 default SDK
+cases pass (478 optional skips), with strict docs and changed-source lint/format.
+All 44 edits across 11 exact catalog presets reuse preparation, retain live
+state/history and acquire current imagery without freshness retries. All 55 XML
+documents match the prior compiler byte for byte. Paired mean bowl add/image
+improves 4.695 to 4.007 s, while empty-scene additions are slower at 1.320/1.489 s;
+these small shared-host samples do not prove a universal speedup. Final all-scene
+add/image samples are 1.135–1.687 s for ten scenes and 4.072 s for Stack bowls.
+Sub-second and long-session refresh latency remain unqualified; startup stays
+deferred. Retain the initial diagnostic import-hook failure and all samples in
+the parent's .local/edit-authored-tree-20261104 and authored-tree report.
 
 Native source validation may retain XML reference names by the freshly verified
 content digest. Trusted authoring supplies the exact tree it just serialized;
