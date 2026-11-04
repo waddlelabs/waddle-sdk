@@ -110,13 +110,25 @@ def test_vendor_realsense_serial_replaces_non_driver_sysfs_identity(
     _write(sys_root / "class/video4linux/video0/name", "Intel RealSense D435\n")
     _write(sys_root / "class/video4linux/video0/device/serial", "usb-interface-id\n")
     _write(sys_root / "class/video4linux/video0/device/idVendor", "8086\n")
+    physical = sys_root / "devices/1-2"
+    physical.mkdir(parents=True)
+    (physical / "serial").write_text("usb-interface-id")
+    node = sys_root / "class/video4linux/video1"
+    node.mkdir()
+    (node / "name").write_text("Intel RealSense D435")
+    (node / "device").symlink_to(physical)
+    # The old fixture has no physical path: keep it as a second unresolved camera.
     exact = HardwareCandidate(
         identifier="linux-camera:realsense:207522070634",
         kind="camera",
         label="RealSense D435 207522070634",
         driver="waddle_sdk.cameras.realsense",
         connection={"serial": "207522070634"},
-        metadata={"family": "realsense", "serial": "207522070634"},
+        metadata={
+            "family": "realsense",
+            "serial": "207522070634",
+            "usb_path": "usb:1-2",
+        },
     )
     monkeypatch.setattr(discovery, "_realsense_vendor_candidates", lambda: (exact,))
 
@@ -127,7 +139,9 @@ def test_vendor_realsense_serial_replaces_non_driver_sysfs_identity(
     )
 
     cameras = [row for row in report.candidates if row.kind == "camera"]
-    assert cameras == [exact]
+    assert exact in cameras
+    assert len(cameras) == 2
+    assert any(row.driver is None for row in cameras)
 
 
 def test_connector_default_uses_connection_preserving_hostname(monkeypatch) -> None:
@@ -137,3 +151,31 @@ def test_connector_default_uses_connection_preserving_hostname(monkeypatch) -> N
     args = _parser().parse_args(["connect", "--site", "site.yaml"])
     assert args.target == "https://connect.waddlelabs.ai:443"
     assert args.api_url == "https://api.waddlelabs.ai"
+
+
+def test_missing_vendor_reports_original_reason_for_detected_camera(
+    tmp_path, monkeypatch
+):
+    node = tmp_path / "class/video4linux/video0"
+    _write(node / "name", "Intel RealSense D435")
+
+    def missing():
+        raise ModuleNotFoundError("No module named 'pyrealsense2'")
+
+    monkeypatch.setattr(discovery, "_realsense_vendor_candidates", missing)
+    report = discover_hardware(
+        include_plugins=False, sys_root=tmp_path, dev_root=tmp_path
+    )
+    assert len(report.candidates) == 1
+    assert "No module named 'pyrealsense2'" in report.warnings[0]
+
+
+def test_realsense_usb_backends_bind_the_same_physical_port():
+    assert discovery._usb_path(Path("2-3.4-4")) == "usb:2-3.4"
+    assert discovery._usb_path(Path("2-3.4-21")) == "usb:2-3.4"
+    assert (
+        discovery._usb_path(
+            Path("/sys/devices/usb2/2-3/2-3.4/2-3.4:1.0/video4linux/video0")
+        )
+        == "usb:2-3.4"
+    )

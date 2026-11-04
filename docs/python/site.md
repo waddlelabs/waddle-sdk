@@ -108,7 +108,7 @@ in [Simulation backends](../porting/simulation.md).
 
 A mounted arm may need room on both sides of its base. The optional
 `waddle_sdk.robots.safety_presets_for_driver` contract exposes the YAM tabletop
-starting bounds as `min: [-0.7, -0.7, -0.015]` and `max: [0.7, 0.7, 1.0]`, in metres
+starting bounds as `min: [-1.0, -1.0, -0.05]` and `max: [1.0, 1.0, 1.0]`, in metres
 in each arm's declared base frame. The preset has no static keepouts or
 self-collision configuration. The site operator must review mounting, table,
 tool, and neighboring-arm clearance before copying these values into a new site.
@@ -164,6 +164,26 @@ hardware discovery, reviewed robot/camera profiles, and camera-inspection lifecy
 Selecting a transport does not open an arm. Camera preview opens only the selected
 camera for one snapshot and closes it before returning. Physical site creation
 requires review of the hardware settings and workspace bounds.
+
+The camera page lists detected cameras directly and refreshes every second while
+idle. Disconnected cameras remain greyed out; unplug/replug identifies the device
+without losing its row. Vendor enumeration runs off the UI thread and does not
+open streams. A camera reported only by USB is not yet a valid SDK selector.
+**Add camera** and **Preview selected camera** request support for the selected
+adapter through the embedding install callback, then rediscover its SDK identity.
+USB and SDK serials are never assumed interchangeable; physical USB-port evidence
+binds the selection across installation. Standalone callers install the relevant
+camera extra in their Python environment. Original discovery and capture errors
+remain visible. Interactive installer callbacks receive the terminal while the
+wizard is suspended, allowing administrator permission prompts over SSH; the
+wizard resumes afterward. Embedders may expose a `progress` builder parameter
+for thread-safe build status updates.
+
+Preview renders a captured RGB image using coloured half-block characters in the
+terminal. It works over ordinary SSH without `DISPLAY`, X forwarding, a browser,
+or terminal-specific image extensions. It is a low-resolution identification
+snapshot, not a live stream. Terminal colour capability affects the result.
+The camera inspection lifecycle closes the selected camera before setup resumes.
 
 ```python
 from pathlib import Path

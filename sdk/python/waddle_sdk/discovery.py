@@ -16,6 +16,7 @@ does not hide the rest of the machine.
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from importlib import import_module
@@ -95,18 +96,31 @@ def _device_fact(device: Path, name: str) -> str | None:
     return None
 
 
+def _usb_path(device: Path) -> str:
+    """Stable USB device ancestor shared by sysfs and vendor physical ports."""
+    # The RSUSB backend reports bus-port-device (e.g. 2-3.4-4); the
+    # V4L backend reports a sysfs path. Device numbers change after reconnect.
+    compact = re.fullmatch(r"(\d+-\d+(?:\.\d+)*)-\d+", str(device))
+    if compact:
+        return "usb:" + compact[1]
+    current = device.resolve(strict=False)
+    for candidate in (current, *current.parents):
+        if re.fullmatch(r"\d+-\d+(?:\.\d+)*", candidate.name):
+            return "usb:" + candidate.name
+    return ""
+
+
 def _realsense_vendor_candidates(
     module: Any | None = None,
 ) -> tuple[HardwareCandidate, ...]:
     """Enumerate driver-valid RealSense identities without starting a stream."""
 
     if module is None:
-        try:
-            module = import_module("pyrealsense2")
-        except ImportError:
-            return ()
+        module = import_module("pyrealsense2")
+    from .cameras.realsense import _shared_context
+
     rows: list[HardwareCandidate] = []
-    for device in module.context().query_devices():
+    for device in _shared_context(module).query_devices():
         serial = str(device.get_info(module.camera_info.serial_number)).strip()
         if not serial:
             continue
@@ -118,6 +132,12 @@ def _realsense_vendor_candidates(
             product = str(device.get_info(module.camera_info.product_id)).strip()
         except (AttributeError, RuntimeError):
             product = ""
+        try:
+            physical_port = _usb_path(
+                Path(device.get_info(module.camera_info.physical_port))
+            )
+        except (AttributeError, RuntimeError):
+            physical_port = ""
         rows.append(
             HardwareCandidate(
                 identifier=f"linux-camera:realsense:{serial}",
@@ -127,6 +147,7 @@ def _realsense_vendor_candidates(
                 connection={"serial": serial},
                 metadata={
                     "device": "",
+                    "usb_path": physical_port,
                     "family": "realsense",
                     "name": name or "Intel RealSense",
                     "product_id": product,
@@ -142,7 +163,7 @@ def _linux_candidates(
     *,
     sys_root: Path,
     dev_root: Path,
-    realsense_resolved: bool = False,
+    realsense_resolved: tuple[HardwareCandidate, ...] = (),
 ) -> tuple[HardwareCandidate, ...]:
     candidates: list[HardwareCandidate] = []
 
@@ -180,7 +201,12 @@ def _linux_candidates(
         product = (_device_fact(node / "device", "idProduct") or "").lower()
         lowered = name.lower()
         if "realsense" in lowered or vendor == "8086":
-            if realsense_resolved:
+            usb_path = _usb_path(node / "device")
+            if any(
+                (usb_path and row.metadata.get("usb_path") == usb_path)
+                or (serial and row.connection.get("serial") == serial)
+                for row in realsense_resolved
+            ):
                 continue
             family = "realsense"
             # A USB interface's sysfs serial is not necessarily the serial that
@@ -223,6 +249,7 @@ def _linux_candidates(
                 connection=connection,
                 metadata={
                     "device": str(dev_root / node.name),
+                    "usb_path": _usb_path(node / "device"),
                     "family": family,
                     "name": name,
                     "product_id": product,
@@ -280,19 +307,40 @@ def discover_hardware(
     found: list[HardwareCandidate] = []
     if os.name == "posix":
         realsense: tuple[HardwareCandidate, ...] = ()
+        realsense_error = None
         if include_vendor_enumeration:
             try:
                 realsense = _realsense_vendor_candidates()
             except Exception as error:  # noqa: BLE001 -- optional vendor discovery
-                warnings.append(f"RealSense discovery failed ({type(error).__name__})")
+                realsense_error = (
+                    f"RealSense discovery failed ({type(error).__name__}): {error}"
+                )
+                if (
+                    isinstance(error, ModuleNotFoundError)
+                    and error.name == "pyrealsense2"
+                ):
+                    realsense_error += (
+                        ". Add or Preview installs camera support when an installer is connected; "
+                        "otherwise install 'waddle-sdk[realsense]' in this Python environment."
+                    )
         found.extend(
             _linux_candidates(
                 sys_root=Path(sys_root),
                 dev_root=Path(dev_root),
-                realsense_resolved=bool(realsense),
+                realsense_resolved=realsense,
             )
         )
         found.extend(realsense)
+        unresolved = any(
+            row.metadata.get("family") == "realsense" and row.driver is None
+            for row in found
+        )
+        if include_vendor_enumeration and unresolved:
+            warnings.append(
+                realsense_error
+                or "RealSense is visible on USB but its SDK returned no matching device. "
+                "Check USB permissions, the camera cable and the installed camera runtime."
+            )
 
     named_providers: list[tuple[str, HardwareDiscoveryProvider]] = [
         (getattr(provider, "__name__", type(provider).__name__), provider)

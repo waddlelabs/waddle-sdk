@@ -6,7 +6,7 @@ from PIL import Image
 from rich.text import Text
 
 
-def snapshot(driver, connection, stream):
+def snapshot(driver, connection, stream, *, columns=80):
     selected = json.loads(connection)
     for adapter, selector in (("realsense", "serial"), ("usb", "device")):
         if driver == "waddle_sdk.cameras." + adapter and not selected.get(selector):
@@ -39,13 +39,15 @@ def snapshot(driver, connection, stream):
         # Retain only a small copied RGB snapshot. Closing inspection releases
         # the camera before returning to the wizard or preparing a robot owner.
         image = Image.fromarray(frame.rgb).convert("RGB")
-        image.thumbnail((60, 28))
+        image.thumbnail((columns, 48))
     pixels = image.load()
     result = Text()
-    for y in range(0, image.height - 1, 2):
+    for y in range(0, image.height, 2):
         for x in range(image.width):
             upper = "#{:02x}{:02x}{:02x}".format(*pixels[x, y])
-            lower = "#{:02x}{:02x}{:02x}".format(*pixels[x, y + 1])
+            lower = "#{:02x}{:02x}{:02x}".format(
+                *pixels[x, min(y + 1, image.height - 1)]
+            )
             result.append("▀", style=f"{upper} on {lower}")
         result.append("\n")
     result.append("Snapshot · camera closed. Check the view, then select its mount.")

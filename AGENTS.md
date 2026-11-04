@@ -1,3 +1,10 @@
+Terminal setup uses a persistent camera list with one-second non-opening discovery.
+Install callbacks prepare only the selected adapter before Add/Preview; SDK and USB
+serials are distinct, and physical-port evidence is required to rebind selection.
+Preview is a camera-only snapshot rendered with terminal colour blocks, including
+over SSH. The YAM starter bounds are [-1, -1, -0.05] to [1, 1, 1] metres; preserve
+explicit saved-site bounds. Software checks do not establish physical camera capture.
+
 Native MuJoCo scene lifecycle tests require the optional `mujoco` extra and must
 skip before importing/opening a simulator when it is unavailable. Keep normal
 package installation independent of simulation dependencies. Run native lifecycle

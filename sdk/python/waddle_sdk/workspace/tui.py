@@ -1,13 +1,17 @@
 """Keyboard workspace setup, using public SDK discovery and reviewed presets."""
 
 import asyncio
+import importlib
+import inspect
 import json
 import re
 from collections.abc import Mapping
+from contextlib import nullcontext
 from pathlib import Path
 from typing import ClassVar
 
 import yaml
+from rich.text import Text
 from textual import on
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, VerticalScroll
@@ -17,10 +21,12 @@ from textual.widgets import (
     Collapsible,
     ContentSwitcher,
     Input,
+    OptionList,
     Select,
     SelectionList,
     Static,
 )
+from textual.widgets.option_list import Option
 
 from waddle_sdk import load_site
 from waddle_sdk.discovery import DiscoveryReport, discover_hardware
@@ -70,6 +76,9 @@ class WorkspaceInitApp(App):
     #status { height: auto; max-height: 4; padding: 0 2; color: $error; }
     #footer { height: 1; padding: 0 2; color: $text-muted; }
     #review { height: auto; }
+    #camera-candidate { height: auto; min-height: 4; max-height: 12; }
+    #camera-preview { height: auto; margin-top: 1; }
+    #camera-discovery { height: auto; color: $text-muted; }
     """
     PAGES = ("workspace", "robots", "cameras", "safety", "review")
 
@@ -106,6 +115,11 @@ class WorkspaceInitApp(App):
         self.camera_candidates = {
             row.identifier: row for row in report.candidates if row.kind == "camera"
         }
+
+        self.available_cameras = set(self.camera_candidates)
+        self.selected_camera = "manual"
+        self._camera_scan_lock = asyncio.Lock()
+        self._camera_poll_running = False
 
     def compose(self) -> ComposeResult:
         yield Static(self.TITLE, id="title")
@@ -178,12 +192,19 @@ class WorkspaceInitApp(App):
                     "Select a camera and its mount, then choose Add camera.",
                     classes="help",
                 )
-                yield Select(
-                    [("Enter camera manually", "manual")]
-                    + [(row.label, key) for key, row in self.camera_candidates.items()],
-                    value="manual",
-                    allow_blank=False,
+                yield OptionList(
+                    *[
+                        Option(row.label, id=key)
+                        for key, row in self.camera_candidates.items()
+                    ],
+                    Option("Enter camera manually", id="manual"),
                     id="camera-candidate",
+                )
+                yield Static(
+                    "Refreshes every second. Unplug a camera to identify its row; "
+                    "disconnected cameras stay greyed out.",
+                    id="camera-discovery",
+                    markup=False,
                 )
                 yield Select(
                     [("Scene · fixed camera", "scene")],
@@ -266,6 +287,7 @@ class WorkspaceInitApp(App):
         self._part_defaults()
         self._camera_defaults()
         self._show_page()
+        self.set_interval(1, self._poll_cameras)
 
     def _input(self, name):
         return self.query_one("#" + name, Input).value.strip()
@@ -285,40 +307,154 @@ class WorkspaceInitApp(App):
         self.building = True
         self._status("Installing support for the selected hardware…")
         try:
-            await asyncio.to_thread(self.prepare_drivers, drivers)
+            # Give installer prompts the real terminal (including an SSH PTY).
+            # Headless embedders keep their existing noninteractive callback.
+            with nullcontext() if self.is_headless else self.suspend():
+                if not self.is_headless:
+                    print(
+                        "Preparing hardware support; administrator permission may be requested."
+                    )
+                await asyncio.to_thread(self.prepare_drivers, drivers)
         finally:
             self.building = False
         self._status()
 
-    async def _discover_cameras(self):
-        if self.prepare_drivers is None:
+    def _poll_cameras(self):
+        if (
+            self.page != self.PAGES.index("cameras")
+            or self.building
+            or self._camera_poll_running
+            or self._camera_scan_lock.locked()
+        ):
             return
-        # RealSense USB evidence can exist before its SDK is installed. Install
-        # the detected camera adapters, then enumerate driver-valid selectors.
-        drivers = []
-        for row in self.camera_candidates.values():
-            family = row.metadata.get("family")
-            driver = row.driver
-            if driver is None and family == "realsense":
-                driver = "waddle_sdk.cameras.realsense"
-            if driver:
-                drivers.append(driver)
-        await self._prepare(drivers)
-        self.report = await asyncio.to_thread(discover_hardware)
-        self.camera_candidates = {
-            row.identifier: row
-            for row in self.report.candidates
-            if row.kind == "camera"
-        }
-        selector = self.query_one("#camera-candidate", Select)
-        selected = selector.value
-        selector.set_options(
-            [("Enter camera manually", "manual")]
-            + [(row.label, key) for key, row in self.camera_candidates.items()]
-        )
-        selector.value = selected if selected in self.camera_candidates else "manual"
-        if self.report.warnings:
-            self._status("\n".join(self.report.warnings))
+        self._camera_poll_running = True
+        self.run_worker(self._poll_camera_worker(), group="camera-discovery")
+
+    async def _poll_camera_worker(self):
+        try:
+            await self._scan_cameras(poll=True)
+        finally:
+            self._camera_poll_running = False
+
+    async def _scan_cameras(self, *, poll=False):
+        # Discovery never opens streams. Only one scan may run at a time, and
+        # slow optional vendors never block Textual's event loop.
+        async with self._camera_scan_lock:
+            if poll and self.building:
+                return
+            try:
+                report = await asyncio.to_thread(discover_hardware)
+            except Exception as error:  # noqa: BLE001 -- optional discovery must not crash setup
+                self.query_one("#camera-discovery", Static).update(
+                    f"Camera discovery failed: {error}. Retrying…"
+                )
+                return
+            current = {
+                row.identifier: row for row in report.candidates if row.kind == "camera"
+            }
+            widget = self.query_one("#camera-candidate", OptionList)
+            # An SDK serial may differ from the USB serial. Rebind only with
+            # matching physical-port evidence, never by number/order of cameras.
+            for key, row in current.items():
+                usb_path = row.metadata.get("usb_path")
+                old_key = next(
+                    (
+                        old
+                        for old, previous in self.camera_candidates.items()
+                        if old != key
+                        and usb_path
+                        and previous.metadata.get("usb_path") == usb_path
+                        and previous.driver is None
+                        and row.driver
+                    ),
+                    None,
+                )
+                if old_key is not None:
+                    self.camera_candidates.pop(old_key)
+                    widget.remove_option(old_key)
+                    if self.selected_camera == old_key:
+                        self.selected_camera = key
+                if key not in self.camera_candidates:
+                    widget.add_option(Option(row.label, id=key))
+            self.available_cameras = set(current)
+            self.camera_candidates.update(current)
+            for key, row in self.camera_candidates.items():
+                available = key in current
+                state = (
+                    (
+                        "Available"
+                        if row.driver
+                        else "Needs camera support / SDK discovery"
+                    )
+                    if available
+                    else "Unavailable"
+                )
+                prompt = Text(
+                    f"{row.label} · {state}", style="" if available else "dim"
+                )
+                widget.replace_option_prompt(key, prompt)
+                (widget.enable_option if available else widget.disable_option)(key)
+            self.report = report
+            self.query_one("#camera-discovery", Static).update(
+                "\n".join(report.warnings)
+                or "Refreshes every second. Disconnected cameras stay greyed out."
+            )
+            # Preserve edited manual settings. Refresh discovered selectors only
+            # when an installation has resolved their identity.
+            if self.selected_camera in current:
+                self._apply_camera_candidate()
+
+    async def _discover_cameras(self, drivers):
+        async with self._camera_scan_lock:
+            await self._prepare(drivers)
+            importlib.invalidate_caches()
+        await self._scan_cameras()
+
+    def _apply_camera_candidate(self):
+        selected = self.camera_candidates.get(self.selected_camera)
+        if selected is None:
+            return
+        profile = {
+            "waddle_sdk.cameras.realsense": "realsense",
+            "waddle_sdk.cameras.usb": "usb",
+            "waddle_sdk.cameras.orbbec": "orbbec",
+        }.get(selected.driver)
+        if profile is None:
+            return
+        selector = self.query_one("#camera-profile", Select)
+        # Prevent the queued profile-change event from erasing the discovered
+        # connection after the user has selected it.
+        with selector.prevent(Select.Changed):
+            selector.value = profile
+        self._set_input("camera-connection", json.dumps(dict(selected.connection)))
+
+    async def _prepare_camera(self):
+        if self.selected_camera != "manual":
+            selected = self.camera_candidates[self.selected_camera]
+            driver = selected.driver or (
+                "waddle_sdk.cameras.realsense"
+                if selected.metadata.get("family") == "realsense"
+                else None
+            )
+            await self._discover_cameras([driver] if driver else [])
+            if self.selected_camera not in self.available_cameras:
+                raise ValueError(
+                    "Selected camera is disconnected. Reconnect it or choose another camera."
+                )
+            selected = self.camera_candidates[self.selected_camera]
+            if selected.driver is None:
+                detail = "\n".join(self.report.warnings)
+                raise ValueError(
+                    detail
+                    or "Camera is detected by USB but the SDK cannot enumerate it. "
+                    "Check camera support, USB permissions and the cable; then retry."
+                )
+            self._apply_camera_candidate()
+        else:
+            row = camera_defaults(self._select("camera-profile"), "camera")
+            async with self._camera_scan_lock:
+                await self._prepare([row["driver"]])
+                importlib.invalidate_caches()
 
     def _part_defaults(self):
         row = part_defaults(self._select("profile"), self._input("part-name") or "arm")
@@ -361,30 +497,15 @@ class WorkspaceInitApp(App):
             connection = {**defaults["connection"], **dict(selected.connection)}
             self._set_input("part-connection", json.dumps(connection))
 
-    @on(Select.Changed, "#camera-candidate")
-    async def camera_candidate_changed(self):
-        selected = self.camera_candidates.get(self._select("camera-candidate"))
-        if selected is None:
-            return
-        profile = {
-            "waddle_sdk.cameras.realsense": "realsense",
-            "waddle_sdk.cameras.usb": "usb",
-            "waddle_sdk.cameras.orbbec": "orbbec",
-        }.get(selected.driver)
-        if profile is None:
-            self._status(
-                "This candidate needs an explicit installed SDK adapter and valid connection settings."
-            )
-            return
-        self.query_one("#camera-profile", Select).value = profile
+    @on(OptionList.OptionSelected, "#camera-candidate")
+    def camera_candidate_changed(self, event):
+        self.selected_camera = event.option.id
+        self._apply_camera_candidate()
+        selected = self.camera_candidates.get(self.selected_camera)
         self.query_one("#camera-preview", Static).update(
-            "Orbbec's adapter uses its default device; exact serial selection is unavailable."
-            if profile == "orbbec"
-            else "Preview the selected camera to identify its view."
-        )
-        await asyncio.sleep(0)
-        self.call_after_refresh(
-            self._set_input, "camera-connection", json.dumps(dict(selected.connection))
+            "Camera support will be installed and discovery retried when you choose Add or Preview."
+            if selected is not None and selected.driver is None
+            else "Preview captures a colour image in this terminal, including over SSH."
         )
 
     def _refresh_parts(self):
@@ -586,6 +707,10 @@ class WorkspaceInitApp(App):
         self._status("Preparing and validating the workspace…")
         try:
             arguments = {"source_site": source} if source else {"site": site}
+            if "progress" in inspect.signature(self.builder).parameters:
+                arguments["progress"] = lambda message: self.call_from_thread(
+                    self._status, message
+                )
             self.created = await asyncio.to_thread(
                 self.builder, Path(self._input("destination")).expanduser(), **arguments
             )
@@ -611,8 +736,8 @@ class WorkspaceInitApp(App):
             elif action == "preview-camera":
                 from .camera_preview import snapshot
 
+                await self._prepare_camera()
                 row = camera_defaults(self._select("camera-profile"), "setup-preview")
-                await self._prepare([row["driver"]])
                 match = re.fullmatch(r"(\d+)x(\d+)@(\d+)", self._input("camera-stream"))
                 if match is None:
                     raise ValueError(
@@ -635,12 +760,14 @@ class WorkspaceInitApp(App):
                         row["driver"],
                         connection,
                         stream,
+                        columns=max(20, min(100, self.size.width - 8)),
                     )
                     if (connection, profile) == (
                         self._input("camera-connection"),
                         self._select("camera-profile"),
                     ):
                         self.query_one("#camera-preview", Static).update(preview)
+                        self.query_one("#camera-preview", Static).scroll_visible()
                         self._status("Camera preview captured and camera closed.")
                     else:
                         self._status(
@@ -649,11 +776,7 @@ class WorkspaceInitApp(App):
                 finally:
                     self.building = False
             elif action == "add-camera":
-                row = camera_defaults(
-                    self._select("camera-profile"),
-                    self._input("camera-name") or "camera",
-                )
-                await self._prepare([row["driver"]])
+                await self._prepare_camera()
                 self._add_camera()
             elif action == "remove-parts":
                 for name in tuple(self.query_one("#parts", SelectionList).selected):
@@ -690,7 +813,7 @@ class WorkspaceInitApp(App):
                 self.page = max(0, min(len(self.PAGES) - 1, target))
                 self._show_page()
                 if self.page == self.PAGES.index("cameras"):
-                    await self._discover_cameras()
+                    self._poll_cameras()
             elif action == "create":
                 await self._create()
             elif action == "cancel":

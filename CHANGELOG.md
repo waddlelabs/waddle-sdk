@@ -11,6 +11,15 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Show a persistent camera list in terminal setup, refreshing every second without
+  opening streams; retain unavailable rows and stable selection through hotplug.
+  Prepare only the selected camera's support before Add/Preview, rediscover its
+  usable SDK identity, and preserve vendor discovery errors. Match RealSense USB
+  evidence by physical port rather than hiding all unresolved peers.
+- Render larger camera-only RGB snapshots as terminal colour blocks over SSH.
+- Set the YAM initializer's starting box to `[-1, -1, -0.05]` through `[1, 1, 1]`
+  metres. Existing explicit site bounds remain unchanged.
+
 - Raise the device relay's bounded RGB preview from its occasional-monitor
   profile to a 640-pixel ceiling, with clock slack for 10 Hz sources and a
   finite aggregate encoder budget. Preserve native video isolation, demand
