@@ -1,3 +1,10 @@
+Candidate authoring passes its exact same-call XML tree to native comparison
+preparation, which takes a detached copy before normalizing or retaining it.
+Portable bytes, fresh asset hashes, independent compilation, fallback and reset
+semantics remain unchanged. Qualification and complete edit latency are pending;
+do not infer a full-path speedup from the removed byte-parsing step. See the
+parent's .local/edit-authored-tree-20261104 for baseline and candidate evidence.
+
 Native source validation may retain XML reference names by the freshly verified
 content digest. Trusted authoring supplies the exact tree it just serialized;
 ordinary validation analyzes the verified bytes. Hash every file and check

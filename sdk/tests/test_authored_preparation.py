@@ -1,5 +1,6 @@
 """Authored edits reuse preparation without sharing a running native model."""
 
+import xml.etree.ElementTree as ET
 from copy import deepcopy
 
 import numpy as np
@@ -25,6 +26,32 @@ def same_model(actual, expected):
         mj.mj_step(expected, b)
     np.testing.assert_array_equal(a.qpos, b.qpos)
     np.testing.assert_array_equal(a.qvel, b.qvel)
+
+
+def test_author_tree_matches_bytes_without_aliasing_retained_comparison():
+    from waddle_sdk.simulators.authored_preparation import _key, parse
+
+    tree = ET.fromstring("""<mujoco><compiler angle="radian"/><asset>
+      <mesh name="m" file="m.stl" content_type="model/stl"/></asset>
+      <worldbody><body name="prop_a"><geom name="a" size=".1"/></body></worldbody>
+      <contact><pair geom1="a" geom2="b"/></contact>
+      <keyframe><key name="initial"/></keyframe></mujoco>""")
+    original = ET.tostring(tree)
+    actual, expected = parse(original, _tree=tree), parse(original)
+    assert actual.static == expected.static
+    assert actual.defaults == expected.defaults
+    assert {name: _key(node) for name, node in actual.parts.items()} == {
+        name: _key(node) for name, node in expected.parts.items()
+    }
+    assert tuple(key for key, _ in actual.contacts) == tuple(
+        key for key, _ in expected.contacts
+    )
+    assert ET.tostring(tree) == original
+    tree.find("keyframe/key").set("qpos", "1 2 3")
+    tree.find("worldbody/body/geom").set("size", ".9")
+    tree.find("contact/pair").set("geom2", "changed")
+    assert _key(actual.parts["worldbody"]) == _key(expected.parts["worldbody"])
+    assert _key(actual.parts["contact"]) == _key(expected.parts["contact"])
 
 
 def test_pair_defaults_survive_attachment_and_changed_material_is_recompiled(

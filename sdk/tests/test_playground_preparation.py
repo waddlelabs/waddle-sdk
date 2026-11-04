@@ -14,9 +14,20 @@ def test_prepared_scene_matches_source_and_caches_no_runtime_state(
     tmp_path, monkeypatch, robot, arms
 ):
     mj = pytest.importorskip("mujoco")
+    from waddle_sdk.simulators import authored_preparation
     from waddle_sdk.simulators.compiled_model import load_model
     from waddle_sdk.simulators.playground import prepare_scene
     from waddle_sdk.simulators.scene import make_site
+
+    parse = authored_preparation.parse
+    supplied = []
+
+    def prepared_tree(data, *, _tree=None):
+        assert _tree is not None
+        supplied.append(True)
+        return parse(data, _tree=_tree)
+
+    monkeypatch.setattr(authored_preparation, "parse", prepared_tree)
 
     cache = tmp_path / "cache"
     monkeypatch.setenv("WADDLE_SIMULATION_MODEL_CACHE", str(cache))
@@ -24,6 +35,7 @@ def test_prepared_scene_matches_source_and_caches_no_runtime_state(
         "prepared", backend="mujoco", robot=robot, arms=arms, environment="two_cubes"
     )
     prepared = prepare_scene(config, scene(), tmp_path / "scene", revision=7)
+    assert supplied
     native = prepared.config["native_scene"]
     assert prepared.config["scene_revision"] == "1.0.7"
     assert native["files"] == {

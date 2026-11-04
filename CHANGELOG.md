@@ -20,6 +20,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Changed
 
+- Prepare native authored-source comparisons from a detached copy of the exact
+  tree just serialized, avoiding a redundant XML parse. Preserve byte-based
+  callers, fresh asset hashes, native fallback and independent runtime models.
+
 - Reuse bounded XML reference analysis by freshly verified content digest during
   native scene validation. Continue to read/hash every asset and check current
   path confinement, manifest membership and configuration; analyze the exact XML

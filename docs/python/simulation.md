@@ -938,8 +938,11 @@ coordinates. The final reset key and running-world edit semantics are unchanged.
 
 Trusted Playground authoring can retain a private parsed specification alongside
 each of those two asset sets. Read-only comparison records retain the parsed old
-XML and contact keys with that specification; every new XML document is parsed
-and compared in full against them, with freshly hashed assets. It copies the
+XML and contact keys with that specification. Every new source is compared in
+full, with freshly hashed assets. Same-call authoring supplies the exact tree
+behind its serialized bytes; comparison preparation detaches that tree before
+normalization so later reset-key edits cannot change retained records. Ordinary
+byte callers still parse their current document. It copies the
 specification, then applies supported object additions,
 removals, poses and primitive geometry/material values before compiling an
 independent model. Newly appended bodies/assets/contact pairs alone need parsing.

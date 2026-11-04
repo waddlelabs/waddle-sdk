@@ -41,7 +41,14 @@ def _canonical_inputs(model_name, inputs):
 
 
 def load_model(
-    model_name, contents, *, cache=None, timings=None, _prepared=None, _authored=False
+    model_name,
+    contents,
+    *,
+    cache=None,
+    timings=None,
+    _prepared=None,
+    _authored=False,
+    _authored_tree=None,
 ):
     """Compile complete verified VFS inputs or load a verified private binary.
 
@@ -52,7 +59,9 @@ def load_model(
     degrades to real compilation; source/model failures are never suppressed.
     The private authoring handoff may retain its matching compiled model after
     setting reset-key arrays. It must describe exactly these verified source
-    bytes; ordinary callers supply no native model.
+    bytes; ordinary callers supply no native model. Trusted same-call authoring
+    may also supply the exact tree just serialized for comparison preparation.
+    Its detached copy never replaces ordinary byte validation or native fallback.
     """
     import mujoco as mj
 
@@ -109,6 +118,7 @@ def load_model(
                 assets,
                 key=namespace if reuse else None,
                 authored=_authored,
+                _authored_tree=_authored_tree if _authored else None,
             )
         else:
             result = mj.MjModel.from_xml_path(

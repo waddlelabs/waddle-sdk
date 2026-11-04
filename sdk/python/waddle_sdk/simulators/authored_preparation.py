@@ -7,8 +7,8 @@ from copy import deepcopy
 from dataclasses import dataclass
 
 
-def _read(data):
-    root = ET.fromstring(data)
+def _read(data, *, tree=None):
+    root = ET.fromstring(data) if tree is None else deepcopy(tree)
     for node in root.iter():
         if node.text is not None and not node.text.strip():
             node.text = None
@@ -132,9 +132,15 @@ class Source:
     contacts: tuple
 
 
-def parse(data):
-    """Index the exact current bytes; no mutable file path is cached."""
-    root = _read(data)
+def parse(data, *, _tree=None):
+    """Index current source, optionally using its trusted author's exact tree.
+
+    A private same-call tree avoids reparsing bytes the author just serialized.
+    Copy it before normalization: retained comparison records must not alias the
+    caller, which later fills the canonical reset key. Ordinary byte callers
+    retain full parsing; no mutable file path is cached.
+    """
+    root = _read(data, tree=_tree)
     compiler = root.find("compiler")
     defaults = _pair_defaults(root)
     if (
