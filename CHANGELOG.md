@@ -22,7 +22,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 - Carry immutable authored body comparisons through the existing private native
   model handoff, retaining source/binding checks, byte bounds and parsing fallback.
-  Local correctness and catalog latency qualification is pending.
+  All 44 edits across 11 published presets preserve live state/history and exact
+  XML; source/native/default SDK checks and strict docs pass. Local addition remains
+  above one second, with no general speedup established. Retain complete timings
+  and original diagnostics with verified closure and archive evidence.
 
 - Carry exact authored robot-contract comparisons with bounded private model
   handoffs, avoiding repeated XML parsing after fresh source validation. Preserve

@@ -1,10 +1,17 @@
-Trusted Playground conversion can complete the private native-model handoff with
-immutable joint-indexed body fingerprints from the exact author tree. Consumers
-still validate source inventories and candidate bindings before mapping those
-records; missing/older preparations retain normal parsing. Metadata shares existing
-byte bounds, carries no live state, and requires matching peers when annotated.
-Qualification is pending in .local/edit-body-handoff-20261104; no new latency
-result, deployment or external/physical change is claimed.
+SDK da73b31 and Twin 73f4353e carry immutable authored body fingerprints through
+the private native-model handoff, after fresh source/binding checks. Retain byte
+bounds, older/missing-record parsing fallback and actual live-world transfer.
+All 119 focused checks, six import-only follow-up cases, 1,349 default SDK cases
+(484 optional skips), strict docs and final lint/format pass. All 44 catalog edits
+preserve state/history; 55 XML files and 44 affected-object oracle sets match.
+All edits reuse the handoff without Twin body parsing or freshness retries.
+Local add/image is 1.074–1.646 s for ten presets and 2.597 s for bowls; bowl resize/
+delete remain 5.616/6.105 s. Paired samples do not establish an overall speedup.
+Sub-second and long-session acceptance remain open; startup stays deferred.
+Retain all diagnostic failures and samples. All 51 recorded PIDs are absent,
+final process audit is empty and eight closed archives have full per-file hash
+readback. See logs/playground-body-handoff-20261104.md/.json and
+.local/edit-body-handoff-20261104. No deployment/external/physical change.
 
 Trusted authored native handoffs carry the robot replacement comparison from
 the exact same-call XML tree. Immutable comparison bytes share the source identity
