@@ -29,14 +29,18 @@ def translate(model, before, after):
         or before is None
         or after is None
         or before.static != after.static
-        or any(node[0] == "statistic" for node in before.static[3])
-        or any(getattr(model, name) for name in ("nplugin", "nflex", "nskin"))
         or _key(before.parts["asset"]) != _key(after.parts["asset"])
         or any(_contact_delta(before, after))
     ):
         return None
     old, new = before.parts["worldbody"], after.parts["worldbody"]
     if old.attrib != new.attrib or old.text != new.text or len(old) != len(new):
+        return None
+    if _key(old) == _key(new):
+        return copy(model)
+    if any(node[0] == "statistic" for node in before.static[3]) or any(
+        getattr(model, name) for name in ("nplugin", "nflex", "nskin")
+    ):
         return None
     updates, names, unchanged = [], set(), []
     for a, b in zip(old, new, strict=True):

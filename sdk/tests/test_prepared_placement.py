@@ -73,7 +73,7 @@ def test_placement_reuses_whole_model_and_isolated_source_state(buffers, monkeyp
     def unexpected_compile(*args, **kwargs):
         pytest.fail("placing an unchanged free object compiled the scene again")
 
-    for position in (".6 -.2 .15", "-.75 .75 .8", ".02 -.75 .02"):
+    for position in (".2 0 .3", ".6 -.2 .15", "-.75 .75 .8", ".02 -.75 .02"):
         contents = source(position)
         expected = mj.MjModel.from_xml_string(contents["world.xml"].decode())
         with monkeypatch.context() as cached:
@@ -83,6 +83,20 @@ def test_placement_reuses_whole_model_and_isolated_source_state(buffers, monkeyp
         np.testing.assert_array_equal(original.geom_rgba, saved.geom_rgba)
         np.testing.assert_array_equal(original.qpos0, saved.qpos0)
         np.testing.assert_array_equal(original.key_qpos, saved.key_qpos)
+
+
+def test_identical_linked_scene_reuses_private_template(buffers, monkeypatch):
+    contents = source(
+        extra='<statistic extent="8"/><equality><weld body1="robot" body2="prop_object"/></equality>'
+    )
+    compile_source(contents)
+    expected = mj.MjModel.from_xml_string(contents["world.xml"].decode())
+
+    def unexpected_compile(*args, **kwargs):
+        pytest.fail("identical complete scene preparation was compiled again")
+
+    monkeypatch.setattr(mj.MjSpec, "compile", unexpected_compile)
+    same_model(compile_source(contents), expected)
 
 
 @pytest.mark.parametrize(

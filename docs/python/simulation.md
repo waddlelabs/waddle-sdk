@@ -986,7 +986,8 @@ initialization remain unchanged.
 
 Within that same bound, authoring can retain a private copy of the complete
 compiled template before the caller edits its reset key or other model arrays.
-An exact source change containing only translations of isolated top-level free
+Unchanged complete source can copy that template directly. An exact source
+change containing only translations of isolated top-level free
 props can copy this template and recompute native constants/statistics instead
 of compiling again. Geometry, contact material, orientation and other source
 changes retain native compilation. Fixed/articulated objects, external references,
