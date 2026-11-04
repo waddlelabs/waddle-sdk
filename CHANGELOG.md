@@ -23,6 +23,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 - Carry exact authored robot-contract comparisons with bounded private model
   handoffs, avoiding repeated XML parsing after fresh source validation. Preserve
   ordinary comparison fallback, selection checks and live-state transfer.
+  Qualify source/state invariants and all 44 edits across 11 published presets;
+  SDK commit work falls, but overall addition latency remains above the target.
 
 - Extend recognized Playground contact preparations using only new geometry
   pairs, retaining exact serialized rows and normalized comparison records.

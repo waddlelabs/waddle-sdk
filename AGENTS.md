@@ -1,10 +1,16 @@
-Trusted authored native handoffs now carry the robot replacement comparison
-computed from the exact same-call XML tree. Comparison bytes share the existing
-source identity and byte budget; changed robot/camera selection or absent records
-retain ordinary comparison. Always freshly validate files before owner dispatch,
-keep independent native models and transfer current state at commit. Do not mutate
-the author tree or expose preparations through scene JSON. Qualification pending
-in the parent .local/edit-robot-contract-20261104; no new latency claim yet.
+Trusted authored native handoffs carry the robot replacement comparison from
+the exact same-call XML tree. Immutable comparison bytes share the source identity
+and existing byte budget; missing records or changed robot/camera selections keep
+ordinary comparison. Fresh file validation, independent models and current-state
+transfer remain. All 46 focused native/source cases and all 44 edits across the
+11 published presets pass; every edit reuses the comparison and all 55 authored
+XML files remain byte-identical. Full SDK passes 1,349 cases (481 optional skips),
+strict docs and lint/format pass. Bowl SDK addition averages 0.525 to 0.314 s,
+but overall addition does not improve in these small shared-host samples. The
+sub-second target remains unmet and startup stays deferred. Preserve the failed
+invocations and interrupted uncached diagnostic; no normal shutdown is claimed
+for that interrupted attempt. See the parent's
+logs/playground-robot-contract-20261104.md/.json for scope and retained evidence.
 
 Trusted Playground authoring can extend an admitted ordered contact layout from
 its exact base XML, finger names and existing prop-name prefix. Generate only new
