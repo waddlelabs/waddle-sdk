@@ -3,7 +3,7 @@
 import math
 from copy import copy
 
-from .authored_preparation import _contact_delta, _encoded, _key
+from .authored_preparation import _encoded, _key, same_contacts
 
 
 def _references(node, names):
@@ -30,7 +30,7 @@ def translate(model, before, after):
         or after is None
         or before.static != after.static
         or _key(before.parts["asset"]) != _key(after.parts["asset"])
-        or any(_contact_delta(before, after))
+        or not same_contacts(before, after)
     ):
         return None
     old, new = before.parts["worldbody"], after.parts["worldbody"]

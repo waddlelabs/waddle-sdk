@@ -968,6 +968,8 @@ compiled model still contains every individual pair with its original parameters
 Unchanged flat pair-only defaults can be expanded when attaching new bodies,
 without reparsing the rest of the scene. Changed defaults and general default
 inheritance use the complete parser.
+Reordering an otherwise unchanged contact set also uses the full parser;
+equal membership alone does not preserve native contact layout and names.
 Same-topology inline mesh vertex changes, such as resizing a bowl, also retain
 the parsed scene. It rebuilds vertex/face-only inline mesh declarations in their
 original order using fresh native mesh objects, so the compiler refreshes all

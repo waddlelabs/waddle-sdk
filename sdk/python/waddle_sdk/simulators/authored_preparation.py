@@ -230,6 +230,15 @@ def _contact_delta(old, new):
     return added, removed
 
 
+def same_contacts(old, new):
+    before, after = old.contact_index, new.contact_index
+    if before is not None and after is not None and before.token is after.token:
+        return True
+    return tuple(key for key, _ in old.contacts) == tuple(
+        key for key, _ in new.contacts
+    )
+
+
 def revise(spec, old, new):
     """Copy preparation for supported authored edits; return None otherwise.
 
@@ -316,6 +325,8 @@ def revise(spec, old, new):
     if None in geoms | retired:
         return None
     pairs, obsolete_pairs = _contact_delta(old, new)
+    if not pairs and not obsolete_pairs and not same_contacts(old, new):
+        return None  # Native contact ordering is observable even for the same set.
     for node in pairs:
         if node.tag != "pair" or not {node.get("geom1"), node.get("geom2")} & geoms:
             return None

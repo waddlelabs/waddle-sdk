@@ -24,7 +24,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   translations, recomputing native constants and preserving source validation,
   independent models and full compilation for other changes/dependencies.
   Native equivalence and complete edit latency remain under qualification;
-  speculative addition preparation is not yet connected to the editor.
+  speculative addition preparation is not yet connected to the editor. Preserve
+  native contact layout by fully parsing reordered unchanged contact sets;
+  matching failures on the prior implementation and candidate are retained.
 
 - Verify exact retired contact references and remove authored bodies through native
   cascading deletion. Reject retained invalid references through the full parser.

@@ -1,11 +1,12 @@
-Whole-scene placement candidate retains a private compiled template within the
-existing source-buffer byte bound. Exact isolated free-body translations copy
-it and recompute native constants/statistics; other changes and dependencies
-retain compilation. Source freshness, independent native models and the 32-edit
-refresh remain. The original no-recompile regression fails on unchanged SDK
-37f9f0c; keep that evidence. Candidate native/catalog/default/docs checks remain
-pending. This is a prerequisite for speculative addition preparation, which is
-not yet wired into the editor. Sub-second acceptance remains open. See the
+Whole-scene placement candidate passes 103 focused native checks and all 44
+catalog edits at SDK c2557ac / parent 5554ee72. Default SDK passes 1,349 cases
+(485 skips), strict docs/lint pass. Paired bowl moves improve, but additions
+remain above one second. Contact-order follow-up reproduces a native-layout
+mismatch on both candidate and unchanged 37f9f0c; preserve both failures. The
+candidate now requires ordered contact equality for whole-model reuse and uses
+the full parser when an otherwise unchanged contact set is reordered. Final
+native/catalog checks remain pending. Speculative addition preparation is not
+yet wired into the editor; sub-second acceptance remains open. Evidence is in
 parent .local/edit-pose-preparation-20261104.
 
 SDK c42e584 verifies the exact retired pair multiset and lets native body removal
