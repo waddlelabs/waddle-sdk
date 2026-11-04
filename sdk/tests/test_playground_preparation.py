@@ -22,10 +22,11 @@ def test_prepared_scene_matches_source_and_caches_no_runtime_state(
     parse = authored_preparation.parse
     supplied = []
 
-    def prepared_tree(data, *, _tree=None):
+    def prepared_tree(data, *, _tree=None, _contacts=None):
         assert _tree is not None
+        assert _contacts is not None and _contacts.comparison is not None
         supplied.append(True)
-        return parse(data, _tree=_tree)
+        return parse(data, _tree=_tree, _contacts=_contacts)
 
     monkeypatch.setattr(authored_preparation, "parse", prepared_tree)
 

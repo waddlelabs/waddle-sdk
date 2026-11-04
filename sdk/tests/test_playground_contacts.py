@@ -140,7 +140,7 @@ def test_incremental_contact_eviction_does_not_retain_a_preparation_chain():
     assert len(cache.entries) == 1
     assert second.comparison.previous is not None
     # Both the complete fragment and its reusable serialized pieces are charged.
-    cache.max_bytes = 2 * len(second.xml) - 1
+    cache.max_bytes = len(ET.tostring(base)) + len(second.xml) + len("fab")
     cache.prepare(base, ["f"], ["a", "b"], _contact_pairs, _incremental=True)
     assert not cache.entries
 
