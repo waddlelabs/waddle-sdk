@@ -75,6 +75,8 @@ def test_other_authoring_changes_fall_back(authored, field):
         after["objects"].pop()
     else:
         after[field] = {"fixture": "handover", "seed": 1, "name": "Other"}[field]
+        if field == "seed":
+            after["fixture"] = "handover"
     try:
         assert position_changes(before, after) is None
         assert template.prepare(after) is None
