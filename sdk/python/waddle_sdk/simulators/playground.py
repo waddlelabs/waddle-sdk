@@ -288,6 +288,21 @@ def _reference(config, scene, easy_grasp):
 
 
 def _pairs(root, fingers, props):
+    # Repeated finger contacts share source defaults, not native contact pairs.
+    # Each compiled pair keeps its original parameters and geometry identities.
+    defaults = root.find("default")
+    if defaults is None:
+        defaults = ET.SubElement(root, "default")
+    material = ET.SubElement(defaults, "default", {"class": "playground_contact"})
+    ET.SubElement(
+        material,
+        "pair",
+        condim="4",
+        friction="0.8 0.8 0.001 0.0001 0.0001",
+        margin="0.000001",
+        solref="0.004 1",
+        solimp="0.95 0.99 0.001",
+    )
     contact = root.find("contact")
     existing_pairs = {
         frozenset((pair.get("geom1"), pair.get("geom2")))
@@ -304,13 +319,7 @@ def _pairs(root, fingers, props):
                 "pair",
                 geom1=finger,
                 geom2=prop,
-                condim="4",
-                # A small finite patch stabilizes ordinary grasps without
-                # making marginal edge contacts resist arbitrary torque.
-                friction="0.8 0.8 0.001 0.0001 0.0001",
-                margin="0.000001",
-                solref="0.004 1",
-                solimp="0.95 0.99 0.001",
+                **{"class": "playground_contact"},
             )
 
 

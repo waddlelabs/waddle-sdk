@@ -27,6 +27,103 @@ def same_model(actual, expected):
     np.testing.assert_array_equal(a.qvel, b.qvel)
 
 
+def test_pair_defaults_survive_attachment_and_changed_material_is_recompiled(
+    tmp_path, monkeypatch
+):
+    buffers = source_buffers.SourceBuffers()
+    monkeypatch.setattr(source_buffers, "cache", buffers)
+    monkeypatch.setenv("WADDLE_SIMULATION_MODEL_CACHE", str(tmp_path / "cache"))
+
+    def source(*, added=False, friction="0.8 0.8 0.001 0.0001 0.0001"):
+        extra = (
+            '<body name="prop_b" pos=".3 0 .1"><freejoint/>'
+            '<geom name="b" size=".03"/></body>'
+            if added
+            else ""
+        )
+        pair = '<pair class="grasp" geom1="finger" geom2="b"/>' if added else ""
+        return {
+            "world.xml": f'''<mujoco><compiler angle="radian"/>
+          <default><default class="grasp"><pair condim="4"
+            friction="{friction}" margin=".000001" solref=".004 1"
+            solimp=".95 .99 .001"/></default></default><asset/>
+          <worldbody><geom name="finger" size=".03"/>
+            <body name="prop_a" pos=".1 0 .1"><freejoint/>
+              <geom name="a" size=".03"/></body>{extra}</worldbody>
+          <contact><pair class="grasp" geom1="finger" geom2="a"/>{pair}</contact>
+          <keyframe><key name="initial"/></keyframe></mujoco>'''.encode()
+        }
+
+    def compile(inputs):
+        return load_model("world.xml", inputs, cache="", _authored=True)
+
+    compile(source())
+
+    def unexpected_full_parse(*args, **kwargs):
+        pytest.fail("unchanged pair defaults discarded the prepared scene")
+
+    with monkeypatch.context() as cached:
+        cached.setattr(mj.MjSpec, "from_file", unexpected_full_parse)
+        added = compile(source(added=True))
+    expected = load_model("world.xml", source(added=True), cache="")
+    same_model(added, expected)
+    np.testing.assert_array_equal(
+        added.pair_friction, [[0.8, 0.8, 0.001, 0.0001, 0.0001]] * 2
+    )
+    # Restore the retained lineage, then change the shared material. Its source
+    # is authoritative and must not inherit either old native pair parameters.
+    compile(source(added=True))
+    changed_source = source(added=True, friction=".4 .4 .002 .0002 .0002")
+    changed = compile(changed_source)
+    expected = load_model("world.xml", changed_source, cache="")
+    same_model(changed, expected)
+    assert np.all(changed.pair_friction[:, 0] == 0.4)
+    buffers.close()
+
+
+def test_resized_inline_mesh_keeps_later_mesh_order_and_rebuilds_native_bounds(
+    tmp_path, monkeypatch
+):
+    buffers = source_buffers.SourceBuffers()
+    monkeypatch.setattr(source_buffers, "cache", buffers)
+    monkeypatch.setenv("WADDLE_SIMULATION_MODEL_CACHE", str(tmp_path / "cache"))
+
+    def source(width=1, invalid=False):
+        face = ' face="0 1 99"' if invalid else ""
+        return {
+            "world.xml": f'''<mujoco><compiler angle="radian"/><asset>
+          <mesh name="first" vertex="0 0 0 {width} 0 0 0 1 0 0 0 1"{face}/>
+          <mesh name="second" vertex="0 0 0 1 0 0 0 1 0 0 0 1"/></asset>
+          <worldbody><body name="prop_a"><freejoint/>
+            <geom name="a" type="mesh" mesh="first" mass="1"/></body>
+            <body name="prop_b" pos="3 0 0"><freejoint/>
+            <geom name="b" type="mesh" mesh="second" mass="1"/></body></worldbody>
+          <contact/><keyframe><key name="initial"/></keyframe></mujoco>'''.encode()
+        }
+
+    first = load_model("world.xml", source(), cache="", _authored=True)
+    vertices = first.mesh_vert.copy()
+
+    def unexpected_full_parse(*args, **kwargs):
+        pytest.fail("resizing an inline mesh discarded the prepared scene")
+
+    with monkeypatch.context() as cached:
+        cached.setattr(mj.MjSpec, "from_file", unexpected_full_parse)
+        cached.setattr(mj.MjSpec, "from_string", unexpected_full_parse)
+        changed = load_model("world.xml", source(2), cache="", _authored=True)
+    expected = load_model("world.xml", source(2), cache="")
+    same_model(changed, expected)
+    np.testing.assert_array_equal(first.mesh_vert, vertices)
+    assert [changed.mesh(i).name for i in range(changed.nmesh)] == ["first", "second"]
+    assert not np.array_equal(changed.geom_aabb, first.geom_aabb)
+    with pytest.raises(ValueError):
+        load_model("world.xml", source(2, invalid=True), cache="", _authored=True)
+    assert not buffers.entries and not buffers.prepared
+    recovered = load_model("world.xml", source(2), cache="", _authored=True)
+    same_model(recovered, expected)
+    buffers.close()
+
+
 @pytest.mark.parametrize(
     "robot,arms,kind,compound",
     [
@@ -151,6 +248,7 @@ def test_existing_edits_match_full_rebuild_without_reparsing_unchanged_bowl(
         [
             ("block", "position", [0.35, -0.18, 0.1]),
             ("bowl", "rotation", [10, 20, 30]),
+            ("bowl", "size", [0.16, 0.16, 0.07]),
             ("block", "size", [0.06, 0.07, 0.08]),
             ("ball", "size", [0.03, 0.03, 0.03]),
             ("cylinder", "color", [0.8, 0.2, 0.3]),

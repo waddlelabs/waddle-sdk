@@ -1,5 +1,6 @@
 """Extend a privately prepared authored scene after an exact source comparison."""
 
+import math
 import xml.etree.ElementTree as ET
 from collections import Counter
 from copy import deepcopy
@@ -63,13 +64,70 @@ def _changes(before, after, updates):
     return all(_changes(a, b, updates) for a, b in zip(before, after, strict=True))
 
 
+def _pair_defaults(root):
+    """Recognize source-only pair defaults that can be expanded for attachment."""
+    sections = root.findall("default")
+    if not sections:
+        return {}
+    if len(sections) != 1 or sections[0].attrib:
+        return None
+    result = {}
+    for group in sections[0]:
+        if (
+            group.tag != "default"
+            or set(group.attrib) != {"class"}
+            or not group.get("class")
+            or group.get("class") in result
+            or len(group) != 1
+            or group[0].tag != "pair"
+            or len(group[0])
+            or set(group[0].attrib)
+            - {"condim", "friction", "margin", "gap", "solref", "solimp"}
+        ):
+            return None
+        result[group.get("class")] = group[0].attrib
+    return result
+
+
+def _asset_changes(before, after, updates):
+    if _key(before) == _key(after):
+        return True
+    # Bowl dimensions change their inline vertices without changing mesh names
+    # or faces. Preserve the rest of the parsed scene and let the native compiler
+    # recompute this mesh's normals, hull, mass properties and contacts normally.
+    if (
+        before.tag != "mesh"
+        or after.tag != "mesh"
+        or not after.get("name")
+        or before.get("file")
+        or after.get("file")
+        or before.text != after.text
+        or len(before)
+        or len(after)
+        or {k: v for k, v in before.attrib.items() if k != "vertex"}
+        != {k: v for k, v in after.attrib.items() if k != "vertex"}
+        or "vertex" not in before.attrib
+        or "vertex" not in after.attrib
+    ):
+        return False
+    values = [float(value) for value in after.get("vertex").split()]
+    if (
+        len(values) != len(before.get("vertex").split())
+        or len(values) % 3
+        or not all(math.isfinite(value) for value in values)
+    ):
+        return False
+    updates.append(after.get("name"))
+    return True
+
+
 def revise(spec, previous, current):
     """Copy preparation for supported authored edits; return None otherwise.
 
     The caller has freshly hashed every non-root asset and holds the matching
     virtual files. Only its trusted authoring path uses this optimization.
-    Current XML remains authoritative; defaults, includes, changed topology in
-    existing bodies and unfamiliar reset keys take the complete parser.
+    Current XML remains authoritative; general defaults, includes, changed
+    topology in existing bodies and unfamiliar reset keys take the full parser.
     """
     import mujoco as mj
 
@@ -78,7 +136,7 @@ def revise(spec, previous, current):
         compiler = root.find("compiler")
         if (
             root.find(".//include") is not None
-            or root.find("default") is not None
+            or _pair_defaults(root) is None
             or compiler is None
             or compiler.attrib != {"angle": "radian"}
             or any(
@@ -106,9 +164,28 @@ def revise(spec, previous, current):
         if node.attrib != new_parts[tag].attrib:
             return None
     old_assets, new_assets = list(old_parts["asset"]), list(new_parts["asset"])
-    if _encoded(new_assets[: len(old_assets)]) != _encoded(old_assets):
+    mesh_changes = []
+    if len(new_assets) < len(old_assets) or not all(
+        _asset_changes(a, b, mesh_changes)
+        for a, b in zip(old_assets, new_assets[: len(old_assets)], strict=True)
+    ):
         return None
     assets = new_assets[len(old_assets) :]
+    rebuilt_meshes = []
+    if mesh_changes:
+        first = next(
+            i for i, node in enumerate(old_assets) if node.get("name") in mesh_changes
+        )
+        rebuilt_meshes = [
+            node for node in new_assets[first : len(old_assets)] if node.tag == "mesh"
+        ]
+        if any(
+            set(node.attrib) - {"name", "vertex", "face"}
+            or not node.get("name")
+            or not node.get("vertex")
+            for node in rebuilt_meshes
+        ):
+            return None
 
     def objects(world):
         return {
@@ -201,6 +278,19 @@ def revise(spec, previous, current):
     for tag, name, attribute, numbers in updates:
         node = getattr(result, tag)(name)
         setattr(node, attribute, numbers[0] if len(numbers) == 1 else numbers)
+    # A compiled mesh retains derived native data: updating only uservert can
+    # leave stale bounds. Recreate the inline mesh suffix, preserving its original
+    # order and leaving robot assets, bodies and contact pairs in the copied spec.
+    # Use fresh typed mesh declarations: reparsing large vertex strings here can
+    # fail inside the native XML numeric parser and discard the entire preparation.
+    for node in rebuilt_meshes:
+        result.delete(result.mesh(node.get("name")))
+    for node in rebuilt_meshes:
+        result.add_mesh(
+            name=node.get("name"),
+            uservert=[float(value) for value in node.get("vertex").split()],
+            userface=[int(value) for value in node.get("face", "").split()],
+        )
     if bodies:
         delta = ET.Element("mujoco")
         ET.SubElement(delta, "compiler", angle="radian")
@@ -210,6 +300,14 @@ def revise(spec, previous, current):
             ("contact", pairs),
         ):
             ET.SubElement(delta, tag).extend(deepcopy(nodes))
+        # Attachment parses an independent child. Resolve the admitted pair-only
+        # defaults explicitly so it needs no duplicate class definitions.
+        defaults = _pair_defaults(new)
+        for pair in delta.find("contact"):
+            if name := pair.attrib.pop("class", None):
+                if name not in defaults:
+                    return None
+                pair.attrib = {**defaults[name], **pair.attrib}
         child = mj.MjSpec.from_string(ET.tostring(delta, encoding="unicode"))
         result.copy_during_attach = True
         result.attach(child, prefix="", frame=result.worldbody.add_frame())

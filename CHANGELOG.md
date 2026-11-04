@@ -20,6 +20,15 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Changed
 
+- Store repeated Playground finger-contact parameters in one named XML default,
+  retaining every native pair and its original contact settings. Reuse parsed
+  preparations with unchanged pair-only defaults; expand those settings for
+  attached additions and recompile changed or unsupported defaults normally.
+- Preserve parsed robot/body/contact preparation when resizing same-topology
+  inline bowl meshes. Recreate vertex/face-only native meshes in order, with fresh
+  native collision bounds and mass properties; retain full-source fallback for
+  unsupported mesh changes and independent live-state transfer.
+
 - Reuse bounded reference XML and unchanged authored object fragments during
   Playground edits. Reread and hash every source asset; invalidate on reference,
   configuration or fixture-placement changes. Keep independent compilation,

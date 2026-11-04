@@ -1,3 +1,31 @@
+Playground finger contacts share a named pair-only default in portable XML.
+Keep every native pair and its original material/solver parameters. Parsed
+preparations can expand unchanged flat pair defaults for attached additions;
+changed defaults, general inheritance and unsupported source still fully parse.
+Inline vertex edits with unchanged topology can rebuild the vertex/face-only
+inline mesh suffix as fresh native meshes in declaration order, retaining parsed
+robots, bodies and contacts. Avoid reparsing the large vertex XML; a native parser
+error can otherwise discard preparation and cause a full scene rebuild. Never
+patch only an already compiled mesh's vertices: derived collision bounds can
+remain stale. Other mesh attributes, file-backed/classed suffixes and unsupported differences
+retain full parsing. Verify unchanged old models and ordered mesh identities.
+The contact representation must match all native arrays and stepped physics
+against the previous explicit-pair authoring code. All 55 native preparation,
+cache and collision cases, 1,305 default Python cases (478 optional skips),
+changed-source lint/format and strict docs pass. All 11 published catalog
+additions plus Stack bowls resizing match every native model array and ten
+physics steps against the frozen prior compiler. Preserve the failed direct
+vertex update and original fallback regressions. See the parent's
+logs/playground-catalog-edits-20261103.md/.json for actual edit timings; smaller
+XML alone is not latency proof, and the sub-second goal remains open.
+The final typed implementation repeats all 55 native checks and strict docs;
+the default suite ran before that native-only follow-up. All 44 edits across the
+11 published scenes reuse preparation, without native exceptions or fallback.
+Preserve the XML-suffix candidate's caught vertex-parser exception and 42.6-second
+resize, the diagnostic stale-frame refusal and the test publication races. Fresh
+native mesh construction fixes that fallback; the final full-catalog bowl resize
+is 7.5 seconds through a current image, not sub-second or browser acceptance.
+
 Playground can also reuse reference XML and unchanged authored object fragments
 with the existing optional model-cache setting. Bound retained serialized XML to
 4 MiB across two reference configurations; this excludes Python object overhead.

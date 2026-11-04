@@ -931,7 +931,18 @@ each of those two asset sets. It compares the entire old/new XML and freshly
 hashed assets, copies the specification, then applies supported object additions,
 removals, poses and primitive geometry/material values before compiling an
 independent model. Newly appended bodies/assets/contact pairs alone need parsing.
-Changed existing mesh assets or topology, defaults, includes, unfamiliar reset
+Authored finger contacts share a named pair default in the portable XML; the
+compiled model still contains every individual pair with its original parameters.
+Unchanged flat pair-only defaults can be expanded when attaching new bodies,
+without reparsing the rest of the scene. Changed defaults and general default
+inheritance use the complete parser.
+Same-topology inline mesh vertex changes, such as resizing a bowl, also retain
+the parsed scene. It rebuilds vertex/face-only inline mesh declarations in their
+original order using fresh native mesh objects, so the compiler refreshes all
+derived bounds, normals and mass properties without reparsing vertex XML.
+The copied robot, bodies and contact pairs remain prepared. Other mesh attributes,
+file-backed or classed mesh suffixes, changed mesh faces/counts, general topology changes,
+includes, unfamiliar reset
 keys and other unsupported differences use the complete parser. At most 32 edits
 reuse one native preparation before full parsing refreshes its internal attachment
 bookkeeping. The 256 MiB limit bounds source bytes, not native specification RSS.
