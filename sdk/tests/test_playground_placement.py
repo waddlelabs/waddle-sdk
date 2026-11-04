@@ -7,7 +7,6 @@ import numpy as np
 import pytest
 from test_playground import scene
 from test_prepared_placement import same_model
-
 from waddle_sdk.simulators.playground import prepare_scene
 from waddle_sdk.simulators.playground_placement import (
     PlacementTemplate,
