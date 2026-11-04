@@ -19,7 +19,9 @@ from waddle_sdk.simulators.scene import make_site
 def authored(tmp_path, monkeypatch):
     pytest.importorskip("mujoco")
     monkeypatch.setenv("WADDLE_SIMULATION_MODEL_CACHE", str(tmp_path / "cache"))
-    _, config = make_site("placement", backend="mujoco", robot="yam", arms=1)
+    _, config = make_site(
+        "placement", backend="mujoco", robot="yam", arms=1, environment="two_cubes"
+    )
     document = scene()
     for obj in document["objects"]:
         obj["rotation"] = [17, 0, -23]
