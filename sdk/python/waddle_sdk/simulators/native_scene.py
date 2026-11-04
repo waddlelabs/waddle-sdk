@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import os
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -105,6 +106,8 @@ def resolve(root, config, *, contents=None):
 
     A trusted consumer can compare and compile this snapshot without reopening
     mutable paths. Ordinary path-only callers retain full hash validation.
+    Optional reference analysis reuse is content-bound, never file validity;
+    every manifest membership and configuration check still runs on each call.
     """
     root = Path(root).resolve(strict=True)
     selected = config["native_scene"]
@@ -122,7 +125,7 @@ def resolve(root, config, *, contents=None):
     files = selected["files"]
     if not isinstance(files, dict) or not files or len(files) > 10000:
         raise ValueError("native scene requires a bounded file digest manifest")
-    directories = {Path("."): root}
+    directories, xml_sources = {Path("."): root}, {}
     for name, digest in files.items():
         path = Path(name)
         if path.is_absolute() or ".." in path.parts or "\\" in name or not name:
@@ -138,7 +141,7 @@ def resolve(root, config, *, contents=None):
         resolved = directory / path.name
         if resolved.is_symlink() or not resolved.is_file():
             raise ValueError("native scene assets must be ordinary files")
-        if contents is None:
+        if contents is None and not name.endswith(".xml"):
             with resolved.open("rb") as stream:
                 actual = hashlib.file_digest(stream, "sha256").hexdigest()
         else:
@@ -146,6 +149,8 @@ def resolve(root, config, *, contents=None):
             actual = hashlib.sha256(data).hexdigest()
         if actual != digest:
             raise ValueError(f"native scene asset digest differs: {name}")
+        if name.endswith(".xml"):
+            xml_sources[name] = data
         if contents is not None:
             contents[name] = data
     if (
@@ -158,33 +163,23 @@ def resolve(root, config, *, contents=None):
         )
     # Validate referenced XML paths as well as the inventory. Included XML has
     # its own source directory; referenced mesh/texture directories remain local.
-    for name in files:
-        if not name.endswith(".xml"):
-            continue
-        xml = (
-            ET.parse(root / name).getroot()
-            if contents is None
-            else ET.fromstring(contents[name])
+    from .source_references import cache, references
+
+    for name, data in xml_sources.items():
+        # Analyze the exact bytes hashed above. Only immutable XML reference
+        # names can be reused; file validity and current manifest membership
+        # are checked afresh, including when the same XML moves directories.
+        selected_references = (
+            cache.read(data, files[name])
+            if os.environ.get("WADDLE_SIMULATION_MODEL_CACHE")
+            else references(data)
         )
-        compiler = xml.find("compiler")
-        directories = {} if compiler is None else compiler.attrib
-        for node in xml.iter():
-            for key in ("file", "meshdir", "texturedir", "assetdir"):
-                value = node.get(key)
-                if not value:
-                    continue
-                path = Path(value)
-                if path.is_absolute() or ".." in path.parts or "\\" in value:
-                    raise ValueError("native XML references must remain portable")
-                if key == "file":
-                    directory = directories.get("assetdir", "")
-                    if node.tag in ("mesh", "texture"):
-                        directory = directories.get(node.tag + "dir", directory)
-                    reference = (Path(name).parent / directory / path).as_posix()
-                    if reference not in files:
-                        raise ValueError(
-                            f"native XML references an unmanifested asset: {reference}"
-                        )
+        for relative in selected_references:
+            reference = (Path(name).parent / relative).as_posix()
+            if reference not in files:
+                raise ValueError(
+                    f"native XML references an unmanifested asset: {reference}"
+                )
     prefixes = selected["prefixes"]
     if (
         not isinstance(prefixes, dict)

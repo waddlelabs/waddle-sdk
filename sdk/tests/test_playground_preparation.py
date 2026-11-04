@@ -33,6 +33,19 @@ def test_prepared_scene_matches_source_and_caches_no_runtime_state(
     assert prepared.contents == {
         name: (tmp_path / "scene" / name).read_bytes() for name in native["files"]
     }
+    from waddle_sdk.simulators import source_references
+    from waddle_sdk.simulators.native_scene import resolve
+
+    # Authoring supplied the exact tree behind the portable bytes. Validation
+    # still captures/checks every file, without parsing that XML a second time.
+    def reparsed(_data):
+        pytest.fail("validated authoring discarded its prepared XML references")
+
+    with monkeypatch.context() as reused:
+        reused.setattr(source_references, "references", reparsed)
+        captured = {}
+        resolve(tmp_path / "scene", prepared.config, contents=captured)
+        assert captured == prepared.contents
     fresh = mj.MjModel.from_xml_path(str(tmp_path / "scene/world.xml"))
     for name in (
         "qpos0",

@@ -1,6 +1,7 @@
 """Native file checks share directory work, never stale source contents."""
 
 import hashlib
+import mmap
 import os
 from pathlib import Path
 
@@ -32,9 +33,15 @@ def source(root, *, count=12):
 
 
 @pytest.mark.parametrize("capture", [False, True])
+@pytest.mark.parametrize("cached", [False, True])
+@pytest.mark.parametrize("mutation", ["write", "hardlink", "mmap"])
 def test_one_directory_resolution_per_pass_keeps_fresh_hashes(
-    tmp_path, monkeypatch, capture
+    tmp_path, monkeypatch, capture, cached, mutation
 ):
+    if cached:
+        monkeypatch.setenv("WADDLE_SIMULATION_MODEL_CACHE", str(tmp_path / "cache"))
+    else:
+        monkeypatch.delenv("WADDLE_SIMULATION_MODEL_CACHE", raising=False)
     config = source(tmp_path)
     original = Path.resolve
     calls = []
@@ -54,7 +61,17 @@ def test_one_directory_resolution_per_pass_keeps_fresh_hashes(
         }
     path = tmp_path / "assets/0.stl"
     stamp = path.stat()
-    path.write_bytes(b"changed data")
+    changed = b"x" * stamp.st_size
+    if mutation == "hardlink":
+        alias = tmp_path / "alias"
+        os.link(path, alias)
+        alias.write_bytes(changed)
+    elif mutation == "mmap":
+        with path.open("r+b") as stream, mmap.mmap(stream.fileno(), 0) as mapped:
+            mapped[:] = changed
+            mapped.flush()
+    else:
+        path.write_bytes(changed)
     os.utime(path, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
     with pytest.raises(ValueError, match="digest differs"):
         resolve(tmp_path, config, contents={} if capture else None)
@@ -90,3 +107,81 @@ def test_confined_directory_alias_remains_supported(tmp_path):
     contents = {}
     resolve(tmp_path, config, contents=contents)
     assert contents["assets/0.stl"] == b"mesh bytes 0"
+
+
+def test_reused_xml_references_still_require_current_manifest_and_relative_base(
+    tmp_path, monkeypatch
+):
+    from waddle_sdk.simulators import source_references
+
+    monkeypatch.setenv("WADDLE_SIMULATION_MODEL_CACHE", str(tmp_path / "cache"))
+    monkeypatch.setattr(
+        source_references, "cache", source_references.SourceReferences()
+    )
+    config = source(tmp_path, count=1)
+    files = config["native_scene"]["files"]
+
+    def publish(name, data):
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        files[name] = hashlib.sha256(data).hexdigest()
+
+    child = b'<mujoco><compiler meshdir="assets"/><asset><mesh file="0.stl"/></asset></mujoco>'
+    publish("world.xml", b'<mujoco><include file="nested/part.xml"/></mujoco>')
+    publish("nested/part.xml", child)
+    publish("nested/assets/0.stl", b"nested mesh")
+    resolve(tmp_path, config)
+    resolve(tmp_path, config, contents={})
+    files.pop("nested/assets/0.stl")
+    with pytest.raises(ValueError, match="unmanifested asset: nested/assets/0.stl"):
+        resolve(tmp_path, config)
+    publish("nested/assets/0.stl", b"nested mesh")
+    publish("world.xml", b'<mujoco><include file="moved/part.xml"/></mujoco>')
+    files.pop("nested/part.xml")
+    publish("moved/part.xml", child)
+    with pytest.raises(ValueError, match="unmanifested asset: moved/assets/0.stl"):
+        resolve(tmp_path, config)
+    publish("moved/assets/0.stl", b"moved mesh")
+    resolve(tmp_path, config)
+    publish("moved/part.xml", child.replace(b'file="0.stl"', b'file="../0.stl"'))
+    with pytest.raises(ValueError, match="must remain portable"):
+        resolve(tmp_path, config)
+
+
+def test_reference_analysis_is_content_bound_and_bounded(monkeypatch):
+    from waddle_sdk.simulators import source_references
+
+    def xml(name):
+        return f'<mujoco><include file="{name}"/></mujoco>'.encode()
+
+    first, second, third = map(xml, ("first.xml", "other.xml", "third.xml"))
+    cache = source_references.SourceReferences(max_bytes=len(first) * 2)
+    analyze = source_references.references
+    analyzed = []
+
+    def tracked(data):
+        analyzed.append(data)
+        return analyze(data)
+
+    monkeypatch.setattr(source_references, "references", tracked)
+
+    def read(data):
+        return cache.read(data, hashlib.sha256(data).hexdigest())
+
+    assert read(first) == read(first) == ("first.xml",)
+    assert analyzed == [first]
+    assert read(second) == ("other.xml",)
+    assert read(third) == ("third.xml",)
+    assert read(first) == ("first.xml",)
+    assert analyzed == [first, second, third, first]
+    large = b"<mujoco>" + b" " * cache.max_bytes + b"</mujoco>"
+    assert read(large) == ()
+    assert not cache.entries
+    read(first)
+    monkeypatch.setattr(cache, "pid", -1)
+    read(first)
+    assert analyzed[-2:] == [first, first]
+    with pytest.raises(ValueError, match="must remain portable"):
+        read(xml("../escape.xml"))
+    assert not cache.entries

@@ -20,6 +20,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Changed
 
+- Reuse bounded XML reference analysis by freshly verified content digest during
+  native scene validation. Continue to read/hash every asset and check current
+  path confinement, manifest membership and configuration; analyze the exact XML
+  snapshot whose digest was checked, without reopening it during the same pass.
+  Trusted authoring prepares reference analysis from its exact serialized tree.
+
 - Retain private authored XML comparison records with prepared native scenes,
   avoiding repeated parsing and contact-key construction for the old revision.
   Continue to compare every new source and freshly hashed asset, compile an

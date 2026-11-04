@@ -490,7 +490,12 @@ def prepare_scene(
                 "simulation.model_cache: select an absolute private directory"
             )
         from .prepared_model import cache
+        from .source_references import cache as references
 
+        # This is the exact tree just serialized above. Retain only its immutable
+        # reference list; final publication still hashes every written file and
+        # checks current confinement and manifest membership normally.
+        references.read(contents["world.xml"], hashes["world.xml"], _tree=root)
         retained = cache.remember("world.xml", hashes, contents["world.xml"], model)
         if not (_prefer_handoff and retained):
             model = load_model("world.xml", contents, _prepared=model)

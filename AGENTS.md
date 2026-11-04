@@ -1,3 +1,21 @@
+Native source validation may retain XML reference names by the freshly verified
+content digest. Trusted authoring supplies the exact tree it just serialized;
+ordinary validation analyzes the verified bytes. Hash every file and check
+current confinement, manifest membership and configuration on every call.
+Never cache file validity, path resolution or
+mutable XML trees. Analyze the same XML bytes that were hashed, including path-only
+validation. Bound retained analysis to two documents/32 MiB of input bytes; reset
+after fork and discard records on parse failure. All 82 native and 1,317 default
+Python cases (478 optional skips), strict docs and changed-source lint/format
+pass, including restored-mtime, hard-link and mmap mutation checks. All 44 edits
+across 11 exact published presets retain running state/history. All 55 authored
+documents prepare their reference lists; 132 validation lookups reuse them,
+without reparsing for reference analysis. Other native source consumers still
+parse where needed. Paired add/image means are 4.567/4.305 s for Stack bowls and
+1.367/1.383 s for Empty two-arm table, baseline/candidate; other edits are mixed.
+The sub-second goal remains open. Keep the unprimed experiment and full samples
+in the parent's .local/edit-critical-path-20261104 and reference-preparation report.
+
 Prepared authored specifications now retain read-only old-XML comparison records
 and contact keys. Parse and compare the exact new XML on every revision and keep
 fresh asset hashes, independent native models, full-parser fallback and the

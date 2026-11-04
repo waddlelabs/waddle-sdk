@@ -906,6 +906,16 @@ checksum. Missing or invalid cache evidence compiles the original sources, keepi
 original model failures. Unavailable cache storage also falls back to compilation.
 The cache retains at most sixteen models and 256 MiB.
 
+Native source validation can also retain immutable XML reference lists for two
+documents totaling at most 32 MiB of input bytes, excluding Python overhead.
+It reads and hashes every file and checks current path confinement, manifest
+membership and configuration on every call. Only reference analysis is reused,
+keyed by the freshly verified XML digest; no file validity or mutable tree is
+retained. The analyzed XML is the exact byte snapshot that was hashed. Parsing
+failures and fork discard the records, and changed XML is analyzed afresh.
+Trusted authoring prepares the list directly from the exact tree it just
+serialized, so later validation can reuse it after hashing the written files.
+
 With newer MuJoCo bindings, compilation uses an explicit virtual file system.
 When the optional cache is enabled, the process can retain two sets of unchanged
 virtual assets within another 256 MiB. Every lookup still hashes all source bytes;
