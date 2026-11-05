@@ -167,8 +167,9 @@ requires review of the hardware settings and workspace bounds.
 
 The robot page refreshes adapter discovery every second. USB CAN adapters use
 serial identity when available and keep a grey row when unplugged; reconnecting
-updates their current CAN channel. Built-in CAN ports stay listed even when the
-arm cable is removed. Link state is not arm connection evidence. Known gs_usb USB
+updates their current CAN channel. USB rows say **USB PLUGGED IN** or **USB UNPLUGGED**. Built-in CAN ports
+are excluded from these suggestions because their presence cannot identify an
+attached arm; use manual connection settings for them. Known gs_usb USB
 adapters whose kernel driver is missing remain visible with a setup error; install
 or enable the matching Linux driver before adding them. Discovery never enables
 the CAN link or motors.

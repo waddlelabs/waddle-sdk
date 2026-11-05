@@ -11,6 +11,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Suggest only external adapters on the robot page, excluding built-in CAN
+  controllers. Show explicit USB PLUGGED IN/USB UNPLUGGED status instead of
+  presenting CAN link state as connection guidance.
+
 - Distinguish built-in CAN ports from USB adapters; show known gs_usb adapters
   even when their Linux driver has not created a CAN interface. Keep USB serial
   identity across reconnects, update changed channel names, and refuse adding an

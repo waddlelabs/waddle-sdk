@@ -2,7 +2,8 @@ Terminal setup uses persistent camera and arm-transport lists with one-second
 non-opening discovery. Preserve the highlighted device through refresh and
 hotplug; do not re-enable already enabled Textual options, which advances focus.
 Transport presence identifies an adapter, not arm power or CAN bus connectivity.
-Distinguish built-in CAN ports from USB adapters. Known gs_usb USB devices without
+Keep built-in CAN controllers out of the arm suggestions; manual connection
+settings still support them. Label USB adapters PLUGGED IN/UNPLUGGED. Known gs_usb USB devices without
 a kernel interface stay visible with a scoped setup error, never a guessed channel.
 Retain USB serial identity and update the channel after reconnecting.
 Install callbacks prepare only the selected adapter before Add/Preview; SDK and USB

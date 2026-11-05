@@ -52,22 +52,35 @@ def _json(raw, kind, label):
 
 
 _TRANSPORT_HELP = (
-    "Refreshes every second. Unplug the USB adapter from this computer to identify "
-    "its row; disconnected adapters stay greyed out. Built-in CAN ports stay listed. "
-    "Arm power and CAN cable connectivity cannot be detected here."
+    "Unplug a USB adapter from this computer to identify it. "
+    "The list refreshes every second; unplugged adapters stay greyed out. "
+    "This shows USB connection, not arm power or the arm-side CAN cable."
 )
 
 
+def _arm_transports(report):
+    # Built-in CAN controllers exist even with no arms attached. They are still
+    # available through manual connection settings, not suggested as found arms.
+    return {
+        row.identifier: row
+        for row in report.candidates
+        if row.kind in {"transport", "robot"}
+        and row.metadata.get("attachment") != "built-in"
+    }
+
+
 def _transport_prompt(row, available=True):
+    usb = row.metadata.get("attachment") == "usb"
     if not available:
-        status = "Unavailable"
-    elif row.metadata.get("setup_error"):
-        status = row.metadata["setup_error"]
-    elif row.metadata.get("transport") == "socketcan":
-        status = f"link {row.metadata.get('state', 'unknown')} · arm connection unknown"
+        status = "USB UNPLUGGED" if usb else "Unavailable"
+    elif usb:
+        status = "USB PLUGGED IN"
     else:
         status = "Adapter detected"
-    return Text(f"{row.label} · {status}", style="" if available else "dim")
+    prompt = Text(f"{status} · {row.label}", style="" if available else "dim")
+    if available and row.metadata.get("setup_error"):
+        prompt.append(f" · {row.metadata['setup_error']}")
+    return prompt
 
 
 class WorkspaceInitApp(App):
@@ -126,11 +139,7 @@ class WorkspaceInitApp(App):
         self.page = 0
         self.building = False
         self.created = None
-        self.transports = {
-            row.identifier: row
-            for row in report.candidates
-            if row.kind in {"transport", "robot"}
-        }
+        self.transports = _arm_transports(report)
         self.camera_candidates = {
             row.identifier: row for row in report.candidates if row.kind == "camera"
         }
@@ -378,11 +387,7 @@ class WorkspaceInitApp(App):
                         f"Hardware discovery failed: {error}. Retrying…"
                     )
                 return
-            transports = {
-                row.identifier: row
-                for row in report.candidates
-                if row.kind in {"transport", "robot"}
-            }
+            transports = _arm_transports(report)
             transport_widget = self.query_one("#transport", OptionList)
             for key, row in transports.items():
                 if key not in self.transports:

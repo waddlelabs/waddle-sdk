@@ -215,7 +215,7 @@ def test_usb_driver_recovery_updates_selected_channel_and_blocks_missing_driver(
             current = DiscoveryReport((resolved,))
             await app._scan_cameras()
             assert "can2" in app._input("part-connection")
-            assert "arm connection unknown" in str(
+            assert "Adapter detected" in str(
                 widget.get_option(resolved.identifier).prompt
             )
             current = DiscoveryReport(())
@@ -233,5 +233,61 @@ def test_usb_driver_recovery_updates_selected_channel_and_blocks_missing_driver(
             assert "can4" in app._input("part-connection")
             app._add_part()
             assert app.parts["arm"]["connection"]["channel"] == "can4"
+
+    asyncio.run(check())
+
+
+def test_arm_list_shows_usb_connections_without_builtin_controller_rows(
+    tmp_path, monkeypatch
+):
+    async def check():
+        builtin = tuple(
+            HardwareCandidate(
+                f"builtin:{i}",
+                "transport",
+                f"Built-in CAN port can{i}",
+                metadata={"attachment": "built-in", "transport": "socketcan"},
+            )
+            for i in range(2)
+        )
+        adapters = tuple(
+            HardwareCandidate(
+                f"usb:{i}",
+                "transport",
+                f"USB CAN adapter {i}",
+                connection={"channel": f"can{i + 2}"},
+                metadata={
+                    "attachment": "usb",
+                    "transport": "socketcan",
+                    "state": "down",
+                },
+            )
+            for i in range(2)
+        )
+        current = DiscoveryReport(builtin + adapters)
+        monkeypatch.setattr(tui, "discover_hardware", lambda: current)
+        app = tui.WorkspaceInitApp(tmp_path, current)
+        async with app.run_test(size=(110, 44)):
+            widget = app.query_one("#transport", OptionList)
+            assert widget.option_count == 3  # Two adapters and manual connection.
+            assert set(app.transports) == {r.identifier for r in adapters}
+            for row in adapters:
+                assert str(widget.get_option(row.identifier).prompt).startswith(
+                    "USB PLUGGED IN"
+                )
+            current = DiscoveryReport(builtin + adapters[:1])
+            await app._scan_cameras()
+            assert widget.option_count == 3
+            unplugged = widget.get_option(adapters[1].identifier)
+            assert str(unplugged.prompt).startswith("USB UNPLUGGED")
+            assert unplugged.disabled
+            assert unplugged.prompt.style == "dim"
+            current = DiscoveryReport(builtin + adapters)
+            await app._scan_cameras()
+            assert widget.option_count == 3
+            assert not widget.get_option(adapters[1].identifier).disabled
+            assert str(widget.get_option(adapters[1].identifier).prompt).startswith(
+                "USB PLUGGED IN"
+            )
 
     asyncio.run(check())
