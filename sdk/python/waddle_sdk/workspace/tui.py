@@ -124,9 +124,11 @@ class WorkspaceInitApp(App):
         hosts=(),
         builder=build_site,
         prepare_drivers=None,
+        site_id=None,
     ):
         super().__init__()
         self.destination = destination
+        self.initial_site_id = site_id or destination.name
         self.report = report
         self.source_site = source_site
         self.hosts = tuple(hosts)
@@ -159,7 +161,7 @@ class WorkspaceInitApp(App):
                 yield Static("Workspace directory", classes="field")
                 yield Input(str(self.destination), id="destination")
                 yield Static("Site name", classes="field")
-                yield Input(self.destination.name, id="site-name")
+                yield Input(self.initial_site_id, id="site-name")
                 yield Static("Control interface", classes="field")
                 yield Select(
                     [("Local site", "none")]
@@ -950,6 +952,7 @@ def run_initializer(
     hosts=(),
     builder=build_site,
     prepare_drivers=None,
+    site_id=None,
 ):
     report = DiscoveryReport(()) if source_site else discover_hardware()
     app = WorkspaceInitApp(
@@ -960,6 +963,7 @@ def run_initializer(
         hosts=hosts,
         builder=builder,
         prepare_drivers=prepare_drivers,
+        site_id=site_id,
     )
     result = app.run()
     return result, app.host
