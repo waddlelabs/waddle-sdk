@@ -888,8 +888,11 @@ impl Playback {
     ) -> Result<PlaybackPoll, PlaybackError> {
         let policy = &self.references.policy;
         let spec = policy.gripper.as_ref().expect("gripper mode");
+        // The worker already serializes write completion. Space from the exact
+        // local submission when available, not completion plus another period.
+        // acknowledge() conservatively supplies completion as both stamps.
         let due = self
-            .acknowledged_ns
+            .dispatched_ns
             .map_or(self.started_ns, |at| at.saturating_add(spec.period_ns));
         if now_ns < due {
             return Ok(PlaybackPoll::WaitUntil(due));

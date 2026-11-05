@@ -467,7 +467,11 @@ optional held groups can still approach them. A paced polynomial, encoder
 position window, nonzero hints and stationary-miss completion cannot be combined
 with this jaw policy.
 
-`period_ns` spaces commands from **completed acknowledgements**, using the local
+`period_ns` spaces commands from the **actual local submission timestamp** when
+the adapter supplies one; otherwise it conservatively uses completed
+acknowledgement time. A write must finish and feedback must be newer than that
+acknowledgement before the next command. Spacing does not add another full period
+after a completed write. Execution uses the local
 clock and no catch-up. It cannot exceed the declared command rate. Nominal jaw
 targets advance once per acknowledgement; after their end, correction continues
 toward the final target under the original absolute timeout. Each correction

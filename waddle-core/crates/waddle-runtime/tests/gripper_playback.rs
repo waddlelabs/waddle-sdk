@@ -112,18 +112,18 @@ fn dispatch(p: &mut Playback, at: i64, q: f64, force_n: Option<f64>) -> Step {
 }
 
 #[test]
-fn jaw_spacing_uses_completed_acknowledgement_and_never_catches_up() {
+fn jaw_spacing_uses_actual_submission_without_catching_up() {
     let (chunk, policy) = inputs();
     let mut p = player(chunk, policy);
     assert_eq!(
         p.poll(0, &measured(0, 1.0, None)).unwrap(),
         PlaybackPoll::Dispatch(0)
     );
-    p.acknowledge_at(0, 10_000_000, 70_000_000).unwrap();
+    p.acknowledge_at(0, 10_000_000, 20_000_000).unwrap();
     assert_eq!(
-        p.poll(100_000_000, &measured(100_000_000, 1.0, None))
+        p.poll(55_000_000, &measured(55_000_000, 1.0, None))
             .unwrap(),
-        PlaybackPoll::WaitUntil(120_000_000)
+        PlaybackPoll::WaitUntil(60_000_000)
     );
     let step = dispatch(&mut p, 500_000_000, 1.0, None);
     assert_eq!(step.values[0], 0.2);
@@ -132,6 +132,28 @@ fn jaw_spacing_uses_completed_acknowledgement_and_never_catches_up() {
         p.poll(510_000_000, &measured(510_000_000, 0.82, None))
             .unwrap(),
         PlaybackPoll::WaitUntil(550_000_000)
+    );
+}
+
+#[test]
+fn slow_jaw_acknowledgement_still_needs_post_ack_feedback_and_full_spacing() {
+    let (chunk, policy) = inputs();
+    let mut p = player(chunk, policy);
+    assert_eq!(
+        p.poll(0, &measured(0, 1.0, None)).unwrap(),
+        PlaybackPoll::Dispatch(0)
+    );
+    p.acknowledge_at(0, 10_000_000, 70_000_000).unwrap();
+    assert_eq!(
+        p.poll(71_000_000, &measured(70_000_000, 1.0, None))
+            .unwrap(),
+        PlaybackPoll::Observe
+    );
+    dispatch(&mut p, 72_000_000, 1.0, None);
+    assert_eq!(
+        p.poll(80_000_000, &measured(80_000_000, 0.82, None))
+            .unwrap(),
+        PlaybackPoll::WaitUntil(122_000_000)
     );
 }
 

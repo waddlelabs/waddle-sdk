@@ -673,6 +673,9 @@ class GripperPlaybackPolicy:
 
     The parent selects only the jaw row. Nominal references advance once per
     acknowledgement, with measured step limits and no wall-clock catch-up.
+    Commands are at least one period apart by local submission time; adapters
+    without an exact submission stamp conservatively use acknowledgement time.
+    Every next command still needs completed acknowledgement and newer feedback.
     Positive force pursues the final target immediately through the same envelope.
     This is separate from checked polynomial playback for arm coordinates.
     """
