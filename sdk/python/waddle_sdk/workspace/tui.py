@@ -76,7 +76,7 @@ class WorkspaceInitApp(App):
     #status { height: auto; max-height: 4; padding: 0 2; color: $error; }
     #footer { height: 1; padding: 0 2; color: $text-muted; }
     #review { height: auto; }
-    #camera-candidate { height: auto; min-height: 4; max-height: 12; }
+    #transport, #camera-candidate { height: auto; min-height: 4; max-height: 12; }
     #camera-preview { height: auto; margin-top: 1; }
     #camera-discovery { height: auto; color: $text-muted; }
     """
@@ -116,6 +116,8 @@ class WorkspaceInitApp(App):
             row.identifier: row for row in report.candidates if row.kind == "camera"
         }
 
+        self.available_transports = set(self.transports)
+        self.selected_transport = "manual"
         self.available_cameras = set(self.camera_candidates)
         self.selected_camera = "manual"
         self._camera_scan_lock = asyncio.Lock()
@@ -160,12 +162,21 @@ class WorkspaceInitApp(App):
                     allow_blank=False,
                     id="profile",
                 )
-                yield Select(
-                    [("Enter connection manually", "manual")]
-                    + [(row.label, key) for key, row in self.transports.items()],
-                    value="manual",
-                    allow_blank=False,
+                yield OptionList(
+                    *[
+                        Option(row.label, id=key)
+                        for key, row in self.transports.items()
+                    ],
+                    Option("Enter connection manually", id="manual"),
                     id="transport",
+                )
+                yield Static(
+                    "Refreshes every second. Unplug the USB CAN adapter to identify "
+                    "its row; disconnected entries stay greyed out. "
+                    "This detects adapters, not arm power or CAN bus wiring.",
+                    id="transport-discovery",
+                    markup=False,
+                    classes="help",
                 )
                 with Horizontal(classes="actions"):
                     yield Button("Add arm", id="add-part", variant="primary")
@@ -321,7 +332,7 @@ class WorkspaceInitApp(App):
 
     def _poll_cameras(self):
         if (
-            self.page != self.PAGES.index("cameras")
+            self.page not in (self.PAGES.index("robots"), self.PAGES.index("cameras"))
             or self.building
             or self._camera_poll_running
             or self._camera_scan_lock.locked()
@@ -345,10 +356,38 @@ class WorkspaceInitApp(App):
             try:
                 report = await asyncio.to_thread(discover_hardware)
             except Exception as error:  # noqa: BLE001 -- optional discovery must not crash setup
-                self.query_one("#camera-discovery", Static).update(
-                    f"Camera discovery failed: {error}. Retrying…"
-                )
+                for name in ("camera-discovery", "transport-discovery"):
+                    self.query_one("#" + name, Static).update(
+                        f"Hardware discovery failed: {error}. Retrying…"
+                    )
                 return
+            transports = {
+                row.identifier: row
+                for row in report.candidates
+                if row.kind in {"transport", "robot"}
+            }
+            transport_widget = self.query_one("#transport", OptionList)
+            for key, row in transports.items():
+                if key not in self.transports:
+                    transport_widget.add_option(Option(row.label, id=key))
+            self.available_transports = set(transports)
+            self.transports.update(transports)
+            for key, row in self.transports.items():
+                available = key in transports
+                self._update_candidate(
+                    transport_widget,
+                    key,
+                    Text(
+                        f"{row.label} · {'Present' if available else 'Unavailable'}",
+                        style="" if available else "dim",
+                    ),
+                    available,
+                )
+            self.query_one("#transport-discovery", Static).update(
+                "Refreshes every second. Unplug the USB CAN adapter to identify "
+                "its row; disconnected entries stay greyed out. "
+                "This detects adapters, not arm power or CAN bus wiring."
+            )
             current = {
                 row.identifier: row for row in report.candidates if row.kind == "camera"
             }
@@ -369,6 +408,11 @@ class WorkspaceInitApp(App):
                     ),
                     None,
                 )
+                highlighted = (
+                    widget.get_option_at_index(widget.highlighted).id
+                    if widget.highlighted is not None
+                    else None
+                )
                 if old_key is not None:
                     self.camera_candidates.pop(old_key)
                     widget.remove_option(old_key)
@@ -376,6 +420,8 @@ class WorkspaceInitApp(App):
                         self.selected_camera = key
                 if key not in self.camera_candidates:
                     widget.add_option(Option(row.label, id=key))
+                if old_key is not None and highlighted == old_key:
+                    widget.highlighted = widget.get_option_index(key)
             self.available_cameras = set(current)
             self.camera_candidates.update(current)
             for key, row in self.camera_candidates.items():
@@ -392,8 +438,7 @@ class WorkspaceInitApp(App):
                 prompt = Text(
                     f"{row.label} · {state}", style="" if available else "dim"
                 )
-                widget.replace_option_prompt(key, prompt)
-                (widget.enable_option if available else widget.disable_option)(key)
+                self._update_candidate(widget, key, prompt, available)
             self.report = report
             self.query_one("#camera-discovery", Static).update(
                 "\n".join(report.warnings)
@@ -403,6 +448,19 @@ class WorkspaceInitApp(App):
             # when an installation has resolved their identity.
             if self.selected_camera in current:
                 self._apply_camera_candidate()
+
+    @staticmethod
+    def _update_candidate(widget, key, prompt, available):
+        option = widget.get_option(key)
+        if option.prompt != prompt:
+            widget.replace_option_prompt(key, prompt)
+        if option.disabled == available:
+            # Textual's enable/disable methods advance the highlighted row even
+            # when enabling an already enabled option. Update only on change,
+            # and retain the user's row through disconnect/reconnect.
+            highlighted = widget.highlighted
+            (widget.enable_option if available else widget.disable_option)(key)
+            widget.highlighted = highlighted
 
     async def _discover_cameras(self, drivers):
         async with self._camera_scan_lock:
@@ -487,9 +545,10 @@ class WorkspaceInitApp(App):
         if self.is_mounted:
             self._camera_defaults()
 
-    @on(Select.Changed, "#transport")
-    def transport_changed(self):
-        selected = self.transports.get(self._select("transport"))
+    @on(OptionList.OptionSelected, "#transport")
+    def transport_changed(self, event):
+        self.selected_transport = event.option.id
+        selected = self.transports.get(self.selected_transport)
         if selected is not None:
             defaults = part_defaults(
                 self._select("profile"), self._input("part-name") or "arm"
@@ -548,6 +607,13 @@ class WorkspaceInitApp(App):
         self.query_one("#safety-reviewed", Checkbox).value = False
 
     def _add_part(self):
+        if (
+            self.selected_transport != "manual"
+            and self.selected_transport not in self.available_transports
+        ):
+            raise ValueError(
+                "Selected arm transport is disconnected; reconnect it before adding."
+            )
         name = self._input("part-name")
         if not name or name in self.parts:
             raise ValueError("Choose a unique arm name")
@@ -812,7 +878,10 @@ class WorkspaceInitApp(App):
                     self._review()
                 self.page = max(0, min(len(self.PAGES) - 1, target))
                 self._show_page()
-                if self.page == self.PAGES.index("cameras"):
+                if self.page in (
+                    self.PAGES.index("robots"),
+                    self.PAGES.index("cameras"),
+                ):
                     self._poll_cameras()
             elif action == "create":
                 await self._create()

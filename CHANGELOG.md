@@ -11,6 +11,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Keep camera selection stable during discovery refresh; avoid Textual's
+  highlight-advancing enable call for already enabled rows.
+- List arm transports with one-second hotplug updates and grey retained
+  disconnected rows. Reject adding a selected disconnected transport without
+  opening hardware or inferring arm connectivity from adapter presence.
+
 - Show a persistent camera list in terminal setup, refreshing every second without
   opening streams; retain unavailable rows and stable selection through hotplug.
   Prepare only the selected camera's support before Add/Preview, rediscover its

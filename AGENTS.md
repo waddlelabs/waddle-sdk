@@ -1,4 +1,7 @@
-Terminal setup uses a persistent camera list with one-second non-opening discovery.
+Terminal setup uses persistent camera and arm-transport lists with one-second
+non-opening discovery. Preserve the highlighted device through refresh and
+hotplug; do not re-enable already enabled Textual options, which advances focus.
+Transport presence identifies an adapter, not arm power or CAN bus connectivity.
 Install callbacks prepare only the selected adapter before Add/Preview; SDK and USB
 serials are distinct, and physical-port evidence is required to rebind selection.
 Preview is a camera-only snapshot rendered with terminal colour blocks, including

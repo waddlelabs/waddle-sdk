@@ -3,6 +3,7 @@
 import asyncio
 import threading
 
+import pytest
 from rich.text import Text
 from textual.widgets import OptionList
 from waddle_sdk.discovery import DiscoveryReport, HardwareCandidate
@@ -68,7 +69,10 @@ def test_hotplug_keeps_unavailable_row_and_selection(tmp_path, monkeypatch):
     asyncio.run(check())
 
 
-def test_slow_discovery_is_single_flight_and_does_not_block_ui(tmp_path, monkeypatch):
+@pytest.mark.parametrize("page", ["robots", "cameras"])
+def test_slow_discovery_is_single_flight_and_does_not_block_ui(
+    tmp_path, monkeypatch, page
+):
     async def check():
         entered, release = threading.Event(), threading.Event()
         calls = []
@@ -82,7 +86,7 @@ def test_slow_discovery_is_single_flight_and_does_not_block_ui(tmp_path, monkeyp
         monkeypatch.setattr(tui, "discover_hardware", discover)
         app = tui.WorkspaceInitApp(tmp_path, DiscoveryReport(()))
         async with app.run_test(size=(110, 44)):
-            app.page = app.PAGES.index("cameras")
+            app.page = app.PAGES.index(page)
             app._poll_cameras()
             try:
                 assert await asyncio.to_thread(entered.wait, 5)
@@ -108,3 +112,73 @@ def test_preview_renders_rgb_without_display_and_closes(monkeypatch):
     assert "▀" in preview.plain
     assert preview.spans
     assert "camera closed" in preview.plain
+
+
+def test_refresh_keeps_visually_selected_camera_and_connection(tmp_path, monkeypatch):
+    async def check():
+        row = camera()
+        report = DiscoveryReport((row,))
+        monkeypatch.setattr(tui, "discover_hardware", lambda: report)
+        app = tui.WorkspaceInitApp(tmp_path, report)
+        async with app.run_test(size=(110, 44)) as pilot:
+            widget = app.query_one("#camera-candidate", OptionList)
+            widget.highlighted = widget.get_option_index(row.identifier)
+            widget.action_select()
+            await pilot.pause()
+            for _ in range(3):
+                await app._scan_cameras()
+                await pilot.pause()
+                assert (
+                    widget.get_option_at_index(widget.highlighted).id == row.identifier
+                )
+                assert app.selected_camera == row.identifier
+                assert app._input("camera-connection") == '{"serial": "sdk-one"}'
+
+    asyncio.run(check())
+
+
+def test_arm_transport_hotplug_preserves_identity_and_blocks_disconnected_add(
+    tmp_path, monkeypatch
+):
+    async def check():
+        rows = tuple(
+            HardwareCandidate(
+                identifier=f"linux-can:can{i}",
+                kind="transport",
+                label=f"CAN interface can{i}",
+                connection={"channel": f"can{i}"},
+                metadata={"transport": "socketcan"},
+            )
+            for i in range(2)
+        )
+        current = DiscoveryReport(rows)
+        monkeypatch.setattr(tui, "discover_hardware", lambda: current)
+        app = tui.WorkspaceInitApp(tmp_path, current)
+        async with app.run_test(size=(110, 44)) as pilot:
+            widget = app.query_one("#transport", OptionList)
+            widget.highlighted = widget.get_option_index(rows[1].identifier)
+            widget.action_select()
+            await pilot.pause()
+            connection = app._input("part-connection")
+            assert "can1" in connection
+            await app._scan_cameras()
+            assert (
+                widget.get_option_at_index(widget.highlighted).id == rows[1].identifier
+            )
+            current = DiscoveryReport((rows[0],))
+            await app._scan_cameras()
+            assert widget.get_option(rows[1].identifier).disabled
+            assert app._input("part-connection") == connection
+            with pytest.raises(ValueError, match="disconnected"):
+                app._add_part()
+            current = DiscoveryReport(rows)
+            await app._scan_cameras()
+            await pilot.pause()
+            assert not widget.get_option(rows[1].identifier).disabled
+            assert (
+                widget.get_option_at_index(widget.highlighted).id == rows[1].identifier
+            )
+            app._add_part()
+            assert app.parts["arm"]["connection"]["channel"] == "can1"
+
+    asyncio.run(check())
