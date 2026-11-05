@@ -51,6 +51,25 @@ def _json(raw, kind, label):
     return value
 
 
+_TRANSPORT_HELP = (
+    "Refreshes every second. Unplug the USB adapter from this computer to identify "
+    "its row; disconnected adapters stay greyed out. Built-in CAN ports stay listed. "
+    "Arm power and CAN cable connectivity cannot be detected here."
+)
+
+
+def _transport_prompt(row, available=True):
+    if not available:
+        status = "Unavailable"
+    elif row.metadata.get("setup_error"):
+        status = row.metadata["setup_error"]
+    elif row.metadata.get("transport") == "socketcan":
+        status = f"link {row.metadata.get('state', 'unknown')} · arm connection unknown"
+    else:
+        status = "Adapter detected"
+    return Text(f"{row.label} · {status}", style="" if available else "dim")
+
+
 class WorkspaceInitApp(App):
     """Retained robot/camera/safety/review workflow over the new local contract."""
 
@@ -164,16 +183,14 @@ class WorkspaceInitApp(App):
                 )
                 yield OptionList(
                     *[
-                        Option(row.label, id=key)
+                        Option(_transport_prompt(row), id=key)
                         for key, row in self.transports.items()
                     ],
                     Option("Enter connection manually", id="manual"),
                     id="transport",
                 )
                 yield Static(
-                    "Refreshes every second. Unplug the USB CAN adapter to identify "
-                    "its row; disconnected entries stay greyed out. "
-                    "This detects adapters, not arm power or CAN bus wiring.",
+                    _TRANSPORT_HELP,
                     id="transport-discovery",
                     markup=False,
                     classes="help",
@@ -371,23 +388,34 @@ class WorkspaceInitApp(App):
                 if key not in self.transports:
                     transport_widget.add_option(Option(row.label, id=key))
             self.available_transports = set(transports)
+            previous = self.transports.get(self.selected_transport)
+            selected = transports.get(self.selected_transport)
             self.transports.update(transports)
+            if (
+                selected is not None
+                and previous is not None
+                and selected.connection != previous.connection
+            ):
+                # USB adapters may receive a new channel after reconnecting.
+                try:
+                    connection = _json(
+                        self._input("part-connection"), dict, "Connection"
+                    )
+                except ValueError:
+                    connection = {}
+                for field in previous.connection:
+                    connection.pop(field, None)
+                connection.update(selected.connection)
+                self._set_input("part-connection", json.dumps(connection))
             for key, row in self.transports.items():
                 available = key in transports
                 self._update_candidate(
                     transport_widget,
                     key,
-                    Text(
-                        f"{row.label} · {'Present' if available else 'Unavailable'}",
-                        style="" if available else "dim",
-                    ),
+                    _transport_prompt(row, available),
                     available,
                 )
-            self.query_one("#transport-discovery", Static).update(
-                "Refreshes every second. Unplug the USB CAN adapter to identify "
-                "its row; disconnected entries stay greyed out. "
-                "This detects adapters, not arm power or CAN bus wiring."
-            )
+            self.query_one("#transport-discovery", Static).update(_TRANSPORT_HELP)
             current = {
                 row.identifier: row for row in report.candidates if row.kind == "camera"
             }
@@ -614,6 +642,9 @@ class WorkspaceInitApp(App):
             raise ValueError(
                 "Selected arm transport is disconnected; reconnect it before adding."
             )
+        selected = self.transports.get(self.selected_transport)
+        if selected is not None and selected.metadata.get("setup_error"):
+            raise ValueError(selected.metadata["setup_error"])
         name = self._input("part-name")
         if not name or name in self.parts:
             raise ValueError("Choose a unique arm name")

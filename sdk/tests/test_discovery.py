@@ -179,3 +179,55 @@ def test_realsense_usb_backends_bind_the_same_physical_port():
         )
         == "usb:2-3.4"
     )
+
+
+def test_can_usb_is_visible_without_driver_and_keeps_identity_when_bound(tmp_path):
+    sys_root = tmp_path / "sys"
+    port = sys_root / "bus/usb/devices/1-2.2"
+    _write(port / "idVendor", "1d50")
+    _write(port / "idProduct", "606f")
+    _write(port / "serial", "adapter-one")
+    _write(port / "product", "CANable 2.5 Candlelight")
+
+    def scan():
+        return discover_hardware(
+            include_plugins=False,
+            include_vendor_enumeration=False,
+            sys_root=sys_root,
+            dev_root=tmp_path / "dev",
+        ).candidates
+
+    (unbound,) = scan()
+    assert unbound.metadata["setup_error"]
+    assert unbound.connection == {}
+    assert unbound.metadata["attachment"] == "usb"
+    assert "adapter-one" in unbound.label
+    _write(sys_root / "class/net/can2/type", "280")
+    _write(sys_root / "class/net/can2/operstate", "down")
+    (sys_root / "class/net/can2/device").symlink_to(port)
+    (bound,) = scan()
+    assert bound.identifier == unbound.identifier
+    assert bound.connection == {"channel": "can2"}
+    assert not bound.metadata.get("setup_error")
+    assert bound.metadata["state"] == "down"
+    # USB removal removes the candidate; no stale channel is reported.
+    (sys_root / "class/net/can2/type").unlink()
+    (port / "idVendor").unlink()
+    assert scan() == ()
+
+
+def test_platform_can_is_identified_as_builtin_not_a_connected_arm(tmp_path):
+    interface = tmp_path / "class/net/can0"
+    _write(interface / "type", "280")
+    device = tmp_path / "devices/platform/c310000.mttcan"
+    device.mkdir(parents=True)
+    (device / "subsystem").symlink_to(tmp_path / "bus/platform")
+    (interface / "device").symlink_to(device)
+    report = discover_hardware(
+        include_plugins=False,
+        include_vendor_enumeration=False,
+        sys_root=tmp_path,
+        dev_root=tmp_path / "dev",
+    )
+    assert report.candidates[0].metadata["attachment"] == "built-in"
+    assert "Built-in" in report.candidates[0].label

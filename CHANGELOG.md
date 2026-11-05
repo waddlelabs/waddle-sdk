@@ -11,6 +11,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Distinguish built-in CAN ports from USB adapters; show known gs_usb adapters
+  even when their Linux driver has not created a CAN interface. Keep USB serial
+  identity across reconnects, update changed channel names, and refuse adding an
+  adapter without a usable interface. Link state never implies arm connectivity.
+
 - Keep camera selection stable during discovery refresh; avoid Textual's
   highlight-advancing enable call for already enabled rows.
 - List arm transports with one-second hotplug updates and grey retained

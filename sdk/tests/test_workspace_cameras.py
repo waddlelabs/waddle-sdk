@@ -182,3 +182,56 @@ def test_arm_transport_hotplug_preserves_identity_and_blocks_disconnected_add(
             assert app.parts["arm"]["connection"]["channel"] == "can1"
 
     asyncio.run(check())
+
+
+def test_usb_driver_recovery_updates_selected_channel_and_blocks_missing_driver(
+    tmp_path,
+    monkeypatch,
+):
+    async def check():
+        unresolved = HardwareCandidate(
+            "linux-can-usb:one",
+            "transport",
+            "USB CAN one",
+            metadata={"transport": "socketcan", "setup_error": "Install gs_usb"},
+        )
+        resolved = HardwareCandidate(
+            unresolved.identifier,
+            "transport",
+            "USB CAN one · can2",
+            connection={"channel": "can2"},
+            metadata={"transport": "socketcan", "state": "down"},
+        )
+        current = DiscoveryReport((unresolved,))
+        monkeypatch.setattr(tui, "discover_hardware", lambda: current)
+        app = tui.WorkspaceInitApp(tmp_path, current)
+        async with app.run_test(size=(110, 44)) as pilot:
+            widget = app.query_one("#transport", OptionList)
+            widget.highlighted = widget.get_option_index(unresolved.identifier)
+            widget.action_select()
+            await pilot.pause()
+            with pytest.raises(ValueError, match="Install gs_usb"):
+                app._add_part()
+            current = DiscoveryReport((resolved,))
+            await app._scan_cameras()
+            assert "can2" in app._input("part-connection")
+            assert "arm connection unknown" in str(
+                widget.get_option(resolved.identifier).prompt
+            )
+            current = DiscoveryReport(())
+            await app._scan_cameras()
+            assert widget.get_option(resolved.identifier).disabled
+            reconnected = HardwareCandidate(
+                resolved.identifier,
+                "transport",
+                "USB CAN one · can4",
+                connection={"channel": "can4"},
+                metadata=resolved.metadata,
+            )
+            current = DiscoveryReport((reconnected,))
+            await app._scan_cameras()
+            assert "can4" in app._input("part-connection")
+            app._add_part()
+            assert app.parts["arm"]["connection"]["channel"] == "can4"
+
+    asyncio.run(check())

@@ -165,6 +165,14 @@ Selecting a transport does not open an arm. Camera preview opens only the select
 camera for one snapshot and closes it before returning. Physical site creation
 requires review of the hardware settings and workspace bounds.
 
+The robot page refreshes adapter discovery every second. USB CAN adapters use
+serial identity when available and keep a grey row when unplugged; reconnecting
+updates their current CAN channel. Built-in CAN ports stay listed even when the
+arm cable is removed. Link state is not arm connection evidence. Known gs_usb USB
+adapters whose kernel driver is missing remain visible with a setup error; install
+or enable the matching Linux driver before adding them. Discovery never enables
+the CAN link or motors.
+
 The camera page lists detected cameras directly and refreshes every second while
 idle. Disconnected cameras remain greyed out; unplug/replug identifies the device
 without losing its row. Vendor enumeration runs off the UI thread and does not

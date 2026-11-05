@@ -84,7 +84,7 @@ def _read(path: Path) -> str | None:
 
 
 def _device_fact(device: Path, name: str) -> str | None:
-    """Read one USB fact from a video node or one of its sysfs parents."""
+    """Read one USB fact from a device node or one of its sysfs parents."""
 
     current = device.resolve(strict=False)
     for candidate in (current, *current.parents):
@@ -172,18 +172,75 @@ def _linux_candidates(
         interfaces = sorted(network.iterdir(), key=lambda path: path.name)
     except OSError:
         interfaces = []
+    bound_usb: set[str] = set()
     for interface in interfaces:
         if _read(interface / "type") != "280":  # Linux ARPHRD_CAN
             continue
+        device = interface / "device"
+        usb_path = _usb_path(device)
+        attachment = (
+            "usb"
+            if usb_path
+            else "built-in"
+            if (device / "subsystem").resolve().name == "platform"
+            else "unknown"
+        )
+        serial = _device_fact(device, "serial") or ""
+        label = f"CAN interface {interface.name}"
+        if usb_path:
+            bound_usb.add(usb_path)
+            label = f"USB CAN {serial or usb_path} · {interface.name}"
+        elif attachment == "built-in":
+            label = f"Built-in CAN port {interface.name}"
         candidates.append(
             HardwareCandidate(
-                identifier=f"linux-can:{interface.name}",
+                identifier=(
+                    f"linux-can-usb:{serial}" if serial else f"linux-can-{usb_path}"
+                )
+                if usb_path
+                else f"linux-can:{interface.name}",
                 kind="transport",
-                label=f"CAN interface {interface.name}",
+                label=label,
                 connection={"channel": interface.name},
                 metadata={
                     "transport": "socketcan",
+                    "attachment": attachment,
+                    "usb_path": usb_path,
+                    "serial": serial,
                     "state": _read(interface / "operstate") or "unknown",
+                },
+            )
+        )
+
+    # Known gs_usb adapters still need to be visible when the kernel lacks their
+    # driver. USB identity alone must never supply a guessed CAN channel.
+    usb_root = sys_root / "bus" / "usb" / "devices"
+    try:
+        usb_devices = sorted(usb_root.iterdir())
+    except OSError:
+        usb_devices = []
+    for device in usb_devices:
+        vendor = (_read(device / "idVendor") or "").lower()
+        product = (_read(device / "idProduct") or "").lower()
+        if (vendor, product) not in {("1d50", "606f"), ("1209", "2323")}:
+            continue
+        usb_path = _usb_path(device)
+        if not usb_path or usb_path in bound_usb:
+            continue
+        serial = _read(device / "serial") or ""
+        candidates.append(
+            HardwareCandidate(
+                identifier=f"linux-can-usb:{serial}"
+                if serial
+                else f"linux-can-{usb_path}",
+                kind="transport",
+                label=f"USB CAN {serial or usb_path}",
+                metadata={
+                    "transport": "socketcan",
+                    "attachment": "usb",
+                    "usb_path": usb_path,
+                    "serial": serial,
+                    "setup_error": "No CAN interface; install/enable the Linux gs_usb driver",
                 },
             )
         )
