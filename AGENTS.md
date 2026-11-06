@@ -1,11 +1,12 @@
-Parsed single-prop attachment fragments now have a private two-template cache in
-SourceBuffers. Normalize only declared prop names and the root body pose; preserve
-all geometry, contact parameters and external references in the exact key. Return
-detached native specifications; no running state or source-validity decision is
-shared. Bound serialized XML to 8 MiB total, 16,384 pairs and 128 meshes per
-template; unsupported layouts retain the ordinary parser. Qualification is pending.
-Keep fresh source validation and exact native/physics parity tests. This does not
-close the parent sub-second goal or authorize a broader deployment.
+Parsed single-prop attachment fragments have a private two-template cache in
+SourceBuffers. Standalone native copying dropped cross-parent contact pairs and
+failed 19 tests; preserve that experiment in parent .local/edit-native-template-20261105.
+The corrected candidate copies during parent attachment instead, with temporary
+name/pose rebinding under SourceBuffers' lock and unconditional template restoration.
+Exact geometry, materials and external references stay in the key. Bound serialized
+XML to 8 MiB total, 16,384 pairs/128 meshes per template; unsupported layouts keep
+the ordinary parser. Qualification is pending. No source-validity decision, running
+state or collision proof is cached. This does not close the parent latency goal.
 
 Default tabletop object geometry is built offline and shipped as
 sdk/python/waddle_sdk/simulators/data/playground-catalog.json.gz. Regenerate with

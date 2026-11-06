@@ -985,7 +985,9 @@ original order using fresh native mesh objects, so the compiler refreshes all
 derived bounds, normals and mass properties without reparsing vertex XML.
 Single-prop additions can also reuse a parsed attachment fragment. Its exact key
 retains geometry, contact materials and external geometry names, while the new
-prop's declared names and root pose are rebound on a private native copy. The
+prop's declared names and root pose are rebound privately under the cache lock.
+The parent copies the fragment during attachment, preserving contact references
+to its robot; the retained template is restored even on attachment failure. The
 owner retains at most two templates, 8 MiB of serialized XML in total, 16,384
 contact pairs and 128 meshes per template. Unsupported layouts use ordinary
 parsing. These are authoring templates, never running state or collision proofs;

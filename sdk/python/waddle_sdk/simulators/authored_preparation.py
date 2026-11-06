@@ -391,13 +391,12 @@ def revise(spec, old, new, *, _fragments=None):
                 if name not in defaults:
                     return None
                 pair.attrib = {**defaults[name], **pair.attrib}
-        child = (
-            _fragments.prepare(delta)
-            if _fragments is not None
-            else mj.MjSpec.from_string(ET.tostring(delta, encoding="unicode"))
-        )
         result.copy_during_attach = True
-        result.attach(child, prefix="", frame=result.worldbody.add_frame())
+        if _fragments is not None:
+            _fragments.attach(result, delta)
+        else:
+            child = mj.MjSpec.from_string(ET.tostring(delta, encoding="unicode"))
+            result.attach(child, prefix="", frame=result.worldbody.add_frame())
     elif assets or pairs:
         return None
     return result

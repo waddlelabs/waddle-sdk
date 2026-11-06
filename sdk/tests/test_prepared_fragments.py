@@ -75,48 +75,92 @@ def fragment(prefix="prop_first", *, friction=".8 .8 .001 .0001 .0001"):
       friction="{friction}" solimp=".95 .99 .001"/></contact></mujoco>''')
 
 
+def attach(cache, delta):
+    parent = mj.MjSpec.from_string("""<mujoco><worldbody>
+      <geom name="finger" size=".02"/>
+      <geom name="different_finger" size=".02"/>
+      <geom name="__waddle_prepared_prop_geom" size=".02"/>
+      </worldbody></mujoco>""")
+    parent.copy_during_attach = True
+    cache.attach(parent, delta)
+    return parent
+
+
 def test_fragment_key_retains_geometry_material_and_external_references():
     from waddle_sdk.simulators.prepared_fragments import FragmentCache
 
     cache = FragmentCache()
     original = fragment()
     serialized = ET.tostring(original)
-    first = cache.prepare(original)
-    second = cache.prepare(fragment("prop_second"))
+    first = attach(cache, original)
+    second = attach(cache, fragment("prop_second"))
     assert len(cache.entries) == 1
     assert ET.tostring(original) == serialized
     assert first.body("prop_first") is not None
     assert second.body("prop_second") is not None
     second.pairs[0].friction[0] = 0.01
-    assert cache.prepare(fragment("prop_third")).pairs[0].friction[0] == 0.8
+    assert attach(cache, fragment("prop_third")).pairs[0].friction[0] == 0.8
     changed = fragment(friction=".4 .4 .002 .0002 .0002")
-    assert cache.prepare(changed).pairs[0].friction[0] == 0.4
+    assert attach(cache, changed).pairs[0].friction[0] == 0.4
     assert len(cache.entries) == 2
     changed.find("contact/pair").set("geom1", "different_finger")
-    assert cache.prepare(changed).pairs[0].geomname1 == "different_finger"
+    assert attach(cache, changed).pairs[0].geomname1 == "different_finger"
     assert len(cache.entries) == 2
     changed.find("asset/mesh").set("vertex", "0 0 0 .2 0 0 0 .1 0 0 0 .1")
-    assert cache.prepare(changed).meshes[0].uservert[3] == pytest.approx(0.2)
+    assert attach(cache, changed).meshes[0].uservert[3] == pytest.approx(0.2)
     cache.close()
     assert not cache.entries
 
 
-def test_fragment_bounds_and_ambiguous_names_keep_ordinary_parser(monkeypatch):
+def test_fragment_bounds_and_ambiguous_names_keep_ordinary_parser():
     from waddle_sdk.simulators.prepared_fragments import FragmentCache
 
     cache = FragmentCache(max_bytes=1)
-    assert cache.prepare(fragment()).body("prop_first") is not None
+    assert attach(cache, fragment()).body("prop_first") is not None
     assert not cache.entries
     cache = FragmentCache(max_pairs=0)
-    assert cache.prepare(fragment()).pairs[0].geomname1 == "finger"
+    assert attach(cache, fragment()).pairs[0].geomname1 == "finger"
     assert not cache.entries
     cache = FragmentCache()
     ambiguous = fragment()
     ambiguous.find("contact/pair").set("geom1", "__waddle_prepared_prop_geom")
-    assert cache.prepare(ambiguous).pairs[0].geomname1 == "__waddle_prepared_prop_geom"
+    assert attach(cache, ambiguous).pairs[0].geomname1 == "__waddle_prepared_prop_geom"
     assert not cache.entries
     invalid = fragment()
     invalid.find("contact/pair").set("solimp", "not-a-number")
     with pytest.raises(ValueError):
-        cache.prepare(invalid)
+        attach(cache, invalid)
+    assert not cache.entries
+
+
+def test_failed_attachment_restores_private_template(monkeypatch):
+    from waddle_sdk.simulators.prepared_fragments import FragmentCache
+
+    cache = FragmentCache()
+    attach(cache, fragment())
+
+    def fail(*args, **kwargs):
+        raise ValueError("attachment refused")
+
+    with monkeypatch.context() as failed:
+        failed.setattr(mj.MjSpec, "attach", fail)
+        with pytest.raises(ValueError, match="attachment refused"):
+            attach(cache, fragment("prop_failed"))
+    result = attach(cache, fragment("prop_after_failure"))
+    assert len(cache.entries) == 1
+    assert result.body("prop_after_failure") is not None
+    assert len(result.pairs) == 1
+    assert result.pairs[0].geomname2 == "prop_after_failure_geom"
+    np.testing.assert_array_equal(
+        result.body("prop_after_failure").pos, [0.1, 0.2, 0.3]
+    )
+
+
+def test_attachment_requires_independent_parent_copy():
+    from waddle_sdk.simulators.prepared_fragments import FragmentCache
+
+    cache = FragmentCache()
+    parent = mj.MjSpec()
+    with pytest.raises(ValueError, match="copying during attachment"):
+        cache.attach(parent, fragment())
     assert not cache.entries

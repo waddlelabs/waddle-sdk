@@ -28,7 +28,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 - Reuse bounded parsed object/contact fragments across authored additions with
   different prop names and poses. Preserve exact geometry, pair values, external
-  bindings, independent native specifications and full-source fallback.
+  bindings and full-source fallback. Copy during parent attachment so contact
+  references to robot geometry survive; restore private templates after failure.
 
 - Preserve complete native source validation on Python 3.10 with bounded-memory
   streaming SHA-256 when hashlib.file_digest is unavailable.

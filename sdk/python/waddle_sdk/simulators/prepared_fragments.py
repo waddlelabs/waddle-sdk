@@ -74,8 +74,22 @@ def normalized(delta, max_pairs):
     )
 
 
+def _rename(spec, names):
+    for collection in (spec.bodies, spec.geoms, spec.meshes, spec.joints, spec.pairs):
+        for node in collection:
+            if node.name in names:
+                node.name = names[node.name]
+    for geom in spec.geoms:
+        if geom.meshname in names:
+            geom.meshname = names[geom.meshname]
+    for pair in spec.pairs:
+        for key in ("geomname1", "geomname2"):
+            if getattr(pair, key) in names:
+                setattr(pair, key, names[getattr(pair, key)])
+
+
 class FragmentCache:
-    """Owned and serialized by SourceBuffers; callers get detached native copies."""
+    """Owned/serialized by SourceBuffers; native templates never escape the cache."""
 
     def __init__(self, *, max_bytes=8 * 1024 * 1024, max_entries=2, max_pairs=16384):
         self.max_bytes, self.max_entries, self.max_pairs = (
@@ -88,16 +102,22 @@ class FragmentCache:
     def close(self):
         self.entries.clear()
 
-    def prepare(self, delta):
+    def attach(self, parent, delta):
         import mujoco as mj
+
+        if not parent.copy_during_attach:
+            raise ValueError("Prepared fragments require copying during attachment")
+
+        def attach(child):
+            return parent.attach(child, prefix="", frame=parent.worldbody.add_frame())
 
         source = normalized(delta, self.max_pairs)
         if source is None:
-            return mj.MjSpec.from_string(ET.tostring(delta, encoding="unicode"))
+            return attach(mj.MjSpec.from_string(ET.tostring(delta, encoding="unicode")))
         xml, names, pose = source
         size = len(xml.encode())
         if size > self.max_bytes or not self.max_entries:
-            return mj.MjSpec.from_string(ET.tostring(delta, encoding="unicode"))
+            return attach(mj.MjSpec.from_string(ET.tostring(delta, encoding="unicode")))
         entry = self.entries.pop(xml, None)
         if entry is None:
             entry = size, mj.MjSpec.from_string(xml)
@@ -107,24 +127,15 @@ class FragmentCache:
             or sum(x[0] for x in self.entries.values()) > self.max_bytes
         ):
             self.entries.popitem(last=False)
-        result = entry[1].copy()
-        body = result.body(_PREFIX)
-        body.pos, body.quat = pose
-        for collection in (
-            result.bodies,
-            result.geoms,
-            result.meshes,
-            result.joints,
-            result.pairs,
-        ):
-            for node in collection:
-                if node.name in names:
-                    node.name = names[node.name]
-        for geom in result.geoms:
-            if geom.meshname in names:
-                geom.meshname = names[geom.meshname]
-        for pair in result.pairs:
-            for key in ("geomname1", "geomname2"):
-                if getattr(pair, key) in names:
-                    setattr(pair, key, names[getattr(pair, key)])
-        return result
+        child = entry[1]
+        body = child.body(_PREFIX)
+        # Standalone MjSpec.copy() discards contacts referring to the parent.
+        # Copy during attachment instead, where those references can resolve.
+        # SourceBuffers holds its lock throughout this private rebinding.
+        try:
+            body.pos, body.quat = pose
+            _rename(child, names)
+            return attach(child)
+        finally:
+            _rename(child, {actual: canonical for canonical, actual in names.items()})
+            body.pos, body.quat = [0, 0, 0], [1, 0, 0, 0]
