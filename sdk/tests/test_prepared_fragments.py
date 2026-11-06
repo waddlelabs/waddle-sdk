@@ -156,11 +156,18 @@ def test_failed_attachment_restores_private_template(monkeypatch):
     )
 
 
-def test_attachment_requires_independent_parent_copy():
+def test_attachment_always_creates_independent_parent_copies():
     from waddle_sdk.simulators.prepared_fragments import FragmentCache
 
     cache = FragmentCache()
-    parent = mj.MjSpec()
-    with pytest.raises(ValueError, match="copying during attachment"):
-        cache.attach(parent, fragment())
-    assert not cache.entries
+    parent = mj.MjSpec.from_string(
+        '<mujoco><worldbody><geom name="finger" size=".02"/></worldbody></mujoco>'
+    )
+    parent.copy_during_attach = False
+    cache.attach(parent, fragment())
+    parent.copy_during_attach = False
+    cache.attach(parent, fragment("prop_second"))
+    assert parent.body("prop_first") is not None
+    assert parent.body("prop_second") is not None
+    assert len(parent.pairs) == 2
+    assert parent.compile().npair == 2

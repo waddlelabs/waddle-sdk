@@ -105,8 +105,7 @@ class FragmentCache:
     def attach(self, parent, delta):
         import mujoco as mj
 
-        if not parent.copy_during_attach:
-            raise ValueError("Prepared fragments require copying during attachment")
+        parent.copy_during_attach = True
 
         def attach(child):
             return parent.attach(child, prefix="", frame=parent.worldbody.add_frame())
