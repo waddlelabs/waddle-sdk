@@ -1,8 +1,11 @@
-Contact-batch regressions are being added for the native parser's quadratic
-signature work on large first-use fragments. Preserve every contact/material,
-native model/physics parity, missing-reference and duplicate-name errors, and
-warm parser reuse. Runtime remains unchanged; qualification is pending on the
-hot-playground feature branch. Parent diagnostics retain rejected alternatives.
+Large first-use prop fragments parse contact-only batches of at most 2,048 pairs,
+then attach geometry and all batches to one receiving frame. Bound counts/bytes
+as before and restore private bindings after failure. Check final geometry names
+before batching: native attachment otherwise silently drops unresolved pairs;
+SourceBuffers must fall back to the authoritative full parser on that failure.
+Old source fails the parser-bound regression and two missing-reference controls.
+Native/physics and full authoring qualification are pending on hot-playground;
+no deployment yet. Parent .local/edit-sdk-assembly-20261106 retains alternatives.
 
 Parsed single-prop attachment fragments retain two private native templates in
 SourceBuffers, with 8 MiB XML total and 16,384 pairs/128 meshes per template.

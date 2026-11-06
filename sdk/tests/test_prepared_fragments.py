@@ -139,8 +139,8 @@ def test_large_fragment_keeps_missing_external_reference_errors(warm):
     if warm:
         attach(cache, large_fragment()).compile()
     parent = mj.MjSpec.from_string("<mujoco><worldbody/></mujoco>")
-    cache.attach(parent, large_fragment("prop_missing"))
-    with pytest.raises(ValueError, match="finger"):
+    with pytest.raises(ValueError, match="contact geometry"):
+        cache.attach(parent, large_fragment("prop_missing"))
         parent.compile()
 
 
@@ -219,23 +219,30 @@ def test_fragment_bounds_and_ambiguous_names_keep_ordinary_parser():
     assert not cache.entries
 
 
-def test_failed_attachment_restores_private_template(monkeypatch):
+@pytest.mark.parametrize("factory", [fragment, large_fragment])
+def test_failed_attachment_restores_private_template(monkeypatch, factory):
     from waddle_sdk.simulators.prepared_fragments import FragmentCache
 
     cache = FragmentCache()
-    attach(cache, fragment())
+    attach(cache, factory())
+    operation = mj.MjSpec.attach
+    calls = 0
 
     def fail(*args, **kwargs):
-        raise ValueError("attachment refused")
+        nonlocal calls
+        calls += 1
+        if factory is fragment or calls == 3:
+            raise ValueError("attachment refused")
+        return operation(*args, **kwargs)
 
     with monkeypatch.context() as failed:
         failed.setattr(mj.MjSpec, "attach", fail)
         with pytest.raises(ValueError, match="attachment refused"):
-            attach(cache, fragment("prop_failed"))
-    result = attach(cache, fragment("prop_after_failure"))
+            attach(cache, factory("prop_failed"))
+    result = attach(cache, factory("prop_after_failure"))
     assert len(cache.entries) == 1
     assert result.body("prop_after_failure") is not None
-    assert len(result.pairs) == 1
+    assert len(result.pairs) == (1 if factory is fragment else 4099)
     assert result.pairs[0].geomname2 == "prop_after_failure_geom"
     np.testing.assert_array_equal(
         result.body("prop_after_failure").pos, [0.1, 0.2, 0.3]

@@ -10,10 +10,11 @@ model, data, source-validity decision or running state is retained here.
 import math
 import xml.etree.ElementTree as ET
 from collections import OrderedDict
-from copy import deepcopy
+from copy import copy, deepcopy
 
 _PREFIX = "__waddle_prepared_prop"
 _REFERENCES = ("name", "mesh", "geom1", "geom2")
+_PAIRS_PER_PARSE = 2048
 
 
 def normalized(delta, max_pairs):
@@ -92,6 +93,25 @@ def _bindings(spec, names):
                 yield pair, key, value, names[value]
 
 
+def _parse_children(delta):
+    """Bound native per-add signature work without changing contact declarations."""
+    import mujoco as mj
+
+    contact = delta.find("contact")
+    if len(contact) <= _PAIRS_PER_PARSE:
+        return (mj.MjSpec.from_string(ET.tostring(delta, encoding="unicode")),)
+    shape = copy(delta)
+    shape.remove(contact)
+    children = [mj.MjSpec.from_string(ET.tostring(shape, encoding="unicode"))]
+    for start in range(0, len(contact), _PAIRS_PER_PARSE):
+        chunk = ET.Element("mujoco")
+        section = copy(contact)
+        section[:] = contact[start : start + _PAIRS_PER_PARSE]
+        chunk.append(section)
+        children.append(mj.MjSpec.from_string(ET.tostring(chunk, encoding="unicode")))
+    return tuple(children)
+
+
 class FragmentCache:
     """Owned/serialized by SourceBuffers; native templates never escape the cache."""
 
@@ -111,26 +131,53 @@ class FragmentCache:
 
         parent.copy_during_attach = True
 
-        def attach(child):
-            return parent.attach(child, prefix="", frame=parent.worldbody.add_frame())
+        def attach(children):
+            frame = parent.worldbody.add_frame()
+            for child in children:
+                parent.attach(child, prefix="", frame=frame)
+            return frame
+
+        def ordinary():
+            return attach(
+                (mj.MjSpec.from_string(ET.tostring(delta, encoding="unicode")),)
+            )
 
         source = normalized(delta, self.max_pairs)
         if source is None:
-            return attach(mj.MjSpec.from_string(ET.tostring(delta, encoding="unicode")))
+            return ordinary()
         xml, names, pose = source
         size = len(xml.encode())
         if size > self.max_bytes or not self.max_entries:
-            return attach(mj.MjSpec.from_string(ET.tostring(delta, encoding="unicode")))
+            return ordinary()
+        if len(delta.find("contact")) > _PAIRS_PER_PARSE:
+            # Native attachment silently drops unresolved contact-only rows.
+            # Require every final binding before splitting; SourceBuffers retries
+            # the full authoritative parser on failure, preserving its errors.
+            available = {geom.name for geom in parent.geoms} | {
+                geom.get("name") for geom in delta.find("worldbody/body").iter("geom")
+            }
+            if any(
+                pair.get(key) not in available
+                for pair in delta.find("contact")
+                for key in ("geom1", "geom2")
+            ):
+                raise ValueError(
+                    "prepared fragment contains an unresolved contact geometry"
+                )
         entry = self.entries.pop(xml, None)
         cold = entry is None
         if cold:
-            child = mj.MjSpec.from_string(ET.tostring(delta, encoding="unicode"))
+            children = _parse_children(delta)
             canonical = {actual: normalized for normalized, actual in names.items()}
             entry = (
                 size,
-                child,
-                child.body(names[_PREFIX]),
-                tuple(_bindings(child, canonical)),
+                children,
+                children[0].body(names[_PREFIX]),
+                tuple(
+                    binding
+                    for child in children
+                    for binding in _bindings(child, canonical)
+                ),
             )
         self.entries[xml] = entry
         while (
@@ -138,9 +185,9 @@ class FragmentCache:
             or sum(x[0] for x in self.entries.values()) > self.max_bytes
         ):
             self.entries.popitem(last=False)
-        child, body, bindings = entry[1:]
+        children, body, bindings = entry[1:]
         if cold:
-            return attach(child)
+            return attach(children)
         # Standalone MjSpec.copy() discards contacts referring to the parent.
         # Copy during attachment instead, where those references can resolve.
         # SourceBuffers holds its lock throughout this private rebinding.
@@ -149,7 +196,7 @@ class FragmentCache:
             body.pos, body.quat = pose
             for node, key, _, canonical in bindings:
                 setattr(node, key, names[canonical])
-            return attach(child)
+            return attach(children)
         finally:
             for node, key, original, _ in bindings:
                 setattr(node, key, original)

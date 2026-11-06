@@ -988,6 +988,11 @@ retains geometry, contact materials and external geometry names, while the new
 prop's declared names and root pose are rebound privately under the cache lock.
 Native reference handles are retained with the private template, avoiding repeated
 contact-list traversal; first-use names and pose need no rebinding.
+Large first-use fragments parse at most 2,048 contact declarations per native
+child, avoiding quadratic signature recomputation in the native parser. Geometry
+is attached first, followed by every contact batch in source order on the same
+frame. Final geometry references are checked before batching: unresolved names
+force full-source fallback rather than being silently omitted by attachment.
 The parent copies the fragment during attachment, preserving contact references
 to its robot; the retained template is restored even on attachment failure. The
 owner retains at most two templates, 8 MiB of serialized XML in total, 16,384

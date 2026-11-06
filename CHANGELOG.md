@@ -21,13 +21,18 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 ### Added
 
 - Add regressions for bounded first-use contact parsing, exact native parity,
-  warm reuse and invalid-reference/name rejection. Runtime qualification pending.
+  warm reuse and invalid-reference/name rejection.
 
 - Ship reproducible default object geometry for all seven tabletop object kinds
   and both contact policies. Bind names, poses and colors from private copies;
   custom dimensions and stale or absent bundles retain ordinary compilation.
 
 ### Changed
+
+- Parse large first-use authored contact fragments in bounded native batches,
+  retaining all pair declarations and cached bindings. Attach only after checking
+  final geometry references so native attachment cannot silently omit a pair.
+  Existing cache limits, full-source fallback and runtime state remain unchanged.
 
 - Reuse bounded parsed object/contact fragments across authored additions with
   different prop names and poses. Preserve exact geometry, pair values, external
