@@ -20,6 +20,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Added
 
+- Add regressions for bounded first-use contact parsing, exact native parity,
+  warm reuse and invalid-reference/name rejection. Runtime qualification pending.
+
 - Ship reproducible default object geometry for all seven tabletop object kinds
   and both contact policies. Bind names, poses and colors from private copies;
   custom dimensions and stale or absent bundles retain ordinary compilation.

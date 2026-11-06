@@ -76,6 +76,84 @@ def fragment(prefix="prop_first", *, friction=".8 .8 .001 .0001 .0001"):
       friction="{friction}" solimp=".95 .99 .001"/></contact></mujoco>''')
 
 
+def large_fragment(prefix="prop_first"):
+    delta = fragment(prefix)
+    contact = delta.find("contact")
+    original = contact[0]
+    contact.clear()
+    for index in range(4099):
+        pair = deepcopy(original)
+        pair.set("name", f"{prefix}_pair_{index}")
+        pair.set("margin", str(index * 1e-7))
+        contact.append(pair)
+    return delta
+
+
+def test_large_fragment_bounds_native_parser_work_and_preserves_model(monkeypatch):
+    from waddle_sdk.simulators.prepared_fragments import FragmentCache
+
+    cache = FragmentCache()
+    delta = large_fragment()
+    original = mj.MjSpec.from_string
+    counts = []
+
+    def record(xml, *args, **kwargs):
+        counts.append(len(ET.fromstring(xml).findall("contact/pair")))
+        return original(xml, *args, **kwargs)
+
+    with monkeypatch.context() as cold:
+        cold.setattr(mj.MjSpec, "from_string", record)
+        actual = attach(cache, delta).compile()
+    assert max(counts) <= 2048
+    assert sum(counts) == 4099
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("Cached contact batches were parsed again")
+
+    # Construct the receiving parent before forbidding all native parsing.
+    parent = original(
+        '<mujoco><worldbody><geom name="finger" size=".02"/></worldbody></mujoco>'
+    )
+    with monkeypatch.context() as warm:
+        warm.setattr(mj.MjSpec, "from_string", unexpected)
+        cache.attach(parent, large_fragment("prop_second"))
+    assert parent.compile().npair == 4099
+    expected_parent = original("""<mujoco><worldbody>
+      <geom name="finger" size=".02"/><geom name="different_finger" size=".02"/>
+      <geom name="__waddle_prepared_prop_geom" size=".02"/>
+      </worldbody></mujoco>""")
+    expected_parent.copy_during_attach = True
+    expected_parent.attach(
+        original(ET.tostring(delta, encoding="unicode")),
+        prefix="",
+        frame=expected_parent.worldbody.add_frame(),
+    )
+    same_model(actual, expected_parent.compile())
+
+
+@pytest.mark.parametrize("warm", [False, True])
+def test_large_fragment_keeps_missing_external_reference_errors(warm):
+    from waddle_sdk.simulators.prepared_fragments import FragmentCache
+
+    cache = FragmentCache()
+    if warm:
+        attach(cache, large_fragment()).compile()
+    parent = mj.MjSpec.from_string("<mujoco><worldbody/></mujoco>")
+    cache.attach(parent, large_fragment("prop_missing"))
+    with pytest.raises(ValueError, match="finger"):
+        parent.compile()
+
+
+def test_large_fragment_keeps_duplicate_names_across_batches():
+    from waddle_sdk.simulators.prepared_fragments import FragmentCache
+
+    delta = large_fragment()
+    contact = delta.find("contact")
+    contact[-1].set("name", contact[0].get("name"))
+    with pytest.raises(ValueError):
+        attach(FragmentCache(), delta).compile()
+
+
 def attach(cache, delta):
     parent = mj.MjSpec.from_string("""<mujoco><worldbody>
       <geom name="finger" size=".02"/>

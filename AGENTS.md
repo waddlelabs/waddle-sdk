@@ -1,3 +1,9 @@
+Contact-batch regressions are being added for the native parser's quadratic
+signature work on large first-use fragments. Preserve every contact/material,
+native model/physics parity, missing-reference and duplicate-name errors, and
+warm parser reuse. Runtime remains unchanged; qualification is pending on the
+hot-playground feature branch. Parent diagnostics retain rejected alternatives.
+
 Parsed single-prop attachment fragments retain two private native templates in
 SourceBuffers, with 8 MiB XML total and 16,384 pairs/128 meshes per template.
 All 58 focused cases and strict docs pass at 64e770b; the old source fails the
