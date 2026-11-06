@@ -986,6 +986,8 @@ derived bounds, normals and mass properties without reparsing vertex XML.
 Single-prop additions can also reuse a parsed attachment fragment. Its exact key
 retains geometry, contact materials and external geometry names, while the new
 prop's declared names and root pose are rebound privately under the cache lock.
+Native reference handles are retained with the private template, avoiding repeated
+contact-list traversal; first-use names and pose need no rebinding.
 The parent copies the fragment during attachment, preserving contact references
 to its robot; the retained template is restored even on attachment failure. The
 owner retains at most two templates, 8 MiB of serialized XML in total, 16,384

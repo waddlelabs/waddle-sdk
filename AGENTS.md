@@ -1,10 +1,13 @@
 Parsed single-prop attachment fragments have a private two-template cache in
 SourceBuffers. Standalone native copying dropped cross-parent contact pairs and
 failed 19 tests; preserve that experiment in parent .local/edit-native-template-20261105.
-The corrected candidate copies during parent attachment instead, with temporary
+The corrected candidate passes 58 focused cases and the old source fails its
+parser-reuse control. Further latency qualification is pending. Copy during parent
+attachment instead, with temporary
 name/pose rebinding under SourceBuffers' lock and unconditional template restoration.
 Exact geometry, materials and external references stay in the key. Bound serialized
-XML to 8 MiB total, 16,384 pairs/128 meshes per template; unsupported layouts keep
+XML to 8 MiB total, 16,384 pairs/128 meshes per template. Retain native binding
+handles once and leave first-use names/pose unchanged; unsupported layouts keep
 the ordinary parser. Qualification is pending. No source-validity decision, running
 state or collision proof is cached. This does not close the parent latency goal.
 

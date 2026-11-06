@@ -74,18 +74,22 @@ def normalized(delta, max_pairs):
     )
 
 
-def _rename(spec, names):
-    for collection in (spec.bodies, spec.geoms, spec.meshes, spec.joints, spec.pairs):
+def _bindings(spec, names):
+    # Retain native handles once: repeatedly materializing spec.pairs itself is
+    # expensive for large contact sets. Handles stay owned by this private spec.
+    geoms, pairs = spec.geoms, spec.pairs
+    for collection in (spec.bodies, geoms, spec.meshes, spec.joints, pairs):
         for node in collection:
             if node.name in names:
-                node.name = names[node.name]
-    for geom in spec.geoms:
+                yield node, "name", node.name, names[node.name]
+    for geom in geoms:
         if geom.meshname in names:
-            geom.meshname = names[geom.meshname]
-    for pair in spec.pairs:
+            yield geom, "meshname", geom.meshname, names[geom.meshname]
+    for pair in pairs:
         for key in ("geomname1", "geomname2"):
-            if getattr(pair, key) in names:
-                setattr(pair, key, names[getattr(pair, key)])
+            value = getattr(pair, key)
+            if value in names:
+                yield pair, key, value, names[value]
 
 
 class FragmentCache:
@@ -118,23 +122,35 @@ class FragmentCache:
         if size > self.max_bytes or not self.max_entries:
             return attach(mj.MjSpec.from_string(ET.tostring(delta, encoding="unicode")))
         entry = self.entries.pop(xml, None)
-        if entry is None:
-            entry = size, mj.MjSpec.from_string(xml)
+        cold = entry is None
+        if cold:
+            child = mj.MjSpec.from_string(ET.tostring(delta, encoding="unicode"))
+            canonical = {actual: normalized for normalized, actual in names.items()}
+            entry = (
+                size,
+                child,
+                child.body(names[_PREFIX]),
+                tuple(_bindings(child, canonical)),
+            )
         self.entries[xml] = entry
         while (
             len(self.entries) > self.max_entries
             or sum(x[0] for x in self.entries.values()) > self.max_bytes
         ):
             self.entries.popitem(last=False)
-        child = entry[1]
-        body = child.body(_PREFIX)
+        child, body, bindings = entry[1:]
+        if cold:
+            return attach(child)
         # Standalone MjSpec.copy() discards contacts referring to the parent.
         # Copy during attachment instead, where those references can resolve.
         # SourceBuffers holds its lock throughout this private rebinding.
+        original_pose = body.pos.copy(), body.quat.copy()
         try:
             body.pos, body.quat = pose
-            _rename(child, names)
+            for node, key, _, canonical in bindings:
+                setattr(node, key, names[canonical])
             return attach(child)
         finally:
-            _rename(child, {actual: canonical for canonical, actual in names.items()})
-            body.pos, body.quat = [0, 0, 0], [1, 0, 0, 0]
+            for node, key, original, _ in bindings:
+                setattr(node, key, original)
+            body.pos, body.quat = original_pose
