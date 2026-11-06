@@ -1,15 +1,16 @@
-Parsed single-prop attachment fragments have a private two-template cache in
-SourceBuffers. Standalone native copying dropped cross-parent contact pairs and
-failed 19 tests; preserve that experiment in parent .local/edit-native-template-20261105.
-The corrected candidate passes 58 focused cases and the old source fails its
-parser-reuse control. Further latency qualification is pending. Copy during parent
-attachment instead, with temporary
-name/pose rebinding under SourceBuffers' lock and unconditional template restoration.
-Exact geometry, materials and external references stay in the key. Bound serialized
-XML to 8 MiB total, 16,384 pairs/128 meshes per template. Retain native binding
-handles once and leave first-use names/pose unchanged; unsupported layouts keep
-the ordinary parser. Qualification is pending. No source-validity decision, running
-state or collision proof is cached. This does not close the parent latency goal.
+Parsed single-prop attachment fragments retain two private native templates in
+SourceBuffers, with 8 MiB XML total and 16,384 pairs/128 meshes per template.
+All 58 focused cases and strict docs pass at 64e770b; the old source fails the
+parser-reuse control. Seven kinds match every native array and ten physics steps.
+Native binding handles are retained once; temporary name/pose rebinding is locked
+and restored even on attachment failure. Copy during parent attachment: standalone
+MjSpec.copy drops contacts referring to the parent robot. Preserve the original
+19 failures and subsequent fixture corrections in the parent checkpoint.
+Exact geometry, materials and external references remain in the key; unsupported
+layouts retain ordinary parsing and normal source/native validation. Local ABBA
+preparation timings improve later bowls by 2.04–2.47 s, but first bowl is 0.249 s
+slower. Installed/hosted and all-preset live edit qualification are pending. No
+running state, source-validity decision or collision proof is cached; no deployment.
 
 Default tabletop object geometry is built offline and shipped as
 sdk/python/waddle_sdk/simulators/data/playground-catalog.json.gz. Regenerate with
