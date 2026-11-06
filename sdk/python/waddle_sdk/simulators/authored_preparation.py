@@ -239,7 +239,7 @@ def same_contacts(old, new):
     )
 
 
-def revise(spec, old, new):
+def revise(spec, old, new, *, _fragments=None):
     """Copy preparation for supported authored edits; return None otherwise.
 
     The caller freshly hashes every asset and indexes the exact current XML.
@@ -391,7 +391,11 @@ def revise(spec, old, new):
                 if name not in defaults:
                     return None
                 pair.attrib = {**defaults[name], **pair.attrib}
-        child = mj.MjSpec.from_string(ET.tostring(delta, encoding="unicode"))
+        child = (
+            _fragments.prepare(delta)
+            if _fragments is not None
+            else mj.MjSpec.from_string(ET.tostring(delta, encoding="unicode"))
+        )
         result.copy_during_attach = True
         result.attach(child, prefix="", frame=result.worldbody.add_frame())
     elif assets or pairs:

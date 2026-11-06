@@ -12,15 +12,19 @@ from copy import copy
 
 class SourceBuffers:
     def __init__(self, *, max_bytes=256 * 1024 * 1024, max_entries=2):
+        from .prepared_fragments import FragmentCache
+
         self.max_bytes, self.max_entries = max_bytes, max_entries
         self.pid = os.getpid()
         self.lock = threading.RLock()
         self.entries = OrderedDict()
         self.prepared = {}
+        self.fragments = FragmentCache()
 
     def close(self):
         with self.lock:
             self.prepared.clear()
+            self.fragments.close()
             for _, vfs in self.entries.values():
                 vfs.close()
             self.entries.clear()
@@ -77,7 +81,9 @@ class SourceBuffers:
                     from .authored_preparation import revise
 
                     try:
-                        spec = revise(prepared[0], prepared[1], source)
+                        spec = revise(
+                            prepared[0], prepared[1], source, _fragments=self.fragments
+                        )
                         model = None
                         if spec is not None:
                             from .prepared_placement import translate

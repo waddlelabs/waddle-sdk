@@ -983,6 +983,14 @@ Same-topology inline mesh vertex changes, such as resizing a bowl, also retain
 the parsed scene. It rebuilds vertex/face-only inline mesh declarations in their
 original order using fresh native mesh objects, so the compiler refreshes all
 derived bounds, normals and mass properties without reparsing vertex XML.
+Single-prop additions can also reuse a parsed attachment fragment. Its exact key
+retains geometry, contact materials and external geometry names, while the new
+prop's declared names and root pose are rebound on a private native copy. The
+owner retains at most two templates, 8 MiB of serialized XML in total, 16,384
+contact pairs and 128 meshes per template. Unsupported layouts use ordinary
+parsing. These are authoring templates, never running state or collision proofs;
+normal compilation and source validation still apply.
+
 The copied robot, bodies and contact pairs remain prepared. Other mesh attributes,
 file-backed or classed mesh suffixes, changed mesh faces/counts, general topology changes,
 includes, unfamiliar reset

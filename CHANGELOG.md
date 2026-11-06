@@ -26,6 +26,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ### Changed
 
+- Reuse bounded parsed object/contact fragments across authored additions with
+  different prop names and poses. Preserve exact geometry, pair values, external
+  bindings, independent native specifications and full-source fallback.
+
 - Preserve complete native source validation on Python 3.10 with bounded-memory
   streaming SHA-256 when hashlib.file_digest is unavailable.
 
