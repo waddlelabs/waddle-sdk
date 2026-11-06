@@ -57,8 +57,9 @@ def test_repeated_object_fragment_keeps_native_parity(tmp_path, monkeypatch, kin
         cached.setattr(mj.MjSpec, "from_file", unexpected)
         actual = prepare_scene(config, scene, tmp_path / "second")
     with monkeypatch.context() as fresh:
-        fresh.delenv("WADDLE_SIMULATION_MODEL_CACHE")
+        fresh.setattr(source_buffers, "cache", source_buffers.SourceBuffers())
         expected = prepare_scene(config, scene, tmp_path / "fresh")
+        source_buffers.cache.close()
     assert actual.contents == expected.contents
     same_model(actual.model, expected.model)
     np.testing.assert_array_equal(first.model.qpos0, untouched)
@@ -99,15 +100,19 @@ def test_fragment_key_retains_geometry_material_and_external_references():
     assert first.body("prop_first") is not None
     assert second.body("prop_second") is not None
     second.pairs[0].friction[0] = 0.01
-    assert attach(cache, fragment("prop_third")).pairs[0].friction[0] == 0.8
+    third = attach(cache, fragment("prop_third"))
+    assert third.pairs[0].friction[0] == 0.8
     changed = fragment(friction=".4 .4 .002 .0002 .0002")
-    assert attach(cache, changed).pairs[0].friction[0] == 0.4
+    material = attach(cache, changed)
+    assert material.pairs[0].friction[0] == 0.4
     assert len(cache.entries) == 2
     changed.find("contact/pair").set("geom1", "different_finger")
-    assert attach(cache, changed).pairs[0].geomname1 == "different_finger"
+    binding = attach(cache, changed)
+    assert binding.pairs[0].geomname1 == "different_finger"
     assert len(cache.entries) == 2
     changed.find("asset/mesh").set("vertex", "0 0 0 .2 0 0 0 .1 0 0 0 .1")
-    assert attach(cache, changed).meshes[0].uservert[3] == pytest.approx(0.2)
+    geometry = attach(cache, changed)
+    assert geometry.meshes[0].uservert[3] == pytest.approx(0.2)
     cache.close()
     assert not cache.entries
 
@@ -116,15 +121,18 @@ def test_fragment_bounds_and_ambiguous_names_keep_ordinary_parser():
     from waddle_sdk.simulators.prepared_fragments import FragmentCache
 
     cache = FragmentCache(max_bytes=1)
-    assert attach(cache, fragment()).body("prop_first") is not None
+    oversized = attach(cache, fragment())
+    assert oversized.body("prop_first") is not None
     assert not cache.entries
     cache = FragmentCache(max_pairs=0)
-    assert attach(cache, fragment()).pairs[0].geomname1 == "finger"
+    too_many = attach(cache, fragment())
+    assert too_many.pairs[0].geomname1 == "finger"
     assert not cache.entries
     cache = FragmentCache()
     ambiguous = fragment()
     ambiguous.find("contact/pair").set("geom1", "__waddle_prepared_prop_geom")
-    assert attach(cache, ambiguous).pairs[0].geomname1 == "__waddle_prepared_prop_geom"
+    ordinary = attach(cache, ambiguous)
+    assert ordinary.pairs[0].geomname1 == "__waddle_prepared_prop_geom"
     assert not cache.entries
     invalid = fragment()
     invalid.find("contact/pair").set("solimp", "not-a-number")
