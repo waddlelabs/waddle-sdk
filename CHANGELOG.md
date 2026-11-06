@@ -33,6 +33,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   retaining all pair declarations and cached bindings. Attach only after checking
   final geometry references so native attachment cannot silently omit a pair.
   Existing cache limits, full-source fallback and runtime state remain unchanged.
+  Qualify 63 focused cases, 11 presets/44 edits and installed native/physics parity;
+  first-bowl installed preparation falls 1.807 to 0.685 s. Later additions retain
+  multi-second browser delays; no universal or sub-second latency claim.
 
 - Reuse bounded parsed object/contact fragments across authored additions with
   different prop names and poses. Preserve exact geometry, pair values, external

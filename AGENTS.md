@@ -1,11 +1,21 @@
+Bounded contact preparation is qualified at SDK 68c7ab9 and deployed only to
+isolated beta by parent runtime 26ef6379, image 08b42c18b6b0. All 63 focused checks,
+strict docs, 11 presets/44 edits and six installed old/new comparisons pass.
+Every native array, XML and ten-step physics result matches; first-bowl installed
+preparation falls 1.807 to 0.685 s. Actual frontend first-bowl DOM Ready is 3.848 s
+versus the previous run's 5.497 s; later additions remain 3.329–7.539 s. Do not
+claim universal improvement or the complete sub-second goal. Own hosted session
+closes normally with full private evidence readback and verified resource absence.
+
 Large first-use prop fragments parse contact-only batches of at most 2,048 pairs,
 then attach geometry and all batches to one receiving frame. Bound counts/bytes
 as before and restore private bindings after failure. Check final geometry names
 before batching: native attachment otherwise silently drops unresolved pairs;
 SourceBuffers must fall back to the authoritative full parser on that failure.
 Old source fails the parser-bound regression and two missing-reference controls.
-Native/physics and full authoring qualification are pending on hot-playground;
-no deployment yet. Parent .local/edit-sdk-assembly-20261106 retains alternatives.
+Parent logs/playground-contact-batches-20261106.md records qualification, exact
+runtime identities, retained failures and rollback. Code-quality work is cancelled.
+Earlier qualification/deployment notes below are historical.
 
 Parsed single-prop attachment fragments retain two private native templates in
 SourceBuffers, with 8 MiB XML total and 16,384 pairs/128 meshes per template.
