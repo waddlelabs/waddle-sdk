@@ -11,6 +11,7 @@ import json
 import math
 import os
 import re
+import time
 import xml.etree.ElementTree as ET
 from copy import deepcopy
 from dataclasses import dataclass
@@ -374,7 +375,14 @@ def compile_scene(config, scene, output: Path, *, revision=1, easy_grasp=True):
 
 
 def prepare_scene(
-    config, scene, output: Path, *, revision=1, easy_grasp=True, _prefer_handoff=False
+    config,
+    scene,
+    output: Path,
+    *,
+    revision=1,
+    easy_grasp=True,
+    _prefer_handoff=False,
+    _timings=None,
 ):
     """Compile once and retain the exact model for trusted authoring consumers.
 
@@ -384,6 +392,8 @@ def prepare_scene(
     A resident consumer can prefer a sealed handoff over exporting a second disk
     binary; unavailable handoff storage retains the ordinary disk-cache fallback.
     """
+    timings = _timings if _timings is not None else {}
+    started = time.perf_counter()
     scene = validate_scene(scene)
     fixture = scene.get("fixture")
     if fixture:
@@ -398,6 +408,7 @@ def prepare_scene(
     config["environment"] = (FIXTURES[fixture] if fixture else None) or "two_cubes"
     from . import playground_source
 
+    reference_started = time.perf_counter()
     if os.environ.get("WADDLE_SIMULATION_MODEL_CACHE"):
         from dataclasses import asdict
 
@@ -444,9 +455,13 @@ def prepare_scene(
                 root.find("worldbody"), root.find("asset"), obj, easy_grasp
             )
         ] + fixture_props
+    timings["reference_and_objects_s"] = time.perf_counter() - reference_started
+    contacts_started = time.perf_counter()
     contacts = _pairs(root, fingers, props) if easy_grasp else None
+    timings["contacts_s"] = time.perf_counter() - contacts_started
     from .playground_contacts import scene_xml
 
+    assets_started = time.perf_counter()
     contents, hashes = {}, {}
     sources = {}
     for source, (data, digest) in captured.items():
@@ -459,6 +474,7 @@ def prepare_scene(
     for node in root.iter():
         if name := node.get("file"):
             node.set("file", sources[Path(name)])
+    timings["assets_s"] = time.perf_counter() - assets_started
     keys = root.find("keyframe")
     if keys is not None:
         root.remove(keys)
@@ -468,12 +484,16 @@ def prepare_scene(
     # require rebuilding topology or loading all robot assets a second time.
     initial = ET.SubElement(ET.SubElement(root, "keyframe"), "key", name="initial")
     model_path = output / "world.xml"
+    xml_started = time.perf_counter()
     contents["world.xml"] = scene_xml(root, contacts)
+    timings["initial_xml_s"] = time.perf_counter() - xml_started
     import mujoco as mj
 
     from .compiled_model import load_model
 
     # Only the final scene belongs in the shared private binary cache.
+    native_started = time.perf_counter()
+    native_timings = {}
     model = load_model(
         "world.xml",
         contents,
@@ -481,7 +501,11 @@ def prepare_scene(
         _authored=True,
         _authored_tree=root,
         _authored_contacts=contacts,
+        timings=native_timings,
     )
+    timings["native_model_s"] = time.perf_counter() - native_started
+    timings["native_model"] = native_timings
+    finalize_started = time.perf_counter()
     data = mj.MjData(model)
     from .description import description
 
@@ -539,6 +563,8 @@ def prepare_scene(
         )
         if not (_prefer_handoff and retained):
             model = load_model("world.xml", contents, _prepared=model)
+    timings["finalize_s"] = time.perf_counter() - finalize_started
+    timings["total_s"] = time.perf_counter() - started
     return ScenePreparation(
         config, model, contents, _tree=root if selected_cache and retained else None
     )
