@@ -8,13 +8,15 @@ from __future__ import annotations
 
 import hashlib
 import math
+import os
 import xml.etree.ElementTree as ET
+from copy import copy
 from pathlib import Path
 
 import numpy as np
 
 
-def replacement_signature(config):
+def replacement_signature(config, *, _contents=None, _tree=None):
     """Bind a native scene's robot assembly and its referenced model assets.
 
     Replacement is optional and intentionally limited to self-contained native
@@ -25,17 +27,17 @@ def replacement_signature(config):
         raise ValueError(
             "simulation.scene_contract: replacement requires native scenes"
         )
-    root = ET.parse(resolve(config["_native_root"], config)).getroot()
+    root = (
+        _tree
+        if _tree is not None
+        else ET.parse(resolve(config["_native_root"], config)).getroot()
+        if _contents is None
+        else ET.fromstring(_contents[config["native_scene"]["model"]])
+    )
     if root.find(".//include") is not None:
         raise ValueError(
             "simulation.scene_contract: included native scenes require reopen"
         )
-    for mesh in root.findall("asset/mesh"):
-        # MuJoCo's cached source export may omit this filename-inferred default.
-        if mesh.get("content_type") == "model/stl" and mesh.get("file", "").endswith(
-            ".stl"
-        ):
-            mesh.attrib.pop("content_type")
     selected = config["native_scene"]
     values = [selected["prefixes"], selected["camera_names"]]
     protected = []
@@ -58,6 +60,18 @@ def replacement_signature(config):
     # Follow material -> texture references as well as direct geometry assets.
     references = {"mesh", "material", "texture", "hfield", "skin"}
     assets = {(node.tag, node.get("name")): node for node in root.findall("asset/*")}
+    for key, node in list(assets.items()):
+        # Normalize only the comparison copy. Trusted same-call authoring may
+        # supply the exact tree it serialized; never mutate that caller's tree.
+        if (
+            node.tag == "mesh"
+            and node.get("content_type") == "model/stl"
+            and node.get("file", "").endswith(".stl")
+        ):
+            node = copy(node)
+            node.attrib = dict(node.attrib)
+            node.attrib.pop("content_type")
+            assets[key] = node
     pending = list(protected)
     required = {}
     while pending:
@@ -96,8 +110,14 @@ def replacement_signature(config):
     return values
 
 
-def resolve(root, config):
-    """Validate confined, hash-bound files without importing a physics engine."""
+def resolve(root, config, *, contents=None):
+    """Validate confined files and optionally retain the exact verified bytes.
+
+    A trusted consumer can compare and compile this snapshot without reopening
+    mutable paths. Ordinary path-only callers retain full hash validation.
+    Optional reference analysis reuse is content-bound, never file validity;
+    every manifest membership and configuration check still runs on each call.
+    """
     root = Path(root).resolve(strict=True)
     selected = config["native_scene"]
     if not isinstance(selected, dict) or set(selected) != {
@@ -114,18 +134,40 @@ def resolve(root, config):
     files = selected["files"]
     if not isinstance(files, dict) or not files or len(files) > 10000:
         raise ValueError("native scene requires a bounded file digest manifest")
+    directories, xml_sources = {Path("."): root}, {}
     for name, digest in files.items():
         path = Path(name)
         if path.is_absolute() or ".." in path.parts or "\\" in name or not name:
             raise ValueError("native scene asset paths must be portable")
-        resolved = (root / path).resolve(strict=True)
-        resolved.relative_to(root)
-        if (root / path).is_symlink() or not resolved.is_file():
+        # Many meshes share one directory. Resolve its confinement once during
+        # this pass, while checking the current leaf type and bytes every time.
+        # Never retain these path resolutions across validation calls.
+        directory = directories.get(path.parent)
+        if directory is None:
+            directory = (root / path.parent).resolve(strict=True)
+            directory.relative_to(root)
+            directories[path.parent] = directory
+        resolved = directory / path.name
+        if resolved.is_symlink() or not resolved.is_file():
             raise ValueError("native scene assets must be ordinary files")
-        with resolved.open("rb") as stream:
-            actual = hashlib.file_digest(stream, "sha256").hexdigest()
+        if contents is None and not name.endswith(".xml"):
+            with resolved.open("rb") as stream:
+                if hasattr(hashlib, "file_digest"):
+                    actual = hashlib.file_digest(stream, "sha256").hexdigest()
+                else:  # Python 3.10 retains complete bounded-memory validation.
+                    checked = hashlib.sha256()
+                    for chunk in iter(lambda: stream.read(256 * 1024), b""):
+                        checked.update(chunk)
+                    actual = checked.hexdigest()
+        else:
+            data = resolved.read_bytes()
+            actual = hashlib.sha256(data).hexdigest()
         if actual != digest:
             raise ValueError(f"native scene asset digest differs: {name}")
+        if name.endswith(".xml"):
+            xml_sources[name] = data
+        if contents is not None:
+            contents[name] = data
     if (
         selected["model"] not in files
         or not isinstance(selected["initial_keyframe"], str)
@@ -136,29 +178,23 @@ def resolve(root, config):
         )
     # Validate referenced XML paths as well as the inventory. Included XML has
     # its own source directory; referenced mesh/texture directories remain local.
-    for name in files:
-        if not name.endswith(".xml"):
-            continue
-        xml = ET.parse(root / name).getroot()
-        compiler = xml.find("compiler")
-        directories = {} if compiler is None else compiler.attrib
-        for node in xml.iter():
-            for key in ("file", "meshdir", "texturedir", "assetdir"):
-                value = node.get(key)
-                if not value:
-                    continue
-                path = Path(value)
-                if path.is_absolute() or ".." in path.parts or "\\" in value:
-                    raise ValueError("native XML references must remain portable")
-                if key == "file":
-                    directory = directories.get("assetdir", "")
-                    if node.tag in ("mesh", "texture"):
-                        directory = directories.get(node.tag + "dir", directory)
-                    reference = (Path(name).parent / directory / path).as_posix()
-                    if reference not in files:
-                        raise ValueError(
-                            f"native XML references an unmanifested asset: {reference}"
-                        )
+    from .source_references import cache, references
+
+    for name, data in xml_sources.items():
+        # Analyze the exact bytes hashed above. Only immutable XML reference
+        # names can be reused; file validity and current manifest membership
+        # are checked afresh, including when the same XML moves directories.
+        selected_references = (
+            cache.read(data, files[name])
+            if os.environ.get("WADDLE_SIMULATION_MODEL_CACHE")
+            else references(data)
+        )
+        for relative in selected_references:
+            reference = (Path(name).parent / relative).as_posix()
+            if reference not in files:
+                raise ValueError(
+                    f"native XML references an unmanifested asset: {reference}"
+                )
     prefixes = selected["prefixes"]
     if (
         not isinstance(prefixes, dict)

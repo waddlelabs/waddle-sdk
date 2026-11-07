@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import logging
 import math
+import os
 import sys
 import tempfile
 import time
@@ -17,11 +18,26 @@ def serve(connection: Connection) -> None:
     engine = None
     with tempfile.TemporaryDirectory(prefix="waddle-simulation-") as scratch:
         try:
-            config = connection.recv()
+            initial = connection.recv()
+            config, prepared = (
+                initial if isinstance(initial, tuple) else (initial, None)
+            )
             engine_type = importlib.import_module(
                 f"waddle_sdk.simulators.{config['backend']}"
             ).Engine
-            engine = engine_type(config, Path(scratch))
+            if prepared is not None:
+                from .prepared_model import receive
+
+                prepared = receive(connection, prepared)
+            try:
+                engine = engine_type(
+                    config,
+                    Path(scratch),
+                    **({"_prepared": prepared} if prepared is not None else {}),
+                )
+            finally:
+                if prepared is not None:
+                    prepared.close()
             # Readiness means both sensor streams render, not merely that an
             # engine module imports. Startup failure never degrades to a mock.
             independent_render = callable(getattr(engine, "render_snapshot", None))
@@ -39,6 +55,9 @@ def serve(connection: Connection) -> None:
                     {
                         "camera_content_timing_kind": timing_kind,
                         "independent_render": independent_render,
+                        "sealed_render_model": bool(
+                            getattr(engine, "supports_sealed_render_model", False)
+                        ),
                     },
                 )
             )
@@ -128,6 +147,7 @@ def serve(connection: Connection) -> None:
                     "evaluation_snapshot",
                     "evaluation_reset",
                     "evaluation_replace_scene",
+                    "evaluation_edit_scene",
                 }:
                     raise ValueError("unsupported simulation operation")
                 try:
@@ -135,6 +155,7 @@ def serve(connection: Connection) -> None:
                         "reset",
                         "evaluation_reset",
                         "evaluation_replace_scene",
+                        "evaluation_edit_scene",
                     }:
                         generation += 1
                     if operation == "step":
@@ -144,7 +165,19 @@ def serve(connection: Connection) -> None:
                             advance(arguments[0])
                         result = None
                     elif operation == "render_snapshot":
-                        result = engine.render_snapshot(generation, arguments[0])
+                        result = engine.render_snapshot(
+                            generation,
+                            arguments[0],
+                            **(
+                                {"_sealed": True}
+                                if len(arguments) > 1
+                                and arguments[1] is True
+                                and getattr(
+                                    engine, "supports_sealed_render_model", False
+                                )
+                                else {}
+                            ),
+                        )
                     elif (
                         operation == "capture"
                         and len(arguments) == 2
@@ -153,14 +186,38 @@ def serve(connection: Connection) -> None:
                         result = engine.capture_timed(arguments[0])
                     elif operation == "evaluation_snapshot":
                         result = engine.evaluation_snapshot()
-                    elif operation == "evaluation_replace_scene":
-                        replacement = engine.replacement(arguments[0], Path(scratch))
+                    elif operation in {
+                        "evaluation_replace_scene",
+                        "evaluation_edit_scene",
+                    }:
+                        if len(arguments) > 1:
+                            from .prepared_model import receive
+
+                            arguments = arguments[0], receive(connection, arguments[1])
+                        try:
+                            replacement = engine.replacement(
+                                arguments[0],
+                                Path(scratch),
+                                preserve_state=operation == "evaluation_edit_scene",
+                                **(
+                                    {"_prepared": arguments[1]}
+                                    if len(arguments) > 1
+                                    else {}
+                                ),
+                            )
+                        finally:
+                            if len(arguments) > 1:
+                                arguments[1].close()
                         engine.hold()
                         engine.close()
                         engine = replacement
                         pending_time = 0.0
                         last_time = time.monotonic()
-                        result = True
+                        # Return the confirmed edited state before another
+                        # camera can begin a large model transfer on this pipe.
+                        # This is privileged administration evidence, not a
+                        # camera acquisition or a participant observation.
+                        result = engine.evaluation_snapshot()
                     elif operation == "evaluation_reset":
                         variation = arguments[1] if len(arguments) > 1 else None
                         result = engine.evaluation_reset(
@@ -184,7 +241,12 @@ def serve(connection: Connection) -> None:
                         if operation == "reset":
                             pending_time = 0.0
                             last_time = time.monotonic()
-                    connection.send((True, result))
+                    if operation == "render_snapshot":
+                        from .render_snapshot import send
+
+                        send(connection, True, result, os.getppid())
+                    else:
+                        connection.send((True, result))
                 except Exception as error:  # noqa: BLE001 -- preserve native faults across the private pipe
                     engine.hold()
                     traceback.print_exc(file=sys.stderr)

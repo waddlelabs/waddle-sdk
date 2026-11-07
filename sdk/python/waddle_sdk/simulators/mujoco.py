@@ -34,8 +34,17 @@ from .scene import depth_z16, profile
 
 class Engine:
     content_timing_kind = "simulated_state"
+    supports_sealed_render_model = True
 
-    def __init__(self, config: dict, scratch: Path):
+    def __init__(
+        self,
+        config: dict,
+        scratch: Path,
+        *,
+        _native_contents=None,
+        _native_model=None,
+        _prepared=None,
+    ):
         # Selection precedes the first MuJoCo import and is local to this worker.
         if sys.platform == "linux" and not os.environ.get("DISPLAY"):
             os.environ.setdefault("MUJOCO_GL", "egl")
@@ -46,18 +55,41 @@ class Engine:
         self.profile = p = profile(config["robot"])
         self.description = robot = description(p.name)
         self._native_key = None
+        self._native_contract = None
+        self._source_xml = None
         if "native_scene" in config:
+            from .compiled_model import load_model
             from .native_scene import resolve
 
-            path = resolve(config["_native_root"], config)
+            if _prepared is not None:
+                from .prepared_model import restore
+
+                native = config["native_scene"]
+                _native_model = restore(native["model"], native["files"], _prepared)
+                if _native_model is not None:
+                    self._native_contract = _prepared.replacement_contract(config)
+            if _native_model is not None:
+                self.model = _native_model
+            elif _native_contents is None:
+                _native_contents = {}
+                resolve(config["_native_root"], config, contents=_native_contents)
+            # A replacement passes the same immutable snapshot used to compare
+            # robot/camera contracts. No mutable file is reopened for compilation.
+            if _native_model is None:
+                self.model = load_model(
+                    config["native_scene"]["model"], _native_contents
+                )
+            # Bind future comparisons to the bytes used to open this world.
+            # Source directories may be retired; neither rereading them nor a
+            # later edit to them can redefine the running robot's contract.
+            self._source_xml = (
+                _native_contents[config["native_scene"]["model"]]
+                if _native_contents is not None
+                else _prepared.xml
+            )
         else:
             path = scratch / "scene.xml"
             path.write_text(mjcf(p, config))
-        if "native_scene" in config and os.environ.get("WADDLE_SIMULATION_MODEL_CACHE"):
-            from .compiled_model import load_native
-
-            self.model = load_native(config["_native_root"], config)
-        else:
             self.model = mujoco.MjModel.from_xml_path(str(path))
         self.data = mujoco.MjData(self.model)
         self.parts = tuple(config["parts"])
@@ -224,18 +256,46 @@ class Engine:
             else f"{part}__"
         )
 
-    def replacement(self, config, scratch):
+    def replacement(self, config, scratch, *, preserve_state=False, _prepared=None):
         """Prepare a new environment while preserving the opened port contracts."""
-        from .native_scene import replacement_signature
+        from .native_scene import replacement_signature, resolve
 
+        if "native_scene" not in config or "native_scene" not in self.config:
+            raise ValueError(
+                "simulation.scene_contract: replacement requires native scenes"
+            )
         ignored = {"native_scene", "_native_root", "scene_revision", "_real_time"}
-        if {k: v for k, v in config.items() if k not in ignored} != {
+        contract_changed = {k: v for k, v in config.items() if k not in ignored} != {
             k: v for k, v in self.config.items() if k not in ignored
-        } or replacement_signature(config) != replacement_signature(self.config):
+        }
+        contents, model, contract = None, None, None
+        if not contract_changed and "native_scene" in config:
+            if _prepared is not None:
+                from .prepared_model import restore
+
+                native = config["native_scene"]
+                model = restore(native["model"], native["files"], _prepared)
+                if model is not None:
+                    contents = {native["model"]: _prepared.xml}
+                    contract = _prepared.replacement_contract(config)
+            if contents is None:
+                contents = {}
+                resolve(config["_native_root"], config, contents=contents)
+        if not contract_changed and self._native_contract is None:
+            self._native_contract = replacement_signature(
+                self.config,
+                _contents={self.config["native_scene"]["model"]: self._source_xml},
+            )
+        if not contract_changed and contract is None:
+            contract = replacement_signature(config, _contents=contents)
+        if contract_changed or contract != self._native_contract:
             raise ValueError(
                 "simulation.scene_contract: replacement changed robot or camera contracts"
             )
-        candidate = type(self)(config, scratch)
+        candidate = type(self)(
+            config, scratch, _native_contents=contents, _native_model=model
+        )
+        candidate._native_contract = contract
         try:
             candidate.evaluation_reset(seed=0)
             # Initial robot commands are part of the preserved execution contract.
@@ -244,6 +304,19 @@ class Engine:
                     candidate.data.qpos[candidate._qpos[part]],
                     self.model.key_qpos[self._native_key, self._qpos[part]],
                 )
+            if preserve_state:
+                from .scene_state import pose_edits, transfer_state
+
+                transfer_state(
+                    self.model,
+                    self.data,
+                    candidate.model,
+                    candidate.data,
+                    edits=pose_edits(self.model, candidate.model),
+                )
+                candidate._force_modes = self._force_modes.copy()
+                candidate._apply_force_modes()
+                candidate.mj.mj_forward(candidate.model, candidate.data)
         except BaseException:
             candidate.close()
             raise
@@ -896,9 +969,13 @@ class Engine:
     def capture(self, name):
         return self.capture_timed(name)[:2]
 
-    def render_snapshot(self, generation, known_generation):
+    def render_snapshot(self, generation, known_generation, *, _sealed=False):
         """Copy native state and ordinary feedback for a read-only renderer."""
-        model = None if generation == known_generation else pickle.dumps(self.model)
+        from .render_snapshot import capture_model
+
+        model = None
+        if generation != known_generation:
+            model = capture_model(self.model) if _sealed else pickle.dumps(self.model)
         began = time.monotonic_ns()
         specification = self.mj.mjtState.mjSTATE_INTEGRATION
         state = np.empty(self.mj.mj_stateSize(self.model, specification))

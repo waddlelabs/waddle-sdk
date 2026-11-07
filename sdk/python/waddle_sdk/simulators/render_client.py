@@ -53,7 +53,9 @@ class RenderClient:
                     # Acquire only when rendering is available. Queued cameras
                     # never accumulate stale snapshots behind a slow render.
                     snapshot, stamp = acquire(self.generation)
-                    self.connection.send((camera, snapshot))
+                    from .render_snapshot import send
+
+                    send(self.connection, camera, snapshot, self.process.pid)
                     if not self.connection.poll(15):
                         raise TimeoutError(
                             "simulation renderer did not respond before its deadline"

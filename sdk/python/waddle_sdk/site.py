@@ -225,7 +225,7 @@ def _load_document(path: Path) -> object:
             return json.loads(text)
         import yaml
 
-        return yaml.safe_load(text)
+        return yaml.load(text, Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader))
     except Exception as exc:  # parser exceptions are dependency-specific
         raise ManifestSyntaxError(f"invalid site manifest {path}: {exc}") from exc
 

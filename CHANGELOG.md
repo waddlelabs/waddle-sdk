@@ -18,6 +18,163 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+### Added
+
+- Add regressions for bounded first-use contact parsing, exact native parity,
+  warm reuse and invalid-reference/name rejection.
+
+- Ship reproducible default object geometry for all seven tabletop object kinds
+  and both contact policies. Bind names, poses and colors from private copies;
+  custom dimensions and stale or absent bundles retain ordinary compilation.
+
+### Changed
+
+- Parse large first-use authored contact fragments in bounded native batches,
+  retaining all pair declarations and cached bindings. Attach only after checking
+  final geometry references so native attachment cannot silently omit a pair.
+  Existing cache limits, full-source fallback and runtime state remain unchanged.
+  Qualify 63 focused cases, 11 presets/44 edits and installed native/physics parity;
+  first-bowl installed preparation falls 1.807 to 0.685 s. Later additions retain
+  multi-second browser delays; no universal or sub-second latency claim.
+
+- Reuse bounded parsed object/contact fragments across authored additions with
+  different prop names and poses. Preserve exact geometry, pair values, external
+  bindings and full-source fallback. Copy during parent attachment so contact
+  references to robot geometry survive; restore private templates after failure.
+  Retain native binding handles once; verify seven object kinds against every
+  native array and ten physics steps, with 58 focused cases passing.
+
+- Preserve complete native source validation on Python 3.10 with bounded-memory
+  streaming SHA-256 when hashlib.file_digest is unavailable.
+
+- Reject the resident native preparation experiment after whole-addition timing
+  fails to improve. Restore the qualified SDK runtime/API and retain all evidence.
+  All 62 restoration checks and changed-source lint pass with exact baseline parity.
+
+- Add bounded trusted authoring templates for final prop translations, preserving
+  exact native/reset bytes, independent models and consumer source validation.
+  Unsupported dependencies and other scene changes retain ordinary authoring.
+
+- Reuse a bounded private whole-scene template for isolated free-object
+  translations, recomputing native constants and preserving source validation,
+  independent models and full compilation for other changes/dependencies.
+  All 104 native checks and 44 edits across 11 exact published presets pass,
+  preserving live state/history, source XML and affected-object comparisons.
+  All tested translations reuse the model; additions remain above one second
+  when prepared after placement; parent editor prewarming is separate. Preserve
+  native contact layout by fully parsing reordered unchanged contact sets.
+  Retain both failing regressions, the disk-full attempt and verified retry.
+
+- Verify exact retired contact references and remove authored bodies through native
+  cascading deletion. Reject retained invalid references through the full parser.
+  All 86 focused native and 1,349 default SDK checks, strict docs and all 44 edits
+  across 11 published presets pass, preserving source, live state and history.
+  Paired bowl deletion/image means fall from 6.000 to 5.488 s; addition remains
+  above one second. Retain all samples, the failing baseline and verified archives.
+
+- Carry immutable authored body comparisons through the existing private native
+  model handoff, retaining source/binding checks, byte bounds and parsing fallback.
+  All 44 edits across 11 published presets preserve live state/history and exact
+  XML; source/native/default SDK checks and strict docs pass. Local addition remains
+  above one second, with no general speedup established. Retain complete timings
+  and original diagnostics with verified closure and archive evidence.
+
+- Carry exact authored robot-contract comparisons with bounded private model
+  handoffs, avoiding repeated XML parsing after fresh source validation. Preserve
+  ordinary comparison fallback, selection checks and live-state transfer.
+  Qualify source/state invariants and all 44 edits across 11 published presets;
+  SDK commit work falls, but overall addition latency remains above the target.
+
+- Extend recognized Playground contact preparations using only new geometry
+  pairs, retaining exact serialized rows and normalized comparison records.
+  Preserve complete source validation, native compilation and live-state transfer;
+  unrecognized layouts keep the full builder. All 44 edits across 11 published
+  presets pass with byte-identical XML, preserved state/history and no freshness
+  retries. Paired bowl add/image means fall from 3.148 to 2.673 s; simple-scene
+  timings are mixed and the sub-second target remains unmet.
+
+- Reuse prepared Playground contact sections and serialized fragments, keyed by
+  exact base contacts and ordered geometry names. Keep every contact pair and
+  parameter, detached trees, fresh asset serialization and canonical reset keys.
+
+- Prepare native authored-source comparisons from a detached copy of the exact
+  tree just serialized, avoiding a redundant XML parse. Preserve byte-based
+  callers, fresh asset hashes, native fallback and independent runtime models.
+
+- Reuse bounded XML reference analysis by freshly verified content digest during
+  native scene validation. Continue to read/hash every asset and check current
+  path confinement, manifest membership and configuration; analyze the exact XML
+  snapshot whose digest was checked, without reopening it during the same pass.
+  Trusted authoring prepares reference analysis from its exact serialized tree.
+
+- Retain private authored XML comparison records with prepared native scenes,
+  avoiding repeated parsing and contact-key construction for the old revision.
+  Continue to compare every new source and freshly hashed asset, compile an
+  independent model and discard records with their specification on failure,
+  eviction or fork.
+
+- Store repeated Playground finger-contact parameters in one named XML default,
+  retaining every native pair and its original contact settings. Reuse parsed
+  preparations with unchanged pair-only defaults; expand those settings for
+  attached additions and recompile changed or unsupported defaults normally.
+- Preserve parsed robot/body/contact preparation when resizing same-topology
+  inline bowl meshes. Recreate vertex/face-only native meshes in order, with fresh
+  native collision bounds and mass properties; retain full-source fallback for
+  unsupported mesh changes and independent live-state transfer.
+
+- Reuse bounded reference XML and unchanged authored object fragments during
+  Playground edits. Reread and hash every source asset; invalidate on reference,
+  configuration or fixture-placement changes. Keep independent compilation,
+  final source validation, canonical reset and ordinary live-state transfer.
+
+- Reuse private authored MuJoCo specifications for supported object additions,
+  removals, pose changes and primitive geometry/material edits. Compare full XML
+  and freshly hashed assets, copy the preparation and parse only appended
+  bodies/assets/contact pairs before compiling an independent model. Bound
+  reuse lineages; keep full parsing for unsupported differences and failed reuse.
+  Preserve canonical reset and ordinary live-state transfer.
+
+- Parse site/scene YAML with the optional safe C parser, retaining safe Python
+  fallback, fresh reads and ordinary manifest validation.
+
+- Compile verified scenes through explicit virtual files on newer MuJoCo bindings.
+  With the optional cache enabled, reuse bounded unchanged asset buffers across
+  edits while freshly hashing source bytes and compiling independent models.
+  Keep the original loader for older bindings and release buffers on failures.
+
+- Transfer current simulation models to independent renderers through negotiated
+  sealed descriptors, preserving fresh state/pixels and independent native models.
+  Retain copied-buffer compatibility and close handles on partial-transfer faults.
+
+- Retain the loaded robot/camera contract for live scene comparisons and bundle
+  reference-worker post-edit state with its acknowledgement. New publications
+  remain validated; legacy backends and multi-world sites retain final readback.
+
+
+- Reuse compatible RGB/depth rendering contexts across native scene revisions.
+  Rebuild for changed uploaded assets, planes or visual settings; continue to
+  acquire fresh pixels from the current model/state with generation fencing.
+
+- Let resident Playground authoring prefer a retained sealed model over a second
+  disk-cache export. Keep ordinary source files and disk caching when sealing or
+  bounded handoff retention is unavailable; general authoring still fills disk cache.
+
+
+- Reuse resolved asset directories within each native source validation pass.
+  Every asset still receives a fresh byte hash; no path or digest result survives
+  between checks. Preserve portable-path, symlink and manifest rejection.
+
+
+- Transfer matching authoring preparations to resident MuJoCo owners through
+  immutable Linux file descriptors, retaining ordinary source checks and separate
+  model/state ownership. Bound the private handoff cache to two models and
+  256 MiB; retain the existing loader on unsupported systems.
+
+- Retain a single tabletop scene preparation for authoring/model handoffs, with
+  identical portable geometry and canonical reset arrays. Compare and compile
+  native replacements from one verified byte snapshot, preserving source
+  validation, cache corruption fallback and independent runtime state.
+
 - Advertise prepared-playback relay support. Return state and configuration with
   observations/completion; check a submitted configuration revision and numerical
   joint preconditions locally before native admission. No planner or native API
@@ -77,6 +234,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   completed-stop receipts. Attempt every declared part and retain all failures.
 
 ### Added
+
+- Add optional trusted live scene edits preserving the running simulator state
+  and native processes. Existing replacement/reset semantics remain unchanged.
 
 - Add a native run-bound playback input watchdog, renewed on SDK input arrival
   independently of planning and status polling. Preserve ordered renewal,

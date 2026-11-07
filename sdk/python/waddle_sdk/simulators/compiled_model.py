@@ -25,7 +25,32 @@ def _hash(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def load_model(model_name, contents, *, cache=None, timings=None):
+def _canonical_inputs(model_name, inputs):
+    """Normalize portable root aliases without changing relative asset names."""
+    inputs = dict(inputs)
+    parent = str(PurePosixPath(model_name).parent)
+    if parent != "." and all(name.startswith(parent + "/") for name in inputs):
+        prefix = len(parent) + 1
+        inputs = {name[prefix:]: data for name, data in inputs.items()}
+        model_name = model_name[prefix:]
+    canonical = "__waddle_root__.xml"
+    if canonical not in inputs:
+        inputs[canonical] = inputs.pop(model_name)
+        model_name = canonical
+    return model_name, inputs
+
+
+def load_model(
+    model_name,
+    contents,
+    *,
+    cache=None,
+    timings=None,
+    _prepared=None,
+    _authored=False,
+    _authored_tree=None,
+    _authored_contacts=None,
+):
     """Compile complete verified VFS inputs or load a verified private binary.
 
     ``cache`` is an absolute private directory, or defaults to
@@ -33,6 +58,11 @@ def load_model(model_name, contents, *, cache=None, timings=None):
     optional timings dict reports actual compilation and cache load separately.
     The directory must stay outside untrusted code/input mounts. Cache failure
     degrades to real compilation; source/model failures are never suppressed.
+    The private authoring handoff may retain its matching compiled model after
+    setting reset-key arrays. It must describe exactly these verified source
+    bytes; ordinary callers supply no native model. Trusted same-call authoring
+    may also supply the exact tree just serialized for comparison preparation.
+    Its detached copy never replaces ordinary byte validation or native fallback.
     """
     import mujoco as mj
 
@@ -54,15 +84,7 @@ def load_model(model_name, contents, *, cache=None, timings=None):
         )
     # Portable copies may add a directory prefix or rename just the root XML.
     # Normalize both while keeping every relative asset reference intact.
-    parent = str(PurePosixPath(model_name).parent)
-    if parent != "." and all(name.startswith(parent + "/") for name in inputs):
-        prefix = len(parent) + 1
-        inputs = {name[prefix:]: data for name, data in inputs.items()}
-        model_name = model_name[prefix:]
-    canonical = "__waddle_root__.xml"
-    if canonical not in inputs:
-        inputs[canonical] = inputs.pop(model_name)
-        model_name = canonical
+    model_name, inputs = _canonical_inputs(model_name, inputs)
     hashes = {name: _hash(data) for name, data in inputs.items()}
     # Namespace VFS assets by bytes, independent of the separately parsed XML.
     namespace = _hash(
@@ -80,9 +102,36 @@ def load_model(model_name, contents, *, cache=None, timings=None):
     key = _hash(json.dumps(identity, sort_keys=True).encode())
 
     def compile():
+        if _prepared is not None:
+            timings.update(cache_hit=False, native_compile_s=0.0, prepared=True)
+            return _prepared
         began = time.monotonic()
-        result = mj.MjModel.from_xml_path(f"{namespace}/{model_name}", assets=assets)
-        timings.update(cache_hit=False, native_compile_s=time.monotonic() - began)
+        if hasattr(mj, "MjVfs"):
+            from .source_buffers import cache as buffers
+
+            # Keep unchanged virtual assets across authored revisions. The key
+            # includes every non-root byte above. Trusted authoring may reuse
+            # parsed components or isolated placement templates after comparing
+            # the full current XML. Older bindings keep their ordinary loader.
+            reuse = selected or os.environ.get(CACHE_ENV)
+            result = buffers.compile(
+                f"{namespace}/{model_name}",
+                assets,
+                key=namespace if reuse else None,
+                authored=_authored,
+                _authored_tree=_authored_tree if _authored else None,
+                _authored_contacts=_authored_contacts if _authored else None,
+                timings=timings,
+            )
+        else:
+            result = mj.MjModel.from_xml_path(
+                f"{namespace}/{model_name}", assets=assets
+            )
+        elapsed = time.monotonic() - began
+        reused = timings.get("placement_reused", False)
+        timings.update(cache_hit=False, native_compile_s=0.0 if reused else elapsed)
+        if reused:
+            timings["placement_prepare_s"] = elapsed
         return result
 
     selected = cache if cache is not None else os.environ.get(CACHE_ENV)
@@ -114,12 +163,18 @@ def load_model(model_name, contents, *, cache=None, timings=None):
             ):
                 raise ValueError("simulation.model_cache: compiled bytes changed")
             began = time.monotonic()
-            model = mj.MjModel.from_binary_path(str(binary))
+            model = (
+                _prepared
+                if _prepared is not None
+                else mj.MjModel.from_binary_path(str(binary))
+            )
             timings.update(
                 cache_hit=True,
                 native_compile_s=0.0,
                 cache_load_s=time.monotonic() - began,
             )
+            if _prepared is not None:
+                timings["prepared"] = True
             binary.touch()
             return model
         except Exception:  # noqa: BLE001 -- disposable cache cannot replace source validation
@@ -171,13 +226,7 @@ def load_native(root, config, *, cache=None, timings=None):
     from .native_scene import resolve
 
     root = Path(root)
-    resolve(root, config)
+    contents = {}
+    resolve(root, config, contents=contents)
     native = config["native_scene"]
-    contents = {name: (root / name).read_bytes() for name in native["files"]}
-    if any(
-        _hash(contents[name]) != expected for name, expected in native["files"].items()
-    ):
-        raise ValueError(
-            "simulation.native_source_changed: files changed after resolution"
-        )
     return load_model(native["model"], contents, cache=cache, timings=timings)

@@ -1,3 +1,272 @@
+Bounded contact preparation is qualified at SDK 68c7ab9 and deployed only to
+isolated beta by parent runtime 26ef6379, image 08b42c18b6b0. All 63 focused checks,
+strict docs, 11 presets/44 edits and six installed old/new comparisons pass.
+Every native array, XML and ten-step physics result matches; first-bowl installed
+preparation falls 1.807 to 0.685 s. Actual frontend first-bowl DOM Ready is 3.848 s
+versus the previous run's 5.497 s; later additions remain 3.329–7.539 s. Do not
+claim universal improvement or the complete sub-second goal. Own hosted session
+closes normally with full private evidence readback and verified resource absence.
+
+Large first-use prop fragments parse contact-only batches of at most 2,048 pairs,
+then attach geometry and all batches to one receiving frame. Bound counts/bytes
+as before and restore private bindings after failure. Check final geometry names
+before batching: native attachment otherwise silently drops unresolved pairs;
+SourceBuffers must fall back to the authoritative full parser on that failure.
+Old source fails the parser-bound regression and two missing-reference controls.
+Parent logs/playground-contact-batches-20261106.md records qualification, exact
+runtime identities, retained failures and rollback. Code-quality work is cancelled.
+Earlier qualification/deployment notes below are historical.
+
+Parsed single-prop attachment fragments retain two private native templates in
+SourceBuffers, with 8 MiB XML total and 16,384 pairs/128 meshes per template.
+All 58 focused cases and strict docs pass at 64e770b; the old source fails the
+parser-reuse control. Seven kinds match every native array and ten physics steps.
+Native binding handles are retained once; temporary name/pose rebinding is locked
+and restored even on attachment failure. Copy during parent attachment: standalone
+MjSpec.copy drops contacts referring to the parent robot. Preserve the original
+19 failures and subsequent fixture corrections in the parent checkpoint.
+Exact geometry, materials and external references remain in the key; unsupported
+layouts retain ordinary parsing and normal source/native validation. Local ABBA
+preparation timings improve later bowls by 2.04–2.47 s, but first bowl is 0.249 s
+slower. Installed/hosted and all-preset live edit qualification are pending. No
+running state, source-validity decision or collision proof is cached; no deployment.
+
+Default tabletop object geometry is built offline and shipped as
+sdk/python/waddle_sdk/simulators/data/playground-catalog.json.gz. Regenerate with
+python -m waddle_sdk.simulators.playground_catalog after changing its recorded
+compiler sources. Verify byte-exact source geometry, independent placement copies,
+custom-size fallback and package inclusion. The bundle contains no running state;
+combined-scene compilation and ordinary native validation remain required.
+
+Beta promotion CI exposed Python 3.10 lacking hashlib.file_digest. Preserve run
+41899775332 (ten failures) and the local f206d12 failing regression. Source
+validation now streams SHA-256 in bounded chunks on Python 3.10; Python 3.11+
+retains its qualified file_digest path. It still reads every current byte and
+rejects a changed final chunk even with unchanged size/timestamps. Qualification
+is pending before SDK beta promotion; no native ABI or world semantics change.
+
+Resident SDK model preparation is rejected after four alternating native profiles.
+Candidate b557b8a passes 74 selected checks, but complete addition/image means
+worsen from 0.768/1.111 to 0.796/1.237 s for empty two-arm/bowls. Runtime, tests
+and public API/docs are restored exactly to a9b911f. All 62 restored SDK cases
+and changed-source lint pass; source equality is checked independently. Eight
+closed parent archives have full per-file hash readback and no test owner remains.
+Keep the eight original failures, candidate patches and every sample in parent
+.local/edit-sdk-resident-20261104. No resident-preparation API remains active.
+
+Trusted authored placement templates retain an independent native model, exact
+source and detached tree within 128 MiB. Only guarded top-level prop translations
+may recompute constants/reset coordinates; other inputs retain full authoring.
+Consumers still verify all published source bytes. All 31 focused native/source
+cases, 1,349 default cases and strict docs pass; seven object kinds match every
+native array and ten physics steps. See docs/python/simulation.md and CHANGELOG.md.
+Templates carry no runtime authority; application latency is not qualified here.
+
+Whole-scene preparation is qualified at SDK 2750b86 / parent 5fb65aae:
+104 native checks and all 44 edits across 11 exact published presets pass,
+with 55 unchanged XML documents, 44 matching affected-object sets and no
+freshness retries. All eleven object translations reuse independent native
+models; additions still compile. Final add/image is 1.209–1.729 s for ten
+presets and 2.799 s for bowls; bowl resize/delete remain about 5.5 s. Paired
+bowl moves improve, but addition means do not. Strict docs/lint pass; the
+preceding candidate passes 1,349 default SDK cases (485 skips). Retain both
+contact-order regressions, the disk-full final attempt and corrected analysis.
+The unchanged-source retry passes. All 117 recorded PIDs are absent; the audit
+is empty and 14 closed archives have full per-file hash readback.
+The parent Waddle editor now wires bounded prospective whole-scene preparation;
+see its current qualification. Sub-second and long-session acceptance remain open.
+See parent logs/playground-catalog-edits-20261103.md and the whole-scene
+preparation JSON, with raw evidence in .local/edit-pose-preparation-20261104.
+
+SDK c42e584 verifies the exact retired pair multiset and lets native body removal
+remove its contact references, preserving full-parser rejection of retained invalid
+references. All 86 focused native cases, 1,349 default SDK cases (484 skips), strict
+docs and lint/format pass. All 44 edits across 11 exact published presets preserve
+state/history/processes; all 55 XML files and 44 affected-object sets match.
+Paired bowl deletion/image means improve 6.000 to 5.488 s. Addition remains above
+one second (1.028–1.646 s for ten presets, 2.565 s for bowls); resize stays slow.
+Keep the failing baseline, server push error and all samples, including two stale
+image retries on each candidate bowl resize. No freshness limit is relaxed.
+All 42 recorded PIDs are absent, process audit is empty, and eight closed archives
+have full per-file hash readback. See logs/playground-native-body-removal-20261104.md/.json
+and .local/edit-spec-profile-20261104 in the parent isolated worktree. Sub-second
+and long-session goals remain open; startup deferred. No external/physical change.
+
+SDK da73b31 and Twin 73f4353e carry immutable authored body fingerprints through
+the private native-model handoff, after fresh source/binding checks. Retain byte
+bounds, older/missing-record parsing fallback and actual live-world transfer.
+All 119 focused checks, six import-only follow-up cases, 1,349 default SDK cases
+(484 optional skips), strict docs and final lint/format pass. All 44 catalog edits
+preserve state/history; 55 XML files and 44 affected-object oracle sets match.
+All edits reuse the handoff without Twin body parsing or freshness retries.
+Local add/image is 1.074–1.646 s for ten presets and 2.597 s for bowls; bowl resize/
+delete remain 5.616/6.105 s. Paired samples do not establish an overall speedup.
+Sub-second and long-session acceptance remain open; startup stays deferred.
+Retain all diagnostic failures and samples. All 51 recorded PIDs are absent,
+final process audit is empty and eight closed archives have full per-file hash
+readback. See the parent logs/playground-body-handoff-20261104.md/.json and
+the parent .local/edit-body-handoff-20261104. No deployment/external/physical change.
+
+Trusted authored native handoffs carry the robot replacement comparison from
+the exact same-call XML tree. Immutable comparison bytes share the source identity
+and existing byte budget; missing records or changed robot/camera selections keep
+ordinary comparison. Fresh file validation, independent models and current-state
+transfer remain. All 46 focused native/source cases and all 44 edits across the
+11 published presets pass; every edit reuses the comparison and all 55 authored
+XML files remain byte-identical. Full SDK passes 1,349 cases (481 optional skips),
+strict docs and lint/format pass. Bowl SDK addition averages 0.525 to 0.314 s,
+but overall addition does not improve in these small shared-host samples. The
+sub-second target remains unmet and startup stays deferred. Preserve the failed
+invocations and interrupted uncached diagnostic; no normal shutdown is claimed
+for that interrupted attempt. See the parent's
+logs/playground-robot-contract-20261104.md/.json for scope and retained evidence.
+
+Trusted Playground authoring can extend an admitted ordered contact layout from
+its exact base XML, finger names and existing prop-name prefix. Generate only new
+pairs and retain unchanged serialized rows and normalized comparison records.
+Other layouts keep the full builder. Same-call comparison may borrow these private
+records; caller trees remain detached. Immediate-delta tokens retain no ancestor
+preparations, and the existing byte limit charges both complete XML and serialized
+rows. Fresh source/asset validation, native compilation, fallback and state transfer
+remain. Only the trusted Cartesian-product builder contract may enable this
+incremental path. All 44 edits across the 11 published presets pass, and all 55
+XML documents are byte-identical to the preceding compiler. Eight additions use
+the incremental builder; all 44 reuse contact comparison and native preparation.
+Selected native/source coverage passes 112 cases plus five corrected fixtures;
+retain the original budget-oracle and parser-spy failures. The complete SDK suite
+passes 1,348 cases (478 optional skips), with strict docs and changed-source lint.
+Paired bowl add/image means improve 3.148 to 2.673 s; simple timings are mixed.
+The sub-second target remains open and startup stays deferred. See the parent's
+logs/playground-contact-index-20261104.md/.json for complete evidence and limits.
+
+Earlier qualification: SDK 4e7e9e6 retains exact generated contact trees and serialized sections
+by base contact bytes, ordered geometry names and builder identity. Only trusted
+same-call authoring may substitute that fragment while serializing current assets
+and reset keys. Return detached trees; bound retention to two entries/32 MiB of
+source bytes, excluding Python overhead, and discard on fork or builder failure.
+Do not remove or reorder pairs or change their material parameters. Source hashes,
+native compilation and live-state transfer remain. All 44 edits across 11 exact
+published scenes pass with preserved running state/history and no freshness
+retry. All 55 XML documents match the previous compiler byte for byte; 33 contact
+cache hits and 110 supplied serialization fragments are recorded. Native/source
+coverage passes 85 cases plus three corrected UTF-8 XML oracle cases; retain the
+initial ASCII-oracle failures. Full default SDK passes 1,322 cases (478 optional
+skips), with strict docs and changed-source lint/format. Paired bowl add/image
+means improve 4.338 to 4.113 s; empty additions are slower at 1.272/1.485 s.
+Final catalog add/image is 1.006–1.673 s for ten scenes and 4.197 s for Stack bowls.
+Sub-second and long-session refresh latency remain open; startup is deferred.
+See the parent's .local/edit-contact-preparation-20261104 and contact-preparation
+report for complete samples, semantics, retained diagnostics and limits.
+
+SDK 690410a authoring passes its exact same-call XML tree to native comparison
+preparation, which takes a detached copy before normalizing or retaining it.
+Portable bytes, fresh asset hashes, independent compilation, fallback and reset
+semantics remain unchanged. All 83 selected native/source and 1,317 default SDK
+cases pass (478 optional skips), with strict docs and changed-source lint/format.
+All 44 edits across 11 exact catalog presets reuse preparation, retain live
+state/history and acquire current imagery without freshness retries. All 55 XML
+documents match the prior compiler byte for byte. Paired mean bowl add/image
+improves 4.695 to 4.007 s, while empty-scene additions are slower at 1.320/1.489 s;
+these small shared-host samples do not prove a universal speedup. Final all-scene
+add/image samples are 1.135–1.687 s for ten scenes and 4.072 s for Stack bowls.
+Sub-second and long-session refresh latency remain unqualified; startup stays
+deferred. Retain the initial diagnostic import-hook failure and all samples in
+the parent's .local/edit-authored-tree-20261104 and authored-tree report.
+
+Native source validation may retain XML reference names by the freshly verified
+content digest. Trusted authoring supplies the exact tree it just serialized;
+ordinary validation analyzes the verified bytes. Hash every file and check
+current confinement, manifest membership and configuration on every call.
+Never cache file validity, path resolution or
+mutable XML trees. Analyze the same XML bytes that were hashed, including path-only
+validation. Bound retained analysis to two documents/32 MiB of input bytes; reset
+after fork and discard records on parse failure. All 82 native and 1,317 default
+Python cases (478 optional skips), strict docs and changed-source lint/format
+pass, including restored-mtime, hard-link and mmap mutation checks. All 44 edits
+across 11 exact published presets retain running state/history. All 55 authored
+documents prepare their reference lists; 132 validation lookups reuse them,
+without reparsing for reference analysis. Other native source consumers still
+parse where needed. Paired add/image means are 4.567/4.305 s for Stack bowls and
+1.367/1.383 s for Empty two-arm table, baseline/candidate; other edits are mixed.
+The sub-second goal remains open. Keep the unprimed experiment and full samples
+in the parent's .local/edit-critical-path-20261104 and reference-preparation report.
+
+Prepared authored specifications now retain read-only old-XML comparison records
+and contact keys. Compare the exact new XML on every revision, borrowing only
+the trusted same-call author's verified comparison records, and keep
+fresh asset hashes, independent native models, full-parser fallback and the
+32-edit refresh. Records share specification eviction/failure/fork cleanup; the
+source-byte budget excludes their Python overhead and native RSS. All 55 native
+preparation/cache/collision cases and 1,305 default Python cases (478 optional
+skips) pass, with strict docs and changed-source lint/format. All 44 edits across
+the 11 exact published presets reuse preparation. Alternating local trials lower
+mean add/image time from 6.555 to 5.443 s for Stack bowls and 1.542 to 1.377 s for
+Empty table; these are small shared-host samples and the sub-second goal remains
+open. The earlier rejected comparison-index experiment remains historical evidence.
+See the parent's logs/playground-comparison-preparation-20261104.md/.json.
+
+Playground finger contacts share a named pair-only default in portable XML.
+Keep every native pair and its original material/solver parameters. Parsed
+preparations can expand unchanged flat pair defaults for attached additions;
+changed defaults, general inheritance and unsupported source still fully parse.
+Inline vertex edits with unchanged topology can rebuild the vertex/face-only
+inline mesh suffix as fresh native meshes in declaration order, retaining parsed
+robots, bodies and contacts. Avoid reparsing the large vertex XML; a native parser
+error can otherwise discard preparation and cause a full scene rebuild. Never
+patch only an already compiled mesh's vertices: derived collision bounds can
+remain stale. Other mesh attributes, file-backed/classed suffixes and unsupported differences
+retain full parsing. Verify unchanged old models and ordered mesh identities.
+The contact representation must match all native arrays and stepped physics
+against the previous explicit-pair authoring code. All 55 native preparation,
+cache and collision cases, 1,305 default Python cases (478 optional skips),
+changed-source lint/format and strict docs pass. All 11 published catalog
+additions plus Stack bowls resizing match every native model array and ten
+physics steps against the frozen prior compiler. Preserve the failed direct
+vertex update and original fallback regressions. See the parent's
+logs/playground-catalog-edits-20261103.md/.json for actual edit timings; smaller
+XML alone is not latency proof, and the sub-second goal remains open.
+The final typed implementation repeats all 55 native checks and strict docs;
+the default suite ran before that native-only follow-up. All 44 edits across the
+11 published scenes reuse preparation, without native exceptions or fallback.
+Preserve the XML-suffix candidate's caught vertex-parser exception and 42.6-second
+resize, the diagnostic stale-frame refusal and the test publication races. Fresh
+native mesh construction fixes that fallback; the final full-catalog bowl resize
+is 7.5 seconds through a current image, not sub-second or browser acceptance.
+
+Playground can also reuse reference XML and unchanged authored object fragments
+with the existing optional model-cache setting. Bound retained serialized XML to
+4 MiB across two reference configurations; this excludes Python object overhead.
+Fresh asset-byte reads/hashes and full configuration/description/fixture keys
+guard reuse. Return detached trees, remove retired objects and reset after fork.
+Native compilation, source validation, canonical reset and live transfer remain.
+All 49 native preparation/cache checks, 1,305 default Python cases (478 optional
+skips), changed-source lint and strict docs pass. Seven frozen-before comparisons
+match every native array and stepped state across robots and fixtures. Preserve
+the initially failed cleanup-fixture case and its corrected reference fallback.
+See sdk/tests/test_playground_source.py and the simulation cache documentation.
+
+Parsed authored-scene reuse passes 40 native preparation/handoff checks and
+1,305 default Python cases (477 optional skips), strict docs and changed-source
+lint/format checks. Local editor comparisons improve complex-scene edits but
+leave startup and sub-second acceptance open; simple-scene resize is slower.
+Only the trusted Playground authoring path opts in. Supported additions, removals,
+poses and primitive geometry/material edits compare full XML plus freshly hashed
+asset bytes, clone the private specification and change only authored components.
+New bodies/assets/contact pairs use delta parsing. Unsupported edits and failed
+reuse keep full parsing; native attachment lineages refresh after 32 edits.
+No live model/state is retained; specifications share buffer eviction/fork/failure
+cleanup. The 256 MiB source bound does not measure native specification RSS.
+Preserve source validation, canonical reset keys and ordinary live-state
+transfer. See sdk/tests/test_authored_preparation.py and simulation cache docs.
+
+Site/scene YAML selects optional CSafeLoader with SafeLoader fallback, retaining
+fresh parsing, ordinary validation and refusal of Python constructors. See
+[manifest parsing](docs/python/site.md). Complete reference XML caching was
+tested and rejected: final paired add/image and startup were slower overall.
+The parent retains its source, tests, failed fixtures and measurements; that
+experiment restored model.py and playground.py to c776d5e before the separate
+parsed-specification work above.
+
 Relay observation bundling (2026-11-02) passes all 1,294 default Python tests
 (413 optional skips), strict docs and selected Metal/real-GPU relay integration.
 The Python-only addition advertises observation_bundle: 1 and reuses retained
@@ -509,6 +778,26 @@ hit loads a new model, and each owner creates fresh state. Missing/corrupt cache
 evidence recompiles the original source. Keep this directory outside untrusted
 code/input mounts; no samples, authority or outcomes are cached. See
 [simulation caching](docs/python/simulation.md#compiled-model-cache).
+
+Native owner preparation retains the exact source bytes verified by `resolve`;
+replacement contract comparison and compilation consume that same snapshot.
+Newer MuJoCo bindings compile through explicit virtual files. The optional cache
+retains at most two asset sets within 256 MiB, keyed by freshly hashed bytes.
+Serialize their use, compile an independent model and remove the root afterward.
+Trusted authoring may retain a private parsed specification for supported edits;
+other callers parse each new root. Eviction/failure/fork release buffers and their
+specifications; a lineage refreshes after 32 edits. No runtime state is retained.
+Older bindings keep their original loader.
+Compiled-cache reads retain their normal checksum and lock. Tabletop
+`prepare_scene` retains its compiled model and captured assets for trusted
+authoring handoffs, with the same
+portable XML/reset state as `compile_scene`. Only the final reset-key model is
+cached. Keep ordinary source validation and independent model/data ownership.
+On Linux, the same optional cache retains up to two sealed native model files
+within 256 MiB for trusted process-private handoffs. Source manifests and runtime
+identity must match before loading a fresh native instance. No live state or
+descriptor enters scene JSON or participant APIs; unsupported sealing retains
+ordinary loading. Close borrowed descriptors on successful and failed handoffs.
 
 Generated YAM source poses serialize at twelve decimal places with canonical zero
 to remove insignificant cross-host BLAS differences from model hashes. Preserve
@@ -1651,6 +1940,21 @@ or vendor interpolation is introduced. See
 
 ## Editable reference scenes
 
+The native owner retains its loaded XML and robot/camera contract for later
+comparisons. Validate every new publication; retiring old source files cannot
+redefine an opened world. Reference replacement/edit replies include privileged
+post-commit state. A single-world administrator consumes this snapshot directly;
+boolean-returning backends and multi-world sites retain separate final readback.
+Malformed state still fences administration; image generation remains separate.
+
+`SimulationAdministration.can_edit_scene/edit_scene` is a separate optional live
+edit facet. Preserve running time, robot/joint state, targets and forces by stable
+native identity; only authored free-body pose deltas teleport/reset that body's
+velocity. Resize/color changes preserve its pose. Keep native processes, image
+generation, participant drain and failure fences. Unsupported edits refuse;
+`replace_scene` and explicit reset retain their prior initial-state semantics.
+See `sdk/tests/test_scene_edits.py` and the real-socket replacement/edit regression.
+
 Authored scenes may select a finite native `fixture` and bounded `seed`.
 `drawer_cabinet` and `cleanup_station` support one/two YAMs; the existing
 handover/container/peg/tray assemblies require two YAMs. Drawer cabinet reuses
@@ -1698,3 +2002,31 @@ remain verified. Administrative model loading has a bounded 60-second IPC wait;
 ordinary feedback/control and capture deadlines stay separate. Verify actual
 same-owner addition/removal of mesh props for one and two arms, old-image fencing
 and genuine robot/camera refusal; fresh-owner loading alone misses reload bugs.
+
+Native source validation may reuse confined parent-directory resolution within
+one call only. Hash every file on every call, including same-size/restored-mtime
+rewrites. Preserve leaf-symlink refusal and confined directory alias support;
+`test_native_source_inventory.py` covers capture and path-only validation.
+
+Private resident authoring may request `_prefer_handoff=True` after configuring
+the optional model cache. Omit the extra disk binary only after successful bounded
+sealed retention. Keep normal `compile_scene`/`prepare_scene` disk caching and
+unavailable/oversized handoff fallback, independent native models and source checks.
+
+The independent snapshot renderer can retain RGB/depth contexts when uploaded
+resources and visual settings match exactly. Rebind both RGB and metric-depth
+models on their owning thread and acquire fresh pixels; never reuse old image
+content or relax generation/freshness checks. Changed assets, planes or settings
+rebuild contexts. Native pixel/depth equality and fallback regressions are in
+`sdk/tests/test_render_revisions.py`.
+
+Matching reference workers can transfer the current physics model to the
+independent renderer through sealed descriptors on their existing private pipes.
+Advertise and request this capability explicitly; old peers, unsupported storage
+and models over 256 MiB keep copied buffers. This snapshots the actual current
+model, not its authored seed. Consumers load independent native models and still
+acquire fresh state after transfer. Release every sender/receiver handle, including
+superseded snapshots and failures; close a partially sent descriptor response.
+Keep generation and 50 ms pairing fences. See
+`sdk/tests/test_render_snapshot_transfer.py` and both transport modes in the
+stalled-renderer regression.

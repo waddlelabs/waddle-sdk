@@ -60,6 +60,14 @@ prefix the native model and file-manifest paths from the **site root**; native
 manifest paths are not relative to the simulation JSON. Existing output directories
 are refused, so callers retain prior revisions instead of overwriting live worlds.
 
+Authoring hosts that also need the compiled model can call `prepare_scene` with
+the same arguments. Its `ScenePreparation` contains `config`, the fresh native
+`model`, and the exact `contents` used to create it. Preparation compiles once,
+sets the canonical reset key in both XML and native arrays, and publishes that
+final model to the optional private cache. The caller owns the model; independent
+running consumers still require separate models and fresh data. A publisher must
+validate the final on-disk runtime configuration before exposing a revision.
+
 The default easy-grasp profile uses a sliding friction coefficient of 0.8, a
 1 mm effective torsional patch and three NoSlip solver iterations. This stabilizes
 centered grasps while allowing weak and marginal edge grasps to fall. Actual native contact,
@@ -506,6 +514,14 @@ capture cannot be interrupted. Real-time pump ticks need no extra clock request:
 reads, writes and captures already advance elapsed time. Explicit-step rollouts
 still dispatch their requested durations.
 
+On Linux, matching reference workers can send the current physics model to the
+independent renderer through sealed descriptors instead of copying a large
+serialized model through both private pipes. Each receiver still loads its own
+native model. The capability is negotiated; older workers, unavailable sealed
+storage and models over 256 MiB retain copied buffers. Handles close after transfer
+or failure. Current robot state is acquired after model transfer, and camera
+generation, pairing and content-age checks remain unchanged.
+
 For explicitly stepped rollouts, set `worlds.cell.options.real_time: false`; only
 SDK world-step durations then advance physics. This is independent of scene reset:
 runs preserve the scene by default, while `worlds.cell.options.reset_on_episode:
@@ -594,6 +610,26 @@ administration until reopen; the original error remains attached. This authority
 is never supplied through the participant runtime or tools. Each prepared scene
 remains immutable; replacement selects new bytes rather than rewriting the old
 world.
+
+For live editing, check `administration.can_edit_scene` and call
+`edit_scene({world_name: WorldConfig(...)})`. The optional
+`SimulationSceneEditBackend` retains time, named joint positions/velocities,
+actuator targets and external forces while changing topology. Compare authored
+free-body translations and rotations to apply only explicit pose edits; those
+teleports clear that object's velocity. Added bodies use their authored state,
+deleted bodies disappear, and resizing/recoloring retains the object's live pose.
+Existing drain, episode invalidation, camera-generation and failure fences apply.
+Unsupported edits refuse and never silently reset. Explicit `reset` still returns
+to the latest authored initial scene. This is simulation administration only.
+
+A backend's replacement/edit method may return its privileged post-commit state
+mapping instead of `True`. On a single-world site, administration validates and
+returns that state without requesting another snapshot. Boolean-returning backends
+and multi-world sites retain their separate readback after all edits. Malformed
+state fences administration just like an unconfirmed edit; this snapshot does
+not indicate camera readiness. The native owner compares new robot/camera
+contracts against the exact XML it loaded, independently of retired old files;
+every new publication still receives source validation.
 
 For a MuJoCo-only continuation reset, the trusted evaluator may also pass
 `preserve_free_bodies=(...)` and `retire_free_bodies=(...)`. The former retains
@@ -855,6 +891,15 @@ calibrate dynamics or establish physical controller parity. See the
 
 ### Compiled model cache
 
+Default tabletop object geometry ships in `simulators/data/playground-catalog.json.gz`.
+The bundle contains the seven catalog shapes for both contact policies, generated
+offline with `python -m waddle_sdk.simulators.playground_catalog`. Source hashes
+invalidate an outdated bundle; regenerate it after changing its compiler sources.
+Placement only binds object names, poses and colors to private copies. Custom sizes
+retain ordinary geometry generation. This removes default mesh generation from
+placement, but the resulting combined scene still requires native model assembly
+and current-state transfer; no running state is stored in the bundle.
+
 Reference MuJoCo native scenes may set `WADDLE_SIMULATION_MODEL_CACHE` to an
 absolute private directory. This avoids parsing the same verified XML/mesh inputs
 again for separately owned physics and render instances. Default behavior stays
@@ -869,6 +914,150 @@ source bytes, the MuJoCo version and platform; compiled binaries carry their own
 checksum. Missing or invalid cache evidence compiles the original sources, keeping
 original model failures. Unavailable cache storage also falls back to compilation.
 The cache retains at most sixteen models and 256 MiB.
+
+Native source validation can also retain immutable XML reference lists for two
+documents totaling at most 32 MiB of input bytes, excluding Python overhead.
+It reads and hashes every file and checks current path confinement, manifest
+membership and configuration on every call. Only reference analysis is reused,
+keyed by the freshly verified XML digest; no file validity or mutable tree is
+retained. The analyzed XML is the exact byte snapshot that was hashed. Parsing
+failures and fork discard the records, and changed XML is analyzed afresh.
+Trusted authoring prepares the list directly from the exact tree it just
+serialized, so later validation can reuse it after hashing the written files.
+
+With newer MuJoCo bindings, compilation uses an explicit virtual file system.
+When the optional cache is enabled, the process can retain two sets of unchanged
+virtual assets within another 256 MiB. Every lookup still hashes all source bytes;
+changed assets select different buffers. Ordinary calls parse and compile the
+root XML afresh and remove it afterward. Concurrent compilations serialize
+access to these private buffers. Eviction and failed compilation release them;
+older bindings retain their original loader. Ordinary callers retain no parsed
+specification or running state.
+
+The same optional setting lets Playground retain reference XML and the most
+recent authored object fragments for two reference configurations, within 4 MiB
+of serialized XML. This limit excludes Python object overhead. Configuration,
+robot description, fixture placement and contact settings identify the reference;
+every request rereads and hashes its asset files. Changed assets regenerate the
+reference. Each object is regenerated only when its authored data changes, and
+removed objects leave the retained set. Returned trees are detached copies.
+Entries are discarded after a fork or on eviction. This saves source generation;
+it neither skips the subsequent native compilation/validation nor retains live
+coordinates. The final reset key and running-world edit semantics are unchanged.
+
+Prepared contact sections use a separate two-entry, 32 MiB source-byte budget
+(excluding Python object overhead). Exact base-contact XML, ordered finger/prop
+names and builder identity guard reuse; every pair and its order are retained.
+The byte budget includes both the complete fragment and reusable serialized rows.
+Recognized ordered contact layouts can extend an unchanged prop-name prefix by
+building only new pairs, retaining the original row and native pair order.
+Changed base contacts, finger order, duplicates, overlap or unrecognized layout
+keeps the full builder. Private normalized comparison records retain an opaque
+immediate-delta token without retaining a chain of ancestor preparations.
+Authoring receives a detached tree and may reuse its serialized contact fragment
+while writing the same call's current assets and reset key. Namespace-bearing or
+unrecognized XML falls back to ordinary serialization. Fork, eviction or builder
+failure discards contact preparations. This cache retains no native model/state.
+
+Trusted Playground authoring can retain a private parsed specification alongside
+each of those two asset sets. Read-only comparison records retain the parsed old
+XML and contact keys with that specification. Every new source is compared in
+full, with freshly hashed assets. Same-call authoring supplies the exact tree
+behind its serialized bytes; comparison preparation detaches that tree before
+normalization so later reset-key edits cannot change retained records. An exact
+same-call contact fragment may supply its already normalized private records;
+unchanged or immediately extended contacts need no repeated full pair comparison.
+Ordinary
+byte callers still parse their current document. It copies the
+specification, then applies supported object additions,
+removals, poses and primitive geometry/material values before preparing an
+independent model. Newly appended bodies/assets/contact pairs alone need parsing.
+Authored finger contacts share a named pair default in the portable XML; the
+compiled model still contains every individual pair with its original parameters.
+Unchanged flat pair-only defaults can be expanded when attaching new bodies,
+without reparsing the rest of the scene. Changed defaults and general default
+inheritance use the complete parser.
+Reordering an otherwise unchanged contact set also uses the full parser;
+equal membership alone does not preserve native contact layout and names.
+Same-topology inline mesh vertex changes, such as resizing a bowl, also retain
+the parsed scene. It rebuilds vertex/face-only inline mesh declarations in their
+original order using fresh native mesh objects, so the compiler refreshes all
+derived bounds, normals and mass properties without reparsing vertex XML.
+Single-prop additions can also reuse a parsed attachment fragment. Its exact key
+retains geometry, contact materials and external geometry names, while the new
+prop's declared names and root pose are rebound privately under the cache lock.
+Native reference handles are retained with the private template, avoiding repeated
+contact-list traversal; first-use names and pose need no rebinding.
+Large first-use fragments parse at most 2,048 contact declarations per native
+child, avoiding quadratic signature recomputation in the native parser. Geometry
+is attached first, followed by every contact batch in source order on the same
+frame. Final geometry references are checked before batching: unresolved names
+force full-source fallback rather than being silently omitted by attachment.
+The parent copies the fragment during attachment, preserving contact references
+to its robot; the retained template is restored even on attachment failure. The
+owner retains at most two templates, 8 MiB of serialized XML in total, 16,384
+contact pairs and 128 meshes per template. Unsupported layouts use ordinary
+parsing. These are authoring templates, never running state or collision proofs;
+normal compilation and source validation still apply.
+
+The copied robot, bodies and contact pairs remain prepared. Other mesh attributes,
+file-backed or classed mesh suffixes, changed mesh faces/counts, general topology changes,
+includes, unfamiliar reset
+keys and other unsupported differences use the complete parser. At most 32 edits
+reuse one native preparation before full parsing refreshes its internal attachment
+bookkeeping. The 256 MiB limit bounds source bytes plus retained native-model
+payloads, not native specification RSS or Python comparison-record overhead.
+Failed reuse also retries the authoritative source parser, whose
+errors remain visible. Specifications and comparison records are discarded with their buffers on
+eviction, failure or fork. Normal state transfer, source validation and reset-key
+initialization remain unchanged.
+
+Within that same bound, authoring can retain a private copy of the complete
+compiled template before the caller edits its reset key or other model arrays.
+Unchanged complete source can copy that template directly. An exact source
+change containing only translations of isolated top-level free
+props can copy this template and recompute native constants/statistics instead
+of compiling again. Geometry, contact material, orientation and other source
+changes retain native compilation. Fixed/articulated objects, external references,
+explicit statistics, plugins, skins and flexes also retain compilation. Returned
+models never alias the private template, and no running coordinates or images
+are retained. Optional timing reports distinguish `placement_prepare_s` from
+`native_compile_s`; this model cache alone does not prewarm a UI addition.
+
+Trusted authoring can retain a private `PlacementTemplate` from a completed
+`ScenePreparation`, bounded to 128 MiB of native/source/tree payload. It accepts
+only position changes in the same full authored scene, including fixed visual
+targets without external dependencies. It updates body and initial/reset
+coordinates, native constants, exact XML and manifest digests. Other changes and
+unsupported dependencies retain fresh authoring. Returned models do not alias
+the original or retained model; consumers still freshly verify the complete
+published source. Templates carry no live state and close with their owner.
+
+Native owners compare and compile one captured, verified source snapshot instead
+of reopening its files at each preparation stage. Trusted authoring can retain
+its already compiled model while filling the cache. On Linux with sealed-memory
+file support, the authoring process also retains at most two immutable compiled
+models within 256 MiB. SDK owners can receive a matching model through their
+existing private pipe after ordinary source validation. Each consumer loads its
+own native model and creates fresh state. File seals prevent writes or truncation,
+and the handoff checks source hashes, native version and platform. Unsupported
+systems retain the ordinary checksum-verified cache/source path. This private
+descriptor is never accepted through scene JSON, workspace files or participant
+tools, and its cache retains no running simulation state.
+
+Trusted authoring also prepares the robot assembly comparison from its exact XML
+tree. Immutable comparison bytes travel with the same source-bound model and count
+toward its existing byte limit. Owners reuse them only for matching source and
+robot/camera selections; missing records or changed selections retain ordinary
+comparison. Fresh file validation and current-state transfer still run on each edit.
+Trusted same-call seed conversion may also complete the retained handoff with
+immutable joint-indexed body fingerprints from the transient author tree. These
+records share the byte bound and source identity; consumers map them to freshly
+validated object bindings. Missing joints or records keep ordinary comparison.
+Oversized optional analysis preserves the native preparation. Existing handed-out
+descriptors retain their metadata and lifetime; annotated handoffs require matching
+peers. Older unannotated metadata remains readable. No tree or running state is
+retained in the cache.
 
 Each hit loads an independent model; callers create fresh `MjData`. Changes to
 model arrays or runtime state cannot affect another instance. The cache contains
@@ -887,3 +1076,20 @@ Authored `bowl` objects have a deep rounded hollow shell and a small flat foot.
 Their smooth visual surface is separate from the convex wall bands and floor
 used for native collision. This leaves the interior open for containment and
 nesting. Existing compiled scene manifests retain their original geometry.
+
+Native source validation resolves each distinct asset directory once per pass,
+while still hashing every file on every pass. Directory reuse is local to that
+check; a later edit, symlink change or same-size rewrite is validated again.
+
+Resident Playground preparation can prefer the existing sealed handoff and omit
+the duplicate disk binary. Source XML/assets are still written and validated.
+General authoring continues to populate the disk cache; unavailable sealing or
+oversized preparations use that same fallback. Each owner still loads independent
+native state from the sealed model.
+
+The independent native camera worker retains its RGB/depth contexts across scene
+revisions when uploaded meshes, textures, height fields, skins, flexes, materials,
+plane resources and visual settings match. Changed resources rebuild the contexts.
+Every revision still receives its own model/state, and every capture rebuilds the
+visual scene from that current state. Image generation and acquisition freshness
+checks remain unchanged; this reuse never caches an acquired image.

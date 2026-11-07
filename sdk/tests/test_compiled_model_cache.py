@@ -16,31 +16,21 @@ def inputs(x=0):
     }
 
 
+@pytest.mark.parametrize("legacy", [False, True])
 def test_unchanged_sources_reuse_compilation_with_independent_model_and_state(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, legacy
 ):
-    from types import SimpleNamespace
-
-    original, calls = mj.MjModel, []
-
-    def compile(*args, **kwargs):
-        calls.append(True)
-        return original.from_xml_path(*args, **kwargs)
-
-    monkeypatch.setattr(
-        mj,
-        "MjModel",
-        SimpleNamespace(
-            from_xml_path=compile, from_binary_path=original.from_binary_path
-        ),
-    )
-    first = load_model("model.xml", inputs(), cache=tmp_path)
+    if legacy:
+        monkeypatch.delattr(mj, "MjVfs", raising=False)
+    first_timing, second_timing = {}, {}
+    first = load_model("model.xml", inputs(), cache=tmp_path, timings=first_timing)
     first.geom_rgba[:] = 0
     first.body_pos[1, 0] = 99
     a = mj.MjData(first)
     a.qpos[0] = 42
-    second = load_model("model.xml", inputs(), cache=tmp_path)
-    assert len(calls) == 1
+    second = load_model("model.xml", inputs(), cache=tmp_path, timings=second_timing)
+    assert not first_timing["cache_hit"] and first_timing["native_compile_s"] > 0
+    assert second_timing["cache_hit"] and second_timing["native_compile_s"] == 0
     assert second is not first and second.body_pos[1, 0] == 0
     assert second.geom_rgba[0, 3] == 1
     b = mj.MjData(second)
@@ -66,6 +56,34 @@ def test_changed_xml_and_mesh_bytes_cannot_reuse_stale_geometry(tmp_path):
         "model.xml", {"model.xml": xml, "mesh.obj": mesh(3)}, cache=tmp_path
     )
     assert large.geom_rbound[0] > small.geom_rbound[0]
+
+
+def test_virtual_files_preserve_nested_source_geometry_and_native_dynamics(monkeypatch):
+    if not hasattr(mj, "MjVfs"):
+        pytest.skip("explicit native virtual files unavailable")
+    sources = {
+        "scene.xml": b'<mujoco><include file="parts/body.xml"/></mujoco>',
+        "parts/body.xml": b"""<mujoco>
+          <asset><mesh name="shape" file="shape.obj"/></asset>
+          <worldbody><body pos="0 0 1"><freejoint/>
+            <geom type="mesh" mesh="shape" mass="2"/>
+          </body></worldbody></mujoco>""",
+        "parts/shape.obj": b"v 0 0 0\nv 1 0 0\nv 0 1 0\nv 0 0 1\nf 1 2 3\nf 1 4 2\nf 1 3 4\nf 2 4 3\n",
+    }
+    current = load_model("scene.xml", sources, cache="")
+    with monkeypatch.context() as old:
+        old.delattr(mj, "MjVfs")
+        legacy = load_model("scene.xml", sources, cache="")
+    for name in dir(legacy):
+        value = getattr(legacy, name)
+        if isinstance(value, np.ndarray):
+            np.testing.assert_array_equal(getattr(current, name), value, err_msg=name)
+    a, b = mj.MjData(current), mj.MjData(legacy)
+    for _ in range(10):
+        mj.mj_step(current, a)
+        mj.mj_step(legacy, b)
+    np.testing.assert_array_equal(a.qpos, b.qpos)
+    np.testing.assert_array_equal(a.qvel, b.qvel)
 
 
 def test_private_cache_corruption_recompiles_original_sources(tmp_path):

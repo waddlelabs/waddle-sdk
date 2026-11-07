@@ -55,6 +55,7 @@ class World:
         self._part_frames: dict[str, str | None] = {}
         self._renderer = None
         self._independent_render = False
+        self._sealed_render_model = False
         self._generation = 0
         self.content_timing_kind = None
 
@@ -93,6 +94,7 @@ class World:
                 env["PYTHONPATH"] = os.pathsep.join(
                     filter(None, (source, env.get("PYTHONPATH")))
                 )
+                prepared = None
                 try:
                     self._process = subprocess.Popen(
                         [
@@ -109,8 +111,29 @@ class World:
                     )
                     self._connection = parent
                     child.close()
-                    parent.send({**self.config, "_real_time": self._real_time})
+                    if self.config.get("native_scene"):
+                        from .native_scene import resolve
+                        from .prepared_model import cache
+
+                        native = self.config["native_scene"]
+                        prepared = cache.get(native["model"], native["files"])
+                        if prepared is not None:
+                            # Declaration may precede opening. Preserve the
+                            # original check of current sources at this boundary.
+                            resolve(self.config["_native_root"], self.config)
+                    initial = {**self.config, "_real_time": self._real_time}
+                    parent.send(
+                        initial if prepared is None else (initial, prepared.metadata())
+                    )
+                    if prepared is not None:
+                        from multiprocessing.reduction import send_handle
+
+                        send_handle(parent, prepared.descriptor(), self._process.pid)
                     ready = self._receive(180.0)
+                    self._sealed_render_model = (
+                        isinstance(ready, dict)
+                        and ready.get("sealed_render_model") is True
+                    )
                     self.content_timing_kind = (
                         ready.get("camera_content_timing_kind")
                         if isinstance(ready, dict)
@@ -132,6 +155,9 @@ class World:
                     self._shutdown()
                     self._failed = True
                     raise
+                finally:
+                    if prepared is not None:
+                        prepared.close()
 
     def _start_renderer(self, env):
         from .render_client import RenderClient
@@ -154,7 +180,9 @@ class World:
             )
             child.close()
             snapshot = self.call("render_snapshot", None)
-            parent.send((self.config, snapshot))
+            from .render_snapshot import send
+
+            send(parent, self.config, snapshot, process.pid)
             if not parent.poll(180):
                 raise TimeoutError("simulation renderer startup timed out")
             ok, result = parent.recv()
@@ -181,30 +209,35 @@ class World:
             raise RuntimeError("simulation renderer is unavailable")
 
         def acquire(known_generation):
-            model = None
-            for _ in range(3):
-                if cancelled():
-                    raise RuntimeError("simulation camera is closed")
-                snapshot = self.call("render_snapshot", known_generation)
-                while snapshot.get("model") is not None:
-                    # Model replacement can be large. Acquire fresh feedback
-                    # after transfer; its cost cannot restamp old state.
-                    model = snapshot["model"]
-                    snapshot = self.call("render_snapshot", snapshot["generation"])
-                captured_stamp = None if stamp is None else stamp()
-                if (
-                    stamp is None
-                    or time.monotonic_ns() - snapshot["interval"][1] <= 50_000_000
-                ):
-                    snapshot["model"] = model
-                    return snapshot, captured_stamp
-                # Discard a late acquisition completely. A fresh snapshot can
-                # recover a scheduling interruption without relaxing pairing
-                # or relabeling old feedback with a new clock stamp.
-                known_generation = snapshot["generation"]
-            raise RuntimeError(
-                "simulation camera snapshot transport exceeded 50 ms pairing bound"
-            )
+            from .render_snapshot import release
+
+            retained = {"model": None}
+            try:
+                for _ in range(3):
+                    if cancelled():
+                        raise RuntimeError("simulation camera is closed")
+                    snapshot = self.call("render_snapshot", known_generation)
+                    while snapshot.get("model") is not None:
+                        # Acquire fresh feedback after model transfer; its cost
+                        # cannot restamp old state. Drop any superseded handle.
+                        release(retained)
+                        retained["model"] = snapshot["model"]
+                        snapshot = self.call("render_snapshot", snapshot["generation"])
+                    captured_stamp = None if stamp is None else stamp()
+                    if (
+                        stamp is None
+                        or time.monotonic_ns() - snapshot["interval"][1] <= 50_000_000
+                    ):
+                        snapshot["model"] = retained["model"]
+                        retained["model"] = None
+                        return snapshot, captured_stamp
+                    # Discard late state, preserving the original pairing bound.
+                    known_generation = snapshot["generation"]
+                raise RuntimeError(
+                    "simulation camera snapshot transport exceeded 50 ms pairing bound"
+                )
+            finally:
+                release(retained)
 
         while not cancelled():
             rgb, depth, snapshot, captured_stamp = renderer.capture(
@@ -265,19 +298,43 @@ class World:
                     "reset",
                     "evaluation_reset",
                     "evaluation_replace_scene",
+                    "evaluation_edit_scene",
                 }:
                     self._generation += 1
+                prepared = (
+                    arguments[1]
+                    if operation
+                    in {"evaluation_replace_scene", "evaluation_edit_scene"}
+                    and len(arguments) > 1
+                    else None
+                )
+                if prepared is not None:
+                    arguments = arguments[0], prepared.metadata()
+                if operation == "render_snapshot" and self._sealed_render_model:
+                    arguments = arguments[0], True
                 self._connection.send((operation, arguments))
+                if prepared is not None:
+                    from multiprocessing.reduction import send_handle
+
+                    send_handle(
+                        self._connection, prepared.descriptor(), self._process.pid
+                    )
                 # Scene loading constructs native models while participant work is
                 # drained; it is not a small control/feedback transaction.
                 timeout = (
                     60.0
-                    if operation == "evaluation_replace_scene"
+                    if operation
+                    in {"evaluation_replace_scene", "evaluation_edit_scene"}
                     else 15.0
                     if operation == "capture"
                     else 5.0
                 )
-                return self._receive(timeout)
+                result = self._receive(timeout)
+                if operation == "render_snapshot":
+                    from .render_snapshot import receive
+
+                    result = receive(self._connection, result)
+                return result
             except (OSError, EOFError, TimeoutError):
                 with self._lock:
                     self._failed = True
@@ -371,11 +428,33 @@ class AdministrativeWorld(World):
     def evaluation_snapshot(self):
         return self.call("evaluation_snapshot")
 
-    def evaluation_replace_scene(self, config: WorldConfig) -> bool:
+    def evaluation_replace_scene(self, config: WorldConfig):
+        return self._replace_scene(config, "evaluation_replace_scene")
+
+    def evaluation_edit_scene(self, config: WorldConfig):
+        return self._replace_scene(config, "evaluation_edit_scene")
+
+    def _replace_scene(self, config, operation):
         _, definition = load_scene(
             config.site_root, config.connection.get("simulation")
         )
-        accepted = self.call("evaluation_replace_scene", definition)
+        from .prepared_model import cache
+
+        native = definition.get("native_scene")
+        prepared = (
+            None if native is None else cache.get(native["model"], native["files"])
+        )
+        # load_scene above still validates the actual on-disk publication. The
+        # immutable model is transported only over this owner's private pipe.
+        try:
+            accepted = (
+                self.call(operation, definition)
+                if prepared is None
+                else self.call(operation, definition, prepared)
+            )
+        finally:
+            if prepared is not None:
+                prepared.close()
         if accepted:
             self.config = definition
         return accepted

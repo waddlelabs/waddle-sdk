@@ -1,5 +1,10 @@
 # Site lifecycle and manifest
 
+Site and portable scene YAML use PyYAML's safe C parser when LibYAML is installed,
+with the safe Python parser as a fallback. Both reject Python object constructors;
+schema, path, secret-reference and device validation still run on every load.
+Parsed manifests are not cached.
+
 ## Lifecycle
 
 The contexts are nested intentionally:

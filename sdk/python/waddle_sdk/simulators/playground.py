@@ -11,10 +11,12 @@ import json
 import math
 import os
 import re
-import shutil
+import time
 import xml.etree.ElementTree as ET
 from copy import deepcopy
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from .model import mjcf, numbers
 from .playground_bowls import bowl_geometry
@@ -123,6 +125,15 @@ def validate_scene(scene):
 
 
 def _object(world, asset, obj, easy_grasp):
+    from .playground_catalog import instantiate
+
+    prepared = instantiate(world, asset, obj, easy_grasp)
+    if prepared is not None:
+        return prepared
+    return _object_source(world, asset, obj, easy_grasp)
+
+
+def _object_source(world, asset, obj, easy_grasp):
     name = "prop_" + obj["id"]
     kind = obj["kind"]
     body = ET.SubElement(
@@ -201,26 +212,9 @@ def _object(world, asset, obj, easy_grasp):
     return names
 
 
-def compile_scene(config, scene, output: Path, *, revision=1, easy_grasp=True):
-    """Compose a fresh immutable native scene from a reference robot configuration.
-
-    Dimensions are full extents in metres; object rotation is XYZ degrees.
-    Robot force limits and actuators are preserved. Easy grasp changes only
-    contact material/solver parameters, never object attachment or outcomes.
-    """
-    scene = validate_scene(scene)
+def _reference(config, scene, easy_grasp):
     fixture = scene.get("fixture")
-    if fixture:
-        validate_fixture(fixture, config["robot"], len(config["parts"]))
-    if output.exists():
-        raise ValueError("playground.output: scene revision already exists")
-    output.mkdir(parents=True)
-    config = deepcopy(config)
-    config.pop("native_scene", None)
-    config.pop("_native_root", None)
-    config.pop("pose_profile", None)
     environment = FIXTURES[fixture] if fixture else None
-    config["environment"] = environment or "two_cubes"
     root = ET.fromstring(mjcf(profile(config["robot"]), config))
     # Compound props and two articulated hands can exceed MuJoCo's inferred
     # constraint arena during ordinary contact. Allocate bounded scratch up
@@ -265,22 +259,9 @@ def compile_scene(config, scene, output: Path, *, revision=1, easy_grasp=True):
                 if value in names:
                     node.set(key, part + "__" + value)
         bases = {part + "__base"}
-    for node in root.iter():
-        if node.get("file"):
-            source = Path(node.get("file"))
-            digest = hashlib.sha256(source.read_bytes()).hexdigest()
-            target = output / "assets" / (digest + source.suffix)
-            target.parent.mkdir(exist_ok=True)
-            shutil.copyfile(source, target)
-            node.set("file", target.relative_to(output).as_posix())
-    asset = root.find("asset")
-    if asset is None:
-        asset = ET.SubElement(root, "asset")
-    props = [
-        name
-        for obj in scene["objects"]
-        for name in _object(world, asset, obj, easy_grasp)
-    ]
+    if root.find("asset") is None:
+        ET.SubElement(root, "asset")
+    props, fingers = [], []
     if fixture:
         for body in world.findall("body"):
             if body.get("name") in bases | {"table"} or body.get("name", "").startswith(
@@ -313,50 +294,218 @@ def compile_scene(config, scene, output: Path, *, revision=1, easy_grasp=True):
                         name = body.get("name") + f"__playground_contact_{i}"
                         geom.set("name", name)
                         fingers.append(name)
-        existing_pairs = {
-            frozenset((pair.get("geom1"), pair.get("geom2")))
-            for pair in contact.findall("pair")
-        }
-        for finger in fingers:
-            for prop in props:
-                pair_key = frozenset((finger, prop))
-                if pair_key in existing_pairs:
-                    continue
-                existing_pairs.add(pair_key)
-                ET.SubElement(
-                    contact,
-                    "pair",
-                    geom1=finger,
-                    geom2=prop,
-                    condim="4",
-                    # A small finite patch stabilizes ordinary grasps without
-                    # making marginal edge contacts resist arbitrary torque.
-                    friction="0.8 0.8 0.001 0.0001 0.0001",
-                    margin="0.000001",
-                    solref="0.004 1",
-                    solimp="0.95 0.99 0.001",
-                )
+    return root, fingers, props
+
+
+def _pairs(root, fingers, props):
+    # Repeated finger contacts share source defaults, not native contact pairs.
+    # Each compiled pair keeps its original parameters and geometry identities.
+    defaults = root.find("default")
+    if defaults is None:
+        defaults = ET.SubElement(root, "default")
+    material = ET.SubElement(defaults, "default", {"class": "playground_contact"})
+    ET.SubElement(
+        material,
+        "pair",
+        condim="4",
+        friction="0.8 0.8 0.001 0.0001 0.0001",
+        margin="0.000001",
+        solref="0.004 1",
+        solimp="0.95 0.99 0.001",
+    )
+    contact = root.find("contact")
+    if os.environ.get("WADDLE_SIMULATION_MODEL_CACHE"):
+        from .playground_contacts import cache
+
+        fragment = cache.prepare(
+            contact, fingers, props, _contact_pairs, _incremental=True
+        )
+        root[list(root).index(contact)] = fragment.node
+        return fragment
+    _contact_pairs(contact, fingers, props)
+    return None
+
+
+def _contact_pairs(contact, fingers, props):
+    existing_pairs = {
+        frozenset((pair.get("geom1"), pair.get("geom2")))
+        for pair in contact.findall("pair")
+    }
+    for finger in fingers:
+        for prop in props:
+            pair_key = frozenset((finger, prop))
+            if pair_key in existing_pairs:
+                continue
+            existing_pairs.add(pair_key)
+            ET.SubElement(
+                contact,
+                "pair",
+                geom1=finger,
+                geom2=prop,
+                **{"class": "playground_contact"},
+            )
+
+
+@dataclass(frozen=True)
+class ScenePreparation:
+    """Fresh authoring model and the exact portable bytes it describes.
+
+    The caller owns the mutable native model. This carries no running state or
+    authority; independent runtime owners must instantiate their own model/data.
+    """
+
+    config: dict
+    model: Any
+    contents: dict[str, bytes]
+    # Trusted conversion can derive immutable analysis from this exact tree.
+    # A bounded private placement template may retain its own detached copy.
+    _tree: Any = None
+
+
+def compile_scene(config, scene, output: Path, *, revision=1, easy_grasp=True):
+    """Compose a fresh immutable native scene from a reference robot configuration.
+
+    Dimensions are full extents in metres; object rotation is XYZ degrees.
+    Robot force limits and actuators are preserved. Easy grasp changes only
+    contact material/solver parameters, never object attachment or outcomes.
+    """
+    return prepare_scene(
+        config, scene, output, revision=revision, easy_grasp=easy_grasp
+    ).config
+
+
+def prepare_scene(
+    config,
+    scene,
+    output: Path,
+    *,
+    revision=1,
+    easy_grasp=True,
+    _prefer_handoff=False,
+    _timings=None,
+):
+    """Compile once and retain the exact model for trusted authoring consumers.
+
+    The written scene has the same reset, geometry and reference robot contracts
+    as :func:`compile_scene`. Source assets are captured into immutable bytes;
+    the final reset key is written into both the native model and portable XML.
+    A resident consumer can prefer a sealed handoff over exporting a second disk
+    binary; unavailable handoff storage retains the ordinary disk-cache fallback.
+    """
+    timings = _timings if _timings is not None else {}
+    started = time.perf_counter()
+    scene = validate_scene(scene)
+    fixture = scene.get("fixture")
+    if fixture:
+        validate_fixture(fixture, config["robot"], len(config["parts"]))
+    if output.exists():
+        raise ValueError("playground.output: scene revision already exists")
+    output.mkdir(parents=True)
+    config = deepcopy(config)
+    config.pop("native_scene", None)
+    config.pop("_native_root", None)
+    config.pop("pose_profile", None)
+    config["environment"] = (FIXTURES[fixture] if fixture else None) or "two_cubes"
+    from . import playground_source
+
+    reference_started = time.perf_counter()
+    if os.environ.get("WADDLE_SIMULATION_MODEL_CACHE"):
+        from dataclasses import asdict
+
+        from . import model
+        from .description import description
+
+        key = (
+            mjcf,
+            model.objects,
+            _reference,
+            _object,
+            bowl_geometry,
+            place_fixture,
+            hashlib.sha256(
+                json.dumps(
+                    (
+                        config,
+                        asdict(profile(config["robot"])),
+                        asdict(description(config["robot"])),
+                        CATALOG,
+                        fixture,
+                        scene.get("seed", 0),
+                        easy_grasp,
+                    ),
+                    sort_keys=True,
+                    allow_nan=False,
+                ).encode()
+            ).digest(),
+        )
+        root, captured, fingers, props = playground_source.cache.prepare(
+            key,
+            lambda: _reference(config, scene, easy_grasp),
+            _object,
+            scene["objects"],
+            easy_grasp,
+        )
+    else:
+        root, fingers, fixture_props = _reference(config, scene, easy_grasp)
+        captured = playground_source.capture(root)
+        props = [
+            name
+            for obj in scene["objects"]
+            for name in _object(
+                root.find("worldbody"), root.find("asset"), obj, easy_grasp
+            )
+        ] + fixture_props
+    timings["reference_and_objects_s"] = time.perf_counter() - reference_started
+    contacts_started = time.perf_counter()
+    contacts = _pairs(root, fingers, props) if easy_grasp else None
+    timings["contacts_s"] = time.perf_counter() - contacts_started
+    from .playground_contacts import scene_xml
+
+    assets_started = time.perf_counter()
+    contents, hashes = {}, {}
+    sources = {}
+    for source, (data, digest) in captured.items():
+        relative = "assets/" + digest + source.suffix
+        target = output / relative
+        target.parent.mkdir(exist_ok=True)
+        target.write_bytes(data)
+        contents[relative], hashes[relative] = data, digest
+        sources[source] = relative
+    for node in root.iter():
+        if name := node.get("file"):
+            node.set("file", sources[Path(name)])
+    timings["assets_s"] = time.perf_counter() - assets_started
     keys = root.find("keyframe")
     if keys is not None:
         root.remove(keys)
     # Reference generators put their initial robot coordinates in joint refs.
     # Save the exact compiled default state as the canonical reset keyframe.
+    # Reserve the key before compilation so setting its arrays below does not
+    # require rebuilding topology or loading all robot assets a second time.
+    initial = ET.SubElement(ET.SubElement(root, "keyframe"), "key", name="initial")
     model_path = output / "world.xml"
-    model_path.write_text(ET.tostring(root, encoding="unicode"))
+    xml_started = time.perf_counter()
+    contents["world.xml"] = scene_xml(root, contacts)
+    timings["initial_xml_s"] = time.perf_counter() - xml_started
     import mujoco as mj
 
-    if os.environ.get("WADDLE_SIMULATION_MODEL_CACHE"):
-        from .compiled_model import load_model
+    from .compiled_model import load_model
 
-        model = load_model(
-            "world.xml",
-            {
-                p.relative_to(output).as_posix(): p.read_bytes()
-                for p in [model_path, *sorted((output / "assets").glob("*"))]
-            },
-        )
-    else:
-        model = mj.MjModel.from_xml_path(str(model_path))
+    # Only the final scene belongs in the shared private binary cache.
+    native_started = time.perf_counter()
+    native_timings = {}
+    model = load_model(
+        "world.xml",
+        contents,
+        cache="",
+        _authored=True,
+        _authored_tree=root,
+        _authored_contacts=contacts,
+        timings=native_timings,
+    )
+    timings["native_model_s"] = time.perf_counter() - native_started
+    timings["native_model"] = native_timings
+    finalize_started = time.perf_counter()
     data = mj.MjData(model)
     from .description import description
 
@@ -373,26 +522,49 @@ def compile_scene(config, scene, output: Path, *, revision=1, easy_grasp=True):
             data.ctrl[actuator.id] = data.qpos[model.joint(part + "__" + name).qposadr][
                 0
             ]
-    ET.SubElement(
-        ET.SubElement(root, "keyframe"),
-        "key",
-        name="initial",
-        qpos=numbers(data.qpos),
-        ctrl=numbers(data.ctrl),
-    )
-    model_path.write_text(ET.tostring(root, encoding="unicode"))
+    initial.set("qpos", numbers(data.qpos))
+    initial.set("ctrl", numbers(data.ctrl))
+    key = model.key("initial").id
+    model.key_qpos[key] = data.qpos
+    model.key_ctrl[key] = data.ctrl
+    contents["world.xml"] = scene_xml(root, contacts)
+    hashes["world.xml"] = hashlib.sha256(contents["world.xml"]).hexdigest()
+    model_path.write_bytes(contents["world.xml"])
     config.update(environment="playground", scene_revision=f"1.0.{revision}")
     config["native_scene"] = {
         "model": "world.xml",
         "initial_keyframe": "initial",
-        "files": {
-            p.relative_to(output).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
-            for p in [model_path, *sorted((output / "assets").glob("*"))]
-        },
+        "files": hashes,
         "prefixes": {part: part + "__" for part in config["parts"]},
         "camera_names": {name: name for name in config["cameras"]},
         "pose_groups": [],
     }
     (output / "simulation.json").write_text(json.dumps(config, indent=2) + "\n")
     (output / "scene.json").write_text(json.dumps(scene, indent=2) + "\n")
-    return config
+    if selected_cache := os.environ.get("WADDLE_SIMULATION_MODEL_CACHE"):
+        if not Path(selected_cache).is_absolute():
+            raise ValueError(
+                "simulation.model_cache: select an absolute private directory"
+            )
+        from .native_scene import replacement_signature
+        from .prepared_model import cache
+        from .source_references import cache as references
+
+        # This is the exact tree just serialized above. Retain only its immutable
+        # reference list; final publication still hashes every written file and
+        # checks current confinement and manifest membership normally.
+        references.read(contents["world.xml"], hashes["world.xml"], _tree=root)
+        retained = cache.remember(
+            "world.xml",
+            hashes,
+            contents["world.xml"],
+            model,
+            _contract=replacement_signature(config, _tree=root),
+        )
+        if not (_prefer_handoff and retained):
+            model = load_model("world.xml", contents, _prepared=model)
+    timings["finalize_s"] = time.perf_counter() - finalize_started
+    timings["total_s"] = time.perf_counter() - started
+    return ScenePreparation(
+        config, model, contents, _tree=root if selected_cache and retained else None
+    )

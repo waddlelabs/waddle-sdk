@@ -153,12 +153,26 @@ class SimulationSceneReplacementBackend(Protocol):
 
     Implementations must preserve the opened robot and camera contracts, reset
     the new scene, and fence camera samples from the previous model.
+    A successful operation may return its privileged post-commit snapshot instead
+    of True, avoiding a second request on a single-world site. False still refuses;
+    backends returning True retain the ordinary separate readback.
     """
 
     @property
     def supports_scene_replacement(self) -> bool: ...
 
-    def evaluation_replace_scene(self, config: WorldConfig) -> bool: ...
+    def evaluation_replace_scene(
+        self, config: WorldConfig
+    ) -> bool | Mapping[str, Any]: ...
+
+
+@runtime_checkable
+class SimulationSceneEditBackend(SimulationSceneReplacementBackend, Protocol):
+    """Optional trusted facet retaining live state while applying authored edits."""
+
+    def evaluation_edit_scene(
+        self, config: WorldConfig
+    ) -> bool | Mapping[str, Any]: ...
 
 
 @dataclass(frozen=True)
@@ -354,6 +368,22 @@ class SimulationAdministration:
                 for backend in self._require().worlds.values()
             )
 
+    @property
+    def can_edit_scene(self) -> bool:
+        with self._lock:
+            return self.can_replace_scene and all(
+                isinstance(backend, SimulationSceneEditBackend)
+                for backend in self._require().worlds.values()
+            )
+
+    def edit_scene(self, worlds: Mapping[str, WorldConfig]) -> SimulationSnapshot:
+        """Apply authored changes while preserving all other live simulator state.
+
+        As with replacement, callers drain participant work and invalidate old
+        plans/images. Unsupported backends refuse; an edit must never reset.
+        """
+        return self._replace_scene(worlds, preserve_state=True)
+
     def replace_scene(self, worlds: Mapping[str, WorldConfig]) -> SimulationSnapshot:
         """Replace prepared scenes after the caller drains participant operations.
 
@@ -361,6 +391,9 @@ class SimulationAdministration:
         callers must invalidate plans and observations using the new episode.
         An admitted failure fences administration until the site is reopened.
         """
+        return self._replace_scene(worlds, preserve_state=False)
+
+    def _replace_scene(self, worlds, *, preserve_state):
         with self._lock:
             binding = self._require()
             if set(worlds) != set(binding.worlds) or any(
@@ -374,16 +407,33 @@ class SimulationAdministration:
                 raise SimulationAdministrationError(
                     "simulation worlds do not support scene replacement"
                 )
+            if preserve_state and not self.can_edit_scene:
+                raise SimulationAdministrationError(
+                    "simulation worlds do not support live scene edits"
+                )
             try:
                 with binding.dispatch_lock, binding.lifecycle_lock:
+                    committed = {}
                     for name, backend in binding.worlds.items():
-                        if not backend.evaluation_replace_scene(worlds[name]):
+                        operation = (
+                            backend.evaluation_edit_scene
+                            if preserve_state
+                            else backend.evaluation_replace_scene
+                        )
+                        result = operation(worlds[name])
+                        if not result:
                             raise SimulationAdministrationError(
                                 "a simulation world refused scene replacement"
                             )
+                        if isinstance(result, Mapping):
+                            committed[name] = _evaluation_document(result)
                     self._episode_revision += 1
                     state = {
-                        name: _evaluation_document(backend.evaluation_snapshot())
+                        name: (
+                            committed[name]
+                            if len(binding.worlds) == 1 and name in committed
+                            else _evaluation_document(backend.evaluation_snapshot())
+                        )
                         for name, backend in binding.worlds.items()
                     }
             except Exception as error:

@@ -1,5 +1,6 @@
 """Authored scenes retain reference feedback, camera and reset behavior."""
 
+import time
 from copy import deepcopy
 
 import numpy as np
@@ -182,12 +183,14 @@ def test_scene_rejects_invalid_geometry_before_compiling(mutation):
         validate_scene(value)
 
 
+@pytest.mark.parametrize("preserve", [False, True])
 @pytest.mark.parametrize("arms", [1, 2])
 @pytest.mark.parametrize("kind", ["block", "bowl"])
 def test_scene_replacement_keeps_ports_and_native_processes_and_fences_old_images(
     tmp_path,
     kind,
     arms,
+    preserve,
 ):
     pytest.importorskip("mujoco")
     import json
@@ -254,12 +257,25 @@ def test_scene_replacement_keeps_ports_and_native_processes_and_fences_old_image
         world = session._managed.arms[part].driver.world
         pids = world._process.pid, world._renderer.process.pid
         assert admin.can_replace_scene
-        before = world.capture("scene")[0]
+
+        def camera_frame():
+            # Read the normal camera pump. A direct capture would add an extra
+            # producer to its bounded render queue and race the real cameras.
+            deadline = time.monotonic() + 15
+            while True:
+                sample = session.observe_parts(()).cameras.get("scene")
+                if sample is not None:
+                    assert sample.capture_state.revision == str(world._generation)
+                    return sample.rgb
+                assert time.monotonic() < deadline, "current scene frame unavailable"
+                time.sleep(0.01)
+
+        before = camera_frame()
         # Replacement must also restore robot state, not replay a previous target.
         pose = np.array(world.call("read_part", part)[0])
         pose[0] += 0.1
         world.call("home_part", part, pose)
-        result = admin.replace_scene(
+        result = (admin.edit_scene if preserve else admin.replace_scene)(
             {
                 "cell": WorldConfig(
                     "cell", {"simulation": "simulation.json"}, site_root=second
@@ -270,10 +286,12 @@ def test_scene_replacement_keeps_ports_and_native_processes_and_fences_old_image
         assert "prop_block" in result.worlds["cell"]["bodies"]
         assert (world._process.pid, world._renderer.process.pid) == pids
         np.testing.assert_allclose(
-            world.call("read_part", part)[0], profile("yam").home, atol=1e-8
+            world.call("read_part", part)[0],
+            pose if preserve else profile("yam").home,
+            atol=1e-8,
         )
-        after, _, snapshot, _ = world.capture("scene")
-        assert snapshot["generation"] == world._generation == 1
+        after = camera_frame()
+        assert world._generation == 1
         assert np.abs(after.astype(float) - before).max() > 20
         assert "prop_block" in admin.reset(seed=0).worlds["cell"]["bodies"]
         # Prop assets can also disappear without changing the robot/cameras.
