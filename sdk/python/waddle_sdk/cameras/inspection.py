@@ -48,6 +48,24 @@ def _error_kind(error: BaseException) -> str:
     return (type(error).__name__ or "Exception")[:128]
 
 
+def _error_detail(error: Exception) -> str:
+    # Keep vendor diagnostics (including device paths/errno), using the same
+    # credential redaction as the runtime boundary. Never repr driver objects.
+    from waddle_sdk.runtime import RuntimeFault
+
+    fault = RuntimeFault.from_exception(error)
+    details = [fault.detail]
+
+    def causes(rows):
+        for cause in rows:
+            if cause.detail not in details:
+                details.append(cause.detail)
+            causes(cause.causes)
+
+    causes(fault.causes)
+    return "; caused by: ".join(details)
+
+
 class _CameraFrameValidationError(ValueError):
     """A safe, SDK-owned frame validation failure."""
 
@@ -179,7 +197,7 @@ class _LatestFrames:
             self._errors[name] = (
                 str(error)
                 if isinstance(error, _CameraFrameValidationError)
-                else f"capture failed ({_error_kind(error)})"
+                else f"capture failed ({_error_kind(error)}): {_error_detail(error)}"
             )
             self._changed.notify_all()
 
@@ -371,7 +389,9 @@ class CameraInspectionSession:
                 try:
                     driver.close()
                 except Exception as exc:  # noqa: BLE001 -- vendor close boundary
-                    failures.append(f"{name}: close failed ({_error_kind(exc)})")
+                    failures.append(
+                        f"{name}: close failed ({_error_kind(exc)}): {_error_detail(exc)}"
+                    )
             for name, pump in self._pumps.items():
                 if pump.ident is None:
                     continue
@@ -431,7 +451,10 @@ class CameraInspection:
                 raise CameraInspectionError(message) from exc
             except Exception as exc:
                 close_failures = self._close_partial(drivers)
-                message = f"camera {spec.name!r} failed to open ({_error_kind(exc)})"
+                message = (
+                    f"camera {spec.name!r} failed to open ({_error_kind(exc)}): "
+                    + _error_detail(exc)
+                )
                 if close_failures:
                     message += "; camera cleanup also failed: " + "; ".join(
                         close_failures
@@ -466,7 +489,9 @@ class CameraInspection:
             try:
                 driver.close()
             except Exception as exc:  # noqa: BLE001 -- vendor close boundary
-                failures.append(f"{name}: close failed ({_error_kind(exc)})")
+                failures.append(
+                    f"{name}: close failed ({_error_kind(exc)}): {_error_detail(exc)}"
+                )
         return failures
 
     def __exit__(self, exc_type, exc, traceback) -> bool:

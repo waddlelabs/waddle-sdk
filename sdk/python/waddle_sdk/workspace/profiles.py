@@ -143,7 +143,26 @@ def camera_defaults(profile: str, name: str) -> dict:
     return row
 
 
+def review_yam_base_frames(parts):
+    """Refuse a shared local base label for independent native YAM factories."""
+    yam_frames = {}
+    for part, row in parts.items():
+        if row.get("driver") != YAM_DRIVER:
+            continue
+        frame = row.get("base_frame") or row.get("options", {}).get("base_frame")
+        if frame and frame in yam_frames:
+            raise InitializationError(
+                f"Independent YAM arms {yam_frames[frame]} and {part} need distinct "
+                f"base_frame IDs; both use {frame!r}. Each YAM reports poses in "
+                "its own local base. Give each base a unique name; register their "
+                "relationship separately."
+            )
+        if frame:
+            yam_frames[frame] = part
+
+
 def review_profile_connections(document: dict):
+    review_yam_base_frames(document["parts"])
     for part, row in document["parts"].items():
         if not row.get("base_frame") and not row.get("options", {}).get("base_frame"):
             raise InitializationError(f"Part {part} needs its explicit SDK base_frame")

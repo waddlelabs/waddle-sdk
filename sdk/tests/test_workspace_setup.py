@@ -22,6 +22,29 @@ def document():
     )
 
 
+def test_independent_yams_cannot_publish_the_same_local_base(tmp_path):
+    value = document()
+    second = part_defaults("yam", "other")
+    second["connection"]["channel"] = "other-can-not-opened"
+    second["base_frame"] = value["parts"]["arm"]["base_frame"]
+    value["parts"]["other"] = second
+    with pytest.raises(ValueError, match="distinct.*base_frame"):
+        build_site(tmp_path / "invalid", value)
+    assert not (tmp_path / "invalid").exists()
+    second["base_frame"] = "other_base"
+    build_site(tmp_path / "valid", value)
+
+
+def test_custom_adapters_can_explicitly_share_a_common_frame(tmp_path):
+    value = document()
+    value["parts"]["arm"]["driver"] = "customer:arm"
+    value["parts"]["other"] = {
+        **value["parts"]["arm"],
+        "connection": {"channel": "other"},
+    }
+    build_site(tmp_path / "shared", value)
+
+
 def test_site_creation_preserves_reviewed_hardware_without_opening(
     tmp_path, monkeypatch
 ):

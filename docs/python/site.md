@@ -188,11 +188,20 @@ wizard is suspended, allowing administrator permission prompts over SSH; the
 wizard resumes afterward. Embedders may expose a `progress` builder parameter
 for thread-safe build status updates.
 
+Renaming an arm updates its suggested base-frame name; a manually entered frame
+is preserved. Independent `waddle_sdk.robots.yam:arm` entries must have distinct
+local `base_frame` IDs, including when importing a site. Register the relationship
+between those local bases separately. Other adapters may explicitly report in a
+shared coordinate frame.
+
 Preview renders a captured RGB image using coloured half-block characters in the
 terminal. It works over ordinary SSH without `DISPLAY`, X forwarding, a browser,
 or terminal-specific image extensions. It is a low-resolution identification
 snapshot, not a live stream. Terminal colour capability affects the result.
 The camera inspection lifecycle closes the selected camera before setup resumes.
+Failures include the selected camera identity and redacted vendor diagnostics,
+including device paths and busy errors. An explicitly busy RealSense device is
+not reset or retried; close the other camera application before retrying preview.
 
 ```python
 from pathlib import Path

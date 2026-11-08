@@ -11,6 +11,12 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Preserve redacted camera-open/capture/close diagnostics and selected preview
+  identity. Do not reset explicitly busy RealSense cameras. Keep arbitrary
+  `*-key` credential assignments redacted through the existing runtime path.
+- Update suggested base frames when arm names change, preserving custom input;
+  refuse duplicate local bases for independent native YAM entries during setup.
+
 - Suggest only external adapters on the robot page, excluding built-in CAN
   controllers. Show explicit USB PLUGGED IN/USB UNPLUGGED status instead of
   presenting CAN link state as connection guidance.

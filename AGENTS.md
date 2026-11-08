@@ -1,3 +1,9 @@
+Setup diagnostics retain redacted camera vendor errors and native causes.
+Explicitly busy RealSense opens never reset a device owned by another program.
+Arm-name edits update only suggested frames; independent native YAM entries need
+distinct local base IDs. Custom adapters may still explicitly share a frame.
+These are local setup candidates; fresh customer installation remains separate.
+
 Terminal setup uses persistent camera and arm-transport lists with one-second
 non-opening discovery. Preserve the highlighted device through refresh and
 hotplug; do not re-enable already enabled Textual options, which advances focus.

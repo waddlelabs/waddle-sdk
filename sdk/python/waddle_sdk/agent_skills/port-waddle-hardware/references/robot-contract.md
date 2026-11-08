@@ -12,6 +12,11 @@ The factory returns a `Rig` containing a `Robot` declaration, `build_arms`, rate
 
 Keep the declaration's joint names, order, widths, units, limits, rate, gripper row, and frame facts byte-for-byte consistent with the opened `Arm` and driver. Use SI units: revolute radians, prismatic metres, and per-second rate units.
 
+Setup requires distinct local base-frame IDs for independent native YAM entries;
+renaming their frames does not register the relationship between their bases.
+Custom adapters that genuinely report in a registered common frame may share it.
+See `docs/python/site.md` for the reviewed setup contract.
+
 ## Structural driver
 
 Inheritance is optional. A driver provides:

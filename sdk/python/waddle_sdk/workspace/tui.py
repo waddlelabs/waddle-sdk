@@ -33,7 +33,7 @@ from waddle_sdk.discovery import DiscoveryReport, discover_hardware
 from waddle_sdk.robots import safety_presets_for_driver
 
 from .initialization import build_site, make_site
-from .profiles import YAM_DRIVER, camera_defaults, part_defaults
+from .profiles import YAM_DRIVER, camera_defaults, part_defaults, review_yam_base_frames
 
 
 def _plain(value):
@@ -558,6 +558,22 @@ class WorkspaceInitApp(App):
         ):
             self._set_input(field, json.dumps(row.get(key, {})))
         self._set_input("part-frame", row["base_frame"])
+        self._suggested_part_frame = row["base_frame"]
+
+    @on(Input.Changed, "#part-name")
+    def part_name_changed(self):
+        if not self.is_mounted:
+            return
+        previous = getattr(self, "_suggested_part_frame", None)
+        try:
+            frame = part_defaults(
+                self._select("profile"), self._input("part-name") or "arm"
+            )["base_frame"]
+        except ValueError:
+            return  # A name being typed may be temporarily incomplete.
+        if self._input("part-frame") == previous:
+            self._set_input("part-frame", frame)
+            self._suggested_part_frame = frame
 
     def _camera_defaults(self):
         row = camera_defaults(
@@ -663,6 +679,7 @@ class WorkspaceInitApp(App):
             raise ValueError("Joint limits must be an object or array")  # noqa: TRY004 -- terminal input validation
         row["joint_limits"] = limits
         row["base_frame"] = self._input("part-frame")
+        review_yam_base_frames({**self.parts, name: row})
         if self._select("profile") == "yam" and not row["connection"].get("channel"):
             raise ValueError("Select or enter the CAN interface for this YAM")
         self.parts[name] = row
