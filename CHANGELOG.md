@@ -18,6 +18,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Add browser-approved `connect login/setup/logout` with workspace-scoped device credentials; retain explicit account-key setup.
+
 - Bundle hosted connector setup/start/status under `waddle-sdk connect`; keep legacy gRPC flags.
 
 

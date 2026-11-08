@@ -318,7 +318,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         and argv[0] == "connect"
         and (
             len(argv) == 1
-            or argv[1] in {"setup", "start", "status", "check", "--help", "-h"}
+            or argv[1] in {"setup", "start", "status", "check", "login", "logout", "--help", "-h"}
         )
     ):
         from .connect.bootstrap import main as connect_main

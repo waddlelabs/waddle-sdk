@@ -28,7 +28,9 @@ def main(argv=None, *, prog="waddle-sdk connect"):
     setup = commands.add_parser("setup", help="Configure and pair a rig with the app")
     setup.add_argument("--endpoint", default="https://app.waddlelabs.ai")
     setup.add_argument(
-        "--key-file", type=Path, default=Path("~/.config/waddle/account.key")
+        "--key-file",
+        type=Path,
+        help="Existing credential file; otherwise approve this device in your browser",
     )
     setup.add_argument("--workspace-id")
     setup.add_argument("--directory", type=Path, default=Path("~/workspaces/my-rig"))
@@ -60,8 +62,35 @@ def main(argv=None, *, prog="waddle-sdk connect"):
         help="Check saved configuration and app connection without opening hardware",
     )
     status.add_argument("--directory", type=Path, default=Path("~/workspaces/my-rig"))
+    login_parser = commands.add_parser(
+        "login", help="Approve a device using your browser"
+    )
+    login_parser.add_argument("--endpoint", default="https://app.waddlelabs.ai")
+    login_parser.add_argument("--workspace-id")
+    login_parser.add_argument("--key-file", type=Path)
+    login_parser.add_argument("--no-browser", action="store_true")
+    logout_parser = commands.add_parser(
+        "logout", help="Revoke a device credential; stop the robot first"
+    )
+    logout_parser.add_argument("--endpoint", default="https://app.waddlelabs.ai")
+    logout_parser.add_argument("--key-file", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
+        if args.command == "login":
+            from .login import login
+
+            login(
+                args.endpoint,
+                workspace_id=args.workspace_id,
+                key_file=args.key_file,
+                open_browser=not args.no_browser,
+            )
+            return 0
+        if args.command == "logout":
+            from .login import logout
+
+            logout(args.endpoint, args.key_file)
+            return 0
         directory = args.directory.expanduser().absolute()
         workspace = directory / "workspace.yaml"
         state_file = directory / ".metal" / "hosted.json"
@@ -137,6 +166,12 @@ def main(argv=None, *, prog="waddle-sdk connect"):
         if args.workspace_id is None and state_file.exists():
             args.workspace_id = json.loads(state_file.read_text()).get("workspace_id")
         args.endpoint = origin(args.endpoint)
+        if args.key_file is None:
+            from .login import login
+
+            args.key_file, args.workspace_id = login(
+                args.endpoint, workspace_id=args.workspace_id
+            )
         args.key_file = args.key_file.expanduser().absolute()
         with account_client(args.endpoint, args.key_file) as client:
             account = checked(client.get("/api/v1/account"))

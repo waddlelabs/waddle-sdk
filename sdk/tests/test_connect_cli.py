@@ -11,7 +11,7 @@ def test_hosted_subcommands_delegate_without_legacy_site(monkeypatch):
 
     calls = []
     monkeypatch.setattr(bootstrap, "main", lambda argv: calls.append(argv) or 0)
-    for name in ("setup", "start", "status"):
+    for name in ("setup", "start", "status", "login", "logout"):
         assert cli.main(["connect", name, "--directory", "/tmp/rig"]) == 0
         assert calls[-1] == [name, "--directory", "/tmp/rig"]
 

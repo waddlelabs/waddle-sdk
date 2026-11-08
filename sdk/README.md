@@ -708,9 +708,18 @@ waddle-sdk connect start --directory ~/workspaces/my-rig
 ```
 
 The endpoint defaults to `https://app.waddlelabs.ai`; use an explicit beta endpoint
-for testing. Existing account-key setup remains required (`--key-file` defaults to
-`~/.config/waddle/account.key`). Hardware support is selected by the workspace
-wizard. Cloud operation does not require Metal or Torch. Local planning still
+for testing. Setup opens `/activate` and prints a short pairing code. Sign in with
+Google, review the computer and workspace, and approve. No account secret needs
+to be copied. Hardware support is selected later by the workspace wizard.
+
+`waddle-sdk connect login` pairs separately (`--no-browser` works on headless
+machines). Device keys are saved with owner-only permissions in unique files under
+`~/.config/waddle/devices/` and expire after 30 days. Stop the connector before
+renewing with setup. `waddle-sdk connect logout --key-file PATH` revokes a device
+before deleting its key; `/activate` also lists and revokes devices. Revoking an
+active connection disconnects the robot: support the arm first.
+
+Existing account-key clients can still pass `--key-file PATH` explicitly. Cloud operation does not require Metal or Torch. Local planning still
 requires a separately authorized Metal installation. `--no-start` saves setup
 without enabling hardware. The legacy `connect --site …` gRPC command is retained.
 The separate `waddle-connect` distribution is a compatibility wrapper and must be
