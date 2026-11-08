@@ -32,7 +32,7 @@ def _parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
     connect = commands.add_parser(
         "connect",
-        help="connect one site to its authorized hosted workspace",
+        help="set up/start a hosted rig, or connect a legacy gRPC site",
     )
     connect.add_argument("--site", required=True)
     connect.add_argument(
@@ -237,9 +237,7 @@ def _sim(args: argparse.Namespace) -> int:
             else:
                 for row in rows:
                     capabilities = ", ".join(
-                        name
-                        for name in ("runtime", "compiler")
-                        if row[name]
+                        name for name in ("runtime", "compiler") if row[name]
                     )
                     print(f"{row['name']}\t{capabilities}")
             return 0
@@ -314,6 +312,18 @@ def _sim(args: argparse.Namespace) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if (
+        argv
+        and argv[0] == "connect"
+        and (
+            len(argv) == 1
+            or argv[1] in {"setup", "start", "status", "check", "login", "logout", "--help", "-h"}
+        )
+    ):
+        from .connect.bootstrap import main as connect_main
+
+        return connect_main(argv[1:])
     args = _parser().parse_args(argv)
     if args.command == "connect":
         return _connect(args)

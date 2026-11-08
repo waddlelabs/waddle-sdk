@@ -9,7 +9,15 @@ readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
-dependencies = ["numpy>=1.24", "PyYAML>=6,<7", "jsonschema>=4.22,<5"]
+dependencies = [
+    "numpy>=1.24",
+    "PyYAML>=6,<7",
+    "jsonschema>=4.22,<5",
+    "httpx>=0.28,<1",
+    "websockets>=15,<16; python_version < '3.11'",
+    "websockets==17.0.1; python_version >= '3.11'",
+    "msgpack>=1.0.8,<2",
+]
 dynamic = ["version"]
 
 [project.scripts]

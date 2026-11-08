@@ -1,3 +1,15 @@
+The unpublished integration preserves API-42 native execution, submission-paced jaw references, sample-bound evidence and camera isolation. Completed Stop returns the original structured fault in error and evidence; native_error retains the diagnostic wrapper text. Hosted setup uses public lazy application extensions. No downstream implementation names/imports belong in this public repository. See CHANGELOG.md and docs/python/device-relay.md.
+
+The unpublished integration uses binding API 42 with local goal/queue/jog
+supervision and the existing sample-bound window/stop diagnostics. Jaw cadence
+stays anchored to exact local submission, with post-acknowledgement fresh feedback
+and no catch-up. Public hosted setup loads optional applications only through
+`waddle_sdk.connect_execution`, `waddle_sdk.connection_layouts` and
+`waddle_sdk.connect_prepare`; providers must not open hardware during discovery.
+New connections use `.waddle`; existing credentials/site identity remain intact.
+See docs/python/device-relay.md and the rolling CHANGELOG.md. Matching native/media
+artifacts are required; no publication or physical qualification is implied.
+
 Terminal setup uses persistent camera and arm-transport lists with one-second
 non-opening discovery. Preserve the highlighted device through refresh and
 hotplug; do not re-enable already enabled Textual options, which advances focus.
@@ -20,10 +32,101 @@ child. Direct RealSense construction remains inline for camera-only diagnostics.
 Capture stays open throughout the owning rig session, including model-thinking
 gaps. Camera-only timing evidence does not qualify physical motor reliability.
 
+Hosted connector implementation now ships under waddle_sdk.connect. The SDK CLI
+accepts connect setup/start/status while legacy connect --site remains supported.
+Applications supply local/hybrid execution through the optional public
+`waddle_sdk.connect_execution` entry-point contract. The SDK never imports a
+planning application. Existing application connection layouts are discovered via
+`waddle_sdk.connection_layouts`; new SDK connections use `.waddle`.
+
+Source exports retain declared mechanical body contact exclusions, remapping a
+merged YAM hand root to its actual arm body. This changes new source identities;
+existing published bundles and native contact physics remain unchanged.
+
+New authored bowls use a smooth deep curved shell, an open cavity and a small
+flat foot. Separate convex wall bands retain native concavity, interior support
+and nesting; do not use the visual mesh's filled convex hull for contacts. Only
+the floor contacts the table when upright. Keep finite mass and finger-contact
+materials, exact reset and immutable existing compiled scenes. Contact-pair
+deduplication uses a set instead of rescanning the growing XML list. Support,
+side contact, interior-floor and nesting checks remain separate from grasp/task
+acceptance. See `sdk/tests/test_playground_bowl_contacts.py`.
+
+The bounded short-wait candidate passes all 53 selected native worker cases, including deterministic jitter, queued gripper completion, slow-curve watchdog freshness and original cancellation/deadline failures. A further deterministic regression now injects cancellation, owner shutdown, deadline expiry and displaced feedback during the short wait; it must never dispatch another write. Full native/public integration and matching wheels remain pending.
+
+The deterministic read-jitter baseline fails: every nominal 20 ms interval takes 30 ms because a near-due fresh sample is immediately reread. The candidate retains that single curve sample only for the short remaining cadence wait, bounded by observed read cost and the original sample period. Late wakeups reacquire; gripper/long waits keep fresh reads; cancellation/watchdog/owner checks still precede dispatch and the observation stamp is unchanged. Native validation pending.
+
+SDK PR 66 first CI/docs preview pass documentation; Rust lint flags one indexed loop in the new lag test. The fixture now uses zipped iterators with identical assertions and arithmetic. All 184 native cases passed before this test-only style change; runtime and installed cadence-wheel bytes are unchanged. Exact-head full CI remains required.
+
+Native fresh-read scheduling at aaba593 passes all 184 selected cases: 78 worker, 25 feedback, 24 finite, 13 gripper and 44 paced-curve checks. This includes variable read costs, slow-jog watchdog freshness, gripper queue outcomes, cancellation and cleanup. The original deadlines remain unchanged. Full CI, matching installed wheels and application integration remain pending; no service or owner changes.
+
+Fresh-read scheduling passes all 77 pre-existing worker cases and both fixed read costs. The variable 1/15/2 ms sequence still exhausts the original budget; the next candidate retains the observed maximum read cost within this execution so a faster read cannot defer the next expensive one. All observations remain fresh; no deadline extension or cached feedback. Validation pending.
+
+Native cadence candidate b3213d4 passes 76 worker cases but fails queued gripper arrival and slow-curve watchdog freshness: replaying a previously scored observation is incorrect. The follow-up keeps every read fresh and schedules it before the due tick using its measured cost. Existing playback still enforces spacing, while cancellation/watchdog/deadline checks and sample identities remain unchanged. No prepared-observation cache remains. Validation pending; installed wheels and services are unchanged.
+
+First timing ports pass all 13 gripper and 42 existing curve cases, failing two new bent-path fixtures. The ordinary path fixture now includes the exact corner sample grid, as its real producer does; the lagging actuator keeps moving toward the held endpoint during observation. Original deadline and headroom assertions remain. Native worker cost validation has not run yet.
+
+SDK API 41 is merged into beta 0b0a606 after exact-head CI 41288288064: 1,282 Python cases (413 optional skips, two warnings), native/transports/shim, packaged skills and strict docs pass. The next test-only transfer retains the old execution-deadline-during-feedback assertion on the native worker using callback barriers and its fake clock. Runtime and installed wheels are unchanged; the deadline/read barrier passes. Additional native ports cover bent-path delayed IO, lag/headroom and hints, repeated feedback costs, and the original gripper budget; validation pending.
+
+API 41 passes all 24 native finite cases and 40 installed public cases. One new wire assertion incorrectly compared text to encoded bytes; it now uses a bytes literal. Runtime and built wheel bytes are unchanged; capability follow-up and full CI remain pending.
+
+The first API 41 native compile exposed a test assertion comparing SmallVec with Vec; compare its actual slice. No runtime change. Matching-wheel and full validation pending.
+
+SDK API 41 adds a distinct expected measured-start vector on the existing worker. The original three native-public baselines fail on the old DTO; new tests retain both-direction stale refusal, complete finite layout and owner target limits. The start vector is never dispatched; default relay shape is unchanged. Focused, matching-wheel and full CI validation remain pending. No package publication or deployment.
+
+Playback history now also samples SDK host-monotonic time at each call boundary, preserving the native paired session/epoch stamps unchanged. This supports existing local camera-content diagnostics without comparing cloud clocks. Both missing-field regressions fail on the prior wheel; focused and full validation pending. No execution-policy or native ABI change.
+
+History source `c7a9d1f` passes 74 focused native/public/relay tests and the full 1,273 Python cases (413 optional skips, two existing reset warnings). Base/media wheels retain the previously qualified native hashes; native API 40 is unchanged. The history response now also names its retained native execution ID so remote consumers can verify both run and handle. Identity follow-up and full CI pending. The relay still deliberately omits host-clock camera exposure metadata; SDK history does not establish cross-host exposure alignment. No deployment or publication.
+
+Gripper receipts retain contact sample counts, velocity-stationary counts and
+the local compatibility decision on failures as well as success. This is additive
+diagnostic data on API 40; execution, thresholds and normal Hold are unchanged.
+Validation passes 1,267 default Python cases (413 optional skips), 560 core,
+24 gRPC, 14 LiveKit, required core/shim lint/format and strict docs. Matching
+media wheels pass all 13 public gripper cases; implementation CI run 41279950191
+passes. No publication or owner changes.
+
+Site-wide stop callbacks now retain structured failure evidence in native
+cleanup and completed-stop receipts, just like scoped playback Hold. Typed
+callback diagnostics remain opaque to the Rust core. All declared parts receive
+Hold/e-stop even if an earlier callback raises; a single original runtime fault
+passes through, while multiple failures retain every part and complete fault.
+The existing worker, ownership fences and API 40 stay unchanged. Validation passes
+1,266 default Python cases (413 optional skips), 560 core, 24 gRPC and 14 LiveKit
+cases, required native/shim checks, strict documentation and CI. Matching base
+and media wheels pass public callback-failure tests. The initial Python run
+forced base selection and failed eight package-selection cases; the normal
+environment passes unchanged source. This does not publish wheels or change
+installed owners.
+
+Selected TCP goals can carry a numeric `PlaybackKinematics` chain under
+`execution.kinematic_goal_playback`. The existing worker's observation callback
+evaluates local measured joints; native completion and ABI 35 remain unchanged.
+Keep base-frame/reference/affine bindings exact, bounded scalar joints and normal
+owner safety gates. This is FK for completion, not IK or a model loader. Default
+TCP goals retain their earlier wire shape. Source tests do not deploy the change.
+
+SDK API 35 exposes local playback elapsed time at the retained feedback sample.
+It starts at native activation, excludes dependency wait, remains absent for work
+that never activates, and is retained after completion. Callers may use it to
+budget planning without synchronizing clocks; it never renews the native deadline
+or makes an old sample fresh. Preserve this timing through updates and the relay.
+
+SDK binding API 34 exposes `execution.goal_progress` on the existing worker.
+Snapshots bind `settled_miss` to their latest fresh local feedback. Explicit-goal
+playback with `allow_settled=False` stays running while either native settling
+method reports a stationary miss; only checked caller corrections change the
+curve. Motion, stale samples and changed references reset miss evidence. Keep
+original tolerances, sample counts, deadline, immutable results and ordinary
+cleanup. This signal adds no planner, scheduler or RPC. See the normative
+finite-reference-playback contract. Deployment qualification remains separate.
+
 Native MuJoCo scene lifecycle tests require the optional `mujoco` extra and must
 skip before importing/opening a simulator when it is unavailable. Keep normal
 package installation independent of simulation dependencies. Run native lifecycle
 acceptance separately in a configured simulator environment.
+
+
 
 # AGENTS.md — waddle-sdk monorepo
 
@@ -39,6 +142,64 @@ only to an already held Site shutdown. False never arms future closure or assert
 Home. Keep the original close/drain outcome and ownership authoritative; no motion,
 new owner, native ABI, driver behavior or remote control authority is added.
 
+Binding API 33 composes measured goals with existing revision-checked paced
+curves under `execution.revisable_goal_playback`. Keep one execution identity,
+original goal and total deadline across checked corrections. Goal curves must
+end at zero velocity/acceleration; they may resume from that resting endpoint.
+Accepted future work must finish or be withdrawn before completion. Original
+checkpoints must all be observed before replacement and are never repeated.
+The worker checks fresh local time before accepting a revision, including after
+blocked observations. Expired allowances cannot be revived. No planner, worker
+or remote finish request is added. Validation passes 540 core, 24 gRPC, 14 LiveKit
+and 1,214 default Python cases, with 413 optional skips and the existing two reset
+warnings. Strict Rust/MkDocs builds pass. The remote consumer passes 42 selected
+WebSocket/completion regressions, including withheld correction acknowledgements.
+application's higher-level integration and deployment/physical acceptance remain open.
+
+Binding API 32 adds dependent playback on the existing serialized worker. Keep
+same-SDK/run retained handles, explicit successful outcomes, all selected-part
+reservations, and bounded waiting chains. Before activation, cancellation or
+dependency/start-deadline refusal issues no child I/O or extra Hold. After
+activation retain fresh-start checks and normal cleanup; site-wide Stop still
+drains active and queued work. Motion timing starts at activation, but watchdogs
+retain their original deadline. Public Run and relay add no scheduler or replay.
+application still owns planning, world validity and application outcome selection.
+Validation passes 533 core, 24 gRPC, 14 LiveKit and 1,211 default Python cases,
+all required native/shim lint and strict documentation. The matching remote
+consumer passes 43 WebSocket/transport/completion cases. Retain the original
+concurrent mock-site lock failures; the isolated rerun passes without changing
+ownership. Higher-level application adapters and deployment remain in progress.
+
+Binding API 31 adds optional measured goal completion on the existing native
+playback worker. `PlaybackGoal` selects the original joint target or declared
+SDK TCP pose independently of the commanded endpoint. The local clock evaluates
+tolerances, settling and optional post-endpoint allowance; the total deadline,
+owner envelope and normal Hold/drain remain binding. Terminal results survive
+delayed status reads without a remote finish request. Pose completion requires
+local FK and the exact declared base frame; callers resolve other tool frames
+before admission. No planner or additional worker is introduced. Source and
+application integration are under validation; this is not deployed acceptance.
+An explicit goal newly entering tolerance must finish its full local settling
+interval within the original deadline. Earlier stationary samples outside that
+goal cannot terminate this attempt as a miss.
+
+Binding API 30 adds optional deferred reference completion for finite, fixed
+paced curves. The existing worker retains ownership and samples after endpoint
+acknowledgement without sending more references. `finish_references()` queues
+completion; only its terminal snapshot confirms it, after fresh feedback/window
+checks. Preserve the original deadline, tracking, cancellation and Hold/drain.
+Default false preserves older policies and wire encoding. This primitive does
+not decide application goals or establish physical stationarity. See the finite
+reference playback guide and `sdk/tests/test_deferred_playback.py`.
+Validation passes 521 core, 24 gRPC, 14 LiveKit and eight focused installed
+deferred-playback cases, all required native/shim lint and strict documentation.
+The locked default Python profile passes 1,199 cases with 413 optional skips.
+Separate MuJoCo 3.13 coverage retains unchanged baseline failures in xArm contact
+width and SO-101/YAM two-arm peg drift; do not relax those assertions or call the
+optional physics suite fully passing. Match the source checkout's compiled binding
+when tests explicitly select its Python path; an old ignored extension is not a
+valid wheel regression. No physical stationarity or deployment result is implied.
+
 Binding API 29 adds `execution.reference_settling`: optional native encoder-window
 diagnostics remain current through the final reference-only sample. Window
 `observed_ns` binds the evidence to SDK feedback; publish both in one snapshot
@@ -50,6 +211,10 @@ and strict documentation pass. The public Python run passes 1,247 cases before
 an optional MuJoCo xArm contact-width stability failure, reproduced unchanged
 with the prior API-27 source and binary. Remaining public cases are still being
 checked. This does not establish physical timing or optional scene qualification.
+
+The original terminal drift/gap regression is retained. All 251 native runtime
+and 77 selected public/packaged-skill cases pass; full CI remains the source
+promotion gate. These checks do not establish deployed or physical acceptance.
 
 Binding API 28 adds optional `control.completed_stop` and `SiteSession.stop`.
 The existing priority worker returns a fresh callback receipt even after finite
@@ -881,7 +1046,7 @@ waddle-sdk/
                              #   owner position-error allowance derives from rate
                              #   and those speeds. Optional explicit arm error bounds
                              #   are independent of cadence. GOTCHA:
-                             #   driving metal needs the
+                             #   driving physical hardware needs the
                              #   vendor package, which is NOT a dependency and
                              #   cannot be an extra (not on PyPI; direct refs
                              #   are rejected there) — it is the documented
@@ -1420,7 +1585,14 @@ or vendor interpolation is introduced. See
 
 ## Editable reference scenes
 
-Authored two-YAM scenes may select a finite native `fixture` and bounded `seed`.
+Authored scenes may select a finite native `fixture` and bounded `seed`.
+`drawer_cabinet` and `cleanup_station` support one/two YAMs; the existing
+handover/container/peg/tray assemblies require two YAMs. Drawer cabinet reuses
+the passive retrieval drawer; cleanup supplies a rigid sweeping-pad brush,
+six free pieces and a fixed ramped dustpan. Preserve real contacts and reset;
+there is no flexible-bristle model or grasp/attachment shortcut. Workstation
+mechanics, view/reset and unsupported-embodiment checks live in
+`sdk/tests/test_playground_workstations.py`.
 Reuse reference assemblies and preserve compound geometry/contact identity;
 never accept executable scene imports through authoring data. Seed zero remains
 canonical and reset repeats the compiled variation. Added props remain separate.
@@ -1449,3 +1621,14 @@ MuJoCo retains its physics/render processes for self-contained native scenes wit
 unchanged robot/camera contracts. Keep participant drain, episode invalidation,
 render-generation fencing, immutable source bytes and failed-admin fencing.
 Unsupported worlds retain close/open; this capability is never a participant tool.
+Prepared-playback relay work is under qualification on perf/motion-roundtrips-20261102.
+It adds Python-only state/configuration bundles and local submission preconditions;
+native API 42 is unchanged. Matching application consumes these within preparation only.
+No package publication, deployment or hardware startup has occurred for this change.
+
+Native scene replacement binds the protected robot assembly and its transitive
+asset/file dependencies, not unrelated tabletop assets. Full scene manifests
+remain verified. Administrative model loading has a bounded 60-second IPC wait;
+ordinary feedback/control and capture deadlines stay separate. Verify actual
+same-owner addition/removal of mesh props for one and two arms, old-image fencing
+and genuine robot/camera refusal; fresh-owner loading alone misses reload bugs.

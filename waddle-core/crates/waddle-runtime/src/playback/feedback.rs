@@ -223,7 +223,8 @@ impl FeedbackState {
         else {
             return Ok(None);
         };
-        let eligible = (finished || window.during_motion) && (arrived || policy.allow_settled);
+        let eligible = (finished || window.during_motion)
+            && (arrived || policy.allow_settled || policy.goal.is_some());
         if !fresh
             || !eligible
             || self.rows.back().is_some_and(|last| {
@@ -296,16 +297,25 @@ impl FeedbackState {
                 .fold(0.0_f64, f64::max),
             consecutive_samples: self.consecutive,
         });
-        Ok((self.consecutive >= window.consecutive_samples).then_some(
-            if arrived
-                && self
+        let arrived_stable = arrived
+            && (policy
+                .goal
+                .as_ref()
+                .is_some_and(|goal| goal.dwell.is_some())
+                || self
                     .arrived_since
-                    .is_some_and(|since| measured.observed_ns - since >= policy.settle_ns)
-            {
+                    .is_some_and(|since| measured.observed_ns - since >= policy.settle_ns));
+        // A newly reached explicit goal still needs its full in-tolerance window.
+        // Earlier stationary samples outside the goal must not end this attempt.
+        if policy.goal.is_some() && arrived && !arrived_stable {
+            return Ok(None);
+        }
+        Ok(
+            (self.consecutive >= window.consecutive_samples).then_some(if arrived_stable {
                 Completion::Arrived
             } else {
                 Completion::Settled
-            },
-        ))
+            }),
+        )
     }
 }

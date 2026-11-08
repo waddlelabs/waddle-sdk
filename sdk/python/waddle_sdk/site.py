@@ -45,7 +45,9 @@ from .runtime import (
     JSONValue,
     Observation,
     PartObservation,
+    PlaybackDependency,
     PlaybackHandlePort,
+    PlaybackInputPort,
     Pose,
     RuntimeEvent,
     RuntimeFault,
@@ -1524,18 +1526,34 @@ class SiteSession:
                     facts.add(SupportFact.COMPLETED_STOP)
                     facts.add(SupportFact.FINITE_JOINT_PLAYBACK)
                     facts.add(SupportFact.JOINT_PLAYBACK_BOUNDS)
+                    facts.add(SupportFact.PART_HOLD_PLAYBACK)
                     if coordinated:
                         facts.add(SupportFact.COORDINATED_JOINT_PLAYBACK)
                         facts.add(SupportFact.COORDINATED_SUBSET_PLAYBACK)
                         facts.add(SupportFact.PARALLEL_JOINT_PLAYBACK)
-                        facts.add(SupportFact.PART_HOLD_PLAYBACK)
                     facts.add(SupportFact.WATCHDOG_PLAYBACK)
+                    facts.add(SupportFact.INPUT_WATCHDOG_PLAYBACK)
                     facts.add(SupportFact.STREAMED_JOINT_PLAYBACK)
                     facts.add(SupportFact.PACED_JOINT_PLAYBACK)
                     facts.add(SupportFact.FEEDBACK_JOINT_PLAYBACK)
                     facts.add(SupportFact.SAMPLED_JOINT_PLAYBACK)
                     facts.add(SupportFact.REFERENCE_JOINT_PLAYBACK)
                     facts.add(SupportFact.REFERENCE_SETTLING)
+                    facts.add(SupportFact.DEFERRED_REFERENCE_COMPLETION)
+                    facts.add(SupportFact.GOAL_PLAYBACK)
+                    facts.add(SupportFact.REVISABLE_GOAL_PLAYBACK)
+                    facts.add(SupportFact.REVISABLE_SETTLED_PLAYBACK)
+                    facts.add(SupportFact.GOAL_PROGRESS)
+                    facts.add(SupportFact.PLAYBACK_TIMING)
+                    facts.add(SupportFact.KINEMATIC_GOAL_PLAYBACK)
+                    facts.add(SupportFact.RESTING_GOAL_PLAYBACK)
+                    facts.add(SupportFact.DWELL_GOAL_PLAYBACK)
+                    facts.add(SupportFact.UPDATABLE_GOAL_PLAYBACK)
+                    facts.add(SupportFact.DEPENDENT_PLAYBACK)
+                    facts.add(SupportFact.TRANSIT_PLAYBACK)
+                    facts.add(SupportFact.EXPECTED_START_PLAYBACK)
+                    if arm.fk is not None and arm.base_frame:
+                        facts.add(SupportFact.CARTESIAN_GOAL_PLAYBACK)
                     facts.add(SupportFact.CHECKPOINTED_JOINT_PLAYBACK)
                     facts.add(SupportFact.REVISABLE_JOINT_PLAYBACK)
                     facts.add(SupportFact.PLAYBACK_FEEDBACK_REFERENCE)
@@ -1820,6 +1838,11 @@ class SiteSession:
             receipt = managed.core.completed_stop(estop)
         except Exception as exc:
             raise _operation_fault("complete stop", exc) from exc
+        if receipt.get("evidence"):
+            receipt["evidence"] = json.loads(receipt["evidence"])
+            if receipt.get("error") is not None:
+                receipt["native_error"] = receipt["error"]
+                receipt["error"] = receipt["evidence"]
         self._event("control.stop", {"reason": reason, **receipt})
         return receipt
 
@@ -2104,21 +2127,40 @@ class Run:
 
         install(self, bounds)
 
+    def start_playback_input(self, timeout_ns: int) -> PlaybackInputPort:
+        """Create input before planning; renew only on newly accepted human input.
+
+        The deadline starts on the SDK clock. Release fences delayed admission;
+        completed Stop or playback cleanup remains separate evidence.
+        """
+        from ._playback_input import start
+
+        return start(self, timeout_ns)
+
     def start_playback(
-        self, motion: FiniteJointMotion | CoordinatedJointMotion
+        self,
+        motion: FiniteJointMotion | CoordinatedJointMotion,
+        *,
+        after: Sequence[PlaybackDependency] = (),
+        start_before_ns: int | None = None,
+        input: PlaybackInputPort | None = None,
     ) -> PlaybackHandlePort:
         """Admit finite references to the local native worker; never wait for motion."""
         from ._playback import start
 
-        self._require_idle_playback(
-            (motion.part,)
-            if isinstance(motion, FiniteJointMotion) and isinstance(motion.part, str)
-            else motion.parts
-            if isinstance(motion, CoordinatedJointMotion)
-            else None
-        )
+        if not after:
+            self._require_idle_playback(
+                (motion.part,)
+                if isinstance(motion, FiniteJointMotion)
+                and isinstance(motion.part, str)
+                else motion.parts
+                if isinstance(motion, CoordinatedJointMotion)
+                else None
+            )
         with self._session._dispatch_lock:
-            return start(self, motion)
+            return start(
+                self, motion, after=after, start_before_ns=start_before_ns, input=input
+            )
 
     def _step(self, action, observation=None, *, part=None, parts=None) -> SubmitResult:
         if self._episode is None:

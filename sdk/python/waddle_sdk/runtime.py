@@ -70,6 +70,7 @@ class SupportFact(str, enum.Enum):
     COORDINATED_SUBSET_PLAYBACK = "execution.coordinated_subset_playback"
     PARALLEL_JOINT_PLAYBACK = "execution.parallel_joint_playback"
     WATCHDOG_PLAYBACK = "execution.watchdog_playback"
+    INPUT_WATCHDOG_PLAYBACK = "execution.input_watchdog_playback"
     STREAMED_JOINT_PLAYBACK = "execution.streamed_joint_playback"
     PART_HOLD_PLAYBACK = "execution.part_hold_playback"
     JOINT_PLAYBACK_BOUNDS = "execution.joint_playback_bounds"
@@ -78,6 +79,20 @@ class SupportFact(str, enum.Enum):
     SAMPLED_JOINT_PLAYBACK = "execution.sampled_joint_playback"
     REFERENCE_JOINT_PLAYBACK = "execution.reference_joint_playback"
     REFERENCE_SETTLING = "execution.reference_settling"
+    GOAL_PLAYBACK = "execution.goal_playback"
+    REVISABLE_GOAL_PLAYBACK = "execution.revisable_goal_playback"
+    REVISABLE_SETTLED_PLAYBACK = "execution.revisable_settled_playback"
+    GOAL_PROGRESS = "execution.goal_progress"
+    PLAYBACK_TIMING = "execution.playback_timing"
+    CARTESIAN_GOAL_PLAYBACK = "execution.cartesian_goal_playback"
+    KINEMATIC_GOAL_PLAYBACK = "execution.kinematic_goal_playback"
+    RESTING_GOAL_PLAYBACK = "execution.resting_goal_playback"
+    DWELL_GOAL_PLAYBACK = "execution.dwell_goal_playback"
+    UPDATABLE_GOAL_PLAYBACK = "execution.updatable_goal_playback"
+    DEPENDENT_PLAYBACK = "execution.dependent_playback"
+    TRANSIT_PLAYBACK = "execution.transit_playback"
+    EXPECTED_START_PLAYBACK = "execution.expected_start_playback"
+    DEFERRED_REFERENCE_COMPLETION = "execution.deferred_reference_completion"
     CHECKPOINTED_JOINT_PLAYBACK = "execution.checkpointed_joint_playback"
     REVISABLE_JOINT_PLAYBACK = "execution.revisable_joint_playback"
     PLAYBACK_FEEDBACK_REFERENCE = "execution.playback_feedback_reference"
@@ -693,7 +708,7 @@ class GripperPlaybackPolicy:
 
 @dataclass(frozen=True)
 class PlaybackCurveUpdate:
-    """A checked future suffix for a revisable, reference-only paced execution.
+    """A checked future suffix for a revisable paced execution.
 
     ``switch_ns`` uses the original execution's reference phase, not wall time.
     ``curve`` starts at zero and must preserve position/velocity/acceleration at
@@ -722,14 +737,117 @@ class PlaybackWatchdog:
 
 
 @dataclass(frozen=True)
+class PlaybackKinematicJoint:
+    """One scalar joint in a base-frame product-of-exponentials FK chain.
+
+    ``index`` selects the named part's measured joint vector. ``scale * q +
+    offset`` is the displacement from the supplied reference pose, in radians
+    for a hinge or metres for a slide. Axis and hinge origin use that reference
+    configuration's base frame; the axis is a unit vector. This is geometry
+    for measuring a goal, never a replacement driver or an IK solver.
+    """
+
+    index: int
+    kind: str
+    axis: tuple[float, float, float]
+    origin_m: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    scale: float = 1.0
+    offset: float = 0.0
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "axis", tuple(self.axis))
+        object.__setattr__(self, "origin_m", tuple(self.origin_m))
+
+
+@dataclass(frozen=True)
+class PlaybackKinematics:
+    """Selected TCP reference pose and its ordered scalar FK chain.
+
+    Joints run from base to tool, at most 128. The immutable numeric description
+    is evaluated from local feedback by the existing worker. It installs no
+    executable code, model engine, planner or additional observation loop.
+    """
+
+    reference_pose: Pose
+    joints: tuple[PlaybackKinematicJoint, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "joints", tuple(self.joints))
+
+
+@dataclass(frozen=True)
+class PlaybackGoalDwell:
+    """Pose/joint dwell independent of measured stationarity.
+
+    Entry requires nominal tolerance. Small crossings preserve elapsed dwell;
+    exceeding ``exit_tolerance_multiplier`` resets it. Completion still requires
+    current nominal tolerance and the playback's independent stationarity policy.
+    """
+
+    duration_ns: int
+    exit_tolerance_multiplier: float = 2.0
+
+
+@dataclass(frozen=True)
+class PlaybackGoal:
+    """Original joint or TCP goal, evaluated locally.
+
+    Joint positions follow ``PlaybackPolicy.indices`` and use its tolerances.
+    A pose uses the owner's TCP unless explicit ``kinematics`` binds another
+    tool. Both use the owner's declared base frame. No model or remote callback
+    is installed, and owner safety gates retain their configured geometry.
+    ``orientation_tolerance_rad=None`` explicitly selects position-only arrival.
+    Optional ``dwell`` uses the SDK observation clock and requires separately
+    declared goal-dwell support. It never changes the target or renews a deadline.
+    ``allow_updates`` explicitly admits same-frame pose updates with independent
+    dwell. Tolerances, kinematics, stationarity and all deadlines remain fixed.
+    """
+
+    joint_positions: tuple[float, ...] | None = None
+    pose: Pose | None = None
+    position_tolerance_m: float = 0.002
+    orientation_tolerance_rad: float | None = 0.02
+    kinematics: PlaybackKinematics | None = None
+    dwell: PlaybackGoalDwell | None = None
+    allow_updates: bool = False
+
+    def __post_init__(self) -> None:
+        if self.joint_positions is not None:
+            object.__setattr__(self, "joint_positions", tuple(self.joint_positions))
+
+
+@dataclass(frozen=True)
+class PlaybackGoalUpdate:
+    """Same-frame pose for an explicitly updatable goal's current revision.
+
+    This changes no reference, tolerance, kinematics or deadline. Only native
+    acceptance changes the goal. Revision zero denotes the admitted target.
+    """
+
+    expected_revision: int
+    pose: Pose
+
+
+@dataclass(frozen=True)
 class PlaybackPolicy:
     """Explicit measured completion and local timing bounds; validated by core.
+
+    ``expected_start`` optionally supplies the full declared measured vector,
+    separately from the first reference. Requires expected-start playback support.
+    The existing ``indices`` and ``start_tolerance`` check fresh local feedback;
+    omission compares with the first reference. This vector is never dispatched
+    and cannot waive target limits, tracking, deadlines or normal cleanup.
 
     ``minimum_settle_samples`` requires fresh eligible observations in addition
     to the settling span, with separately declared sampled-playback support.
     Velocity/goal loss resets the count. Position windows retain at least this
     many samples (and never fewer than three). Gripper policies keep their own
     outcome-specific sample rules and require the default value here.
+
+    Explicit ``goal.dwell`` separates goal dwell from stationarity. Its positive
+    duration permits ``settle_ns=0`` for immediate velocity-based stationarity;
+    sample-count and encoder-window requirements still apply. Other policies
+    require a positive settling span.
 
     ``reference_only`` uses separately advertised reference-playback support to
     report ``references_dispatched`` after all acknowledgements and fresh local
@@ -742,18 +860,40 @@ class PlaybackPolicy:
     ``settling.observed_ns`` identifies that sample; completion still reports
     only ``references_dispatched``, never arrival or stationarity.
 
+    ``defer_reference_completion`` keeps a fixed reference-only paced curve's
+    owner reservation and local observation loop after endpoint acknowledgement.
+    It requires ``execution.deferred_reference_completion`` and a finite timeout.
+    No more references are sent. Call ``finish_references`` on the retained
+    handle, then wait for its terminal snapshot with fresh feedback/window
+    evidence. The original deadline, tracking checks and stop cleanup remain
+    active; finishing does not itself establish goal arrival or stationarity.
+
     ``checkpoint_offsets_ns`` requests up to 256 strictly increasing diagnostic
     markers within the buffer, with checkpointed-playback support. Each retains
     the first fresh local feedback after acknowledged reference phase crosses
     its offset. These are not intermediate arrival gates or interpolated
     measurements. Gripper outcome policies cannot request checkpoints.
 
-    ``allow_curve_updates`` requires revisable-playback support and reference-only
-    paced execution without checkpoints, exact sample grids or goal-latched hints.
-    Updates use the same local worker; they do not extend the original timeout.
+    ``allow_curve_updates`` requires revisable-playback support and paced
+    execution without exact sample grids or goal-latched hints. Explicit goals
+    additionally require revisable-goal support; their original checkpoints must
+    all be observed before any update. Reference-only updates exclude checkpoints.
+    Updates retain the original goal, local worker, identity and total timeout.
+    With ``execution.revisable_settled_playback``, a curve without an explicit
+    goal may instead set ``allow_settled=True``. Its accepted endpoint supplies
+    the joint goal, and local stationarity ends it even on a measured miss.
+    Zero ``settle_ns`` permits a single fresh stationary sample in this mode;
+    position windows retain their configured span and sample count.
+
+    ``complete_in_resting_tail`` opts a revisable paced goal into local completion
+    once the acknowledged remainder is entirely constant and all requested
+    checkpoints are observed. It requires resting-goal playback support. Pending
+    accepted future motion must run or be withdrawn first. Local goal/settling
+    checks, the original timeout and cancellation still apply; default false
+    preserves an explicitly requested rest duration.
 
     ``credit_pacing_delay`` requires separately advertised paced-deadline support
-    and reference-only polynomial playback. Only a complete acknowledged moving
+    and reference-only, explicit-goal or settled polynomial playback. Only a complete acknowledged moving
     tick credits its excess local wall time to the original budget. Exact
     constant tails and stalled phase cannot renew it. Snapshots retain the
     accumulated ``curve_progress.pacing_extension_ns``; cloud receipt time never
@@ -795,8 +935,15 @@ class PlaybackPolicy:
     credit_pacing_delay: bool = False
     part_hold: bool = False
     watchdog: PlaybackWatchdog | None = None
+    defer_reference_completion: bool = False
+    goal: PlaybackGoal | None = None
+    settle_timeout_ns: int | None = None
+    complete_in_resting_tail: bool = False
+    expected_start: tuple[float, ...] | None = None
 
     def __post_init__(self) -> None:
+        if self.expected_start is not None:
+            object.__setattr__(self, "expected_start", tuple(self.expected_start))
         for name in (
             "indices",
             "start_tolerance",
@@ -861,11 +1008,50 @@ class PlaybackHandlePort(Protocol):
     callback alone does not prove that a safety verb stopped hardware.
     """
 
-    def snapshot(self) -> Mapping[str, JSONValue]: ...
+    def snapshot(self) -> Mapping[str, JSONValue]:
+        """Read retained execution state; polling never advances its references.
+
+        With ``execution.playback_timing``, ``elapsed_ns`` is local time from
+        activation to the retained feedback sample, or ``None`` before activation.
+        Queue wait and cloud delivery time do not consume this elapsed duration.
+        Reading it cannot renew a deadline or imply that the feedback is current.
+
+        With ``execution.goal_progress``, ``settled_miss`` reports a fresh local
+        settling result outside the original goal. It is nonterminal progress,
+        not a correction authorization; the original goal/deadline stay fixed.
+        """
+        ...
 
     def wait(self) -> Mapping[str, JSONValue]: ...
 
     def cancel(self, reason: str) -> None: ...
+
+
+@runtime_checkable
+class PlaybackHistoryPort(PlaybackHandlePort, Protocol):
+    """Optional bounded call diagnostics, separate from frequent status reads.
+
+    History uses the SDK session clock and its stamp-time epoch twin, scoped to
+    the run. A pending call has no returned stamp. Acknowledged calls are not
+    physical arrival; superseded calls did not dispatch the requested reference.
+    Cleanup writes and camera exposure intervals are not included.
+    Each stamp also samples SDK host monotonic time for local content-clock
+    diagnostics; it must never be compared with another host's clock.
+    """
+
+    def history(self) -> Mapping[str, JSONValue]: ...
+
+
+@runtime_checkable
+class DeferredPlaybackHandlePort(PlaybackHandlePort, Protocol):
+    """Finish an acknowledged fixed reference curve after local observation.
+
+    Queueing does not establish completion. Require the terminal snapshot; its
+    feedback/window is refreshed by the existing worker before completion.
+    The original deadline and cancellation/owner cleanup remain binding.
+    """
+
+    def finish_references(self) -> None: ...
 
 
 @runtime_checkable
@@ -880,6 +1066,19 @@ class WatchdogPlaybackHandlePort(PlaybackHandlePort, Protocol):
     """
 
     def refresh_watchdog(self, observed_ns: int) -> None: ...
+
+
+@runtime_checkable
+class UpdatableGoalPlaybackHandlePort(PlaybackHandlePort, Protocol):
+    """Optional target updates processed by the existing execution worker.
+
+    Queue one request, then read ``goal_update`` for its accepted revision or
+    refusal. ``goal_target`` is the accepted pose/revision used for retained
+    feedback, including terminal results. A pending request may lose to terminal
+    completion and be rejected. Reconcile unknown replies; never replay them.
+    """
+
+    def update_goal(self, update: PlaybackGoalUpdate) -> int: ...
 
 
 @runtime_checkable
@@ -912,12 +1111,66 @@ class WithdrawablePlaybackHandlePort(RevisablePlaybackHandlePort, Protocol):
 
 
 @runtime_checkable
+class PlaybackInputPort(Protocol):
+    """Run-bound human input, stamped on the SDK clock independently of I/O.
+
+    Renew only for newly accepted input using an increasing sequence. Expiry and
+    release are permanent. Release fences admission; inspect playback cleanup or
+    completed Stop separately before claiming the owner has held.
+    """
+
+    def snapshot(self) -> Mapping[str, object]: ...
+
+    def refresh(self, sequence: int) -> Mapping[str, object]: ...
+
+    def release(self, reason: str) -> None: ...
+
+
+@runtime_checkable
+class InputPlaybackRunPort(Protocol):
+    """Optional input liveness under ``execution.input_watchdog_playback``."""
+
+    def start_playback_input(self, timeout_ns: int) -> PlaybackInputPort: ...
+
+
+@runtime_checkable
 class FinitePlaybackRunPort(Protocol):
     """Optional finite execution, declared by a per-part support fact."""
 
     def start_playback(
-        self, motion: FiniteJointMotion | CoordinatedJointMotion
+        self,
+        motion: FiniteJointMotion | CoordinatedJointMotion,
+        *,
+        after: Sequence[PlaybackDependency] = (),
+        start_before_ns: int | None = None,
+        input: PlaybackInputPort | None = None,
     ) -> PlaybackHandlePort: ...
+
+
+@dataclass(frozen=True)
+class PlaybackDependency:
+    """Wait locally for this run's handle to finish with an accepted outcome.
+
+    Failure never starts the dependent motion. Accepted outcomes are explicit:
+    arrived, settled, contact_stall, force_reached or references_dispatched.
+    A reference receipt alone does not establish measured arrival.
+
+    With ``execution.transit_playback``, accepting ``references_dispatched``
+    also permits a completed finite predecessor to skip intermediate settling
+    when that predecessor is this buffer's sole dependency and both address the
+    same named arm. Both buffers must
+    end at rest and exclude gripper policies. The successor must remain admitted,
+    uncancelled and within its start deadline. A required measured goal must be
+    in tolerance; a report allowing stationary misses may cross without it.
+    The parent retains the successor's SDK ID in ``transit_successor``. This
+    grants no replay, bypass of tracking or waiver of the child's fresh-start check.
+    """
+
+    handle: PlaybackHandlePort
+    outcomes: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "outcomes", tuple(self.outcomes))
 
 
 @dataclass(frozen=True)
@@ -1085,6 +1338,7 @@ __all__ = [
     "SUPPORT_CONTRACT_VERSION",
     "Action",
     "BodySphere",
+    "DeferredPlaybackHandlePort",
     "FaultCode",
     "FiniteJointMotion",
     "FinitePlaybackRunPort",
@@ -1093,6 +1347,7 @@ __all__ = [
     "GripperForcePolicy",
     "GripperPlaybackPolicy",
     "HeldJointGroup",
+    "InputPlaybackRunPort",
     "JSONValue",
     "JointPositionCommand",
     "JointReference",
@@ -1102,8 +1357,10 @@ __all__ = [
     "Observation",
     "PacedJointCurve",
     "PartObservation",
+    "PlaybackDependency",
     "PlaybackFeedbackPolicy",
     "PlaybackHandlePort",
+    "PlaybackInputPort",
     "PlaybackPolicy",
     "PlaybackWatchdog",
     "Pose",

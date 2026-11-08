@@ -8,11 +8,34 @@ import pytest
 pytest.importorskip("fcntl")
 pytest.importorskip("msgpack")
 
+from test_finite_playback import motion
+from test_finite_playback import opened as opened  # noqa: PLC0414
 from waddle_sdk.runtime import Observation, PartObservation
 from waddle_sdk_relay.device import Device, checked_path
 from waddle_sdk_relay.errors import RelayError
 from waddle_sdk_relay.publisher import publisher_binding
 from waddle_sdk_relay.wire import decode, encode
+
+
+def test_playback_history_keeps_exact_native_records_and_run_binding(opened, tmp_path):
+    session, run = opened
+    device = Device(session.site, tmp_path)
+    device.sdk, device.run = session, run
+    handle = run.start_playback(motion())
+    result = handle.wait()
+    key = (run.id, result["id"])
+    device._playbacks[key] = handle
+    expected = handle.history()
+    received = decode(
+        encode(device.dispatch("playback_history", {"run_id": key[0], "id": key[1]}))
+    )
+    assert received["submissions"] == expected["submissions"]
+    assert received["run_id"] == expected["run_id"]
+    assert received["execution_id"] == key[1]
+    assert received["sampled"]["session_ns"] >= expected["sampled"]["session_ns"]
+    with pytest.raises(RelayError) as caught:
+        device.dispatch("playback_history", {"run_id": "another-run", "id": key[1]})
+    assert caught.value.code == "sdk_playback_expired"
 
 
 def test_protocol_and_publisher_imports_do_not_load_the_sdk_runtime():
@@ -263,7 +286,11 @@ def test_native_playback_uses_the_site_run_and_retains_its_receipt(tmp_path):
     local = SimpleNamespace(open=lambda **kw: site.open(_testing=True, **kw))
     device = Device(local, tmp_path, torque_release_authorized=True)
     try:
-        assert device.dispatch("open", {}) == {"safety_slots": 2}
+        assert device.dispatch("open", {}) == {
+            "safety_slots": 2,
+            "observation_bundle": 1,
+            "prepared_playback": 1,
+        }
         run_id = device.dispatch(
             "run_enter", {"task": "local references", "actor": "test"}
         )
@@ -282,11 +309,74 @@ def test_native_playback_uses_the_site_run_and_retains_its_receipt(tmp_path):
         assert receipt == completed
         assert receipt["status"] == "arrived"
         assert receipt["dispatched"] == 2
+        bundled = device.dispatch(
+            "playback_status",
+            {"run_id": run_id, "id": admitted["id"], "include_state": True},
+        )
+        assert bundled["status"] == receipt["status"]
+        assert bundled["preparation"]["observation"].parts
+        assert not bundled["preparation"]["observation"].cameras
         with pytest.raises(RelayError) as wrong_run:
             device.dispatch(
                 "playback_status", {"run_id": "another-run", "id": admitted["id"]}
             )
         assert wrong_run.value.code == "sdk_playback_expired"
+    finally:
+        device.disconnect()
+        assert site_fixtures.opened == site_fixtures.closed
+        site_fixtures.reset()
+
+
+@pytest.mark.parametrize("changed", ["configuration", "joint", "native_start"])
+def test_prepared_playback_rejects_changed_inputs_before_writes(
+    tmp_path, monkeypatch, changed
+):
+    import site_fixtures
+    from test_finite_playback import motion
+    from test_site_api import _write_site
+    from waddle_sdk import load_site
+
+    site_fixtures.reset()
+    site = load_site(_write_site(tmp_path))
+    device = Device(
+        SimpleNamespace(open=lambda **kw: site.open(_testing=True, **kw)),
+        tmp_path,
+        torque_release_authorized=True,
+    )
+    try:
+        device.dispatch("open", {})
+        run = device.dispatch(
+            "run_enter", {"task": "bound preparation", "actor": "test"}
+        )
+        bundle = device.dispatch("state_bundle", {})
+        arguments = {
+            "run_id": run,
+            "motion": motion((0, 0), (0.02, 0)),
+            "expected_revision": bundle["revision"],
+        }
+        if changed == "configuration":
+            describe = device.sdk.describe
+            monkeypatch.setattr(
+                device.sdk, "describe", lambda: {**describe(), "changed": True}
+            )
+        elif changed == "joint":
+            arguments["joint_guards"] = [
+                {"part": "arm", "index": 1, "position": 0.5, "tolerance": 0.001}
+            ]
+        else:
+            arguments["motion"] = motion((0.1, 0.1), (0.12, 0.1))
+        if changed == "native_start":
+            admitted = device.dispatch("playback_start", arguments)
+            result = device._playbacks[(run, admitted["id"])].wait()
+            assert result["status"] == "failed", result
+            assert result["dispatched"] == 0
+        else:
+            with pytest.raises(RelayError) as caught:
+                device.dispatch("playback_start", arguments)
+            assert caught.value.code == (
+                "stale_plan" if changed == "configuration" else "stale_model_state"
+            )
+            assert not device._playbacks
     finally:
         device.disconnect()
         assert site_fixtures.opened == site_fixtures.closed

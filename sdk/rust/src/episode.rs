@@ -117,7 +117,8 @@ impl PyEpisode {
 #[pymethods]
 impl PyEpisode {
     /// Admit a fully received finite buffer; callbacks only adapt local owner I/O.
-    #[pyo3(signature = (chunk_json, policy, observe, dispatch, hold_part=None, *, parts=None))]
+    #[pyo3(signature = (chunk_json, policy, observe, dispatch, hold_part=None, *, parts=None, after=Vec::new(), start_before_ns=None, input=None))]
+    #[allow(clippy::too_many_arguments)]
     fn start_playback(
         &self,
         chunk_json: &str,
@@ -126,6 +127,9 @@ impl PyEpisode {
         dispatch: Py<PyAny>,
         hold_part: Option<Py<PyAny>>,
         parts: Option<Vec<String>>,
+        after: Vec<(PyRef<'_, crate::playback::PyExecutionHandle>, Vec<String>)>,
+        start_before_ns: Option<i64>,
+        input: Option<PyRef<'_, crate::playback::PyPlaybackInput>>,
     ) -> PyResult<crate::playback::PyExecutionHandle> {
         crate::playback::start(
             &self.session,
@@ -138,7 +142,20 @@ impl PyEpisode {
                 hold_part,
             },
             parts,
+            crate::playback::queue(after, start_before_ns, input)?,
         )
+    }
+
+    fn start_playback_input(&self, timeout_ns: i64) -> PyResult<crate::playback::PyPlaybackInput> {
+        self.session
+            .start_playback_input(&self.id, timeout_ns)
+            .map(crate::playback::PyPlaybackInput)
+            .map_err(|error| match error {
+                waddle_runtime::playback::PlaybackError::Busy => {
+                    crate::playback::PlaybackBusyError::new_err(error.to_string())
+                }
+                _ => pyo3::exceptions::PyValueError::new_err(error.to_string()),
+            })
     }
 
     #[getter]

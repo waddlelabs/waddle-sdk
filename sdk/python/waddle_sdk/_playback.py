@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from ._native import core
 from ._playback_bounds import observe as observe_bounded
+from ._playback_history import History
+from ._playback_input import PlaybackInput
 from .robots import base
 from .runtime import (
     CoordinatedJointMotion,
@@ -14,6 +17,11 @@ from .runtime import (
     FiniteJointMotion,
     JointPositionCommand,
     PlaybackCurveUpdate,
+    PlaybackDependency,
+    PlaybackGoal,
+    PlaybackGoalDwell,
+    PlaybackGoalUpdate,
+    Pose,
     RuntimeFault,
     SupportFact,
 )
@@ -30,8 +38,14 @@ def _error(error: Exception, *, unknown: bool):
 class PlaybackHandle:
     """A retained native handle. Waiting releases the interpreter lock."""
 
-    def __init__(self, native):
+    def __init__(self, native, history):
         self._native = native
+        self._history = history
+        self._id = native.snapshot()["id"]
+
+    def history(self):
+        """Copy bounded SDK command-call diagnostics without waiting for I/O."""
+        return {**self._history.snapshot(), "execution_id": self._id}
 
     @staticmethod
     def _snapshot(value):
@@ -51,6 +65,15 @@ class PlaybackHandle:
 
     def cancel(self, reason: str) -> None:
         self._native.cancel(reason)
+
+    def finish_references(self) -> None:
+        """Queue normal completion; wait for a terminal native snapshot."""
+        try:
+            self._native.finish_references()
+        except (TypeError, ValueError, OverflowError) as error:
+            raise RuntimeFault.from_exception(
+                error, code=FaultCode.INVALID_REQUEST
+            ) from error
 
     def refresh_watchdog(self, observed_ns: int) -> None:
         """Queue feedback time; acceptance is retained in the native snapshot."""
@@ -89,9 +112,29 @@ class PlaybackHandle:
                 error, code=FaultCode.INVALID_REQUEST
             ) from error
 
+    def update_goal(self, update: PlaybackGoalUpdate) -> int:
+        """Queue one pose target; retain its native acceptance or refusal."""
+        if not isinstance(update, PlaybackGoalUpdate):
+            raise RuntimeFault(
+                FaultCode.INVALID_REQUEST, "provide a PlaybackGoalUpdate"
+            )
+        try:
+            return self._native.update_goal(update)
+        except core.PlaybackBusyError as error:
+            raise RuntimeFault(FaultCode.BUSY, str(error)) from error
+        except (TypeError, ValueError, OverflowError) as error:
+            raise RuntimeFault.from_exception(
+                error, code=FaultCode.INVALID_REQUEST
+            ) from error
+
 
 def start(
-    run: Run, motion: FiniteJointMotion | CoordinatedJointMotion
+    run: Run,
+    motion: FiniteJointMotion | CoordinatedJointMotion,
+    *,
+    after: Sequence[PlaybackDependency] = (),
+    start_before_ns: int | None = None,
+    input: PlaybackInput | None = None,
 ) -> PlaybackHandle:
     """Called under the ordinary dispatch lock; admission does not wait for I/O."""
     session = run._session
@@ -127,6 +170,114 @@ def start(
             FaultCode.UNSUPPORTED, "part does not support finite playback"
         )
     facts = set.intersection(*(set(row.facts) for row in rows))
+    if input is not None:
+        if not isinstance(input, PlaybackInput) or input._run is not run:
+            raise RuntimeFault(
+                FaultCode.INVALID_REQUEST, "input requires this local SDK run"
+            )
+        if SupportFact.INPUT_WATCHDOG_PLAYBACK not in facts:
+            raise RuntimeFault(
+                FaultCode.UNSUPPORTED, "part does not support input watchdogs"
+            )
+    if (
+        after or start_before_ns is not None
+    ) and SupportFact.DEPENDENT_PLAYBACK not in facts:
+        raise RuntimeFault(
+            FaultCode.UNSUPPORTED, "part does not support dependent playback"
+        )
+    if any(
+        not isinstance(dependency, PlaybackDependency)
+        or not isinstance(dependency.handle, PlaybackHandle)
+        for dependency in after
+    ):
+        raise RuntimeFault(
+            FaultCode.INVALID_REQUEST, "dependencies require local playback handles"
+        )
+    goal = motion.policy.goal
+    if (goal is not None or motion.policy.settle_timeout_ns is not None) and (
+        SupportFact.GOAL_PLAYBACK not in facts
+    ):
+        raise RuntimeFault(
+            FaultCode.UNSUPPORTED, "part does not support local goal completion"
+        )
+    if goal is not None and not isinstance(goal, PlaybackGoal):
+        raise RuntimeFault(FaultCode.INVALID_REQUEST, "provide a PlaybackGoal")
+    if (
+        motion.policy.allow_curve_updates
+        and not motion.policy.reference_only
+        and goal is None
+        and SupportFact.REVISABLE_SETTLED_PLAYBACK not in facts
+    ):
+        raise RuntimeFault(
+            FaultCode.UNSUPPORTED, "part does not support revisable settled playback"
+        )
+    if (
+        goal is not None
+        and goal.allow_updates
+        and SupportFact.UPDATABLE_GOAL_PLAYBACK not in facts
+    ):
+        raise RuntimeFault(FaultCode.UNSUPPORTED, "part does not support goal updates")
+    if goal is not None and goal.dwell is not None:
+        if not isinstance(goal.dwell, PlaybackGoalDwell):
+            raise RuntimeFault(FaultCode.INVALID_REQUEST, "provide a PlaybackGoalDwell")
+        if SupportFact.DWELL_GOAL_PLAYBACK not in facts:
+            raise RuntimeFault(
+                FaultCode.UNSUPPORTED, "part does not support goal dwell"
+            )
+    if (
+        motion.policy.complete_in_resting_tail
+        and SupportFact.RESTING_GOAL_PLAYBACK not in facts
+    ):
+        raise RuntimeFault(
+            FaultCode.UNSUPPORTED, "part does not support resting-tail goal completion"
+        )
+    kinematics = None
+    if goal is not None and goal.kinematics is not None:
+        if SupportFact.KINEMATIC_GOAL_PLAYBACK not in facts:
+            raise RuntimeFault(
+                FaultCode.UNSUPPORTED, "part does not support selected TCP goals"
+            )
+        if group or goal.pose is None:
+            raise RuntimeFault(
+                FaultCode.INVALID_REQUEST, "kinematics requires a named TCP goal"
+            )
+        from ._playback_kinematics import Kinematics
+
+        try:
+            kinematics = Kinematics(
+                goal.kinematics,
+                width=len(arms[motion.part].joint_names),
+                frame=arms[motion.part].base_frame,
+            )
+        except (TypeError, ValueError, OverflowError) as error:
+            raise RuntimeFault.from_exception(
+                error, code=FaultCode.INVALID_REQUEST
+            ) from error
+    if (
+        goal is not None
+        and motion.policy.allow_curve_updates
+        and SupportFact.REVISABLE_GOAL_PLAYBACK not in facts
+    ):
+        raise RuntimeFault(
+            FaultCode.UNSUPPORTED, "part does not support revisable goal playback"
+        )
+    if goal is not None and goal.pose is not None:
+        if (
+            group
+            or kinematics is None
+            and SupportFact.CARTESIAN_GOAL_PLAYBACK not in facts
+        ):
+            raise RuntimeFault(
+                FaultCode.UNSUPPORTED, "TCP goal requires a named part with local FK"
+            )
+        if (
+            not isinstance(goal.pose, Pose)
+            or goal.pose.frame_id != arms[motion.part].base_frame
+        ):
+            raise RuntimeFault(
+                FaultCode.INVALID_REQUEST,
+                "TCP goal must use the SDK part's declared base frame",
+            )
     if (
         motion.policy.timeout_ns is None
         and SupportFact.STREAMED_JOINT_PLAYBACK not in facts
@@ -138,10 +289,19 @@ def start(
         raise RuntimeFault(
             FaultCode.UNSUPPORTED, "parts do not support coordinated subsets"
         )
-    if run._episode.playback_active and (
-        group and not subset or SupportFact.PARALLEL_JOINT_PLAYBACK not in facts
+    if (
+        not after
+        and run._episode.playback_active
+        and (group and not subset or SupportFact.PARALLEL_JOINT_PLAYBACK not in facts)
     ):
         raise RuntimeFault(FaultCode.BUSY, "finite playback is still active")
+    if (
+        motion.policy.expected_start is not None
+        and SupportFact.EXPECTED_START_PLAYBACK not in facts
+    ):
+        raise RuntimeFault(
+            FaultCode.UNSUPPORTED, "part does not support a separate measured start"
+        )
     if (
         motion.policy.watchdog is not None
         and SupportFact.WATCHDOG_PLAYBACK not in facts
@@ -196,6 +356,13 @@ def start(
             FaultCode.UNSUPPORTED, "part does not support playback checkpoint evidence"
         )
     if (
+        motion.policy.defer_reference_completion
+        and SupportFact.DEFERRED_REFERENCE_COMPLETION not in facts
+    ):
+        raise RuntimeFault(
+            FaultCode.UNSUPPORTED, "part does not support deferred reference completion"
+        )
+    if (
         motion.policy.reference_only
         and SupportFact.REFERENCE_JOINT_PLAYBACK not in facts
     ):
@@ -209,7 +376,8 @@ def start(
         and SupportFact.REFERENCE_SETTLING not in facts
     ):
         raise RuntimeFault(
-            FaultCode.UNSUPPORTED, "part does not support reference-only window evidence"
+            FaultCode.UNSUPPORTED,
+            "part does not support reference-only window evidence",
         )
     if (
         motion.policy.minimum_settle_samples != 1
@@ -315,6 +483,25 @@ def start(
                     if name in observation.faults:
                         raise observation.faults[name]
                 measured = [observation.parts[name] for name in parts]
+                pose = None
+                if goal is not None and goal.pose is not None:
+                    sample = measured[0]
+                    if kinematics is not None:
+                        pose = kinematics(sample.joint_position)
+                    elif (
+                        sample.ee_pose_wxyz is None
+                        or sample.frame_id != goal.pose.frame_id
+                    ):
+                        raise RuntimeFault(
+                            FaultCode.INTERNAL,
+                            "local TCP feedback is unavailable or has the wrong frame",
+                        )
+                    else:
+                        pose = Pose(
+                            tuple(sample.ee_pose_wxyz[:3]),
+                            tuple(sample.ee_pose_wxyz[3:]),
+                            sample.frame_id,
+                        )
                 return {
                     "observed_ns": observation.session_ns,
                     "positions": [
@@ -324,14 +511,23 @@ def start(
                         v for row in measured for v in row.joint_velocity.tolist()
                     ],
                     "gripper_force": None if group else measured[0].gripper_force,
+                    "pose": pose,
                 }
         except Exception as error:  # noqa: BLE001 -- retain any vendor fault across the native callback
             return _error(error, unknown=False)
 
+    history = History(
+        run.id,
+        {name: list(arms[name].joint_names) for name in parts},
+        session._require().core.stamp,
+    )
+
     def dispatch(reference, measured, force_n):
+        sequence = None
         try:
             with session._dispatch_lock:
-                started_ns = session._require().core.stamp().session_ns
+                started = session._require().core.stamp()
+                sequence = history.begin(started, reference, measured, force_n)
                 result = run._step(
                     JointPositionCommand(
                         reference["positions"],
@@ -343,19 +539,39 @@ def start(
                     **({"parts": parts} if subset else {}),
                 )
             if result.fault is not None or result.gate == "owner_refusal":
+                fault = result.fault or RuntimeFault(
+                    FaultCode.SAFETY_REFUSAL, result.detail
+                )
+                history.end(
+                    sequence, result="error", gate=result.gate, error=fault.as_dict()
+                )
                 return _error(
-                    result.fault
-                    or RuntimeFault(FaultCode.SAFETY_REFUSAL, result.detail),
+                    fault,
                     unknown=False,
                 )
+            history.end(
+                sequence,
+                result="acknowledged"
+                if result.dispatched and result.gate == "pass"
+                else "superseded"
+                if result.gate != "pass"
+                else "refused",
+                gate=result.gate,
+            )
             return {
                 "dispatched": result.dispatched and result.gate == "pass",
                 "detail": result.gate,
-                "started_ns": started_ns,
+                "started_ns": started.session_ns,
             }
         except Exception as error:  # noqa: BLE001 -- an unexpected write failure must retain uncertainty
             # A raising write may have reached the device. Preserve its evidence,
             # never retry, and do not confuse local loop drain with physical stop.
+            if sequence is not None:
+                history.end(
+                    sequence,
+                    result="error",
+                    error=RuntimeFault.from_exception(error).as_dict(),
+                )
             return _error(error, unknown=True)
 
     def hold_part(name):
@@ -373,12 +589,17 @@ def start(
             observe,
             dispatch,
             hold_part if motion.policy.part_hold else None,
+            after=[
+                (dependency.handle._native, dependency.outcomes) for dependency in after
+            ],
+            start_before_ns=start_before_ns,
+            input=None if input is None else input._native,
             **({"parts": parts} if subset else {}),
         )
     except core.PlaybackBusyError as error:
         raise RuntimeFault(FaultCode.BUSY, str(error)) from error
-    except (TypeError, ValueError) as error:
+    except (TypeError, ValueError, OverflowError) as error:
         raise RuntimeFault.from_exception(
             error, code=FaultCode.INVALID_REQUEST
         ) from error
-    return PlaybackHandle(native)
+    return PlaybackHandle(native, history)

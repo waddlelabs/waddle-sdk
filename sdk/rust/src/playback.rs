@@ -7,9 +7,11 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use waddle_runtime::playback::{
     Completion, ContactCondition, CurveUpdate, ExecutionFailure, ExecutionHandle,
-    ExecutionSnapshot, Feedback, FeedbackPolicy, ForceCondition, GripperPolicy, HeldJointGroup,
-    MeasuredForce, PacedCurve, PlaybackError, PlaybackIo, PlaybackIoError, PlaybackPolicy,
-    PlaybackWatchdog, PositionWindow, ReferenceReceipt, VelocityHints,
+    ExecutionSnapshot, Feedback, FeedbackPolicy, ForceCondition, GoalDwell, GoalUpdate,
+    GripperPolicy, HeldJointGroup, MeasuredForce, PacedCurve, PlaybackDependency, PlaybackError,
+    PlaybackGoal, PlaybackInput, PlaybackInputSnapshot, PlaybackIo, PlaybackIoError,
+    PlaybackPolicy, PlaybackQueue, PlaybackWatchdog, Pose, PositionWindow, ReferenceReceipt,
+    VelocityHints,
 };
 use waddle_types::Step;
 
@@ -19,6 +21,7 @@ pyo3::create_exception!(_core, PlaybackBusyError, PyRuntimeError);
 pub(crate) struct Policy {
     indices: Vec<usize>,
     start_tolerance: Vec<f64>,
+    expected_start: Option<Vec<f64>>,
     position_tolerance: Vec<f64>,
     stationary_velocity: Vec<f64>,
     settle_ns: i64,
@@ -27,6 +30,10 @@ pub(crate) struct Policy {
     timeout_ns: Option<i64>,
     allow_settled: bool,
     reference_only: bool,
+    defer_reference_completion: bool,
+    goal: Option<Goal>,
+    settle_timeout_ns: Option<i64>,
+    complete_in_resting_tail: bool,
     checkpoint_offsets_ns: Vec<i64>,
     allow_curve_updates: bool,
     credit_pacing_delay: bool,
@@ -41,6 +48,39 @@ pub(crate) struct Policy {
 struct Watchdog {
     observed_ns: i64,
     timeout_ns: i64,
+}
+
+#[derive(FromPyObject)]
+struct Goal {
+    allow_updates: bool,
+    joint_positions: Option<Vec<f64>>,
+    pose: Option<GoalPose>,
+    position_tolerance_m: f64,
+    orientation_tolerance_rad: Option<f64>,
+    dwell: Option<Dwell>,
+}
+
+#[derive(FromPyObject)]
+struct Dwell {
+    duration_ns: i64,
+    exit_tolerance_multiplier: f64,
+}
+
+#[derive(FromPyObject)]
+struct GoalPose {
+    position_m: [f64; 3],
+    quaternion_wxyz: [f64; 4],
+    frame_id: String,
+}
+
+impl From<GoalPose> for Pose {
+    fn from(p: GoalPose) -> Self {
+        Self {
+            position_m: p.position_m,
+            quaternion_wxyz: p.quaternion_wxyz,
+            frame_id: p.frame_id,
+        }
+    }
 }
 
 #[derive(FromPyObject)]
@@ -135,6 +175,12 @@ struct Update {
     curve: Curve,
 }
 
+#[derive(FromPyObject)]
+struct TargetUpdate {
+    expected_revision: u64,
+    pose: GoalPose,
+}
+
 impl TryFrom<Policy> for PlaybackPolicy {
     type Error = PyErr;
 
@@ -172,6 +218,7 @@ impl TryFrom<Policy> for PlaybackPolicy {
         Ok(Self {
             indices: p.indices,
             start_tolerance: p.start_tolerance,
+            expected_start: p.expected_start,
             position_tolerance: p.position_tolerance,
             stationary_velocity: p.stationary_velocity,
             settle_ns: p.settle_ns,
@@ -180,6 +227,20 @@ impl TryFrom<Policy> for PlaybackPolicy {
             timeout_ns: p.timeout_ns,
             allow_settled: p.allow_settled,
             reference_only: p.reference_only,
+            defer_reference_completion: p.defer_reference_completion,
+            goal: p.goal.map(|g| PlaybackGoal {
+                allow_updates: g.allow_updates,
+                dwell: g.dwell.map(|d| GoalDwell {
+                    duration_ns: d.duration_ns,
+                    exit_tolerance_multiplier: d.exit_tolerance_multiplier,
+                }),
+                joint_positions: g.joint_positions,
+                pose: g.pose.map(Into::into),
+                position_tolerance_m: g.position_tolerance_m,
+                orientation_tolerance_rad: g.orientation_tolerance_rad,
+            }),
+            settle_timeout_ns: p.settle_timeout_ns,
+            complete_in_resting_tail: p.complete_in_resting_tail,
             checkpoint_offsets_ns: p.checkpoint_offsets_ns,
             allow_curve_updates: p.allow_curve_updates,
             credit_pacing_delay: p.credit_pacing_delay,
@@ -239,6 +300,8 @@ struct Measured {
     positions: Vec<f64>,
     velocities: Vec<f64>,
     gripper_force: Option<ForceFeedback>,
+    #[pyo3(default)]
+    pose: Option<GoalPose>,
 }
 
 #[derive(FromPyObject)]
@@ -298,7 +361,17 @@ fn feedback(py: Python<'_>, value: &Feedback) -> PyResult<Py<PyDict>> {
         })
         .transpose()?;
     out.set_item("gripper_force", force)?;
+    let pose = value.pose.as_ref().map(|p| pose_dict(py, p)).transpose()?;
+    out.set_item("pose", pose)?;
     Ok(out.unbind())
+}
+
+fn pose_dict(py: Python<'_>, p: &Pose) -> PyResult<Py<PyDict>> {
+    let result = PyDict::new(py);
+    result.set_item("position_m", p.position_m)?;
+    result.set_item("quaternion_wxyz", p.quaternion_wxyz)?;
+    result.set_item("frame_id", &p.frame_id)?;
+    Ok(result.unbind())
 }
 
 fn reference(py: Python<'_>, value: &Step) -> PyResult<Py<PyDict>> {
@@ -349,6 +422,7 @@ impl PlaybackIo for PyIo {
                 observed_ns: measured.observed_ns,
                 positions: measured.positions,
                 velocities: measured.velocities,
+                pose: measured.pose.map(Into::into),
                 gripper_force: measured.gripper_force.map(|f| MeasuredForce {
                     force_n: f.force_n,
                     source: f.source,
@@ -390,6 +464,7 @@ pub(crate) fn start(
     policy: Policy,
     io: PyIo,
     parts: Option<Vec<String>>,
+    queue: PlaybackQueue,
 ) -> PyResult<PyExecutionHandle> {
     let chunk = waddle_sidecar::json::message_from_json::<waddle_types::pb::v0::ActionChunk>(
         "waddle.v0.ActionChunk",
@@ -398,10 +473,7 @@ pub(crate) fn start(
     .map_err(|e| PyValueError::new_err(e.to_string()))?;
     let policy = policy.try_into()?;
     let io = Arc::new(io);
-    let result = match parts {
-        Some(parts) => session.start_playback_parts(id, &parts, &chunk, policy, io),
-        None => session.start_playback(id, &chunk, policy, io),
-    };
+    let result = session.start_queued_playback(id, &chunk, policy, io, parts.as_deref(), queue);
     result.map(PyExecutionHandle).map_err(|error| match error {
         PlaybackError::Busy => PlaybackBusyError::new_err(error.to_string()),
         _ => PyValueError::new_err(error.to_string()),
@@ -410,6 +482,80 @@ pub(crate) fn start(
 
 #[pyclass(name = "ExecutionHandle", frozen)]
 pub(crate) struct PyExecutionHandle(ExecutionHandle);
+
+#[pyclass(name = "PlaybackInput", frozen)]
+pub(crate) struct PyPlaybackInput(pub(crate) PlaybackInput);
+
+#[pymethods]
+impl PyPlaybackInput {
+    fn snapshot(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
+        input_snapshot(py, self.0.snapshot())
+    }
+
+    fn refresh(&self, py: Python<'_>, sequence: u64) -> PyResult<Py<PyDict>> {
+        let value = self
+            .0
+            .refresh(sequence)
+            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        input_snapshot(py, value)
+    }
+
+    fn release(&self, reason: &str) {
+        self.0.release(reason);
+    }
+}
+
+fn input_snapshot(py: Python<'_>, value: PlaybackInputSnapshot) -> PyResult<Py<PyDict>> {
+    let out = PyDict::new(py);
+    out.set_item("id", value.id)?;
+    out.set_item("episode_id", value.episode_id.to_string())?;
+    out.set_item("sequence", value.sequence)?;
+    let watchdog = PyDict::new(py);
+    watchdog.set_item("observed_ns", value.watchdog.observed_ns)?;
+    watchdog.set_item("timeout_ns", value.watchdog.timeout_ns)?;
+    watchdog.set_item("deadline_ns", value.watchdog.deadline_ns())?;
+    out.set_item("watchdog", watchdog)?;
+    out.set_item(
+        "failure",
+        value
+            .failure
+            .map(|error| failure(py, ExecutionFailure::Playback(error)))
+            .transpose()?,
+    )?;
+    Ok(out.unbind())
+}
+
+pub(crate) fn queue(
+    after: Vec<(PyRef<'_, PyExecutionHandle>, Vec<String>)>,
+    start_before_ns: Option<i64>,
+    input: Option<PyRef<'_, PyPlaybackInput>>,
+) -> PyResult<PlaybackQueue> {
+    let after = after
+        .into_iter()
+        .map(|(handle, outcomes)| {
+            let outcomes = outcomes
+                .into_iter()
+                .map(|outcome| match outcome.as_str() {
+                    "arrived" => Ok(Completion::Arrived),
+                    "settled" => Ok(Completion::Settled),
+                    "references_dispatched" => Ok(Completion::ReferencesDispatched),
+                    "contact_stall" => Ok(Completion::ContactStall),
+                    "force_reached" => Ok(Completion::ForceReached),
+                    _ => Err(PyValueError::new_err("invalid accepted playback outcome")),
+                })
+                .collect::<PyResult<Vec<_>>>()?;
+            Ok(PlaybackDependency {
+                handle: handle.0.clone(),
+                outcomes,
+            })
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+    Ok(PlaybackQueue {
+        after,
+        start_before_ns,
+        input: input.map(|input| input.0.clone()),
+    })
+}
 
 #[pymethods]
 impl PyExecutionHandle {
@@ -421,6 +567,11 @@ impl PyExecutionHandle {
     }
     fn cancel(&self, reason: &str) {
         self.0.cancel(reason);
+    }
+    fn finish_references(&self) -> PyResult<()> {
+        self.0
+            .finish_references()
+            .map_err(|error| PyValueError::new_err(error.to_string()))
     }
     fn refresh_watchdog(&self, observed_ns: i64) -> PyResult<()> {
         self.0
@@ -450,12 +601,27 @@ impl PyExecutionHandle {
             _ => PyValueError::new_err(error.to_string()),
         })
     }
+
+    fn update_goal(&self, update: TargetUpdate) -> PyResult<u64> {
+        self.0
+            .update_goal(GoalUpdate {
+                expected_revision: update.expected_revision,
+                pose: update.pose.into(),
+            })
+            .map_err(|error| match error {
+                PlaybackError::Busy => PlaybackBusyError::new_err(error.to_string()),
+                _ => PyValueError::new_err(error.to_string()),
+            })
+    }
 }
 
 fn snapshot(py: Python<'_>, value: ExecutionSnapshot) -> PyResult<Py<PyDict>> {
     let out = PyDict::new(py);
     out.set_item("id", value.id)?;
     out.set_item("episode_id", value.episode_id.to_string())?;
+    out.set_item("waiting_for", value.waiting_for)?;
+    out.set_item("transit_successor", value.transit_successor)?;
+    out.set_item("elapsed_ns", value.elapsed_ns)?;
     out.set_item("dispatched", value.dispatched)?;
     out.set_item("references", value.references)?;
     out.set_item("last_acknowledged_ns", value.last_acknowledged_ns)?;
@@ -519,6 +685,47 @@ fn snapshot(py: Python<'_>, value: ExecutionSnapshot) -> PyResult<Py<PyDict>> {
         })
         .transpose()?;
     out.set_item("curve_update", update)?;
+    let target = value
+        .goal_target
+        .map(|target| -> PyResult<Py<PyDict>> {
+            let result = PyDict::new(py);
+            result.set_item("revision", target.revision)?;
+            result.set_item("pose", pose_dict(py, &target.pose)?)?;
+            Ok(result.unbind())
+        })
+        .transpose()?;
+    out.set_item("goal_target", target)?;
+    let update = value
+        .goal_update
+        .map(|receipt| -> PyResult<Py<PyDict>> {
+            let result = PyDict::new(py);
+            result.set_item("request_id", receipt.request_id)?;
+            result.set_item("expected_revision", receipt.update.expected_revision)?;
+            result.set_item("pose", pose_dict(py, &receipt.update.pose)?)?;
+            result.set_item(
+                "status",
+                match &receipt.result {
+                    None => "pending",
+                    Some(Ok(_)) => "accepted",
+                    Some(Err(_)) => "rejected",
+                },
+            )?;
+            result.set_item(
+                "revision",
+                receipt
+                    .result
+                    .as_ref()
+                    .and_then(|r| r.as_ref().ok())
+                    .copied(),
+            )?;
+            result.set_item(
+                "error",
+                receipt.result.and_then(Result::err).map(|e| e.to_string()),
+            )?;
+            Ok(result.unbind())
+        })
+        .transpose()?;
+    out.set_item("goal_update", update)?;
     let checkpoints = value
         .checkpoints
         .iter()
@@ -583,6 +790,16 @@ fn snapshot(py: Python<'_>, value: ExecutionSnapshot) -> PyResult<Py<PyDict>> {
         })
         .transpose()?;
     out.set_item("settling", settling)?;
+    out.set_item("settled_miss", value.settled_miss)?;
+    if let Some(progress) = value.goal_dwell {
+        let dwell = PyDict::new(py);
+        dwell.set_item("observed_ns", progress.observed_ns)?;
+        dwell.set_item("since_ns", progress.since_ns)?;
+        dwell.set_item("restarts", progress.restarts)?;
+        out.set_item("goal_dwell", dwell)?;
+    } else {
+        out.set_item("goal_dwell", py.None())?;
+    }
     let gripper = value
         .gripper
         .map(|e| -> PyResult<Py<PyDict>> {
@@ -595,6 +812,9 @@ fn snapshot(py: Python<'_>, value: ExecutionSnapshot) -> PyResult<Py<PyDict>> {
             result.set_item("commanded_shortfall_m", e.commanded_shortfall_m)?;
             result.set_item("window_ns", e.window_ns)?;
             result.set_item("drift_m", e.drift_m)?;
+            result.set_item("sample_count", e.sample_count)?;
+            result.set_item("stationary_samples", e.stationary_samples)?;
+            result.set_item("contact_compatible", e.contact_compatible)?;
             result.set_item("force_target_n", e.force_target_n)?;
             result.set_item("force_samples", e.force_samples)?;
             result.set_item("arrival_samples", e.arrival_samples)?;
@@ -617,11 +837,11 @@ fn snapshot(py: Python<'_>, value: ExecutionSnapshot) -> PyResult<Py<PyDict>> {
             )?;
             if let Some(part) = receipt.part {
                 result.set_item("part", part)?;
-                result.set_item(
-                    "evidence",
-                    receipt.result.as_ref().err().map(|e| &e.evidence),
-                )?;
             }
+            result.set_item(
+                "evidence",
+                receipt.result.as_ref().err().map(|e| &e.evidence),
+            )?;
             result.set_item("error", receipt.result.err().map(|e| e.detail))?;
             result.set_item("completed_ns", receipt.at.0)?;
             result.set_item("measured_stationary", false)?;
@@ -666,6 +886,8 @@ fn failure(py: Python<'_>, error: ExecutionFailure) -> PyResult<Py<PyDict>> {
                 PlaybackError::Busy => "busy",
                 PlaybackError::Invalid(_) | PlaybackError::InvalidAction(_) => "invalid",
                 PlaybackError::StaleStart => "stale_start",
+                PlaybackError::StartExpired => "start_expired",
+                PlaybackError::DependencyFailed(_) => "dependency_failed",
                 PlaybackError::Tracking => "tracking",
                 PlaybackError::ForceUnavailable => "gripper_force_unavailable",
                 PlaybackError::EmptyGripper => "gripper_empty",

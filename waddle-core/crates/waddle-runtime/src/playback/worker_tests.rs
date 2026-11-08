@@ -11,6 +11,18 @@ use waddle_ingest::FakeClock;
 use waddle_types::time::Stamp;
 use waddle_types::{MonoNs, ProvenanceTag, ReplanPolicy, SourceId, Step};
 
+#[path = "queue_tests.rs"]
+mod queue_tests;
+
+#[path = "revisable_goal_tests.rs"]
+mod revisable_goal_tests;
+
+#[path = "moving_goal_tests.rs"]
+mod moving_goal_tests;
+
+#[path = "input_tests.rs"]
+mod input_tests;
+
 #[derive(Clone, Default)]
 struct TestClock(FakeClock);
 
@@ -46,6 +58,7 @@ struct MemoryIo {
     events: Arc<Mutex<Vec<&'static str>>>,
     writes: Mutex<Vec<(i64, i64, f64)>>,
     observation_pause: Mutex<Option<Pause>>,
+    observation_costs: Mutex<std::collections::VecDeque<i64>>,
     dispatch_pause: Mutex<Option<Pause>>,
     error: Mutex<Option<PlaybackIoError>>,
     panic: AtomicBool,
@@ -76,11 +89,18 @@ impl PlaybackIo for MemoryIo {
         if let Some(pause) = self.observation_pause.lock().take() {
             pause.wait();
         }
+        let mut costs = self.observation_costs.lock();
+        if let Some(cost) = costs.pop_front() {
+            self.clock.0.advance(cost);
+            costs.push_back(cost);
+        }
+        drop(costs);
         Ok(Feedback {
             observed_ns: self.clock.stamp_now().mono_ns().0,
             positions: vec![*self.q.lock()],
             velocities: vec![0.0],
             gripper_force: None,
+            pose: None,
         })
     }
 
@@ -149,6 +169,7 @@ impl Harness {
             events: events.clone(),
             writes: Mutex::new(Vec::new()),
             observation_pause: Mutex::new(None),
+            observation_costs: Mutex::default(),
             dispatch_pause: Mutex::new(None),
             error: Mutex::new(None),
             panic: AtomicBool::new(false),
@@ -277,6 +298,7 @@ fn reference_inputs(
         PlaybackPolicy {
             indices: vec![0],
             start_tolerance: vec![0.01],
+            expected_start: None,
             position_tolerance: vec![0.005],
             stationary_velocity: vec![0.01],
             settle_ns: 20_000_000,
@@ -285,6 +307,10 @@ fn reference_inputs(
             timeout_ns: Some(500_000_000),
             allow_settled: false,
             reference_only: false,
+            defer_reference_completion: false,
+            goal: None,
+            settle_timeout_ns: None,
+            complete_in_resting_tail: false,
             checkpoint_offsets_ns: vec![],
             allow_curve_updates: false,
             credit_pacing_delay: false,
@@ -312,6 +338,7 @@ fn sibling_io(h: &Harness) -> Arc<MemoryIo> {
         events: h.io.events.clone(),
         writes: Mutex::new(Vec::new()),
         observation_pause: Mutex::new(None),
+        observation_costs: Mutex::default(),
         dispatch_pause: Mutex::new(None),
         error: Mutex::new(None),
         panic: AtomicBool::new(false),
@@ -552,6 +579,228 @@ fn slow_declared_feedback_rate_cannot_postpone_the_buffer_deadline() {
         Some(Err(ExecutionFailure::Playback(PlaybackError::Deadline)))
     );
     assert_eq!(h.io.writes.lock().len(), 3);
+    assert_eq!(h.outcome().verb, Verb::Hold);
+}
+
+#[test]
+fn sustained_feedback_cost_stays_inside_the_original_curve_budget() {
+    for costs in [
+        vec![4_000_000],
+        vec![15_000_000],
+        vec![1_000_000, 15_000_000, 2_000_000],
+    ] {
+        let h = Harness::new();
+        *h.io.observation_costs.lock() = costs.clone().into();
+        let (mut chunk, mut policy) = reference_inputs(None, false, None);
+        chunk.horizon_ns = 2_000_000_000;
+        chunk.steps.truncate(2);
+        chunk.steps[1].offset_ns = chunk.horizon_ns;
+        chunk.steps[1].values[0] = 0.01;
+        policy.timeout_ns = Some(4_000_000_000);
+        policy.paced_curve = Some(crate::playback::PacedCurve {
+            times_s: vec![0.0, 2.0],
+            positions: vec![vec![0.0], vec![0.01]],
+            coefficients: vec![[0.0, 0.0, 0.0, 0.1, -0.15, 0.06].map(|q| vec![q]).into()],
+            period_ns: 20_000_000,
+            position_error: vec![0.04],
+            tracking_tolerance: vec![0.05],
+            sample_times_s: None,
+        });
+        let handle = h
+            .dispatch
+            .start_playback(
+                h.mirror.clone(),
+                EpisodeId::new("episode"),
+                FiniteReferences::new(chunk, policy).unwrap(),
+                h.io.clone(),
+                20_000_000,
+                0,
+            )
+            .unwrap();
+        let result = finished(&handle);
+        assert_eq!(
+            result.result,
+            Some(Ok(Completion::Arrived)),
+            "costs={costs:?}, snapshot={result:#?}"
+        );
+        assert!(result.elapsed_ns.unwrap() <= 4_000_000_000);
+        assert!(result.curve_progress.unwrap().endpoint_acknowledged);
+        let writes = h.io.writes.lock();
+        assert_eq!(writes.last().unwrap().2, 0.01);
+        for pair in writes.windows(2) {
+            assert!(pair[1].0 - pair[0].0 >= 20_000_000);
+            assert!(pair[1].2 - pair[0].2 <= 0.01 * (pair[1].0 - pair[0].0) as f64 / 1e9 + 1e-12);
+        }
+    }
+}
+
+fn jitter_curve() -> FiniteReferences {
+    let (mut chunk, mut policy) = reference_inputs(None, false, None);
+    chunk.horizon_ns = 200_000_000;
+    chunk.steps.truncate(2);
+    chunk.steps[1].offset_ns = chunk.horizon_ns;
+    chunk.steps[1].values[0] = 0.01;
+    policy.timeout_ns = Some(1_000_000_000);
+    policy.paced_curve = Some(crate::playback::PacedCurve {
+        times_s: vec![0.0, 0.2],
+        positions: vec![vec![0.0], vec![0.01]],
+        coefficients: vec![[0.0, 0.0, 0.0, 0.1, -0.15, 0.06].map(|q| vec![q]).into()],
+        period_ns: 20_000_000,
+        position_error: vec![0.04],
+        tracking_tolerance: vec![0.05],
+        sample_times_s: None,
+    });
+    FiniteReferences::new(chunk, policy).unwrap()
+}
+
+#[test]
+fn read_jitter_does_not_add_an_extra_read_to_each_curve_tick() {
+    std::thread::Builder::new()
+        .name("waddle-verbs".into())
+        .spawn(|| {
+            let h = Harness::new();
+            *h.io.observation_costs.lock() = [8_000_000, 7_900_000].into();
+            let references = jitter_curve();
+            let handle = h
+                .dispatch
+                .playback
+                .register(
+                    EpisodeId::new("episode"),
+                    None,
+                    references.len(),
+                    &Default::default(),
+                    || false,
+                )
+                .unwrap();
+            let mut task = ExecutionTask::new(
+                h.mirror.clone(),
+                EpisodeId::new("episode"),
+                references,
+                h.io.clone(),
+                &handle,
+                20_000_000,
+                0,
+            );
+            let result = loop {
+                // Only callbacks and this scheduler advance time. The 1 ms gate
+                // callback stays inside a 2 ms dispatch allowance; a duplicate
+                // 8 ms feedback read cannot hide inside that allowance.
+                h.io.clock.0.advance(100_000);
+                if let Some(result) = task.tick(&h.io.clock.0) {
+                    break result;
+                }
+                assert!(h.io.clock.0.now().0 < 1_100_000_000);
+            };
+            task.finish(result.clone());
+            assert_eq!(result, Ok(Completion::Arrived));
+            let writes = h.io.writes.lock();
+            assert!(writes.len() >= 10);
+            let intervals: Vec<_> = writes.windows(2).map(|w| w[1].0 - w[0].0).collect();
+            assert!(
+                intervals
+                    .iter()
+                    .all(|dt| (20_000_000..=22_000_000).contains(dt)),
+                "{intervals:?}"
+            );
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
+fn short_curve_wait_keeps_stop_deadline_and_feedback_freshness() {
+    std::thread::Builder::new()
+        .name("waddle-verbs".into())
+        .spawn(|| {
+            for action in ["cancel", "deadline", "stale", "owner"] {
+                let h = Harness::new();
+                *h.io.observation_costs.lock() = [8_000_000, 7_900_000].into();
+                let references = jitter_curve();
+                let handle = h
+                    .dispatch
+                    .playback
+                    .register(
+                        EpisodeId::new("episode"),
+                        None,
+                        references.len(),
+                        &Default::default(),
+                        || false,
+                    )
+                    .unwrap();
+                let mut task = ExecutionTask::new(
+                    h.mirror.clone(),
+                    EpisodeId::new("episode"),
+                    references,
+                    h.io.clone(),
+                    &handle,
+                    20_000_000,
+                    0,
+                );
+                assert_eq!(task.tick(&h.io.clock.0), None);
+                let first = handle.snapshot().feedback.unwrap().observed_ns;
+                while handle.snapshot().feedback.unwrap().observed_ns == first {
+                    h.io.clock.0.advance(100_000);
+                    assert_eq!(task.tick(&h.io.clock.0), None);
+                }
+                // Fresh feedback arrived just before the second write's due
+                // time. No later control event may be bypassed by that sample.
+                assert_eq!(h.io.writes.lock().len(), 1);
+                let expected = match action {
+                    "cancel" => {
+                        handle.cancel("stop during cadence wait");
+                        ExecutionFailure::Playback(PlaybackError::Cancelled(
+                            "stop during cadence wait".into(),
+                        ))
+                    }
+                    "deadline" => {
+                        h.io.clock.0.advance(1_000_000_000);
+                        ExecutionFailure::Playback(PlaybackError::Deadline)
+                    }
+                    "stale" => {
+                        h.io.clock.0.advance(21_000_000);
+                        *h.io.q.lock() = 0.2;
+                        ExecutionFailure::Playback(PlaybackError::Tracking)
+                    }
+                    "owner" => {
+                        h.mirror.update(|s| s.shutdown = true);
+                        ExecutionFailure::Superseded("episode ended".into())
+                    }
+                    _ => unreachable!(),
+                };
+                let result = task.tick(&h.io.clock.0);
+                assert_eq!(result, Some(Err(expected)), "{action}");
+                assert_eq!(h.io.writes.lock().len(), 1);
+                task.finish(result.unwrap());
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
+fn deadline_expiring_during_feedback_prevents_the_next_write() {
+    let h = Harness::new();
+    let (write_pause, writing, written) = pause();
+    *h.io.dispatch_pause.lock() = Some(write_pause);
+    let handle = h.start().unwrap();
+    writing.recv_timeout(Duration::from_secs(5)).unwrap();
+    let (read_pause, reading, read) = pause();
+    *h.io.observation_pause.lock() = Some(read_pause);
+    written.send(()).unwrap();
+    reading.recv_timeout(Duration::from_secs(5)).unwrap();
+    // The first acknowledged command has activated the original 500 ms budget.
+    // A later completed read cannot admit a command past that deadline.
+    h.io.clock.0.advance(1_000_000_000);
+    read.send(()).unwrap();
+    let result = finished(&handle);
+    assert_eq!(
+        result.result,
+        Some(Err(ExecutionFailure::Playback(PlaybackError::Deadline)))
+    );
+    assert_eq!(h.io.writes.lock().len(), 1);
+    assert_eq!(result.cleanup.unwrap().result, Ok(()));
     assert_eq!(h.outcome().verb, Verb::Hold);
 }
 
@@ -945,6 +1194,7 @@ fn delayed_cancelled_admission_cannot_override_completed_control_takeover() {
                 EpisodeId::new("episode"),
                 Some(vec!["left".into()]),
                 references.len(),
+                &Default::default(),
                 || false,
             )
             .unwrap();
@@ -987,6 +1237,7 @@ fn caller_cancellation_before_worker_admission_still_gets_owner_cleanup() {
                 EpisodeId::new("episode"),
                 Some(vec!["left".into()]),
                 references.len(),
+                &Default::default(),
                 || false,
             )
             .unwrap();
@@ -1135,6 +1386,7 @@ fn watchdog_task(h: &Harness) -> (ExecutionTask, ExecutionHandle) {
             EpisodeId::new("episode"),
             Some(vec!["left".into()]),
             references.len(),
+            &Default::default(),
             || false,
         )
         .unwrap();
@@ -1148,6 +1400,98 @@ fn watchdog_task(h: &Harness) -> (ExecutionTask, ExecutionHandle) {
         0,
     );
     (task, handle)
+}
+
+#[test]
+fn slow_curve_samples_feedback_without_accelerating_writes_or_renewing_input() {
+    std::thread::Builder::new()
+        .name("waddle-verbs".into())
+        .spawn(|| {
+            let h = Harness::new();
+            let (mut chunk, mut policy) = reference_inputs(
+                Some("left"),
+                false,
+                Some(crate::playback::PlaybackWatchdog {
+                    observed_ns: 0,
+                    timeout_ns: 100_000_000,
+                }),
+            );
+            for (index, step) in chunk.steps.iter_mut().enumerate() {
+                step.offset_ns = index as i64 * 500_000_000;
+            }
+            chunk.horizon_ns = 1_000_000_000;
+            policy.timeout_ns = None;
+            policy.reference_only = true;
+            policy.allow_curve_updates = true;
+            policy.paced_curve = Some(crate::playback::PacedCurve {
+                times_s: vec![0.0, 0.5, 1.0],
+                positions: vec![vec![0.0], vec![0.1], vec![0.2]],
+                coefficients: vec![
+                    [0.0, 0.0, 0.0, 1.0, -1.5, 0.6].map(|x| vec![x]).into(),
+                    [0.1, 0.0, 0.0, 1.0, -1.5, 0.6].map(|x| vec![x]).into(),
+                ],
+                period_ns: 500_000_000,
+                position_error: vec![0.2],
+                tracking_tolerance: vec![0.2],
+                sample_times_s: None,
+            });
+            let references = FiniteReferences::new(chunk, policy).unwrap();
+            let handle = h
+                .dispatch
+                .playback
+                .register(
+                    EpisodeId::new("episode"),
+                    Some(vec!["left".into()]),
+                    references.len(),
+                    &Default::default(),
+                    || false,
+                )
+                .unwrap();
+            let mut task = ExecutionTask::new(
+                h.mirror.clone(),
+                EpisodeId::new("episode"),
+                references,
+                h.io.clone(),
+                &handle,
+                500_000_000,
+                500_000_000,
+            );
+            assert_eq!(task.tick(&h.io.clock), None);
+            let first = handle.snapshot().feedback.unwrap().observed_ns;
+            while h.io.clock.0.now().0 < 600_000_000 {
+                // Only accepted input renews, using feedback already acquired
+                // by this worker. No caller timestamp or wall-clock race.
+                handle
+                    .refresh_watchdog(handle.snapshot().feedback.unwrap().observed_ns)
+                    .unwrap();
+                h.io.clock.0.advance(20_000_000);
+                assert_eq!(task.tick(&h.io.clock), None);
+            }
+            let snapshot = handle.snapshot();
+            assert!(snapshot.feedback.unwrap().observed_ns > first);
+            let writes = h.io.writes.lock();
+            assert_eq!(writes.len(), 2);
+            assert!(writes[1].0 - writes[0].0 >= 500_000_000);
+            drop(writes);
+            // Continuing local sampling/status reads cannot renew input.
+            let deadline = snapshot.watchdog.unwrap().deadline_ns();
+            let result = loop {
+                h.io.clock.0.advance(10_000_000);
+                if let Some(result) = task.tick(&h.io.clock) {
+                    break result;
+                }
+                assert!(h.io.clock.0.now().0 <= deadline);
+            };
+            assert_eq!(
+                result,
+                Err(ExecutionFailure::Playback(PlaybackError::WatchdogExpired))
+            );
+            assert_eq!(h.io.writes.lock().len(), 2);
+            task.finish(result);
+        })
+        .unwrap()
+        .join()
+        .unwrap();
 }
 
 #[test]

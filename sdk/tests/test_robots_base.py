@@ -830,8 +830,10 @@ def test_every_arm_gets_the_stop_even_when_one_of_them_raises():
         "left": _arm(_Refuses(), part="left"),
         "right": _arm(_CountingDriver(), part="right"),
     }
-    with pytest.raises(RuntimeError, match="left"):
+    with pytest.raises(base.RuntimeFault, match="bus timeout") as caught:
         base.estop_all(arms, report=lambda line: None)
+    assert caught.value.context == {"part": "left"}
+    assert caught.value.causes[0].context["error_type"] == "builtins.RuntimeError"
 
     assert base.latched_parts(arms) == ["right"]
     assert arms["left"].estopped is False

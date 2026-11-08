@@ -139,6 +139,9 @@ pub struct GripperEvidence {
     pub commanded_shortfall_m: Option<f64>,
     pub window_ns: i64,
     pub drift_m: f64,
+    pub sample_count: usize,
+    pub stationary_samples: usize,
+    pub contact_compatible: bool,
     pub force_target_n: Option<f64>,
     pub force_samples: usize,
     pub arrival_samples: usize,
@@ -148,7 +151,7 @@ pub struct GripperEvidence {
 pub(super) struct GripperState {
     pub last_command: Option<f64>,
     pub nominal_complete: bool,
-    samples: VecDeque<(i64, f64)>,
+    samples: VecDeque<(i64, f64, bool)>,
     force_samples: usize,
     arrival_samples: usize,
     pub evidence: Option<GripperEvidence>,
@@ -217,7 +220,8 @@ impl GripperState {
         let mut drift = 0.0;
         if let Some(contact) = &spec.contact {
             if fresh && commanded.is_some() {
-                self.samples.push_back((measured.observed_ns, opening));
+                self.samples
+                    .push_back((measured.observed_ns, opening, stationary));
                 while self.samples.len() > 2
                     && self.samples[1].0 <= measured.observed_ns - contact.window_ns
                 {
@@ -269,6 +273,9 @@ impl GripperState {
             commanded_shortfall_m: demand,
             window_ns: span,
             drift_m: drift,
+            sample_count: self.samples.len(),
+            stationary_samples: self.samples.iter().filter(|row| row.2).count(),
+            contact_compatible: spec.contact.is_some() && tracking_exempt,
             force_target_n: spec.force.as_ref().map(|f| f.target_n),
             force_samples: self.force_samples,
             arrival_samples: self.arrival_samples,

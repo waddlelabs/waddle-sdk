@@ -11,6 +11,13 @@ playback local without providing a listener or login. See the
 [device relay contract](../docs/python/device-relay.md) for integration,
 confined file operations and current platform limits.
 
+Finite playback can decide measured completion locally against an original joint
+goal or the SDK owner's TCP pose (`execution.goal_playback`, binding API 31).
+Tolerance and settling use local measurements and time; the caller receives a
+retained terminal result even if it does not poll during execution. Pose goals
+require `execution.cartesian_goal_playback` and the declared base frame.
+See the [finite playback contract](../docs/core/finite-reference-playback.md).
+
 ## Site lifecycle
 
 ```python
@@ -688,3 +695,38 @@ and a conversion source. These are actuator-effort estimates: friction,
 transmission loss and transient inertia require separate physical calibration
 before claiming accurate object contact force. No load-cell calibration or
 physical force acceptance is established by software or native simulation tests.
+
+Stop receipts retain structured callback failures in `evidence` when supplied.
+A queued `hold()` or `estop()` is distinct from a completed `stop()` receipt.
+Failed cleanup remains unknown; callback completion does not prove measured
+stationarity. Every declared part receives the stop even when a peer callback
+fails.
+
+## Hosted robot connection
+
+The SDK includes the hosted connector. In your chosen virtual environment, install
+`waddle-sdk[setup]` for the existing interactive workspace wizard, then run:
+
+```sh
+waddle-sdk connect setup --endpoint https://app.waddlelabs.ai --execution cloud
+waddle-sdk connect status --directory ~/workspaces/my-rig
+waddle-sdk connect start --directory ~/workspaces/my-rig
+```
+
+The endpoint defaults to `https://app.waddlelabs.ai`; use an explicit beta endpoint
+for testing. Setup opens `/activate` and prints a short pairing code. Sign in with
+Google, review the computer and workspace, and approve. No account secret needs
+to be copied. Hardware support is selected later by the workspace wizard.
+
+`waddle-sdk connect login` pairs separately (`--no-browser` works on headless
+machines). Device keys are saved with owner-only permissions in unique files under
+`~/.config/waddle/devices/` and expire after 30 days. Stop the connector before
+renewing with setup. `waddle-sdk connect logout --key-file PATH` revokes a device
+before deleting its key; `/activate` also lists and revokes devices. Revoking an
+active connection disconnects the robot: support the arm first.
+
+Existing account-key clients can still pass `--key-file PATH` explicitly. Cloud operation does not require application or Torch. Local planning still
+requires a separately authorized application installation. `--no-start` saves setup
+without enabling hardware. The legacy `connect --site …` gRPC command is retained.
+The separate `waddle-connect` distribution is a compatibility wrapper and must be
+released with a matching SDK; these source changes do not publish a new PyPI release.

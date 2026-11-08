@@ -14,19 +14,24 @@ mod curve;
 use curve::CurveCursor;
 pub use curve::{CurveProgress, CurveUpdate, PacedCurve};
 mod feedback;
+mod goal;
 use feedback::FeedbackState;
 pub use feedback::{
     FeedbackPolicy, HeldJointGroup, PositionWindow, SettlingEvidence, VelocityHints,
 };
+pub use goal::{GoalDwell, GoalDwellProgress, GoalTarget, GoalUpdate, PlaybackGoal, Pose};
 mod gripper;
+mod input;
 use gripper::GripperState;
 pub use gripper::{
     ContactCondition, ForceCondition, GripperEvidence, GripperPolicy, MeasuredForce,
 };
+pub use input::{PlaybackInput, PlaybackInputSnapshot};
 pub(crate) mod execution;
 pub use execution::{
     CurveUpdateReceipt, ExecutionFailure, ExecutionHandle, ExecutionResult, ExecutionSnapshot,
-    PlaybackCleanup, PlaybackIo, PlaybackIoError, ReferenceReceipt, WatchdogReceipt,
+    GoalUpdateReceipt, PlaybackCleanup, PlaybackDependency, PlaybackIo, PlaybackIoError,
+    PlaybackQueue, ReferenceReceipt, WatchdogReceipt,
 };
 
 /// Caller liveness measured on the existing session clock. Renewal is anchored
@@ -50,6 +55,9 @@ impl PlaybackWatchdog {
 pub struct PlaybackPolicy {
     pub indices: Vec<usize>,
     pub start_tolerance: Vec<f64>,
+    /// Optional measured starting vector, separate from the first command.
+    /// Uses the complete declared layout; `indices` selects checked coordinates.
+    pub expected_start: Option<Vec<f64>>,
     pub position_tolerance: Vec<f64>,
     pub stationary_velocity: Vec<f64>,
     pub settle_ns: i64,
@@ -58,15 +66,24 @@ pub struct PlaybackPolicy {
     pub max_lateness_ns: i64,
     /// None selects a watchdog-limited stream of finite, resting curves.
     pub timeout_ns: Option<i64>,
+    /// Optional original goal, independent of a corrected reference endpoint.
+    pub goal: Option<PlaybackGoal>,
+    /// Local allowance after the final reference acknowledgement.
+    pub settle_timeout_ns: Option<i64>,
+    /// Permit local goal completion in an acknowledged constant resting tail.
+    pub complete_in_resting_tail: bool,
     /// Permit a separately reported stationary miss, never an arrival claim.
     pub allow_settled: bool,
     /// Finish after all references are acknowledged and fresh feedback arrives.
     /// This reports dispatch completion, never measured arrival or stationarity.
     pub reference_only: bool,
+    /// Keep sampling the acknowledged endpoint until explicitly finished.
+    /// The finite deadline, owner reservation and failure cleanup still apply.
+    pub defer_reference_completion: bool,
     /// Retain the first fresh post-acknowledgement feedback at these offsets.
     /// These are evidence markers, not arrival conditions or authority changes.
     pub checkpoint_offsets_ns: Vec<i64>,
-    /// Permit revision-checked future suffixes on a reference-only paced curve.
+    /// Permit revision-checked future suffixes on a paced reference or goal curve.
     pub allow_curve_updates: bool,
     /// Credit only completed moving reference ticks; false keeps a wall deadline.
     pub credit_pacing_delay: bool,
@@ -90,6 +107,7 @@ pub struct Feedback {
     pub positions: Vec<f64>,
     pub velocities: Vec<f64>,
     pub gripper_force: Option<MeasuredForce>,
+    pub pose: Option<Pose>,
 }
 
 /// Measured evidence after an acknowledged reference crosses a requested offset.
@@ -132,6 +150,10 @@ pub enum PlaybackError {
     LateReference { index: usize, lateness_ns: i64 },
     #[error("finite reference deadline expired")]
     Deadline,
+    #[error("queued execution did not start before its admission deadline")]
+    StartExpired,
+    #[error("queued execution prerequisite did not succeed: {0}")]
+    DependencyFailed(String),
     #[error("finite playback watchdog expired")]
     WatchdogExpired,
     #[error("a reference has an unacknowledged dispatch; do not replay it")]
@@ -153,6 +175,7 @@ pub struct FiniteReferences {
     chunk: ActionChunk,
     policy: PlaybackPolicy,
     pub(crate) parts: Option<Vec<String>>,
+    pub(crate) queue: PlaybackQueue,
 }
 
 impl FiniteReferences {
@@ -164,12 +187,61 @@ impl FiniteReferences {
         self.policy.part_hold
     }
 
+    fn can_transit(&self) -> bool {
+        self.parts.as_ref().is_some_and(|parts| parts.len() == 1)
+            && self.policy.gripper.is_none()
+            && self.policy.timeout_ns.is_some()
+            && self
+                .policy
+                .paced_curve
+                .as_ref()
+                .is_none_or(|curve| curve.validate_stream_tail().is_ok())
+            && self
+                .chunk
+                .steps
+                .last()
+                .expect("validated references")
+                .velocity_feedforward
+                .as_ref()
+                .is_none_or(|velocity| self.policy.indices.iter().all(|i| velocity[*i] == 0.0))
+    }
+
     pub(crate) fn len(&self) -> usize {
         self.chunk.steps.len()
     }
 
     pub fn new(chunk: ActionChunk, policy: PlaybackPolicy) -> Result<Self, PlaybackError> {
         let invalid = PlaybackError::Invalid;
+        if let Some(goal) = &policy.goal {
+            goal.validate(&policy)?;
+        }
+        if policy.complete_in_resting_tail
+            && (policy.goal.is_none()
+                || !policy.allow_curve_updates
+                || policy.paced_curve.is_none())
+        {
+            return Err(invalid(
+                "resting-tail completion requires a revisable paced goal",
+            ));
+        }
+        if policy.settle_timeout_ns.is_some_and(|timeout| {
+            timeout <= 0 || policy.reference_only || policy.timeout_ns.is_none()
+        }) {
+            return Err(invalid(
+                "settling timeout requires finite measured completion",
+            ));
+        }
+        if policy.defer_reference_completion
+            && (!policy.reference_only
+                || policy.timeout_ns.is_none()
+                || policy.paced_curve.is_none()
+                || policy.allow_curve_updates
+                || policy.gripper.is_some())
+        {
+            return Err(invalid(
+                "deferred completion requires a finite, fixed reference-only curve",
+            ));
+        }
         if policy.watchdog.is_some_and(|w| {
             w.observed_ns < 0
                 || w.timeout_ns <= 0
@@ -179,7 +251,8 @@ impl FiniteReferences {
             return Err(invalid("watchdog requires bounded session-clock feedback"));
         }
         if policy.timeout_ns.is_none()
-            && (policy.watchdog.is_none()
+            && (!policy.reference_only
+                || policy.watchdog.is_none()
                 || !policy.allow_curve_updates
                 || policy.credit_pacing_delay)
         {
@@ -197,6 +270,13 @@ impl FiniteReferences {
         let width = first.values.len();
         if !(1..=128).contains(&width) || first.offset_ns != 0 {
             return Err(invalid("requires 1..=128 joints and a zero-offset start"));
+        }
+        if policy.expected_start.as_ref().is_some_and(|start| {
+            start.len() != width || start.iter().any(|value| !value.is_finite())
+        }) {
+            return Err(invalid(
+                "expected start requires the finite declared joint vector",
+            ));
         }
         let mut previous = -1;
         for step in &chunk.steps {
@@ -220,16 +300,18 @@ impl FiniteReferences {
             return Err(invalid("horizon must equal the final reference offset"));
         }
         if policy.credit_pacing_delay
-            && (!policy.reference_only || policy.paced_curve.is_none() || policy.gripper.is_some())
+            && ((!policy.reference_only && policy.goal.is_none() && !policy.allow_settled)
+                || policy.paced_curve.is_none()
+                || policy.gripper.is_some())
         {
             return Err(invalid(
-                "paced deadlines require reference-only polynomial playback",
+                "paced deadlines require reference, goal or settled polynomial playback",
             ));
         }
         if policy.allow_curve_updates
-            && (!policy.reference_only
+            && ((!policy.reference_only && policy.goal.is_none() && !policy.allow_settled)
                 || policy.gripper.is_some()
-                || !policy.checkpoint_offsets_ns.is_empty()
+                || (!policy.checkpoint_offsets_ns.is_empty() && policy.goal.is_none())
                 || policy
                     .paced_curve
                     .as_ref()
@@ -240,7 +322,7 @@ impl FiniteReferences {
                     .is_some_and(|f| f.velocity_hints == VelocityHints::TowardGoal))
         {
             return Err(invalid(
-                "curve updates require reference-only paced playback without checkpoint or goal-hint policies",
+                "curve updates require paced reference, goal or settled playback without goal hints",
             ));
         }
         if policy.checkpoint_offsets_ns.len() > 256
@@ -286,7 +368,10 @@ impl FiniteReferences {
                 return Err(invalid("requires positive per-joint tolerances"));
             }
         }
-        if policy.settle_ns <= 0
+        if policy.settle_ns < 0
+            || (policy.settle_ns == 0
+                && !policy.allow_settled
+                && policy.goal.as_ref().is_none_or(|goal| goal.dwell.is_none()))
             || !(1..=16_385).contains(&policy.minimum_settle_samples)
             || (policy.gripper.is_some() && policy.minimum_settle_samples != 1)
             || (policy.gripper.is_some() && policy.reference_only)
@@ -301,7 +386,8 @@ impl FiniteReferences {
         }
         if let Some(curve) = &policy.paced_curve {
             curve.validate(policy.indices.len())?;
-            if policy.timeout_ns.is_none() {
+            if policy.timeout_ns.is_none() || (policy.allow_curve_updates && !policy.reference_only)
+            {
                 curve.validate_stream_tail()?;
             }
             if (curve.duration_s() * 1e9 - chunk.horizon_ns as f64).abs() > 1.0 {
@@ -381,6 +467,7 @@ impl FiniteReferences {
         }
         Ok(Self {
             parts: first.part.as_ref().map(|part| vec![part.to_string()]),
+            queue: PlaybackQueue::default(),
             chunk,
             policy,
         })
@@ -416,9 +503,14 @@ pub struct Playback {
     observed_ns: Option<i64>,
     settled_since: Option<i64>,
     arrived_since: Option<i64>,
+    goal_dwell: GoalDwellProgress,
+    goal_revision: u64,
     settled_samples: usize,
+    settled_miss: bool,
     arrived_samples: usize,
     completion: Option<Completion>,
+    finish_requested: bool,
+    transit_permitted: bool,
     failure: Option<PlaybackError>,
     curve: Option<CurveCursor>,
     proposed: Option<Step>,
@@ -429,6 +521,29 @@ pub struct Playback {
 }
 
 impl Playback {
+    /// SDK observation-clock dwell evidence, independent of reference phase.
+    pub fn goal_dwell(&self) -> Option<&GoalDwellProgress> {
+        self.references.policy.goal.as_ref()?.dwell.as_ref()?;
+        Some(&self.goal_dwell)
+    }
+
+    /// End deferred observation only after the unchanged curve was acknowledged.
+    /// The next poll still validates fresh feedback, tracking and the deadline.
+    pub fn finish_references(&mut self) -> Result<(), PlaybackError> {
+        if !self.references.policy.defer_reference_completion
+            || self.failure.is_some()
+            || self
+                .curve
+                .as_ref()
+                .is_none_or(|c| !c.progress.endpoint_acknowledged)
+        {
+            return Err(PlaybackError::Invalid(
+                "reference endpoint is not ready to finish",
+            ));
+        }
+        self.finish_requested = true;
+        Ok(())
+    }
     /// Withdraw a future suffix without changing the incumbent or its deadline.
     /// An already dispatched handoff must be acknowledged, never retracted.
     pub fn withdraw_curve(&mut self, expected_revision: u64) -> Result<(), PlaybackError> {
@@ -451,6 +566,14 @@ impl Playback {
 
     /// Refusal leaves the incumbent intact; it is not a motion failure.
     pub fn update_curve(&mut self, update: CurveUpdate) -> Result<(), PlaybackError> {
+        self.update_curve_at(update, self.now_ns)
+    }
+
+    pub(crate) fn update_curve_at(
+        &mut self,
+        update: CurveUpdate,
+        now_ns: i64,
+    ) -> Result<(), PlaybackError> {
         if !self.references.policy.allow_curve_updates
             || self.completion.is_some()
             || self.failure.is_some()
@@ -462,6 +585,14 @@ impl Playback {
         if self.pending {
             return Err(PlaybackError::DispatchPending);
         }
+        if self.motion_deadline_reached(now_ns) || self.settling_deadline_reached(now_ns) {
+            return Err(PlaybackError::Deadline);
+        }
+        if self.checkpoints.len() != self.references.policy.checkpoint_offsets_ns.len() {
+            return Err(PlaybackError::Invalid(
+                "original checkpoints must be observed before replacing their curve",
+            ));
+        }
         self.curve
             .as_mut()
             .expect("validated revisable curve")
@@ -470,10 +601,14 @@ impl Playback {
 
     #[must_use]
     pub fn new(references: FiniteReferences, started_ns: i64) -> Self {
-        let curve =
-            references.policy.paced_curve.clone().map(|spec| {
-                CurveCursor::new(spec, started_ns, references.policy.timeout_ns.is_none())
-            });
+        let curve = references.policy.paced_curve.clone().map(|spec| {
+            CurveCursor::new(
+                spec,
+                started_ns,
+                references.policy.timeout_ns.is_none(),
+                references.policy.allow_curve_updates && !references.policy.reference_only,
+            )
+        });
         let feedback = FeedbackState::new(references.chunk.steps[0].values.len());
         Self {
             references,
@@ -485,9 +620,14 @@ impl Playback {
             observed_ns: None,
             settled_since: None,
             arrived_since: None,
+            goal_dwell: GoalDwellProgress::default(),
+            goal_revision: 0,
             settled_samples: 0,
+            settled_miss: false,
             arrived_samples: 0,
             completion: None,
+            finish_requested: false,
+            transit_permitted: false,
             failure: None,
             curve,
             proposed: None,
@@ -518,6 +658,13 @@ impl Playback {
     #[must_use]
     pub fn settling_evidence(&self) -> Option<SettlingEvidence> {
         self.feedback.evidence.clone()
+    }
+
+    /// Latest local sample completes settling outside the original goal.
+    /// This is progress for a planner, never a terminal result or permission.
+    #[must_use]
+    pub fn settled_miss(&self) -> bool {
+        self.settled_miss
     }
 
     #[must_use]
@@ -607,6 +754,41 @@ impl Playback {
         })
     }
 
+    fn references_finished(&self) -> bool {
+        self.curve
+            .as_ref()
+            .map_or(self.next == self.references.chunk.steps.len(), |curve| {
+                curve.progress.endpoint_acknowledged
+            })
+    }
+
+    fn completion_ready(&self) -> bool {
+        self.references_finished()
+            || (self.references.policy.complete_in_resting_tail
+                && self.checkpoints.len() == self.references.policy.checkpoint_offsets_ns.len()
+                && self
+                    .curve
+                    .as_ref()
+                    .is_some_and(|curve| curve.resting_tail_acknowledged()))
+    }
+
+    fn motion_deadline_reached(&self, now_ns: i64) -> bool {
+        self.timeout_ns()
+            .is_some_and(|timeout| now_ns.saturating_sub(self.started_ns) >= timeout)
+    }
+
+    fn settling_deadline_reached(&self, now_ns: i64) -> bool {
+        self.completion_ready()
+            && self
+                .references
+                .policy
+                .settle_timeout_ns
+                .is_some_and(|timeout| {
+                    self.acknowledged_ns
+                        .is_some_and(|at| now_ns.saturating_sub(at) >= timeout)
+                })
+    }
+
     pub fn cancel(&mut self, reason: &str) {
         if self.completion.is_none() && self.failure.is_none() {
             self.failure = Some(PlaybackError::Cancelled(reason.to_owned()));
@@ -629,6 +811,7 @@ impl Playback {
         if let Some(outcome) = self.completion {
             return Ok(PlaybackPoll::Complete(outcome));
         }
+        self.settled_miss = false;
         if self.pending {
             return self.fail(PlaybackError::DispatchPending);
         }
@@ -654,10 +837,7 @@ impl Playback {
             return self.fail(PlaybackError::InvalidFeedback);
         }
         self.now_ns = now_ns;
-        if self
-            .timeout_ns()
-            .is_some_and(|timeout| now_ns.saturating_sub(self.started_ns) >= timeout)
-        {
+        if self.motion_deadline_reached(now_ns) {
             return self.fail(PlaybackError::Deadline);
         }
         let fresh = self.observed_ns != Some(measured.observed_ns);
@@ -668,7 +848,11 @@ impl Playback {
         if self.next == 0
             && !within(
                 &measured.positions,
-                &self.references.chunk.steps[0].values,
+                self.references
+                    .policy
+                    .expected_start
+                    .as_deref()
+                    .unwrap_or(&self.references.chunk.steps[0].values),
                 &self.references.policy.start_tolerance,
                 &self.references.policy.indices,
             )
@@ -692,12 +876,13 @@ impl Playback {
         if fresh {
             self.record_checkpoints(measured);
         }
-        let finished = self
-            .curve
-            .as_ref()
-            .map_or(self.next == self.references.chunk.steps.len(), |curve| {
-                curve.progress.endpoint_acknowledged
-            });
+        let finished = self.completion_ready();
+        if !finished {
+            self.settled_since = None;
+            self.arrived_since = None;
+            self.settled_samples = 0;
+            self.arrived_samples = 0;
+        }
         let goal = &self
             .references
             .chunk
@@ -705,12 +890,42 @@ impl Playback {
             .last()
             .expect("validated buffer")
             .values;
-        let arrived = within(
-            &measured.positions,
-            goal,
-            &self.references.policy.position_tolerance,
-            &self.references.policy.indices,
+        let arrived = self.curve.as_ref().map_or_else(
+            || {
+                within(
+                    &measured.positions,
+                    goal,
+                    &self.references.policy.position_tolerance,
+                    &self.references.policy.indices,
+                )
+            },
+            |curve| {
+                self.references
+                    .policy
+                    .indices
+                    .iter()
+                    .zip(curve.endpoint())
+                    .zip(&self.references.policy.position_tolerance)
+                    .all(|((i, q), tolerance)| (measured.positions[*i] - q).abs() <= *tolerance)
+            },
         );
+        let mut nominal_goal = arrived;
+        let arrived = if let Some(goal) = &self.references.policy.goal {
+            match goal.score(measured, &self.references.policy) {
+                Ok(score) => {
+                    nominal_goal = score <= 1.0;
+                    goal.dwell.as_ref().map_or(nominal_goal, |spec| {
+                        self.goal_dwell.observe(spec, measured.observed_ns, score)
+                    })
+                }
+                Err(error) => return self.fail(error),
+            }
+        } else {
+            arrived
+        };
+        if self.settling_deadline_reached(now_ns) {
+            return self.fail(PlaybackError::Deadline);
+        }
         let after_ack = self
             .acknowledged_ns
             .is_some_and(|at| measured.observed_ns > at);
@@ -724,22 +939,44 @@ impl Playback {
             Ok(outcome) => outcome,
             Err(error) => return self.fail(error),
         };
+        if self.transit_permitted
+            && !self.references.policy.reference_only
+            && self.references.can_transit()
+            && self.references_finished()
+            && fresh
+            && after_ack
+            && (nominal_goal
+                || (self.references.policy.goal.is_none() && self.references.policy.allow_settled))
+        {
+            self.completion = Some(Completion::ReferencesDispatched);
+            return Ok(PlaybackPoll::Complete(Completion::ReferencesDispatched));
+        }
         if self.references.policy.reference_only {
-            if finished && after_ack && fresh && self.references.policy.timeout_ns.is_some() {
+            if finished
+                && after_ack
+                && fresh
+                && self.references.policy.timeout_ns.is_some()
+                && (!self.references.policy.defer_reference_completion || self.finish_requested)
+            {
                 self.completion = Some(Completion::ReferencesDispatched);
                 return Ok(PlaybackPoll::Complete(Completion::ReferencesDispatched));
             }
             if finished {
                 return Ok(PlaybackPoll::Observe);
             }
-        } else if let Some(outcome) = window_completion {
-            self.completion = Some(outcome);
-            return Ok(PlaybackPoll::Complete(outcome));
+        } else if let Some(outcome) = window_completion.filter(|_| !nominal_goal || arrived) {
+            self.settled_miss = outcome == Completion::Settled
+                && self.references.policy.goal.is_some()
+                && !nominal_goal;
+            if outcome != Completion::Settled || self.references.policy.allow_settled {
+                self.completion = Some(outcome);
+                return Ok(PlaybackPoll::Complete(outcome));
+            }
         }
         if let Some(curve) = self
             .curve
             .as_mut()
-            .filter(|c| !c.progress.endpoint_acknowledged)
+            .filter(|c| !c.progress.endpoint_acknowledged && !finished)
         {
             let due = self.dispatched_ns.map_or(self.started_ns, |at| {
                 at.saturating_add(curve.spec.period_ns)
@@ -834,19 +1071,11 @@ impl Playback {
             .iter()
             .zip(&self.references.policy.stationary_velocity)
             .all(|(i, limit)| measured.velocities[*i].abs() <= *limit);
-        let arrived = within(
-            &measured.positions,
-            &self
-                .references
-                .chunk
-                .steps
-                .last()
-                .expect("validated nonempty buffer")
-                .values,
-            &self.references.policy.position_tolerance,
-            &self.references.policy.indices,
-        );
-        if !stationary || (!arrived && !self.references.policy.allow_settled) {
+        if !stationary
+            || (!arrived
+                && !self.references.policy.allow_settled
+                && self.references.policy.goal.is_none())
+        {
             self.settled_since = None;
             self.arrived_since = None;
             self.settled_samples = 0;
@@ -867,15 +1096,31 @@ impl Playback {
         {
             return Ok(PlaybackPoll::Observe);
         }
-        let outcome = if self
-            .arrived_since
-            .is_some_and(|since| measured.observed_ns - since >= self.references.policy.settle_ns)
-            && self.arrived_samples >= self.references.policy.minimum_settle_samples
-        {
+        let independent_dwell = self
+            .references
+            .policy
+            .goal
+            .as_ref()
+            .is_some_and(|goal| goal.dwell.is_some());
+        let arrived_stable = arrived
+            && (independent_dwell
+                || (self.arrived_since.is_some_and(|since| {
+                    measured.observed_ns - since >= self.references.policy.settle_ns
+                }) && self.arrived_samples >= self.references.policy.minimum_settle_samples));
+        if self.references.policy.goal.is_some() && nominal_goal && !arrived_stable {
+            return Ok(PlaybackPoll::Observe);
+        }
+        let outcome = if arrived_stable {
             Completion::Arrived
         } else {
             Completion::Settled
         };
+        self.settled_miss = outcome == Completion::Settled
+            && self.references.policy.goal.is_some()
+            && !nominal_goal;
+        if outcome == Completion::Settled && !self.references.policy.allow_settled {
+            return Ok(PlaybackPoll::Observe);
+        }
         self.completion = Some(outcome);
         Ok(PlaybackPoll::Complete(outcome))
     }

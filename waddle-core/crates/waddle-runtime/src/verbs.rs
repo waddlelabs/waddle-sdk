@@ -20,7 +20,7 @@ use waddle_types::{ActionChunk, EpisodeId, Verb, VerbRequest};
 use crate::mirror::Mirror;
 use crate::playback::execution::{ExecutionSlot, ExecutionTask};
 use crate::playback::{
-    ExecutionFailure, ExecutionHandle, FiniteReferences, PlaybackError, PlaybackIo,
+    ExecutionFailure, ExecutionHandle, FiniteReferences, PlaybackError, PlaybackInput, PlaybackIo,
 };
 
 enum Work {
@@ -34,8 +34,21 @@ pub enum VerbError {
     NotRegistered(Verb),
     #[error("verb callable failed: {0}")]
     Failed(String),
+    #[error("verb callable failed: {detail}")]
+    FailedWithEvidence { detail: String, evidence: String },
     #[error("verb callable panicked")]
     Panicked,
+}
+
+impl VerbError {
+    /// Opaque caller diagnostics, retained without interpreting their schema.
+    #[must_use]
+    pub fn evidence(&self) -> Option<&str> {
+        match self {
+            Self::FailedWithEvidence { evidence, .. } => Some(evidence),
+            _ => None,
+        }
+    }
 }
 
 /// The integrator's `send` callable for one canonical space.
@@ -292,6 +305,28 @@ impl VerbDispatch {
         rx
     }
 
+    fn playback_unavailable(&self) -> bool {
+        self.shutdown.load(Ordering::SeqCst)
+            || self.pending_verbs.load(Ordering::SeqCst) != 0
+            || self.estop_flag.pending()
+            || self.priority_hold_flag.pending()
+    }
+
+    pub(crate) fn start_playback_input(
+        &self,
+        episode: EpisodeId,
+        clock: Arc<dyn Clock>,
+        timeout_ns: i64,
+    ) -> Result<PlaybackInput, PlaybackError> {
+        if !self.playback_available {
+            return Err(PlaybackError::Invalid(
+                "requires a registered Hold callback",
+            ));
+        }
+        self.playback
+            .start_input(episode, clock, timeout_ns, || self.playback_unavailable())
+    }
+
     pub(crate) fn start_playback(
         &self,
         mirror: Arc<Mirror>,
@@ -315,12 +350,8 @@ impl VerbDispatch {
             episode.clone(),
             references.scope().map(<[String]>::to_vec),
             references.len(),
-            || {
-                self.shutdown.load(Ordering::SeqCst)
-                    || self.pending_verbs.load(Ordering::SeqCst) != 0
-                    || self.estop_flag.pending()
-                    || self.priority_hold_flag.pending()
-            },
+            &references.queue,
+            || self.playback_unavailable(),
         )?;
         let task = ExecutionTask::new(
             mirror,
@@ -479,6 +510,7 @@ fn dispatch_loop<C: Clock>(
                     .as_ref()
                     .is_err_and(|e| !matches!(e, ExecutionFailure::Superseded(_)))
                     && !task.scope_ended()
+                    && !task.waiting_to_start()
                 {
                     if task.hold_part(clock) {
                         // A site-wide request may arrive during the owner callback.

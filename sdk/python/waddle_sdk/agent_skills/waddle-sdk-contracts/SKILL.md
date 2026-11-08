@@ -43,3 +43,8 @@ Queue-only control acknowledgements and physical stationarity are separate.
 reference-only playback. Bind `settling.observed_ns` to the matching feedback;
 window statistics do not change `references_dispatched` into arrival. See the
 finite-reference-playback guide for eligibility, sample, drift and gap bounds.
+
+`execution.deferred_reference_completion` keeps local sampling and ownership
+after a fixed finite curve ends. `finish_references()` only queues completion;
+require the terminal snapshot and its fresh diagnostics. Deadlines and stop
+cleanup remain active. See the same guide; never infer application goal success.

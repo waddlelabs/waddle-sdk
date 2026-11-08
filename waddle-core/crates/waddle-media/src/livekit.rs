@@ -781,6 +781,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::disallowed_methods)] // wall-clock liveness bound, never a sample stamp
     fn disconnected_preview_does_not_delay_session_or_shutdown() {
         let started = std::time::Instant::now();
         let mut config = LiveKitConfig::new("ws://127.0.0.1:1".into(), "scoped-test".into());
@@ -800,6 +801,7 @@ mod tests {
 
     #[test]
     #[ignore = "requires isolated LiveKit publisher/viewer grants"]
+    #[allow(clippy::disallowed_methods)] // wall-clock test deadline, never a sample stamp
     fn preview_demand_follows_real_room_presence() {
         let url = std::env::var("WADDLE_TEST_LIVEKIT_URL").expect("test SFU URL");
         let publisher =

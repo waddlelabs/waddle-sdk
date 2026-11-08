@@ -65,6 +65,7 @@ mod session_execution {
                 positions: self.positions.clone(),
                 velocities: vec![0.0; self.positions.len()],
                 gripper_force: None,
+                pose: None,
             })
         }
         fn dispatch(
@@ -129,6 +130,81 @@ mod session_execution {
                 .unwrap_err(),
             PlaybackError::Cancelled("episode ended".into())
         );
+        session.shutdown();
+    }
+
+    #[test]
+    fn session_binds_input_without_a_second_watchdog_and_fences_it_on_close() {
+        use waddle_runtime::playback::PlaybackQueue;
+
+        let dir = tempfile::tempdir().unwrap();
+        let session = Session::builder("playback-input")
+            .robot(robot())
+            .control(ControlRegistry {
+                send: Some(Arc::new(|_: &ActionChunk| Ok(()))),
+                hold: Some(Arc::new(|| Ok(()))),
+                ..Default::default()
+            })
+            .recording_dir(dir.path())
+            .build()
+            .unwrap();
+        let ep = session.start_episode("input binding").unwrap();
+        // Timing/expiry is covered with FakeClock in input_tests. This test
+        // checks the real Session adapter and synchronizes owner I/O explicitly.
+        let input_watchdog = session
+            .start_playback_input(ep.id(), 30_000_000_000)
+            .unwrap();
+        let unused_input = session
+            .start_playback_input(ep.id(), 30_000_000_000)
+            .unwrap();
+        let mut policy = policy();
+        policy.timeout_ns = Some(30_000_000_000);
+        policy.watchdog = Some(input_watchdog.snapshot().watchdog);
+        let (observe_tx, observe_rx) = mpsc::channel();
+        let (release_observe, wait_observe) = mpsc::channel();
+        let io = Arc::new(NoDispatch {
+            session: session.clone(),
+            observe: Mutex::new(Some((observe_tx, wait_observe))),
+            positions: vec![0.0, 0.5],
+        });
+        let queue = PlaybackQueue {
+            input: Some(input_watchdog.clone()),
+            ..Default::default()
+        };
+        assert!(matches!(
+            session.start_queued_playback(
+                ep.id(),
+                &input(),
+                policy.clone(),
+                io.clone(),
+                None,
+                queue.clone(),
+            ),
+            Err(PlaybackError::Invalid(_))
+        ));
+        policy.watchdog = None;
+        let handle = session
+            .start_queued_playback(ep.id(), &input(), policy, io, None, queue)
+            .unwrap();
+        observe_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        input_watchdog.release("released");
+        release_observe.send(()).unwrap();
+        let outcome = handle.wait();
+        assert_eq!(outcome.dispatched, 0);
+        assert!(matches!(
+            outcome.result,
+            Some(Err(ExecutionFailure::Playback(PlaybackError::Cancelled(_))))
+        ));
+        assert!(outcome.cleanup.unwrap().result.is_ok());
+        session.terminate_episode(ep.id(), TerminalOutcome::Abort, "test done");
+        assert!(matches!(
+            unused_input.refresh(1),
+            Err(PlaybackError::Cancelled(_))
+        ));
+        assert!(matches!(
+            session.start_playback_input(ep.id(), 250_000_000),
+            Err(PlaybackError::Cancelled(_))
+        ));
         session.shutdown();
     }
 
@@ -352,6 +428,7 @@ fn policy() -> PlaybackPolicy {
     PlaybackPolicy {
         indices: vec![0, 1],
         start_tolerance: vec![0.01, 0.01],
+        expected_start: None,
         position_tolerance: vec![0.005, 0.005],
         stationary_velocity: vec![0.01, 0.01],
         settle_ns: 20_000_000,
@@ -360,6 +437,10 @@ fn policy() -> PlaybackPolicy {
         timeout_ns: Some(200_000_000),
         allow_settled: false,
         reference_only: false,
+        defer_reference_completion: false,
+        goal: None,
+        settle_timeout_ns: None,
+        complete_in_resting_tail: false,
         checkpoint_offsets_ns: vec![],
         allow_curve_updates: false,
         credit_pacing_delay: false,
@@ -381,6 +462,7 @@ fn feedback(at: i64, q: f64) -> Feedback {
         positions: vec![q, 0.5],
         velocities: vec![0.0, 0.0],
         gripper_force: None,
+        pose: None,
     }
 }
 
@@ -762,4 +844,34 @@ fn whole_site_references_cannot_select_part_hold() {
         FiniteReferences::new(whole_site, policy),
         Err(PlaybackError::Invalid(_))
     ));
+}
+
+#[test]
+fn distinct_measured_start_preserves_tolerance_and_first_command() {
+    for measured in [-0.02, -0.005, -0.035] {
+        let mut selected = policy();
+        selected.expected_start = Some(vec![-0.02, 0.5]);
+        let references = FiniteReferences::new(chunk(), selected).unwrap();
+        let mut player = Playback::new(references, 0);
+        if measured == -0.02 {
+            // Admission uses the measured anchor; dispatch still uses the exact
+            // first command from the original checked buffer.
+            dispatch(&mut player, 0, measured, 0);
+            assert_eq!(player.reference(0).unwrap().values.as_slice(), &[0.0, 0.5]);
+        } else {
+            assert_eq!(
+                player.poll(0, &feedback(0, measured)),
+                Err(PlaybackError::StaleStart)
+            );
+        }
+    }
+}
+
+#[test]
+fn distinct_measured_start_requires_finite_complete_layout() {
+    for anchor in [vec![], vec![0.0], vec![0.0; 3], vec![f64::NAN, 0.0]] {
+        let mut selected = policy();
+        selected.expected_start = Some(anchor);
+        assert!(FiniteReferences::new(chunk(), selected).is_err());
+    }
 }

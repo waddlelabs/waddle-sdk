@@ -1,8 +1,7 @@
 //! Finite local execution on the existing serialized control thread.
 
-use std::collections::HashMap;
 use std::panic::AssertUnwindSafe;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use parking_lot::{Condvar, Mutex};
@@ -11,7 +10,8 @@ use waddle_types::{EpisodeId, MonoNs, Step, Verb};
 
 use super::{
     CheckpointEvidence, Completion, CurveProgress, CurveUpdate, Feedback, FiniteReferences,
-    GripperEvidence, Playback, PlaybackError, PlaybackPoll, PlaybackWatchdog, SettlingEvidence,
+    GoalDwellProgress, GoalTarget, GoalUpdate, GripperEvidence, Playback, PlaybackError,
+    PlaybackInput, PlaybackPoll, PlaybackWatchdog, SettlingEvidence,
 };
 use crate::mirror::Mirror;
 use crate::verbs::VerbOutcome;
@@ -99,7 +99,7 @@ impl From<&VerbOutcome> for PlaybackCleanup {
                 .copied()
                 .map_err(|error| PlaybackIoError {
                     detail: error.to_string(),
-                    evidence: String::new(),
+                    evidence: error.evidence().unwrap_or_default().to_owned(),
                     outcome_unknown: true,
                 }),
             latency_ns: outcome.latency_ns,
@@ -126,6 +126,14 @@ pub struct WatchdogReceipt {
     pub result: Option<Result<i64, PlaybackError>>,
 }
 
+/// One queued target and its worker-accepted revision, or refusal.
+#[derive(Clone, Debug)]
+pub struct GoalUpdateReceipt {
+    pub request_id: u64,
+    pub update: GoalUpdate,
+    pub result: Option<Result<u64, PlaybackError>>,
+}
+
 /// An execution snapshot. A terminal result means the reference loop has ended;
 /// it is not proof that a requested safety verb physically stopped the device.
 #[derive(Clone, Debug)]
@@ -134,6 +142,12 @@ pub struct ExecutionSnapshot {
     pub episode_id: EpisodeId,
     pub dispatched: usize,
     pub references: usize,
+    /// Dependencies still awaiting an accepted outcome; empty after activation.
+    pub waiting_for: Vec<String>,
+    /// Admitted successor that permitted reference crossing without intermediate settling.
+    pub transit_successor: Option<String>,
+    /// Local time from activation to the retained feedback sample; absent before activation.
+    pub elapsed_ns: Option<i64>,
     pub feedback: Option<Feedback>,
     /// Last acknowledged reference before acquiring `feedback`. Later dispatches
     /// may advance `last_reference` without changing this causal pair.
@@ -143,6 +157,12 @@ pub struct ExecutionSnapshot {
     pub watchdog: Option<PlaybackWatchdog>,
     pub watchdog_refresh: Option<WatchdogReceipt>,
     pub settling: Option<SettlingEvidence>,
+    /// Local settling completed outside the original goal on this feedback sample.
+    pub settled_miss: bool,
+    pub goal_dwell: Option<GoalDwellProgress>,
+    /// Accepted pose paired with retained feedback; absent before first sample.
+    pub goal_target: Option<GoalTarget>,
+    pub goal_update: Option<GoalUpdateReceipt>,
     pub gripper: Option<GripperEvidence>,
     pub checkpoints: Vec<CheckpointEvidence>,
     pub last_reference: Option<Step>,
@@ -161,6 +181,10 @@ struct State {
     cancelled: Option<String>,
     cancelled_by_control: bool,
     curve_update: Option<CurveRequest>,
+    deferred_completion: bool,
+    finish_requested: bool,
+    predecessors: Vec<Arc<Control>>,
+    transit_successor: Option<Weak<Control>>,
 }
 
 #[derive(Debug)]
@@ -174,6 +198,10 @@ enum CurveRequest {
 
 #[derive(Debug)]
 struct Control {
+    registry: Arc<()>,
+    scope: Option<Vec<String>>,
+    start_before_ns: Option<i64>,
+    input: Option<PlaybackInput>,
     state: Mutex<State>,
     changed: Condvar,
 }
@@ -195,8 +223,41 @@ impl Control {
             if state.cancelled.is_some() && result.is_ok() {
                 return false;
             }
+            if !matches!(result, Ok(Completion::ReferencesDispatched)) {
+                state.snapshot.transit_successor = None;
+            }
+            // Replacing one checked buffer does not release its live press.
+            // Only an individual cancellation with completed scoped Hold may
+            // retain input; faults, failed cleanup and global Stop still fence it.
+            let scoped_cancel = matches!(
+                result,
+                Err(ExecutionFailure::Playback(PlaybackError::Cancelled(_)))
+            ) && state.cancelled.is_some()
+                && !state.cancelled_by_control
+                && state
+                    .snapshot
+                    .cleanup
+                    .as_ref()
+                    .is_some_and(|cleanup| cleanup.part.is_some() && cleanup.result.is_ok());
             state.snapshot.result = Some(result);
+            if state.snapshot.result.as_ref().is_some_and(Result::is_err)
+                && !scoped_cancel
+                && let Some(input) = &self.input
+            {
+                input.release("input execution failed");
+            }
+            state.predecessors.clear();
             state.curve_update = None;
+            if let Some(receipt) = state
+                .snapshot
+                .goal_update
+                .as_mut()
+                .filter(|r| r.result.is_none())
+            {
+                receipt.result = Some(Err(PlaybackError::Cancelled(
+                    "execution ended before goal update".into(),
+                )));
+            }
             if let Some(receipt) = state
                 .snapshot
                 .watchdog_refresh
@@ -229,6 +290,24 @@ pub struct ExecutionHandle {
     control: Arc<Control>,
 }
 
+/// A retained execution in this same SDK run and its explicitly accepted outcomes.
+#[derive(Clone, Debug)]
+pub struct PlaybackDependency {
+    pub handle: ExecutionHandle,
+    pub outcomes: Vec<Completion>,
+}
+
+/// Queued admission on the existing worker. Motion timing begins at activation;
+/// an optional session-clock deadline bounds how long the plan may wait to start.
+#[derive(Clone, Debug, Default)]
+pub struct PlaybackQueue {
+    pub after: Vec<PlaybackDependency>,
+    pub start_before_ns: Option<i64>,
+    /// Optional SDK-local input, created before planning and bound to this run.
+    /// Do not also supply a feedback-stamped policy watchdog.
+    pub input: Option<PlaybackInput>,
+}
+
 impl ExecutionHandle {
     #[must_use]
     pub fn snapshot(&self) -> ExecutionSnapshot {
@@ -241,10 +320,43 @@ impl ExecutionHandle {
         self.control.mark_cancelled(reason, false);
     }
 
+    /// Queue normal completion of an acknowledged, fixed reference curve.
+    /// Queueing is not completion: wait for the retained terminal snapshot.
+    pub fn finish_references(&self) -> Result<(), PlaybackError> {
+        let mut state = self.control.state.lock();
+        if !state.deferred_completion || state.cancelled.is_some() {
+            return Err(PlaybackError::Invalid(
+                "execution does not admit deferred completion",
+            ));
+        }
+        if let Some(result) = &state.snapshot.result {
+            return if matches!(result, Ok(super::Completion::ReferencesDispatched)) {
+                Ok(())
+            } else {
+                Err(PlaybackError::Invalid("execution has already failed"))
+            };
+        }
+        if state
+            .snapshot
+            .curve_progress
+            .as_ref()
+            .is_none_or(|p| !p.endpoint_acknowledged)
+        {
+            return Err(PlaybackError::Invalid(
+                "reference endpoint is not acknowledged",
+            ));
+        }
+        state.finish_requested = true;
+        Ok(())
+    }
+
     /// Queue a fresh session-clock feedback stamp. Repeating the same stamp is
     /// idempotent and cannot extend the deadline. No timeout or authority changes.
     pub fn refresh_watchdog(&self, observed_ns: i64) -> Result<(), PlaybackError> {
         let mut state = self.control.state.lock();
+        if self.control.input.is_some() {
+            return Err(PlaybackError::Invalid("renew the bound playback input"));
+        }
         if state.snapshot.result.is_some() || state.cancelled.is_some() {
             return Err(PlaybackError::Invalid("execution is closing or terminal"));
         }
@@ -272,6 +384,35 @@ impl ExecutionHandle {
     /// response never authorizes retry; reconcile the retained execution first.
     pub fn update_curve(&self, update: CurveUpdate) -> Result<u64, PlaybackError> {
         self.queue_curve(CurveRequest::Update(update))
+    }
+
+    /// Queue one pose update on this execution. Acceptance, not submission,
+    /// changes the target. Reconcile unknown replies instead of replaying them.
+    pub fn update_goal(&self, update: GoalUpdate) -> Result<u64, PlaybackError> {
+        let mut state = self.control.state.lock();
+        if state.snapshot.result.is_some() || state.cancelled.is_some() {
+            return Err(PlaybackError::Invalid("execution is closing or terminal"));
+        }
+        if state
+            .snapshot
+            .goal_update
+            .as_ref()
+            .is_some_and(|r| r.result.is_none())
+        {
+            return Err(PlaybackError::Busy);
+        }
+        let id = state
+            .snapshot
+            .goal_update
+            .as_ref()
+            .map_or(Some(1), |r| r.request_id.checked_add(1))
+            .ok_or(PlaybackError::Invalid("goal request sequence exhausted"))?;
+        state.snapshot.goal_update = Some(GoalUpdateReceipt {
+            request_id: id,
+            update,
+            result: None,
+        });
+        Ok(id)
     }
 
     /// Queue withdrawal of one accepted suffix. Only the serialized worker can
@@ -331,35 +472,121 @@ impl ExecutionHandle {
     }
 }
 
+type Reservation = (Option<Vec<String>>, Arc<Control>);
+
 #[derive(Debug, Default)]
 pub(crate) struct ExecutionSlot {
-    current: Mutex<HashMap<Option<Vec<String>>, Arc<Control>>>,
+    current: Mutex<Vec<Reservation>>,
+    registry: Arc<()>,
+    inputs: Mutex<Vec<Weak<super::input::InputControl>>>,
 }
 
 impl ExecutionSlot {
+    pub(crate) fn start_input(
+        &self,
+        episode: EpisodeId,
+        clock: Arc<dyn Clock>,
+        timeout_ns: i64,
+        unavailable: impl FnOnce() -> bool,
+    ) -> Result<PlaybackInput, PlaybackError> {
+        // Share the admission/stop boundary: a concurrent Hold must fence both
+        // existing buffers and inputs whose plans have not arrived yet.
+        let _current = self.current.lock();
+        let mut inputs = self.inputs.lock();
+        inputs.retain(|weak| {
+            weak.upgrade()
+                .is_some_and(|control| PlaybackInput(control).snapshot().failure.is_none())
+        });
+        if unavailable() || inputs.len() >= 128 {
+            return Err(PlaybackError::Busy);
+        }
+        let input = PlaybackInput::new(self.registry.clone(), episode, clock, timeout_ns)?;
+        inputs.push(Arc::downgrade(&input.0));
+        Ok(input)
+    }
+
+    fn release_inputs(&self, episode: Option<&EpisodeId>, reason: &str) {
+        for control in self.inputs.lock().iter().filter_map(Weak::upgrade) {
+            if episode.is_none_or(|id| id == &control.episode) {
+                PlaybackInput(control).release(reason);
+            }
+        }
+    }
+
     pub(crate) fn register(
         &self,
         episode_id: EpisodeId,
         scope: Option<Vec<String>>,
         references: usize,
+        queue: &PlaybackQueue,
         unavailable: impl FnOnce() -> bool,
     ) -> Result<ExecutionHandle, PlaybackError> {
         let mut current = self.current.lock();
-        current.retain(|_, c| c.state.lock().snapshot.result.is_none());
+        current.retain(|(_, c)| c.state.lock().snapshot.result.is_none());
+        if let Some(input) = &queue.input {
+            if !Arc::ptr_eq(&input.0.registry, &self.registry) || input.0.episode != episode_id {
+                return Err(PlaybackError::Invalid("input requires this SDK run"));
+            }
+            if let Some(error) = input.snapshot().failure {
+                return Err(error);
+            }
+        }
+        if queue.after.len() > 16 || queue.start_before_ns.is_some_and(|at| at <= 0) {
+            return Err(PlaybackError::Invalid("invalid playback dependency bounds"));
+        }
+        let mut ancestors = Vec::new();
+        for dependency in &queue.after {
+            let parent = &dependency.handle.control;
+            if !Arc::ptr_eq(&parent.registry, &self.registry)
+                || parent.state.lock().snapshot.episode_id != episode_id
+                || dependency.outcomes.is_empty()
+            {
+                return Err(PlaybackError::Invalid(
+                    "dependencies require this SDK run and explicit successful outcomes",
+                ));
+            }
+            ancestors.push(parent.clone());
+        }
+        let mut i = 0;
+        while i < ancestors.len() {
+            let parents = ancestors[i].state.lock().predecessors.clone();
+            for parent in parents {
+                if !ancestors.iter().any(|known| Arc::ptr_eq(known, &parent)) {
+                    ancestors.push(parent);
+                }
+            }
+            i += 1;
+        }
         if unavailable()
-            || current
-                .keys()
-                .any(|part| overlaps(part.as_deref(), scope.as_deref()))
+            || current.iter().any(|(part, control)| {
+                overlaps(part.as_deref(), scope.as_deref())
+                    && !ancestors
+                        .iter()
+                        .any(|ancestor| Arc::ptr_eq(ancestor, control))
+            })
+            || (!queue.after.is_empty()
+                && current
+                    .iter()
+                    .filter(|(_, c)| !c.state.lock().predecessors.is_empty())
+                    .count()
+                    >= 16)
         {
             return Err(PlaybackError::Busy);
         }
         let control = Arc::new(Control {
+            registry: self.registry.clone(),
+            scope: scope.clone(),
+            start_before_ns: queue.start_before_ns,
+            input: queue.input.clone(),
             state: Mutex::new(State {
                 snapshot: ExecutionSnapshot {
                     id: uuid::Uuid::new_v4().to_string(),
                     episode_id,
                     dispatched: 0,
                     references,
+                    waiting_for: queue.after.iter().map(|d| d.handle.snapshot().id).collect(),
+                    transit_successor: None,
+                    elapsed_ns: None,
                     feedback: None,
                     feedback_reference: None,
                     curve_progress: None,
@@ -367,6 +594,10 @@ impl ExecutionSlot {
                     watchdog: None,
                     watchdog_refresh: None,
                     settling: None,
+                    settled_miss: false,
+                    goal_dwell: None,
+                    goal_target: None,
+                    goal_update: None,
                     gripper: None,
                     checkpoints: Vec::new(),
                     last_reference: None,
@@ -377,10 +608,18 @@ impl ExecutionSlot {
                 cancelled: None,
                 cancelled_by_control: false,
                 curve_update: None,
+                deferred_completion: false,
+                finish_requested: false,
+                transit_successor: None,
+                predecessors: queue
+                    .after
+                    .iter()
+                    .map(|d| d.handle.control.clone())
+                    .collect(),
             }),
             changed: Condvar::new(),
         });
-        current.insert(scope, control.clone());
+        current.push((scope, control.clone()));
         Ok(ExecutionHandle { control })
     }
 
@@ -389,7 +628,8 @@ impl ExecutionSlot {
         // Make the pending-control fence visible before marking cancellations.
         // Completed callbacks acquire this same registry lock for their receipts.
         request();
-        for control in current.values() {
+        self.release_inputs(None, reason);
+        for (_, control) in current.iter() {
             control.mark_cancelled(reason, true);
         }
     }
@@ -399,7 +639,7 @@ impl ExecutionSlot {
             outcome.verb,
             waddle_types::Verb::Hold | waddle_types::Verb::Estop
         ) {
-            for control in self.current.lock().values() {
+            for (_, control) in self.current.lock().iter() {
                 let mut state = control.state.lock();
                 if state.snapshot.result.is_none() {
                     state.snapshot.cleanup = Some(outcome.into());
@@ -411,8 +651,8 @@ impl ExecutionSlot {
     pub(crate) fn any_active(&self) -> bool {
         self.current
             .lock()
-            .values()
-            .any(|c| c.state.lock().snapshot.result.is_none())
+            .iter()
+            .any(|(_, c)| c.state.lock().snapshot.result.is_none())
     }
 
     pub(crate) fn active(&self, episode: &EpisodeId, scope: Option<&str>) -> bool {
@@ -426,10 +666,11 @@ impl ExecutionSlot {
     }
 
     pub(crate) fn cancel_episode(&self, episode: &EpisodeId) -> Vec<ExecutionHandle> {
-        self.current
-            .lock()
-            .values()
-            .filter_map(|control| {
+        let current = self.current.lock();
+        self.release_inputs(Some(episode), "episode ended");
+        current
+            .iter()
+            .filter_map(|(_, control)| {
                 if &control.state.lock().snapshot.episode_id != episode {
                     return None;
                 }
@@ -459,24 +700,45 @@ pub(crate) struct ExecutionTask {
     io: Arc<dyn PlaybackIo>,
     control: Arc<Control>,
     next_poll_ns: i64,
+    read_cost_ns: i64,
+    due_feedback: Option<(i64, Feedback)>,
     sample_period_ns: i64,
     dispatch_period_ns: i64,
     failure: Option<ExecutionResult>,
     pending_update_id: Option<u64>,
     hold_part: Option<String>,
+    queue: PlaybackQueue,
+    waiting_to_start: bool,
 }
 
 impl ExecutionTask {
     pub(crate) fn new(
         mirror: Arc<Mirror>,
         episode: EpisodeId,
-        references: FiniteReferences,
+        mut references: FiniteReferences,
         io: Arc<dyn PlaybackIo>,
         handle: &ExecutionHandle,
         sample_period_ns: i64,
         dispatch_period_ns: i64,
     ) -> Self {
-        handle.control.state.lock().snapshot.watchdog = references.policy.watchdog;
+        {
+            let mut state = handle.control.state.lock();
+            state.snapshot.watchdog = references.policy.watchdog;
+            state.deferred_completion = references.policy.defer_reference_completion;
+        }
+        let queue = std::mem::take(&mut references.queue);
+        if references.can_transit()
+            && let [dependency] = queue.after.as_slice()
+            && dependency
+                .outcomes
+                .contains(&Completion::ReferencesDispatched)
+            && dependency.handle.control.scope == handle.control.scope
+        {
+            let mut parent = dependency.handle.control.state.lock();
+            if parent.snapshot.result.is_none() {
+                parent.transit_successor = Some(Arc::downgrade(&handle.control));
+            }
+        }
         Self {
             mirror,
             episode,
@@ -489,11 +751,19 @@ impl ExecutionTask {
             io,
             control: handle.control.clone(),
             next_poll_ns: 0,
+            read_cost_ns: 0,
+            due_feedback: None,
             sample_period_ns,
             dispatch_period_ns,
             failure: None,
             pending_update_id: None,
+            waiting_to_start: !queue.after.is_empty() || queue.start_before_ns.is_some(),
+            queue,
         }
+    }
+
+    pub(crate) fn waiting_to_start(&self) -> bool {
+        self.waiting_to_start
     }
 
     pub(crate) fn wait_duration(&self, now_ns: i64) -> Duration {
@@ -580,6 +850,13 @@ impl ExecutionTask {
 
     pub(crate) fn check_watchdog<C: Clock>(&self, clock: &C) -> Option<ExecutionResult> {
         let mut state = self.control.state.lock();
+        if let Some(input) = &self.control.input {
+            let snapshot = input.snapshot();
+            state.snapshot.watchdog = Some(snapshot.watchdog);
+            return snapshot
+                .failure
+                .map(|error| Err(ExecutionFailure::Playback(error)));
+        }
         let watchdog = state.snapshot.watchdog?;
         let now = clock.stamp_now().mono_ns().0;
         // Check the incumbent first: a queued or delayed renewal cannot revive
@@ -635,10 +912,46 @@ impl ExecutionTask {
         if let Some(result) = self.check_watchdog(clock) {
             return Some(result);
         }
-        if clock.stamp_now().mono_ns().0 < self.next_poll_ns {
+        if self.waiting_to_start {
+            let now = clock.stamp_now().mono_ns().0;
+            if self.queue.start_before_ns.is_some_and(|at| now >= at) {
+                return Some(Err(ExecutionFailure::Playback(PlaybackError::StartExpired)));
+            }
+            let mut waiting = false;
+            for dependency in &self.queue.after {
+                let snapshot = dependency.handle.snapshot();
+                let Some(result) = snapshot.result else {
+                    waiting = true;
+                    continue;
+                };
+                if !matches!(&result, Ok(outcome) if dependency.outcomes.contains(outcome)) {
+                    return Some(Err(ExecutionFailure::Playback(
+                        PlaybackError::DependencyFailed(format!("{}: {result:?}", snapshot.id)),
+                    )));
+                }
+            }
+            if waiting {
+                self.next_poll_ns = now.saturating_add(5_000_000);
+                return None;
+            }
+            self.waiting_to_start = false;
+            self.next_poll_ns = now;
+            self.queue.after.clear();
+            let mut state = self.control.state.lock();
+            state.snapshot.waiting_for.clear();
+            state.predecessors.clear();
+        }
+        let poll_ns = clock.stamp_now().mono_ns().0;
+        if poll_ns < self.next_poll_ns {
             return None;
         }
-        let measured = match self.io.observe() {
+        // Keep a just-acquired curve sample through its short remaining cadence
+        // wait. A delayed worker reacquires; cancellation and watchdog checks
+        // still run before dispatch, and the sample keeps its original stamp.
+        let due_feedback = self.due_feedback.take().filter(|(at, feedback)| {
+            poll_ns >= *at && poll_ns.saturating_sub(feedback.observed_ns) <= self.sample_period_ns
+        });
+        let measured = match due_feedback.map_or_else(|| self.io.observe(), |(_, f)| Ok(f)) {
             Ok(measured) => measured,
             Err(error) => return Some(Err(ExecutionFailure::Observation(error))),
         };
@@ -652,6 +965,10 @@ impl ExecutionTask {
             return Some(result);
         }
         let now = clock.stamp_now().mono_ns().0;
+        // Retain the observed cost across variable reads; one faster sample
+        // must not move the next expensive read outside the control interval.
+        self.read_cost_ns = self.read_cost_ns.max(now.saturating_sub(poll_ns));
+        let read_cost_ns = self.read_cost_ns;
         let player = self.player.get_or_insert_with(|| {
             Playback::new(
                 self.references.take().expect("one admitted buffer"),
@@ -667,7 +984,7 @@ impl ExecutionTask {
                 .as_mut()
                 .expect("queued receipt");
             let result = match update {
-                CurveRequest::Update(update) => player.update_curve(update).inspect(|()| {
+                CurveRequest::Update(update) => player.update_curve_at(update, now).inspect(|()| {
                     self.pending_update_id = Some(receipt.request_id);
                 }),
                 CurveRequest::Withdraw {
@@ -687,20 +1004,54 @@ impl ExecutionTask {
             };
             receipt.result = Some(result);
         }
-        let polled = player.poll(now, &measured);
+        if self.control.state.lock().finish_requested
+            && let Err(error) = player.finish_references()
         {
+            return Some(Err(ExecutionFailure::Playback(error)));
+        }
+        let polled = {
             let mut state = self.control.state.lock();
+            let successor = state.transit_successor.as_ref().and_then(Weak::upgrade);
+            let successor_state = successor.as_ref().map(|control| control.state.lock());
+            player.transit_permitted = successor_state
+                .as_ref()
+                .is_some_and(|s| s.cancelled.is_none() && s.snapshot.result.is_none())
+                && successor
+                    .as_ref()
+                    .is_some_and(|c| c.start_before_ns.is_none_or(|at| now < at));
+            if let Some(receipt) = state
+                .snapshot
+                .goal_update
+                .as_mut()
+                .filter(|r| r.result.is_none())
+            {
+                receipt.result = Some(player.update_goal_at(receipt.update.clone(), now));
+            }
+            let polled = player.poll(now, &measured);
+            if polled == Ok(PlaybackPoll::Complete(Completion::ReferencesDispatched))
+                && player.transit_permitted
+                && !player.references.policy.reference_only
+            {
+                state.snapshot.transit_successor =
+                    successor_state.as_ref().map(|s| s.snapshot.id.clone());
+            }
+            state.snapshot.elapsed_ns =
+                Some(measured.observed_ns.saturating_sub(player.started_ns));
             state.snapshot.feedback = Some(measured.clone());
             state.snapshot.feedback_reference = state.snapshot.last_reference.clone();
             state.snapshot.curve_progress = player.curve_progress();
             state.snapshot.settling = player.settling_evidence();
+            state.snapshot.settled_miss = player.settled_miss();
+            state.snapshot.goal_dwell = player.goal_dwell().cloned();
+            state.snapshot.goal_target = player.goal_target();
             state.snapshot.gripper = player.gripper_evidence();
             let recorded = state.snapshot.checkpoints.len();
             state
                 .snapshot
                 .checkpoints
                 .extend_from_slice(&player.checkpoints()[recorded..]);
-        }
+            polled
+        };
         let action = match polled {
             Ok(action) => action,
             Err(error) => return Some(Err(ExecutionFailure::Playback(error))),
@@ -737,7 +1088,21 @@ impl ExecutionTask {
                         // The next poll establishes its exact due time; it never
                         // skips an entry or catches up by dispatching a batch.
                         self.next_poll_ns =
-                            now.max(started.saturating_add(self.dispatch_period_ns));
+                            if let Some(curve) = &player.references.policy.paced_curve {
+                                completed.max(
+                                    started
+                                        .saturating_add(curve.period_ns)
+                                        .saturating_sub(read_cost_ns),
+                                )
+                            } else if let Some(gripper) = &player.references.policy.gripper {
+                                completed.max(
+                                    completed
+                                        .saturating_add(gripper.period_ns)
+                                        .saturating_sub(read_cost_ns),
+                                )
+                            } else {
+                                now.max(started.saturating_add(self.dispatch_period_ns))
+                            };
                     }
                     Ok(ReferenceReceipt::Superseded(gate)) => {
                         return Some(Err(ExecutionFailure::Superseded(gate)));
@@ -745,11 +1110,33 @@ impl ExecutionTask {
                     Err(error) => return Some(Err(ExecutionFailure::Dispatch(error))),
                 }
             }
-            PlaybackPoll::WaitUntil(at) => self.next_poll_ns = at,
+            PlaybackPoll::WaitUntil(at) => {
+                // Start the next fresh read early enough to fit its measured
+                // cost inside the interval. Playback still enforces the due
+                // time; neither faster reads nor late callbacks permit bursts.
+                if player.references.policy.paced_curve.is_some()
+                    && at > now
+                    && at - now <= read_cost_ns.min(self.sample_period_ns)
+                {
+                    self.due_feedback = Some((at, measured));
+                    self.next_poll_ns = at;
+                } else {
+                    self.next_poll_ns = at.saturating_sub(read_cost_ns);
+                }
+            }
             PlaybackPoll::Observe => self.next_poll_ns = now.saturating_add(self.sample_period_ns),
             PlaybackPoll::Complete(result) => return Some(Ok(result)),
         }
         self.next_poll_ns = self.next_poll_ns.min(player.check_by_ns());
+        if player.references.policy.paced_curve.is_some()
+            && let Some(watchdog) = player.references.policy.watchdog
+        {
+            // Paced curves enforce their own write interval. Read between
+            // slow ticks so accepted input can bind fresh local feedback.
+            self.next_poll_ns = self
+                .next_poll_ns
+                .min(now.saturating_add((watchdog.timeout_ns / 2).max(1)));
+        }
         None
     }
 }
@@ -779,21 +1166,39 @@ mod tests {
         let episode = EpisodeId::new("group");
         let selected = Some(vec!["left".into(), "right".into()]);
         let group = slot
-            .register(episode.clone(), selected.clone(), 2, || false)
+            .register(
+                episode.clone(),
+                selected.clone(),
+                2,
+                &Default::default(),
+                || false,
+            )
             .unwrap();
         for part in ["left", "right"] {
             assert!(slot.active(&episode, Some(part)));
             assert!(matches!(
-                slot.register(episode.clone(), Some(vec![part.into()]), 2, || false),
+                slot.register(
+                    episode.clone(),
+                    Some(vec![part.into()]),
+                    2,
+                    &Default::default(),
+                    || false
+                ),
                 Err(PlaybackError::Busy)
             ));
         }
         assert!(!slot.active(&episode, Some("unused")));
         let third = slot
-            .register(episode.clone(), Some(vec!["unused".into()]), 2, || false)
+            .register(
+                episode.clone(),
+                Some(vec!["unused".into()]),
+                2,
+                &Default::default(),
+                || false,
+            )
             .unwrap();
         assert!(matches!(
-            slot.register(episode.clone(), None, 2, || false),
+            slot.register(episode.clone(), None, 2, &Default::default(), || false),
             Err(PlaybackError::Busy)
         ));
         assert!(matches!(
@@ -801,13 +1206,20 @@ mod tests {
                 episode.clone(),
                 Some(vec!["right".into(), "unused".into()]),
                 2,
+                &Default::default(),
                 || false
             ),
             Err(PlaybackError::Busy)
         ));
         group.cancel("selected group stopped");
         assert!(matches!(
-            slot.register(episode.clone(), selected.clone(), 2, || false),
+            slot.register(
+                episode.clone(),
+                selected.clone(),
+                2,
+                &Default::default(),
+                || false
+            ),
             Err(PlaybackError::Busy)
         ));
         assert!(
@@ -819,14 +1231,23 @@ mod tests {
         );
         assert!(!slot.active(&episode, Some("left")));
         assert!(third.snapshot().result.is_none());
-        assert!(slot.register(episode, selected, 2, || false).is_ok());
+        assert!(
+            slot.register(episode, selected, 2, &Default::default(), || false)
+                .is_ok()
+        );
     }
 
     #[test]
     fn cancellation_winning_completion_waits_for_worker_cleanup() {
         let slot = ExecutionSlot::default();
         let handle = slot
-            .register(EpisodeId::new("episode"), None, 1, || false)
+            .register(
+                EpisodeId::new("episode"),
+                None,
+                1,
+                &Default::default(),
+                || false,
+            )
             .unwrap();
         handle.cancel("stop before completion");
         assert!(!handle.control.finish(Ok(Completion::Arrived)));

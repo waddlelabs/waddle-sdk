@@ -43,6 +43,11 @@ for _name in (
     "JointReference",
     "JointPositionBounds",
     "PlaybackPolicy",
+    "PlaybackGoal",
+    "PlaybackGoalDwell",
+    "PlaybackGoalUpdate",
+    "PlaybackKinematics",
+    "PlaybackKinematicJoint",
     "PlaybackWatchdog",
     "PacedJointCurve",
     "PlaybackCurveUpdate",
@@ -94,6 +99,11 @@ def _default(value):
             # An older receiver must reject an enabled completion mode, but can
             # continue decoding ordinary measured-completion policies.
             data.pop("reference_only")
+        if (
+            type(value).__name__ == "PlaybackPolicy"
+            and data.get("defer_reference_completion") is False
+        ):
+            data.pop("defer_reference_completion")
         if type(value).__name__ == "PlaybackPolicy" and not data.get(
             "checkpoint_offsets_ns"
         ):
@@ -114,6 +124,21 @@ def _default(value):
             data.pop("part_hold")
         if type(value).__name__ == "PlaybackPolicy" and data.get("watchdog") is None:
             data.pop("watchdog", None)
+        if (
+            type(value).__name__ == "PlaybackPolicy"
+            and data.get("complete_in_resting_tail") is False
+        ):
+            data.pop("complete_in_resting_tail")
+        if type(value).__name__ == "PlaybackPolicy":
+            for optional in ("goal", "settle_timeout_ns", "expected_start"):
+                if data.get(optional) is None:
+                    data.pop(optional, None)
+        if type(value).__name__ == "PlaybackGoal":
+            if data.get("allow_updates") is False:
+                data.pop("allow_updates")
+            for optional in ("kinematics", "dwell"):
+                if data.get(optional) is None:
+                    data.pop(optional, None)
         if isinstance(value, runtime.SubmitResult):
             # These optional clocks belong to the SDK host, not this executor.
             data["dispatch_started_monotonic_s"] = None

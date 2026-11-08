@@ -1,3 +1,10 @@
+## 2026-11-02 — Curved hollow tabletop bowls
+
+- Give newly authored bowls smooth curved sides, a deep open interior and a
+  small flat foot, with separate convex wall contacts that support nesting.
+- Preserve finite mass, native contact/release and canonical reset. Replace
+  quadratic contact-pair bookkeeping without changing pair materials.
+
 # Changelog
 
 All notable changes to the waddle-sdk monorepo are documented here.
@@ -10,6 +17,13 @@ Released changelogs are stowed in [`docs/changelogs/`](docs/changelogs/) when a 
 ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
+
+### Changed
+
+- Keep original structured Stop failures in `error`/`evidence` with native diagnostic text retained separately.
+
+- Integrate API-42 local execution while retaining submission-paced jaws, sample-bound diagnostics and camera isolation. Supply public hosted pairing/setup with lazy application execution/layout/preparation extensions; preserve existing credentials and site identity.
+
 
 - Isolate RealSense opening, capture and recovery in a private camera process
   for POSIX Site and inspection lifecycles. Preserve aligned RGB-D, active
@@ -48,6 +62,147 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 - Expose optional local confirmation of an already held shutdown, preserving
   fresh operator support consent and the original close/drain outcome.
 
+- Add browser-approved `connect login/setup/logout` with workspace-scoped device credentials; retain explicit account-key setup.
+
+- Bundle hosted connector setup/start/status under `waddle-sdk connect`; keep legacy gRPC flags.
+
+
+- Advertise prepared-playback relay support. Return state and configuration with
+  observations/completion; check a submitted configuration revision and numerical
+  joint preconditions locally before native admission. No planner or native API
+  change; existing start, cancellation and completion policies remain authoritative.
+
+- Add an advertised read-only relay observation bundle with one retained frame,
+  description, support and bounded workspace reads; preserve per-file errors.
+
+- Bind native scene replacement to robot-referenced assets rather than tabletop
+  prop meshes. Preserve genuine robot/camera refusal and image fencing. Give
+  administrative scene loading its own 60-second wait; control deadlines remain
+  unchanged. One-/two-arm block and bowl replacement/removal regressions pass.
+
+- Add native `drawer_cabinet` and `cleanup_station` authored fixtures for one/two
+  YAMs, with a passive retrieval drawer and a rigid brush/loose-piece/dustpan scene.
+  Preserve bounded variation, exact reset, contact dynamics and robot contracts.
+- Keep qualified single-arm robot bases out of fixture-contact renaming, and
+  classify native passive joint types using Python integers for MuJoCo enum
+  compatibility. Existing scenes and supported joint kinds remain unchanged.
+
+- Start authored bowl walls above their solid floor, removing coplanar wall
+  soles that multiply table contact constraints. Preserve the open rim, wall
+  pieces, total mass, materials and solver settings; newly compiled scene geometry
+  and inertia change, while existing immutable scenes remain unchanged.
+
+
+- Include local feedback acquisition inside paced motion intervals instead of adding its cost after every cadence wait.
+
+- Preserve bent-path, IO cadence, headroom and gripper budget regressions at native playback boundaries.
+
+- Add optional bounded playback call history with native session/epoch stamps,
+  pending calls, original faults and explicit supersession; keep history reads
+  separate from execution status and preserve the existing native worker. Actual
+  SDK host-monotonic samples additionally support same-host camera diagnostics;
+  native paired timestamps remain unchanged.
+
+
+### Fixed
+
+- Advertise existing scoped playback Hold on single-arm named sites as well as
+  composite sites, without widening action or Hold grants.
+
+- Preserve declared mechanical body contact exclusions in reference planner
+  exports and assembled physical YAM sources, including opposing slide fingers.
+  Existing published bundles and simulation contact physics remain unchanged.
+
+- Keep live playback input across an individual buffer cancellation only after
+  successful scoped Hold; faults and global controls still fence input.
+
+- Sample fresh local feedback between slow paced-curve commands so accepted input
+  can renew its watchdog. Preserve write cadence and expiry without input.
+
+- Retain local gripper contact sample counts and compatibility evidence on failed
+  attempts, without changing execution or cleanup.
+
+- Preserve structured callback diagnostics in site-wide Hold/e-stop cleanup and
+  completed-stop receipts. Attempt every declared part and retain all failures.
+
+### Added
+
+- Add a native run-bound playback input watchdog, renewed on SDK input arrival
+  independently of planning and status polling. Preserve ordered renewal,
+  irreversible release/expiry, same-run binding and ordinary worker cleanup.
+  Binding API 42 exposes public Python input handles and device-relay operations;
+  renewals bypass ordinary I/O admission and release uses reserved Stop capacity.
+  Cloud application integration and actual WAN qualification remain separate.
+
+- Preserve execution deadline-during-feedback regression coverage on the native
+  worker using explicit callback barriers; no runtime or policy change.
+
+- Separate the expected measured start from the first playback command with
+  optional `PlaybackPolicy.expected_start` (binding API 41). Preserve the original
+  start tolerance and all owner command limits; reject stale local feedback.
+
+- Permit explicit transit handoffs to admitted successors on the existing worker
+  (binding API 40). Preserve required goal tolerance, completed references,
+  cancellation/expiry gates, fresh-start checks and the distinction from arrival.
+
+- Allow revised finite curves to complete with SDK-local settling even without
+  an explicit goal (binding API 39). Score the accepted endpoint and preserve
+  stationary misses, original deadlines and cancellation on the existing worker.
+
+- Add opt-in same-frame pose updates for dwelled goals on the existing worker
+  (binding API 38). Retain accepted target/revision with feedback and terminal
+  results; reject stale updates without changing trajectories, policy or deadlines.
+  Explicit-goal polynomial playback may reuse native motion-pacing credit;
+  stationary tails, target messages and dwell do not increase the allowance.
+
+- Add optional `PlaybackGoalDwell` on the existing worker for independent goal
+  dwell with a wider reset band. Current nominal tolerance and stationarity
+  still gate completion; snapshots retain observation-clock dwell evidence.
+  Original deadlines, cancellation and default settling behavior are unchanged.
+
+- Add opt-in local goal completion within a constant resting tail (binding API
+  36, `execution.resting_goal_playback`). Preserve pending future motion,
+  checkpoint observations, local settling, original deadlines and cancellation;
+  callers no longer need to shorten a resting curve just to report arrival.
+
+- Evaluate selected custom TCP goals from numeric `PlaybackKinematics` on the
+  existing worker (`execution.kinematic_goal_playback`). Support hinge/slide
+  chains and affine joint coordinates without a planner/model dependency, while
+  retaining the owner's safety geometry, local settling and original goal result.
+
+- Expose SDK-local execution elapsed time (`execution.playback_timing`, binding
+  API 35), bound to retained feedback. Queued work starts its motion budget at
+  activation; cloud planning can use the same elapsed duration without counting
+  dependency wait or synchronizing clocks. Existing deadlines remain enforced.
+
+- Expose nonterminal stationary-goal misses from the existing local settling
+  checks (`execution.goal_progress`, binding API 34). application can plan a checked
+  correction on the same execution without reconstructing a window from cloud
+  samples; original goal completion, deadlines and cleanup remain SDK-owned.
+
+- Keep one measured-goal execution across checked curve corrections (binding
+  API 33). Reuse the existing worker and revision/withdrawal API, preserve the
+  original goal, total deadline and checkpoint evidence, and let queued work
+  depend on final local completion. Delayed updates cannot revive expired
+  endpoint or motion allowances, including after blocked observation callbacks.
+
+- Add dependent playback on the existing SDK worker (binding API 32). Reserve
+  queued parts, start only after explicitly accepted predecessor results, and
+  optionally expire a waiting plan on the SDK clock. Queued cancellation leaves
+  a running predecessor alone; site-wide Stop still drains the whole queue.
+  Public Run and device relay preserve retained identities without cloud handoff.
+
+- Add SDK-local completion against an original joint or declared TCP goal,
+  with local tolerance, settling and endpoint-timeout evaluation (binding API 31).
+  Terminal outcomes require no caller polling or explicit finish request.
+  Entering goal tolerance starts the full local settling interval; earlier
+  stationary samples outside tolerance cannot end that attempt as a miss.
+
+- Add opt-in deferred reference completion (binding API 30): retain the local
+  sampler and owner reservation after a fixed curve ends, without repeating
+  references. Explicit finish returns fresh final diagnostics under the original
+  deadline and stop rules. Keep reference dispatch distinct from goal arrival.
+
 - Add sample-bound encoder-window diagnostics for reference-only playback
   (binding API 29). Include the final fresh sample and its drift/gap resets,
   while preserving reference completion semantics and existing local execution.
@@ -55,6 +210,7 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 - Expose optional completed priority-stop callback receipts through
   `SiteSession.stop` (binding API 28), fencing admission until the existing
   serialized callback finishes without claiming physical stationarity.
+
 
 - Confirm failed Site startup cleanup before clearing the device relay's session,
   so ordinary disconnect does not hang on a session already closed by entry.

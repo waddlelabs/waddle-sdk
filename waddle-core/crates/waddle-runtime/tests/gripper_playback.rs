@@ -34,6 +34,7 @@ fn inputs() -> (ActionChunk, PlaybackPolicy) {
         PlaybackPolicy {
             indices: vec![1],
             start_tolerance: vec![0.001],
+            expected_start: None,
             position_tolerance: vec![0.001],
             stationary_velocity: vec![0.01],
             settle_ns: 10_000_000,
@@ -42,6 +43,10 @@ fn inputs() -> (ActionChunk, PlaybackPolicy) {
             timeout_ns: Some(2_000_000_000),
             allow_settled: false,
             reference_only: false,
+            defer_reference_completion: false,
+            goal: None,
+            settle_timeout_ns: None,
+            complete_in_resting_tail: false,
             checkpoint_offsets_ns: vec![],
             allow_curve_updates: false,
             credit_pacing_delay: false,
@@ -92,6 +97,7 @@ fn measured(at: i64, q: f64, force_n: Option<f64>) -> Feedback {
         observed_ns: at,
         positions: vec![0.2, q],
         velocities: vec![0.0; 2],
+        pose: None,
         gripper_force: force_n.map(|force_n| MeasuredForce {
             force_n,
             source: "motor.estimate".into(),
@@ -158,6 +164,47 @@ fn slow_jaw_acknowledgement_still_needs_post_ack_feedback_and_full_spacing() {
 }
 
 #[test]
+fn sustained_read_cost_keeps_the_original_gripper_budget() {
+    for read_cost in [4_000_000, 200_000_000] {
+        let (chunk, mut policy) = inputs();
+        let budget = chunk.horizon_ns + 2_000_000_000;
+        policy.timeout_ns = Some(budget);
+        // A longer fixed jaw path needs multiple actual acknowledged writes.
+        policy.gripper.as_mut().unwrap().position_error = 0.04;
+        let mut p = player(chunk, policy);
+        let mut now = 0;
+        let mut q = 1.0;
+        let mut writes = Vec::new();
+        loop {
+            now += read_cost;
+            match p.poll(now, &measured(now, q, None)) {
+                Ok(PlaybackPoll::Dispatch(index)) => {
+                    assert!(now <= budget);
+                    q = p.reference(index).unwrap().values[1];
+                    writes.push(now);
+                    p.acknowledge(index, now).unwrap();
+                }
+                Ok(PlaybackPoll::WaitUntil(at)) => now = at - read_cost.min(at - now),
+                Ok(PlaybackPoll::Observe) => now += PERIOD,
+                Ok(PlaybackPoll::Complete(completion)) => {
+                    assert_eq!(read_cost, 4_000_000);
+                    assert_eq!(completion, Completion::Arrived);
+                    assert_eq!(q, 0.0);
+                    break;
+                }
+                Err(error) => {
+                    assert_eq!(read_cost, 200_000_000);
+                    assert_eq!(error, PlaybackError::Deadline);
+                    break;
+                }
+            }
+        }
+        assert!(now <= budget + read_cost + PERIOD);
+        assert!(writes.windows(2).all(|pair| pair[1] - pair[0] >= PERIOD));
+    }
+}
+
+#[test]
 fn position_arrival_needs_three_fresh_stationary_samples_after_nominal_end() {
     let (chunk, mut policy) = inputs();
     policy.gripper.as_mut().unwrap().position_error = 2.0;
@@ -198,6 +245,9 @@ fn closing_progress_and_sustained_demand_qualify_contact_despite_noisy_velocity(
     let evidence = p.gripper_evidence().unwrap();
     assert_eq!(evidence.window_ns, 250_000_000);
     assert_eq!(evidence.drift_m, 0.0);
+    assert_eq!(evidence.sample_count, 6);
+    assert_eq!(evidence.stationary_samples, 0);
+    assert!(evidence.contact_compatible);
     assert!(evidence.progress_m > 0.002 && evidence.commanded_shortfall_m.unwrap() > 0.0005);
 }
 
@@ -212,6 +262,10 @@ fn unexplained_initial_stall_retains_tracking_failure_even_with_contact_requeste
         p.poll(2 * PERIOD, &measured(2 * PERIOD, 1.0, None)),
         Err(PlaybackError::Tracking)
     );
+    let evidence = p.gripper_evidence().unwrap();
+    assert_eq!(evidence.sample_count, 2);
+    assert_eq!(evidence.stationary_samples, 2);
+    assert!(!evidence.contact_compatible);
 }
 
 #[test]

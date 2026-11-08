@@ -1,5 +1,107 @@
 # Finite reference playback
 
+## Optional command history
+
+`PlaybackHistoryPort.history()` returns a detached diagnostic copy of the latest
+256 playback callback attempts. Read it separately from `snapshot()` so ordinary
+status polling does not resend the journal. The optional device relay exposes
+the same data through `playback_history`, bound to the retained run and handle.
+Older handles may not provide this optional method.
+
+The `waddle.playback-history/v1` document identifies the run, native execution ID, joint ordering, total
+and dropped counts, and each requested reference with its measured input. Start,
+return and read stamps carry SDK session-monotonic nanoseconds and their epoch
+twins captured by the native clock. A pending call has no returned stamp; errors
+retain their original diagnostics. Superseded calls do not acknowledge the
+requested reference. Cancellation drains an admitted call before normal Hold.
+
+Each stamp also includes a separate `host_monotonic_ns` sample taken in the SDK
+process. This permits comparison with optional camera content intervals from that
+same SDK host and run. It does not convert session time, synchronize hosts, or
+establish an exposure interval for cameras that do not supply one.
+
+This records command calls, not physical arrival or camera exposure. Cleanup
+writes and another supervision stream are excluded. Journal truncation is explicit.
+Do not compare these session timestamps with another host clock or infer missing
+commands from cloud polling; camera alignment requires the same clock identity.
+The recorder makes no execution decisions and introduces no additional worker.
+
+## Measured starting position
+
+Binding API 41 adds `execution.expected_start_playback` and optional
+`PlaybackPolicy.expected_start`. Supply a finite vector in the complete declared
+joint order when the expected measured starting position differs from the first
+command. The worker compares fresh feedback against that vector using the
+original `indices` and `start_tolerance`; omission retains the first-command
+comparison. Admission still occurs locally when a queued motion activates.
+
+This vector is never commanded. It does not waive target limits, tracking bounds,
+step limits, deadlines, or normal Hold on refusal. A caller planning bounded
+recovery from an out-of-limit measurement must still provide legal commands and
+establish the recovery path. Planning and collision proofs remain outside the SDK.
+Check the separate support fact before supplying this option. Default policies
+omit the field on the device relay, preserving their existing wire shape.
+
+## SDK-owned queue handoff
+
+Binding API 32 adds `execution.dependent_playback`. A caller can submit a checked
+motion before its predecessor completes. The existing local worker waits for
+the explicitly accepted result, checks the new motion's measured start, then
+executes and completes it without another cloud request:
+
+```python
+from waddle_sdk.runtime import PlaybackDependency
+
+first = run.start_playback(first_motion)
+second = run.start_playback(
+    second_motion,
+    after=[PlaybackDependency(first, ("arrived",))],
+    start_before_ns=latest_start_in_sdk_session_clock,
+)
+result = second.wait()
+```
+
+Dependencies must belong to this SDK instance and run. Accepted outcomes are
+`arrived`, `settled`, `contact_stall`, `force_reached`, or
+`references_dispatched`; choose only outcomes that justify the next motion.
+Dispatching references alone does not establish arrival. Failed or unaccepted
+predecessors produce `dependency_failed` without issuing child commands.
+Original predecessor failure and cleanup evidence remain on that handle.
+
+Binding API 40 adds `execution.transit_playback`. An admitted finite successor
+that explicitly accepts `references_dispatched` can waive its predecessor's
+intermediate settling. It must have exactly that predecessor as its dependency,
+address the same named arm, remain uncancelled and meet its start deadline.
+Gripper policies, other-arm and coordinated boundaries do not qualify. Both
+references must end at rest. The predecessor must finish all references, retain
+fresh feedback/tracking checks and satisfy its required goal tolerance; a report
+allowing stationary misses can cross without measured arrival. Its result stays
+`references_dispatched`, with the chosen successor ID in `transit_successor`.
+The successor still performs ordinary measured-start checks and final settling.
+Cancellation before this local decision removes the waiver. No cloud finish call,
+second queue, additional worker or replay is introduced.
+
+`waiting_for` contains predecessor IDs until activation. Status stays `running`
+while queued; `dispatched` remains zero. The queue reserves all selected parts,
+so overlapping work must depend on the complete preceding reservation chain.
+Unrelated named parts may continue independently. There may be at most 16 waiting
+dependent motions and 16 predecessors per motion. No planner, extra worker, or
+automatic retry is added.
+
+`start_before_ns` is optional and uses acquired SDK session time, never the
+cloud clock. If it expires before activation, the result is `start_expired`.
+Motion duration and completion allowances begin with activation. An existing
+watchdog keeps its original absolute deadline even while queued. Cancelling or
+rejecting a motion before activation does not Hold its running predecessor;
+after activation, ordinary measured-start checks and cleanup apply. Site-wide
+Hold/e-stop and owner closure still drain active and queued work together.
+
+application remains responsible for IK, collision proofs, accepted predecessor outcomes
+and plan validity. Queue admission does not validate stale world geometry or
+authorize a motion after an unknown response; reconcile the retained handle and
+never replay an uncertain submission. Existing calls without queue arguments
+retain their behavior. Check the separate support fact before using this option.
+
 ## Input-limited reference streams
 
 Binding API 26 adds `execution.streamed_joint_playback`. Set
@@ -30,6 +132,69 @@ require their own qualification.
 
 ## Optional playback watchdog
 
+### Input arrival watchdog
+
+Named single-arm and composite sites advertise `execution.part_hold_playback`
+when their ordinary action/Hold grants permit the existing local callback.
+An individual buffer cancellation may retain its live input only after a
+successful **scoped** Hold. This supports replacing checked trajectories during
+one still-active press. It does not renew the input or change its deadline.
+Failed cleanup, other execution failures and global Stop fence the input;
+release, expiry and run closure remain permanent even if scoped cancellation
+finishes later. A completed Hold receipt is not measured physical stationarity.
+
+The Rust `Session.start_playback_input(episode_id, timeout_ns)` creates a
+run-bound `PlaybackInput` before planning starts. Attach it as
+`PlaybackQueue.input` when submitting the checked references, leaving
+`PlaybackPolicy.watchdog` unset. Creating or renewing an input commands no
+hardware and adds no execution thread.
+
+Binding API 42 exposes the same handle through public
+`InputPlaybackRunPort.start_playback_input(timeout_ns)` and
+`PlaybackInputPort`, under `execution.input_watchdog_playback`. Pass that handle
+as `Run.start_playback(motion, input=control)`; it must belong to that exact run.
+The device relay retains input handles by run and ID. Input renewal bypasses
+ordinary I/O admission; release additionally uses the existing reserved Stop
+capacity. Neither method waits for feedback, planning or execution-status reads.
+
+```python
+control = run.start_playback_input(250_000_000)
+# Each newly received human input may call control.refresh(next_sequence).
+# Do not renew from an automatic timer or from status/planning activity.
+handle = run.start_playback(checked_motion, input=control)
+control.release("operator released")
+result = handle.wait()  # inspect normal cleanup before claiming completed Hold
+```
+
+The caller remains responsible for forwarding input while planning and admission
+are pending, and for releasing a late creation reply after the press has ended.
+Creating this SDK primitive alone does not establish that a cloud application
+has implemented those paths or passed actual WAN qualification.
+
+`refresh(sequence)` records acceptance on the SDK's session clock. Supply a
+strictly increasing sequence for each newly accepted input message. Repeating
+or reordering a sequence returns the retained state without extending its
+deadline. Planning, feedback and status polling never renew it. This allows
+input to arrive while a planner or execution-status response is delayed.
+
+The timeout applies from **SDK input acceptance**, not physical button time or
+cloud feedback time. It therefore cannot bound internet transit delay. Expiry
+is checked before every renewal; a late message cannot revive an expired input.
+`release(reason)` permanently fences that identity, including plans that have
+not arrived. Site-wide Hold/e-stop, run closure and session shutdown also fence
+retained inputs. A new press requires a new input. The native registry retains
+at most 128 live inputs and reclaims expired, released or dropped entries.
+
+The existing execution worker checks the bound input before I/O and after
+observation and performs its ordinary Hold/cleanup on release or expiry.
+In-flight callbacks still drain; input release is not completed stop or proof of
+physical stationarity. Original motion deadlines, measured-feedback checks,
+owner limits, cancellation and fault evidence still apply. Admission requires
+the same SDK and run; a bound input cannot also be renewed through
+`ExecutionHandle.refresh_watchdog`.
+
+### Feedback-stamped watchdog
+
 Binding API 25 adds optional `PlaybackWatchdog(observed_ns, timeout_ns)` under
 `execution.watchdog_playback`. The existing serialized native worker checks
 expiry before I/O and after observation; expiry retains `watchdog_expired` and
@@ -37,6 +202,10 @@ ordinary selected Hold/cleanup. `WatchdogPlaybackHandlePort.refresh_watchdog`
 queues an acquired SDK feedback stamp, with pending/accepted/rejected evidence.
 Only the native worker accepts renewal. Stale/future stamps refuse, duplicates
 cannot extend time, and delayed requests cannot revive an expired buffer.
+For paced curves, the worker also samples between command ticks when their
+interval exceeds half the watchdog timeout. This supplies fresh feedback for
+accepted input without increasing the curve's write rate. Sampling and status
+reads alone never renew the watchdog.
 No motion timeout extension, authority, clock or writer is added. Blocked callbacks still drain
 before Hold; this is neither physical-stop proof nor a complete teleoperation
 input policy. See the finite-playback contract and watchdog tests.
@@ -306,6 +475,10 @@ acknowledgement. Delayed or unconfirmed writes cannot be replayed. Native snapsh
 retain `curve_progress` and the complete `last_reference` only after a confirmed
 dispatch. `references` counts input references; `dispatched` counts actual
 acknowledgements and can be larger with polynomial evaluation/partial steps.
+The worker schedules fresh feedback reads within the cadence interval, using
+the read cost observed during that execution. Faster reads cannot dispatch early;
+slower reads still consume the original timeout. This does not cache observations,
+renew input liveness or change the owner's dispatch checks.
 The optional curve does not provide dynamic world updates, contact detection,
 force-grasp completion or coordinated parts.
 
@@ -313,6 +486,9 @@ force-grasp completion or coordinated parts.
 
 Binding API 21 adds `PlaybackPolicy.credit_pacing_delay`, requiring
 `execution.paced_playback_deadline` and reference-only polynomial playback.
+Binding API 38 also permits explicit-goal polynomial playback with the same
+accounting; target messages and goal dwell never earn additional credit.
+Binding API 39 also permits revisable settled playback, with the same accounting.
 Default false preserves the absolute wall-time limit. Enable it only when the
 caller selects a curve-progress budget rather than an explicit wall deadline.
 The original `timeout_ns` remains the initial budget; the effective deadline
@@ -341,9 +517,22 @@ bound; callers needing a strict total time must leave this option false.
 ## Optional future curve updates
 
 `PlaybackPolicy.allow_curve_updates=True` requires the separate
-`execution.revisable_joint_playback` fact and reference-only paced execution.
-Gripper outcome policies, checkpoints, exact sample grids and `toward_goal`
-velocity hints cannot be combined with updates. Coordinate order, held targets,
+`execution.revisable_joint_playback` fact and paced execution. Reference-only
+buffers retain their existing contract. A buffer with an explicit measured goal
+additionally requires `execution.revisable_goal_playback` (binding API 33).
+Binding API 39 permits `allow_settled=True` without an explicit goal under
+`execution.revisable_settled_playback`. Native completion scores the accepted
+curve's final joint positions, then reports arrival or a stationary miss after
+the full endpoint is acknowledged. It never completes in an intermediate rest.
+The caller may use either settling method; `settle_ns=0` allows one fresh
+post-acknowledgement stationary velocity sample, while position windows preserve
+their span and sample count. A checked replacement retains the same worker,
+execution identity, deadline, tracking limits and cancellation behavior.
+This mode excludes checkpoints and requires a resting endpoint on each curve.
+Gripper outcome policies, exact sample grids and `toward_goal` velocity hints
+cannot be combined with updates. Checkpointed goal buffers accept updates only
+after all original markers have been observed; reference-only buffers still
+exclude checkpoints. Coordinate order, held targets,
 feedback policy, pacing/tracking limits and the original timeout policy stay
 fixed for the execution.
 
@@ -456,6 +645,161 @@ and `allow_settled` retain their normal eligibility meanings. The result remains
 the required sample count/span, drift bounds and its actual goal. Window diagnostics
 never turn a reference receipt into an arrival or physical-stop guarantee.
 
+### SDK-owned goal completion
+
+Binding API 31 adds `PlaybackPolicy.goal` and `settle_timeout_ns`, gated by
+`execution.goal_playback`. A `PlaybackGoal` carries exactly one of:
+
+- `joint_positions`: the original target in selected-index order, evaluated with
+  the existing per-joint `position_tolerance`. A corrected command endpoint can
+  differ from this target.
+- `pose`: a TCP pose in the SDK owner's base frame. Position uses
+  `position_tolerance_m`; rotation uses `orientation_tolerance_rad`, or explicit
+  `None` for position-only completion. This additionally requires
+  `execution.cartesian_goal_playback` for the owner's default TCP, derived from
+  opened local FK and a frame. Missing/wrong-frame feedback fails through normal
+  local cleanup.
+
+For a different selected tool, `execution.kinematic_goal_playback` accepts
+`PlaybackGoal.kinematics`: a `PlaybackKinematics` reference TCP pose plus at most
+128 `PlaybackKinematicJoint` entries, ordered from base to tool. Each identifies
+a local measured joint index, hinge/slide axis, hinge origin, scale and offset.
+The reference pose, axes and origins use the part's base frame at the same
+reference configuration. The scalar displacement is `scale * measured + offset`;
+the caller includes any reference-joint subtraction in that offset. FK composes
+these scalar transforms in order before the reference pose. A slide translates
+along its axis; a hinge rotates about its axis through its origin.
+
+The existing worker evaluates this immutable numeric chain from the same local
+joint sample used for settling and retains that TCP pose in feedback. It needs
+no optional model engine or remote callback. The selected goal geometry does not
+change owner workspace, collision, joint or dispatch gates. The caller remains
+responsible for binding the chain to its selected robot/tool model. Other parts'
+coordinates cannot be frozen into a local part's chain as if they were measured.
+Omitting `kinematics` preserves the original declared-TCP wire contract.
+
+The same worker evaluates arrival and settling for each fresh local sample.
+`arrived` means the requested goal satisfies the configured settling policy;
+`settled` is a separately allowed stationary miss, not successful arrival.
+Failure/cancellation retains the original error and cleanup receipt. No caller
+polling, remote arrival decision or `finish_references` request is needed.
+Delayed status reads return the immutable outcome rather than rerunning checks
+against the caller's clock. Planning a correction is a caller decision and
+requires a checked trajectory.
+
+With `execution.revisable_goal_playback`, the caller may opt into curve updates
+on this same execution. The original goal, result identity and total deadline
+remain fixed. A checked correction can continue from the acknowledged resting
+endpoint, preserving position, velocity and acceleration there. Initial and
+replacement curves must end with zero velocity and acceleration. A pending
+accepted correction must finish before goal completion; merely observing the
+goal cannot discard accepted future work. Withdrawing that pending correction
+restores the incumbent's completion rules. Expired executions cannot be revived
+by a delayed update, including one queued during an observation callback.
+
+Binding API 38 adds `execution.updatable_goal_playback`. Set `goal.allow_updates`
+explicitly on a pose goal with independent dwell, then call
+`handle.update_goal(PlaybackGoalUpdate(expected_revision, pose))`. Revision zero
+identifies the admitted target. The same local worker validates the current
+revision and the unchanged base frame before accepting a new pose. It changes no
+trajectory, FK, tolerance, stationarity policy, deadline or authority. Independent
+dwell history persists; the next fresh goal score resets it only outside the
+configured outer band. Target resolution and trajectory planning stay with the
+caller.
+
+Only one goal request may await processing. The returned request ID identifies
+`goal_update`, which records the requested pose, expected revision and pending,
+accepted or rejected result. Accepted receipts include the new revision.
+`goal_target` contains the accepted pose/revision used for retained feedback and
+is published with that feedback and dwell progress; it is absent before the first
+sample. A queued update may lose to cancellation, failure or completion and be
+rejected. Report the target retained in the terminal snapshot, never a newer
+unaccepted intent. Delayed updates cannot renew either deadline or change a
+terminal result. Reconcile a lost response from the same handle; do not replay.
+Default fixed goals keep their previous behavior and wire encoding.
+
+Binding API 37 adds optional `PlaybackGoalDwell(duration_ns,
+exit_tolerance_multiplier)` under `execution.dwell_goal_playback`. Goal dwell
+starts inside nominal tolerance, survives small crossings, and resets outside
+the selected outer band. Arrival still requires current nominal tolerance and
+independent stationarity. For example, a 300 ms dwell with multiplier 2 preserves
+the timer through slight threshold jitter without declaring arrival outside the
+nominal band. SDK observation time drives the timer, even during motion; measured
+motion still prevents completion. Snapshots expose `goal_dwell.observed_ns`,
+`since_ns` and `restarts` separately from encoder-window evidence.
+
+With explicit positive goal dwell, `settle_ns=0` permits immediate velocity-based
+stationarity; minimum sample counts and encoder-window bounds still apply. Default
+goal policies retain their full in-tolerance settling interval. Goal dwell does
+not alter trajectories, deadlines or cancellation and does not itself update a
+moving target. application's target resolution and correction strategy remain external.
+
+Binding API 36 adds opt-in `complete_in_resting_tail` under
+`execution.resting_goal_playback` for revisable paced goals. Once every remaining
+polynomial segment is constant, its resting reference has been acknowledged and
+all requested checkpoints have been observed, the local worker can settle the
+goal without dispatching the rest repeatedly or waiting for a remote finish
+decision. A pending accepted suffix must execute or be withdrawn first, even
+when the current measured pose already satisfies the goal. Goal loss, feedback
+failure, cancellation and the original deadline remain authoritative. Default
+false preserves the complete requested reference duration. A completed result
+can therefore report `arrived` while `curve_progress.endpoint_acknowledged` is
+false: the unused remainder contained only constant rest, not undispatched motion.
+
+With `execution.playback_timing` (binding API 35), `elapsed_ns` is the duration
+from native activation to the retained feedback sample. It is `None` while queued
+or when an execution ends before activation. Queue wait and cloud reply delay do
+not enter this duration; a terminal snapshot retains its final value. Planners
+can subtract it from their supplied execution budget without comparing clocks.
+It does not renew the local deadline or establish freshness of a delayed sample.
+
+With `execution.goal_progress` (binding API 34), snapshots expose `settled_miss`:
+the latest fresh local sample completes the configured settling test outside the
+original goal. It is progress, not a terminal result or permission to move. Both
+velocity dwell and position-window checks use the original local sample count,
+drift and gap limits. Motion, stale feedback or loss of that settling evidence
+clears the signal; reading status never renews it.
+
+Set `allow_settled=False` to keep a stationary miss open for correction within
+the original deadline. The SDK continues local supervision and measured goal
+completion while the caller plans. A dependent buffer waits for this execution's
+final accepted outcome across all corrections; no remote finish or handoff is
+required. Original checkpoint evidence is retained and never repeated. A caller
+must reconcile accepted revisions and keep its geometry proof valid; the SDK
+adds no planner. Without this support, a correction is a separately admitted
+execution, so dependents must not mistake an intermediate result for final arrival.
+
+`settle_timeout_ns`, when supplied, bounds observation after the last reference
+acknowledgement. It cannot extend the original finite motion timeout. Omitting
+these fields preserves the existing joint-endpoint completion and wire format.
+Explicit goals cannot be combined with reference-only or scalar gripper policies;
+gripper completion retains its existing local policy.
+
+### Deferred reference completion
+
+Binding API 30 adds `PlaybackPolicy.defer_reference_completion`, gated by
+`execution.deferred_reference_completion`. It requires reference-only paced
+execution with a finite timeout, no curve updates and no gripper outcome policy.
+After the fixed curve's endpoint is acknowledged, the same worker retains the
+reservation and continues local observation and optional window diagnostics.
+It sends no further references. This lets a remote planner score its goal using
+locally collected evidence without treating WAN polling intervals as sensor gaps.
+
+Call `DeferredPlaybackHandlePort.finish_references()` on that retained handle
+after endpoint acknowledgement, then wait for the terminal snapshot. Request
+acceptance alone is not completion. The worker checks fresh feedback, tracking,
+window diagnostics and the unchanged deadline before returning
+`references_dispatched`. Final drift or a sample gap remains in the returned
+window; finishing does not certify arrival or stationarity. Early finish refuses;
+repeating a successfully completed finish is idempotent and cannot replay motion.
+Failed or cancelled buffers cannot be revived.
+
+Cancellation, global controls, run closure and failures retain normal local
+Hold/drain. The original timeout bounds deferred observation; a missing finish
+does not create an indefinite reservation. A correction requires confirmed
+completion of the previous buffer before admitting another. The default is
+false and is omitted on the relay wire for older receivers.
+
 ## Optional gripper execution
 
 `PlaybackPolicy.gripper` selects `GripperPolicy` (Python:
@@ -505,6 +849,11 @@ does not apply in this mode.
   Hold/e-stop and teardown use the driver's existing lifecycle.
 
 Repeated or pre-acknowledgement feedback resets completion history. The snapshot's
+The contact sample count, velocity-stationary sample count and local
+contact-compatibility decision are retained on both success and failure. These
+are diagnostics from the existing observation window; they do not change
+completion or cleanup.
+
 `gripper` evidence retains target/measured/commanded opening, progress, shortfalls,
 window span/drift and arrival/force sample counts. Failure and uncertain writes
 retain their original outcome and normal native Hold/drain; no reference retries.
@@ -595,6 +944,14 @@ the original error. Transport loss or a caller timeout does not establish cleanu
 retain ownership until a completed receipt or independently verified owner closure.
 The receipt proves callback completion, not measured physical stationarity.
 
+Site-wide cleanup and completed-stop receipts retain optional structured
+`evidence` supplied by the owner callback, matching scoped Hold diagnostics.
+Python `RuntimeFault` code, detail, retryability, context and causes survive this
+boundary. All declared parts receive Hold/e-stop despite an earlier failure;
+a single fault passes through unchanged, while multiple failures retain each
+part and complete fault. Unknown cleanup never becomes confirmed by recording
+these diagnostics.
+
 `Session.hold` and `Session.estop` still acknowledge only that a request was queued;
 posting another request cannot turn missing/failed cleanup into confirmed cleanup.
 
@@ -672,3 +1029,9 @@ real native gate and callback barriers to check execution, stop ordering,
 supersession, retained faults and shutdown. No hardware or remote planner is
 involved. These tests do not establish device timing, WAN performance or physical
 acceptance.
+
+When a paced-curve feedback read finishes just before its due write, the worker
+retains that sample only through the short remaining cadence wait (bounded by
+the observed read cost and sampling interval). It keeps the original observation
+stamp and rechecks cancellation, owner and watchdog state before dispatch. A late
+wakeup reacquires feedback; gripper and long cadence waits continue sampling.

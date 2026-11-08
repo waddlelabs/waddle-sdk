@@ -21,6 +21,25 @@ Parsing a saved launcher never executes it or opens hardware.
 
 ## Hollow frontend
 
+Binding API 40 exposes `execution.transit_playback`: an admitted same-arm
+successor accepting `references_dispatched` may waive intermediate settling.
+Require the native terminal result and retain its `transit_successor` ID. Cancelled,
+expired, gripper or other-arm successors grant no waiver; required goal tolerance
+and the child's fresh-start check still apply. Reference crossing is not arrival.
+
+Binding API 39 permits revisable local settling without a separate measured goal:
+require `execution.revisable_settled_playback`, set `allow_settled=True`, and
+submit checked finite curves. Completion uses the accepted curve endpoint and
+local stationarity; `settled` remains distinct from `arrived`. Preserve original
+deadlines, cancellation and unknown-reply handling. No new worker is introduced.
+
+Binding API 38 allows explicit `PlaybackGoal.allow_updates` with pose and dwell.
+`update_goal(PlaybackGoalUpdate(...))` queues a target on the same worker; inspect
+`goal_update` for acceptance and use `goal_target` paired with retained feedback.
+Unknown responses never authorize replay. Original policy/deadlines and terminal
+results remain binding. Explicit-goal curves may reuse the native motion-pacing
+allowance; target updates never earn credit. See the finite-reference-playback guide.
+
 The Python package describes hardware and composes lifecycle resources. It must not reproduce Rust decisions about claims, leases, handoffs, feature negotiation, or episode timelines. If Python grows an `if` about those concepts, move the behavior to the core and expose only the narrow result needed by the binding.
 
 The extension shim grows declarations and keyword arguments, not policy logic. Select optional native features through the package's declared feature set rather than probing imports.
@@ -71,6 +90,52 @@ acquires the shared dispatch boundary; applications may use the start bound for
 cadence without counting unrelated lock wait as driver execution.
 
 ## Finite joint playback
+
+Binding API 42 exposes `InputPlaybackRunPort.start_playback_input(timeout_ns)`
+and `PlaybackInputPort` under `execution.input_watchdog_playback`. Bind the input
+to checked work with `Run.start_playback(..., input=control)`. Forward newly
+accepted human input with increasing sequences independently of planning/status;
+never renew automatically. Release and expiry cannot be revived. The device
+relay accepts renewals outside ordinary I/O admission and releases through the
+reserved Stop lane. Release alone is not completed Hold or physical stopping.
+See `docs/core/finite-reference-playback.md#input-arrival-watchdog`.
+
+Binding API 41 adds optional `PlaybackPolicy.expected_start` under
+`execution.expected_start_playback`. It separates measured start admission from
+the first command without changing tolerances or owner limits. See
+`docs/core/finite-reference-playback.md#measured-starting-position`.
+
+Binding API 37 adds optional `PlaybackGoalDwell` under
+`execution.dwell_goal_playback`. Use SDK observation-clock evidence, preserve the
+nominal/outer tolerance bands and independent stationarity, and never renew a
+deadline or infer a moving-goal update from dwell alone. See the normative
+finite-reference playback guide.
+
+Binding API 36 adds opt-in `complete_in_resting_tail` for revisable paced goals.
+It lets the worker settle during an acknowledged constant tail, after checkpoints
+and any accepted future motion are resolved. Default false preserves requested
+rest duration; see the normative finite-playback page for result semantics.
+
+Binding API 35 adds `execution.playback_timing`. Use snapshot `elapsed_ns` for
+local time since activation at the retained feedback sample; queued wait is
+excluded and an unstarted execution has no elapsed duration. The normative
+finite-playback page defines deadline and delayed-sample semantics.
+
+Binding API 31 supports `PlaybackGoal` and local endpoint settling allowances.
+Use SDK-owned measured outcomes for finite trajectories; original joint or
+declared-TCP goals are independent of corrected reference endpoints. Pose goals
+require local FK and the exact SDK base frame. For a selected custom TCP,
+`execution.kinematic_goal_playback` accepts numeric `PlaybackKinematics` on the
+goal; the normative finite-playback page defines its joint/frame binding. It
+changes completion measurement only, never owner safety geometry. A delayed status read cannot renew
+a deadline or change a retained result. See the normative finite-playback page.
+
+Binding API 30 adds `DeferredPlaybackHandlePort.finish_references` with
+`execution.deferred_reference_completion`. Opt-in finite, fixed reference-only
+curves keep their local sampler and owner reservation after endpoint acknowledgement,
+without more writes. Require a terminal snapshot after finish; acceptance alone
+does not confirm completion. Preserve deadlines, final drift/gap diagnostics,
+cancellation and ordinary Hold/drain. See the normative finite-playback page.
 
 Binding API 26 supports explicit reference streams with `timeout_ns=None` and
 `execution.streamed_joint_playback`. Require a watchdog and revisable reference
@@ -143,6 +208,13 @@ playback continues. Preserve handoff position/velocity/acceleration, original
 limits and deadline; reconcile request receipts and acknowledged revisions
 without replaying uncertain updates. See the normative finite-playback page for
 admission restrictions, clock semantics and the separate application checks.
+
+Binding API 33 additionally advertises `execution.revisable_goal_playback`.
+Checked corrections can use that same update API while retaining one measured
+goal, execution identity and original deadline. The SDK finishes locally and
+advances admitted dependents without caller handoff. Original checkpoints must
+be observed before replacement and are never repeated. See the finite-playback
+page for resting continuations, pending suffixes and completion policies.
 
 Binding API 17 optionally records bounded `PlaybackPolicy.checkpoint_offsets_ns`
 under `execution.checkpointed_joint_playback`. Retained snapshots bind fresh local
@@ -229,3 +301,8 @@ reviewed rows or an explicit source manifest, preserving site identity and bound
 source/calibration snapshots. Its trusted configure callback runs before atomic
 publication and must not open hardware. Linux absent-destination rename is the
 qualified filesystem boundary. Normal SDK imports do not require the terminal UI.
+
+A live input may survive individual buffer cancellation only after confirmed
+scoped Hold; this never renews its deadline or revives released/expired input.
+Other failures and global Stop still fence it. See the finite-reference-playback
+contract for the input lifetime and cleanup boundary.

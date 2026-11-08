@@ -206,7 +206,6 @@ def test_public_docs_are_strict_versioned_and_current():
     prose = "\n".join(path.read_text(encoding="utf-8") for path in published)
     assert "github.com/waddlelabs/waddle-sdk/blob/main/waddle-protocol/docs" not in prose
     for stale in (
-        "waddle-sdk connect",
         "waddle_sdk.init(",
         "waddle_sdk.rollout(",
         "waddle_sdk.agent(",
@@ -214,6 +213,8 @@ def test_public_docs_are_strict_versioned_and_current():
         "MCP",
     ):
         assert stale not in prose
+
+    assert "waddle-sdk connect setup" in prose
 
     requirements = (REPO / "docs" / "requirements.txt").read_text(encoding="utf-8")
     assert "--hash=sha256:" in requirements

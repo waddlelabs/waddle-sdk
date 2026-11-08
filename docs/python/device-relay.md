@@ -32,6 +32,12 @@ with async iteration over binary messages, `send(bytes)` and
 peer and use TLS before calling `serve`; the relay itself supplies no identity
 or access-control service. Do not expose it as an unauthenticated listener.
 
+Optional `playback_finish` forwards deferred reference completion to the retained
+run/execution handle. It grants no new ownership and is not a stop operation.
+Require the terminal snapshot after acceptance; the existing reserved stop calls
+and uncertain-drain fences remain unchanged. See
+[deferred completion](../core/finite-reference-playback.md#deferred-reference-completion).
+
 The wheel ships `waddle_sdk_relay` as a separate Python namespace so a server
 can import its protocol constants, publisher schema and structured errors without
 loading `waddle_sdk`, native bindings or hardware modules. Device and wire imports
@@ -66,6 +72,37 @@ native worker can accept renewal; delayed replies and transport heartbeats do
 not extend it. See [finite playback](../core/finite-reference-playback.md).
 
 ## Relay contract
+
+An open reply may advertise `observation_bundle: 1`. Supporting peers can request
+`observation_bundle` to obtain one retained observation, description, support and
+up to eight read-only workspace operations in one roundtrip. Pass optional
+`workspace` entries containing `operation` (`read`, `list` or `stat`) and the usual
+file arguments. Replies retain each request and its `result` or structured workspace
+`error`; missing optional files do not discard the observation. Existing path,
+file, wire-size and camera-retention limits apply. Files are read before capture;
+this is not an atomic filesystem snapshot. SDK clocks and faults are unchanged.
+Consumers should inspect individual advertised fields rather than require an exact
+open-reply object, and keep separate calls for older peers. No native API change
+or planning functionality is introduced.
+
+Deploy the compatible application consumer before distributing this relay update:
+older application builds that require an exact open-reply object reject the additional
+capability field. The updated consumer accepts both old and bundled SDK replies.
+
+`prepared_playback: 1` additionally advertises `state_bundle`: robot state,
+description, support and a configuration `revision`, without camera pixels.
+Observation bundles also carry this revision. A `playback_start` may supply
+`expected_revision` and `joint_guards` (part, index, position, tolerance). The relay
+checks these locally before native admission; mismatches refuse the request without
+dispatching it. Planning remains remote. Native measured-start checks, reference
+bounds, completion and cancellation are unchanged.
+
+Request `include_state: true` on `playback_status` to attach a fresh `preparation`
+bundle to a terminal receipt. If that extra read fails, `preparation_error` retains
+the error while the original completion remains authoritative. Consumers must then
+read fresh state. A supporting planner can reuse observation/completion data and
+submit a trajectory in one roundtrip; cold preparation and active handoffs may need
+a state read. Feedback polling and cancellation remain independent requests.
 
 `waddle_sdk_relay.protocol.PROTOCOL` is the existing binary device protocol. Encode/decode
 binary envelopes with `waddle_sdk_relay.wire`; it accepts an explicit SDK DTO
@@ -165,3 +202,31 @@ These are presentation ceilings, not a guaranteed browser frame rate.
 
 The software tests exercise native mock hardware, lifecycle and transport limits.
 They do not establish physical stopping distances, WAN timing or task success.
+## Hosted setup and application extensions
+
+`waddle-sdk connect setup` pairs a device through browser approval when no existing
+credential is selected. `login --no-browser` supports a remote terminal. Setup
+reuses an existing workspace's credential and site identity; it does not silently
+replace an active credential. `logout` revokes access before removing the local
+credential file. Pairing and configuration do not open hardware.
+
+New SDK connections store their connection state beneath `.waddle` in the
+workspace. An installed application can register a non-opening layout resolver
+under `waddle_sdk.connection_layouts` to retain its existing paths. A resolver
+returns a `Path` for an existing connection, or `None`; conflicting saved layouts
+refuse before starting a device. Credentials are not moved or rewritten by layout
+discovery.
+
+Optional local/hybrid applications register modules under the
+`waddle_sdk.connect_execution` entry-point group with the selected mode as the
+entry-point name. A module provides `main(argv, *, prog)` for setup/start/status
+and an async `serve(workspace, *, stop, torque_release_authorized)` for hybrid
+device execution. These modules are loaded only after that mode is selected.
+Missing or multiple providers refuse without opening hardware. Applications may
+also register explicit, non-opening system preparation callbacks under
+`waddle_sdk.connect_prepare`; callbacks receive `(endpoint, key_file)` before
+hardware setup. The SDK does not depend on an application implementation.
+
+The public device attachment identifies the SDK relay protocol. Servers retaining
+an older attachment envelope must support this handshake before advertising the
+new connector. Binary device RPC and its version negotiation remain unchanged.
