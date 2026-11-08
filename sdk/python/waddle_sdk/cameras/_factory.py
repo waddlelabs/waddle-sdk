@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import inspect
+import os
 from collections.abc import Callable
 
 from .base import CameraDriver
@@ -52,6 +53,10 @@ def open_camera_driver(
 ) -> CameraDriver:
     """Call one current or legacy camera factory and check its result."""
 
+    # Vendor startup/recovery may block Python itself. A driver may select its
+    # own process-backed implementation without changing its camera contract.
+    if os.name == "posix":
+        target = getattr(target, "isolated_camera_factory", target)
     parameters = inspect.signature(target).parameters
     if "config" in parameters:
         result = target(config=config)

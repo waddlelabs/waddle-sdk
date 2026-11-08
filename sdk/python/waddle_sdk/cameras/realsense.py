@@ -61,6 +61,10 @@ def _shared_context(rs: Any) -> Any:
 class RealSenseDriver:
     """One aligned, self-recovering RealSense RGB-D stream."""
 
+    # Site/inspection factories use this process-backed implementation. Direct
+    # construction remains available for standalone camera-only diagnostics.
+    from .realsense_process import IsolatedRealSenseDriver as isolated_camera_factory
+
     _ENUMERATION_TIMEOUT_S = 6.0
     _STREAM_CONFIRM_TIMEOUT_S = 3.0
     _RESET_SETTLE_S = 3.0

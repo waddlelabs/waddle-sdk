@@ -131,6 +131,15 @@ process-lifetime vendor context and each camera's independent bounded recovery.
 Omitting the serial selects the first enumerated device; use explicit serials for
 multi-camera sites.
 
+On POSIX, Site and camera-inspection factories run each RealSense stream in a
+private camera-only process. This keeps vendor opening and recovery from blocking
+Python robot-control threads. The process returns original aligned RGB-D and
+active intrinsics; per-frame pixel deprojection still uses the vendor's matching
+distortion model. Capture remains open for the rig session rather than closing
+between calls. Original camera failures remain errors. Cleanup is bounded and may
+terminate only that camera process if its vendor teardown wedges. Standalone
+`RealSenseDriver(...)` construction remains inline for camera-only diagnostics.
+
 For source-built librealsense 2.58.4, the optional
 [alignment binding patch](patches/librealsense-2.58.4-align-gil.patch) releases
 Python's GIL while native `align.process` runs. Apply it to the upstream source

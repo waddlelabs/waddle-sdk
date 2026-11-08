@@ -11,6 +11,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Isolate RealSense opening, capture and recovery in a private camera process
+  for POSIX Site and inspection lifecycles. Preserve aligned RGB-D, active
+  intrinsics, vendor deprojection, original failures and bounded teardown;
+  camera recovery no longer holds the caller's Python control threads.
+
 - Suggest only external adapters on the robot page, excluding built-in CAN
   controllers. Show explicit USB PLUGGED IN/USB UNPLUGGED status instead of
   presenting CAN link state as connection guidance.

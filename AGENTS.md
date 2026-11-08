@@ -12,6 +12,14 @@ Preview is a camera-only snapshot rendered with terminal colour blocks, includin
 over SSH. The YAM starter bounds are [-1, -1, -0.05] to [1, 1, 1] metres; preserve
 explicit saved-site bounds. Software checks do not establish physical camera capture.
 
+POSIX camera factories honor an adapter's optional `isolated_camera_factory`.
+RealSense uses a camera-only child so native opening/recovery cannot hold the
+robot-control interpreter. Keep original RGB-D, active intrinsics, per-frame
+vendor deprojection and scoped errors; do not open robot/control state in that
+child. Direct RealSense construction remains inline for camera-only diagnostics.
+Capture stays open throughout the owning rig session, including model-thinking
+gaps. Camera-only timing evidence does not qualify physical motor reliability.
+
 Native MuJoCo scene lifecycle tests require the optional `mujoco` extra and must
 skip before importing/opening a simulator when it is unavailable. Keep normal
 package installation independent of simulation dependencies. Run native lifecycle
