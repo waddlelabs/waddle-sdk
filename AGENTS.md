@@ -1,3 +1,8 @@
+Hosted connector implementation now ships under waddle_sdk.connect. The SDK CLI
+accepts connect setup/start/status while legacy connect --site remains supported.
+Private Metal is imported only for local/hybrid operation. Keep the old standalone
+connector as forwarding compatibility code and ship matching client releases.
+
 Relay observation bundling (2026-11-02) passes all 1,294 default Python tests
 (413 optional skips), strict docs and selected Metal/real-GPU relay integration.
 The Python-only addition advertises observation_bundle: 1 and reuses retained

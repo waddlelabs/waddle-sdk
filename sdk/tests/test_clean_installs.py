@@ -113,6 +113,12 @@ def wheelhouse(tmp_path_factory: pytest.TempPathFactory) -> Path:
         requirements=project["dependencies"],
         extras=extras,
     )
+    for distribution, version in (
+        ("httpx", "0.28.1"),
+        ("websockets", "15.0.1" if sys.version_info < (3, 11) else "17.0.1"),
+        ("msgpack", "1.1.0"),
+    ):
+        _build_wheel(directory, distribution, version, files={})
     _build_wheel(
         directory,
         "numpy",

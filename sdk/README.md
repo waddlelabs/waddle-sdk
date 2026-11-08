@@ -695,3 +695,23 @@ A queued `hold()` or `estop()` is distinct from a completed `stop()` receipt.
 Failed cleanup remains unknown; callback completion does not prove measured
 stationarity. Every declared part receives the stop even when a peer callback
 fails.
+
+## Hosted robot connection
+
+The SDK includes the hosted connector. In your chosen virtual environment, install
+`waddle-sdk[setup]` for the existing interactive workspace wizard, then run:
+
+```sh
+waddle-sdk connect setup --endpoint https://app.waddlelabs.ai --execution cloud
+waddle-sdk connect status --directory ~/workspaces/my-rig
+waddle-sdk connect start --directory ~/workspaces/my-rig
+```
+
+The endpoint defaults to `https://app.waddlelabs.ai`; use an explicit beta endpoint
+for testing. Existing account-key setup remains required (`--key-file` defaults to
+`~/.config/waddle/account.key`). Hardware support is selected by the workspace
+wizard. Cloud operation does not require Metal or Torch. Local planning still
+requires a separately authorized Metal installation. `--no-start` saves setup
+without enabling hardware. The legacy `connect --site …` gRPC command is retained.
+The separate `waddle-connect` distribution is a compatibility wrapper and must be
+released with a matching SDK; these source changes do not publish a new PyPI release.

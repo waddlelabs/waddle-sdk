@@ -18,6 +18,9 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Bundle hosted connector setup/start/status under `waddle-sdk connect`; keep legacy gRPC flags.
+
+
 - Advertise prepared-playback relay support. Return state and configuration with
   observations/completion; check a submitted configuration revision and numerical
   joint preconditions locally before native admission. No planner or native API
