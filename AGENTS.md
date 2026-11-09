@@ -1,3 +1,5 @@
+Native JSON transport enables exact float round trips. Joint targets, returned references and measured positions must preserve their binary values; decimal transport must not introduce drift across unrelated commands. The native worker precision case in test_finite_playback.py exercises the public boundary. No gain, tolerance or physical acceptance change is implied.
+
 The unpublished integration preserves API-42 native execution, submission-paced jaw references, sample-bound evidence and camera isolation. Completed Stop returns the original structured fault in error and evidence; native_error retains the diagnostic wrapper text. Hosted setup uses public lazy application extensions. No downstream implementation names/imports belong in this public repository. See CHANGELOG.md and docs/python/device-relay.md.
 
 The unpublished integration uses binding API 42 with local goal/queue/jog

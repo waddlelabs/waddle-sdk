@@ -584,3 +584,19 @@ def test_completed_stop_after_terminal_reference_only_motion(opened, estop):
     assert receipt["measured_stationary"] is False
     assert handle.snapshot() == original
     assert SupportFact.COMPLETED_STOP in session.support().rows[0].facts
+
+
+def test_reference_values_survive_native_transport_without_bit_drift(opened):
+    session, run = opened
+    target = (0.24999999999999994, -0.24999999999999994)
+    result = run.start_playback(
+        motion((0.0, 0.0), (0.125, -0.125), target, feedforward=True)
+    ).wait()
+    assert result["status"] == "arrived", result
+    commanded = site_fixtures.velocity_commands[-1][0]
+    expected = np.asarray(target, dtype=np.float64)
+    assert np.array_equal(commanded.view(np.uint64), expected.view(np.uint64))
+    returned = np.asarray(result["last_reference"]["positions"], dtype=np.float64)
+    assert np.array_equal(returned.view(np.uint64), expected.view(np.uint64))
+    observed = session.observe_parts().parts["arm"].joint_position
+    assert np.array_equal(observed.view(np.uint64), expected.view(np.uint64))

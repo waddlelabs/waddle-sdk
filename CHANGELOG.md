@@ -1,3 +1,7 @@
+## Unreleased — exact native numeric transport
+
+- Preserve binary joint/reference/feedback values through native JSON decoding, including values whose shortest decimal previously parsed one ULP away.
+
 ## 2026-11-02 — Curved hollow tabletop bowls
 
 - Give newly authored bowls smooth curved sides, a deep open interior and a

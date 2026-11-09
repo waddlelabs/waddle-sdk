@@ -37,7 +37,7 @@ smallvec = { version = "1", features = ["union", "const_generics", "serde"] }
 thiserror = "2"
 bytes = "1"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["float_roundtrip"] }
 mcap = "0.25"
 uuid = { version = "1", features = ["v4"] }
 semver = { version = "1", features = ["serde"] }
