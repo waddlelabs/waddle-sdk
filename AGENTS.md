@@ -1,5 +1,8 @@
 Native JSON transport enables exact float round trips. Joint targets, returned references and measured positions must preserve their binary values; decimal transport must not introduce drift across unrelated commands. The native worker precision case in test_finite_playback.py exercises the public boundary. No gain, tolerance or physical acceptance change is implied.
 
+Unpublished ISO014 integration review (2026-11-09): SDK-owned setup retains USB permission progress and original scoped/redacted failures in the public CLI. Camera inspection and explicit base-identity validation from the qualified client are retained with API42.
+
+
 The unpublished integration preserves API-42 native execution, submission-paced jaw references, sample-bound evidence and camera isolation. Completed Stop returns the original structured fault in error and evidence; native_error retains the diagnostic wrapper text. Hosted setup uses public lazy application extensions. No downstream implementation names/imports belong in this public repository. See CHANGELOG.md and docs/python/device-relay.md.
 
 The unpublished integration uses binding API 42 with local goal/queue/jog
@@ -11,6 +14,11 @@ and no catch-up. Public hosted setup loads optional applications only through
 New connections use `.waddle`; existing credentials/site identity remain intact.
 See docs/python/device-relay.md and the rolling CHANGELOG.md. Matching native/media
 artifacts are required; no publication or physical qualification is implied.
+Setup diagnostics retain redacted camera vendor errors and native causes.
+Explicitly busy RealSense opens never reset a device owned by another program.
+Arm-name edits update only suggested frames; independent native YAM entries need
+distinct local base IDs. Custom adapters may still explicitly share a frame.
+These are local setup candidates; fresh customer installation remains separate.
 
 Terminal setup uses persistent camera and arm-transport lists with one-second
 non-opening discovery. Preserve the highlighted device through refresh and

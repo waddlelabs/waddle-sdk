@@ -10,7 +10,9 @@ from pathlib import Path
 import httpx
 from waddle_sdk_relay.errors import RelayError as ToolError
 
-from .config import load_connection, load_workspace
+from waddle_sdk.runtime import RuntimeFault
+
+from .config import load_connection, load_workspace, read_key
 from .connection import launch
 from .dependencies import (
     HARDWARE,
@@ -20,6 +22,20 @@ from .dependencies import (
 )
 from .extensions import connection_directory
 from .setup import account_client, checked, configure, origin, setup_identity
+
+
+def _failure(error, *, code, key_file=None):
+    """Keep original scoped causes in terminal failures, without the account key."""
+    payload = RuntimeFault.from_exception(error).as_dict()
+    raw = json.dumps(payload, ensure_ascii=False)
+    if key_file is not None:
+        try:
+            key = read_key(key_file=Path(key_file).expanduser())
+        except (ValueError, OSError):
+            key = None
+        if key:
+            raw = raw.replace(json.dumps(key, ensure_ascii=False)[1:-1], "[REDACTED]")
+    print(f"waddle-connect: {code}: {raw}", file=sys.stderr)
 
 
 def main(argv=None, *, prog="waddle-sdk connect"):
@@ -76,6 +92,7 @@ def main(argv=None, *, prog="waddle-sdk connect"):
     logout_parser.add_argument("--endpoint", default="https://app.waddlelabs.ai")
     logout_parser.add_argument("--key-file", type=Path, required=True)
     args = parser.parse_args(argv)
+    diagnostic_key_file = getattr(args, "key_file", None)
     try:
         if args.command == "login":
             from .login import login
@@ -110,6 +127,7 @@ def main(argv=None, *, prog="waddle-sdk connect"):
             saved = load_connection(workspace)
             if saved is None:
                 raise ValueError("No saved app connection; rerun setup")
+            diagnostic_key_file = saved.key_file
             return launch(
                 workspace,
                 workspace_id=state.get("workspace_id"),
@@ -123,6 +141,7 @@ def main(argv=None, *, prog="waddle-sdk connect"):
             saved = load_connection(workspace)
             if saved is None:
                 raise ValueError("No saved app connection; rerun setup")
+            diagnostic_key_file = saved.key_file
             endpoint = "https://" + saved.endpoint.removeprefix("wss://").removesuffix(
                 "/connect"
             )
@@ -172,6 +191,7 @@ def main(argv=None, *, prog="waddle-sdk connect"):
                 args.endpoint, workspace_id=args.workspace_id
             )
         args.key_file = args.key_file.expanduser().absolute()
+        diagnostic_key_file = args.key_file
         with account_client(args.endpoint, args.key_file) as client:
             account = checked(client.get("/api/v1/account"))
         args.rig, site_id = setup_identity(account, args.workspace_id, args.rig)
@@ -275,16 +295,23 @@ def main(argv=None, *, prog="waddle-sdk connect"):
             key_file=args.key_file,
         )
     except ToolError as error:
-        print(f"waddle-connect: {error.code}: {error.detail}", file=sys.stderr)
+        if error.context:
+            _failure(
+                ToolError(error.code, error.detail, **error.context),
+                code=error.code,
+                key_file=diagnostic_key_file,
+            )
+        else:
+            print(f"waddle-connect: {error.code}: {error.detail}", file=sys.stderr)
         return 2
-    except httpx.HTTPError:
-        print(
-            "waddle-connect: could not reach the app; check the connection and rerun setup",
-            file=sys.stderr,
-        )
+    except httpx.HTTPError as error:
+        _failure(error, code=f"{args.command}.http", key_file=diagnostic_key_file)
+        return 2
+    except RuntimeFault as error:
+        _failure(error, code=error.code.value, key_file=diagnostic_key_file)
         return 2
     except (ValueError, OSError) as error:
-        print(f"waddle-connect: {error}", file=sys.stderr)
+        _failure(error, code=f"{args.command}.failed", key_file=diagnostic_key_file)
         return 2
     except subprocess.CalledProcessError:
         print(

@@ -99,7 +99,14 @@ class RealSenseDriver:
             # fail to set power on a peer whose streaming interfaces are owned.
             config = self._rs.config()
             config.enable_device(self._serial)
-            return config.resolve(self._rs.pipeline_wrapper(pipeline)).get_device()
+            try:
+                return config.resolve(self._rs.pipeline_wrapper(pipeline)).get_device()
+            except RuntimeError as exc:
+                raise RuntimeError(
+                    f"Cannot open RealSense camera {self._serial!r}: {exc}. "
+                    "Check USB connection/access and close other applications using "
+                    "this camera before retrying."
+                ) from exc
         deadline = time.monotonic() + self._ENUMERATION_TIMEOUT_S
         while True:
             for device in context.query_devices():
@@ -232,6 +239,18 @@ class RealSenseDriver:
             except RuntimeError as exc:
                 last_error = exc
                 self._stop_pipeline()
+                message = str(exc).lower()
+                if any(
+                    marker in message
+                    for marker in (
+                        "device or resource busy",
+                        "rs2_usb_status_busy",
+                        "libusb_error_busy",
+                    )
+                ):
+                    # Another owner is not a wedged camera. Resetting its USB
+                    # device would interrupt that owner's stream.
+                    raise
                 if attempt == 0:
                     try:
                         device.hardware_reset()

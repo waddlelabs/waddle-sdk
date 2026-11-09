@@ -327,12 +327,12 @@ class FaultCode(str, enum.Enum):
 
 _CREDENTIAL_FIELD = re.compile(
     r"(?:.*[_.-])?(?:authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|"
-    r"token|password|passwd|secret|credentials?)$",
+    r"token|key|password|passwd|secret|credentials?)$",
     re.IGNORECASE,
 )
 _CREDENTIAL_TEXT = re.compile(
     r"(\b(?:authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|"
-    r"token|password|passwd|secret|credentials?)\s*[:=]\s*)"
+    r"token|(?:[\w.-]+[_-])?key|password|passwd|secret|credentials?)\s*[:=]\s*)"
     r"(?:Bearer\s+[^\s,;]+|\"[^\"]*\"|'[^']*'|[^\s,;]+)",
     re.IGNORECASE,
 )

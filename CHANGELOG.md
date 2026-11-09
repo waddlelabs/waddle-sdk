@@ -1,5 +1,8 @@
 ## Unreleased — exact native numeric transport
 
+Unpublished ISO014 integration review (2026-11-09): SDK-owned setup retains USB permission progress and original scoped/redacted failures in the public CLI. Camera inspection and explicit base-identity validation from the qualified client are retained with API42.
+
+
 - Preserve binary joint/reference/feedback values through native JSON decoding, including values whose shortest decimal previously parsed one ULP away.
 
 ## 2026-11-02 — Curved hollow tabletop bowls
@@ -33,6 +36,11 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   for POSIX Site and inspection lifecycles. Preserve aligned RGB-D, active
   intrinsics, vendor deprojection, original failures and bounded teardown;
   camera recovery no longer holds the caller's Python control threads.
+- Preserve redacted camera-open/capture/close diagnostics and selected preview
+  identity. Do not reset explicitly busy RealSense cameras. Keep arbitrary
+  `*-key` credential assignments redacted through the existing runtime path.
+- Update suggested base frames when arm names change, preserving custom input;
+  refuse duplicate local bases for independent native YAM entries during setup.
 
 - Suggest only external adapters on the robot page, excluding built-in CAN
   controllers. Show explicit USB PLUGGED IN/USB UNPLUGGED status instead of

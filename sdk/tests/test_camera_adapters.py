@@ -225,6 +225,29 @@ def _fast_realsense(monkeypatch, vendor: _RsVendor) -> None:
     monkeypatch.setattr(realsense.RealSenseDriver, "_STREAM_CONFIRM_TIMEOUT_S", 0.001)
 
 
+@pytest.mark.parametrize(
+    "message",
+    [
+        "ioctl(VIDIOC_S_FMT) failed, errno=16: Device or resource busy",
+        "failed to claim usb interface: RS2_USB_STATUS_BUSY",
+    ],
+)
+def test_realsense_busy_device_is_not_reset_or_retried(monkeypatch, message):
+    vendor = _RsVendor([{"confirm": True}])
+    _fast_realsense(monkeypatch, vendor)
+    original = RuntimeError(message)
+
+    def busy(*args):
+        raise original
+
+    monkeypatch.setattr(_RsPipeline, "start", busy)
+    with pytest.raises(RuntimeError) as error:
+        realsense.RealSenseDriver(serial="rs-test", width=3, height=2)
+    assert error.value is original
+    assert vendor.device.resets == 0
+    assert len(vendor.pipelines) == 1
+
+
 def test_realsense_resets_a_pipeline_that_opens_without_frames(monkeypatch):
     vendor = _RsVendor([{"confirm": False}, {"confirm": True}])
     _fast_realsense(monkeypatch, vendor)

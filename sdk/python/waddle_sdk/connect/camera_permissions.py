@@ -42,6 +42,9 @@ def prepare_realsense_usb_access(
     """
     if sys.platform != "linux":
         return
+    # A piped installer must fail promptly instead of asking sudo to read from
+    # an unrelated terminal. The TUI suspends before this interactive callback.
+    interactive = interactive and sys.stdin.isatty()
     blocked = [
         row
         for row in _devices(sys_root, dev_root)
@@ -71,7 +74,9 @@ def prepare_realsense_usb_access(
         )
     prefix = [] if os.geteuid() == 0 else (["sudo"] if interactive else ["sudo", "-n"])
 
-    def run(*args):
+    def run(label, *args):
+        if interactive:
+            print(label, flush=True)
         try:
             result = subprocess.run(
                 prefix + list(args),
@@ -81,7 +86,9 @@ def prepare_realsense_usb_access(
                 timeout=120 if interactive else 15,
             )
         except (OSError, subprocess.TimeoutExpired) as error:
-            raise RelayError("setup.camera_permissions", str(error)) from error
+            raise RelayError(
+                "setup.camera_permissions", label + " " + str(error)
+            ) from error
         if result.returncode:
             raise RelayError(
                 "setup.camera_permissions",
@@ -113,11 +120,26 @@ def prepare_realsense_usb_access(
             else:
                 source = Path(temporary) / destination.name
                 source.write_text(rule)
-                run("install", "-m", "0644", str(source), str(destination))
-        run("udevadm", "control", "--reload-rules")
+                run(
+                    "Installing camera USB access rule…",
+                    "install",
+                    "-m",
+                    "0644",
+                    str(source),
+                    str(destination),
+                )
+        run(
+            "Reloading camera USB access rules…", "udevadm", "control", "--reload-rules"
+        )
         for device, _, _ in blocked:
-            run("udevadm", "trigger", "--action=change", str(device))
-        run("udevadm", "settle", "--timeout=5")
+            run(
+                "Applying camera USB access…",
+                "udevadm",
+                "trigger",
+                "--action=change",
+                str(device),
+            )
+        run("Checking camera USB access…", "udevadm", "settle", "--timeout=5")
     remaining = [
         str(row[2]) for row in blocked if not os.access(row[2], os.R_OK | os.W_OK)
     ]
@@ -127,6 +149,8 @@ def prepare_realsense_usb_access(
             "RealSense USB access is still unavailable after applying rules: "
             + ", ".join(remaining),
         )
+    if interactive:
+        print("Camera USB access ready. Continuing setup…", flush=True)
 
 
 if __name__ == "__main__":

@@ -10,6 +10,39 @@ from waddle_sdk.discovery import DiscoveryReport, HardwareCandidate
 from waddle_sdk.workspace import tui
 
 
+def test_arm_names_update_suggested_frames_and_duplicate_yam_frames_are_refused(
+    tmp_path,
+):
+    async def check():
+        from textual.widgets import Select
+
+        app = tui.WorkspaceInitApp(tmp_path, DiscoveryReport(()))
+        async with app.run_test(size=(110, 44)) as pilot:
+            app.query_one("#profile", Select).value = "yam"
+            await pilot.pause()
+            app._set_input("part-name", "left")
+            await pilot.pause()
+            assert app._input("part-frame") == "left_base"
+            app._set_input("part-connection", '{"channel":"unused-left"}')
+            app._add_part()
+            await pilot.pause()
+            app._set_input("part-name", "right")
+            await pilot.pause()
+            assert app._input("part-frame") == "right_base"
+            app._set_input("part-frame", "left_base")
+            app._set_input("part-connection", '{"channel":"unused-right"}')
+            with pytest.raises(ValueError, match="distinct base_frame"):
+                app._add_part()
+            app._set_input("part-frame", "measured_right_base")
+            app._set_input("part-name", "renamed_right")
+            await pilot.pause()
+            assert app._input("part-frame") == "measured_right_base"
+            app._add_part()
+            assert len(app.parts) == 2
+
+    asyncio.run(check())
+
+
 def camera(serial="sdk-one", *, ready=True):
     return HardwareCandidate(
         identifier=serial,

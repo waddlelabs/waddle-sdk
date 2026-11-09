@@ -22,7 +22,8 @@ def snapshot(driver, connection, stream, *, columns=80):
             "Camera preview needs an SDK build with camera inspection support"
         ) from error
     spec = CameraInspectionSpec(
-        name="setup-preview",
+        name="setup-preview:"
+        + str(selected.get("serial", selected.get("device", "camera")))[:100],
         driver=driver,
         connection=selected,
         stream={key: int(value) for key, value in stream.items()},

@@ -173,7 +173,7 @@ def test_partial_open_failure_closes_every_previous_camera(
 
     assert events == ["open:first", "open:broken", "close:first"]
     assert drivers["first"].capture_started.is_set() is False
-    assert "vendor refused" not in str(raised.value)
+    assert "vendor refused second camera" in str(raised.value)
 
 
 def test_context_close_unblocks_pending_capture_without_site_runtime(
@@ -202,7 +202,7 @@ def test_capture_failure_is_bounded_and_reported(fake_cameras) -> None:
         assert "requested 2x2" in session.errors["wrong-shape"]
 
 
-def test_vendor_capture_detail_is_not_exposed(fake_cameras) -> None:
+def test_vendor_capture_diagnostics_redact_credentials(fake_cameras) -> None:
     events, drivers, module = fake_cameras
 
     class SecretErrorCamera(_BlockingCamera):
@@ -225,7 +225,10 @@ def test_vendor_capture_detail_is_not_exposed(fake_cameras) -> None:
     )
     with inspect_cameras((spec,)) as session:
         assert session.wait("secret", timeout_s=1.0) is None
-        assert session.errors["secret"] == "capture failed (RuntimeError)"
+        assert (
+            session.errors["secret"]
+            == "capture failed (RuntimeError): token=[REDACTED]"
+        )
         assert "do-not-share" not in session.errors["secret"]
 
 
