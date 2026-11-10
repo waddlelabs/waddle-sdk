@@ -10,6 +10,7 @@ from __future__ import annotations
 import importlib
 import math
 import threading
+import time
 
 import numpy as np
 
@@ -36,6 +37,10 @@ def _profile(pipeline, sensor, width: int, height: int, fmt, fps: int):
     return profiles.get_video_stream_profile(width, height, fmt, fps)
 
 
+class _FrameTimeout(RuntimeError):
+    """Only the adapter's bounded acquisition timeout permits startup recovery."""
+
+
 class OrbbecDriver:
     """One pixel-aligned Orbbec RGB-D stream satisfying ``CameraDriver``."""
 
@@ -49,14 +54,44 @@ class OrbbecDriver:
     ) -> None:
         fps = _integral_fps(fps)
         sdk = _vendor_module()
+        self._sdk = sdk
+        self._serial = serial
+        self._pipeline = None
+        self._closed = False
+        self._close_lock = threading.Lock()
+        self.depth_scale_mm: float | None = None
+        self._intrinsics: Intrinsics | None = None
         self._context = sdk.Context() if serial is not None else None
+        try:
+            try:
+                self._start(width, height, fps)
+            except _FrameTimeout:
+                if self._context is None:
+                    raise
+                # Only a timed-out owned stream may be rebooted, before arms open.
+                # A failed stop is not permission to reset a possibly busy device.
+                self._stop_pipeline()
+                self._reboot_and_wait()
+                self._start(width, height, fps)
+        except BaseException as error:
+            try:
+                self.close()
+            except Exception as cleanup:
+                raise RuntimeError(
+                    f"Orbbec startup failed: {error}; pipeline cleanup failed: {cleanup}"
+                ) from error
+            raise
+
+    def _start(self, width: int, height: int, fps: int) -> None:
+        sdk = self._sdk
         pipeline = (
             sdk.Pipeline(
-                self._context.query_devices().get_device_by_serial_number(serial)
+                self._context.query_devices().get_device_by_serial_number(self._serial)
             )
             if self._context is not None
             else sdk.Pipeline()
         )
+        self._pipeline = pipeline
         config = sdk.Config()
         color = _profile(
             pipeline,
@@ -84,21 +119,37 @@ class OrbbecDriver:
         config.set_frame_aggregate_output_mode(
             sdk.OBFrameAggregateOutputMode.FULL_FRAME_REQUIRE
         )
-        self._pipeline = pipeline
-        self._closed = False
-        self._close_lock = threading.Lock()
-        self.depth_scale_mm: float | None = None
-        self._intrinsics: Intrinsics | None = None
-        try:
-            pipeline.start(config)
-            self._align = sdk.AlignFilter(align_to_stream=sdk.OBStreamType.COLOR_STREAM)
-            self._color_profile = color
-            # The scale belongs to an actual depth frame. Acquire it before the
-            # rig snapshots calibration and opens actuators; never guess units.
-            self._capture(attempts=10)
-        except Exception:
-            self.close()
-            raise
+        pipeline.start(config)
+        self._align = sdk.AlignFilter(align_to_stream=sdk.OBStreamType.COLOR_STREAM)
+        self._color_profile = color
+        self._capture(attempts=10)
+
+    def _stop_pipeline(self) -> None:
+        if self._pipeline is not None:
+            self._pipeline.stop()
+            self._pipeline = None
+
+    def _reboot_and_wait(self, timeout_s: float = 30.0) -> None:
+        def present() -> bool:
+            devices = self._context.query_devices()
+            return any(
+                devices.get_device_serial_number_by_index(i) == self._serial
+                for i in range(devices.get_count())
+            )
+
+        device = self._context.query_devices().get_device_by_serial_number(self._serial)
+        device.reboot()
+        del device
+        deadline = time.monotonic() + timeout_s
+        for expected in (False, True):
+            while present() is not expected:
+                if time.monotonic() >= deadline:
+                    phase = "return" if expected else "disconnect"
+                    raise RuntimeError(
+                        f"Orbbec {self._serial} did not {phase} after reboot"
+                    )
+                time.sleep(0.2)
+        time.sleep(1.0)
 
     def intrinsics(self) -> Intrinsics:
         """Calibration of the active color grid to which depth is aligned."""
@@ -131,7 +182,7 @@ class OrbbecDriver:
                 break
             failure = f"incomplete RGB-D frameset (color={color is not None}, depth={depth is not None})"
         else:
-            raise RuntimeError(
+            raise _FrameTimeout(
                 f"Orbbec timed out after {attempts} frame wait(s): {failure}"
             )
         width, height = int(color.get_width()), int(color.get_height())
@@ -167,5 +218,5 @@ class OrbbecDriver:
         with self._close_lock:
             if self._closed:
                 return
+            self._stop_pipeline()
             self._closed = True
-            self._pipeline.stop()

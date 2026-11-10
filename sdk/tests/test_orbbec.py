@@ -39,7 +39,7 @@ def vendor(monkeypatch, *, scale=0.25, missing=False):
         state.selected.append(serial)
         if serial != "CV2L761000XJ":
             raise RuntimeError("configured camera not found")
-        return "selected-device"
+        return getattr(state, "device", "selected-device")
 
     def pipeline(*devices):
         state.devices = devices
@@ -167,3 +167,122 @@ def test_orbbec_running_capture_does_not_inherit_startup_wait(monkeypatch):
         driver.capture()
     assert state.captures == 2
     driver.close()
+
+
+def recovering_vendor(monkeypatch, *, disappearance=True, returns=True):
+    state = vendor(monkeypatch)
+    state.delay = 10
+    state.reboots = 0
+    state.clock = 0.0
+    state.polls = 0
+    sdk = orbbec._vendor_module()
+    original_context = sdk.Context
+
+    def reboot():
+        assert state.stops == 1
+        state.reboots += 1
+
+    state.device = NS(reboot=reboot)
+
+    def count():
+        state.polls += 1
+        if not disappearance:
+            return 1
+        return int(returns and state.polls > 1)
+
+    def query():
+        devices = original_context().query_devices()
+        devices.get_count = count
+        devices.get_device_serial_number_by_index = lambda i: "CV2L761000XJ"
+        return devices
+
+    sdk.Context = lambda: NS(query_devices=query)
+
+    def sleep(seconds):
+        state.clock += seconds
+
+    monkeypatch.setattr(orbbec, "time", NS(monotonic=lambda: state.clock, sleep=sleep))
+    return state
+
+
+def test_startup_timeout_stops_reboots_exact_serial_and_retries_once(monkeypatch):
+    state = recovering_vendor(monkeypatch)
+    driver = orbbec.OrbbecDriver(serial="CV2L761000XJ")
+    assert state.reboots == 1
+    assert state.captures == 11
+    assert driver.intrinsics().depth_scale_mm == 0.25
+    driver.close()
+    assert state.stops == 2
+
+
+def test_failed_recovery_is_not_repeated(monkeypatch):
+    state = recovering_vendor(monkeypatch)
+    state.delay = 100
+    with pytest.raises(RuntimeError, match="timed out"):
+        orbbec.OrbbecDriver(serial="CV2L761000XJ")
+    assert state.reboots == 1
+    assert state.captures == 20
+    assert state.stops == 2
+
+
+@pytest.mark.parametrize(
+    "disappearance,returns,phase",
+    [(False, True, "disconnect"), (True, False, "return")],
+)
+def test_reboot_requires_bounded_serial_disappearance_and_return(
+    monkeypatch, disappearance, returns, phase
+):
+    state = recovering_vendor(monkeypatch, disappearance=disappearance, returns=returns)
+    with pytest.raises(RuntimeError, match="did not " + phase):
+        orbbec.OrbbecDriver(serial="CV2L761000XJ")
+    assert state.reboots == 1
+    assert state.captures == 10
+    assert state.clock < 30.3
+
+
+def test_invalid_scale_does_not_reboot(monkeypatch):
+    state = recovering_vendor(monkeypatch)
+    state.delay = 0
+    state.scale = float("nan")
+    with pytest.raises(ValueError, match="finite positive"):
+        orbbec.OrbbecDriver(serial="CV2L761000XJ")
+    assert state.reboots == 0
+
+
+def test_busy_timeout_text_does_not_authorize_reboot(monkeypatch):
+    state = recovering_vendor(monkeypatch)
+    sdk = orbbec._vendor_module()
+    original = sdk.Pipeline
+
+    def fail():
+        raise RuntimeError("busy device timed out")
+
+    def pipeline(*args):
+        p = original(*args)
+        p.start = lambda config: fail()
+        return p
+
+    sdk.Pipeline = pipeline
+    with pytest.raises(RuntimeError, match="busy device timed out"):
+        orbbec.OrbbecDriver(serial="CV2L761000XJ")
+    assert state.reboots == 0
+    assert state.stops == 1
+
+
+def test_failed_stop_is_not_permission_to_reboot(monkeypatch):
+    state = recovering_vendor(monkeypatch)
+    sdk = orbbec._vendor_module()
+    original = sdk.Pipeline
+
+    def fail():
+        raise RuntimeError("stop failed")
+
+    def pipeline(*args):
+        p = original(*args)
+        p.stop = fail
+        return p
+
+    sdk.Pipeline = pipeline
+    with pytest.raises(RuntimeError, match="stop failed"):
+        orbbec.OrbbecDriver(serial="CV2L761000XJ")
+    assert state.reboots == 0
