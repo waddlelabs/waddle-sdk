@@ -37,6 +37,32 @@ def _profile(pipeline, sensor, width: int, height: int, fmt, fps: int):
     return profiles.get_video_stream_profile(width, height, fmt, fps)
 
 
+def _distortion(distortion):
+    """Translate the vendor-declared model, not just its coefficient storage."""
+    name = getattr(getattr(distortion, "model", None), "name", None)
+    layouts = {
+        "NONE": ("plumb_bob", ()),
+        "BROWN_CONRADY": ("plumb_bob", ("k1", "k2", "p1", "p2", "k3")),
+        "BROWN_CONRADY_K6": (
+            "rational_polynomial",
+            ("k1", "k2", "p1", "p2", "k3", "k4", "k5", "k6"),
+        ),
+        "MODIFIED_BROWN_CONRADY": (
+            "modified_brown_conrady",
+            ("k1", "k2", "p1", "p2", "k3"),
+        ),
+        "INVERSE_BROWN_CONRADY": (
+            "inverse_brown_conrady",
+            ("k1", "k2", "p1", "p2", "k3"),
+        ),
+        "KANNALA_BRANDT4": ("kannala_brandt", ("k1", "k2", "k3", "k4")),
+    }
+    if name not in layouts:
+        raise ValueError(f"Unsupported Orbbec distortion model: {name!r}")
+    model, keys = layouts[name]
+    return model, tuple(float(getattr(distortion, key)) for key in keys)
+
+
 class _FrameTimeout(RuntimeError):
     """Only the adapter's bounded acquisition timeout permits startup recovery."""
 
@@ -198,15 +224,14 @@ class OrbbecDriver:
         if self._intrinsics is None:
             raw = self._color_profile.get_intrinsic()
             distortion = self._color_profile.get_distortion()
+            model, coefficients = _distortion(distortion)
             self._intrinsics = Intrinsics(
                 fx=float(raw.fx),
                 fy=float(raw.fy),
                 cx=float(raw.cx),
                 cy=float(raw.cy),
-                distortion=tuple(
-                    float(getattr(distortion, key))
-                    for key in ("k1", "k2", "p1", "p2", "k3", "k4", "k5", "k6")
-                ),
+                distortion_model=model,
+                distortion=coefficients,
                 depth_scale_mm=scale,
             )
         self.depth_scale_mm = scale

@@ -8,7 +8,17 @@ from waddle_sdk.cameras import CameraCalibrationDriver, orbbec
 def vendor(monkeypatch, *, scale=0.25, missing=False):
     state = NS(stops=0, captures=0, selected=[], scale=scale)
     intr = NS(fx=400.0, fy=401.0, cx=1.0, cy=0.5)
-    dist = NS(k1=0.01, k2=0.0, p1=0.0, p2=0.0, k3=0.0, k4=0.0, k5=0.0, k6=0.0)
+    dist = NS(
+        model=NS(name="BROWN_CONRADY"),
+        k1=0.01,
+        k2=0.0,
+        p1=0.0,
+        p2=0.0,
+        k3=0.0,
+        k4=0.0,
+        k5=0.0,
+        k6=0.0,
+    )
     profile = NS(get_intrinsic=lambda: intr, get_distortion=lambda: dist)
     color = NS(
         get_width=lambda: 2,
@@ -286,3 +296,42 @@ def test_failed_stop_is_not_permission_to_reboot(monkeypatch):
     with pytest.raises(RuntimeError, match="stop failed"):
         orbbec.OrbbecDriver(serial="CV2L761000XJ")
     assert state.reboots == 0
+
+
+@pytest.mark.parametrize(
+    "name,model,keys",
+    [
+        ("BROWN_CONRADY", "DISTORTION_MODEL_PLUMB_BOB", (1, 2, 7, 8, 3)),
+        (
+            "BROWN_CONRADY_K6",
+            "DISTORTION_MODEL_RATIONAL_POLYNOMIAL",
+            (1, 2, 7, 8, 3, 4, 5, 6),
+        ),
+        ("KANNALA_BRANDT4", "DISTORTION_MODEL_KANNALA_BRANDT", (1, 2, 3, 4)),
+    ],
+)
+def test_vendor_distortion_model_and_coefficient_order(name, model, keys):
+    from waddle_sdk.descriptors import Intrinsics
+
+    vendor = NS(
+        model=NS(name=name),
+        k1=1.0,
+        k2=2.0,
+        k3=3.0,
+        k4=4.0,
+        k5=5.0,
+        k6=6.0,
+        p1=7.0,
+        p2=8.0,
+    )
+    mapped, coefficients = orbbec._distortion(vendor)
+    compiled = Intrinsics(
+        fx=1.0, fy=1.0, cx=0.0, cy=0.0, distortion_model=mapped, distortion=coefficients
+    )._compile()
+    assert compiled["model"] == model
+    assert compiled["distortion"] == list(keys)
+
+
+def test_missing_vendor_model_is_not_guessed():
+    with pytest.raises(ValueError, match="Unsupported Orbbec distortion model"):
+        orbbec._distortion(NS(k1=0.1))
