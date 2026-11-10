@@ -95,7 +95,7 @@ class OrbbecDriver:
             self._color_profile = color
             # The scale belongs to an actual depth frame. Acquire it before the
             # rig snapshots calibration and opens actuators; never guess units.
-            self.capture()
+            self._capture(attempts=10)
         except Exception:
             self.close()
             raise
@@ -107,18 +107,33 @@ class OrbbecDriver:
         return self._intrinsics
 
     def capture(self) -> CameraFrame:
+        return self._capture(attempts=1)
+
+    def _capture(self, *, attempts: int) -> CameraFrame:
         if self._closed:
             raise RuntimeError("Orbbec camera is closed")
-        frames = self._pipeline.wait_for_frames(1000)
-        if frames is None:
-            raise RuntimeError("Orbbec timed out waiting for an RGB-D frameset")
-        frames = self._align.process(frames)
-        if frames is None:
-            raise RuntimeError("Orbbec alignment returned no RGB-D frameset")
-        color = frames.get_color_frame()
-        depth = frames.get_depth_frame()
-        if color is None or depth is None:
-            raise RuntimeError("Orbbec returned an incomplete RGB-D frameset")
+        # Startup may initially return empty frames. Retry only acquisition,
+        # before actuators open; ordinary capture retains its one-second bound.
+        failure = "no RGB-D frameset"
+        for _ in range(attempts):
+            frames = self._pipeline.wait_for_frames(1000)
+            if frames is None:
+                failure = "no RGB-D frameset"
+                continue
+            aligned = self._align.process(frames)
+            if aligned is None:
+                failure = "alignment returned no RGB-D frameset"
+                continue
+            frames = aligned.as_frame_set()
+            color = frames.get_color_frame()
+            depth = frames.get_depth_frame()
+            if color is not None and depth is not None:
+                break
+            failure = f"incomplete RGB-D frameset (color={color is not None}, depth={depth is not None})"
+        else:
+            raise RuntimeError(
+                f"Orbbec timed out after {attempts} frame wait(s): {failure}"
+            )
         width, height = int(color.get_width()), int(color.get_height())
         if (int(depth.get_width()), int(depth.get_height())) != (width, height):
             raise RuntimeError("Orbbec did not return pixel-aligned RGB-D frames")

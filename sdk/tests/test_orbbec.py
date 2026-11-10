@@ -22,10 +22,15 @@ def vendor(monkeypatch, *, scale=0.25, missing=False):
         get_depth_scale=lambda: state.scale,
     )
     frames = NS(get_color_frame=lambda: color, get_depth_frame=lambda: depth)
+    aligned = NS(as_frame_set=lambda: frames)
 
     def wait(_timeout):
         state.captures += 1
-        return None if missing else frames
+        return (
+            None
+            if (missing or state.captures <= getattr(state, "delay", 0))
+            else frames
+        )
 
     def stop():
         state.stops += 1
@@ -59,7 +64,7 @@ def vendor(monkeypatch, *, scale=0.25, missing=False):
         OBFormat=NS(RGB=1, Y16=2),
         OBStreamType=NS(COLOR_STREAM=1),
         OBFrameAggregateOutputMode=NS(FULL_FRAME_REQUIRE=1),
-        AlignFilter=lambda **kw: NS(process=lambda f: f),
+        AlignFilter=lambda **kw: NS(process=lambda f: aligned),
     )
     monkeypatch.setattr(orbbec, "_vendor_module", lambda: sdk)
     return state
@@ -135,3 +140,30 @@ def test_orbbec_calibration_reaches_rig_description(monkeypatch):
         intrinsics = session.robot._compile([])["cameras"][0]["intrinsics"]
         assert intrinsics["depthScaleMm"] == 0.25
         assert intrinsics["fx"] == 400.0
+
+
+def test_orbbec_startup_waits_for_actual_first_frame(monkeypatch):
+    state = vendor(monkeypatch)
+    state.delay = 3
+    driver = orbbec.OrbbecDriver()
+    assert state.captures == 4
+    assert driver.intrinsics().depth_scale_mm == 0.25
+    driver.close()
+
+
+def test_orbbec_startup_wait_is_bounded(monkeypatch):
+    state = vendor(monkeypatch, missing=True)
+    with pytest.raises(RuntimeError, match="after 10 frame wait"):
+        orbbec.OrbbecDriver()
+    assert state.captures == 10
+    assert state.stops == 1
+
+
+def test_orbbec_running_capture_does_not_inherit_startup_wait(monkeypatch):
+    state = vendor(monkeypatch)
+    driver = orbbec.OrbbecDriver()
+    state.delay = 100
+    with pytest.raises(RuntimeError, match="after 1 frame wait"):
+        driver.capture()
+    assert state.captures == 2
+    driver.close()

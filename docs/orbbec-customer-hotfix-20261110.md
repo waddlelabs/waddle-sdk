@@ -23,3 +23,16 @@ Customer camera-only capture is required before normal full connector startup.
 Do not invent a depth scale or rewrite historical failed evidence.
 
 Vendor interfaces: https://github.com/orbbec/pyorbbecsdk/blob/v2-main/stubs/pyorbbecsdk.pyi
+
+## First customer capture and startup follow-up
+
+Hotfix v1 applied successfully on omen-2 with pyorbbecsdk2 2.1.3. The camera-only
+probe timed out on its first one-second wait, before calibration. No full connector
+restart or motion occurred. This does not verify depth-scale publication on hardware.
+
+V2 permits ten one-second startup waits for a complete aligned pair, retaining
+the one-wait normal capture limit. Only absent/incomplete frames retry; vendor
+exceptions and invalid calibration still fail. Explicit as_frame_set follows the
+vendor alignment API. 67 focused cases pass, with the unchanged version-fixture
+exclusion/media warning above. V1-to-V2 installation, repeat apply and rollback
+to original bytes pass. Customer hardware recheck remains pending.
