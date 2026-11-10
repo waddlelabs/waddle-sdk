@@ -231,3 +231,19 @@ def test_platform_can_is_identified_as_builtin_not_a_connected_arm(tmp_path):
     )
     assert report.candidates[0].metadata["attachment"] == "built-in"
     assert "Built-in" in report.candidates[0].label
+
+
+def test_orbbec_discovery_retains_serial_for_site_connection(tmp_path):
+    root = tmp_path / "sys"
+    for node in ["video0", "video1"]:
+        _write(root / f"class/video4linux/{node}/name", "Orbbec Gemini 305")
+        _write(root / f"class/video4linux/{node}/device/serial", "CV2L761000XJ")
+    report = discover_hardware(
+        include_plugins=False,
+        include_vendor_enumeration=False,
+        sys_root=root,
+        dev_root=tmp_path / "dev",
+    )
+    cameras = [c for c in report.candidates if c.driver == "waddle_sdk.cameras.orbbec"]
+    assert len(cameras) == 1
+    assert cameras[0].connection == {"serial": "CV2L761000XJ"}

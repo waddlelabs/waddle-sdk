@@ -1,3 +1,8 @@
+Orbbec customer hotfix: publish measured RGB-D intrinsics before rig startup;
+retain serial selection in discovery and refuse changed/invalid depth units.
+64 focused fake-vendor/native-rig cases pass; Gemini 305 hardware qualification
+remains pending on the customer device. No native ABI or deployment changed.
+
 Setup diagnostics retain redacted camera vendor errors and native causes.
 Explicitly busy RealSense opens never reset a device owned by another program.
 Arm-name edits update only suggested frames; independent native YAM entries need

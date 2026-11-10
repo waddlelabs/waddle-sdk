@@ -279,9 +279,7 @@ def _linux_candidates(
         elif any(marker in lowered for marker in ("orbbec", "astra", "gemini")):
             family = "orbbec"
             driver = "waddle_sdk.cameras.orbbec"
-            # The current Orbbec adapter has no serial-selection parameter;
-            # retain a discovered serial as evidence only.
-            connection = {}
+            connection = {"serial": serial} if serial else {}
             label = f"Orbbec {serial or name}"
             metadata_serial = serial or ""
             confidence = "confirmed"

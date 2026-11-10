@@ -8,10 +8,12 @@ is unavailable.
 from __future__ import annotations
 
 import importlib
+import math
 import threading
 
 import numpy as np
 
+from ..descriptors import Intrinsics
 from .base import CameraFrame, _integral_fps
 
 __all__ = ["OrbbecDriver"]
@@ -43,10 +45,18 @@ class OrbbecDriver:
         width: int = 640,
         height: int = 480,
         fps: int = 30,
+        serial: str | None = None,
     ) -> None:
         fps = _integral_fps(fps)
         sdk = _vendor_module()
-        pipeline = sdk.Pipeline()
+        self._context = sdk.Context() if serial is not None else None
+        pipeline = (
+            sdk.Pipeline(
+                self._context.query_devices().get_device_by_serial_number(serial)
+            )
+            if self._context is not None
+            else sdk.Pipeline()
+        )
         config = sdk.Config()
         color = _profile(
             pipeline,
@@ -74,14 +84,31 @@ class OrbbecDriver:
         config.set_frame_aggregate_output_mode(
             sdk.OBFrameAggregateOutputMode.FULL_FRAME_REQUIRE
         )
-        pipeline.start(config)
         self._pipeline = pipeline
-        self._align = sdk.AlignFilter(align_to_stream=sdk.OBStreamType.COLOR_STREAM)
-        self.depth_scale_mm: float | None = None
         self._closed = False
         self._close_lock = threading.Lock()
+        self.depth_scale_mm: float | None = None
+        self._intrinsics: Intrinsics | None = None
+        try:
+            pipeline.start(config)
+            self._align = sdk.AlignFilter(align_to_stream=sdk.OBStreamType.COLOR_STREAM)
+            self._color_profile = color
+            # The scale belongs to an actual depth frame. Acquire it before the
+            # rig snapshots calibration and opens actuators; never guess units.
+            self.capture()
+        except Exception:
+            self.close()
+            raise
+
+    def intrinsics(self) -> Intrinsics:
+        """Calibration of the active color grid to which depth is aligned."""
+        if self._intrinsics is None:
+            raise RuntimeError("Orbbec has no acquired RGB-D calibration")
+        return self._intrinsics
 
     def capture(self) -> CameraFrame:
+        if self._closed:
+            raise RuntimeError("Orbbec camera is closed")
         frames = self._pipeline.wait_for_frames(1000)
         if frames is None:
             raise RuntimeError("Orbbec timed out waiting for an RGB-D frameset")
@@ -95,7 +122,28 @@ class OrbbecDriver:
         width, height = int(color.get_width()), int(color.get_height())
         if (int(depth.get_width()), int(depth.get_height())) != (width, height):
             raise RuntimeError("Orbbec did not return pixel-aligned RGB-D frames")
-        self.depth_scale_mm = float(depth.get_depth_scale())
+        scale = float(depth.get_depth_scale())
+        if not math.isfinite(scale) or scale <= 0:
+            raise ValueError(
+                "Orbbec depth frame must declare a finite positive depth scale"
+            )
+        if self.depth_scale_mm is not None and scale != self.depth_scale_mm:
+            raise RuntimeError("Orbbec depth scale changed during capture")
+        if self._intrinsics is None:
+            raw = self._color_profile.get_intrinsic()
+            distortion = self._color_profile.get_distortion()
+            self._intrinsics = Intrinsics(
+                fx=float(raw.fx),
+                fy=float(raw.fy),
+                cx=float(raw.cx),
+                cy=float(raw.cy),
+                distortion=tuple(
+                    float(getattr(distortion, key))
+                    for key in ("k1", "k2", "p1", "p2", "k3", "k4", "k5", "k6")
+                ),
+                depth_scale_mm=scale,
+            )
+        self.depth_scale_mm = scale
         rgb = np.frombuffer(color.get_data(), dtype=np.uint8).reshape(height, width, 3)
         z16 = np.frombuffer(depth.get_data(), dtype=np.uint16).reshape(height, width)
         return CameraFrame(rgb=rgb, depth=z16)
