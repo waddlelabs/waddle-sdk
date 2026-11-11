@@ -456,11 +456,17 @@ class RuntimeFault(Exception):
         if isinstance(error, cls):
             return error
         cause = _exception_cause(error)
+        from .diagnostics import capture_exception
+
+        diagnostic_id = capture_exception(error)
+        metadata = dict(context or {})
+        if diagnostic_id is not None:
+            metadata["diagnostic_id"] = diagnostic_id
         return cls(
             code,
             cause.detail,
             retryable=isinstance(error, TimeoutError),
-            context=_diagnostic_json(dict(context or {})),
+            context=_diagnostic_json(metadata),
             causes=(cause,),
         )
 

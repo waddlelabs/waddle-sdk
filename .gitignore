@@ -22,6 +22,7 @@ __pycache__/
 
 # Local scratch
 /tmp/
+/.local/
 *.log
 
 # maturin develop output (built extensions: the default core and the

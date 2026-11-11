@@ -69,6 +69,38 @@ metadata and cause nesting are bounded. Typed fault producers must exclude secre
 YAM control-thread and feedback failures originate as `motor_failure` with the
 channel and specific failure reason, so consumers can retain their scope.
 
+### Optional private exception evidence
+
+An application can configure `waddle_sdk.diagnostics.configure(directory,
+context={...}, secrets=(...))` before opening devices. `RuntimeFault.from_exception`
+and relay error conversion then add a `context.diagnostic_id` linking the original
+fault to a private JSON incident. `diagnostic_scope(command_id="...")` adds scalar
+correlation fields to errors raised within that scope. Applications can explicitly
+call `capture_exception(error, context={...})` at other exception boundaries.
+The SDK never uploads evidence or changes device ownership, gates or outcomes.
+Unconfigured applications create no diagnostic worker or files.
+
+Capture copies the exception type/message, causes/groups and bounded stack
+locations. It retains no local variables, frame objects, source text, camera data
+or environment dump. Credential-labelled values and application-supplied secrets
+are redacted. A low-priority worker adds Python/distribution versions and hashes
+of at most eight source files (2 MiB total reading budget), then atomically
+publishes mode-0600 files in a private user-owned directory. On Linux only that
+worker's thread receives niceness 19. Spawned application workers can inherit the
+directory and scalar context with `inherit=True`; do not put credentials in that
+context. Optional additional distribution names are application-selected through
+`WADDLE_DIAGNOSTICS_DISTRIBUTIONS`.
+
+The producer never waits for disk or network: its queue holds eight incidents,
+each published record is at most 48 KiB, and the directory retains at most 64
+unacknowledged incidents. Saturation preserves earlier evidence and increments
+`store.status()` counters; it does not replace the original fault. Capture IDs
+are best-effort references, not acknowledgments of durable storage. Storage
+failures, truncation, process death before persistence and hard native crashes
+can leave incomplete evidence. `close()` never waits for storage during control
+drain. Applications own authenticated retrieval, acknowledgment and health
+reporting, and should retire a file only after its consumer confirms the exact ID.
+
 An owner-envelope refusal keeps `SubmitResult.dispatched=False` and
 `gate="owner_refusal"`. Its additive `fault` field carries `safety_refusal` with
 the exact admission reason, named part/frame, measured and requested joints,

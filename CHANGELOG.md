@@ -11,6 +11,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Add optional bounded private exception capture with correlation IDs, cause/stack
+  locations, source digests and distribution versions. Keep original fault fields,
+  credential redaction and device authority; perform storage outside control threads.
+
 - Preserve redacted camera-open/capture/close diagnostics and selected preview
   identity. Do not reset explicitly busy RealSense cameras. Keep arbitrary
   `*-key` credential assignments redacted through the existing runtime path.

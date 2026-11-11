@@ -1447,3 +1447,9 @@ MuJoCo retains its physics/render processes for self-contained native scenes wit
 unchanged robot/camera contracts. Keep participant drain, episode invalidation,
 render-generation fencing, immutable source bytes and failed-admin fencing.
 Unsupported worlds retain close/open; this capability is never a participant tool.
+Optional exception evidence lives in `sdk/python/waddle_sdk/diagnostics.py`.
+It is disabled until an application configures a private sink. Preserve the
+original fault/outcome, bounded nonblocking capture, no locals/source contents,
+credential redaction and low-priority storage worker. Never add control-loop,
+camera or network work to this facility. See the Python runtime documentation
+for acknowledgment, truncation and saturation limits.

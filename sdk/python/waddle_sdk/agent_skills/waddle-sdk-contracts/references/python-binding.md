@@ -229,3 +229,9 @@ reviewed rows or an explicit source manifest, preserving site identity and bound
 source/calibration snapshots. Its trusted configure callback runs before atomic
 publication and must not open hardware. Linux absent-destination rename is the
 qualified filesystem boundary. Normal SDK imports do not require the terminal UI.
+Applications can opt into `waddle_sdk.diagnostics` before opening devices to
+retain bounded private exception/stack evidence and correlation IDs. The sink
+never changes original device faults, outcomes or control authority; storage
+runs on its own worker and the SDK performs no upload. Capture is best effort,
+with explicit truncation/saturation counters. Keep credentials, camera data and
+local-variable dumps out of diagnostic context.
