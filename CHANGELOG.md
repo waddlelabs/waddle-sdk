@@ -17,6 +17,8 @@ ships; this root file always carries `[Unreleased]` plus pointers.
   calibrated depth, RGB multisampling and render-thread teardown.
   Retain the reviewed POSIX clean-install fixture fix so relocatable Python
   keeps its standard-library prefix; optional dependency assertions stay intact.
+  Isolate its pip subprocess as well as its import probe so a caller's
+  `PYTHONPATH` installation cannot satisfy the fresh environment's requirements.
 
 - Preserve native scene asset hashing on supported Python 3.10 with bounded
   streaming SHA-256. Verify both complete inert-step chunks before resubmission

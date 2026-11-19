@@ -331,6 +331,7 @@ def test_clean_install_extra_matrix(
     subprocess.run(
         [
             str(python),
+            "-I",  # Parent PYTHONPATH distributions must not satisfy this install.
             "-m",
             "pip",
             "install",
