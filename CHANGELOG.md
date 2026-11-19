@@ -11,6 +11,13 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Prepare shared-world MuJoCo RGB-D scenes under the state lock, then release
+  it before pixel rendering and depth conversion so pending pixels do not block
+  feedback, commands or stops. Preserve paired source-state timestamps,
+  calibrated depth, RGB multisampling and render-thread teardown.
+  Retain the reviewed POSIX clean-install fixture fix so relocatable Python
+  keeps its standard-library prefix; optional dependency assertions stay intact.
+
 - Preserve native scene asset hashing on supported Python 3.10 with bounded
   streaming SHA-256. Verify both complete inert-step chunks before resubmission
   in the claim-deduplication test, retaining exact waypoint and fault assertions.

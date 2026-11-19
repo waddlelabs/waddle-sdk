@@ -750,21 +750,23 @@ class MujocoCameraDriver:
         with self._world._lock:
             self._world._require_open()
             renderer = self._thread_renderer()
-            rgb, metres, timing = renderer.capture(
-                self._world.data, camera=self._camera
-            )
-            depth = None
-            if metres is not None:
-                metres = np.asarray(metres, dtype=float)
-                valid = np.isfinite(metres) & (metres > 0.0)
-                scaled = np.zeros(metres.shape, dtype=np.uint16)
-                raw = np.rint(metres[valid] * (1000.0 / self._depth_scale_mm))
-                in_range = raw <= np.iinfo(np.uint16).max
-                valid_values = np.zeros(raw.shape, dtype=np.uint16)
-                valid_values[in_range] = raw[in_range].astype(np.uint16)
-                scaled[valid] = valid_values
-                depth = scaled
-            return CameraFrame(rgb=rgb, depth=depth, content_timing=timing)
+            timing = renderer.prepare(self._world.data, camera=self._camera)
+        # update_scene has copied the shared state into each private MjvScene.
+        # GPU rendering/readback and depth conversion must not hold up physics,
+        # feedback or stop commands. Content time remains the scene capture time.
+        rgb, metres, timing = renderer.render(timing)
+        depth = None
+        if metres is not None:
+            metres = np.asarray(metres, dtype=float)
+            valid = np.isfinite(metres) & (metres > 0.0)
+            scaled = np.zeros(metres.shape, dtype=np.uint16)
+            raw = np.rint(metres[valid] * (1000.0 / self._depth_scale_mm))
+            in_range = raw <= np.iinfo(np.uint16).max
+            valid_values = np.zeros(raw.shape, dtype=np.uint16)
+            valid_values[in_range] = raw[in_range].astype(np.uint16)
+            scaled[valid] = valid_values
+            depth = scaled
+        return CameraFrame(rgb=rgb, depth=depth, content_timing=timing)
 
     def close(self) -> None:
         self._closing.set()

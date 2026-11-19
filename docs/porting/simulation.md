@@ -40,6 +40,14 @@ For ready-made YAM/xArm7 scenes with coupled grippers, cubes, a threaded cap, or
 drawer, see [reference environments](../python/simulation.md). These use the same
 shared-world lifecycle, with MuJoCo, Isaac Sim, or SAPIEN physics workers.
 
+The shared-world MuJoCo camera prepares its RGB and depth scenes together under
+the world state lock, then releases that lock before rendering pixels. Feedback,
+commands, stops and physics can proceed while pixels are pending. Both images
+retain the original scene-preparation content-time interval, even when the world
+advances before publication. Renderer construction and closure still belong to
+the camera capture thread; a pending render must drain before world teardown.
+This separation does not guarantee a command deadline on a particular host.
+
 The packaged reference robot adapter accepts `parts.<name>.options.max_joint_position_error_rad`
 as a finite positive scalar or an ordered list with one value per arm joint.
 It uses the normal [position-error admission contract](robot.md#position-tracking-allowance)

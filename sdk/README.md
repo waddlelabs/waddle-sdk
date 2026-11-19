@@ -356,6 +356,9 @@ configurable simulated arm with planar FK and conservative body geometry.
 site-relative MuJoCo XML model for every attached part and camera, advances that
 world once per SDK tick, renders aligned RGB-D, and evaluates TCP and conservative
 body geometry on a separate scratch state before dispatch.
+Its cameras prepare paired render scenes under the world lock and release it
+before rendering pixels, retaining the preparation content-time interval while
+feedback, commands and stops proceed. See the [simulation guide](../docs/porting/simulation.md).
 
 The owner supplies hard safety. `base.Arm` checks declared width, finiteness,
 joint limits, per-step travel, optional workspace bounds, and SDK-owned static

@@ -3,12 +3,68 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from time import monotonic_ns
 
 import numpy as np
 import pytest
 from waddle_sdk.cameras.site import CameraConfig
 from waddle_sdk.robots.mujoco import MujocoBackend
 from waddle_sdk.simulators.mujoco import Engine
+
+
+@pytest.mark.parametrize("samples", [0, 4])
+def test_native_prepared_rgbd_keeps_state_and_time_after_world_advances(
+    tmp_path, monkeypatch, samples
+):
+    mj = pytest.importorskip("mujoco")
+    path = tmp_path / "moving.xml"
+    path.write_text(
+        f'<mujoco><visual><quality offsamples="{samples}"/></visual>'
+        '<worldbody><light pos="0 0 3"/><camera name="view" pos="0 0 1"/>'
+        '<geom type="plane" size="5 5 .1"/>'
+        '<body><joint type="slide" axis="1 0 0"/>'
+        '<geom type="box" pos="0 0 .2" size=".08 .08 .05" rgba="1 0 0 1"/>'
+        "</body></worldbody></mujoco>"
+    )
+    world = MujocoBackend(model_path=path)
+    world.open()
+    driver = world.camera(
+        config=CameraConfig(
+            name="view",
+            connection={"camera": "view"},
+            stream={"width": 80, "height": 60},
+            frame_id="view",
+            intrinsics=None,
+        )
+    )
+    try:
+        before = driver.capture()
+        render = driver._renderer.render
+        changed_at = []
+
+        def advance_then_render(timing):
+            with world._lock:
+                changed_at.append(monotonic_ns())
+                world.data.qpos[0] = 0.3
+                mj.mj_forward(world.model, world.data)
+            return render(timing)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(driver._renderer, "render", advance_then_render)
+            pending = driver.capture()
+        after = driver.capture()
+        np.testing.assert_array_equal(pending.rgb, before.rgb)
+        np.testing.assert_array_equal(pending.depth, before.depth)
+        assert not np.array_equal(after.rgb, before.rgb)
+        assert not np.array_equal(after.depth, before.depth)
+        assert pending.content_timing.rgb_monotonic_ns[1] <= changed_at[0]
+        assert (
+            pending.content_timing.rgb_monotonic_ns
+            == pending.content_timing.depth_monotonic_ns
+        )
+    finally:
+        driver.close()
+        world.close()
 
 
 @pytest.mark.parametrize("samples", [0, 4])

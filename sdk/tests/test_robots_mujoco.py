@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+from threading import Event, Thread
+from time import monotonic_ns
 from types import SimpleNamespace
 from typing import ClassVar
 
@@ -335,6 +337,91 @@ def test_modular_world_shares_physics_with_rgbd_camera(tmp_path):
     camera_driver.close()
     arm_driver.close()
     world.close()
+
+
+def test_pending_rgbd_pixels_allow_feedback_commands_and_stops(tmp_path, monkeypatch):
+    """Hold rendering open until ordinary world operations have completed."""
+    rendering, release = Event(), Event()
+
+    class PendingRenderer(FakeMujoco.Renderer):
+        def update_scene(self, data, *, camera):
+            super().update_scene(data, camera=camera)
+            self.position = float(data.qpos[0])
+
+        def render(self):
+            rendering.set()
+            assert release.wait(10), "test did not release pending rendering"
+            if self.depth:
+                return np.full(
+                    (self.height, self.width), 0.75 + self.position, dtype=np.float32
+                )
+            return np.full(
+                (self.height, self.width, 3), 100 * self.position, dtype=np.uint8
+            )
+
+    monkeypatch.setattr(FakeMujoco, "Renderer", PendingRenderer)
+    config = _config(tmp_path, connection={"entity": "arm"}, world="cell")
+    world = mujoco.MujocoBackend(model_path=tmp_path / "models" / "cell.xml")
+    rig = world.part(config=config)
+    world.open()
+    arm = rig.arms()[""].driver
+    camera = world.camera(
+        config=CameraConfig(
+            name="overhead",
+            connection={"camera": "overhead"},
+            stream={"width": 3, "height": 2},
+            frame_id="overhead_optical",
+            intrinsics=None,
+            options={"depth_scale_mm": 1.0},
+        )
+    )
+    arm.home([0.2, -0.2])
+    frames, errors = [], []
+
+    def capture():
+        try:
+            frames.append(camera.capture())
+        except BaseException as error:  # noqa: BLE001 -- retain capture-thread failures
+            errors.append(error)
+        finally:
+            camera.close()  # Native render contexts close on their owning thread.
+
+    worker = Thread(target=capture)
+    worker.start()
+    try:
+        assert rendering.wait(10), "camera never entered pixel rendering"
+        # This nonblocking check makes an accidental shared-lock deadlock fail
+        # immediately. The render window closes only after the operations below.
+        assert world._lock.acquire(blocking=False), "pixels blocked the world lock"
+        world._lock.release()
+        world_access_ns = monotonic_ns()
+        assert arm.read()[0].tolist() == [0.2, -0.2]
+        arm.write(np.asarray([0.4, 0.3]))
+        world.step(0.01)
+        assert arm.read()[0].tolist() == [0.4, 0.3]
+        arm.hold()
+        arm.estop()
+        assert arm.estopped
+        with pytest.raises(RuntimeError, match="e-stopped"):
+            arm.write(np.asarray([0.2, -0.2]))
+        world.reset()
+        assert arm.read()[0].tolist() == [0.0, 0.0]
+        assert not frames
+    finally:
+        release.set()
+        worker.join(10)
+        assert not worker.is_alive(), "capture worker failed to drain"
+        arm.close()
+        world.close()
+    assert not errors
+    (frame,) = frames
+    np.testing.assert_array_equal(frame.rgb, np.full((2, 3, 3), 20))
+    np.testing.assert_array_equal(frame.depth, np.full((2, 3), 950))
+    assert frame.content_timing.kind == "simulated_state"
+    assert frame.content_timing.rgb_monotonic_ns[1] <= world_access_ns
+    assert (
+        frame.content_timing.rgb_monotonic_ns == frame.content_timing.depth_monotonic_ns
+    )
 
 
 def test_modular_world_runtime_identity_must_be_complete_and_match_parts(tmp_path):

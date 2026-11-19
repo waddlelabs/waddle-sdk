@@ -1,7 +1,8 @@
 """Native RGB appearance plus depth on calibrated pixel-centre rays.
 
-Construct and capture on the owning render thread, with the caller's model/state
-lock held. Reference worker engines already serialize these operations.
+Construct and prepare scenes on the owning render thread with the caller's
+model/state lock held. Pixel rendering uses the prepared scenes and can run
+outside that lock. Reference worker engines already serialize these operations.
 """
 
 from __future__ import annotations
@@ -35,6 +36,11 @@ class RGBDRenderer:
                 model.vis.quality.offsamples = samples
 
     def capture(self, data, *, camera, scene_option=None):
+        timing = self.prepare(data, camera=camera, scene_option=scene_option)
+        return self.render(timing)
+
+    def prepare(self, data, *, camera, scene_option=None):
+        """Freeze both scenes under the caller's model/state lock."""
         if self.closed:
             raise RuntimeError("MuJoCo RGB-D renderer is closed")
         options = {} if scene_option is None else {"scene_option": scene_option}
@@ -43,6 +49,17 @@ class RGBDRenderer:
         if self.depth is not None and self.depth is not self.rgb:
             self.depth.update_scene(data, camera=camera, **options)
         ended = time.monotonic_ns()
+        return CameraContentTiming(
+            kind="simulated_state",
+            clock_revision="local-host-monotonic/v1",
+            rgb_monotonic_ns=(began, ended),
+            depth_monotonic_ns=(began, ended) if self.depth is not None else None,
+        )
+
+    def render(self, timing):
+        """Render prepared scenes on their owner thread, retaining source time."""
+        if self.closed:
+            raise RuntimeError("MuJoCo RGB-D renderer is closed")
         self.rgb.disable_depth_rendering()
         rgb = np.array(self.rgb.render(), dtype=np.uint8, order="C", copy=True)
         depth = None
@@ -52,16 +69,7 @@ class RGBDRenderer:
                 depth = self.depth.render().copy()
             finally:
                 self.depth.disable_depth_rendering()
-        return (
-            rgb,
-            depth,
-            CameraContentTiming(
-                kind="simulated_state",
-                clock_revision="local-host-monotonic/v1",
-                rgb_monotonic_ns=(began, ended),
-                depth_monotonic_ns=(began, ended) if depth is not None else None,
-            ),
-        )
+        return rgb, depth, timing
 
     def close(self):
         if self.closed:

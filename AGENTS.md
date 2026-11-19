@@ -1101,6 +1101,13 @@ commands above remain the pre-commit gate and the fastest way to diagnose a fail
 
 ## Working conventions
 
+Shared-world MuJoCo cameras prepare both private render scenes under the world
+lock, then render pixels and convert depth outside it on the same capture thread.
+Keep RGB/depth state and content-time intervals paired at preparation; rendering
+or publication never renews source time. Context construction remains locked
+and teardown remains thread-affine. This avoids render-held feedback/stop waits;
+it does not promise a command deadline on an arbitrary host.
+
 - Commit style: small, coherent commits; imperative subject; body explains why. End
   commit messages with truthful attribution when applicable. Work on a feature
   branch, preserve existing history, and use repository-local identity
