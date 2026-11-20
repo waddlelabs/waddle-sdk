@@ -136,12 +136,21 @@ class Bench:
     def __exit__(self, exc_type, exc, tb):
         errors = []
         if self.session is not None:
+            managed = getattr(self.session, "_managed", None)
+            drivers = {
+                name: arm.driver for name, arm in getattr(managed, "arms", {}).items()
+            }
             try:
                 self.session.close(
                     torque_release_authorized=self.config["torque_release_authorized"]
                 )
             except BaseException as error:
                 errors.append(error)
+            self.report["usb_shutdown_evidence"] = {
+                name: driver.usb_shutdown_evidence
+                for name, driver in drivers.items()
+                if getattr(driver, "usb_shutdown_evidence", None) is not None
+            }
         self.report["shutdown_errors"] = [
             RuntimeFault.from_exception(error).as_dict() for error in errors
         ]

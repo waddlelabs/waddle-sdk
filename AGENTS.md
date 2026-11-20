@@ -123,6 +123,18 @@ The inert-step claim test observes each complete chunk before resubmitting a fre
 sequence, retaining exact surrounding waypoints and one fault per claim window.
 Newer-chunk supersession remains separately tested and unchanged in production.
 
+Explicit USB-YAM teardown latches commands, drains both reviewed writers and
+requires fresh, matching disabled-state replies from all seven motors before
+transport closure. Retain `usb_shutdown_evidence` and the exact first original
+fault while attempting every motor. Stale/healthy replies and thread/interface
+closure do not establish disable. A failed drain/disable keeps ownership uncertain;
+never clear it for memory relief. SocketCAN retains its existing path. Disabled
+protocol replies do not establish mechanical stopping or a physical power cut.
+The live SDK bench retains each USB driver's shutdown evidence. Clean-install
+tests use symlinks on POSIX so relocatable Python retains its standard-library
+prefix; Windows keeps copied executables. This changes no optional dependency
+matrix or package-import assertions.
+
 SDK CI runs on pull requests, main pushes and explicit `feat/native-ci-*`
 qualification branch pushes. These triggers run software gates only; they do not
 publish release artifacts. Python/core test logs and Python JUnit remain in CI

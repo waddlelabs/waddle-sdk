@@ -756,6 +756,8 @@ class LiveDriver:
             }
         transport_options = {}
         self._usb_can = usb_can
+        self.usb_shutdown_evidence = None
+        self._usb_close_confirmed = False
         self._transport_source = None
         if usb_can is not None:
             from ..scheduling import periodic_wait
@@ -1265,9 +1267,37 @@ class LiveDriver:
 
     def close(self) -> None:
         with self._lock:
+            if self._usb_can is not None and self._usb_close_confirmed:
+                return
+            if self._usb_can is not None:
+                self._estopped = True
+                self.usb_shutdown_evidence = {
+                    "status": "awaiting_writer_drain",
+                    "source": "fresh USB host-acquired motor-disable replies",
+                }
+                if not all(
+                    callable(getattr(owner, "stop_control_loop", None))
+                    for owner in (self._robot, self._robot.motor_chain)
+                ):
+                    raise RuntimeFault(
+                        FaultCode.MOTOR_FAILURE,
+                        f"{self.channel}: reviewed USB writers cannot confirm drain",
+                        context={
+                            "channel": self.channel,
+                            "reason": "stop_drain_unavailable",
+                        },
+                    )
             self._quiesce_pinned_i2rt_control_thread()
+            if self._usb_can is not None:
+                from ._yam_usb_can import disable_motors
+
+                self.usb_shutdown_evidence["writers_drained"] = True
+                disable_motors(
+                    self._robot.motor_chain, self.channel, self.usb_shutdown_evidence
+                )
             self._clear_force()
             self._robot.close()
+            self._usb_close_confirmed = self._usb_can is not None
 
     def _quiesce_pinned_i2rt_control_thread(self) -> None:
         """Join I2RT's CAN writer before its ``close()`` shuts the socket.

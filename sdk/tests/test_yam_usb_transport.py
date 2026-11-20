@@ -6,6 +6,7 @@ import copy
 import json
 import sys
 import threading
+import time
 import types
 from dataclasses import asdict
 from pathlib import Path
@@ -24,7 +25,7 @@ vendor = yam_test_vendor.vendor  # Reuse the existing non-opening vendor fixture
 
 @pytest.fixture
 def transport(monkeypatch, vendor):
-    pytest.importorskip("can")
+    can = pytest.importorskip("can")
     pytest.importorskip("usb")
     from waddle_sdk.robots import usbcan
 
@@ -38,15 +39,35 @@ def transport(monkeypatch, vendor):
         def __init__(self, selector, **kwargs):
             self.transport_evidence = {"qualified": False, "provider": "gs_usb"}
             events.append((selector, kwargs))
+            self.pending = []
+
+        def send(self, message):
+            self.pending.append(
+                can.Message(
+                    arbitration_id=message.arbitration_id + 16,
+                    timestamp=time.time(),
+                    data=[message.arbitration_id] + [0] * 7,
+                    is_extended_id=False,
+                )
+            )
+
+        def recv(self, timeout):
+            return self.pending.pop(0) if self.pending else None
 
     class Interface:
         def __init__(self, *, bus_factory, **kwargs):
             self.kwargs = kwargs
+            self.receive_mode = types.SimpleNamespace(
+                get_receive_id=lambda value: value + 16
+            )
             self.bus = bus_factory(
                 bustype=kwargs["bustype"],
                 channel=kwargs["channel"],
                 bitrate=kwargs["bitrate"],
             )
+
+        def _get_frame_id(self, motor_id):
+            return motor_id
 
     module = types.ModuleType("i2rt.motor_drivers.dm_driver")
     module.DMSingleMotorCanInterface = Interface
@@ -83,7 +104,12 @@ def test_exact_usb_selection_is_frozen_until_hardware_open(vendor, transport):
             control_mode="MIT",
             use_buffered_reader=False,
         )
-        vendor.robots[0].motor_chain = types.SimpleNamespace(motor_interface=interface)
+        vendor.robots[0].stop_control_loop = lambda: None
+        vendor.robots[0].motor_chain = types.SimpleNamespace(
+            motor_interface=interface,
+            stop_control_loop=lambda: None,
+            motor_list=[(value, "reviewed") for value in range(1, 8)],
+        )
         assert interface.kwargs == {
             "channel": SELECTOR.channel,
             "bitrate": 1_000_000,
