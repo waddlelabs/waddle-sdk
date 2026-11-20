@@ -11,6 +11,13 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Keep reference MuJoCo feedback, commands and Hold independent of pending
+  pixels through a separately negotiated bounded camera channel. Preserve
+  paired scene/source time, original physics advancement and reset barriers,
+  thread-owned native context closure and explicit drain confirmation. Lost
+  channels or missing drain receipts remain failed; other engines keep their
+  existing serialized path. No physical driver or binding API changes.
+
 - Prepare shared-world MuJoCo RGB-D scenes under the state lock, then release
   it before pixel rendering and depth conversion so pending pixels do not block
   feedback, commands or stops. Preserve paired source-state timestamps,

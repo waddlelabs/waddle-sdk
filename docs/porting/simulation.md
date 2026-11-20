@@ -48,6 +48,18 @@ advances before publication. Renderer construction and closure still belong to
 the camera capture thread; a pending render must drain before world teardown.
 This separation does not guarantee a command deadline on a particular host.
 
+Reference MuJoCo environments also negotiate a separate camera channel with
+their physics worker. One render thread prepares paired scenes under the state
+lock and reads pixels outside it, so feedback, target commands and Hold can
+proceed while pixels are pending. Original elapsed-time physics advances the
+old targets before admitting a new target; native substeps and catch-up bounds
+remain unchanged. Reset and model variation wait for a complete capture, and
+normal shutdown requires confirmed context closure on the render thread. A lost
+channel or missing drain confirmation leaves the world unavailable. Other
+reference engines retain their serialized channel until they explicitly support
+the prepare/render/close-renderers facet. Rendering still consumes host resources;
+this does not qualify a particular frame rate or execution deadline under load.
+
 The packaged reference robot adapter accepts `parts.<name>.options.max_joint_position_error_rad`
 as a finite positive scalar or an ordered list with one value per arm joint.
 It uses the normal [position-error admission contract](robot.md#position-tracking-allowance)

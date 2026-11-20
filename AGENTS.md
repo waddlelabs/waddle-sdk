@@ -1101,6 +1101,16 @@ commands above remain the pre-commit gate and the fastest way to diagnose a fail
 
 ## Working conventions
 
+Reference engines may explicitly advertise `parallel_camera_capture` with
+prepare/render/close-renderers methods. MuJoCo uses a separate bounded camera
+channel and one render thread; the original control pipe stays independent.
+Prepare paired scenes under the physics lock and retain source timing; advance
+old targets before new commands with the original substeps/catch-up ceiling.
+Reset/model variation waits for a complete capture transaction. Native context
+closure belongs to its render thread and normal close requires its explicit
+drain receipt; loss/missing receipts stay fenced. Engines without this facet
+retain the serialized path. This changes no physical driver or binding API.
+
 Shared-world MuJoCo cameras prepare both private render scenes under the world
 lock, then render pixels and convert depth outside it on the same capture thread.
 Keep RGB/depth state and content-time intervals paired at preparation; rendering

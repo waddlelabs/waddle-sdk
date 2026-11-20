@@ -32,6 +32,7 @@ from .scene import depth_z16, profile
 
 class Engine:
     content_timing_kind = "simulated_state"
+    parallel_camera_capture = True
 
     def __init__(self, config: dict, scratch: Path):
         # Selection precedes the first MuJoCo import and is local to this worker.
@@ -829,6 +830,10 @@ class Engine:
         return self.capture_timed(name)[:2]
 
     def capture_timed(self, name):
+        return self.render_capture(self.prepare_capture(name))
+
+    def prepare_capture(self, name):
+        """Freeze paired render scenes while the worker owns the physics state."""
         row = self.config["cameras"][name]
         if name not in self.renderers:
             self.renderers[name] = RGBDRenderer(
@@ -840,20 +845,31 @@ class Engine:
             )
         option = self.mj.MjvOption()
         option.geomgroup[3] = 0  # collisions do not replace the manufacturer's visuals
-        rgb, depth, timing = self.renderers[name].capture(
+        renderer = self.renderers[name]
+        timing = renderer.prepare(
             self.data,
             camera=self.config.get("native_scene", {})
             .get("camera_names", {})
             .get(name, name),
             scene_option=option,
         )
+        return (
+            renderer,
+            timing,
+            float(self.model.vis.map.zfar * self.model.stat.extent),
+            row["intrinsics"]["depth_scale_mm"] if row["options"]["depth"] else None,
+        )
+
+    def render_capture(self, prepared):
+        """Read pixels on the render owner, retaining the preparation state/time."""
+        renderer, timing, far, scale_mm = prepared
+        rgb, depth, timing = renderer.render(timing)
         if depth is None:
             return rgb, None, asdict(timing)
-        far = self.model.vis.map.zfar * self.model.stat.extent
         depth[depth >= far * 0.999] = 0
         return (
             rgb,
-            depth_z16(depth, row["intrinsics"]["depth_scale_mm"]),
+            depth_z16(depth, scale_mm),
             asdict(timing),
         )
 
@@ -864,6 +880,17 @@ class Engine:
         return site.xpos.copy(), site.xmat.reshape(3, 3).copy()
 
     def close(self):
+        self.close_renderers()
+
+    def close_renderers(self):
+        """Drain native contexts on the same thread that rendered them."""
+        first = None
         for renderer in self.renderers.values():
-            renderer.close()
+            try:
+                renderer.close()
+            except BaseException as error:  # noqa: BLE001 -- drain all contexts before re-raising the first fault
+                if first is None:
+                    first = error
+        if first is not None:
+            raise first
         self.renderers.clear()

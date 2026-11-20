@@ -359,6 +359,10 @@ body geometry on a separate scratch state before dispatch.
 Its cameras prepare paired render scenes under the world lock and release it
 before rendering pixels, retaining the preparation content-time interval while
 feedback, commands and stops proceed. See the [simulation guide](../docs/porting/simulation.md).
+Reference MuJoCo environments negotiate an independent camera channel, preserve
+old-target physics advancement and reset barriers, and require render-thread
+drain confirmation before normal shutdown. Other engines retain their existing
+serialized path.
 
 The owner supplies hard safety. `base.Arm` checks declared width, finiteness,
 joint limits, per-step travel, optional workspace bounds, and SDK-owned static

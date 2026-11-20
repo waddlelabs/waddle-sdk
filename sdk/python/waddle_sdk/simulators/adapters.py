@@ -48,6 +48,11 @@ class World:
         self._busy = False
         self._process: subprocess.Popen | None = None
         self._connection = None
+        self._capture_connection = None
+        self._capture_lock = threading.Lock()
+        self._parallel_camera = False
+        self._camera_drain_confirmed = False
+        self._capture_fault = None
         self._failed = False
         self._part_names: set[str] = set()
         self.content_timing_kind = None
@@ -71,6 +76,8 @@ class World:
                         "physics workspace workers currently require Linux or macOS"
                     )
                 parent, child = multiprocessing.Pipe(duplex=True)
+                camera_parent, camera_child = multiprocessing.Pipe(duplex=True)
+                camera_fd = camera_child.fileno()
                 env = {
                     k: v
                     for k, v in os.environ.items()
@@ -89,7 +96,7 @@ class World:
                             "waddle_sdk.simulators.worker",
                             str(child.fileno()),
                         ],
-                        pass_fds=(child.fileno(),),
+                        pass_fds=(child.fileno(), camera_fd),
                         env=env,
                         stdin=subprocess.DEVNULL,
                         stdout=sys.stderr,
@@ -97,8 +104,30 @@ class World:
                     )
                     self._connection = parent
                     child.close()
-                    parent.send({**self.config, "_real_time": self._real_time})
+                    parent.send(
+                        {
+                            **self.config,
+                            "_real_time": self._real_time,
+                            "_camera_connection_fd": camera_fd,
+                        }
+                    )
+                    camera_child.close()
                     ready = self._receive(180.0)
+                    parallel = (
+                        ready.get("parallel_camera_capture", False)
+                        if isinstance(ready, dict)
+                        else False
+                    )
+                    if type(parallel) is not bool:
+                        raise TypeError(
+                            "simulation worker advertised invalid parallel capture"
+                        )
+                    self._parallel_camera = parallel
+                    self._camera_drain_confirmed = False
+                    if self._parallel_camera:
+                        self._capture_connection = camera_parent
+                    else:
+                        camera_parent.close()
                     self.content_timing_kind = (
                         ready.get("camera_content_timing_kind")
                         if isinstance(ready, dict)
@@ -114,20 +143,25 @@ class World:
                         )
                 except BaseException:
                     child.close()
+                    camera_child.close()
+                    camera_parent.close()
                     parent.close()
                     self._shutdown()
                     self._failed = True
                     raise
 
-    def _receive(self, timeout: float):
-        if self._connection is None or not self._connection.poll(timeout):
+    def _receive(self, timeout: float, connection=None):
+        connection = self._connection if connection is None else connection
+        if connection is None or not connection.poll(timeout):
             raise TimeoutError("simulation worker did not respond before its deadline")
-        ok, result = self._connection.recv()
+        ok, result = connection.recv()
         if not ok:
             raise RuntimeError(f"{self.config['backend']} simulation failed: {result}")
         return result
 
     def call(self, operation: str, *arguments):
+        if operation == "capture" and self._parallel_camera:
+            return self._capture(*arguments)
         # A capture already rendering must finish, but a second camera must
         # not get ahead of queued state/control requests. Preserve FIFO order
         # within each priority and one outstanding transaction on the pipe.
@@ -154,6 +188,10 @@ class World:
             except (OSError, EOFError, TimeoutError):
                 with self._lock:
                     self._failed = True
+                    if self._parallel_camera:
+                        self._capture_fault = RuntimeError(
+                            "simulation connection lost; reopen the site"
+                        )
                     self._shutdown()
                 raise RuntimeError(
                     "simulation connection lost; reopen the site"
@@ -162,6 +200,25 @@ class World:
             with self._requests:
                 self._busy = False
                 self._requests.notify_all()
+
+    def _capture(self, *arguments):
+        # One camera transaction stays outstanding, independently of control.
+        # A negotiated channel never falls back to the state/control pipe.
+        with self._capture_lock:
+            connection = self._capture_connection
+            if self._failed or connection is None:
+                raise RuntimeError("simulation world is unavailable")
+            try:
+                connection.send(("capture", arguments))
+                return self._receive(15.0, connection)
+            except (OSError, EOFError, TimeoutError):
+                with self._lock:
+                    self._failed = True
+                    self._capture_fault = RuntimeError(
+                        "simulation connection lost; reopen the site"
+                    )
+                    self._shutdown()
+                raise self._capture_fault from None
 
     def step(self, dt: float) -> None:
         if not math.isfinite(dt) or dt < 0:
@@ -198,19 +255,41 @@ class World:
         return _camera(self, config=config)
 
     def close(self) -> None:
+        fault = None
         with self._lock:
             if self._connection is not None and not self._failed:
                 try:
-                    self.call("close")
-                except (RuntimeError, OSError):
-                    pass
+                    receipt = self.call("close")
+                    if self._parallel_camera and not (
+                        isinstance(receipt, dict)
+                        and receipt.get("camera_drain_confirmed") is True
+                    ):
+                        fault = RuntimeError(
+                            "simulation worker did not confirm camera drain"
+                        )
+                    elif self._parallel_camera:
+                        self._camera_drain_confirmed = True
+                except (RuntimeError, OSError) as error:
+                    if self._parallel_camera:
+                        fault = error
+            if self._parallel_camera:
+                fault = self._capture_fault or fault
+                if not self._camera_drain_confirmed and fault is None:
+                    fault = RuntimeError("simulation camera teardown is unconfirmed")
             self._shutdown()
+            if fault is not None:
+                self._failed = True
+                self._capture_fault = fault
+                raise fault
 
     def _shutdown(self):
         process, self._process = self._process, None
         if self._connection is not None:
             self._connection.close()
             self._connection = None
+        if self._capture_connection is not None:
+            self._capture_connection.close()
+            self._capture_connection = None
         if process is not None:
             try:
                 process.wait(timeout=3.0)
@@ -450,9 +529,7 @@ def _arm(owner: World, *, config: PartConfig) -> base.Rig:
             "max_joint_position_error_rad must be one finite positive value "
             f"or {p.dof} finite positive arm-joint values"
         )
-    position_error_caps = tuple(float(value) for value in values) + (
-        hand_speed / rate,
-    )
+    position_error_caps = tuple(float(value) for value in values) + (hand_speed / rate,)
 
     def build():
         driver = Driver(
