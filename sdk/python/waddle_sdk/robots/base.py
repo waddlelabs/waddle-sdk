@@ -80,6 +80,7 @@ __all__ = [
     "ConsoleRecovery",
     "CrossArm",
     "Driver",
+    "FeedbackSnapshotDriver",
     "ParkGate",
     "PositionVelocityDriver",
     "RejectLog",
@@ -97,6 +98,8 @@ __all__ = [
     "control",
     "drives_metal",
     "estop_all",
+    "feedback_snapshot_supported",
+    "gripper_force_supported",
     "hold_all",
     "hold_until_parked",
     "latched_parts",
@@ -364,6 +367,44 @@ class GripperForceDriver(Protocol):
     def write_gripper_force(
         self, target: np.ndarray, force_n: float, velocity: np.ndarray | None = None
     ) -> None: ...
+
+
+@runtime_checkable
+class FeedbackSnapshotDriver(Protocol):
+    """Optional fresh joint/force sample from one provider acquisition.
+
+    Positions and velocities retain the ordinary Driver order/units. Force is a
+    GripperForce exactly when the driver's GripperForceDriver capability is
+    supported, otherwise None. Every call acquires anew; a previous read is not
+    a fallback. Unavailable implementations advertise False and keep the existing
+    separate-read path. A selected snapshot failure remains the original fault.
+    """
+
+    @property
+    def feedback_snapshot_supported(self) -> bool: ...
+
+    def read_feedback_snapshot(
+        self,
+    ) -> tuple[np.ndarray, np.ndarray, GripperForce | None]: ...
+
+
+def gripper_force_supported(driver: Driver) -> bool:
+    """Inspect force support without probing unavailable driver properties."""
+    # Python 3.10 runtime protocol checks evaluate properties. An unsupported
+    # adapter must never query force limits merely to inspect the interface.
+    return bool(getattr(driver, "gripper_force_supported", False)) and isinstance(
+        driver, GripperForceDriver
+    )
+
+
+def feedback_snapshot_supported(driver: Driver) -> bool:
+    """Return the explicit snapshot capability, rejecting malformed flags."""
+    if not isinstance(driver, FeedbackSnapshotDriver):
+        return False
+    supported = driver.feedback_snapshot_supported
+    if type(supported) is not bool:
+        raise TypeError("feedback_snapshot_supported must be a boolean")
+    return supported
 
 
 class SimDriver:
@@ -896,6 +937,26 @@ class Arm:
     def state(self) -> tuple[np.ndarray, np.ndarray]:
         return self.driver.read()
 
+    def feedback(self) -> tuple[np.ndarray, np.ndarray, GripperForce | None]:
+        """Acquire joint/force feedback, selecting a supported coherent sample."""
+        if feedback_snapshot_supported(self.driver):
+            position, velocity, force = self.driver.read_feedback_snapshot()
+            force_supported = gripper_force_supported(self.driver)
+            if (force is not None) != bool(force_supported) or (
+                force is not None and not isinstance(force, GripperForce)
+            ):
+                raise TypeError(
+                    "feedback snapshot force does not match the driver capability"
+                )
+            return position, velocity, force
+        position, velocity = self.state()
+        force = (
+            self.driver.read_gripper_force()
+            if gripper_force_supported(self.driver)
+            else None
+        )
+        return position, velocity, force
+
     @property
     def estopped(self) -> bool:
         """Whether this part's e-stop latch is set. The ONE thing that reads a
@@ -1227,10 +1288,7 @@ def apply_decision(
         raise ValueError("force modifier must address an admitted part")
     for part, force in force_rows.items():
         driver = arms[part].driver
-        if (
-            not isinstance(driver, GripperForceDriver)
-            or not driver.gripper_force_supported
-        ):
+        if not gripper_force_supported(driver):
             if force == 0:
                 continue
             raise RuntimeFault(
@@ -1366,11 +1424,7 @@ def apply_decision(
         if target.size == 0:
             continue
         part = next(name for name, value in arms.items() if value is arm)
-        if (
-            part in force_rows
-            and isinstance(arm.driver, GripperForceDriver)
-            and arm.driver.gripper_force_supported
-        ):
+        if part in force_rows and gripper_force_supported(arm.driver):
             arm.driver.write_gripper_force(target, force_rows[part], velocity)
         elif velocity is not None and isinstance(arm.driver, PositionVelocityDriver):
             arm.driver.write_position_velocity(target, velocity)

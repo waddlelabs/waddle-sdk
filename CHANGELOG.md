@@ -11,6 +11,13 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Add an optional, capability-gated feedback snapshot for fresh joint and force
+  measurements from one provider acquisition. The reference MuJoCo worker serves
+  it in one transaction per part. Preserve legacy drivers, force authority and
+  provenance, exact faults, original physics/limits/deadlines and camera teardown.
+  Check force availability before protocol inspection so unsupported adapters do
+  not query force limits through Python 3.10's property-evaluating protocol check.
+
 - Keep reference MuJoCo feedback, commands and Hold independent of pending
   pixels through a separately negotiated bounded camera channel. Preserve
   paired scene/source time, original physics advancement and reset barriers,

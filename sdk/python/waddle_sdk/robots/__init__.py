@@ -23,7 +23,12 @@ them.
 from __future__ import annotations
 
 from . import base
-from .base import Driver, GripperForceDriver, PositionVelocityDriver
+from .base import (
+    Driver,
+    FeedbackSnapshotDriver,
+    GripperForceDriver,
+    PositionVelocityDriver,
+)
 from .safety import (
     SafetyPreset,
     SafetyPresetProvider,
@@ -35,6 +40,7 @@ from .socketcan import SocketCanState, ensure_socketcan_up, read_socketcan_state
 
 __all__ = [
     "Driver",
+    "FeedbackSnapshotDriver",
     "GripperForceDriver",
     "PartConfig",
     "PositionVelocityDriver",

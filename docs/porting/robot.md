@@ -91,6 +91,36 @@ Methods must be thread-safe. Runtime-owned dispatch and pump threads can call th
 driver concurrently with shutdown or observation. `close()` must be idempotent in
 practice even where the structural type does not express that property.
 
+### Optional feedback snapshot
+
+`FeedbackSnapshotDriver` adds `feedback_snapshot_supported: bool` and
+`read_feedback_snapshot() -> (position, velocity, force)`. Each call returns fresh
+joint arrays in the ordinary declared order/units, together with closing force
+from the same provider acquisition. `force` is a `GripperForce` exactly when the
+driver also supports `GripperForceDriver`; otherwise it is `None`. Preserve the
+measurement's source and estimated/calibrated status.
+
+`Arm.feedback()` and `SiteSession.observe_parts()` select this method only when
+the explicit flag is true. Missing/false support retains the separate `read()`
+and optional force read. A malformed flag, inconsistent force result or selected
+snapshot failure is an error; another read cannot replace that failed sample.
+Every subsequent observation acquires anew. This interface grants no action and
+does not alter SDK freshness, command admission, limits or stop behavior.
+
+| Driver support | Observation path | Support fact |
+|---|---|---|
+| Snapshot interface and true flag | Fresh combined joint/force acquisition | `observation.feedback_snapshot` |
+| Missing interface or false flag | Existing joint and optional force reads | Snapshot fact unavailable |
+| Force interface and true force flag | Existing force authority, independently of snapshot support | `observation.gripper_force` |
+
+The reference MuJoCo worker negotiates this optional facet and returns each
+part's joint/force values from one physics checkpoint. Older workers and other
+engines retain their existing path. Joint and force reads remain independently
+available, and separate parts are not claimed to be physically simultaneous.
+`base.gripper_force_supported(driver)` checks the support flag before inspecting
+the force interface, avoiding property evaluation for unsupported adapters on
+Python 3.10. Use it before reading force limits.
+
 ## Periodic host scheduling
 
 An adapter's dedicated periodic thread may use

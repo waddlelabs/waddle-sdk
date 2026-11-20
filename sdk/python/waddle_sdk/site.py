@@ -1290,8 +1290,7 @@ class SiteSession:
                     name: {
                         **(
                             {"gripper_force_n": list(arm.driver.gripper_force_limits_n)}
-                            if isinstance(arm.driver, base.GripperForceDriver)
-                            and arm.driver.gripper_force_supported
+                            if base.gripper_force_supported(arm.driver)
                             else {}
                         ),
                         "joint_names": list(arm.joint_names),
@@ -1512,15 +1511,14 @@ class SiteSession:
                         for joint in joints
                     ):
                         facts.add(SupportFact.VELOCITY_LIMITS)
-            if (
-                isinstance(arm.driver, base.GripperForceDriver)
-                and arm.driver.gripper_force_supported
-            ):
+            if base.gripper_force_supported(arm.driver):
                 facts.update(
                     (SupportFact.GRIPPER_FORCE, SupportFact.GRIPPER_FORCE_OBSERVATION)
                 )
             if isinstance(arm.driver, base.PositionVelocityDriver):
                 facts.add(SupportFact.VELOCITY_FEEDFORWARD)
+            if base.feedback_snapshot_supported(arm.driver):
+                facts.add(SupportFact.FEEDBACK_SNAPSHOT)
             if arm.fk is not None:
                 facts.update(
                     (SupportFact.EE_POSE_OBSERVATION, SupportFact.FORWARD_KINEMATICS)
@@ -1715,14 +1713,8 @@ class SiteSession:
             try:
                 if managed.pump is not None and managed.pump.fault is not None:
                     raise managed.pump.fault
-                position, velocity = arm.state()
+                position, velocity, force = arm.feedback()
                 pose = arm.ee_pose(position)
-                force = (
-                    arm.driver.read_gripper_force()
-                    if isinstance(arm.driver, base.GripperForceDriver)
-                    and arm.driver.gripper_force_supported
-                    else None
-                )
             except Exception as exc:
                 faults[name] = _operation_fault(
                     "observe robot part",
@@ -2101,8 +2093,7 @@ class Run:
                     force_rows = {
                         name: 0.0
                         for name in rows
-                        if isinstance(arms[name].driver, base.GripperForceDriver)
-                        and arms[name].driver.gripper_force_supported
+                        if base.gripper_force_supported(arms[name].driver)
                     }
                 dispatched = base.apply_decision(
                     self._session._require().arms,

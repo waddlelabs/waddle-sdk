@@ -51,6 +51,7 @@ class World:
         self._capture_connection = None
         self._capture_lock = threading.Lock()
         self._parallel_camera = False
+        self._feedback_snapshot = False
         self._camera_drain_confirmed = False
         self._capture_fault = None
         self._failed = False
@@ -65,6 +66,10 @@ class World:
         engine overrides this to False, so its arms advertise position-only jaws.
         """
         return self.config["backend"] == "mujoco"
+
+    @property
+    def supports_feedback_snapshot(self) -> bool:
+        return getattr(self, "_feedback_snapshot", False)
 
     def open(self) -> None:
         with self._lock:
@@ -113,6 +118,16 @@ class World:
                     )
                     camera_child.close()
                     ready = self._receive(180.0)
+                    feedback = (
+                        ready.get("feedback_snapshot", False)
+                        if isinstance(ready, dict)
+                        else False
+                    )
+                    if type(feedback) is not bool:
+                        raise TypeError(
+                            "simulation worker advertised invalid feedback snapshot"
+                        )
+                    self._feedback_snapshot = feedback
                     parallel = (
                         ready.get("parallel_camera_capture", False)
                         if isinstance(ready, dict)
@@ -371,6 +386,29 @@ class Driver:
         # adapters. Soft contact limits can overshoot a native slide by microns.
         q[-1] = np.clip(q[-1], 0.0, 1.0)
         return q, dq
+
+    @property
+    def feedback_snapshot_supported(self):
+        return self.world.supports_feedback_snapshot
+
+    def read_feedback_snapshot(self):
+        from ..runtime import FaultCode, GripperForce, RuntimeFault
+
+        if not self.feedback_snapshot_supported:
+            raise RuntimeFault(
+                FaultCode.UNSUPPORTED, "simulation feedback snapshot is unavailable"
+            )
+        position, velocity, force_n = self.world.part_call(
+            "feedback_snapshot", self.part
+        )
+        q, dq = (np.asarray(values, dtype=float) for values in (position, velocity))
+        q[-1] = np.clip(q[-1], 0.0, 1.0)
+        force = (
+            None
+            if force_n is None
+            else GripperForce(float(force_n), "mujoco.yam.actuator_force", True)
+        )
+        return q, dq, force
 
     @property
     def gripper_force_supported(self):

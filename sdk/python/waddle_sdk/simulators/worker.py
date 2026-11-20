@@ -185,6 +185,9 @@ def serve(connection: Connection) -> None:
                     {
                         "camera_content_timing_kind": timing_kind,
                         "parallel_camera_capture": cameras is not None,
+                        "feedback_snapshot": callable(
+                            getattr(engine, "feedback_snapshot", None)
+                        ),
                     },
                 )
             )
@@ -225,6 +228,8 @@ def serve(connection: Connection) -> None:
                         "write_force",
                         "write_force_part",
                         "read_part",
+                        "feedback_snapshot",
+                        "feedback_snapshot_part",
                         "write_part",
                         "hold_part",
                         "home_part",

@@ -61,6 +61,15 @@ thread errors and uses explicit server/writer drain operations when supplied.
 
 An optional `write_position_velocity(target, velocity_feedforward_rad_s) -> bool` consumes a producer-known feedforward for the same admitted position target. Return `False` only after deliberately issuing the unchanged position-only target. Never derive feedforward from measurements.
 
+`FeedbackSnapshotDriver` optionally supplies `feedback_snapshot_supported: bool`
+and `read_feedback_snapshot() -> (position, velocity, force)` from one fresh provider
+acquisition. Force is `GripperForce` only when the force interface is supported;
+otherwise it is `None`. `Arm.feedback()` selects the declared snapshot or existing
+separate reads. A selected failure remains its original scoped fault, with no
+sample reuse or fallback. The support matrix reports `observation.feedback_snapshot`.
+Use `base.gripper_force_supported(driver)` to test force availability before
+inspecting its limits; Python 3.10 protocol checks can evaluate properties.
+
 ## Owner envelope
 
 Every command crosses `Arm`. Supply exact joint limits and `step_caps`, the legacy target-to-measurement allowance. An optional `position_error_caps` vector replaces that allowance independently of cadence; neither is physical velocity or torque enforcement. The default seam checks declared width, finite values, limits, the applicable allowance, optional workspace bounds, and configured geometry rules; it rejects whole and never clamps. Reference timing and convergence belong to the caller.

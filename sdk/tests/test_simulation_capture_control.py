@@ -34,6 +34,9 @@ def test_feedback_targets_and_hold_complete_before_pending_pixels(
         def read(self):
             return state.target, len(state.steps)
 
+        def feedback_snapshot(self):
+            return state.target, len(state.steps), state.target * 10
+
         def hold(self):
             state.target = 0
 
@@ -93,6 +96,7 @@ def test_feedback_targets_and_hold_complete_before_pending_pixels(
     serving.start()
     try:
         ready = receive(control)
+        assert ready.get("feedback_snapshot", False) is True
         parallel = ready.get("parallel_camera_capture", False)
         capture = camera if parallel else control
         control.send(("write", [1]))
@@ -106,6 +110,8 @@ def test_feedback_targets_and_hold_complete_before_pending_pixels(
         clock.now = 0.11
         control.send(("read", []))
         assert receive(control) == (2, 55)
+        control.send(("feedback_snapshot", []))
+        assert receive(control) == (2, 55, 20)
         control.send(("hold", []))
         receive(control)
         assert state.target == 0

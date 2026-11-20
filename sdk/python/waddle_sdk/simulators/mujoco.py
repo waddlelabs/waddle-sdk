@@ -241,6 +241,12 @@ class Engine:
             raise ValueError("gripper.force_unavailable")
         return 1.0, min(50.0, max(abs(self._force_ranges[part])) / 2)
 
+    def feedback_snapshot(self, part=None):
+        part = self._part(part)
+        position, velocity = self.read(part)
+        force = self.gripper_force(part) if self.profile.name == "yam" else None
+        return position, velocity, force
+
     def gripper_force(self, part=None):
         part = self._part(part)
         self.gripper_force_limits(part)

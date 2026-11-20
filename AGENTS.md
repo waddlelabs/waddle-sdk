@@ -1,5 +1,19 @@
 # AGENTS.md — waddle-sdk monorepo
 
+Optional `FeedbackSnapshotDriver` returns fresh joint/velocity/force values from
+one provider acquisition. Its explicit boolean selects `Arm.feedback()` and the
+ordinary named observation path, advertising `observation.feedback_snapshot`.
+Force availability remains independently gated by `GripperForceDriver`; preserve
+source/estimate provenance and reject inconsistent results. Missing/false support
+retains legacy reads, while a selected failure remains the original scoped fault
+without fallback or sample reuse. Reference MuJoCo workers negotiate the facet;
+old workers/other engines and physical drivers retain their existing path. Keep
+old-target physics/substeps/catch-up ceilings, timing/freshness/stop guards and
+independent camera drain unchanged. See [adapter contract](docs/porting/robot.md#optional-feedback-snapshot).
+Force capability inspection checks the explicit flag before the runtime protocol;
+Python 3.10 protocol checks can evaluate properties. Position-only adapters must
+never query unsupported force limits during observation, description or admission.
+
 Optional gripper force control uses `GripperForceDriver` and the public runtime
 `GripperForce` observation. Named `JointPositionCommand.gripper_force_n` is
 admitted by the existing native gate and owner envelope before driver activation.

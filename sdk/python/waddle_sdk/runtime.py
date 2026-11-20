@@ -60,6 +60,7 @@ class SupportFact(str, enum.Enum):
 
     JOINT_POSITION_OBSERVATION = "observation.joint_position"
     JOINT_VELOCITY_OBSERVATION = "observation.joint_velocity"
+    FEEDBACK_SNAPSHOT = "observation.feedback_snapshot"
     EE_POSE_OBSERVATION = "observation.ee_pose"
     JOINT_POSITION_ACTION = "action.joint_position"
     PART_OBSERVATION = "observation.named_parts"
