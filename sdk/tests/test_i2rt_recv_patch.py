@@ -162,6 +162,27 @@ def test_transaction_skips_unrelated_reply_without_resending(transaction, expect
     assert interface.bus.waits == pytest.approx([0.01, 0.007])
 
 
+def test_can_fault_is_evidence_and_never_a_motor_reply(transaction):
+    interface, _ = transaction
+    fault = types.SimpleNamespace(
+        arbitration_id=21, is_error_frame=True, data=bytes.fromhex("0008100000007300")
+    )
+    interface.bus.script = [(0, fault)]
+    with pytest.raises(AssertionError, match="class=0x15 data=0008100000007300"):
+        interface._send_message_get_response(5, 5, [3], max_retry=1)
+    assert len(interface.bus.sent) == 1
+
+    reply = types.SimpleNamespace(arbitration_id=21)
+    interface.bus.script = [(0, fault), (0, reply)]
+    assert interface._send_message_get_response(5, 5, [3]) is reply
+    assert len(interface.bus.sent) == 2
+
+    # Evidence belongs to the single transaction that received it.
+    with pytest.raises(AssertionError) as failed:
+        interface._send_message_get_response(5, 5, [3], max_retry=1)
+    assert "CAN error frames" not in str(failed.value)
+
+
 def test_transaction_accepts_queued_matching_reply_after_scheduling_delay(transaction):
     interface, _ = transaction
     reply = types.SimpleNamespace(arbitration_id=21)

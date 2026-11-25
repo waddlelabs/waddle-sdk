@@ -142,6 +142,7 @@ def _receive_before(
     deadline: float,
     supress_warning: bool = False,
     expected_id: int | None = None,
+    error_frames: list[Any] | None = None,
 ) -> Any | None:
     """Use one deadline and at most one final nonblocking poll after it expires."""
 
@@ -152,10 +153,20 @@ def _receive_before(
             message = self.buffered_reader.get_message(timeout=wait)
         else:
             message = self.bus.recv(timeout=wait)
-        if message is not None and (
-            expected_id is None or message.arbitration_id == expected_id
-        ):
-            return message
+        if message is not None:
+            if getattr(message, "is_error_frame", False):
+                if error_frames is not None:
+                    # Keep the first cause and the latest controller state.
+                    if len(error_frames) < 2:
+                        error_frames.append(message)
+                    else:
+                        error_frames[-1] = message
+            elif expected_id is None or (
+                message.arbitration_id == expected_id
+                and not getattr(message, "is_extended_id", False)
+                and not getattr(message, "is_remote_frame", False)
+            ):
+                return message
         if remaining <= 0.0:
             break
     if not supress_warning:
@@ -186,20 +197,23 @@ def _send_message_get_response_matching(
     message = can.Message(arbitration_id=id, data=data, is_extended_id=False)
     if expected_id is None:
         expected_id = self.receive_mode.get_receive_id(motor_id)
+    error_frames: list[Any] = []
+    last_exception = None
     for _ in range(max_retry):
         try:
             self.bus.send(message)
             start = time.monotonic()
             response = _receive_before(
-                self, motor_id, start + 0.010, expected_id=expected_id
+                self, motor_id, start + 0.010, False, expected_id, error_frames
             )
             if response is None:
                 response = _receive_before(
-                    self, motor_id, start + 0.019, True, expected_id
+                    self, motor_id, start + 0.019, True, expected_id, error_frames
                 )
             if response is not None:
                 return response
         except (can.CanError, AssertionError) as error:
+            last_exception = error
             _ROOT_LOG.warning(error)
             _ROOT_LOG.warning(
                 "\033[91m"
@@ -207,9 +221,14 @@ def _send_message_get_response_matching(
                 "\033[0m"
             )
         time.sleep(0.001)
-    raise AssertionError(
-        f"fail to communicate with the motor {id} on {self.name} at can channel {self.bus.channel_info}"
-    )
+    detail = f"fail to communicate with the motor {id} on {self.name} at can channel {self.bus.channel_info}"
+    if error_frames:
+        frames = ", ".join(
+            f"class=0x{frame.arbitration_id:x} data={bytes(frame.data).hex()}"
+            for frame in error_frames
+        )
+        detail += f" (observed CAN error frames: {frames})"
+    raise AssertionError(detail) from last_exception
 
 
 _send_message_get_response_matching._waddle_matching_patch = True  # type: ignore[attr-defined]
