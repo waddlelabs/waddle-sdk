@@ -1594,3 +1594,15 @@ def test_force_driver_binds_mode_to_reference_and_hold_releases_it(vendor, monke
         assert robot._gripper_force_limiter.force_n == 0
     finally:
         driver.close()
+
+
+def test_live_open_uses_current_usb_identity_before_opening_vendor(vendor, monkeypatch):
+    channels = {"bench-left": "can2"}
+    rig = yam.arm(workspace=None, channel="can2", can_usb_serial="bench-left")
+    monkeypatch.setattr(yam, "resolve_usb_can_channel", channels.__getitem__)
+    channels["bench-left"] = "can7"
+    opened = rig.arms()
+    try:
+        assert [call["channel"] for call in vendor.calls] == ["can7"]
+    finally:
+        base.close_all(opened)

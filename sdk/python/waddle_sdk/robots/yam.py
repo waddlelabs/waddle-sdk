@@ -98,6 +98,7 @@ from ._i2rt_patches import (
     apply_recv_starvation_patch,
 )
 from .base import CrossArm
+from ..discovery import resolve_usb_can_channel
 from .socketcan import ensure_socketcan_up
 
 if TYPE_CHECKING:
@@ -602,6 +603,9 @@ class ArmSite:
         Required when the rig is live; ignored, and permitted, in sim — so one
         call site can carry both configurations and the program text does not
         change across the flip.
+    ``can_usb_serial``
+        Optional USB adapter identity. At live open, resolve its current Linux
+        interface even if the saved channel changed after a restart.
     ``base_frame``
         What this arm's base is called in the frames the rig declares.
     ``gripper_limits``
@@ -616,6 +620,7 @@ class ArmSite:
     base_frame: str | None = None
     gripper_limits: Sequence[float] | None = None
     sim_home: Sequence[float] | None = None
+    can_usb_serial: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -1552,7 +1557,7 @@ def _resolved_site(
     where the program can still be fixed, rather than at the bus."""
     site = site if site is not None else ArmSite()
     channel = site.channel
-    if not sim and not channel:
+    if not sim and not (channel or site.can_usb_serial):
         raise ValueError(
             f"{where}: a live rig needs a channel (the SocketCAN interface this "
             "arm is on) — pass it, or pass sim=True. Nothing here reaches for a "
@@ -1575,6 +1580,7 @@ def _resolved_site(
         base_frame=site.base_frame or base_frame,
         gripper_limits=limits,
         sim_home=home,
+        can_usb_serial=site.can_usb_serial,
     )
 
 
@@ -1662,7 +1668,9 @@ def _build_arms(
                     )
                 else:
                     driver = LiveDriver(
-                        site.channel,
+                        resolve_usb_can_channel(site.can_usb_serial)
+                        if site.can_usb_serial is not None
+                        else site.channel,
                         gripper_limits=site.gripper_limits,
                         max_gripper_speed_per_s=step_caps[-1] * rate_hz,
                         gravity_comp_factor=gravity_comp_factor,
@@ -1878,6 +1886,7 @@ def arm(
     workspace: Sequence[Sequence[float]] | None,
     gripper_limits: Sequence[float] | None = None,
     channel: str | None = None,
+    can_usb_serial: str | None = None,
     sim: bool = False,
     posture: str = "supervised",
     fk: Callable[[Sequence[float]], tuple[np.ndarray, np.ndarray]] | None = (
@@ -1927,7 +1936,12 @@ def arm(
     box = _checked_workspace(workspace, report=report)
     caps = _step_caps(rate_hz, max_joint_speed_rad_s, max_gripper_speed_per_s)
     site = _resolved_site(
-        ArmSite(channel=channel, base_frame=base_frame, sim_home=sim_home),
+        ArmSite(
+            channel=channel,
+            base_frame=base_frame,
+            sim_home=sim_home,
+            can_usb_serial=can_usb_serial,
+        ),
         where="arm",
         sim=sim,
         base_frame=base_frame,

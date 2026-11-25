@@ -159,14 +159,8 @@ def _realsense_vendor_candidates(
     return tuple(rows)
 
 
-def _linux_candidates(
-    *,
-    sys_root: Path,
-    dev_root: Path,
-    realsense_resolved: tuple[HardwareCandidate, ...] = (),
-) -> tuple[HardwareCandidate, ...]:
+def _socketcan_candidates(sys_root: Path) -> tuple[HardwareCandidate, ...]:
     candidates: list[HardwareCandidate] = []
-
     network = sys_root / "class" / "net"
     try:
         interfaces = sorted(network.iterdir(), key=lambda path: path.name)
@@ -244,6 +238,36 @@ def _linux_candidates(
                 },
             )
         )
+
+    return tuple(candidates)
+
+
+def resolve_usb_can_channel(serial: str, *, sys_root: Path = Path("/sys")) -> str:
+    """Resolve the selected adapter again when a live arm opens after hotplug."""
+    if not isinstance(serial, str) or not serial or serial.strip() != serial:
+        raise ValueError("SocketCAN USB serial must be a non-empty exact identifier")
+    candidates = [
+        row
+        for row in _socketcan_candidates(sys_root)
+        if row.metadata.get("serial") == serial
+    ]
+    if len(candidates) != 1 or not candidates[0].connection.get("channel"):
+        raise RuntimeError(
+            f"Cannot bind SocketCAN USB serial {serial!r} to one interface: "
+            f"{[row.label for row in candidates]}"
+        )
+    return candidates[0].connection["channel"]
+
+
+def _linux_candidates(
+    *,
+    sys_root: Path,
+    dev_root: Path,
+    realsense_resolved: tuple[HardwareCandidate, ...] = (),
+) -> tuple[HardwareCandidate, ...]:
+    candidates: list[HardwareCandidate] = []
+
+    candidates.extend(_socketcan_candidates(sys_root))
 
     video_root = sys_root / "class" / "video4linux"
     try:

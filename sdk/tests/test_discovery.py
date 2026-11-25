@@ -231,3 +231,26 @@ def test_platform_can_is_identified_as_builtin_not_a_connected_arm(tmp_path):
     )
     assert report.candidates[0].metadata["attachment"] == "built-in"
     assert "Built-in" in report.candidates[0].label
+
+
+def test_saved_usb_identity_follows_can_renumbering_and_refuses_ambiguity(tmp_path):
+    import pytest
+
+    interfaces = tmp_path / "class/net"
+    for name, serial in [("can2", "A"), ("can3", "B")]:
+        node = interfaces / name
+        _write(node / "type", "280")
+        _write(node / "device/serial", serial)
+
+    def channel(serial):
+        return discovery.resolve_usb_can_channel(serial, sys_root=tmp_path)
+
+    assert channel("A") == "can2"
+    (interfaces / "can2").rename(interfaces / "can7")
+    assert channel("A") == "can7"
+    assert channel("B") == "can3"
+    _write(interfaces / "can3/device/serial", "A")
+    with pytest.raises(RuntimeError, match="one interface"):
+        channel("A")
+    with pytest.raises(RuntimeError, match="one interface"):
+        channel("B")

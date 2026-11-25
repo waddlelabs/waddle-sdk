@@ -11,7 +11,8 @@ Transport presence identifies an adapter, not arm power or CAN bus connectivity.
 Keep built-in CAN controllers out of the arm suggestions; manual connection
 settings still support them. Label USB adapters PLUGGED IN/UNPLUGGED. Known gs_usb USB devices without
 a kernel interface stay visible with a scoped setup error, never a guessed channel.
-Retain USB serial identity and update the channel after reconnecting.
+Retain USB serial identity and update the channel after reconnecting. When saved, the YAM connection’s
+`can_usb_serial` also resolves at each live open, before the vendor driver opens.
 Install callbacks prepare only the selected adapter before Add/Preview; SDK and USB
 serials are distinct, and physical-port evidence is required to rebind selection.
 Preview is a camera-only snapshot rendered with terminal colour blocks, including

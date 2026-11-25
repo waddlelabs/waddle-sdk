@@ -605,6 +605,8 @@ class WorkspaceInitApp(App):
                 self._select("profile"), self._input("part-name") or "arm"
             )
             connection = {**defaults["connection"], **dict(selected.connection)}
+            if self._select("profile") == "yam" and selected.metadata.get("serial"):
+                connection["can_usb_serial"] = selected.metadata["serial"]
             self._set_input("part-connection", json.dumps(connection))
 
     @on(OptionList.OptionSelected, "#camera-candidate")
