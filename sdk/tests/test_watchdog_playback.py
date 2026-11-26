@@ -35,8 +35,15 @@ def test_expired_playback_never_writes_and_retains_native_hold(opened):
     assert result["dispatched"] == 0
     assert result["cleanup"]["error"] is None
     assert result["watchdog"] == {"observed_ns": 0, "timeout_ns": 1, "deadline_ns": 1}
+    before = session.session_time_ns()
     with pytest.raises(RuntimeFault) as caught:
-        handle.refresh_watchdog(session.observe().session_ns)
+        handle.refresh_watchdog(before)
+    assert (
+        before
+        <= caught.value.context["sdk_refused_session_ns"]
+        <= session.session_time_ns()
+    )
+    assert handle.snapshot() == result
     assert caught.value.code == FaultCode.INVALID_REQUEST
 
 
@@ -94,6 +101,9 @@ def test_watchdog_renewal_is_pending_until_worker_accepts_feedback(opened, monke
     try:
         assert entered.wait(5)
         handle.refresh_watchdog(stamp)
+        pending = handle.snapshot()["watchdog_refresh_timing"]
+        assert stamp <= pending["submitted_ns"] <= session.session_time_ns()
+        assert pending["decided_ns"] is None
         assert handle.snapshot()["watchdog_refresh"] == {
             "observed_ns": stamp,
             "status": "pending",
@@ -104,10 +114,14 @@ def test_watchdog_renewal_is_pending_until_worker_accepts_feedback(opened, monke
         with pytest.raises(RuntimeFault) as caught:
             handle.refresh_watchdog(stamp + 1)
         assert caught.value.code == FaultCode.BUSY
+        assert caught.value.context["sdk_refused_session_ns"] >= pending["submitted_ns"]
     finally:
         release.set()
     result = handle.wait()
     assert result["status"] == "arrived", result
+    timing = result["watchdog_refresh_timing"]
+    assert timing["submitted_ns"] == pending["submitted_ns"]
+    assert timing["submitted_ns"] <= timing["decided_ns"] <= session.session_time_ns()
     assert result["watchdog_refresh"] == {
         "observed_ns": stamp,
         "status": "accepted",
@@ -169,7 +183,15 @@ def test_delayed_dispatch_cannot_cross_deadline_or_resume(
     assert result["failure"]["outcome_unknown"] is False, result
     assert "deadline expired" in result["failure"]["detail"], result
     assert result["watchdog"]["deadline_ns"] == deadline
-    assert result["watchdog_refresh"]["status"] != "accepted"
+    assert result["watchdog_refresh"]["status"] == "rejected"
+    timing = result["watchdog_refresh_timing"]
+    assert (
+        deadline
+        <= late
+        <= timing["submitted_ns"]
+        <= timing["decided_ns"]
+        <= session.session_time_ns()
+    )
     assert result["dispatched"] == len(writes) == 1
     assert max(writes) < deadline <= late
     assert result["cleanup"]["outcome"] == "acknowledged", result
@@ -184,6 +206,7 @@ def test_delayed_dispatch_cannot_cross_deadline_or_resume(
                 "driver_position_ns": writes,
                 "driver_hold_ns": holds,
                 "watchdog_refresh": result["watchdog_refresh"],
+                "watchdog_refresh_timing": result["watchdog_refresh_timing"],
                 "failure": result["failure"],
                 "cleanup": result["cleanup"],
             }
@@ -234,6 +257,7 @@ def test_timely_renewal_carries_its_deadline_to_later_writes(
                 "renewed_deadline_ns": replacement + age,
                 "driver_position_ns": writes,
                 "watchdog_refresh": result["watchdog_refresh"],
+                "watchdog_refresh_timing": result["watchdog_refresh_timing"],
             }
         ),
     )

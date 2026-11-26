@@ -426,13 +426,17 @@ impl PyExecutionHandle {
     fn cancel(&self, reason: &str) {
         self.0.cancel(reason);
     }
-    fn refresh_watchdog(&self, observed_ns: i64) -> PyResult<()> {
-        self.0
-            .refresh_watchdog(observed_ns)
-            .map_err(|error| match error {
+    fn refresh_watchdog(&self, py: Python<'_>, observed_ns: i64) -> PyResult<()> {
+        let (at, result) = self.0.refresh_watchdog_timed(observed_ns);
+        if let Err(error) = result {
+            let fault = match error {
                 PlaybackError::Busy => PlaybackBusyError::new_err(error.to_string()),
                 _ => PyValueError::new_err(error.to_string()),
-            })
+            };
+            fault.value(py).setattr("sdk_refused_session_ns", at)?;
+            return Err(fault);
+        }
+        Ok(())
     }
     fn withdraw_curve(&self, request_id: u64, expected_revision: u64) -> PyResult<u64> {
         self.0
@@ -463,6 +467,17 @@ fn snapshot(py: Python<'_>, value: ExecutionSnapshot) -> PyResult<Py<PyDict>> {
     out.set_item("dispatched", value.dispatched)?;
     out.set_item("references", value.references)?;
     out.set_item("last_acknowledged_ns", value.last_acknowledged_ns)?;
+    let admission = value
+        .initial_watchdog
+        .map(|(w, at)| -> PyResult<Py<PyDict>> {
+            let row = PyDict::new(py);
+            row.set_item("observed_ns", w.observed_ns)?;
+            row.set_item("deadline_ns", w.deadline_ns())?;
+            row.set_item("installed_session_ns", at)?;
+            Ok(row.unbind())
+        })
+        .transpose()?;
+    out.set_item("initial_watchdog", admission)?;
     let watchdog = value
         .watchdog
         .map(|w| -> PyResult<Py<PyDict>> {
@@ -474,6 +489,18 @@ fn snapshot(py: Python<'_>, value: ExecutionSnapshot) -> PyResult<Py<PyDict>> {
         })
         .transpose()?;
     out.set_item("watchdog", watchdog)?;
+    let timing = value
+        .watchdog_refresh
+        .as_ref()
+        .map(|r| -> PyResult<Py<PyDict>> {
+            let row = PyDict::new(py);
+            row.set_item("observed_ns", r.observed_ns)?;
+            row.set_item("submitted_ns", r.submitted_ns)?;
+            row.set_item("decided_ns", r.decided_ns)?;
+            Ok(row.unbind())
+        })
+        .transpose()?;
+    out.set_item("watchdog_refresh_timing", timing)?;
     let refresh = value
         .watchdog_refresh
         .map(|r| -> PyResult<Py<PyDict>> {

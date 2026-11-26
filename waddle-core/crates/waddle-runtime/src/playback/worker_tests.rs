@@ -1211,13 +1211,23 @@ fn accepted_watchdog_stamp_advances_deadline_once() {
     let (task, handle) = watchdog_task(&h);
     h.io.clock.0.advance(40_000_000);
     let observed_ns = h.io.clock.0.now().0;
-    handle.refresh_watchdog(observed_ns).unwrap();
+    let (submitted, queued) = handle.refresh_watchdog_timed(observed_ns);
+    queued.unwrap();
+    assert!(
+        handle
+            .snapshot()
+            .watchdog_refresh
+            .unwrap()
+            .decided_ns
+            .is_none()
+    );
+    h.io.clock.0.advance(3_000_000);
     assert!(task.check_watchdog(&h.io.clock).is_none());
     let accepted = handle.snapshot();
-    assert_eq!(
-        accepted.watchdog_refresh.unwrap().result,
-        Some(Ok(observed_ns + 100_000_000))
-    );
+    let timing = accepted.watchdog_refresh.unwrap();
+    assert_eq!(timing.submitted_ns, submitted);
+    assert!(timing.decided_ns.unwrap() >= submitted + 3_000_000);
+    assert_eq!(timing.result, Some(Ok(observed_ns + 100_000_000)));
     handle.refresh_watchdog(observed_ns).unwrap();
     h.io.clock.0.advance(101_000_000);
     assert_eq!(

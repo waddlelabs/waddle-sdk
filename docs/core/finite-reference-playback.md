@@ -679,3 +679,14 @@ real native gate and callback barriers to check execution, stop ordering,
 supersession, retained faults and shutdown. No hardware or remote planner is
 involved. These tests do not establish device timing, WAN performance or physical
 acceptance.
+
+### Renewal timing
+
+Read `SiteSession.session_time_ns()` for a clock-only stamp in the same domain as
+the playback and recorded action timestamps. With the timing-enabled binding,
+`initial_watchdog` retains the starting exposure, deadline and installation time.
+`watchdog_refresh_timing` identifies the current renewal by `observed_ns`.
+Its `submitted_ns` is sampled under the handle lock. Its `decided_ns` is null
+while pending and is set on worker acceptance or rejection. A synchronous SDK
+refusal carries `sdk_refused_session_ns` in the runtime fault context. Retain
+each receipt before submitting a successor when reconstructing a full timeline.

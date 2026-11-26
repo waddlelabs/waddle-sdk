@@ -56,11 +56,19 @@ class PlaybackHandle:
         """Queue feedback time; acceptance is retained in the native snapshot."""
         try:
             self._native.refresh_watchdog(observed_ns)
-        except core.PlaybackBusyError as error:
-            raise RuntimeFault(FaultCode.BUSY, str(error)) from error
-        except (TypeError, ValueError, OverflowError) as error:
+        except (core.PlaybackBusyError, TypeError, ValueError, OverflowError) as error:
+            code = (
+                FaultCode.BUSY
+                if isinstance(error, core.PlaybackBusyError)
+                else FaultCode.INVALID_REQUEST
+            )
+            refused = getattr(error, "sdk_refused_session_ns", None)
             raise RuntimeFault.from_exception(
-                error, code=FaultCode.INVALID_REQUEST
+                error,
+                code=code,
+                context={"sdk_refused_session_ns": refused}
+                if refused is not None
+                else {},
             ) from error
 
     def withdraw_curve(self, request_id: int, expected_revision: int) -> int:

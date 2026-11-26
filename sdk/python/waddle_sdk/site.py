@@ -1735,6 +1735,10 @@ class SiteSession:
         run.__enter__()
         return run
 
+    def session_time_ns(self) -> int:
+        """Read the native session clock without a device observation."""
+        return self._require().core.stamp().session_ns
+
     def observe(self) -> Observation:
         observation = self.observe_parts()
         if observation.faults:

@@ -217,7 +217,8 @@ impl VerbDispatch {
         let stats = Arc::new(DispatchStats::default());
         let shutdown = Arc::new(AtomicBool::new(false));
 
-        let playback = Arc::new(ExecutionSlot::default());
+        let clock = Arc::new(clock);
+        let playback = Arc::new(ExecutionSlot::new(clock.clone()));
         let playback_thread = playback.clone();
         let flag = estop_flag.clone();
         let hold_flag = priority_hold_flag.clone();
@@ -229,7 +230,7 @@ impl VerbDispatch {
             .spawn(move || {
                 dispatch_loop(
                     &registry,
-                    &clock,
+                    clock.as_ref(),
                     &rx,
                     &outcomes,
                     &flag,

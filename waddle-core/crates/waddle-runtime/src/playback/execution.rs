@@ -124,6 +124,9 @@ pub struct CurveUpdateReceipt {
 #[derive(Clone, Debug)]
 pub struct WatchdogReceipt {
     pub observed_ns: i64,
+    /// Clock sampled with the handle state locked at enqueue and resolution.
+    pub submitted_ns: i64,
+    pub decided_ns: Option<i64>,
     pub result: Option<Result<i64, PlaybackError>>,
 }
 
@@ -141,6 +144,8 @@ pub struct ExecutionSnapshot {
     pub feedback_reference: Option<Step>,
     pub curve_progress: Option<CurveProgress>,
     pub curve_update: Option<CurveUpdateReceipt>,
+    /// Incumbent window and session time installed at handle admission.
+    pub initial_watchdog: Option<(PlaybackWatchdog, i64)>,
     pub watchdog: Option<PlaybackWatchdog>,
     pub watchdog_refresh: Option<WatchdogReceipt>,
     pub settling: Option<SettlingEvidence>,
@@ -173,8 +178,24 @@ enum CurveRequest {
     },
 }
 
+#[derive(Clone)]
+struct ReceiptClock(Arc<dyn Clock>);
+
+impl ReceiptClock {
+    fn now_ns(&self) -> i64 {
+        self.0.stamp_now().mono_ns().0
+    }
+}
+
+impl std::fmt::Debug for ReceiptClock {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("session clock")
+    }
+}
+
 #[derive(Debug)]
 struct Control {
+    clock: ReceiptClock,
     state: Mutex<State>,
     changed: Condvar,
 }
@@ -204,6 +225,7 @@ impl Control {
                 .as_mut()
                 .filter(|r| r.result.is_none())
             {
+                receipt.decided_ns = Some(self.clock.now_ns());
                 receipt.result = Some(Err(PlaybackError::Cancelled(
                     "execution ended before watchdog renewal".into(),
                 )));
@@ -245,7 +267,22 @@ impl ExecutionHandle {
     /// Queue a fresh session-clock feedback stamp. Repeating the same stamp is
     /// idempotent and cannot extend the deadline. No timeout or authority changes.
     pub fn refresh_watchdog(&self, observed_ns: i64) -> Result<(), PlaybackError> {
+        self.refresh_watchdog_timed(observed_ns).1
+    }
+
+    /// Stamp synchronous admission/refusal on the same clock as emission.
+    pub fn refresh_watchdog_timed(&self, observed_ns: i64) -> (i64, Result<(), PlaybackError>) {
         let mut state = self.control.state.lock();
+        let submitted_ns = self.control.clock.now_ns();
+        let result = Self::queue_watchdog(&mut state, observed_ns, submitted_ns);
+        (submitted_ns, result)
+    }
+
+    fn queue_watchdog(
+        state: &mut State,
+        observed_ns: i64,
+        submitted_ns: i64,
+    ) -> Result<(), PlaybackError> {
         if state.snapshot.result.is_some() || state.cancelled.is_some() {
             return Err(PlaybackError::Invalid("execution is closing or terminal"));
         }
@@ -262,6 +299,8 @@ impl ExecutionHandle {
         }
         state.snapshot.watchdog_refresh = Some(WatchdogReceipt {
             observed_ns,
+            submitted_ns,
+            decided_ns: None,
             result: None,
         });
         Ok(())
@@ -332,12 +371,20 @@ impl ExecutionHandle {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct ExecutionSlot {
+    clock: ReceiptClock,
     current: Mutex<HashMap<Option<Vec<String>>, Arc<Control>>>,
 }
 
 impl ExecutionSlot {
+    pub(crate) fn new(clock: Arc<dyn Clock>) -> Self {
+        Self {
+            clock: ReceiptClock(clock),
+            current: Mutex::default(),
+        }
+    }
+
     pub(crate) fn register(
         &self,
         episode_id: EpisodeId,
@@ -355,6 +402,7 @@ impl ExecutionSlot {
             return Err(PlaybackError::Busy);
         }
         let control = Arc::new(Control {
+            clock: self.clock.clone(),
             state: Mutex::new(State {
                 snapshot: ExecutionSnapshot {
                     id: uuid::Uuid::new_v4().to_string(),
@@ -365,6 +413,7 @@ impl ExecutionSlot {
                     feedback_reference: None,
                     curve_progress: None,
                     curve_update: None,
+                    initial_watchdog: None,
                     watchdog: None,
                     watchdog_refresh: None,
                     settling: None,
@@ -477,7 +526,11 @@ impl ExecutionTask {
         sample_period_ns: i64,
         dispatch_period_ns: i64,
     ) -> Self {
-        handle.control.state.lock().snapshot.watchdog = references.policy.watchdog;
+        if let Some(watchdog) = references.policy.watchdog {
+            let mut state = handle.control.state.lock();
+            state.snapshot.initial_watchdog = Some((watchdog, handle.control.clock.now_ns()));
+            state.snapshot.watchdog = Some(watchdog);
+        }
         Self {
             mirror,
             episode,
@@ -599,6 +652,7 @@ impl ExecutionTask {
                 .as_mut()
                 .filter(|r| r.result.is_none())
             {
+                receipt.decided_ns = Some(now);
                 receipt.result = Some(Err(error.clone()));
             }
             return Some(Err(ExecutionFailure::Playback(error)));
@@ -608,6 +662,7 @@ impl ExecutionTask {
             .watchdog_refresh
             .as_mut()
             .filter(|r| r.result.is_none())?;
+        receipt.decided_ns = Some(now);
         let next = PlaybackWatchdog {
             observed_ns: receipt.observed_ns,
             ..watchdog
@@ -786,7 +841,7 @@ mod tests {
 
     #[test]
     fn coordinated_subset_reserves_exact_members_until_terminal() {
-        let slot = ExecutionSlot::default();
+        let slot = ExecutionSlot::new(Arc::new(waddle_ingest::FakeClock::default()));
         let episode = EpisodeId::new("group");
         let selected = Some(vec!["left".into(), "right".into()]);
         let group = slot
@@ -835,7 +890,7 @@ mod tests {
 
     #[test]
     fn cancellation_winning_completion_waits_for_worker_cleanup() {
-        let slot = ExecutionSlot::default();
+        let slot = ExecutionSlot::new(Arc::new(waddle_ingest::FakeClock::default()));
         let handle = slot
             .register(EpisodeId::new("episode"), None, 1, || false)
             .unwrap();
