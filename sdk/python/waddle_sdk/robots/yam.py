@@ -750,6 +750,7 @@ class LiveDriver:
         self._zero_gravity = bool(zero_gravity)
         self._report = report
         self._lock = threading.RLock()
+        self._closed = False
         self._feedback_lock = threading.Lock()
         self._last_feedback_state: object | None = None
         self._last_feedback_update = monotonic()
@@ -1238,11 +1239,38 @@ class LiveDriver:
 
     def close(self) -> None:
         with self._lock:
-            self._quiesce_pinned_i2rt_control_thread()
-            self._clear_force()
-            self._robot.close()
+            if self._closed:
+                return
+            chain = self._quiesce_pinned_i2rt_control_thread()
+            try:
+                try:
+                    self._clear_force()
+                finally:
+                    self._disable_pinned_motors(chain)
+            finally:
+                self._robot.close()
+                self._closed = True
 
-    def _quiesce_pinned_i2rt_control_thread(self) -> None:
+    def _disable_pinned_motors(self, chain) -> None:
+        # I2RT closes its CAN socket without explicitly disabling the motors.
+        # The owner has authorized release and both vendor writers are quiescent.
+        motor_off = getattr(getattr(chain, "motor_interface", None), "motor_off", None)
+        motors = getattr(chain, "motor_list", None)
+        if not callable(motor_off) or motors is None:
+            return
+        failures = []
+        for motor_id, _ in motors:
+            try:
+                motor_off(motor_id)
+            except Exception as error:
+                failures.append((motor_id, error))
+        if failures:
+            failed_ids = ", ".join(str(motor_id) for motor_id, _ in failures)
+            raise RuntimeError(
+                f"{self.channel}: motor disable failed for IDs {failed_ids}"
+            ) from failures[0][1]
+
+    def _quiesce_pinned_i2rt_control_thread(self):
         """Join I2RT's CAN writer before its ``close()`` shuts the socket.
 
         The pinned I2RT ``MotorChainRobot.close()`` joins its own server thread,
@@ -1288,6 +1316,7 @@ class LiveDriver:
         motor_chain.running = False
         if control_thread is not None:
             control_thread.join()
+        return motor_chain
 
 
 # ---------------------------------------------------------------------------

@@ -1348,6 +1348,35 @@ def test_a_live_arm_has_no_home_and_integrates_itself(vendor):
     assert vendor.robots[0].closed == 1
 
 
+@pytest.mark.parametrize("failed_motor", [None, 3])
+def test_parked_close_disables_every_motor_before_closing_transport(vendor, failed_motor):
+    vendor.next_kwargs = {"pinned_i2rt_close": True}
+    driver = _live(vendor)
+    robot = vendor.robots[0]
+    chain = robot.motor_chain
+    chain.motor_list = [(motor_id, "DM") for motor_id in range(1, 8)]
+    attempted = []
+
+    def motor_off(motor_id):
+        assert not chain._thread.is_alive() and not robot._server_thread.is_alive()
+        assert not robot.closed
+        attempted.append(motor_id)
+        if motor_id == failed_motor:
+            raise TimeoutError("disable acknowledgment timed out")
+
+    chain.motor_interface = types.SimpleNamespace(motor_off=motor_off)
+    if failed_motor is None:
+        driver.close()
+    else:
+        with pytest.raises(RuntimeError, match="disable.*3"):
+            driver.close()
+    assert attempted == list(range(1, 8))
+    assert robot.closed == 1
+    driver.close()
+    assert robot.closed == 1
+    assert attempted == list(range(1, 8))
+
+
 def test_live_close_joins_pinned_i2rt_can_writer_before_socket_close(vendor):
     """The pinned vendor forgets to retain or join its CAN control thread.
 
