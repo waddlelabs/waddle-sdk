@@ -72,6 +72,11 @@ cadence without counting unrelated lock wait as driver execution.
 
 ## Finite joint playback
 
+Binding API 30 exposes `execution.emission_deadline_playback`. Pass the oldest
+acquisition time covered by a published proof to the playback watchdog. The SDK
+checks the accepted deadline at action recording and each driver handoff. A late
+renewal leaves the terminal Hold in force. See the finite reference playback guide.
+
 Binding API 26 supports explicit reference streams with `timeout_ns=None` and
 `execution.streamed_joint_playback`. Require a watchdog and revisable reference
 curves ending at zero velocity/acceleration. The local worker retains supervised

@@ -230,6 +230,18 @@ impl<C: Clock> Gate<C> {
         obs: Option<&[f64]>,
         part: Option<Arc<str>>,
     ) -> GateOutput {
+        self.gate_scoped_until(values, gripper, obs, part, None)
+    }
+
+    /// Fence the recorded emission using the exact stamp retained by the action log.
+    pub fn gate_scoped_until(
+        &mut self,
+        values: &[f64],
+        gripper: Option<f64>,
+        obs: Option<&[f64]>,
+        part: Option<Arc<str>>,
+        valid_until_ns: Option<i64>,
+    ) -> GateOutput {
         let stamp = self.clock.stamp_now();
         let now = stamp.mono_ns();
         self.shared.stats.record(now);
@@ -239,6 +251,16 @@ impl<C: Clock> Gate<C> {
         // contract, whatever the gate decides.
         let obs = obs.map(ObsValues::from_slice);
 
+        if valid_until_ns.is_some_and(|deadline| now.0 >= deadline) {
+            self.record(
+                stamp,
+                GateDecision::Hold,
+                ProvenanceTag::policy(),
+                None,
+                obs,
+            );
+            return GateOutput::Hold;
+        }
         let plan = self.shared.plan.load();
         match &plan.mode {
             PlanMode::Passthrough => {

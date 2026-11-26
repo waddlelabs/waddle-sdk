@@ -1530,6 +1530,7 @@ class SiteSession:
                         facts.add(SupportFact.PARALLEL_JOINT_PLAYBACK)
                         facts.add(SupportFact.PART_HOLD_PLAYBACK)
                     facts.add(SupportFact.WATCHDOG_PLAYBACK)
+                    facts.add(SupportFact.EMISSION_DEADLINE_PLAYBACK)
                     facts.add(SupportFact.STREAMED_JOINT_PLAYBACK)
                     facts.add(SupportFact.PACED_JOINT_PLAYBACK)
                     facts.add(SupportFact.FEEDBACK_JOINT_PLAYBACK)
@@ -2120,7 +2121,9 @@ class Run:
         with self._session._dispatch_lock:
             return start(self, motion)
 
-    def _step(self, action, observation=None, *, part=None, parts=None) -> SubmitResult:
+    def _step(
+        self, action, observation=None, *, part=None, parts=None, valid_until_ns=None
+    ) -> SubmitResult:
         if self._episode is None:
             raise RuntimeFault(FaultCode.NOT_OPEN, "run has not started")
         if self._episode.done:
@@ -2156,6 +2159,11 @@ class Run:
                 gate_action,
                 obs,
                 part=part,
+                **(
+                    {"valid_until_ns": valid_until_ns}
+                    if valid_until_ns is not None
+                    else {}
+                ),
                 **({"parts": parts} if parts is not None else {}),
             )
         except RuntimeFault:
@@ -2176,6 +2184,24 @@ class Run:
         detail = ""
         refusal_faults: list[RuntimeFault] = []
         bounds_refusal = False
+
+        def check_emission():
+            now_ns = self._session._require().core.stamp().session_ns
+            if now_ns >= valid_until_ns:
+                return base.EmissionDeadlineExpired(
+                    FaultCode.SAFETY_REFUSAL,
+                    "Playback emission deadline expired",
+                    context={
+                        "now_session_ns": now_ns,
+                        "valid_until_ns": valid_until_ns,
+                    },
+                )
+            return None
+
+        if valid_until_ns is not None and decided is None and kind == "hold":
+            if (fault := check_emission()) is not None:
+                refusal_faults.append(fault)
+                detail = fault.detail
         if kind != "pass":
             # A non-pass action belongs to the core's selected stream, never
             # to the caller. Clear the caller's hint even when the selected
@@ -2250,6 +2276,11 @@ class Run:
                         velocity_feedforward_rad_s=velocity_feedforward,
                         gripper_force_n=force_rows,
                         on_refusal=refusal_faults.append,
+                        **(
+                            {"emission_check": check_emission}
+                            if valid_until_ns is not None
+                            else {}
+                        ),
                         check_neighbors=part is not None or parts is not None,
                     )
             except RuntimeFault:

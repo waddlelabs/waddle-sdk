@@ -50,6 +50,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from typing import Protocol, runtime_checkable
 
@@ -1196,6 +1197,22 @@ def _cross_arm_collision_refusal(
     return None
 
 
+class EmissionDeadlineExpired(RuntimeFault):
+    """A checked position was refused before the next target was published."""
+
+
+_emission_check: ContextVar[Callable[[], RuntimeFault | None] | None] = ContextVar(
+    "sdk_emission_check", default=None
+)
+
+
+def check_driver_emission() -> None:
+    """Recheck at a driver's final setpoint publication after taking its own locks."""
+    check = _emission_check.get()
+    if check is not None and (error := check()) is not None:
+        raise error
+
+
 def apply_decision(
     arms: Mapping[str, Arm],
     decided,
@@ -1205,6 +1222,7 @@ def apply_decision(
     ) = None,
     gripper_force_n: Mapping[str, float] | None = None,
     on_refusal: Callable[[RuntimeFault], None] | None = None,
+    emission_check: Callable[[], RuntimeFault | None] | None = None,
     check_neighbors: bool = False,
 ) -> bool:
     """Apply one gate decision atomically across every addressed part.
@@ -1361,6 +1379,7 @@ def apply_decision(
             on_refusal(fault)
         return False
 
+    written_parts = []
     for arm, target, velocity in prepared:
         if target.size == 0:
             continue
@@ -1370,11 +1389,33 @@ def apply_decision(
             and isinstance(arm.driver, GripperForceDriver)
             and arm.driver.gripper_force_supported
         ):
-            arm.driver.write_gripper_force(target, force_rows[part], velocity)
+            write, arguments = (
+                arm.driver.write_gripper_force,
+                (target, force_rows[part], velocity),
+            )
         elif velocity is not None and isinstance(arm.driver, PositionVelocityDriver):
-            arm.driver.write_position_velocity(target, velocity)
+            write, arguments = arm.driver.write_position_velocity, (target, velocity)
         else:
-            arm.driver.write(target)
+            write, arguments = arm.driver.write, (target,)
+        if emission_check is None:
+            write(*arguments)
+        else:
+            token = _emission_check.set(emission_check)
+            try:
+                check_driver_emission()
+                write(*arguments)
+                written_parts.append(part)
+            except EmissionDeadlineExpired as error:
+                if written_parts:
+                    error.context = {
+                        **error.context, "written_parts": written_parts, "refused_part": part
+                    }
+                    raise
+                if on_refusal is not None:
+                    on_refusal(error)
+                return False
+            finally:
+                _emission_check.reset(token)
         arm.accepted += 1
     return True
 

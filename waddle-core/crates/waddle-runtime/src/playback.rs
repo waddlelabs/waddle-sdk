@@ -173,7 +173,7 @@ impl FiniteReferences {
         if policy.watchdog.is_some_and(|w| {
             w.observed_ns < 0
                 || w.timeout_ns <= 0
-                || w.timeout_ns > policy.timeout_ns.unwrap_or(180_000_000_000)
+                || w.timeout_ns > 180_000_000_000
                 || w.observed_ns.checked_add(w.timeout_ns).is_none()
         }) {
             return Err(invalid("watchdog requires bounded session-clock feedback"));

@@ -61,6 +61,7 @@ pub trait PlaybackIo: Send + Sync + 'static {
         reference: &Step,
         measured: &Feedback,
         force_n: Option<f64>,
+        valid_until_ns: Option<i64>,
     ) -> Result<ReferenceReceipt, PlaybackIoError>;
 }
 
@@ -708,7 +709,17 @@ impl ExecutionTask {
         match action {
             PlaybackPoll::Dispatch(index) => {
                 let reference = player.reference(index).expect("admitted reference").clone();
-                match self.io.dispatch(&reference, &measured, player.force_n()) {
+                let valid_until_ns = self
+                    .control
+                    .state
+                    .lock()
+                    .snapshot
+                    .watchdog
+                    .map(|w| w.deadline_ns());
+                match self
+                    .io
+                    .dispatch(&reference, &measured, player.force_n(), valid_until_ns)
+                {
                     Ok(
                         receipt
                         @ (ReferenceReceipt::Dispatched | ReferenceReceipt::DispatchedAt(_)),

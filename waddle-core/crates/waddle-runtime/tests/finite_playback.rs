@@ -72,6 +72,7 @@ mod session_execution {
             _: &Step,
             _: &Feedback,
             _: Option<f64>,
+            _: Option<i64>,
         ) -> Result<ReferenceReceipt, PlaybackIoError> {
             panic!("rejected or cancelled input must never dispatch")
         }

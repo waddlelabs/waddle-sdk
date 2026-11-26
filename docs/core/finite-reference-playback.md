@@ -41,9 +41,16 @@ No motion timeout extension, authority, clock or writer is added. Blocked callba
 before Hold; this is neither physical-stop proof nor a complete teleoperation
 input policy. See the finite-playback contract and watchdog tests.
 
-A watchdog requires `observed_ns >= 0` and `0 < timeout_ns <= policy.timeout_ns`
-(or at most 180 seconds for an explicit stream),
-without integer overflow. Its initial stamp and renewals use this SDK session's
+Binding API 30 advertises `execution.emission_deadline_playback`. The SDK checks
+the accepted watchdog deadline against the recorded action timestamp and again
+immediately before each addressed driver write. The pinned I2RT YAM adapter rechecks under
+the vendor command lock immediately before publishing the setpoint. A delayed gate or envelope check
+can therefore refuse a pending reference and trigger Hold. A vendor write that
+has already started can still complete.
+
+A watchdog requires `observed_ns >= 0` and a positive interval of at most
+180 seconds without integer overflow. The finite motion timeout runs independently,
+so a short command can use the original lifetime of a checked camera exposure. Its initial stamp and renewals use this SDK session's
 observation clock, never the caller's clock or request-arrival time. The worker
 checks the incumbent deadline before applying a pending renewal, including after
 blocked observation. A blocked write can finish, but no next reference follows

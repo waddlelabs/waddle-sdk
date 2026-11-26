@@ -209,7 +209,8 @@ def start(
         and SupportFact.REFERENCE_SETTLING not in facts
     ):
         raise RuntimeFault(
-            FaultCode.UNSUPPORTED, "part does not support reference-only window evidence"
+            FaultCode.UNSUPPORTED,
+            "part does not support reference-only window evidence",
         )
     if (
         motion.policy.minimum_settle_samples != 1
@@ -339,6 +340,11 @@ def start(
                         gripper_force_n=force_n,
                     ),
                     measured["positions"],
+                    **(
+                        {"valid_until_ns": reference["valid_until_ns"]}
+                        if "valid_until_ns" in reference
+                        else {}
+                    ),
                     part=reference["part"],
                     **({"parts": parts} if subset else {}),
                 )

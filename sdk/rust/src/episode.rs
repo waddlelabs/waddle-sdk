@@ -177,7 +177,8 @@ impl PyEpisode {
     /// The record captures the values at call time; mutating the array
     /// afterwards (before your `send`) makes the dispatched action diverge
     /// from the recorded one.
-    #[pyo3(signature = (action, obs=None, gripper=None, *, part=None, parts=None))]
+    #[pyo3(signature = (action, obs=None, gripper=None, *, part=None, parts=None, valid_until_ns=None))]
+    #[allow(clippy::too_many_arguments)] // Python gate accepts optional scope and deadline.
     fn gate(
         &self,
         py: Python<'_>,
@@ -186,6 +187,7 @@ impl PyEpisode {
         gripper: Option<f64>,
         part: Option<&str>,
         parts: Option<Vec<String>>,
+        valid_until_ns: Option<i64>,
     ) -> PyResult<Py<PyAny>> {
         let action_row = extract_f64s(action)?;
         let obs_row = obs.map(extract_f64s).transpose()?;
@@ -198,7 +200,7 @@ impl PyEpisode {
             }
             self.inner
                 .lock()
-                .gate_parts(parts, action_row.as_slice(), observation)
+                .gate_parts_until(parts, action_row.as_slice(), observation, valid_until_ns)
                 .map_err(runtime_err)?
         } else if let Some(part) = part {
             if gripper.is_some() {
@@ -208,12 +210,15 @@ impl PyEpisode {
             }
             self.inner
                 .lock()
-                .gate_part(part, action_row.as_slice(), observation)
+                .gate_part_until(part, action_row.as_slice(), observation, valid_until_ns)
                 .map_err(runtime_err)?
         } else {
-            self.inner
-                .lock()
-                .gate(action_row.as_slice(), gripper, observation)
+            self.inner.lock().gate_until(
+                action_row.as_slice(),
+                gripper,
+                observation,
+                valid_until_ns,
+            )
         };
 
         let (result, info) = match output {

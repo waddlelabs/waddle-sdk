@@ -363,13 +363,17 @@ impl PlaybackIo for PyIo {
         step: &Step,
         measured: &Feedback,
         force_n: Option<f64>,
+        valid_until_ns: Option<i64>,
     ) -> Result<ReferenceReceipt, PlaybackIoError> {
         callback(true, |py| {
-            let value = self.dispatch.bind(py).call1((
-                reference(py, step)?,
-                feedback(py, measured)?,
-                force_n,
-            ))?;
+            let row = reference(py, step)?;
+            if let Some(deadline) = valid_until_ns {
+                row.bind(py).set_item("valid_until_ns", deadline)?;
+            }
+            let value = self
+                .dispatch
+                .bind(py)
+                .call1((row, feedback(py, measured)?, force_n))?;
             if let Ok(error) = value.extract::<PyRef<'_, PyIoError>>() {
                 return Ok(Err(error.0.clone()));
             }

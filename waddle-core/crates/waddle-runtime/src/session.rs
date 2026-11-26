@@ -2656,7 +2656,7 @@ impl Episode {
         gripper: Option<f64>,
         obs: Option<&[f64]>,
     ) -> GateOutput {
-        self.gate_scoped(values, gripper, obs, None)
+        self.gate_scoped_until(values, gripper, obs, None, None)
     }
 
     /// Gate one declared part without fabricating commands for its neighbors.
@@ -2666,6 +2666,17 @@ impl Episode {
         part: &str,
         values: &[f64],
         obs: Option<&[f64]>,
+    ) -> Result<GateOutput, RuntimeError> {
+        self.gate_part_until(part, values, obs, None)
+    }
+
+    /// Apply the same part validation and gate with a session-clock expiry.
+    pub fn gate_part_until(
+        &mut self,
+        part: &str,
+        values: &[f64],
+        obs: Option<&[f64]>,
+        valid_until_ns: Option<i64>,
     ) -> Result<GateOutput, RuntimeError> {
         let waddle_types::SpaceSpec::Composite { parts } = &self.session.inner.action_space.spec
         else {
@@ -2684,7 +2695,7 @@ impl Episode {
                 space.dims()
             )));
         }
-        Ok(self.gate_scoped(values, None, obs, Some(Arc::from(part))))
+        Ok(self.gate_scoped_until(values, None, obs, Some(Arc::from(part)), valid_until_ns))
     }
 
     /// Resolve every selected caller through the ordinary gate before the owner
@@ -2695,6 +2706,17 @@ impl Episode {
         parts: &[String],
         values: &[f64],
         obs: Option<&[f64]>,
+    ) -> Result<GateOutput, RuntimeError> {
+        self.gate_parts_until(parts, values, obs, None)
+    }
+
+    /// Apply the same part validation and gate with a session-clock expiry.
+    pub fn gate_parts_until(
+        &mut self,
+        parts: &[String],
+        values: &[f64],
+        obs: Option<&[f64]>,
+        valid_until_ns: Option<i64>,
     ) -> Result<GateOutput, RuntimeError> {
         let space = self.session.selected_joint_space(parts)?;
         if space.dims() != Some(values.len())
@@ -2712,11 +2734,12 @@ impl Episode {
         let mut result = None;
         for (part, space) in parts {
             let end = start + space.dims().expect("selected joint space has a width");
-            let output = self.gate_scoped(
+            let output = self.gate_scoped_until(
                 &values[start..end],
                 None,
                 obs.map(|row| &row[start..end]),
                 Some(Arc::from(part)),
+                valid_until_ns,
             );
             if !matches!(output, GateOutput::Pass { .. }) {
                 return Ok(output);
@@ -2727,19 +2750,32 @@ impl Episode {
         Ok(result.expect("selected group is nonempty"))
     }
 
-    fn gate_scoped(
+    /// Gate validated coordinates and record only unexpired emissions.
+    pub fn gate_until(
+        &mut self,
+        values: &[f64],
+        gripper: Option<f64>,
+        obs: Option<&[f64]>,
+        valid_until_ns: Option<i64>,
+    ) -> GateOutput {
+        self.gate_scoped_until(values, gripper, obs, None, valid_until_ns)
+    }
+
+    fn gate_scoped_until(
         &mut self,
         values: &[f64],
         gripper: Option<f64>,
         obs: Option<&[f64]>,
         part: Option<Arc<str>>,
+        valid_until_ns: Option<i64>,
     ) -> GateOutput {
         if !self.started {
             self.started = true;
             let at = self.session.inner.clock.stamp_now().mono_ns();
             self.session.inject(SessionEvent::GateTick { at });
         }
-        self.gate.gate_scoped(values, gripper, obs, part)
+        self.gate
+            .gate_scoped_until(values, gripper, obs, part, valid_until_ns)
     }
 
     /// Flips when a judge, a directive, a timeout, `terminate`, or session

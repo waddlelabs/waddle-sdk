@@ -106,6 +106,7 @@ class Episode:
         *,
         part: str | None = None,
         parts: Sequence[str] | None = None,
+        valid_until_ns: int | None = None,
     ) -> Any: ...
     def terminate(self, outcome: str = "abort", reason: str = "") -> None: ...
 

@@ -38,6 +38,11 @@ only to an already held Site shutdown. False never arms future closure or assert
 Home. Keep the original close/drain outcome and ownership authoritative; no motion,
 new owner, native ABI, driver behavior or remote control authority is added.
 
+Binding API 30 exposes `execution.emission_deadline_playback`. Pass the oldest
+acquisition time covered by a published proof to the playback watchdog. The SDK
+checks the accepted deadline at action recording and each driver handoff. A late
+renewal leaves the terminal Hold in force. See the finite reference playback guide.
+
 Binding API 29 adds `execution.reference_settling`: optional native encoder-window
 diagnostics remain current through the final reference-only sample. Window
 `observed_ns` binds the evidence to SDK feedback; publish both in one snapshot

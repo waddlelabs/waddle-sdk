@@ -16,6 +16,7 @@ from waddle_sdk.runtime import (
     JointReference,
     PacedJointCurve,
     PlaybackPolicy,
+    PlaybackWatchdog,
     RuntimeFault,
     SupportFact,
 )
@@ -345,3 +346,42 @@ def test_named_takeover_of_group_keeps_the_selected_velocity_hint(
         assert result["dispatched"] == 0
         assert sdk._managed.arms["left"].accepted == 1
         assert result["cleanup"] is None  # do not Hold over the new native claimant
+
+
+def test_expiry_between_group_driver_calls_retains_partial_dispatch(
+    site_path, monkeypatch
+):
+    with (
+        load_site(site_path).open(console=False, _testing=True) as sdk,
+        sdk.run(task="group expiry", actor="test") as run,
+    ):
+        clock = sdk._managed.core.stamp
+        stamp = sdk.observe().session_ns
+        window = 300_000_000
+        deadline = stamp + window
+        left = DRIVERS["left"].write
+        writes = {"left": [], "right": []}
+
+        def slow_left(target):
+            writes["left"].append(clock().session_ns)
+            left(target)
+            time.sleep(max(0, deadline - clock().session_ns) * 1e-9 + 0.02)
+
+        monkeypatch.setattr(DRIVERS["left"], "write", slow_left)
+        monkeypatch.setattr(
+            DRIVERS["right"],
+            "write",
+            lambda target: writes["right"].append(clock().session_ns),
+        )
+        value = request()
+        value = replace(
+            value,
+            policy=replace(value.policy, watchdog=PlaybackWatchdog(stamp, window)),
+        )
+        result = run.start_playback(value).wait()
+        assert len(writes["left"]) == 1 and writes["left"][0] < deadline
+        assert writes["right"] == []
+        assert result["failure"]["outcome_unknown"], result
+        assert result["failure"]["evidence"]["context"]["written_parts"] == ["left"]
+        assert result["failure"]["evidence"]["context"]["refused_part"] == "right"
+        assert result["cleanup"]["outcome"] == "acknowledged"

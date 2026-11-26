@@ -32,6 +32,8 @@ import textwrap
 import time
 from typing import Any
 
+from . import base
+
 _EXPECTED_RECEIVE_PARAMETERS = (
     "self",
     "motor_id",
@@ -282,14 +284,19 @@ def apply_recv_starvation_patch() -> None:
 def _command_joint_state_atomic(self: Any, joint_state: Any) -> None:
     """Publish one complete I2RT PD command under the vendor command lock."""
 
+    _publish_joint_command(self, joint_state, position_only=False)
+
+
+def _publish_joint_command(self: Any, joint_state: Any, *, position_only: bool) -> None:
     position = self._clip_robot_joint_pos_command(joint_state["pos"])
-    velocity = joint_state["vel"]
     commands = type(self._commands).init_all_zero(len(self.motor_chain))
     commands.pos = self.remapper.to_robot_joint_pos_space(position)
-    commands.vel = self.remapper.to_robot_joint_vel_space(velocity)
+    if not position_only:
+        commands.vel = self.remapper.to_robot_joint_vel_space(joint_state["vel"])
     commands.kp = joint_state.get("kp", self._kp)
     commands.kd = joint_state.get("kd", self._kd)
     with self._command_lock:
+        base.check_driver_emission()
         self._commands = commands
 
 

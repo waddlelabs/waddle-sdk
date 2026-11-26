@@ -11,6 +11,10 @@ ships; this root file always carries `[Unreleased]` plus pointers.
 
 ## [Unreleased]
 
+- Enforce accepted playback watchdog deadlines at the native action timestamp and
+  each driver handoff. Binding API 30 advertises `execution.emission_deadline_playback`.
+  Motion timeouts and acquisition lifetimes each keep their own expiry.
+
 - Add optional bounded private exception capture with correlation IDs, cause/stack
   locations, source digests and distribution versions. Keep original fault fields,
   credential redaction and device authority; perform storage outside control threads.

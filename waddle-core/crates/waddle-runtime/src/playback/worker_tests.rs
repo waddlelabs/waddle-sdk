@@ -89,6 +89,7 @@ impl PlaybackIo for MemoryIo {
         reference: &Step,
         measured: &Feedback,
         _force_n: Option<f64>,
+        _valid_until_ns: Option<i64>,
     ) -> Result<ReferenceReceipt, PlaybackIoError> {
         assert_eq!(std::thread::current().name(), Some("waddle-verbs"));
         self.events.lock().push("dispatch");

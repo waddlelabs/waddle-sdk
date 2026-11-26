@@ -69,6 +69,7 @@ class SupportFact(str, enum.Enum):
     COORDINATED_JOINT_PLAYBACK = "execution.coordinated_joint_playback"
     COORDINATED_SUBSET_PLAYBACK = "execution.coordinated_subset_playback"
     PARALLEL_JOINT_PLAYBACK = "execution.parallel_joint_playback"
+    EMISSION_DEADLINE_PLAYBACK = "execution.emission_deadline_playback"
     WATCHDOG_PLAYBACK = "execution.watchdog_playback"
     STREAMED_JOINT_PLAYBACK = "execution.streamed_joint_playback"
     PART_HOLD_PLAYBACK = "execution.part_hold_playback"
@@ -718,9 +719,9 @@ class PlaybackWatchdog:
     """Local caller-liveness bound anchored to acquired SDK feedback time.
 
     ``observed_ns`` comes from this session's observation clock. The native
-    worker expires at that stamp plus ``timeout_ns``; delayed request arrival
-    cannot renew liveness or revive an expired execution. This does not change
-    the motion deadline, authorize commands or preempt a blocked driver callback.
+    worker expires at that stamp plus ``timeout_ns``. With emission deadline
+    support, the gate and each driver handoff check that same expiry. The
+    motion timeout runs independently. A driver call already entered may finish.
     """
 
     observed_ns: int

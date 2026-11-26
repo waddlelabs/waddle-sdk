@@ -93,6 +93,7 @@ from ..descriptors import (
 from ..runtime import FaultCode, RuntimeFault
 from . import base
 from ._i2rt_patches import (
+    _publish_joint_command,
     apply_command_state_atomic_patch,
     apply_observation_snapshot_patch,
     apply_recv_starvation_patch,
@@ -1101,6 +1102,19 @@ class LiveDriver:
             )
             limiter.set_force(0, raw)
 
+    def _publish_position(self, position):
+        # The pinned I2RT position API can block on its command lock. Use the
+        # same atomic publication as PD playback, retaining zero velocity.
+        if base._emission_check.get() is not None and getattr(
+            getattr(self._robot, "command_joint_state", None),
+            "_waddle_atomic_command_patch",
+            False,
+        ):
+            _publish_joint_command(self._robot, {"pos": position}, position_only=True)
+        else:
+            base.check_driver_emission()
+            self._robot.command_joint_pos(position)
+
     def write(self, target: np.ndarray) -> None:
         if self._zero_gravity:
             raise RuntimeError(
@@ -1115,7 +1129,7 @@ class LiveDriver:
                     "moves nothing. Clear the latch at the machine."
                 )
             self._check_feedback()
-            self._robot.command_joint_pos(np.asarray(target, dtype=float))
+            self._publish_position(np.asarray(target, dtype=float))
 
     def write_position_velocity(
         self,
@@ -1152,11 +1166,12 @@ class LiveDriver:
                 )
             self._check_feedback()
             if not self._velocity_feedforward or not self._can_command_state:
-                self._robot.command_joint_pos(position)
+                self._publish_position(position)
                 return False
             cap = self._max_feedforward_vel_rad_s
             bounded = np.zeros(JOINT_COUNT, dtype=float)
             bounded[:ARM_JOINT_COUNT] = np.clip(velocity[:ARM_JOINT_COUNT], -cap, cap)
+            base.check_driver_emission()
             self._robot.command_joint_state({"pos": position, "vel": bounded})
             return True
 
